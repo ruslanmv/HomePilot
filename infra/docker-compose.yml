@@ -1,91 +1,98 @@
 version: "3.9"
 
 services:
-frontend:
-build: ../frontend
-environment:
-- VITE_API_URL=${VITE_API_URL:-[http://localhost:8000}](http://localhost:8000})
-ports:
-- "127.0.0.1:3000:3000"
-depends_on:
-- backend
+  frontend:
+    build: ../frontend
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - backend
 
-backend:
-build: ../backend
-environment:
-- API_KEY=${API_KEY:-}
-- LLM_BASE_URL=${LLM_BASE_URL:-[http://llm:8001/v1}](http://llm:8001/v1})
-- LLM_MODEL=${LLM_MODEL:-local-model}
-- COMFY_BASE_URL=${COMFY_BASE_URL:-[http://comfyui:8188}](http://comfyui:8188})
-- MEDIA_BASE_URL=${MEDIA_BASE_URL:-[http://media:8002}](http://media:8002})
-- SQLITE_PATH=${SQLITE_PATH:-/app/data/homepilot.db}
-- UPLOAD_DIR=${UPLOAD_DIR:-/app/data/uploads}
-- OUTPUT_DIR=${OUTPUT_DIR:-/outputs}
-- TOOL_TIMEOUT_S=${TOOL_TIMEOUT_S:-300}
-- COMFY_POLL_INTERVAL_S=${COMFY_POLL_INTERVAL_S:-1.0}
-- COMFY_POLL_MAX_S=${COMFY_POLL_MAX_S:-240}
-- CORS_ORIGINS=${CORS_ORIGINS:-[http://localhost:3000}](http://localhost:3000})
-volumes:
-- ../backend/data:/app/data
-- ../outputs:/outputs
-- ../comfyui/workflows:/workflows:ro
-ports:
-- "127.0.0.1:8000:8000"
-depends_on:
-- llm
-- comfyui
-- media
-healthcheck:
-test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
-interval: 10s
-timeout: 3s
-retries: 10
+  backend:
+    build: ../backend
+    environment:
+      API_KEY: ${API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://llm:8001/v1}
+      LLM_MODEL: ${LLM_MODEL:-local-model}
+      COMFY_BASE_URL: ${COMFY_BASE_URL:-http://comfyui:8188}
+      MEDIA_BASE_URL: ${MEDIA_BASE_URL:-http://media:8002}
+      SQLITE_PATH: ${SQLITE_PATH:-/app/data/homegrok.db}
+      UPLOAD_DIR: ${UPLOAD_DIR:-/app/data/uploads}
+      OUTPUT_DIR: ${OUTPUT_DIR:-/outputs}
+      TOOL_TIMEOUT_S: ${TOOL_TIMEOUT_S:-300}
+      COMFY_POLL_INTERVAL_S: ${COMFY_POLL_INTERVAL_S:-1.0}
+      COMFY_POLL_MAX_S: ${COMFY_POLL_MAX_S:-240}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    volumes:
+      - ../backend/data:/app/data
+      - ../outputs:/outputs
+      - ../comfyui/workflows:/workflows:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      - llm
+      - comfyui
+      - media
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
 
-llm:
-image: vllm/vllm-openai:latest
-runtime: nvidia
-environment:
-- NVIDIA_VISIBLE_DEVICES=all
-volumes:
-- ../models/llm:/models
-ports:
-- "127.0.0.1:8001:8001"
-command: >
---model /models
---host 0.0.0.0
---port 8001
---gpu-memory-utilization 0.90
---max-model-len 8192
-healthcheck:
-test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/v1/models').read()"]
-interval: 20s
-timeout: 5s
-retries: 10
+  llm:
+    image: vllm/vllm-openai:latest
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ../models/llm:/models
+    ports:
+      - "127.0.0.1:8001:8001"
+    command:
+      - --model
+      - /models
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+      - --gpu-memory-utilization
+      - "0.90"
+      - --max-model-len
+      - "8192"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/v1/models').read()"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
 
-comfyui:
-image: runcomfy/comfyui:latest
-runtime: nvidia
-environment:
-- NVIDIA_VISIBLE_DEVICES=all
-volumes:
-- ../models/comfy:/ComfyUI/models
-- ../outputs:/ComfyUI/output
-ports:
-- "127.0.0.1:8188:8188"
-healthcheck:
-test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8188/system_stats').read()"]
-interval: 20s
-timeout: 5s
-retries: 10
+  comfyui:
+    build: ../comfyui
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ../models/comfy:/ComfyUI/models
+      - ../outputs:/ComfyUI/output
+      # Optional: if you want ComfyUI to see your workflows directly
+      - ../comfyui/workflows:/ComfyUI/user/default/workflows:ro
+    ports:
+      - "127.0.0.1:8188:8188"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8188/system_stats').read()"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
 
-media:
-build: ../media
-ports:
-- "127.0.0.1:8002:8002"
-volumes:
-- ../outputs:/outputs
-healthcheck:
-test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health').read()"]
-interval: 20s
-timeout: 5s
-retries: 10
+  media:
+    build: ../media
+    ports:
+      - "127.0.0.1:8002:8002"
+    volumes:
+      - ../outputs:/outputs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health').read()"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
