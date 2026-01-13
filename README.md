@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/License-Apache_2.0-green?style=for-the-badge)
 ![Stack](https://img.shields.io/badge/Stack-Local_First-purple?style=for-the-badge)
 
-**HomePilot** is an all-in-one, local-first GenAI application that unifies **chat, image generation, editing, and video creation** into a **single continuous conversation**. Designed to deliver a high-end, Grok-like experience, it remains entirely **self-hosted, auditable, and extensible**.
+**HomePilot** is an all-in-one, local-first GenAI application that unifies **chat, image generation, editing, and video creation** into a **single continuous conversation**. Designed to deliver a high-end experience, it remains entirely **self-hosted, auditable, and extensible**.
 
 This repository contains the **"Home Edition"**: a production-oriented stack designed to run on a local machine (ideally with an NVIDIA GPU) using Docker Compose.
 
