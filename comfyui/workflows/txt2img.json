@@ -1,0 +1,7 @@
+{
+"NOTE": "Replace with a real exported ComfyUI workflow JSON. Put {{prompt}} somewhere in the text prompt node.",
+"0": {
+"class_type": "CLIPTextEncode",
+"inputs": { "text": "{{prompt}}", "clip": [ "1", 0 ] }
+}
+}

@@ -1,0 +1,7 @@
+{
+"NOTE": "Replace with real image-to-video workflow (e.g., SVD). Use {{image_url}}, {{seconds}}, {{motion}} placeholders.",
+"0": {
+"class_type": "LoadImage",
+"inputs": { "image": "{{image_url}}" }
+}
+}

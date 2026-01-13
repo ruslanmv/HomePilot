@@ -1,0 +1,7 @@
+{
+"NOTE": "Replace with real inpaint/edit workflow. Use {{image_url}} and {{instruction}} placeholders in nodes.",
+"0": {
+"class_type": "LoadImage",
+"inputs": { "image": "{{image_url}}" }
+}
+}

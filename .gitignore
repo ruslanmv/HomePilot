@@ -1,0 +1,21 @@
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local env / secrets
+.env
+.env.*.local
+
+# Models & outputs
+models/
+outputs/
+backend/data/
+backend/data/*.db
+backend/data/uploads/
+backend/data/comfy_cache/

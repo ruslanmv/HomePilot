@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+--bg: 0 0% 4%;
+--fg: 0 0% 98%;
+}
+
+body {
+background: hsl(var(--bg));
+color: hsl(var(--fg));
+font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+font-feature-settings: "liga" 1, "calt" 1;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
