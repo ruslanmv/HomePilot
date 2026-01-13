@@ -1,6 +1,9 @@
 SHELL := /bin/bash
 
-.PHONY: help install run up down logs health dev build test clean download
+# Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
+export UV_LINK_MODE ?= copy
+
+.PHONY: help install run up down logs health dev build test clean download uv uv-run uv-test
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -10,6 +13,47 @@ install: ## Install frontend deps and build images
 	cd frontend && npm install
 	@echo "Building docker images..."
 	docker compose -f infra/docker-compose.yml build
+
+# --- Local backend with uv -----------------------------------------------------
+
+uv: ## Install backend locally using uv (creates backend/.venv and installs deps + dev group)
+	@command -v uv >/dev/null 2>&1 || { \
+		echo "ERROR: 'uv' not found."; \
+		echo "Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"; \
+		echo "Then reopen your terminal and run: make uv"; \
+		exit 1; \
+	}
+	@test -f backend/pyproject.toml || { \
+		echo "ERROR: backend/pyproject.toml missing."; \
+		exit 1; \
+	}
+	@test -f backend/README.md || { \
+		echo "ERROR: backend/README.md missing (required by pyproject readme)."; \
+		echo "Create it (can be short) then rerun: make uv"; \
+		exit 1; \
+	}
+	@echo "Setting up backend venv with uv..."
+	cd backend && uv venv .venv
+	@echo "Installing backend (editable)..."
+	cd backend && uv pip install -e .
+	@echo "Installing backend dev dependencies (dependency-groups.dev)..."
+	cd backend && uv pip install --group dev
+	@echo ""
+	@echo "✅ Backend installed locally with uv."
+	@echo "Next:"
+	@echo "  make uv-run   # run backend locally (uvicorn --reload)"
+	@echo "  make uv-test  # run backend tests locally"
+	@echo ""
+
+uv-run: ## Run backend locally with uv (reload)
+	@command -v uv >/dev/null 2>&1 || { echo "ERROR: 'uv' not found. Run: make uv"; exit 1; }
+	cd backend && uv run dev
+
+uv-test: ## Run backend tests locally with uv (pytest)
+	@command -v uv >/dev/null 2>&1 || { echo "ERROR: 'uv' not found. Run: make uv"; exit 1; }
+	cd backend && uv run test
+
+# --- Docker stack -------------------------------------------------------------
 
 run: up ## Alias for up
 
