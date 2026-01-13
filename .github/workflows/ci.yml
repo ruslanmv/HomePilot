@@ -1,28 +1,37 @@
 name: CI
+
 on:
-push:
-pull_request:
+  push:
+  pull_request:
 
 jobs:
-backend:
-runs-on: ubuntu-latest
-steps:
-- uses: actions/checkout@v4
-- uses: actions/setup-python@v5
-with:
-python-version: "3.11"
-- run: pip install -r backend/requirements.txt
-- run: pytest -q
-working-directory: backend
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          
+      # Installing from root is fine if you point to the file path
+      - run: pip install -r backend/requirements.txt
+      
+      # Indent working-directory so it applies to this specific run command
+      - run: pytest -q
+        working-directory: backend
 
-frontend:
-runs-on: ubuntu-latest
-steps:
-- uses: actions/checkout@v4
-- uses: actions/setup-node@v4
-with:
-node-version: "20"
-- run: npm install
-working-directory: frontend
-- run: npm run build
-working-directory: frontend
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          
+      - run: npm install
+        working-directory: frontend
+        
+      - run: npm run build
+        working-directory: frontend
