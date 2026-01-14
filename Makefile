@@ -1,13 +1,12 @@
 SHELL := /bin/bash
 
-# Fix uv hardlink warning on WSL / multi-filesystem setups
+# Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
 .PHONY: help install run up down logs health dev build test clean download uv uv-run uv-test
 
-# --- Help (Fixed to use Python instead of awk) --------------------------------
 help: ## Show help
-	@python -c "import re, sys; pattern = re.compile(r'^([a-zA-Z0-9_-]+):.*?## (.*)$$'); [print(f'\033[36m{m.group(1):<18}\033[0m {m.group(2)}') for line in open(sys.argv[1]) for m in [pattern.search(line)] if m]" $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 install: ## Install frontend deps and build images
 	@echo "Installing frontend deps..."
@@ -61,10 +60,10 @@ run: up ## Alias for up
 up: ## Start full stack (docker)
 	docker compose -f infra/docker-compose.yml up -d --build
 	@echo ""
-	@echo "UI       : http://localhost:3000"
-	@echo "Backend  : http://localhost:8000/docs"
-	@echo "LLM API  : http://localhost:8001/v1"
-	@echo "ComfyUI  : http://localhost:8188"
+	@echo "UI      : http://localhost:3000"
+	@echo "Backend : http://localhost:8000/docs"
+	@echo "LLM API : http://localhost:8001/v1"
+	@echo "ComfyUI : http://localhost:8188"
 	@echo ""
 
 down: ## Stop stack
