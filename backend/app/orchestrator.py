@@ -82,8 +82,22 @@ async def orchestrate(
 
     # --- Imagine ---
     if (m == "imagine") or IMAGE_RE.search(text_in):
-        res = run_workflow("txt2img", {"prompt": text_in})
-        images = res.get("images", []) or []
+        try:
+            res = run_workflow("txt2img", {"prompt": text_in})
+            images = res.get("images", []) or []
+            text = "Here you go."
+            add_message(cid, "assistant", text)
+            media = {"images": images} if images else None
+            return {"conversation_id": cid, "text": text, "media": media}
+        except FileNotFoundError:
+            # In CI/tests, workflows may not be mounted. Return a stable text-only response.
+            text = "Image generation is not configured on this server."
+            add_message(cid, "assistant", text)
+            return {"conversation_id": cid, "text": text, "media": None}
+        except Exception as e:
+            text = f"Image generation error: {str(e)}"
+            add_message(cid, "assistant", text)
+            return {"conversation_id": cid, "text": text, "media": None}
         text = "Generated a few variations."
         add_message(cid, "assistant", text)
         return {"conversation_id": cid, "text": text, "media": {"images": images}}
