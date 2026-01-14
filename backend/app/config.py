@@ -47,6 +47,7 @@ COMFY_POLL_MAX_S = float(os.getenv("COMFY_POLL_MAX_S", "240"))
 def _parse_csv(value: str) -> List[str]:
     return [x.strip() for x in (value or "").split(",") if x.strip()]
 
-CORS_ORIGINS = _parse_csv(os.getenv("CORS_ORIGINS", "http://localhost:3000"))
+# FIX: Added http://localhost:5173 and http://127.0.0.1:5173 for local Vite development
+CORS_ORIGINS = _parse_csv(os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"))
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
