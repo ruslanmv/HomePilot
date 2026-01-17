@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Typewriter from './Typewriter'
 import {
   Send,
   X,
@@ -17,131 +16,71 @@ import {
   Server,
   PlugZap,
 } from 'lucide-react'
-import type { Msg } from './types'
 
-/**
- * Production-ready App.tsx
- * Fixes: "only one key" typing bug (stable component identities + no remount on keystroke)
- * Adds: Settings for Backend URL + LLM provider selection (Backend vs Ollama optional)
- * Ensures: Backend requests use configured base URL + headers
- */
+// -----------------------------------------------------------------------------
+// Types (consolidated)
+// -----------------------------------------------------------------------------
+
+export type Msg = {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  pending?: boolean
+  media?: {
+    images?: string[]
+    video_url?: string
+  } | null
+}
 
 type Mode = 'chat' | 'imagine' | 'edit' | 'animate'
 type Provider = 'backend' | 'ollama'
 
-function uuid() {
-  return crypto.randomUUID()
+type SettingsModel = {
+  backendUrl: string
+  provider: Provider
+  ollamaUrl: string
+  ollamaModel: string
+  apiKey: string
+  funMode: boolean
 }
 
-function modeHint(mode: Mode) {
-  switch (mode) {
-    case 'chat':
-      return 'What do you want to know?'
-    case 'imagine':
-      return 'Describe an image to generate...'
-    case 'edit':
-      return 'Upload an image or describe edits...'
-    case 'animate':
-      return 'Upload an image or describe motion...'
-    default:
-      return 'What do you want to know?'
-  }
+// -----------------------------------------------------------------------------
+// Components (consolidated)
+// -----------------------------------------------------------------------------
+
+function Typewriter({ text, speed = 10 }: { text: string; speed?: number }) {
+  const [displayedText, setDisplayedText] = useState('')
+  const indexRef = useRef(0)
+
+  // Reset when text changes (e.g. if we switch messages or streaming updates)
+  useEffect(() => {
+    // If text is already fully displayed, don't reset (prevents flickering on re-renders)
+    if (text.startsWith(displayedText) && displayedText.length > 0 && text.length > displayedText.length) {
+       // Continue typing from current position
+    } else if (text !== displayedText && !text.startsWith(displayedText)) {
+       // New text content entirely
+       setDisplayedText('')
+       indexRef.current = 0
+    } else if (text === displayedText) {
+       return 
+    }
+  }, [text, displayedText])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (indexRef.current < text.length) {
+        setDisplayedText((prev) => text.slice(0, indexRef.current + 1))
+        indexRef.current++
+      } else {
+        clearInterval(timer)
+      }
+    }, speed)
+
+    return () => clearInterval(timer)
+  }, [text, speed])
+
+  return <span>{displayedText}</span>
 }
-
-function buildMessageForMode(mode: Mode, text: string) {
-  const t = text.trim()
-  if (!t) return t
-  if (mode === 'chat') return t
-
-  if (mode === 'imagine') {
-    if (/\b(imagine|generate|create|draw|make)\b/i.test(t)) return t
-    return `imagine ${t}`
-  }
-
-  if (mode === 'edit' || mode === 'animate') {
-    return `${mode} ${t}`
-  }
-
-  return t
-}
-
-/**
- * Simple, dependency-free JSON POST helper that supports dynamic base URLs.
- * (Avoids axios instance baseURL mismatch when user changes backend URL in UI.)
- */
-async function postJson<T>(
-  baseUrl: string,
-  path: string,
-  body: any,
-  headers?: Record<string, string>
-): Promise<T> {
-  const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(headers ?? {}),
-    },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
-  }
-  return (await res.json()) as T
-}
-
-async function postForm<T>(
-  baseUrl: string,
-  path: string,
-  form: FormData,
-  headers?: Record<string, string>
-): Promise<T> {
-  const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      ...(headers ?? {}),
-      // NOTE: do NOT set Content-Type for FormData; browser sets boundary.
-    },
-    body: form,
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
-  }
-  return (await res.json()) as T
-}
-
-/** Optional: direct Ollama call (browser->Ollama). Requires Ollama CORS / reverse proxy. */
-type OllamaChatResponse = {
-  message?: { role?: string; content?: string }
-  response?: string
-}
-async function ollamaChat(
-  ollamaBaseUrl: string,
-  model: string,
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-) {
-  const url = `${ollamaBaseUrl.replace(/\/+$/, '')}/api/chat`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      messages,
-      stream: false,
-    }),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Ollama HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
-  }
-  const data = (await res.json()) as OllamaChatResponse
-  return data.message?.content ?? data.response ?? ''
-}
-
-/* ----------------------------- UI Components ----------------------------- */
 
 function NavItem({
   icon: Icon,
@@ -179,15 +118,6 @@ function NavItem({
       ) : null}
     </button>
   )
-}
-
-type SettingsModel = {
-  backendUrl: string
-  provider: Provider
-  ollamaUrl: string
-  ollamaModel: string
-  apiKey: string
-  funMode: boolean
 }
 
 function SettingsPopover({
@@ -735,6 +665,118 @@ function ChatState({
 
 /* ------------------------------- Main App ------------------------------- */
 
+function uuid() {
+  return crypto.randomUUID()
+}
+
+function modeHint(mode: Mode) {
+  switch (mode) {
+    case 'chat':
+      return 'What do you want to know?'
+    case 'imagine':
+      return 'Describe an image to generate...'
+    case 'edit':
+      return 'Upload an image or describe edits...'
+    case 'animate':
+      return 'Upload an image or describe motion...'
+    default:
+      return 'What do you want to know?'
+  }
+}
+
+function buildMessageForMode(mode: Mode, text: string) {
+  const t = text.trim()
+  if (!t) return t
+  if (mode === 'chat') return t
+
+  if (mode === 'imagine') {
+    if (/\b(imagine|generate|create|draw|make)\b/i.test(t)) return t
+    return `imagine ${t}`
+  }
+
+  if (mode === 'edit' || mode === 'animate') {
+    return `${mode} ${t}`
+  }
+
+  return t
+}
+
+/**
+ * Simple, dependency-free JSON POST helper that supports dynamic base URLs.
+ * (Avoids axios instance baseURL mismatch when user changes backend URL in UI.)
+ */
+async function postJson<T>(
+  baseUrl: string,
+  path: string,
+  body: any,
+  headers?: Record<string, string>
+): Promise<T> {
+  const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(headers ?? {}),
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
+  }
+  return (await res.json()) as T
+}
+
+async function postForm<T>(
+  baseUrl: string,
+  path: string,
+  form: FormData,
+  headers?: Record<string, string>
+): Promise<T> {
+  const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      ...(headers ?? {}),
+      // NOTE: do NOT set Content-Type for FormData; browser sets boundary.
+    },
+    body: form,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
+  }
+  return (await res.json()) as T
+}
+
+/** Optional: direct Ollama call (browser->Ollama). Requires Ollama CORS / reverse proxy. */
+type OllamaChatResponse = {
+  message?: { role?: string; content?: string }
+  response?: string
+}
+async function ollamaChat(
+  ollamaBaseUrl: string,
+  model: string,
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+) {
+  const url = `${ollamaBaseUrl.replace(/\/+$/, '')}/api/chat`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: false,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Ollama HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
+  }
+  const data = (await res.json()) as OllamaChatResponse
+  return data.message?.content ?? data.response ?? ''
+}
+
 export default function App() {
   // Core State
   const [messages, setMessages] = useState<Msg[]>([])
@@ -851,8 +893,10 @@ export default function App() {
             conversation_id: conversationId,
             fun_mode: settings.funMode,
             mode,
-            // Include provider hints for backend (backend can ignore if unsupported)
-            llm_provider: settings.provider,
+            // FIX: Use 'provider' to match Python Pydantic model. 
+            // 'ollama' is handled via browser fetch above, so here we use backend default (null).
+            provider: null,
+            
             ollama_base_url: settings.ollamaUrl,
             ollama_model: settings.ollamaModel,
           },
@@ -943,7 +987,10 @@ export default function App() {
             conversation_id: conversationId,
             fun_mode: settings.funMode,
             mode: intent,
-            llm_provider: settings.provider,
+            // FIX: Use 'provider' to match Python Pydantic model. 
+            // If settings says 'backend', send null so backend uses its own default.
+            provider: settings.provider === 'ollama' ? 'ollama' : null,
+
             ollama_base_url: settings.ollamaUrl,
             ollama_model: settings.ollamaModel,
           },
