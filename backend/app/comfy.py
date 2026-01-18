@@ -10,7 +10,28 @@ import httpx
 
 from .config import COMFY_BASE_URL, COMFY_POLL_INTERVAL_S, COMFY_POLL_MAX_S
 
-WORKFLOWS_DIR = Path(os.getenv("COMFY_WORKFLOWS_DIR", "/workflows"))
+
+def _get_workflows_dir() -> Path:
+    """
+    Find workflows directory intelligently:
+    1. If COMFY_WORKFLOWS_DIR is set, use it
+    2. Try repo path (for local development)
+    3. Fallback to /workflows (docker)
+    """
+    env_dir = os.getenv("COMFY_WORKFLOWS_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir)
+
+    current_file = Path(__file__).resolve()
+    repo_root = current_file.parent.parent.parent  # HomePilot root
+    repo_workflows = repo_root / "comfyui" / "workflows"
+    if repo_workflows.exists() and repo_workflows.is_dir():
+        return repo_workflows
+
+    return Path("/workflows")
+
+
+WORKFLOWS_DIR = _get_workflows_dir()
 
 
 def _deep_replace(obj: Any, mapping: Dict[str, Any]) -> Any:
@@ -31,15 +52,63 @@ def _load_workflow(name: str) -> Dict[str, Any]:
     if not p.exists():
         raise FileNotFoundError(
             f"Workflow file not found: {p}. "
-            f"Mount workflows into {WORKFLOWS_DIR} (docker volume) or set COMFY_WORKFLOWS_DIR."
+            f"Set COMFY_WORKFLOWS_DIR or mount workflows into {WORKFLOWS_DIR}."
         )
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+def _validate_prompt_graph(prompt_graph: Dict[str, Any], *, workflow_name: str) -> None:
+    """
+    ComfyUI /prompt expects an API-format graph:
+      { "1": {"class_type": "...", "inputs": {...}}, "2": {...}, ... }
+    Your repo currently ships TEMPLATE files with keys like "_comment"/"_instructions".
+    Those cause ComfyUI to reply 400.
+    """
+    if not isinstance(prompt_graph, dict) or not prompt_graph:
+        raise ValueError(
+            f"Comfy workflow '{workflow_name}' is empty/invalid. "
+            "Export a real ComfyUI workflow in 'API format' and replace the template JSON."
+        )
+
+    # If it looks like a template, fail early with a clear message
+    template_keys = [k for k in prompt_graph.keys() if isinstance(k, str) and k.startswith("_")]
+    if template_keys and all(k.startswith("_") for k in prompt_graph.keys()):
+        raise ValueError(
+            f"Comfy workflow '{workflow_name}' is still a TEMPLATE (contains only _comment/_instructions). "
+            "You must export a real ComfyUI workflow using 'Save (API Format)' and overwrite this file:\n"
+            f"  {WORKFLOWS_DIR / (workflow_name + '.json')}\n"
+        )
+
+    # Ensure at least one node has class_type
+    has_node = False
+    for _, node in prompt_graph.items():
+        if isinstance(node, dict) and node.get("class_type"):
+            has_node = True
+            break
+    if not has_node:
+        raise ValueError(
+            f"Comfy workflow '{workflow_name}' does not look like ComfyUI API format (no class_type nodes). "
+            "Export from ComfyUI: Settings → enable Dev mode → Save (API Format)."
+        )
+
+
 def _post_prompt(client: httpx.Client, prompt: Dict[str, Any]) -> str:
     url = f"{COMFY_BASE_URL.rstrip('/')}/prompt"
-    r = client.post(url, json={"prompt": prompt})
-    r.raise_for_status()
+    try:
+        r = client.post(url, json={"prompt": prompt})
+        r.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        body = ""
+        try:
+            body = e.response.text
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"ComfyUI /prompt failed ({e.response.status_code}). "
+            f"Most common cause: workflow JSON is not API format. "
+            f"Response: {body[:400]}"
+        ) from e
+
     data = r.json()
     prompt_id = data.get("prompt_id")
     if not prompt_id:
@@ -120,6 +189,8 @@ def _extract_media(history: Dict[str, Any], prompt_id: str) -> Tuple[List[str], 
 def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     workflow = _load_workflow(name)
     prompt_graph = _deep_replace(workflow, variables)
+
+    _validate_prompt_graph(prompt_graph, workflow_name=name)
 
     timeout = httpx.Timeout(60.0, connect=60.0)
     with httpx.Client(timeout=timeout) as client:
