@@ -67,7 +67,7 @@ async def chat_ollama(
     mdl = (model or OLLAMA_MODEL).strip()
     if not mdl:
         # Keep error explicit for UI
-        raise RuntimeError("Ollama model not configured. Set OLLAMA_MODEL env var.")
+        raise RuntimeError("Ollama model not configured. Set OLLAMA_MODEL env var or provide ollama_model in request.")
 
     url = f"{base}/api/chat"
     payload = {
@@ -82,9 +82,35 @@ async def chat_ollama(
     }
 
     async with httpx.AsyncClient(timeout=_timeout()) as client:
-        r = await client.post(url, json=payload)
-        r.raise_for_status()
-        data = r.json()
+        try:
+            r = await client.post(url, json=payload)
+            r.raise_for_status()
+            data = r.json()
+        except httpx.HTTPStatusError as e:
+            # Better error handling for 404 model not found
+            if e.response.status_code == 404:
+                error_msg = f"Ollama model '{mdl}' not found"
+
+                # Try to fetch available models
+                try:
+                    tags_r = await client.get(f"{base}/api/tags")
+                    if tags_r.status_code == 200:
+                        tags_data = tags_r.json()
+                        models = tags_data.get("models", [])
+                        if models:
+                            model_names = [m.get("name", "") for m in models if m.get("name")]
+                            error_msg += f". Available models: {', '.join(model_names)}"
+                        else:
+                            error_msg += ". No models are currently available. Run 'ollama pull <model-name>' to download a model."
+                    else:
+                        error_msg += f". Could not fetch available models. Please run 'ollama pull {mdl}' to download it."
+                except Exception:
+                    error_msg += f". Please run 'ollama pull {mdl}' to download it."
+
+                raise RuntimeError(error_msg) from e
+            else:
+                # Re-raise other HTTP errors
+                raise RuntimeError(f"Ollama HTTP {e.response.status_code}: {e.response.text}") from e
 
     # Normalize to OpenAI-like shape for downstream parsing
     content = ""
@@ -104,7 +130,21 @@ async def chat(
     provider: ProviderName = "openai_compat",
     temperature: float = 0.7,
     max_tokens: int = 800,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     if provider == "ollama":
-        return await chat_ollama(messages, temperature=temperature, max_tokens=max_tokens)
-    return await chat_openai_compat(messages, temperature=temperature, max_tokens=max_tokens)
+        return await chat_ollama(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            base_url=base_url,
+            model=model,
+        )
+    return await chat_openai_compat(
+        messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        base_url=base_url,
+        model=model,
+    )

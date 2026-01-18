@@ -48,6 +48,7 @@ def _parse_csv(value: str) -> List[str]:
     return [x.strip() for x in (value or "").split(",") if x.strip()]
 
 # FIX: Added http://localhost:5173 and http://127.0.0.1:5173 for local Vite development
-CORS_ORIGINS = _parse_csv(os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"))
+# Also added port 3001 for alternate dev setups
+CORS_ORIGINS = _parse_csv(os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:3001"))
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")

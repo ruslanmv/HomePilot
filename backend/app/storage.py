@@ -3,19 +3,13 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
+from typing import List, Dict, Any, Tuple
 
 from .config import SQLITE_PATH
 
-# Cache the resolved path so we don't check permissions on every query
 _RESOLVED_DB_PATH = None
 
 def _get_db_path() -> str:
-    """
-    Returns a writable database path.
-    1. Tries the configured SQLITE_PATH (e.g. /app/data/db.sqlite).
-    2. If that raises PermissionError (common in local dev vs Docker), 
-       falls back to a local 'data' folder relative to this file.
-    """
     global _RESOLVED_DB_PATH
     if _RESOLVED_DB_PATH:
         return _RESOLVED_DB_PATH
@@ -24,23 +18,17 @@ def _get_db_path() -> str:
     directory = os.path.dirname(candidate) or "."
 
     try:
-        # Try creating the directory and writing a temp file to test permissions
         os.makedirs(directory, exist_ok=True)
         test_file = os.path.join(directory, f".perm_check_{os.getpid()}")
         with open(test_file, "w") as f:
             f.write("ok")
         os.remove(test_file)
-        
-        # If successful, use the configured path
         _RESOLVED_DB_PATH = candidate
         return candidate
     except (OSError, PermissionError):
-        # Fallback: Use 'data' directory inside the backend folder
-        # This file is in .../backend/app/storage.py, so parents[1] is .../backend
         fallback_dir = Path(__file__).resolve().parents[1] / "data"
         fallback_dir.mkdir(parents=True, exist_ok=True)
         fallback_path = str(fallback_dir / "db.sqlite")
-        
         print(f"WARNING: Permission denied for '{SQLITE_PATH}'. Using local fallback: {fallback_path}")
         _RESOLVED_DB_PATH = fallback_path
         return fallback_path
@@ -48,7 +36,6 @@ def _get_db_path() -> str:
 
 def init_db():
     path = _get_db_path()
-    # Directory creation is handled inside _get_db_path, so we can just connect
     con = sqlite3.connect(path)
     cur = con.cursor()
     cur.execute(
@@ -78,7 +65,7 @@ def add_message(conversation_id: str, role: str, content: str):
     con.close()
 
 
-def get_recent(conversation_id: str, limit: int = 24):
+def get_recent(conversation_id: str, limit: int = 24) -> List[Tuple[str, str]]:
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
@@ -94,3 +81,63 @@ def get_recent(conversation_id: str, limit: int = 24):
     rows = cur.fetchall()
     con.close()
     return list(reversed(rows))
+
+
+def list_conversations(limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Returns most recent conversations, with last message preview.
+    """
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        """
+        SELECT m.conversation_id,
+               MAX(m.id) as max_id
+        FROM messages m
+        GROUP BY m.conversation_id
+        ORDER BY max_id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    convs = cur.fetchall()
+
+    out: List[Dict[str, Any]] = []
+    for conversation_id, max_id in convs:
+        cur.execute(
+            "SELECT role, content, created_at FROM messages WHERE id=?",
+            (max_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            role, content, created_at = row
+            out.append(
+                {
+                    "conversation_id": conversation_id,
+                    "last_role": role,
+                    "last_content": content,
+                    "updated_at": created_at,
+                }
+            )
+    con.close()
+    return out
+
+
+def get_messages(conversation_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        """
+        SELECT role, content, created_at
+        FROM messages
+        WHERE conversation_id=?
+        ORDER BY id ASC
+        LIMIT ?
+        """,
+        (conversation_id, limit),
+    )
+    rows = cur.fetchall()
+    con.close()
+    return [{"role": r, "content": c, "created_at": t} for (r, c, t) in rows]

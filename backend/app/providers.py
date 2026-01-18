@@ -20,16 +20,29 @@ def available_providers() -> List[str]:
 def provider_info() -> Dict[str, Dict[str, Any]]:
     """
     Safe info for frontend settings UI (no secrets).
+    Includes capabilities for each provider.
     """
     return {
         "openai_compat": {
             "label": "OpenAI-compatible (vLLM)",
             "base_url": LLM_BASE_URL,
-            "model": LLM_MODEL,
+            "default_model": LLM_MODEL,
+            "capabilities": {
+                "chat": True,
+                "models_list": True,
+                "images": False,
+                "video": False,
+            },
         },
         "ollama": {
-            "label": "Ollama",
+            "label": "Ollama (optional)",
             "base_url": OLLAMA_BASE_URL,
-            "model": OLLAMA_MODEL or "(set in env OLLAMA_MODEL)",
+            "default_model": OLLAMA_MODEL or "",
+            "capabilities": {
+                "chat": True,
+                "models_list": True,
+                "images": False,
+                "video": False,
+            },
         },
     }

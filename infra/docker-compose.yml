@@ -14,8 +14,12 @@ services:
     build: ../backend
     environment:
       API_KEY: ${API_KEY:-}
+      DEFAULT_PROVIDER: ${DEFAULT_PROVIDER:-openai_compat}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://llm:8001/v1}
       LLM_MODEL: ${LLM_MODEL:-local-model}
+      # Ollama (running on host machine) - use host.docker.internal to access host from container
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:latest}
       COMFY_BASE_URL: ${COMFY_BASE_URL:-http://comfyui:8188}
       MEDIA_BASE_URL: ${MEDIA_BASE_URL:-http://media:8002}
       SQLITE_PATH: ${SQLITE_PATH:-/app/data/homegrok.db}
@@ -35,11 +39,31 @@ services:
       - llm
       - comfyui
       - media
+    # Add extra_hosts for Linux compatibility (host.docker.internal)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
       interval: 10s
       timeout: 3s
       retries: 10
+
+  ollama:
+    profiles: ["ollama"]
+    build:
+      context: ./ollama
+      dockerfile: Dockerfile
+    container_name: homepilot_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "sh", "-lc", "wget -qO- http://localhost:11434/api/tags >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
 
   llm:
     image: vllm/vllm-openai:latest
@@ -96,3 +120,6 @@ services:
       interval: 20s
       timeout: 5s
       retries: 10
+
+volumes:
+  ollama_data:
