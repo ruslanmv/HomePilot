@@ -12,12 +12,43 @@ from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER
 
+# Import specialized handlers
+from .search import run_search
+from .projects import run_project_chat
+
 ProviderName = Literal["openai_compat", "ollama"]
 
 IMAGE_RE = re.compile(r"\b(imagine|generate|create|draw|make)\b.*\b(image|picture|photo|art)\b", re.I)
 EDIT_RE = re.compile(r"\b(edit|inpaint|replace|remove|change)\b", re.I)
 ANIM_RE = re.compile(r"\b(animate|make (a )?video|image\s*to\s*video)\b", re.I)
 URL_RE = re.compile(r"(https?://\S+)")
+
+
+def route_request(mode: str, payload: Dict[str, Any]) -> str:
+    """
+    Mode-centric routing: determines which handler to use
+
+    Modes:
+    - chat: Regular conversation (orchestrate)
+    - voice: Voice conversation (orchestrate with voice context)
+    - search: Web search + summarization (run_search)
+    - project: Project-scoped chat (run_project_chat)
+    - imagine: Image generation (orchestrate)
+    - edit: Image editing (orchestrate)
+    - animate: Video generation (orchestrate)
+
+    Returns: handler name
+    """
+    normalized = (mode or "").strip().lower()
+
+    if normalized == "search":
+        return "search"
+    elif normalized == "project":
+        return "project"
+    else:
+        # chat, voice, imagine, edit, animate all use orchestrate
+        return "orchestrate"
+
 
 # Prompt refiner system message (Grok-like behavior)
 PROMPT_REFINER_SYSTEM = """You are an expert at refining user prompts into detailed, visual image generation prompts.
@@ -256,3 +287,63 @@ async def orchestrate(
 
     add_message(cid, "assistant", text)
     return {"conversation_id": cid, "text": text, "media": None}
+
+
+async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Unified entry point for all requests.
+    Routes to specialized handlers based on mode.
+
+    Args:
+        mode: The mode (chat, search, project, imagine, edit, animate, voice)
+        payload: Request payload with all parameters
+
+    Returns:
+        Unified response dict with at minimum: conversation_id, text, media
+    """
+    handler = route_request(mode or "chat", payload)
+
+    if handler == "search":
+        # Search mode: web search + summarization
+        result = await run_search(payload)
+        # Normalize to standard response format
+        return {
+            "conversation_id": payload.get("conversation_id", str(uuid.uuid4())),
+            "text": result.get("summary", ""),
+            "media": {
+                "type": "search",
+                "query": result.get("query", ""),
+                "results": result.get("results", [])
+            } if result.get("results") else None
+        }
+
+    elif handler == "project":
+        # Project mode: project-scoped chat
+        result = await run_project_chat(payload)
+        return {
+            "conversation_id": result.get("conversation_id", ""),
+            "text": result.get("text", ""),
+            "media": result.get("media")
+        }
+
+    else:
+        # Default: orchestrate (chat, voice, imagine, edit, animate)
+        return await orchestrate(
+            user_text=payload.get("message", ""),
+            conversation_id=payload.get("conversation_id"),
+            fun_mode=payload.get("fun_mode", False),
+            mode=mode,
+            provider=payload.get("provider"),
+            ollama_base_url=payload.get("ollama_base_url"),
+            ollama_model=payload.get("ollama_model"),
+            text_temperature=payload.get("textTemperature"),
+            text_max_tokens=payload.get("textMaxTokens"),
+            img_width=payload.get("imgWidth"),
+            img_height=payload.get("imgHeight"),
+            img_steps=payload.get("imgSteps"),
+            img_cfg=payload.get("imgCfg"),
+            img_seed=payload.get("imgSeed"),
+            vid_seconds=payload.get("vidSeconds"),
+            vid_fps=payload.get("vidFps"),
+            vid_motion=payload.get("vidMotion"),
+        )
