@@ -34,7 +34,7 @@ export type Msg = {
   } | null
 }
 
-type Mode = 'chat' | 'voice' | 'imagine' | 'edit' | 'animate'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate'
 type Provider = 'backend' | 'ollama'
 
 type HardwarePreset = '4060' | '4080' | 'a100' | 'custom'
@@ -666,6 +666,8 @@ function Sidebar({
         <div className="flex flex-col gap-px">
           <NavItem icon={MessageSquare} label="Chat" active={mode === 'chat'} shortcut="Ctrl+J" onClick={() => setMode('chat')} />
           <NavItem icon={Mic} label="Voice" active={mode === 'voice'} shortcut="Ctrl+V" onClick={() => setMode('voice')} />
+          <NavItem icon={Search} label="Search" active={mode === 'search'} onClick={() => setMode('search')} />
+          <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} />
           <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} />
           <NavItem icon={ImageIcon} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} />
@@ -1431,8 +1433,11 @@ export default function App() {
     ]
   )
 
-  // TTS for assistant responses (speak-once pattern)
+  // TTS for assistant responses (speak-once pattern) - ONLY IN VOICE MODE
   useEffect(() => {
+    // Only enable TTS when in Voice mode
+    if (mode !== 'voice') return
+
     const ttsEnabled = settingsDraft.ttsEnabled ?? true
     if (!ttsEnabled || !window.SpeechService) return
 
@@ -1452,7 +1457,7 @@ export default function App() {
       // Speak the assistant's response
       window.SpeechService.speak(lastMessage.text)
     }
-  }, [messages, settingsDraft.ttsEnabled])
+  }, [messages, settingsDraft.ttsEnabled, mode])
 
   const uploadAndSend = useCallback(
     async (file: File) => {
@@ -1596,6 +1601,32 @@ export default function App() {
 
         {mode === 'voice' ? (
           <VoiceMode onSendText={(text) => sendTextOrIntent(text)} />
+        ) : mode === 'search' || mode === 'project' ? (
+          // Search and Project modes: use chat interface with mode-specific behavior
+          messages.length === 0 ? (
+            <EmptyState
+              mode={mode}
+              input={input}
+              setInput={setInput}
+              fileInputRef={fileInputRef}
+              canSend={canSend}
+              onSend={onSend}
+              onUpload={uploadAndSend}
+            />
+          ) : (
+            <ChatState
+              messages={messages}
+              setLightbox={setLightbox}
+              endRef={endRef}
+              mode={mode}
+              input={input}
+              setInput={setInput}
+              fileInputRef={fileInputRef}
+              canSend={canSend}
+              onSend={onSend}
+              onUpload={uploadAndSend}
+            />
+          )
         ) : messages.length === 0 ? (
           <EmptyState
             mode={mode}
