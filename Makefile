@@ -3,7 +3,7 @@ SHELL := /bin/bash
 # Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
-.PHONY: help install run up down logs health dev build test clean download uv uv-run uv-test
+.PHONY: help install run up down logs health dev build test clean download uv uv-run uv-test local local-backend local-frontend
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -13,6 +13,44 @@ install: ## Install frontend deps and build images
 	cd frontend && npm install
 	@echo "Building docker images..."
 	docker compose -f infra/docker-compose.yml build
+
+# --- Local development (no Docker) --------------------------------------------
+
+local: ## Run everything locally (backend + frontend, no Docker). Requires Ollama running on host.
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Running HomePilot LOCALLY (no Docker)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "Prerequisites:"
+	@echo "  ✓ Ollama running: ollama serve"
+	@echo "  ✓ Ollama model: ollama pull llama3.1:latest (or your preferred model)"
+	@echo "  ✓ ComfyUI running (optional): cd ComfyUI && python main.py"
+	@echo ""
+	@echo "Starting services..."
+	@echo ""
+	@echo "Backend will run on: http://localhost:8000"
+	@echo "Frontend will run on: http://localhost:3000"
+	@echo ""
+	@echo "Press Ctrl+C to stop both services"
+	@echo ""
+	@$(MAKE) local-backend & $(MAKE) local-frontend
+
+local-backend: ## Run backend locally (requires Python 3.11+)
+	@echo "Starting backend..."
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "Virtual environment not found. Creating..."; \
+		cd backend && python3 -m venv .venv && \
+		.venv/bin/pip install -e .; \
+	fi
+	@cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+local-frontend: ## Run frontend locally (requires Node.js)
+	@echo "Starting frontend..."
+	@if [ ! -d "frontend/node_modules" ]; then \
+		echo "Node modules not found. Installing..."; \
+		cd frontend && npm install; \
+	fi
+	@cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
 
 # --- Local backend with uv -----------------------------------------------------
 
@@ -65,6 +103,8 @@ up: ## Start full stack (docker)
 	@echo "LLM API : http://localhost:8001/v1"
 	@echo "ComfyUI : http://localhost:8188"
 	@echo ""
+	@echo "NOTE: If using Ollama on your host machine, it's accessible via host.docker.internal:11434"
+	@echo ""
 
 down: ## Stop stack
 	docker compose -f infra/docker-compose.yml down
@@ -93,3 +133,29 @@ download: ## Download helper (requires huggingface-cli on host)
 clean: ## Remove local artifacts
 	rm -rf frontend/node_modules frontend/dist
 	rm -rf backend/data/*.db || true
+
+health-check: ## Comprehensive health check of all services
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  HomePilot Health Check"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "Checking all services..."
+	@echo ""
+	@echo "1. Backend API"
+	@curl -fsS http://localhost:8000/health 2>/dev/null | jq '.' || echo "❌ Backend not running"
+	@echo ""
+	@echo "2. Detailed Service Health"
+	@curl -fsS http://localhost:8000/health/detailed 2>/dev/null | jq '.' || echo "❌ Backend not running"
+	@echo ""
+	@echo "3. Direct Service Checks:"
+	@echo ""
+	@echo "   Ollama:"
+	@curl -fsS http://localhost:11434 2>/dev/null && echo "   ✅ Ollama is running" || echo "   ❌ Ollama not reachable at localhost:11434"
+	@echo ""
+	@echo "   ComfyUI:"
+	@curl -fsS http://localhost:8188/system_stats 2>/dev/null >/dev/null && echo "   ✅ ComfyUI is running" || echo "   ❌ ComfyUI not reachable at localhost:8188"
+	@echo ""
+	@echo "   vLLM:"
+	@curl -fsS http://localhost:8001/v1/models 2>/dev/null >/dev/null && echo "   ✅ vLLM is running" || echo "   ❌ vLLM not reachable at localhost:8001"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"

@@ -16,6 +16,7 @@ import {
   Server,
   PlugZap,
 } from 'lucide-react'
+import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 
 // -----------------------------------------------------------------------------
 // Types (consolidated)
@@ -35,6 +36,8 @@ export type Msg = {
 type Mode = 'chat' | 'imagine' | 'edit' | 'animate'
 type Provider = 'backend' | 'ollama'
 
+type HardwarePreset = '4060' | '4080' | 'a100' | 'custom'
+
 type SettingsModel = {
   backendUrl: string
   provider: Provider
@@ -42,6 +45,28 @@ type SettingsModel = {
   ollamaModel: string
   apiKey: string
   funMode: boolean
+  // Text generation parameters
+  textTemperature: number
+  textMaxTokens: number
+  // Image generation parameters
+  imgWidth: number
+  imgHeight: number
+  imgSteps: number
+  imgCfg: number
+  imgSeed: number
+  // Video generation parameters
+  vidSeconds: number
+  vidFps: number
+  vidMotion: string
+  // Hardware preset
+  preset: HardwarePreset
+}
+
+type Conversation = {
+  conversation_id: string
+  last_role: string
+  last_content: string
+  updated_at: string
 }
 
 // -----------------------------------------------------------------------------
@@ -129,6 +154,33 @@ function SettingsPopover({
   onChange: (next: SettingsModel) => void
   onClose: () => void
 }) {
+  const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelsError, setModelsError] = useState<string | null>(null)
+
+  const fetchModels = async () => {
+    setLoadingModels(true)
+    setModelsError(null)
+    try {
+      const url = `${value.backendUrl}/models?provider=ollama&base_url=${encodeURIComponent(value.ollamaUrl)}`
+      const response = await fetch(url)
+      const data = await response.json()
+
+      if (data.ok && Array.isArray(data.models)) {
+        setAvailableModels(data.models)
+        if (data.models.length === 0) {
+          setModelsError('No models found. Run "ollama pull <model-name>" to download a model.')
+        }
+      } else {
+        setModelsError(data.message || 'Failed to fetch models')
+      }
+    } catch (err: any) {
+      setModelsError(err.message || 'Failed to connect to backend')
+    } finally {
+      setLoadingModels(false)
+    }
+  }
+
   return (
     <div className="absolute bottom-16 left-4 w-80 bg-[#121212] border border-white/10 rounded-2xl p-4 shadow-2xl z-30 ring-1 ring-white/10">
       <div className="flex items-center justify-between mb-4">
@@ -219,12 +271,50 @@ function SettingsPopover({
               <label className="text-[11px] uppercase tracking-wider text-white/40 block mb-2 font-semibold">
                 Ollama Model
               </label>
-              <input
-                className="w-full bg-black border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-white/30 transition-colors"
-                value={value.ollamaModel}
-                onChange={(e) => onChange({ ...value, ollamaModel: e.target.value })}
-                placeholder="llama3.1:8b"
-              />
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 bg-black border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-white/30 transition-colors"
+                  value={value.ollamaModel}
+                  onChange={(e) => onChange({ ...value, ollamaModel: e.target.value })}
+                  placeholder="llama3.1:8b"
+                />
+                <button
+                  type="button"
+                  onClick={fetchModels}
+                  disabled={loadingModels}
+                  className="px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs text-white font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Fetch available models from Ollama"
+                >
+                  {loadingModels ? 'Loading...' : 'Fetch'}
+                </button>
+              </div>
+              {modelsError && (
+                <div className="mt-2 text-[11px] text-red-400">{modelsError}</div>
+              )}
+              {availableModels.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-[10px] text-white/40 mb-1">
+                    Available models ({availableModels.length}):
+                  </div>
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {availableModels.map((model) => (
+                      <button
+                        key={model}
+                        type="button"
+                        onClick={() => onChange({ ...value, ollamaModel: model })}
+                        className={[
+                          'w-full text-left px-2 py-1.5 rounded-lg text-xs transition-colors',
+                          value.ollamaModel === model
+                            ? 'bg-white/10 text-white font-semibold'
+                            : 'bg-black/50 text-white/70 hover:bg-white/5 hover:text-white',
+                        ].join(' ')}
+                      >
+                        {model}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ) : null}
@@ -241,6 +331,183 @@ function SettingsPopover({
             onChange={(e) => onChange({ ...value, apiKey: e.target.value })}
             placeholder="x-api-key value"
           />
+        </div>
+
+        {/* Divider */}
+        <div className="border-t border-white/5 pt-4">
+          <h4 className="text-[11px] uppercase tracking-wider text-white/40 mb-3 font-semibold">
+            Hardware Preset
+          </h4>
+          <div className="grid grid-cols-4 gap-2">
+            {(['4060', '4080', 'a100', 'custom'] as HardwarePreset[]).map((preset) => (
+              <button
+                key={preset}
+                onClick={() => {
+                  const presets = {
+                    '4060': { imgWidth: 1024, imgHeight: 1024, imgSteps: 20, imgCfg: 5.0, vidSeconds: 4, vidFps: 8 },
+                    '4080': { imgWidth: 1024, imgHeight: 1344, imgSteps: 25, imgCfg: 6.0, vidSeconds: 6, vidFps: 12 },
+                    'a100': { imgWidth: 1536, imgHeight: 1536, imgSteps: 40, imgCfg: 7.0, vidSeconds: 8, vidFps: 16 },
+                    'custom': {}
+                  }
+                  onChange({ ...value, preset, ...(preset !== 'custom' ? presets[preset] : {}) })
+                }}
+                className={[
+                  'px-2 py-1.5 rounded-lg text-xs font-medium transition-all',
+                  value.preset === preset
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white/5 text-white/60 hover:bg-white/10 hover:text-white/80'
+                ].join(' ')}
+              >
+                {preset.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <div className="text-[10px] text-white/35 mt-2">
+            {value.preset === '4060' && '✓ RTX 4060: 1024x1024, 20 steps, good for quick iterations'}
+            {value.preset === '4080' && '✓ RTX 4080: Higher res, 25 steps, balanced quality'}
+            {value.preset === 'a100' && '✓ A100: Max quality, 1536x1536, 40 steps'}
+            {value.preset === 'custom' && '✓ Custom: Manual settings below'}
+          </div>
+        </div>
+
+        {/* Text Generation */}
+        <div className="border-t border-white/5 pt-4">
+          <h4 className="text-[11px] uppercase tracking-wider text-white/40 mb-3 font-semibold">
+            Text Generation
+          </h4>
+          <div className="space-y-3">
+            <div>
+              <label className="text-[10px] text-white/50 block mb-1">Temperature: {value.textTemperature}</label>
+              <input
+                type="range"
+                min="0"
+                max="2"
+                step="0.1"
+                value={value.textTemperature}
+                onChange={(e) => onChange({ ...value, textTemperature: parseFloat(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-white/50 block mb-1">Max Tokens: {value.textMaxTokens}</label>
+              <input
+                type="range"
+                min="256"
+                max="8192"
+                step="256"
+                value={value.textMaxTokens}
+                onChange={(e) => onChange({ ...value, textMaxTokens: parseInt(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Image Generation */}
+        <div className="border-t border-white/5 pt-4">
+          <h4 className="text-[11px] uppercase tracking-wider text-white/40 mb-3 font-semibold">
+            Image Generation
+          </h4>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-white/50 block mb-1">Width</label>
+                <input
+                  type="number"
+                  value={value.imgWidth}
+                  onChange={(e) => onChange({ ...value, imgWidth: parseInt(e.target.value) || 1024 })}
+                  className="w-full bg-black border border-white/10 rounded-lg px-2 py-1 text-xs text-white"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-white/50 block mb-1">Height</label>
+                <input
+                  type="number"
+                  value={value.imgHeight}
+                  onChange={(e) => onChange({ ...value, imgHeight: parseInt(e.target.value) || 1024 })}
+                  className="w-full bg-black border border-white/10 rounded-lg px-2 py-1 text-xs text-white"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] text-white/50 block mb-1">Steps: {value.imgSteps}</label>
+              <input
+                type="range"
+                min="10"
+                max="50"
+                step="1"
+                value={value.imgSteps}
+                onChange={(e) => onChange({ ...value, imgSteps: parseInt(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-white/50 block mb-1">CFG Scale: {value.imgCfg}</label>
+              <input
+                type="range"
+                min="1"
+                max="15"
+                step="0.5"
+                value={value.imgCfg}
+                onChange={(e) => onChange({ ...value, imgCfg: parseFloat(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-white/50 block mb-1">Seed (-1 = random)</label>
+              <input
+                type="number"
+                value={value.imgSeed}
+                onChange={(e) => onChange({ ...value, imgSeed: parseInt(e.target.value) || -1 })}
+                className="w-full bg-black border border-white/10 rounded-lg px-2 py-1 text-xs text-white"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Video Generation */}
+        <div className="border-t border-white/5 pt-4">
+          <h4 className="text-[11px] uppercase tracking-wider text-white/40 mb-3 font-semibold">
+            Video Generation
+          </h4>
+          <div className="space-y-3">
+            <div>
+              <label className="text-[10px] text-white/50 block mb-1">Duration: {value.vidSeconds}s</label>
+              <input
+                type="range"
+                min="2"
+                max="10"
+                step="1"
+                value={value.vidSeconds}
+                onChange={(e) => onChange({ ...value, vidSeconds: parseInt(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-white/50 block mb-1">FPS: {value.vidFps}</label>
+              <input
+                type="range"
+                min="6"
+                max="24"
+                step="2"
+                value={value.vidFps}
+                onChange={(e) => onChange({ ...value, vidFps: parseInt(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-white/50 block mb-1">Motion</label>
+              <select
+                value={value.vidMotion}
+                onChange={(e) => onChange({ ...value, vidMotion: e.target.value })}
+                className="w-full bg-black border border-white/10 rounded-lg px-2 py-1 text-xs text-white"
+              >
+                <option value="low">Low Motion</option>
+                <option value="medium">Medium Motion</option>
+                <option value="high">High Motion</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         {/* Fun mode */}
@@ -270,6 +537,84 @@ function SettingsPopover({
   )
 }
 
+function HistoryPanel({
+  conversations,
+  searchQuery,
+  setSearchQuery,
+  onLoadConversation,
+  onClose,
+}: {
+  conversations: Conversation[]
+  searchQuery: string
+  setSearchQuery: (q: string) => void
+  onLoadConversation: (convId: string) => void
+  onClose: () => void
+}) {
+  const filteredConversations = conversations.filter((conv) => {
+    if (!searchQuery) return true
+    const query = searchQuery.toLowerCase()
+    return (
+      conv.conversation_id.toLowerCase().includes(query) ||
+      conv.last_content.toLowerCase().includes(query)
+    )
+  })
+
+  return (
+    <div className="absolute top-0 right-0 w-96 h-full bg-[#121212] border-l border-white/10 shadow-2xl z-40 flex flex-col">
+      <div className="flex items-center justify-between p-4 border-b border-white/10">
+        <h3 className="text-sm font-bold text-white flex items-center gap-2">
+          <Clock size={16} />
+          Conversation History
+        </h3>
+        <button
+          onClick={onClose}
+          className="text-white/50 hover:text-white p-1 rounded-lg hover:bg-white/5"
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      <div className="p-4 border-b border-white/10">
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search conversations..."
+            className="w-full bg-black border border-white/10 rounded-xl pl-9 pr-3 py-2 text-xs text-white focus:outline-none focus:border-white/30"
+          />
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        {filteredConversations.length === 0 ? (
+          <div className="text-center text-white/40 text-sm py-8">
+            {searchQuery ? 'No conversations found' : 'No conversation history yet'}
+          </div>
+        ) : (
+          filteredConversations.map((conv) => (
+            <button
+              key={conv.conversation_id}
+              onClick={() => onLoadConversation(conv.conversation_id)}
+              className="w-full text-left bg-black hover:bg-white/5 rounded-xl p-3 border border-white/5 hover:border-white/10 transition-all"
+            >
+              <div className="text-xs text-white/50 mb-1">
+                {new Date(conv.updated_at).toLocaleString()}
+              </div>
+              <div className="text-sm text-white/90 line-clamp-2">
+                {conv.last_content.length > 100
+                  ? conv.last_content.substring(0, 100) + '...'
+                  : conv.last_content}
+              </div>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Sidebar({
   mode,
   setMode,
@@ -278,8 +623,11 @@ function Sidebar({
   onScrollToBottom,
   showSettings,
   setShowSettings,
-  settings,
-  setSettings,
+  settingsDraft,
+  setSettingsDraft,
+  onSaveSettings,
+  showHistory,
+  setShowHistory,
 }: {
   mode: Mode
   setMode: (m: Mode) => void
@@ -288,8 +636,11 @@ function Sidebar({
   onScrollToBottom: () => void
   showSettings: boolean
   setShowSettings: React.Dispatch<React.SetStateAction<boolean>>
-  settings: SettingsModel
-  setSettings: React.Dispatch<React.SetStateAction<SettingsModel>>
+  settingsDraft: SettingsModelV2
+  setSettingsDraft: React.Dispatch<React.SetStateAction<SettingsModelV2>>
+  onSaveSettings: () => void
+  showHistory: boolean
+  setShowHistory: React.Dispatch<React.SetStateAction<boolean>>
 }) {
   return (
     <aside className="w-[280px] flex-shrink-0 flex flex-col h-full bg-black border-r border-white/5 py-4 px-3 gap-3 relative">
@@ -319,8 +670,8 @@ function Sidebar({
         <div className="pt-2">
           <div className="px-3 pb-2 text-xs font-semibold text-white/30 uppercase tracking-widest">Library</div>
           <div className="flex flex-col gap-px">
-            <NavItem icon={Folder} label="Projects" onClick={() => {}} />
-            <NavItem icon={Clock} label="History" onClick={() => {}} />
+            <NavItem icon={Folder} label="Projects" onClick={() => setShowHistory(true)} />
+            <NavItem icon={Clock} label="History" active={showHistory} onClick={() => setShowHistory(true)} />
           </div>
         </div>
 
@@ -378,9 +729,10 @@ function Sidebar({
       </div>
 
       {showSettings ? (
-        <SettingsPopover
-          value={settings}
-          onChange={(next) => setSettings(next)}
+        <SettingsPanel
+          value={settingsDraft}
+          onChangeDraft={(next) => setSettingsDraft(next)}
+          onSave={onSaveSettings}
           onClose={() => setShowSettings(false)}
         />
       ) : null}
@@ -749,32 +1101,30 @@ async function postForm<T>(
   return (await res.json()) as T
 }
 
+async function getJson<T>(
+  baseUrl: string,
+  path: string,
+  headers?: Record<string, string>
+): Promise<T> {
+  const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(headers ?? {}),
+    },
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
+  }
+  return (await res.json()) as T
+}
+
 /** Optional: direct Ollama call (browser->Ollama). Requires Ollama CORS / reverse proxy. */
 type OllamaChatResponse = {
   message?: { role?: string; content?: string }
   response?: string
-}
-async function ollamaChat(
-  ollamaBaseUrl: string,
-  model: string,
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-) {
-  const url = `${ollamaBaseUrl.replace(/\/+$/, '')}/api/chat`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      messages,
-      stream: false,
-    }),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Ollama HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
-  }
-  const data = (await res.json()) as OllamaChatResponse
-  return data.message?.content ?? data.response ?? ''
 }
 
 export default function App() {
@@ -799,10 +1149,57 @@ export default function App() {
     const ollamaModel = localStorage.getItem('homepilot_ollama_model') || 'llama3.1:8b'
     const apiKey = localStorage.getItem('homepilot_api_key') || ''
     const funMode = localStorage.getItem('homepilot_funmode') === '1'
-    return { backendUrl, provider, ollamaUrl, ollamaModel, apiKey, funMode }
+
+    // Generation parameters with RTX 4060 defaults
+    const textTemperature = parseFloat(localStorage.getItem('homepilot_text_temp') || '0.7')
+    const textMaxTokens = parseInt(localStorage.getItem('homepilot_text_maxtokens') || '2048')
+    const imgWidth = parseInt(localStorage.getItem('homepilot_img_width') || '1024')
+    const imgHeight = parseInt(localStorage.getItem('homepilot_img_height') || '1024')
+    const imgSteps = parseInt(localStorage.getItem('homepilot_img_steps') || '20')
+    const imgCfg = parseFloat(localStorage.getItem('homepilot_img_cfg') || '5.0')
+    const imgSeed = parseInt(localStorage.getItem('homepilot_img_seed') || '-1')
+    const vidSeconds = parseInt(localStorage.getItem('homepilot_vid_seconds') || '4')
+    const vidFps = parseInt(localStorage.getItem('homepilot_vid_fps') || '8')
+    const vidMotion = localStorage.getItem('homepilot_vid_motion') || 'medium'
+    const preset = (localStorage.getItem('homepilot_preset') as HardwarePreset) || '4060'
+
+    return {
+      backendUrl, provider, ollamaUrl, ollamaModel, apiKey, funMode,
+      textTemperature, textMaxTokens,
+      imgWidth, imgHeight, imgSteps, imgCfg, imgSeed,
+      vidSeconds, vidFps, vidMotion, preset
+    }
   })
 
   const [showSettings, setShowSettings] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Settings draft for new enterprise panel
+  const [settingsDraft, setSettingsDraft] = useState<SettingsModelV2>(() => {
+    const backendUrl = localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
+    const apiKey = localStorage.getItem('homepilot_api_key') || ''
+    const providerChat = (localStorage.getItem('homepilot_provider_chat') || 'openai_compat') as string
+    const providerImages = (localStorage.getItem('homepilot_provider_images') || 'openai_compat') as string
+    const providerVideo = (localStorage.getItem('homepilot_provider_video') || 'openai_compat') as string
+    const modelChat = localStorage.getItem('homepilot_model_chat') || 'local-model'
+    const modelImages = localStorage.getItem('homepilot_model_images') || ''
+    const modelVideo = localStorage.getItem('homepilot_model_video') || ''
+    const preset = (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med'
+
+    return {
+      backendUrl,
+      apiKey,
+      providerChat,
+      providerImages,
+      providerVideo,
+      modelChat,
+      modelImages,
+      modelVideo,
+      preset,
+    }
+  })
 
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -818,6 +1215,17 @@ export default function App() {
     localStorage.setItem('homepilot_ollama_model', settings.ollamaModel)
     localStorage.setItem('homepilot_api_key', settings.apiKey)
     localStorage.setItem('homepilot_funmode', settings.funMode ? '1' : '0')
+    localStorage.setItem('homepilot_text_temp', String(settings.textTemperature))
+    localStorage.setItem('homepilot_text_maxtokens', String(settings.textMaxTokens))
+    localStorage.setItem('homepilot_img_width', String(settings.imgWidth))
+    localStorage.setItem('homepilot_img_height', String(settings.imgHeight))
+    localStorage.setItem('homepilot_img_steps', String(settings.imgSteps))
+    localStorage.setItem('homepilot_img_cfg', String(settings.imgCfg))
+    localStorage.setItem('homepilot_img_seed', String(settings.imgSeed))
+    localStorage.setItem('homepilot_vid_seconds', String(settings.vidSeconds))
+    localStorage.setItem('homepilot_vid_fps', String(settings.vidFps))
+    localStorage.setItem('homepilot_vid_motion', settings.vidMotion)
+    localStorage.setItem('homepilot_preset', settings.preset)
   }, [settings])
 
   // Scroll on new message
@@ -836,6 +1244,96 @@ export default function App() {
     setConversationId(uuid())
     setMessages([])
   }, [])
+
+  const onSaveSettings = useCallback(() => {
+    // Save new settings to localStorage
+    localStorage.setItem('homepilot_backend_url', settingsDraft.backendUrl)
+    localStorage.setItem('homepilot_api_key', settingsDraft.apiKey)
+    localStorage.setItem('homepilot_provider_chat', settingsDraft.providerChat)
+    localStorage.setItem('homepilot_provider_images', settingsDraft.providerImages)
+    localStorage.setItem('homepilot_provider_video', settingsDraft.providerVideo)
+    localStorage.setItem('homepilot_model_chat', settingsDraft.modelChat)
+    localStorage.setItem('homepilot_model_images', settingsDraft.modelImages)
+    localStorage.setItem('homepilot_model_video', settingsDraft.modelVideo)
+    localStorage.setItem('homepilot_preset_v2', settingsDraft.preset)
+
+    // Also update old settings format for backward compatibility
+    setSettings({
+      ...settings,
+      backendUrl: settingsDraft.backendUrl,
+      apiKey: settingsDraft.apiKey,
+      // Map preset to old preset format
+      preset: settingsDraft.preset === 'low' ? '4060' : settingsDraft.preset === 'med' ? '4080' : settingsDraft.preset === 'high' ? 'a100' : 'custom',
+    })
+
+    setShowSettings(false)
+  }, [settingsDraft, settings])
+
+  // When opening settings, sync draft with current
+  useEffect(() => {
+    if (showSettings) {
+      setSettingsDraft({
+        backendUrl: settings.backendUrl,
+        apiKey: settings.apiKey,
+        providerChat: localStorage.getItem('homepilot_provider_chat') || 'openai_compat',
+        providerImages: localStorage.getItem('homepilot_provider_images') || 'openai_compat',
+        providerVideo: localStorage.getItem('homepilot_provider_video') || 'openai_compat',
+        modelChat: localStorage.getItem('homepilot_model_chat') || 'local-model',
+        modelImages: localStorage.getItem('homepilot_model_images') || '',
+        modelVideo: localStorage.getItem('homepilot_model_video') || '',
+        preset: (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med',
+      })
+    }
+  }, [showSettings, settings])
+
+  const fetchConversations = useCallback(async () => {
+    try {
+      const data = await getJson<{ ok: boolean; conversations: Conversation[] }>(
+        settings.backendUrl,
+        '/conversations',
+        authHeaders
+      )
+      if (data.ok && data.conversations) {
+        setConversations(data.conversations)
+      }
+    } catch (err) {
+      console.error('Failed to fetch conversations:', err)
+    }
+  }, [settings.backendUrl, authHeaders])
+
+  const loadConversation = useCallback(async (convId: string) => {
+    try {
+      const data = await getJson<{
+        ok: boolean
+        conversation_id: string
+        messages: Array<{ role: string; content: string; created_at: string }>
+      }>(
+        settings.backendUrl,
+        `/conversations/${convId}/messages`,
+        authHeaders
+      )
+      if (data.ok && data.messages) {
+        setConversationId(convId)
+        setMessages(
+          data.messages.map((m, idx) => ({
+            id: `loaded-${idx}`,
+            role: m.role as 'user' | 'assistant',
+            text: m.content,
+          }))
+        )
+        setShowHistory(false)
+      }
+    } catch (err) {
+      console.error('Failed to load conversation:', err)
+    }
+  }, [settings.backendUrl, authHeaders])
+
+  // Fetch conversations when history panel is opened
+  useEffect(() => {
+    if (showHistory) {
+      fetchConversations()
+    }
+  }, [showHistory, fetchConversations])
 
   const onScrollToBottom = useCallback(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -858,33 +1356,8 @@ export default function App() {
       setMessages((prev) => [...prev, user, pending])
 
       try {
-        // If provider is Ollama, we do a direct browser call (optional).
-        if (settings.provider === 'ollama') {
-          const system = settings.funMode
-            ? 'You are HomePilot enterprise mind. Be witty, concise, and helpful.'
-            : 'You are HomePilot enterprise mind. Be concise and helpful.'
-
-          const history = messages
-            .filter((m) => !m.pending)
-            .slice(-12)
-            .map((m) => ({
-              role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-              content: m.text,
-            }))
-
-          const reply = await ollamaChat(settings.ollamaUrl, settings.ollamaModel, [
-            { role: 'system', content: system },
-            ...history,
-            { role: 'user', content: requestText },
-          ])
-
-          setMessages((prev) =>
-            prev.map((m) => (m.id === tmpId ? { ...m, pending: false, text: reply || '…' } : m))
-          )
-          return
-        }
-
-        // Default: call backend
+        // Always call backend - it will route to the correct provider
+        // If provider is 'ollama', backend will use Ollama with the provided base_url and model
         const data = await postJson<any>(
           settings.backendUrl,
           '/chat',
@@ -893,10 +1366,9 @@ export default function App() {
             conversation_id: conversationId,
             fun_mode: settings.funMode,
             mode,
-            // FIX: Use 'provider' to match Python Pydantic model. 
-            // 'ollama' is handled via browser fetch above, so here we use backend default (null).
-            provider: null,
-            
+            // Pass provider to backend - 'ollama' or null for backend default
+            provider: settings.provider === 'ollama' ? 'ollama' : null,
+            // Always pass Ollama settings so backend can use them when provider='ollama'
             ollama_base_url: settings.ollamaUrl,
             ollama_model: settings.ollamaModel,
           },
@@ -1050,12 +1522,26 @@ export default function App() {
         onScrollToBottom={onScrollToBottom}
         showSettings={showSettings}
         setShowSettings={setShowSettings}
-        settings={settings}
-        setSettings={setSettings}
+        settingsDraft={settingsDraft}
+        setSettingsDraft={setSettingsDraft}
+        onSaveSettings={onSaveSettings}
+        showHistory={showHistory}
+        setShowHistory={setShowHistory}
       />
 
       <main className="flex-1 flex flex-col relative min-w-0">
-        {/* Top-right “Private” */}
+        {/* History Panel */}
+        {showHistory && (
+          <HistoryPanel
+            conversations={conversations}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            onLoadConversation={loadConversation}
+            onClose={() => setShowHistory(false)}
+          />
+        )}
+
+        {/* Top-right "Private" */}
         <header className="absolute top-0 right-0 p-5 z-20 flex items-center gap-4">
           <button
             type="button"
