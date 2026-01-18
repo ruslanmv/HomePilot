@@ -27,9 +27,10 @@ from .config import (
     LLM_MODEL,
     OLLAMA_BASE_URL,
 )
-from .orchestrator import orchestrate
+from .orchestrator import orchestrate, handle_request
 from .providers import provider_info
 from .storage import init_db
+from .migrations import run_migrations
 
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
@@ -198,6 +199,11 @@ def _startup() -> None:
     _ensure_db_path_is_writable()
     # Database
     init_db()
+    # Run migrations
+    try:
+        run_migrations()
+    except Exception as e:
+        print(f"Warning: Failed to run migrations: {e}")
     # Files mount
     _ensure_static_mount()
 
@@ -526,28 +532,32 @@ async def conversation_messages(conversation_id: str, limit: int = Query(200, ge
 @app.post("/chat", dependencies=[Depends(require_api_key)])
 async def chat(inp: ChatIn) -> JSONResponse:
     """
+    Unified chat endpoint with mode-aware routing.
     Stable response schema:
       { conversation_id, text, media }
     """
-    out = await orchestrate(
-        user_text=inp.message,
-        conversation_id=inp.conversation_id,
-        fun_mode=inp.fun_mode,
-        mode=inp.mode,
-        provider=inp.provider,
-        ollama_base_url=inp.ollama_base_url,
-        ollama_model=inp.ollama_model,
-        text_temperature=inp.textTemperature,
-        text_max_tokens=inp.textMaxTokens,
-        img_width=inp.imgWidth,
-        img_height=inp.imgHeight,
-        img_steps=inp.imgSteps,
-        img_cfg=inp.imgCfg,
-        img_seed=inp.imgSeed,
-        vid_seconds=inp.vidSeconds,
-        vid_fps=inp.vidFps,
-        vid_motion=inp.vidMotion,
-    )
+    # Build payload for mode-aware handler
+    payload = {
+        "message": inp.message,
+        "conversation_id": inp.conversation_id,
+        "fun_mode": inp.fun_mode,
+        "provider": inp.provider,
+        "ollama_base_url": inp.ollama_base_url,
+        "ollama_model": inp.ollama_model,
+        "textTemperature": inp.textTemperature,
+        "textMaxTokens": inp.textMaxTokens,
+        "imgWidth": inp.imgWidth,
+        "imgHeight": inp.imgHeight,
+        "imgSteps": inp.imgSteps,
+        "imgCfg": inp.imgCfg,
+        "imgSeed": inp.imgSeed,
+        "vidSeconds": inp.vidSeconds,
+        "vidFps": inp.vidFps,
+        "vidMotion": inp.vidMotion,
+    }
+
+    # Route through mode-aware handler
+    out = await handle_request(mode=inp.mode, payload=payload)
 
     if not isinstance(out, dict):
         out = {}
