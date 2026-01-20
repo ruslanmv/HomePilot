@@ -148,9 +148,12 @@ async def orchestrate(
     img_steps: Optional[int] = None,
     img_cfg: Optional[float] = None,
     img_seed: Optional[int] = None,
+    img_model: Optional[str] = None,
     vid_seconds: Optional[int] = None,
     vid_fps: Optional[int] = None,
     vid_motion: Optional[str] = None,
+    vid_model: Optional[str] = None,
+    nsfw_mode: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -180,8 +183,19 @@ async def orchestrate(
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
 
+        # Determine which video workflow to use based on selected model
+        video_workflow_name = "img2vid"
+        if vid_model:
+            # Map model name to workflow filename
+            video_workflow_map = {
+                "svd": "img2vid",
+                "wan-2.2": "img2vid-wan",
+                "seedream": "img2vid-seedream",
+            }
+            video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
+
         res = run_workflow(
-            "img2vid",
+            video_workflow_name,
             {
                 "image_url": image_url,
                 "motion": vid_motion if vid_motion is not None else "subtle cinematic camera drift",
@@ -232,8 +246,21 @@ async def orchestrate(
             if img_seed is not None:
                 refined["seed"] = img_seed
 
+            # Determine which workflow to use based on selected model
+            workflow_name = "txt2img"
+            if img_model:
+                # Map model name to workflow filename
+                workflow_map = {
+                    "sdxl": "txt2img",
+                    "flux-schnell": "txt2img-flux-schnell",
+                    "flux-dev": "txt2img-flux-dev",
+                    "pony-xl": "txt2img-pony-xl",
+                    "sd15-uncensored": "txt2img-sd15-uncensored",
+                }
+                workflow_name = workflow_map.get(img_model, "txt2img")
+
             # Run the workflow with refined prompt and parameters
-            res = run_workflow("txt2img", refined)
+            res = run_workflow(workflow_name, refined)
             images = res.get("images", []) or []
 
             # Short Grok-like caption
@@ -343,7 +370,10 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             img_steps=payload.get("imgSteps"),
             img_cfg=payload.get("imgCfg"),
             img_seed=payload.get("imgSeed"),
+            img_model=payload.get("imgModel"),
             vid_seconds=payload.get("vidSeconds"),
             vid_fps=payload.get("vidFps"),
             vid_motion=payload.get("vidMotion"),
+            vid_model=payload.get("vidModel"),
+            nsfw_mode=payload.get("nsfwMode"),
         )
