@@ -24,6 +24,15 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()  # empty => backend will re
 COMFY_BASE_URL = os.getenv("COMFY_BASE_URL", "http://comfyui:8188").rstrip("/")
 MEDIA_BASE_URL = os.getenv("MEDIA_BASE_URL", "http://media:8002").rstrip("/")
 
+# Image/Video Generation Models
+# Available image models (ComfyUI workflows)
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "sdxl").strip()  # sdxl, flux-schnell, flux-dev, pony-xl
+# Available video models
+VIDEO_MODEL = os.getenv("VIDEO_MODEL", "svd").strip()  # svd, wan-2.2, seedream
+
+# NSFW Mode (enables uncensored generation)
+NSFW_MODE = os.getenv("NSFW_MODE", "false").lower() == "true"
+
 # Storage
 #
 # When developing locally (especially on Windows/WSL), paths like /app/... may not exist.

@@ -39,6 +39,9 @@ export type SettingsModelV2 = {
   ttsEnabled?: boolean;
   selectedVoice?: string;
 
+  // NSFW/Spice mode
+  nsfwMode?: boolean;
+
   // Legacy generation parameters (kept for compatibility)
   textTemperature?: number;
   textMaxTokens?: number;
@@ -283,6 +286,36 @@ export default function SettingsPanel({
         {modelSelectRow("Chat Model", value.providerChat, value.modelChat, (m) => onChangeDraft({ ...value, modelChat: m }))}
         {modelSelectRow("Image Model (if supported)", value.providerImages, value.modelImages, (m) => onChangeDraft({ ...value, modelImages: m }))}
         {modelSelectRow("Video Model (if supported)", value.providerVideo, value.modelVideo, (m) => onChangeDraft({ ...value, modelVideo: m }))}
+
+        {/* NSFW/Spice Mode Toggle */}
+        <div className="border-t border-white/5 pt-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-white/40 font-semibold">Spice Mode (NSFW)</div>
+              <div className="text-[10px] text-white/35 mt-1">Enable uncensored content generation</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChangeDraft({ ...value, nsfwMode: !value.nsfwMode })}
+              className={[
+                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                value.nsfwMode ? "bg-red-600" : "bg-white/10",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                  value.nsfwMode ? "translate-x-6" : "translate-x-1",
+                ].join(" ")}
+              />
+            </button>
+          </div>
+          {value.nsfwMode && (
+            <div className="mt-2 text-[10px] text-red-400/80 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              <span className="font-semibold">⚠ Warning:</span> Uncensored mode enabled. Use responsibly and ensure compliance with local laws.
+            </div>
+          )}
+        </div>
 
         {/* Hardware */}
         <div className="border-t border-white/5 pt-3">

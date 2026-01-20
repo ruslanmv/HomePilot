@@ -1386,9 +1386,12 @@ export default function App() {
             imgSteps: settingsDraft.imgSteps,
             imgCfg: settingsDraft.imgCfg,
             imgSeed: settingsDraft.imgSeed,
+            imgModel: settingsDraft.modelImages,
             vidSeconds: settingsDraft.vidSeconds,
             vidFps: settingsDraft.vidFps,
             vidMotion: settingsDraft.vidMotion,
+            vidModel: settingsDraft.modelVideo,
+            nsfwMode: settingsDraft.nsfwMode,
           },
           authHeaders
         )
@@ -1503,12 +1506,18 @@ export default function App() {
             conversation_id: conversationId,
             fun_mode: settings.funMode,
             mode: intent,
-            // FIX: Use 'provider' to match Python Pydantic model. 
+            // FIX: Use 'provider' to match Python Pydantic model.
             // If settings says 'backend', send null so backend uses its own default.
             provider: settings.provider === 'ollama' ? 'ollama' : null,
 
             ollama_base_url: settings.ollamaUrl,
             ollama_model: settings.ollamaModel,
+
+            // Video generation parameters
+            vidModel: settingsDraft.modelVideo,
+            vidSeconds: settingsDraft.vidSeconds,
+            vidFps: settingsDraft.vidFps,
+            nsfwMode: settingsDraft.nsfwMode,
           },
           authHeaders
         )

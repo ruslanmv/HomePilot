@@ -74,9 +74,12 @@ class ChatIn(BaseModel):
     imgSteps: Optional[int] = Field(None, description="Image generation steps")
     imgCfg: Optional[float] = Field(None, description="Image CFG scale")
     imgSeed: Optional[int] = Field(None, description="Image generation seed (0 = random)")
+    imgModel: Optional[str] = Field(None, description="Image model selection (sdxl, flux-schnell, flux-dev, pony-xl, sd15-uncensored)")
     vidSeconds: Optional[int] = Field(None, description="Video duration in seconds")
     vidFps: Optional[int] = Field(None, description="Video FPS")
     vidMotion: Optional[str] = Field(None, description="Video motion bucket")
+    vidModel: Optional[str] = Field(None, description="Video model selection (svd, wan-2.2, seedream)")
+    nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
 
 
 class ChatOut(BaseModel):
@@ -418,14 +421,17 @@ async def settings(request: Request) -> JSONResponse:
 async def list_models(
     provider: str = Query("openai_compat", description="Provider to list models from"),
     base_url: Optional[str] = Query(None, description="Override base URL for the provider"),
+    model_type: Optional[str] = Query(None, description="For ComfyUI: 'image' or 'video'"),
 ) -> JSONResponse:
     """
     List available models from a provider.
     Supports:
       - openai_compat: GET {base}/models   (expects OpenAI-style response)
       - ollama: GET {base}/api/tags
+      - comfyui: Returns local image/video models list
 
     Example: GET /models?provider=openai_compat&base_url=http://localhost:8001/v1
+    Example: GET /models?provider=comfyui&model_type=image
     """
     try:
         if provider == "ollama":
@@ -491,6 +497,28 @@ async def list_models(
                         ),
                     )
 
+        if provider == "comfyui":
+            from .providers import available_image_models, available_video_models
+
+            if model_type == "image":
+                models = available_image_models()
+            elif model_type == "video":
+                models = available_video_models()
+            else:
+                # Return both if not specified
+                models = available_image_models() + available_video_models()
+
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": True,
+                    "provider": "comfyui",
+                    "model_type": model_type or "all",
+                    "models": models,
+                    "count": len(models),
+                },
+            )
+
         return JSONResponse(
             status_code=400,
             content=_safe_err(
@@ -551,9 +579,12 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "imgSteps": inp.imgSteps,
         "imgCfg": inp.imgCfg,
         "imgSeed": inp.imgSeed,
+        "imgModel": inp.imgModel,
         "vidSeconds": inp.vidSeconds,
         "vidFps": inp.vidFps,
         "vidMotion": inp.vidMotion,
+        "vidModel": inp.vidModel,
+        "nsfwMode": inp.nsfwMode,
     }
 
     # Route through mode-aware handler
