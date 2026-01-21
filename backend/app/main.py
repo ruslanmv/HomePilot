@@ -32,7 +32,7 @@ from .config import (
 )
 from .orchestrator import orchestrate, handle_request
 from .providers import provider_info
-from .storage import init_db, list_conversations, get_messages
+from .storage import init_db, list_conversations, get_messages, delete_image_url, delete_conversation
 from .migrations import run_migrations
 
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
@@ -747,6 +747,32 @@ async def conversation_messages(conversation_id: str, limit: int = Query(200, ge
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to load conversation: {e}", code="conversation_load_error"))
 
 
+@app.delete("/conversations/{conversation_id}")
+async def delete_conversation_endpoint(conversation_id: str) -> JSONResponse:
+    """Delete all messages from a specific conversation."""
+    try:
+        deleted_count = delete_conversation(conversation_id)
+        return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted_count > 0, "deleted_messages": deleted_count, "conversation_id": conversation_id})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete conversation: {e}", code="delete_conversation_error"))
+
+
+@app.delete("/media/image")
+async def delete_image(request: Request) -> JSONResponse:
+    """Delete an image URL from all messages in the database."""
+    try:
+        body = await request.json()
+        image_url = body.get("image_url")
+
+        if not image_url:
+            return JSONResponse(status_code=400, content=_safe_err("image_url is required", code="missing_image_url"))
+
+        updated_count = delete_image_url(image_url)
+        return JSONResponse(status_code=200, content={"ok": True, "deleted": updated_count > 0, "updated_messages": updated_count})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete image: {e}", code="delete_image_error"))
+
+
 @app.get("/conversations/{conversation_id}/search")
 async def search_conversation(
     conversation_id: str,
@@ -825,15 +851,29 @@ async def get_project(project_id: str) -> JSONResponse:
     """Get a specific project by ID."""
     try:
         result = projects.get_project_by_id(project_id)
-        if result:
-            return JSONResponse(status_code=200, content={"ok": True, "project": result})
-        else:
+        if not result:
             # Check if it's an example project
             examples = projects.get_example_projects()
             for example in examples:
                 if example["id"] == project_id:
-                    return JSONResponse(status_code=200, content={"ok": True, "project": example})
+                    result = example
+                    break
+
+        if not result:
             return JSONResponse(status_code=404, content=_safe_err("Project not found", code="not_found"))
+
+        # Add document count if RAG is enabled
+        if projects.RAG_ENABLED:
+            try:
+                doc_count = projects.get_project_document_count(project_id)
+                result = {**result, "document_count": doc_count}
+            except Exception as e:
+                print(f"Error getting document count: {e}")
+                result = {**result, "document_count": 0}
+        else:
+            result = {**result, "document_count": 0}
+
+        return JSONResponse(status_code=200, content={"ok": True, "project": result})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to get project: {e}"))
 

@@ -60,6 +60,8 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "  Linking ComfyUI models to ./models/comfy..."
 	@rm -rf ComfyUI/models
 	@ln -s $$(pwd)/models/comfy ComfyUI/models
+	@test -L ComfyUI/models || (echo "  ❌ ERROR: Failed to create symlink"; exit 1)
+	@echo "  ✓ Symlink created successfully"
 	@echo ""
 	@echo "✓ Verifying ComfyUI install..."
 	@test -f ComfyUI/main.py || (echo "  ❌ ERROR: ComfyUI/main.py missing"; exit 1)
