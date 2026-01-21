@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "HomePilot Model Catalog - Curated models for all providers",
+  "version": "1.0.0",
+  "last_updated": "2026-01-21",
+  "providers": {
+    "ollama": {
+      "chat": [
+        {
+          "id": "llama3:8b",
+          "label": "Llama 3 8B",
+          "recommended": true,
+          "description": "Fast, efficient 8B parameter model. Great for general-purpose tasks.",
+          "size_gb": 4.7,
+          "context_window": 8192
+        },
+        {
+          "id": "llama3:70b",
+          "label": "Llama 3 70B",
+          "description": "High-quality 70B parameter model. Excellent reasoning and coding.",
+          "size_gb": 40,
+          "context_window": 8192
+        },
+        {
+          "id": "llama3.1:8b",
+          "label": "Llama 3.1 8B",
+          "description": "Updated 8B model with improved performance.",
+          "size_gb": 4.7,
+          "context_window": 128000
+        },
+        {
+          "id": "llama3.1:70b",
+          "label": "Llama 3.1 70B",
+          "description": "Latest 70B model with 128K context window.",
+          "size_gb": 40,
+          "context_window": 128000
+        },
+        {
+          "id": "mistral:7b",
+          "label": "Mistral 7B",
+          "description": "Efficient 7B model from Mistral AI.",
+          "size_gb": 4.1,
+          "context_window": 8192
+        },
+        {
+          "id": "mixtral:8x7b",
+          "label": "Mixtral 8x7B",
+          "description": "Mixture of Experts model with excellent performance.",
+          "size_gb": 26,
+          "context_window": 32768
+        },
+        {
+          "id": "qwen2.5:7b",
+          "label": "Qwen 2.5 7B",
+          "description": "Alibaba's Qwen 2.5 model with strong multilingual support.",
+          "size_gb": 4.7,
+          "context_window": 32768
+        },
+        {
+          "id": "phi3:3.8b",
+          "label": "Phi-3 3.8B",
+          "description": "Microsoft's compact model with strong reasoning.",
+          "size_gb": 2.3,
+          "context_window": 4096
+        },
+        {
+          "id": "gemma2:9b",
+          "label": "Gemma 2 9B",
+          "description": "Google's Gemma 2 model with excellent efficiency.",
+          "size_gb": 5.4,
+          "context_window": 8192
+        }
+      ]
+    },
+    "comfyui": {
+      "image": [
+        {
+          "id": "sd_xl_base_1.0.safetensors",
+          "label": "SDXL Base 1.0",
+          "recommended": true,
+          "description": "Stable Diffusion XL base model. Best balance of quality and speed.",
+          "size_gb": 6.94,
+          "resolution": "1024x1024",
+          "download_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors",
+          "install_path": "models/checkpoints/"
+        },
+        {
+          "id": "flux1-schnell.safetensors",
+          "label": "Flux.1 Schnell",
+          "description": "Fast Flux model optimized for speed. 4-step generation.",
+          "size_gb": 23.8,
+          "resolution": "1024x1024",
+          "download_url": "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/flux1-schnell.safetensors",
+          "install_path": "models/checkpoints/"
+        },
+        {
+          "id": "flux1-dev.safetensors",
+          "label": "Flux.1 Dev",
+          "description": "High-quality Flux model for detailed generations.",
+          "size_gb": 23.8,
+          "resolution": "1024x1024",
+          "download_url": "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors",
+          "install_path": "models/checkpoints/"
+        },
+        {
+          "id": "ponyDiffusionV6XL.safetensors",
+          "label": "Pony Diffusion v6 XL",
+          "description": "SDXL-based model fine-tuned for anime/illustration styles.",
+          "size_gb": 6.46,
+          "resolution": "1024x1024",
+          "download_url": "https://civitai.com/api/download/models/290640",
+          "install_path": "models/checkpoints/"
+        },
+        {
+          "id": "sd15.safetensors",
+          "label": "Stable Diffusion 1.5",
+          "description": "Classic SD 1.5 model. Fast, lightweight.",
+          "size_gb": 4.27,
+          "resolution": "512x512",
+          "download_url": "https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors",
+          "install_path": "models/checkpoints/"
+        },
+        {
+          "id": "realisticVisionV51.safetensors",
+          "label": "Realistic Vision v5.1",
+          "description": "Photorealistic SD 1.5 model.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/130072",
+          "install_path": "models/checkpoints/"
+        }
+      ],
+      "video": [
+        {
+          "id": "svd_xt_1_1.safetensors",
+          "label": "Stable Video Diffusion XT 1.1",
+          "recommended": true,
+          "description": "Latest SVD model with 25 frames, 1024x576 resolution.",
+          "size_gb": 9.56,
+          "resolution": "1024x576",
+          "frames": 25,
+          "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt-1-1/resolve/main/svd_xt_1_1.safetensors",
+          "install_path": "models/checkpoints/"
+        },
+        {
+          "id": "svd_xt.safetensors",
+          "label": "Stable Video Diffusion XT",
+          "description": "Extended temporal model with 25 frames.",
+          "size_gb": 9.56,
+          "resolution": "1024x576",
+          "frames": 25,
+          "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt/resolve/main/svd_xt.safetensors",
+          "install_path": "models/checkpoints/"
+        },
+        {
+          "id": "svd.safetensors",
+          "label": "Stable Video Diffusion",
+          "description": "Base SVD model with 14 frames.",
+          "size_gb": 9.56,
+          "resolution": "1024x576",
+          "frames": 14,
+          "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid/resolve/main/svd.safetensors",
+          "install_path": "models/checkpoints/"
+        }
+      ]
+    },
+    "openai_compat": {
+      "chat": [
+        {
+          "id": "local-model",
+          "label": "Local Model (auto-detect)",
+          "recommended": true,
+          "description": "Automatically detect and use the first available model from your vLLM/TGI server."
+        }
+      ]
+    },
+    "openai": {
+      "chat": [
+        {
+          "id": "gpt-4o",
+          "label": "GPT-4o",
+          "recommended": true,
+          "description": "Latest GPT-4 optimized model with vision capabilities.",
+          "context_window": 128000
+        },
+        {
+          "id": "gpt-4o-mini",
+          "label": "GPT-4o Mini",
+          "description": "Smaller, faster GPT-4 variant.",
+          "context_window": 128000
+        },
+        {
+          "id": "gpt-4-turbo",
+          "label": "GPT-4 Turbo",
+          "description": "GPT-4 Turbo with vision support.",
+          "context_window": 128000
+        },
+        {
+          "id": "gpt-3.5-turbo",
+          "label": "GPT-3.5 Turbo",
+          "description": "Fast and cost-effective GPT-3.5 model.",
+          "context_window": 16385
+        }
+      ]
+    },
+    "claude": {
+      "chat": [
+        {
+          "id": "claude-opus-4-5-20251101",
+          "label": "Claude Opus 4.5",
+          "recommended": true,
+          "description": "Most capable Claude model with advanced reasoning.",
+          "context_window": 200000
+        },
+        {
+          "id": "claude-sonnet-4-5-20250929",
+          "label": "Claude Sonnet 4.5",
+          "description": "Balanced performance and speed.",
+          "context_window": 200000
+        },
+        {
+          "id": "claude-sonnet-3-5-20241022",
+          "label": "Claude Sonnet 3.5",
+          "description": "Previous generation Sonnet model.",
+          "context_window": 200000
+        },
+        {
+          "id": "claude-haiku-3-5-20241022",
+          "label": "Claude Haiku 3.5",
+          "description": "Fast and efficient Claude model.",
+          "context_window": 200000
+        }
+      ]
+    },
+    "watsonx": {
+      "chat": [
+        {
+          "id": "meta-llama/llama-3-1-70b-instruct",
+          "label": "Llama 3.1 70B Instruct",
+          "recommended": true,
+          "description": "IBM-hosted Llama 3.1 70B model.",
+          "context_window": 128000
+        },
+        {
+          "id": "meta-llama/llama-3-1-8b-instruct",
+          "label": "Llama 3.1 8B Instruct",
+          "description": "Smaller, faster Llama 3.1 variant.",
+          "context_window": 128000
+        },
+        {
+          "id": "ibm/granite-13b-chat-v2",
+          "label": "IBM Granite 13B Chat v2",
+          "description": "IBM's Granite model optimized for chat.",
+          "context_window": 8192
+        },
+        {
+          "id": "mistralai/mixtral-8x7b-instruct-v01",
+          "label": "Mixtral 8x7B Instruct",
+          "description": "Mistral's Mixture of Experts model.",
+          "context_window": 32768
+        }
+      ]
+    }
+  }
+}
