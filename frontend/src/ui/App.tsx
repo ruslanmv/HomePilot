@@ -20,6 +20,7 @@ import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './Se
 import VoiceMode from './VoiceMode'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
+import ModelsView from './Models'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -46,7 +47,7 @@ export type Msg = {
   } | null
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models'
 type Provider = 'backend' | 'ollama'
 
 type HardwarePreset = '4060' | '4080' | 'a100' | 'custom'
@@ -690,6 +691,7 @@ function Sidebar({
           <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} />
           <NavItem icon={ImageIcon} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} />
+          <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} />
         </div>
 
         {/* Divider */}
@@ -1779,6 +1781,17 @@ export default function App() {
             imgCfg={settingsDraft.imgCfg}
             imgSeed={settingsDraft.imgSeed}
             nsfwMode={settingsDraft.nsfwMode}
+          />
+        ) : mode === 'models' ? (
+          <ModelsView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            providerChat={settingsDraft.providerChat}
+            providerImages={settingsDraft.providerImages}
+            providerVideo={settingsDraft.providerVideo}
+            baseUrlChat={settingsDraft.baseUrlChat}
+            baseUrlImages={settingsDraft.baseUrlImages}
+            baseUrlVideo={settingsDraft.baseUrlVideo}
           />
         ) : mode === 'search' ? (
           // Search mode: use chat interface with mode-specific behavior
