@@ -289,8 +289,14 @@ async def orchestrate(
             return {"conversation_id": cid, "text": text, "media": media}
 
         except FileNotFoundError as e:
-            # In CI/tests, workflows may not be mounted. Return a stable text-only response.
-            text = "Image generation is not configured on this server. Please set up ComfyUI workflows."
+            # Distinguish between missing workflows and missing model files
+            error_str = str(e)
+            if "Workflow file not found" in error_str:
+                text = "Image generation is not configured on this server. Please set up ComfyUI workflows."
+            elif any(keyword in error_str.lower() for keyword in ["model", "checkpoint", "safetensors", "ckpt"]):
+                text = "No models are downloaded yet. Please run 'make download-recommended' to download image generation models (~14GB)."
+            else:
+                text = f"Image generation error: Required file not found. {error_str}"
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
         except Exception as e:

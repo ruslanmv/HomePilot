@@ -62,12 +62,9 @@
     }
   },
   "8": {
-    "class_type": "VHS_VideoCombine",
+    "class_type": "SaveImage",
     "inputs": {
-      "frame_rate": 6,
-      "loop_count": 0,
-      "filename_prefix": "AnimateDiff",
-      "format": "video/h264-mp4",
+      "filename_prefix": "img2vid_frames",
       "images": ["7", 0]
     }
   }
