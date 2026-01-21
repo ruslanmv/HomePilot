@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 from .config import SQLITE_PATH
 
@@ -45,21 +46,43 @@ def init_db():
             conversation_id TEXT,
             role TEXT,
             content TEXT,
+            media TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
+    # Add media column to existing tables (migration)
+    try:
+        cur.execute("ALTER TABLE messages ADD COLUMN media TEXT")
+        con.commit()
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
     con.commit()
     con.close()
 
 
-def add_message(conversation_id: str, role: str, content: str):
+def add_message(conversation_id: str, role: str, content: str, media: Optional[Dict[str, Any]] = None):
+    """
+    Add a message to the database with optional media attachments.
+
+    Args:
+        conversation_id: Unique conversation identifier
+        role: Message role (user/assistant)
+        content: Message text content
+        media: Optional dict containing images/videos, e.g.:
+               {"images": ["url1", "url2"], "video_url": "url"}
+    """
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
+
+    # Serialize media to JSON if provided
+    media_json = json.dumps(media) if media else None
+
     cur.execute(
-        "INSERT INTO messages(conversation_id, role, content) VALUES (?,?,?)",
-        (conversation_id, role, content),
+        "INSERT INTO messages(conversation_id, role, content, media) VALUES (?,?,?,?)",
+        (conversation_id, role, content, media_json),
     )
     con.commit()
     con.close()
@@ -125,12 +148,19 @@ def list_conversations(limit: int = 50) -> List[Dict[str, Any]]:
 
 
 def get_messages(conversation_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+    """
+    Retrieve messages for a conversation, including media attachments.
+
+    Returns:
+        List of dicts with keys: role, content, created_at, media
+        media is None or a dict like {"images": [...], "video_url": "..."}
+    """
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
     cur.execute(
         """
-        SELECT role, content, created_at
+        SELECT role, content, created_at, media
         FROM messages
         WHERE conversation_id=?
         ORDER BY id ASC
@@ -140,4 +170,105 @@ def get_messages(conversation_id: str, limit: int = 200) -> List[Dict[str, Any]]
     )
     rows = cur.fetchall()
     con.close()
-    return [{"role": r, "content": c, "created_at": t} for (r, c, t) in rows]
+
+    result = []
+    for row in rows:
+        r, c, t, media_json = row
+        # Deserialize media from JSON
+        media = None
+        if media_json:
+            try:
+                media = json.loads(media_json)
+            except (json.JSONDecodeError, TypeError):
+                media = None
+
+        result.append({
+            "role": r,
+            "content": c,
+            "created_at": t,
+            "media": media
+        })
+
+    return result
+
+
+def delete_image_url(image_url: str) -> int:
+    """
+    Delete a specific image URL from all messages in the database.
+
+    Args:
+        image_url: The image URL to remove
+
+    Returns:
+        Number of messages updated
+    """
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+
+    # Get all messages with media
+    cur.execute("SELECT id, media FROM messages WHERE media IS NOT NULL")
+    rows = cur.fetchall()
+
+    updated_count = 0
+    for msg_id, media_json in rows:
+        if not media_json:
+            continue
+
+        try:
+            media = json.loads(media_json)
+            if not isinstance(media, dict):
+                continue
+
+            images = media.get("images", [])
+            if not isinstance(images, list):
+                continue
+
+            # Remove the image URL if it exists
+            if image_url in images:
+                images.remove(image_url)
+
+                # Update or clear media field
+                if images or media.get("video_url"):
+                    # Still have media, update with filtered list
+                    media["images"] = images
+                    new_media_json = json.dumps(media)
+                    cur.execute("UPDATE messages SET media = ? WHERE id = ?", (new_media_json, msg_id))
+                else:
+                    # No media left, clear field
+                    cur.execute("UPDATE messages SET media = NULL WHERE id = ?", (msg_id,))
+
+                updated_count += 1
+
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    con.commit()
+    con.close()
+    return updated_count
+
+
+def delete_conversation(conversation_id: str) -> int:
+    """
+    Delete all messages from a specific conversation.
+
+    Args:
+        conversation_id: The conversation ID to delete
+
+    Returns:
+        Number of messages deleted
+    """
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+
+    # Count messages before deletion
+    cur.execute("SELECT COUNT(*) FROM messages WHERE conversation_id = ?", (conversation_id,))
+    count = cur.fetchone()[0]
+
+    # Delete all messages for this conversation
+    cur.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+
+    con.commit()
+    con.close()
+    return count
