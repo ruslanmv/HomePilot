@@ -1276,6 +1276,38 @@ export default function App() {
   useEffect(() => localStorage.setItem('homepilot_conversation', conversationId), [conversationId])
   useEffect(() => localStorage.setItem('homepilot_mode', mode), [mode])
 
+  // Reset conversation when switching between incompatible mode groups
+  // to prevent chat history from bleeding into edit/animate sessions
+  const prevModeRef = useRef<Mode>(mode)
+  useEffect(() => {
+    const prevMode = prevModeRef.current
+    const currentMode = mode
+
+    // Define mode groups
+    const chatLikeModes: Mode[] = ['chat', 'voice', 'project', 'search', 'imagine']
+    const editMode: Mode[] = ['edit']
+    const animateMode: Mode[] = ['animate']
+
+    const getModeGroup = (m: Mode): 'chat' | 'edit' | 'animate' | 'other' => {
+      if (chatLikeModes.includes(m)) return 'chat'
+      if (editMode.includes(m)) return 'edit'
+      if (animateMode.includes(m)) return 'animate'
+      return 'other'
+    }
+
+    const prevGroup = getModeGroup(prevMode)
+    const currentGroup = getModeGroup(currentMode)
+
+    // Reset conversation when switching between different mode groups
+    if (prevGroup !== currentGroup && currentGroup !== 'other') {
+      console.log(`Mode switched from ${prevMode} (${prevGroup}) to ${currentMode} (${currentGroup}) - resetting conversation`)
+      setConversationId(uuid())
+      setMessages([])
+    }
+
+    prevModeRef.current = currentMode
+  }, [mode])
+
   useEffect(() => {
     localStorage.setItem('homepilot_backend_url', settings.backendUrl)
     localStorage.setItem('homepilot_provider', settings.provider)
