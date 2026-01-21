@@ -37,7 +37,7 @@ def test_models_ollama_success(mock_client_class, client, mock_outbound):
     mock_response.status_code = 200
     mock_response.json.return_value = {
         "models": [
-            {"name": "llama3.1:latest"},
+            {"name": "llama3:8b"},
             {"name": "llama3:latest"},
             {"name": "gemma:2b"},
         ]
@@ -53,7 +53,7 @@ def test_models_ollama_success(mock_client_class, client, mock_outbound):
     assert data["ok"] is True
     assert data["provider"] == "ollama"
     assert len(data["models"]) == 3
-    assert "llama3.1:latest" in data["models"]
+    assert "llama3:8b" in data["models"]
 
 
 @patch("app.main.httpx.AsyncClient")
@@ -114,7 +114,7 @@ def test_chat_ollama_provider(mock_llm, client, mock_outbound):
         "mode": "chat",
         "provider": "ollama",
         "ollama_base_url": "http://localhost:11434",
-        "ollama_model": "llama3.1:latest"
+        "ollama_model": "llama3:8b"
     })
 
     assert r.status_code == 200

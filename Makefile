@@ -3,12 +3,53 @@ SHELL := /bin/bash
 # Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
-.PHONY: help install run up down logs health dev build test clean download uv uv-run uv-test local local-backend local-frontend
+.PHONY: help install setup run up down logs health dev build test clean download download-minimal download-recommended download-full download-verify start start-backend start-frontend
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install: ## Install frontend deps and build images
+# --- Installation & Setup -----------------------------------------------------
+
+install: ## Install HomePilot locally with uv (Python 3.11+)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Installing HomePilot Locally (uv + Python 3.11)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@# Check for uv
+	@command -v uv >/dev/null 2>&1 || { \
+		echo "ERROR: 'uv' not found."; \
+		echo ""; \
+		echo "Install it with:"; \
+		echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"; \
+		echo ""; \
+		echo "Then reopen your terminal and run: make install"; \
+		exit 1; \
+	}
+	@# Check Python version
+	@python3 --version 2>&1 | grep -q "Python 3.11" || python3 --version 2>&1 | grep -q "Python 3.12" || { \
+		echo "WARNING: Python 3.11 or 3.12 recommended. Current version:"; \
+		python3 --version; \
+		echo ""; \
+	}
+	@echo "✓ Installing backend with uv..."
+	@cd backend && uv venv .venv --python 3.11 || uv venv .venv
+	@cd backend && uv pip install -e .
+	@cd backend && uv pip install --group dev
+	@echo ""
+	@echo "✓ Installing frontend dependencies..."
+	@cd frontend && npm install
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ Installation Complete!"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  1. Start Ollama: ollama serve"
+	@echo "  2. Pull a model: ollama pull llama3:8b"
+	@echo "  3. Start HomePilot: make start"
+	@echo ""
+
+setup: ## Setup Docker environment (install deps + build images)
 	@echo "Installing frontend deps..."
 	cd frontend && npm install
 	@echo "Building docker images..."
@@ -16,16 +57,24 @@ install: ## Install frontend deps and build images
 
 # --- Local development (no Docker) --------------------------------------------
 
-local: ## Run everything locally (backend + frontend, no Docker). Requires Ollama running on host.
+start: ## Start HomePilot locally (backend + frontend, no Docker)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
-	@echo "  Running HomePilot LOCALLY (no Docker)"
+	@echo "  Starting HomePilot LOCALLY (no Docker)"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
 	@echo "Prerequisites:"
 	@echo "  ✓ Ollama running: ollama serve"
-	@echo "  ✓ Ollama model: ollama pull llama3.1:latest (or your preferred model)"
+	@echo "  ✓ Ollama model: ollama pull llama3:8b (or your preferred model)"
 	@echo "  ✓ ComfyUI running (optional): cd ComfyUI && python main.py"
 	@echo ""
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
+		exit 1; \
+	fi
+	@if [ ! -d "frontend/node_modules" ]; then \
+		echo "❌ Frontend not installed. Run: make install"; \
+		exit 1; \
+	fi
 	@echo "Starting services..."
 	@echo ""
 	@echo "Backend will run on: http://localhost:8000"
@@ -33,63 +82,43 @@ local: ## Run everything locally (backend + frontend, no Docker). Requires Ollam
 	@echo ""
 	@echo "Press Ctrl+C to stop both services"
 	@echo ""
-	@$(MAKE) local-backend & $(MAKE) local-frontend
+	@$(MAKE) start-backend & $(MAKE) start-frontend
 
-local-backend: ## Run backend locally (requires Python 3.11+)
+start-backend: ## Start backend locally with uv
 	@echo "Starting backend..."
 	@if [ ! -d "backend/.venv" ]; then \
-		echo "Virtual environment not found. Creating..."; \
-		cd backend && python3 -m venv .venv && \
-		.venv/bin/pip install -e .; \
+		echo "Virtual environment not found. Run: make install"; \
+		exit 1; \
 	fi
 	@cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-local-frontend: ## Run frontend locally (requires Node.js)
+start-frontend: ## Start frontend locally
 	@echo "Starting frontend..."
 	@if [ ! -d "frontend/node_modules" ]; then \
-		echo "Node modules not found. Installing..."; \
-		cd frontend && npm install; \
+		echo "Node modules not found. Run: make install"; \
+		exit 1; \
 	fi
 	@cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
 
-# --- Local backend with uv -----------------------------------------------------
+# --- Testing & Development ----------------------------------------------------
 
-uv: ## Install backend locally using uv (creates backend/.venv and installs deps + dev group)
-	@command -v uv >/dev/null 2>&1 || { \
-		echo "ERROR: 'uv' not found."; \
-		echo "Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"; \
-		echo "Then reopen your terminal and run: make uv"; \
+test: test-local  ## Run all tests (alias for test-local)
+
+test-local: ## Run backend tests locally with pytest
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Running HomePilot Tests"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
 		exit 1; \
-	}
-	@test -f backend/pyproject.toml || { \
-		echo "ERROR: backend/pyproject.toml missing."; \
-		exit 1; \
-	}
-	@test -f backend/README.md || { \
-		echo "ERROR: backend/README.md missing (required by pyproject readme)."; \
-		echo "Create it (can be short) then rerun: make uv"; \
-		exit 1; \
-	}
-	@echo "Setting up backend venv with uv..."
-	cd backend && uv venv .venv
-	@echo "Installing backend (editable)..."
-	cd backend && uv pip install -e .
-	@echo "Installing backend dev dependencies (dependency-groups.dev)..."
-	cd backend && uv pip install --group dev
+	fi
 	@echo ""
-	@echo "✅ Backend installed locally with uv."
-	@echo "Next:"
-	@echo "  make uv-run   # run backend locally (uvicorn --reload)"
-	@echo "  make uv-test  # run backend tests locally"
+	@echo "Testing backend API endpoints..."
+	@cd backend && .venv/bin/pytest -v --tb=short
 	@echo ""
-
-uv-run: ## Run backend locally with uv (reload)
-	@command -v uv >/dev/null 2>&1 || { echo "ERROR: 'uv' not found. Run: make uv"; exit 1; }
-	cd backend && uv run dev
-
-uv-test: ## Run backend tests locally with uv (pytest)
-	@command -v uv >/dev/null 2>&1 || { echo "ERROR: 'uv' not found. Run: make uv"; exit 1; }
-	cd backend && uv run test
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ All tests passed!"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
 
 # --- Docker stack -------------------------------------------------------------
 
@@ -109,7 +138,7 @@ run: ## Production: Start full stack with Ollama container (docker)
 	@echo "  Ollama  : http://localhost:11434"
 	@echo ""
 	@echo "NOTE: Ollama is running in Docker. Pull models with:"
-	@echo "  docker exec -it homepilot_ollama ollama pull llama3.1:latest"
+	@echo "  docker exec -it homepilot_ollama ollama pull llama3:8b"
 	@echo ""
 	@echo "For local development without Ollama container, use: make local"
 	@echo ""
@@ -155,8 +184,50 @@ build: ## Build production frontend bundle
 test: ## Run backend tests (pytest) inside backend container
 	docker compose -f infra/docker-compose.yml run --rm backend pytest -q
 
-download: ## Download helper (requires huggingface-cli on host)
-	@bash scripts/download_models.sh
+download: download-recommended ## Download models (alias for download-recommended)
+
+download-minimal: ## Download minimal models (~7GB - FLUX Schnell + encoders)
+	@bash scripts/download_models.sh minimal
+
+download-recommended: ## Download recommended models (~14GB - FLUX Schnell + SDXL + encoders)
+	@bash scripts/download_models.sh recommended
+
+download-full: ## Download all models (~65GB - FLUX Schnell + Dev, SDXL, SD1.5, SVD + encoders)
+	@bash scripts/download_models.sh full
+
+download-verify: ## Verify downloaded models and show disk usage
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Model Verification"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@if [ -d "models/comfy" ]; then \
+		echo "ComfyUI Models:"; \
+		echo ""; \
+		echo "  Checkpoints:"; \
+		ls -lh models/comfy/checkpoints/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  UNET Models:"; \
+		ls -lh models/comfy/unet/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  CLIP Encoders:"; \
+		ls -lh models/comfy/clip/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  VAE Models:"; \
+		ls -lh models/comfy/vae/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  Total ComfyUI storage: $$(du -sh models/comfy 2>/dev/null | cut -f1)"; \
+		echo ""; \
+	else \
+		echo "❌ models/comfy directory not found"; \
+		echo "   Run: make download-recommended"; \
+		echo ""; \
+	fi
+	@if [ -d "models/llm" ]; then \
+		echo "LLM Models:"; \
+		ls -lh models/llm/ 2>/dev/null | tail -n +2 || echo "  (managed by Ollama/vLLM)"; \
+		echo ""; \
+	fi
+	@echo "════════════════════════════════════════════════════════════════════════════════"
 
 clean: ## Remove local artifacts
 	rm -rf frontend/node_modules frontend/dist
@@ -187,3 +258,11 @@ health-check: ## Comprehensive health check of all services
 	@curl -fsS http://localhost:8001/v1/models 2>/dev/null >/dev/null && echo "   ✅ vLLM is running" || echo "   ❌ vLLM not reachable at localhost:8001"
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+# --- Backward Compatibility Aliases -------------------------------------------
+
+local: start  ## Alias for 'make start' (backward compatibility)
+
+local-backend: start-backend  ## Alias for 'make start-backend' (backward compatibility)
+
+local-frontend: start-frontend  ## Alias for 'make start-frontend' (backward compatibility)
