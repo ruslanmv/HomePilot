@@ -19,7 +19,8 @@ services:
       LLM_MODEL: ${LLM_MODEL:-local-model}
       # Ollama (running on host machine) - use host.docker.internal to access host from container
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:latest}
+      # Default to a widely-available Ollama tag. Override via env if needed.
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3:8b}
       COMFY_BASE_URL: ${COMFY_BASE_URL:-http://comfyui:8188}
       MEDIA_BASE_URL: ${MEDIA_BASE_URL:-http://media:8002}
       SQLITE_PATH: ${SQLITE_PATH:-/app/data/homegrok.db}

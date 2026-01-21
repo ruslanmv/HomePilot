@@ -10,13 +10,11 @@ from .comfy import run_workflow
 from .llm import chat as llm_chat
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
-from .config import DEFAULT_PROVIDER
+from .config import DEFAULT_PROVIDER, ProviderName
 
 # Import specialized handlers
 from .search import run_search
 from .projects import run_project_chat
-
-ProviderName = Literal["openai_compat", "ollama"]
 
 IMAGE_RE = re.compile(r"\b(imagine|generate|create|draw|make)\b.*\b(image|picture|photo|art)\b", re.I)
 EDIT_RE = re.compile(r"\b(edit|inpaint|replace|remove|change)\b", re.I)
@@ -69,8 +67,8 @@ def _norm_mode(mode: Optional[str]) -> str:
 async def _refine_prompt(
     user_prompt: str,
     provider: ProviderName,
-    ollama_base_url: Optional[str] = None,
-    ollama_model: Optional[str] = None,
+    provider_base_url: Optional[str] = None,
+    provider_model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Use LLM to refine user's casual prompt into a detailed image generation prompt.
@@ -87,8 +85,8 @@ async def _refine_prompt(
             provider=provider,
             temperature=0.7,
             max_tokens=300,
-            base_url=ollama_base_url if provider == "ollama" else None,
-            model=ollama_model if provider == "ollama" else None,
+            base_url=provider_base_url,
+            model=provider_model,
         )
 
         # Extract the response text
@@ -139,8 +137,8 @@ async def orchestrate(
     fun_mode: bool = False,
     mode: Optional[str] = None,
     provider: Optional[ProviderName] = None,
-    ollama_base_url: Optional[str] = None,
-    ollama_model: Optional[str] = None,
+    provider_base_url: Optional[str] = None,
+    provider_model: Optional[str] = None,
     text_temperature: Optional[float] = None,
     text_max_tokens: Optional[int] = None,
     img_width: Optional[int] = None,
@@ -148,9 +146,12 @@ async def orchestrate(
     img_steps: Optional[int] = None,
     img_cfg: Optional[float] = None,
     img_seed: Optional[int] = None,
+    img_model: Optional[str] = None,
     vid_seconds: Optional[int] = None,
     vid_fps: Optional[int] = None,
     vid_motion: Optional[str] = None,
+    vid_model: Optional[str] = None,
+    nsfw_mode: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -180,8 +181,19 @@ async def orchestrate(
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
 
+        # Determine which video workflow to use based on selected model
+        video_workflow_name = "img2vid"
+        if vid_model:
+            # Map model name to workflow filename
+            video_workflow_map = {
+                "svd": "img2vid",
+                "wan-2.2": "img2vid-wan",
+                "seedream": "img2vid-seedream",
+            }
+            video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
+
         res = run_workflow(
-            "img2vid",
+            video_workflow_name,
             {
                 "image_url": image_url,
                 "motion": vid_motion if vid_motion is not None else "subtle cinematic camera drift",
@@ -216,8 +228,8 @@ async def orchestrate(
             refined = await _refine_prompt(
                 text_in,
                 provider=prov,
-                ollama_base_url=ollama_base_url if prov == "ollama" else None,
-                ollama_model=ollama_model if prov == "ollama" else None,
+                provider_base_url=provider_base_url,
+                provider_model=provider_model,
             )
 
             # Merge custom image parameters if provided
@@ -232,8 +244,21 @@ async def orchestrate(
             if img_seed is not None:
                 refined["seed"] = img_seed
 
+            # Determine which workflow to use based on selected model
+            workflow_name = "txt2img"
+            if img_model:
+                # Map model name to workflow filename
+                workflow_map = {
+                    "sdxl": "txt2img",
+                    "flux-schnell": "txt2img-flux-schnell",
+                    "flux-dev": "txt2img-flux-dev",
+                    "pony-xl": "txt2img-pony-xl",
+                    "sd15-uncensored": "txt2img-sd15-uncensored",
+                }
+                workflow_name = workflow_map.get(img_model, "txt2img")
+
             # Run the workflow with refined prompt and parameters
-            res = run_workflow("txt2img", refined)
+            res = run_workflow(workflow_name, refined)
             images = res.get("images", []) or []
 
             # Short Grok-like caption
@@ -268,8 +293,8 @@ async def orchestrate(
             provider=prov,
             temperature=text_temperature if text_temperature is not None else (0.9 if fun_mode else 0.7),
             max_tokens=text_max_tokens if text_max_tokens is not None else 900,
-            base_url=ollama_base_url if prov == "ollama" else None,
-            model=ollama_model if prov == "ollama" else None,
+            base_url=provider_base_url,
+            model=provider_model,
         )
     except Exception as e:
         # Don't crash the API; return a stable response
@@ -328,14 +353,28 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
 
     else:
         # Default: orchestrate (chat, voice, imagine, edit, animate)
+        prov = payload.get("provider") or DEFAULT_PROVIDER
+        # Backwards-compatible mapping from legacy fields
+        base_url = payload.get("provider_base_url")
+        model = payload.get("provider_model")
+        if not base_url:
+            if prov == "ollama":
+                base_url = payload.get("ollama_base_url")
+            elif prov == "openai_compat":
+                base_url = payload.get("llm_base_url")
+        if not model:
+            if prov == "ollama":
+                model = payload.get("ollama_model")
+            elif prov == "openai_compat":
+                model = payload.get("llm_model")
         return await orchestrate(
             user_text=payload.get("message", ""),
             conversation_id=payload.get("conversation_id"),
             fun_mode=payload.get("fun_mode", False),
             mode=mode,
-            provider=payload.get("provider"),
-            ollama_base_url=payload.get("ollama_base_url"),
-            ollama_model=payload.get("ollama_model"),
+            provider=prov,
+            provider_base_url=base_url,
+            provider_model=model,
             text_temperature=payload.get("textTemperature"),
             text_max_tokens=payload.get("textMaxTokens"),
             img_width=payload.get("imgWidth"),
@@ -343,7 +382,10 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             img_steps=payload.get("imgSteps"),
             img_cfg=payload.get("imgCfg"),
             img_seed=payload.get("imgSeed"),
+            img_model=payload.get("imgModel"),
             vid_seconds=payload.get("vidSeconds"),
             vid_fps=payload.get("vidFps"),
             vid_motion=payload.get("vidMotion"),
+            vid_model=payload.get("vidModel"),
+            nsfw_mode=payload.get("nsfwMode"),
         )

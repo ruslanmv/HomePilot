@@ -63,7 +63,7 @@ Response (short caption + image URLs)
 ```bash
 # Install Ollama (see https://ollama.ai for your platform)
 # Then pull a model:
-ollama pull llama3.1:8b
+ollama pull llama3:8b
 
 # Start Ollama (runs on http://localhost:11434)
 ollama serve
@@ -148,7 +148,7 @@ Copy `.env.example` to `.env` and update:
 # LLM Provider (use Ollama for local development)
 DEFAULT_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.1:8b
+OLLAMA_MODEL=llama3:8b
 
 # ComfyUI
 COMFY_BASE_URL=http://localhost:8188
@@ -248,7 +248,7 @@ Keep your response as a single JSON object, no markdown, no explanations.
 
 **Fix:**
 ```bash
-ollama pull llama3.1:8b
+ollama pull llama3:8b
 # Or pull the model specified in OLLAMA_MODEL
 ```
 
@@ -258,7 +258,7 @@ ollama pull llama3.1:8b
 
 **Fix:**
 1. Check Ollama is running: `ollama list`
-2. Test manually: `ollama run llama3.1:8b "refine this prompt: a cat"`
+2. Test manually: `ollama run llama3:8b "refine this prompt: a cat"`
 3. If LLM doesn't return JSON, the system falls back to the original prompt
 4. Try a different model: `ollama pull llama3.2:3b`
 
