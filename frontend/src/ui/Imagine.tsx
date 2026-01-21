@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
@@ -90,7 +90,21 @@ const ASPECT_RATIOS: AspectRatio[] = [
 export default function ImagineView(props: ImagineParams) {
   const authKey = (props.apiKey || '').trim()
   const [prompt, setPrompt] = useState('')
-  const [items, setItems] = useState<ImagineItem[]>([])
+
+  // Load items from localStorage on mount
+  const [items, setItems] = useState<ImagineItem[]>(() => {
+    try {
+      const stored = localStorage.getItem('homepilot_imagine_items')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        return Array.isArray(parsed) ? parsed : []
+      }
+    } catch (error) {
+      console.error('Failed to load imagine items from localStorage:', error)
+    }
+    return []
+  })
+
   const [isGenerating, setIsGenerating] = useState(false)
 
   // Selection state for Lightbox (Grok-style detail view)
@@ -98,6 +112,15 @@ export default function ImagineView(props: ImagineParams) {
 
   const [aspect, setAspect] = useState<string>('1:1')
   const [showAspectPanel, setShowAspectPanel] = useState(false)
+
+  // Save items to localStorage whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('homepilot_imagine_items', JSON.stringify(items))
+    } catch (error) {
+      console.error('Failed to save imagine items to localStorage:', error)
+    }
+  }, [items])
 
   const aspectObj = useMemo(() => {
     return ASPECT_RATIOS.find((a) => a.label === aspect) || ASPECT_RATIOS[0]
@@ -157,7 +180,8 @@ export default function ImagineView(props: ImagineParams) {
         prompt: t,
       }))
 
-      setItems((prev) => [...newItems, ...prev])
+      // Keep only the last 100 items to prevent localStorage overflow
+      setItems((prev) => [...newItems, ...prev].slice(0, 100))
       setPrompt('')
     } catch (err: any) {
       alert(`Generation failed: ${err.message || err}`)

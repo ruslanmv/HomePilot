@@ -21,6 +21,7 @@ import VoiceMode from './VoiceMode'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
 import ModelsView from './Models'
+import { ImageViewer } from './ImageViewer'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -1663,15 +1664,18 @@ export default function App() {
           )
         )
       } catch (err: any) {
+        const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
+        // Distinguish between upload failure and processing failure
+        const failureType = errorMsg.includes('upload') || errorMsg.includes('413') || errorMsg.includes('File too large')
+          ? 'Upload failed'
+          : 'Processing failed'
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
               ? {
                   ...m,
                   pending: false,
-                  text: `Upload failed: ${
-                    typeof err?.message === 'string' ? err.message : 'backend error.'
-                  }`,
+                  text: `${failureType}: ${errorMsg}`,
                 }
               : m
           )
@@ -1695,6 +1699,144 @@ export default function App() {
     void sendTextOrIntent(v)
     setInput('')
   }, [input, sendTextOrIntent])
+
+  // Handle edit from image viewer
+  const handleEditFromViewer = useCallback(
+    async (imageUrl: string) => {
+      setLightbox(null)
+      setMode('edit')
+
+      const tmpId = uuid()
+      const userMsg: Msg = { id: uuid(), role: 'user', text: `Edit image: ${imageUrl}` }
+      const pendingMsg: Msg = { id: tmpId, role: 'assistant', text: 'Preparing to edit...', pending: true }
+      setMessages((prev) => [...prev, userMsg, pendingMsg])
+
+      try {
+        // Fetch the image and convert to File
+        const response = await fetch(imageUrl)
+        const blob = await response.blob()
+        const filename = imageUrl.split('/').pop() || 'image.png'
+        const file = new File([blob], filename, { type: blob.type })
+
+        // Upload the file
+        const fd = new FormData()
+        fd.append('file', file)
+        const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
+        const uploadedUrl = up.url as string
+
+        // Trigger edit workflow with default prompt
+        const editPrompt = 'make it more vibrant and detailed'
+        const data = await postJson<any>(
+          settings.backendUrl,
+          '/chat',
+          {
+            message: `edit ${uploadedUrl} ${editPrompt}`,
+            conversation_id: conversationId,
+            fun_mode: settings.funMode,
+            mode: 'edit',
+            provider: settingsDraft.providerChat,
+            provider_base_url: settingsDraft.baseUrlChat || undefined,
+            provider_model: settingsDraft.modelChat,
+          },
+          authHeaders
+        )
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tmpId
+              ? { ...msg, pending: false, text: data.text ?? 'Done.', media: data.media ?? null }
+              : msg
+          )
+        )
+      } catch (error: any) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tmpId
+              ? { ...msg, pending: false, text: `Edit failed: ${error.message || 'Unknown error'}` }
+              : msg
+          )
+        )
+      }
+    },
+    [authHeaders, conversationId, settings, settingsDraft]
+  )
+
+  // Handle video generation from image viewer
+  const handleGenerateVideoFromViewer = useCallback(
+    async (imageUrl: string, videoPrompt: string) => {
+      setLightbox(null)
+      setMode('animate')
+
+      const tmpId = uuid()
+      const userMsg: Msg = {
+        id: uuid(),
+        role: 'user',
+        text: `Generate video: ${videoPrompt}`,
+      }
+      const pendingMsg: Msg = {
+        id: tmpId,
+        role: 'assistant',
+        text: 'Creating animation...',
+        pending: true,
+      }
+      setMessages((prev) => [...prev, userMsg, pendingMsg])
+
+      try {
+        // Fetch the image and convert to File
+        const response = await fetch(imageUrl)
+        const blob = await response.blob()
+        const filename = imageUrl.split('/').pop() || 'image.png'
+        const file = new File([blob], filename, { type: blob.type })
+
+        // Upload the file
+        const fd = new FormData()
+        fd.append('file', file)
+        const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
+        const uploadedUrl = up.url as string
+
+        // Trigger animate workflow
+        const data = await postJson<any>(
+          settings.backendUrl,
+          '/chat',
+          {
+            message: `animate ${uploadedUrl} ${videoPrompt}`,
+            conversation_id: conversationId,
+            fun_mode: settings.funMode,
+            mode: 'animate',
+            provider: settingsDraft.providerChat,
+            provider_base_url: settingsDraft.baseUrlChat || undefined,
+            provider_model: settingsDraft.modelChat,
+            vidModel: settingsDraft.modelVideo,
+            vidSeconds: settingsDraft.vidSeconds,
+            vidFps: settingsDraft.vidFps,
+            nsfwMode: settingsDraft.nsfwMode,
+          },
+          authHeaders
+        )
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tmpId
+              ? { ...msg, pending: false, text: data.text ?? 'Done.', media: data.media ?? null }
+              : msg
+          )
+        )
+      } catch (error: any) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tmpId
+              ? {
+                  ...msg,
+                  pending: false,
+                  text: `Video generation failed: ${error.message || 'Unknown error'}`,
+                }
+              : msg
+          )
+        )
+      }
+    },
+    [authHeaders, conversationId, settings, settingsDraft]
+  )
 
   return (
     <div className="flex h-screen bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
@@ -1855,30 +1997,14 @@ export default function App() {
         )}
       </main>
 
-      {/* Lightbox */}
+      {/* Image Viewer with Edit and Video Generation */}
       {lightbox ? (
-        <div
-          className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-8 backdrop-blur-md animate-in fade-in duration-200"
-          onClick={() => setLightbox(null)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <button
-            type="button"
-            className="absolute top-6 right-6 p-2 bg-white/10 rounded-full hover:bg-white/20 transition-colors"
-            onClick={() => setLightbox(null)}
-            aria-label="Close preview"
-          >
-            <X size={24} />
-          </button>
-
-          <img
-            src={lightbox}
-            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl border border-white/10"
-            onClick={(e) => e.stopPropagation()}
-            alt="preview"
-          />
-        </div>
+        <ImageViewer
+          imageUrl={lightbox}
+          onClose={() => setLightbox(null)}
+          onEdit={handleEditFromViewer}
+          onGenerateVideo={handleGenerateVideoFromViewer}
+        />
       ) : null}
     </div>
   )
