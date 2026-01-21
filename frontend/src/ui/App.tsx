@@ -989,13 +989,84 @@ function ChatState({
               {m.media?.images?.length ? (
                 <div className="flex gap-2 overflow-x-auto pt-1">
                   {m.media.images.map((src: string, i: number) => (
-                    <img
-                      key={i}
-                      src={src}
-                      onClick={() => setLightbox(src)}
-                      className="h-56 w-56 object-cover rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
-                      alt={`generated ${i}`}
-                    />
+                    <div key={i} className="relative group">
+                      <img
+                        src={src}
+                        onClick={() => setLightbox(src)}
+                        className="h-56 w-56 object-cover rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                        alt={`generated ${i}`}
+                      />
+                      {mode === 'imagine' && (
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            try {
+                              // Fetch the image and convert to File
+                              const response = await fetch(src)
+                              const blob = await response.blob()
+                              const filename = src.split('/').pop() || 'image.png'
+                              const file = new File([blob], filename, { type: blob.type })
+                              // Trigger edit workflow
+                              setMode('edit')
+                              // Use the handleImageDrop function to process the file
+                              const fd = new FormData()
+                              fd.append('file', file)
+
+                              const tmpId = `tmp_${Date.now()}`
+                              const userMsg = { role: 'user', text: `Edit image: ${filename}`, id: tmpId, pending: false }
+                              const pendingMsg = { role: 'assistant', text: '', id: tmpId, pending: true }
+                              setMessages((prev) => [...prev, userMsg, pendingMsg])
+
+                              const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
+                              const imageUrl = up.url as string
+                              const editPrompt = 'make it more vibrant and detailed'
+
+                              const data = await postJson<any>(
+                                settings.backendUrl,
+                                '/chat',
+                                {
+                                  message: `edit ${imageUrl} ${editPrompt}`,
+                                  conversation_id: conversationId,
+                                  fun_mode: settings.funMode,
+                                  mode: 'edit',
+                                  provider: settingsDraft.providerChat,
+                                  provider_base_url: settingsDraft.baseUrlChat || undefined,
+                                  provider_model: settingsDraft.modelChat,
+                                },
+                                authHeaders
+                              )
+
+                              setMessages((prev) =>
+                                prev.map((msg) =>
+                                  msg.id === tmpId
+                                    ? { ...msg, pending: false, text: data.text ?? 'Done.', media: data.media ?? null }
+                                    : msg
+                                )
+                              )
+                            } catch (error: any) {
+                              console.error('Edit failed:', error)
+                            }
+                          }}
+                          className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 bg-black/70 hover:bg-black/90 rounded-lg p-2 transition-all duration-200 backdrop-blur-sm border border-white/10"
+                          title="Edit this image"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                            <path d="m15 5 4 4" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               ) : null}
@@ -1663,15 +1734,18 @@ export default function App() {
           )
         )
       } catch (err: any) {
+        const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
+        // Distinguish between upload failure and processing failure
+        const failureType = errorMsg.includes('upload') || errorMsg.includes('413') || errorMsg.includes('File too large')
+          ? 'Upload failed'
+          : 'Processing failed'
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
               ? {
                   ...m,
                   pending: false,
-                  text: `Upload failed: ${
-                    typeof err?.message === 'string' ? err.message : 'backend error.'
-                  }`,
+                  text: `${failureType}: ${errorMsg}`,
                 }
               : m
           )
