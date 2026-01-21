@@ -39,15 +39,60 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "✓ Installing frontend dependencies..."
 	@cd frontend && npm install
 	@echo ""
+	@echo "✓ Installing ComfyUI..."
+	@if [ ! -f "ComfyUI/main.py" ]; then \
+		echo "  Cloning ComfyUI repository..."; \
+		rm -rf ComfyUI; \
+		git clone https://github.com/comfyanonymous/ComfyUI.git ComfyUI; \
+	else \
+		echo "  ComfyUI already present"; \
+	fi
+	@echo "  Setting up ComfyUI virtual environment..."
+	@if [ ! -d "ComfyUI/.venv" ]; then \
+		python3 -m venv ComfyUI/.venv; \
+	fi
+	@echo "  Installing ComfyUI dependencies..."
+	@ComfyUI/.venv/bin/pip install -U pip setuptools wheel >/dev/null 2>&1 || true
+	@ComfyUI/.venv/bin/pip install -r ComfyUI/requirements.txt
+	@echo ""
+	@echo "✓ Setting up model directories..."
+	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae
+	@echo "  Linking ComfyUI models to ./models/comfy..."
+	@rm -rf ComfyUI/models
+	@ln -s $$(pwd)/models/comfy ComfyUI/models
+	@echo ""
+	@echo "✓ Verifying ComfyUI install..."
+	@test -f ComfyUI/main.py || (echo "  ❌ ERROR: ComfyUI/main.py missing"; exit 1)
+	@test -x ComfyUI/.venv/bin/python || (echo "  ❌ ERROR: ComfyUI venv missing"; exit 1)
+	@ComfyUI/.venv/bin/python -c "import torch; print('  ✓ torch:', torch.__version__)" 2>/dev/null || echo "  ✓ torch: (will be loaded at runtime)"
+	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Installation Complete!"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
 	@echo "Next steps:"
-	@echo "  1. Start Ollama: ollama serve"
-	@echo "  2. Pull a model: ollama pull llama3:8b"
-	@echo "  3. Start HomePilot: make start"
+	@echo "  1. Download models: make download-recommended (~14GB)"
+	@echo "  2. Start Ollama: ollama serve"
+	@echo "  3. Pull a model: ollama pull llama3:8b"
+	@echo "  4. Start HomePilot: make start"
 	@echo ""
+
+verify-install: ## Verify that all components are properly installed
+	@echo "Verifying installation..."
+	@test -f backend/.venv/bin/uvicorn || (echo "❌ backend not installed"; exit 1)
+	@echo "  ✓ Backend installed"
+	@test -d frontend/node_modules || (echo "❌ frontend not installed"; exit 1)
+	@echo "  ✓ Frontend installed"
+	@test -f ComfyUI/main.py || (echo "❌ ComfyUI missing"; exit 1)
+	@echo "  ✓ ComfyUI cloned"
+	@test -x ComfyUI/.venv/bin/python || (echo "❌ ComfyUI deps missing"; exit 1)
+	@echo "  ✓ ComfyUI dependencies installed"
+	@test -L ComfyUI/models || (echo "❌ ComfyUI/models not linked"; exit 1)
+	@echo "  ✓ ComfyUI models linked"
+	@test -d models/comfy/checkpoints || (echo "❌ model directories missing"; exit 1)
+	@echo "  ✓ Model directories created"
+	@echo ""
+	@echo "✅ All components verified successfully!"
 
 setup: ## Setup Docker environment (install deps + build images)
 	@echo "Installing frontend deps..."
@@ -57,15 +102,15 @@ setup: ## Setup Docker environment (install deps + build images)
 
 # --- Local development (no Docker) --------------------------------------------
 
-start: ## Start HomePilot locally (backend + frontend, no Docker)
+start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
-	@echo "  Starting HomePilot LOCALLY (no Docker)"
+	@echo "  Starting HomePilot LOCALLY (All Services)"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
 	@echo "Prerequisites:"
+	@echo "  ✓ Run 'make install' first"
 	@echo "  ✓ Ollama running: ollama serve"
 	@echo "  ✓ Ollama model: ollama pull llama3:8b (or your preferred model)"
-	@echo "  ✓ ComfyUI running (optional): cd ComfyUI && python main.py"
 	@echo ""
 	@if [ ! -d "backend/.venv" ]; then \
 		echo "❌ Backend not installed. Run: make install"; \
@@ -75,14 +120,61 @@ start: ## Start HomePilot locally (backend + frontend, no Docker)
 		echo "❌ Frontend not installed. Run: make install"; \
 		exit 1; \
 	fi
-	@echo "Starting services..."
+	@if [ ! -f "ComfyUI/main.py" ]; then \
+		echo "⚠️  ComfyUI not found. Run: make install"; \
+		echo "    Image/video generation will not work without ComfyUI."; \
+		echo ""; \
+	fi
+	@echo "Services:"
+	@echo "  Backend:  http://localhost:8000"
+	@echo "  Frontend: http://localhost:3000"
+	@if [ -f "ComfyUI/main.py" ]; then \
+		echo "  ComfyUI:  http://localhost:8188"; \
+	fi
 	@echo ""
-	@echo "Backend will run on: http://localhost:8000"
-	@echo "Frontend will run on: http://localhost:3000"
+	@echo "Press Ctrl+C to stop ALL services"
 	@echo ""
-	@echo "Press Ctrl+C to stop both services"
-	@echo ""
-	@$(MAKE) start-backend & $(MAKE) start-frontend
+	@bash -c ' \
+		set -e; \
+		ROOT="$$(pwd)"; \
+		pids=""; \
+		cleanup() { \
+			echo ""; \
+			echo "════════════════════════════════════════════════════════════════════════════════"; \
+			echo "  Stopping all services..."; \
+			echo "════════════════════════════════════════════════════════════════════════════════"; \
+			[ -n "$$pids" ] && kill $$pids 2>/dev/null || true; \
+			wait 2>/dev/null || true; \
+			echo "All services stopped."; \
+		}; \
+		trap cleanup INT TERM EXIT; \
+		\
+		echo "Starting backend..."; \
+		cd "$$ROOT/backend" && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 & \
+		pids="$$pids $$!"; \
+		\
+		echo "Starting frontend..."; \
+		cd "$$ROOT/frontend" && npm run dev -- --host 0.0.0.0 --port 3000 & \
+		pids="$$pids $$!"; \
+		\
+		if [ -f "$$ROOT/ComfyUI/main.py" ] && [ -f "$$ROOT/ComfyUI/.venv/bin/python" ]; then \
+			if [ -d "$$ROOT/models/comfy" ] && [ ! -L "$$ROOT/ComfyUI/models" ]; then \
+				echo "Linking ComfyUI models to ./models/comfy..."; \
+				rm -rf "$$ROOT/ComfyUI/models"; \
+				ln -s "$$ROOT/models/comfy" "$$ROOT/ComfyUI/models"; \
+			fi; \
+			echo "Starting ComfyUI..."; \
+			cd "$$ROOT/ComfyUI" && .venv/bin/python main.py --listen 0.0.0.0 --port 8188 & \
+			pids="$$pids $$!"; \
+		fi; \
+		\
+		echo ""; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo "  ✅ All services started!"; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo ""; \
+		wait \
+	'
 
 start-backend: ## Start backend locally with uv
 	@echo "Starting backend..."
@@ -99,6 +191,23 @@ start-frontend: ## Start frontend locally
 		exit 1; \
 	fi
 	@cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
+
+start-comfyui: ## Start ComfyUI locally (required for image/video generation)
+	@echo "Starting ComfyUI..."
+	@if [ ! -f "ComfyUI/main.py" ]; then \
+		echo "❌ ComfyUI not found. Run: make install"; \
+		exit 1; \
+	fi
+	@if [ ! -f "ComfyUI/.venv/bin/python" ]; then \
+		echo "❌ ComfyUI venv not found. Run: make install"; \
+		exit 1; \
+	fi
+	@if [ -d "models/comfy" ] && [ ! -L "ComfyUI/models" ]; then \
+		echo "ℹ️  Auto-linking models..."; \
+		rm -rf ComfyUI/models; \
+		ln -s $$(pwd)/models/comfy ComfyUI/models; \
+	fi
+	@cd ComfyUI && .venv/bin/python main.py --listen 0.0.0.0 --port 8188
 
 # --- Testing & Development ----------------------------------------------------
 

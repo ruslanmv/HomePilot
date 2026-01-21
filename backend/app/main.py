@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import uuid as uuidlib
 import traceback
 from pathlib import Path
@@ -100,6 +101,7 @@ class ChatIn(BaseModel):
     vidMotion: Optional[str] = Field(None, description="Video motion bucket")
     vidModel: Optional[str] = Field(None, description="Video model selection (svd, wan-2.2, seedream)")
     nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
+    promptRefinement: Optional[bool] = Field(True, description="Enable AI prompt refinement for image generation (default: True)")
 
 
 class ChatOut(BaseModel):
@@ -469,17 +471,17 @@ async def list_models(
     Example: GET /models?provider=comfyui&model_type=image
     """
     try:
-        # ComfyUI model listing is local/static
+        # ComfyUI model listing - scan filesystem for installed models
         if provider == "comfyui":
-            from .providers import available_image_models, available_video_models
+            from .providers import scan_installed_models
 
             if model_type == "image":
-                models = available_image_models()
+                models = scan_installed_models("image")
             elif model_type == "video":
-                models = available_video_models()
+                models = scan_installed_models("video")
             else:
                 # Return both if not specified
-                models = available_image_models() + available_video_models()
+                models = scan_installed_models("image") + scan_installed_models("video")
 
             return JSONResponse(
                 status_code=200,
@@ -489,6 +491,7 @@ async def list_models(
                     "model_type": model_type or "all",
                     "models": models,
                     "count": len(models),
+                    "message": f"Scanned filesystem - found {len(models)} installed models",
                 },
             )
 
@@ -587,6 +590,139 @@ async def get_model_catalog() -> JSONResponse:
             content=_safe_err(
                 f"Error loading model catalog: {str(e)}",
                 code="catalog_error",
+            ),
+        )
+
+
+class ModelInstallRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    provider: str = Field(..., description="Provider (ollama, comfyui, civitai)")
+    model_type: str = Field(..., description="Model type (chat, image, video)")
+    model_id: str = Field(..., description="Model ID to install")
+    base_url: Optional[str] = Field(None, description="Optional base URL override")
+    civitai_version_id: Optional[str] = Field(None, description="Civitai version ID (for civitai provider)")
+
+
+@app.post("/models/install")
+async def install_model(req: ModelInstallRequest) -> JSONResponse:
+    """
+    Install a model using the download.py script.
+
+    Supports:
+    - ollama: Uses ollama pull
+    - comfyui: Downloads from catalog
+    - civitai: Downloads from Civitai by version ID (experimental)
+    """
+    try:
+        script_path = Path(__file__).parent.parent.parent / "scripts" / "download.py"
+
+        if not script_path.exists():
+            return JSONResponse(
+                status_code=500,
+                content=_safe_err(
+                    "Download script not found. Please ensure scripts/download.py exists.",
+                    code="script_not_found",
+                ),
+            )
+
+        # Build command based on provider
+        cmd = ["python3", str(script_path)]
+
+        if req.provider == "civitai":
+            # Experimental Civitai download
+            if not req.civitai_version_id:
+                return JSONResponse(
+                    status_code=400,
+                    content=_safe_err(
+                        "civitai_version_id required for Civitai provider",
+                        code="missing_version_id",
+                    ),
+                )
+
+            cmd.extend([
+                "--civitai",
+                "--version-id", req.civitai_version_id,
+                "--type", req.model_type,
+            ])
+
+            if req.model_id:
+                cmd.extend(["--output", req.model_id])
+
+        elif req.provider == "ollama":
+            # Ollama: Use ollama pull directly
+            pull_cmd = ["ollama", "pull", req.model_id]
+            result = subprocess.run(pull_cmd, capture_output=True, text=True, timeout=300)
+
+            if result.returncode == 0:
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "ok": True,
+                        "message": f"Successfully pulled {req.model_id}",
+                        "provider": "ollama",
+                        "model_id": req.model_id,
+                    },
+                )
+            else:
+                return JSONResponse(
+                    status_code=500,
+                    content=_safe_err(
+                        f"Ollama pull failed: {result.stderr}",
+                        code="ollama_pull_failed",
+                    ),
+                )
+
+        elif req.provider == "comfyui":
+            # ComfyUI: Download from catalog
+            cmd.extend(["--model", req.model_id])
+
+        else:
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err(
+                    f"Unsupported provider: {req.provider}",
+                    code="unsupported_provider",
+                ),
+            )
+
+        # Run download script for comfyui and civitai
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+        if result.returncode == 0:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": True,
+                    "message": f"Successfully installed {req.model_id}",
+                    "provider": req.provider,
+                    "model_id": req.model_id,
+                    "output": result.stdout,
+                },
+            )
+        else:
+            return JSONResponse(
+                status_code=500,
+                content=_safe_err(
+                    f"Installation failed: {result.stderr or result.stdout}",
+                    code="installation_failed",
+                ),
+            )
+
+    except subprocess.TimeoutExpired:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(
+                "Installation timed out. Large models may take longer.",
+                code="timeout",
+            ),
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(
+                f"Installation error: {str(e)}",
+                code="installation_error",
             ),
         )
 
@@ -816,6 +952,7 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "vidMotion": inp.vidMotion,
         "vidModel": inp.vidModel,
         "nsfwMode": inp.nsfwMode,
+        "promptRefinement": inp.promptRefinement,
     }
 
     # Route through mode-aware handler

@@ -152,6 +152,7 @@ async def orchestrate(
     vid_motion: Optional[str] = None,
     vid_model: Optional[str] = None,
     nsfw_mode: Optional[bool] = None,
+    prompt_refinement: Optional[bool] = True,
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -221,16 +222,36 @@ async def orchestrate(
     # --- Imagine ---
     if (m == "imagine") or IMAGE_RE.search(text_in):
         try:
-            # Get provider for prompt refinement
-            prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
+            # Optional prompt refinement (enabled by default, can be disabled)
+            if prompt_refinement:
+                # Get provider for prompt refinement
+                prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
 
-            # Refine the prompt using LLM (Grok-like behavior)
-            refined = await _refine_prompt(
-                text_in,
-                provider=prov,
-                provider_base_url=provider_base_url,
-                provider_model=provider_model,
-            )
+                try:
+                    # Refine the prompt using LLM (Grok-like behavior)
+                    refined = await _refine_prompt(
+                        text_in,
+                        provider=prov,
+                        provider_base_url=provider_base_url,
+                        provider_model=provider_model,
+                    )
+                except Exception as e:
+                    # Fallback to direct mode if refinement fails (e.g., Ollama unavailable)
+                    print(f"Prompt refinement failed, using direct mode: {e}")
+                    refined = {
+                        "prompt": text_in,
+                        "negative_prompt": "",
+                        "aspect_ratio": "1:1",
+                        "style": "photorealistic",
+                    }
+            else:
+                # Direct mode: use user prompt without refinement
+                refined = {
+                    "prompt": text_in,
+                    "negative_prompt": "",
+                    "aspect_ratio": "1:1",
+                    "style": "photorealistic",
+                }
 
             # Merge custom image parameters if provided
             if img_width is not None:
@@ -388,4 +409,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             vid_motion=payload.get("vidMotion"),
             vid_model=payload.get("vidModel"),
             nsfw_mode=payload.get("nsfwMode"),
+            prompt_refinement=payload.get("promptRefinement", True),
         )
