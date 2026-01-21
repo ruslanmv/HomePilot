@@ -16,37 +16,72 @@ import {
   Search,
   ArrowRight,
   MessageSquare,
-  Film
+  Film,
+  Trash2,
+  Edit
 } from 'lucide-react';
 
 // --- Components ---
 
-const ProjectCard = ({ icon: Icon, iconColor, title, type, description, onClick }: {
+const ProjectCard = ({ icon: Icon, iconColor, title, type, description, onClick, onDelete, onEdit, isExample }: {
   icon: React.ElementType
   iconColor: string
   title: string
   type: string
   description: string
   onClick: () => void
+  onDelete?: () => void
+  onEdit?: () => void
+  isExample?: boolean
 }) => (
-  <div
-    onClick={onClick}
-    className="flex flex-col gap-3 p-4 rounded-2xl bg-[#2b2d31] hover:bg-[#32343a] transition-colors cursor-pointer group border border-transparent hover:border-[#3f4148]"
-  >
-    <div className="flex justify-between items-start">
-      <div className="flex items-center gap-3">
-        <Icon size={20} className={iconColor} strokeWidth={2.5} />
-        <h3 className="font-semibold text-sm text-gray-100">{title}</h3>
+  <div className="relative group">
+    <div
+      onClick={onClick}
+      className="flex flex-col gap-3 p-4 rounded-2xl bg-[#2b2d31] hover:bg-[#32343a] transition-colors cursor-pointer border border-transparent hover:border-[#3f4148]"
+    >
+      <div className="flex justify-between items-start">
+        <div className="flex items-center gap-3">
+          <Icon size={20} className={iconColor} strokeWidth={2.5} />
+          <h3 className="font-semibold text-sm text-gray-100">{title}</h3>
+        </div>
+        {type && (
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+            {type}
+          </span>
+        )}
       </div>
-      {type && (
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-          {type}
-        </span>
-      )}
+      <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">
+        {description}
+      </p>
     </div>
-    <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">
-      {description}
-    </p>
+    {!isExample && (onDelete || onEdit) && (
+      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        {onEdit && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onEdit()
+            }}
+            className="p-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-colors"
+            title="Edit project"
+          >
+            <Edit size={14} />
+          </button>
+        )}
+        {onDelete && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+            className="p-1.5 bg-red-500/20 hover:bg-red-500/40 rounded-lg text-red-400 hover:text-red-300 transition-colors"
+            title="Delete project"
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
+      </div>
+    )}
   </div>
 );
 
@@ -364,6 +399,191 @@ const ProjectWizard = ({ onClose, onSave }: {
   );
 };
 
+// --- Edit Project Modal Component ---
+const EditProjectModal = ({ project, onClose, onSave, backendUrl, apiKey }: {
+  project: any
+  onClose: () => void
+  onSave: (project: any) => void
+  backendUrl: string
+  apiKey?: string
+}) => {
+  const [projectName, setProjectName] = useState(project?.name || '');
+  const [description, setDescription] = useState(project?.description || '');
+  const [instructions, setInstructions] = useState(project?.instructions || '');
+  const [documents, setDocuments] = useState<any[]>(project?.files || []);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSave = async () => {
+    setIsLoading(true);
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (apiKey) {
+        headers['x-api-key'] = apiKey;
+      }
+
+      const response = await fetch(`${backendUrl}/projects/${project.id}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          name: projectName,
+          description,
+          instructions
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        onSave(result.project);
+        onClose();
+      } else {
+        alert('Failed to update project');
+      }
+    } catch (error) {
+      console.error('Error updating project:', error);
+      alert('Failed to update project');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteDocument = async (documentName: string) => {
+    if (!confirm(`Delete document "${documentName}"?`)) {
+      return;
+    }
+
+    try {
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        headers['x-api-key'] = apiKey;
+      }
+
+      const response = await fetch(`${backendUrl}/projects/${project.id}/documents/${encodeURIComponent(documentName)}`, {
+        method: 'DELETE',
+        headers
+      });
+
+      if (response.ok) {
+        setDocuments(documents.filter(d => d.name !== documentName));
+      } else {
+        alert('Failed to delete document');
+      }
+    } catch (error) {
+      console.error('Error deleting document:', error);
+      alert('Failed to delete document');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div
+        className="w-full max-w-2xl bg-[#1e1f22] rounded-2xl border border-[#383a40] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#2b2d31]">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Edit Project</h2>
+            <p className="text-xs text-gray-400">Update project details and manage documents</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 text-gray-400 hover:text-white hover:bg-[#2b2d31] rounded-lg transition-colors"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-6">
+          {/* Project Name */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gray-300">Project Name</label>
+            <input
+              type="text"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              className="w-full bg-[#2b2d31] border border-[#383a40] rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+            />
+          </div>
+
+          {/* Description */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gray-300">Description</label>
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full bg-[#2b2d31] border border-[#383a40] rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+            />
+          </div>
+
+          {/* Custom Instructions */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gray-300">Custom Instructions</label>
+            <textarea
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              className="w-full h-32 bg-[#2b2d31] border border-[#383a40] rounded-xl p-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all resize-none"
+              placeholder="How should HomePilot behave in this project?"
+            />
+          </div>
+
+          {/* Documents */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gray-300">Documents ({documents.length})</label>
+            {documents.length === 0 ? (
+              <div className="text-sm text-gray-500 p-4 border border-[#383a40] rounded-xl bg-[#2b2d31]/50">
+                No documents uploaded yet
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {documents.map((doc, i) => (
+                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-[#2b2d31] border border-[#383a40] group">
+                    <div className="flex items-center gap-3">
+                      <div className="p-1.5 bg-[#1e1f22] rounded-md text-blue-400">
+                        <FileText size={16} />
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-sm text-gray-200 truncate max-w-[200px]">{doc.name}</span>
+                        <span className="text-xs text-gray-500">{doc.size} • {doc.chunks || 0} chunks</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteDocument(doc.name)}
+                      className="p-1.5 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg hover:bg-red-500/10"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 border-t border-[#2b2d31] bg-[#1e1f22] flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isLoading}
+            className="px-6 py-2 bg-white text-black text-sm font-semibold rounded-xl hover:bg-gray-200 transition-colors disabled:opacity-50"
+          >
+            {isLoading ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Search Modal Component ---
 const SearchModal = ({ onClose, projects, exampleProjects, onSelectProject, onCreateFromExample }: {
   onClose: () => void
@@ -504,6 +724,8 @@ export default function ProjectsView({
   const [activeTab, setActiveTab] = useState('My Projects');
   const [showWizard, setShowWizard] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingProject, setEditingProject] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [exampleProjects, setExampleProjects] = useState<any[]>([]);
   const [isLoadingExamples, setIsLoadingExamples] = useState(false);
@@ -515,6 +737,51 @@ export default function ProjectsView({
     StickyNote,
     Apple,
     FolderKanban
+  };
+
+  const handleDeleteProject = async (projectId: string, projectName: string) => {
+    if (!confirm(`Delete project "${projectName}"? This will remove all associated data and documents.`)) {
+      return
+    }
+
+    try {
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        headers['x-api-key'] = apiKey;
+      }
+
+      const response = await fetch(`${backendUrl}/projects/${projectId}`, {
+        method: 'DELETE',
+        headers
+      });
+
+      if (response.ok) {
+        setProjects(projects.filter(p => p.id !== projectId));
+      } else {
+        alert('Failed to delete project');
+      }
+    } catch (error) {
+      console.error('Error deleting project:', error);
+      alert('Failed to delete project');
+    }
+  };
+
+  const handleEditProject = async (projectId: string) => {
+    try {
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        headers['x-api-key'] = apiKey;
+      }
+
+      const response = await fetch(`${backendUrl}/projects/${projectId}`, { headers });
+      if (response.ok) {
+        const result = await response.json();
+        setEditingProject(result.project);
+        setShowEditModal(true);
+      }
+    } catch (error) {
+      console.error('Error fetching project:', error);
+    }
   };
 
   // Define the examples grid to reuse it
@@ -531,6 +798,7 @@ export default function ProjectsView({
             type="Example"
             description={example.description}
             onClick={() => handleCreateFromExample(example.id)}
+            isExample={true}
           />
         );
       })}
@@ -695,6 +963,18 @@ export default function ProjectsView({
           onCreateFromExample={handleCreateFromExample}
         />
       )}
+      {showEditModal && editingProject && (
+        <EditProjectModal
+          project={editingProject}
+          onClose={() => setShowEditModal(false)}
+          onSave={(updatedProject) => {
+            setProjects(projects.map(p => p.id === updatedProject.id ? updatedProject : p));
+            setShowEditModal(false);
+          }}
+          backendUrl={backendUrl}
+          apiKey={apiKey}
+        />
+      )}
 
       {/* Main Content Container */}
       <main className="px-4 sm:px-8 pt-16 pb-8 max-w-5xl mx-auto w-full">
@@ -780,6 +1060,9 @@ export default function ProjectsView({
                         type={project.project_type || 'Chat'}
                         description={project.description || 'No description'}
                         onClick={() => onProjectSelect?.(project.id)}
+                        onDelete={() => handleDeleteProject(project.id, project.name)}
+                        onEdit={() => handleEditProject(project.id)}
+                        isExample={false}
                       />
                     ))}
                   </div>

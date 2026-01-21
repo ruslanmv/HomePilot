@@ -285,6 +285,53 @@ def create_project_from_example(example_id: str) -> Optional[Dict[str, Any]]:
 
     return create_new_project(project_data)
 
+def delete_project(project_id: str) -> bool:
+    """Delete a project and its knowledge base."""
+    db = _load_projects_db()
+
+    if project_id not in db:
+        return False
+
+    # Delete from database
+    del db[project_id]
+    _save_projects_db(db)
+
+    # Delete knowledge base if RAG enabled
+    if RAG_ENABLED:
+        try:
+            from .vectordb import delete_project_knowledge
+            delete_project_knowledge(project_id)
+        except Exception as e:
+            print(f"Error deleting project knowledge base: {e}")
+
+    return True
+
+def update_project(project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Update a project's details."""
+    db = _load_projects_db()
+
+    if project_id not in db:
+        return None
+
+    project = db[project_id]
+
+    # Update fields
+    if "name" in data:
+        project["name"] = data["name"]
+    if "description" in data:
+        project["description"] = data["description"]
+    if "instructions" in data:
+        project["instructions"] = data["instructions"]
+    if "is_public" in data:
+        project["is_public"] = data["is_public"]
+
+    project["updated_at"] = time.time()
+
+    db[project_id] = project
+    _save_projects_db(db)
+
+    return project
+
 # -------------------------------------------------------------------------
 # Chat Logic
 # -------------------------------------------------------------------------
