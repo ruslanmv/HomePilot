@@ -17,7 +17,7 @@ This guide explains how to run HomePilot in different environments.
 
 **Prerequisites:**
 - **Ollama** installed and running: `ollama serve`
-- **Ollama model** downloaded: `ollama pull llama3.1:latest`
+- **Ollama model** downloaded: `ollama pull llama3:8b`
 - Docker (for `make run`) OR Python 3.11+ and Node.js (for `make local`)
 
 **Fastest path:**
@@ -54,7 +54,7 @@ Use this when you want:
 ollama serve
 
 # 2. Pull a model
-ollama pull llama3.1:latest
+ollama pull llama3:8b
 
 # 3. Start the Docker stack
 make run
@@ -81,7 +81,7 @@ The docker-compose.yml uses `host.docker.internal:11434` to access Ollama on you
 ```yaml
 environment:
   OLLAMA_BASE_URL: http://host.docker.internal:11434
-  OLLAMA_MODEL: llama3.1:latest
+  OLLAMA_MODEL: llama3:8b
 ```
 
 This works on:
@@ -121,7 +121,7 @@ Use this when you want:
 ollama serve
 
 # 2. Pull a model
-ollama pull llama3.1:latest
+ollama pull llama3:8b
 
 # 3. (Optional) Start ComfyUI for image generation
 cd /path/to/ComfyUI
@@ -173,7 +173,7 @@ gemma:2b             1.7 GB
 llama3:latest        4.7 GB
 granite3.2:latest    4.9 GB
 codellama:latest     3.8 GB
-llama3.1:latest      4.9 GB
+llama3:8b      4.9 GB
 ```
 
 ### Selecting a Model
@@ -194,12 +194,12 @@ Create `.env` file (copy from `.env.example`):
 # For Docker
 DEFAULT_PROVIDER=ollama
 OLLAMA_BASE_URL=http://host.docker.internal:11434
-OLLAMA_MODEL=llama3.1:latest
+OLLAMA_MODEL=llama3:8b
 
 # For local development
 DEFAULT_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.1:latest
+OLLAMA_MODEL=llama3:8b
 ```
 
 Then restart:
@@ -239,7 +239,7 @@ make down && make run
    - Ollama should be at `http://localhost:11434`
    - No special configuration needed
 
-### "Ollama model 'llama3.1:8b' not found"
+### "Ollama model 'llama3:8b' not found"
 
 **Symptom:** Model doesn't exist
 
@@ -249,7 +249,7 @@ make down && make run
 ollama list
 
 # Pull the model
-ollama pull llama3.1:latest
+ollama pull llama3:8b
 
 # Or use a different model you already have
 # Update OLLAMA_MODEL in .env or UI settings
@@ -357,7 +357,7 @@ make health
 
 ```bash
 ollama serve              # Terminal 1
-ollama pull llama3.1      # Terminal 1
+ollama pull llama3:8b      # Terminal 1
 make run                  # Terminal 2
 # Open http://localhost:3000
 ```
@@ -366,7 +366,7 @@ make run                  # Terminal 2
 
 ```bash
 ollama serve              # Terminal 1
-ollama pull llama3.1      # Terminal 1
+ollama pull llama3:8b      # Terminal 1
 make local                # Terminal 2
 # Open http://localhost:3000
 ```

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid as uuidlib
+import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional, Literal
 
@@ -14,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from .auth import require_api_key
 # Import config and storage as modules so we can patch paths if needed
-from . import config, storage 
+from . import config, storage, projects, search
 from .config import (
     CORS_ORIGINS,
     PUBLIC_BASE_URL,
@@ -29,7 +30,7 @@ from .config import (
 )
 from .orchestrator import orchestrate, handle_request
 from .providers import provider_info
-from .storage import init_db
+from .storage import init_db, list_conversations, get_messages
 from .migrations import run_migrations
 
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
@@ -46,14 +47,15 @@ app.add_middleware(
 # Models
 # ----------------------------
 
-ProviderName = Literal["openai_compat", "ollama"]
+ProviderName = Literal["openai_compat", "ollama", "openai", "claude", "watsonx"]
 
 
 class ChatIn(BaseModel):
     message: str = Field(..., description="User message (raw input)")
     conversation_id: Optional[str] = Field(None, description="Conversation id (optional)")
+    project_id: Optional[str] = Field(None, description="Project ID context (optional)")
     fun_mode: bool = Field(False, description="Frontend fun mode toggle")
-    mode: Optional[str] = Field(None, description="chat|imagine|edit|animate")
+    mode: Optional[str] = Field(None, description="chat|imagine|edit|animate|project")
     provider: Optional[ProviderName] = Field(
         None,
         description="LLM provider selection. If omitted, backend default is used.",
@@ -64,7 +66,24 @@ class ChatIn(BaseModel):
     )
     ollama_model: Optional[str] = Field(
         None,
-        description="Optional Ollama model override (e.g., llama3.1:8b)",
+        description="Optional Ollama model override (e.g., llama3:8b)",
+    )
+    provider_base_url: Optional[str] = Field(
+        None,
+        description="Optional base URL override for the selected provider.",
+    )
+    provider_model: Optional[str] = Field(
+        None,
+        description="Optional model override for the selected provider.",
+    )
+    # Backwards-compatible fields for openai_compat (vLLM)
+    llm_base_url: Optional[str] = Field(
+        None,
+        description="Optional OpenAI-compatible (vLLM) base URL override.",
+    )
+    llm_model: Optional[str] = Field(
+        None,
+        description="Optional OpenAI-compatible (vLLM) model override.",
     )
     # Custom generation parameters
     textTemperature: Optional[float] = Field(None, description="Text generation temperature (0-2)")
@@ -74,15 +93,30 @@ class ChatIn(BaseModel):
     imgSteps: Optional[int] = Field(None, description="Image generation steps")
     imgCfg: Optional[float] = Field(None, description="Image CFG scale")
     imgSeed: Optional[int] = Field(None, description="Image generation seed (0 = random)")
+    imgModel: Optional[str] = Field(None, description="Image model selection (sdxl, flux-schnell, flux-dev, pony-xl, sd15-uncensored)")
     vidSeconds: Optional[int] = Field(None, description="Video duration in seconds")
     vidFps: Optional[int] = Field(None, description="Video FPS")
     vidMotion: Optional[str] = Field(None, description="Video motion bucket")
+    vidModel: Optional[str] = Field(None, description="Video model selection (svd, wan-2.2, seedream)")
+    nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
 
 
 class ChatOut(BaseModel):
     conversation_id: str
     text: str
     media: Optional[Dict[str, Any]] = None
+
+class ProjectFile(BaseModel):
+    name: str
+    size: Optional[str] = None
+    path: Optional[str] = None
+
+class ProjectCreateIn(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    instructions: Optional[str] = ""
+    files: Optional[list] = []
+    is_public: Optional[bool] = False
 
 
 # ----------------------------
@@ -418,86 +452,74 @@ async def settings(request: Request) -> JSONResponse:
 async def list_models(
     provider: str = Query("openai_compat", description="Provider to list models from"),
     base_url: Optional[str] = Query(None, description="Override base URL for the provider"),
+    model_type: Optional[str] = Query(None, description="For ComfyUI: 'image' or 'video'"),
 ) -> JSONResponse:
     """
     List available models from a provider.
     Supports:
       - openai_compat: GET {base}/models   (expects OpenAI-style response)
       - ollama: GET {base}/api/tags
+      - openai: OpenAI API
+      - claude: Anthropic API
+      - watsonx: IBM watsonx.ai
+      - comfyui: Returns local image/video models list
 
-    Example: GET /models?provider=openai_compat&base_url=http://localhost:8001/v1
+    Example: GET /models?provider=ollama&base_url=http://localhost:11434
+    Example: GET /models?provider=comfyui&model_type=image
     """
     try:
-        if provider == "ollama":
-            ollama_url = (base_url or OLLAMA_BASE_URL).rstrip("/")
+        # ComfyUI model listing is local/static
+        if provider == "comfyui":
+            from .providers import available_image_models, available_video_models
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                try:
-                    response = await client.get(f"{ollama_url}/api/tags")
-                    response.raise_for_status()
-                    data = response.json()
+            if model_type == "image":
+                models = available_image_models()
+            elif model_type == "video":
+                models = available_video_models()
+            else:
+                # Return both if not specified
+                models = available_image_models() + available_video_models()
 
-                    models = data.get("models", [])
-                    model_names = sorted([m.get("name", "") for m in models if m.get("name")])
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "ok": True,
+                    "provider": "comfyui",
+                    "model_type": model_type or "all",
+                    "models": models,
+                    "count": len(models),
+                },
+            )
 
-                    return JSONResponse(
-                        status_code=200,
-                        content={
-                            "ok": True,
-                            "provider": "ollama",
-                            "base_url": ollama_url,
-                            "models": model_names,
-                            "count": len(model_names),
-                        },
-                    )
-                except httpx.HTTPError as e:
-                    return JSONResponse(
-                        status_code=503,
-                        content=_safe_err(
-                            f"Failed to connect to Ollama at {ollama_url}: {str(e)}. "
-                            "Make sure Ollama is running (ollama serve).",
-                            code="ollama_unavailable",
-                        ),
-                    )
+        # Everything else uses the shared model catalog
+        from .model_catalog import list_models_for_provider
 
-        if provider == "openai_compat":
-            llm_url = (base_url or LLM_BASE_URL).rstrip("/")
-            # LLM_BASE_URL defaults to http://llm:8001/v1, so /models is http://.../v1/models
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                try:
-                    resp = await client.get(f"{llm_url}/models")
-                    resp.raise_for_status()
-                    data = resp.json()
-                    arr = data.get("data", [])
-                    model_names = sorted([m.get("id", "") for m in arr if isinstance(m, dict) and m.get("id")])
+        # Validate provider string against our ProviderName literal
+        if provider not in {"openai_compat", "ollama", "openai", "claude", "watsonx"}:
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err(
+                    f"Provider '{provider}' is not supported for model listing.",
+                    code="unsupported_provider",
+                ),
+            )
+        prov: ProviderName = provider  # type: ignore
 
-                    return JSONResponse(
-                        status_code=200,
-                        content={
-                            "ok": True,
-                            "provider": "openai_compat",
-                            "base_url": llm_url,
-                            "models": model_names,
-                            "count": len(model_names),
-                        },
-                    )
-                except httpx.HTTPError as e:
-                    return JSONResponse(
-                        status_code=503,
-                        content=_safe_err(
-                            f"Failed to connect to OpenAI-compatible LLM at {llm_url}: {str(e)}. "
-                            "Check vLLM container or service.",
-                            code="openai_compat_unavailable",
-                        ),
-                    )
+        models, err = await list_models_for_provider(prov, base_url=base_url)
+        if err:
+            return JSONResponse(status_code=503, content=_safe_err(err, code="models_unavailable"))
 
         return JSONResponse(
-            status_code=400,
-            content=_safe_err(
-                f"Provider '{provider}' is not supported for model listing.",
-                code="unsupported_provider",
-            ),
+            status_code=200,
+            content={
+                "ok": True,
+                "provider": provider,
+                "base_url": (base_url or ""),
+                "models": models,
+                "count": len(models),
+            },
         )
+
     except Exception as e:
         return JSONResponse(
             status_code=500,
@@ -529,6 +551,179 @@ async def conversation_messages(conversation_id: str, limit: int = Query(200, ge
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to load conversation: {e}", code="conversation_load_error"))
 
+
+@app.get("/conversations/{conversation_id}/search")
+async def search_conversation(
+    conversation_id: str,
+    q: str = Query(..., description="Search query"),
+    limit: int = Query(20, ge=1, le=100)
+) -> JSONResponse:
+    """Search within a specific conversation."""
+    try:
+        results = search.search_conversation_history(
+            query=q,
+            conversation_id=conversation_id,
+            limit=limit
+        )
+        return JSONResponse(status_code=200, content={
+            "ok": True,
+            "conversation_id": conversation_id,
+            "query": q,
+            "results": results,
+            "count": len(results)
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Search failed: {e}"))
+
+
+# ----------------------------
+# Projects API
+# ----------------------------
+
+@app.post("/projects", dependencies=[Depends(require_api_key)])
+async def create_project(data: ProjectCreateIn) -> JSONResponse:
+    """Create a new project context."""
+    try:
+        # Convert pydantic model to dict for storage
+        project_dict = data.dict()
+        result = projects.create_new_project(project_dict)
+        return JSONResponse(status_code=201, content={"ok": True, "project": result})
+    except Exception as e:
+        print(f"ERROR creating project: {e}")
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to create project: {e}"))
+
+@app.get("/projects", dependencies=[Depends(require_api_key)])
+async def list_projects() -> JSONResponse:
+    """List all available projects."""
+    try:
+        result = projects.list_all_projects()
+        return JSONResponse(status_code=200, content={"ok": True, "projects": result})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to list projects: {e}"))
+
+@app.get("/projects/examples")
+async def get_example_projects() -> JSONResponse:
+    """Get list of example project templates."""
+    try:
+        examples = projects.get_example_projects()
+        return JSONResponse(status_code=200, content={"ok": True, "examples": examples})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to get examples: {e}"))
+
+@app.post("/projects/from-example/{example_id}", dependencies=[Depends(require_api_key)])
+async def create_from_example(example_id: str) -> JSONResponse:
+    """Create a new project from an example template."""
+    try:
+        result = projects.create_project_from_example(example_id)
+        if result:
+            return JSONResponse(status_code=201, content={"ok": True, "project": result})
+        else:
+            return JSONResponse(status_code=404, content=_safe_err("Example not found", code="not_found"))
+    except Exception as e:
+        print(f"ERROR creating project from example: {e}")
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to create from example: {e}"))
+
+@app.get("/projects/{project_id}")
+async def get_project(project_id: str) -> JSONResponse:
+    """Get a specific project by ID."""
+    try:
+        result = projects.get_project_by_id(project_id)
+        if result:
+            return JSONResponse(status_code=200, content={"ok": True, "project": result})
+        else:
+            # Check if it's an example project
+            examples = projects.get_example_projects()
+            for example in examples:
+                if example["id"] == project_id:
+                    return JSONResponse(status_code=200, content={"ok": True, "project": example})
+            return JSONResponse(status_code=404, content=_safe_err("Project not found", code="not_found"))
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to get project: {e}"))
+
+@app.post("/projects/{project_id}/upload", dependencies=[Depends(require_api_key)])
+async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JSONResponse:
+    """Upload a file to a project's knowledge base."""
+    import time
+    try:
+        # First, save the file using existing upload logic
+        filename = file.filename or "upload.txt"
+        ext = os.path.splitext(filename)[1].lower()[:10]
+
+        if ext not in {".pdf", ".txt", ".md"}:
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err("Only PDF, TXT, and MD files are supported", code="invalid_file_type")
+            )
+
+        max_bytes = int(MAX_UPLOAD_MB) * 1024 * 1024
+        name = f"{uuidlib.uuid4().hex}{ext}"
+        path = UPLOAD_PATH / name
+
+        written = 0
+        chunk_size = 1024 * 1024  # 1MB
+
+        try:
+            with path.open("wb") as f:
+                while True:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > max_bytes:
+                        path.unlink(missing_ok=True)
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"File too large. Max {MAX_UPLOAD_MB}MB.",
+                        )
+                    f.write(chunk)
+        finally:
+            await file.close()
+
+        # Process the file and add to vector database
+        try:
+            from .vectordb import process_and_add_file
+            chunks_added = process_and_add_file(project_id, path)
+
+            # Update project metadata with file info
+            project = projects.get_project_by_id(project_id)
+            if project:
+                files_list = project.get("files", [])
+                files_list.append({
+                    "name": filename,
+                    "size": f"{written / 1024 / 1024:.2f} MB",
+                    "path": str(path),
+                    "chunks": chunks_added
+                })
+
+                # Update project
+                db = projects._load_projects_db()
+                db[project_id]["files"] = files_list
+                db[project_id]["updated_at"] = time.time()
+                projects._save_projects_db(db)
+
+            return JSONResponse(status_code=201, content={
+                "ok": True,
+                "filename": filename,
+                "size_bytes": written,
+                "chunks_added": chunks_added,
+                "message": f"File processed and {chunks_added} chunks added to knowledge base"
+            })
+
+        except Exception as e:
+            # Clean up file if processing failed
+            path.unlink(missing_ok=True)
+            raise e
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to upload file: {e}"))
+
+
+# ----------------------------
+# Chat & Upload
+# ----------------------------
+
 @app.post("/chat", dependencies=[Depends(require_api_key)])
 async def chat(inp: ChatIn) -> JSONResponse:
     """
@@ -540,10 +735,15 @@ async def chat(inp: ChatIn) -> JSONResponse:
     payload = {
         "message": inp.message,
         "conversation_id": inp.conversation_id,
+        "project_id": inp.project_id,
         "fun_mode": inp.fun_mode,
         "provider": inp.provider,
         "ollama_base_url": inp.ollama_base_url,
         "ollama_model": inp.ollama_model,
+        "provider_base_url": inp.provider_base_url,
+        "provider_model": inp.provider_model,
+        "llm_base_url": inp.llm_base_url,
+        "llm_model": inp.llm_model,
         "textTemperature": inp.textTemperature,
         "textMaxTokens": inp.textMaxTokens,
         "imgWidth": inp.imgWidth,
@@ -551,9 +751,12 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "imgSteps": inp.imgSteps,
         "imgCfg": inp.imgCfg,
         "imgSeed": inp.imgSeed,
+        "imgModel": inp.imgModel,
         "vidSeconds": inp.vidSeconds,
         "vidFps": inp.vidFps,
         "vidMotion": inp.vidMotion,
+        "vidModel": inp.vidModel,
+        "nsfwMode": inp.nsfwMode,
     }
 
     # Route through mode-aware handler

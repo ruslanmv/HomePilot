@@ -1,10 +1,11 @@
 """
 Search provider for HomePilot
-Implements web search with summarization (Grok-style)
+Implements web search with summarization (Grok-style) and conversation history search
 """
 from typing import Any, Dict, List, Optional
 import httpx
 from .llm import chat as llm_chat
+from .storage import get_messages
 
 
 async def web_search(query: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -106,3 +107,129 @@ async def run_search(payload: Dict[str, Any]) -> Dict[str, Any]:
         "results": results,
         "provider": provider
     }
+
+
+# ==========================================
+# Conversation History Search
+# ==========================================
+
+def search_conversation_history(
+    query: str,
+    conversation_id: Optional[str] = None,
+    limit: int = 20
+) -> List[Dict[str, Any]]:
+    """
+    Search through conversation history
+
+    Args:
+        query: Search query string
+        conversation_id: Optional conversation ID to search within specific conversation
+        limit: Maximum number of results to return
+
+    Returns:
+        List of matching messages with context
+    """
+    if not query or not query.strip():
+        return []
+
+    query_lower = query.lower().strip()
+    results = []
+
+    # Get messages from conversation
+    if conversation_id:
+        # Use get_messages which returns List[Dict] with 'role', 'content', 'created_at'
+        messages = get_messages(conversation_id, limit=1000)  # Get many messages for searching
+    else:
+        # If no conversation_id, search recent messages across all conversations
+        # For now, we'll just return empty since we need conversation context
+        return []
+
+    # Search through messages
+    for msg in messages:
+        content = msg.get("content", "")
+        if not content:
+            continue
+
+        content_lower = content.lower()
+
+        # Calculate relevance score
+        relevance_score = 0
+
+        # Exact phrase match (highest score)
+        if query_lower in content_lower:
+            relevance_score = 10
+            # Boost if it's at the start of the message
+            if content_lower.startswith(query_lower):
+                relevance_score += 5
+        # Word-based matching (medium score)
+        elif _contains_all_words(content_lower, query_lower):
+            relevance_score = 5
+
+        # No match
+        if relevance_score == 0:
+            continue
+
+        # Extract context snippet
+        snippet = _extract_snippet(content, query_lower)
+
+        # Use created_at from get_messages (ISO timestamp string)
+        timestamp = msg.get("created_at", "")
+
+        results.append({
+            "role": msg.get("role", ""),
+            "content": content,
+            "snippet": snippet,
+            "timestamp": timestamp,
+            "relevance_score": relevance_score
+        })
+
+    # Sort by relevance and timestamp
+    results.sort(key=lambda x: (
+        -x["relevance_score"],
+        -x["timestamp"]
+    ))
+
+    return results[:limit]
+
+
+def _contains_all_words(text: str, query: str) -> bool:
+    """Check if text contains all words from query"""
+    query_words = query.split()
+    return all(word in text for word in query_words)
+
+
+def _extract_snippet(text: str, query: str, context_length: int = 100) -> str:
+    """
+    Extract a snippet of text around the search query
+
+    Args:
+        text: Full text content
+        query: Search query
+        context_length: Characters to show around the match
+
+    Returns:
+        Text snippet with query highlighted
+    """
+    text_lower = text.lower()
+    query_lower = query.lower()
+
+    # Find first occurrence
+    idx = text_lower.find(query_lower)
+
+    if idx == -1:
+        # If no exact match, just return start of text
+        return text[:context_length * 2] + ("..." if len(text) > context_length * 2 else "")
+
+    # Calculate start and end positions
+    start = max(0, idx - context_length)
+    end = min(len(text), idx + len(query) + context_length)
+
+    snippet = text[start:end]
+
+    # Add ellipsis if truncated
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet = snippet + "..."
+
+    return snippet
