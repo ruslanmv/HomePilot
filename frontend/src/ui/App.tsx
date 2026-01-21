@@ -15,12 +15,14 @@ import {
   Paperclip,
   Server,
   PlugZap,
+  Trash2,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import VoiceMode from './VoiceMode'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
 import ModelsView from './Models'
+import { ImageViewer } from './ImageViewer'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -556,12 +558,14 @@ function HistoryPanel({
   searchQuery,
   setSearchQuery,
   onLoadConversation,
+  onDeleteConversation,
   onClose,
 }: {
   conversations: Conversation[]
   searchQuery: string
   setSearchQuery: (q: string) => void
   onLoadConversation: (convId: string) => void
+  onDeleteConversation: (convId: string) => void
   onClose: () => void
 }) {
   const filteredConversations = conversations.filter((conv) => {
@@ -608,20 +612,34 @@ function HistoryPanel({
           </div>
         ) : (
           filteredConversations.map((conv) => (
-            <button
+            <div
               key={conv.conversation_id}
-              onClick={() => onLoadConversation(conv.conversation_id)}
-              className="w-full text-left bg-black hover:bg-white/5 rounded-xl p-3 border border-white/5 hover:border-white/10 transition-all"
+              className="relative group"
             >
-              <div className="text-xs text-white/50 mb-1">
-                {new Date(conv.updated_at).toLocaleString()}
-              </div>
-              <div className="text-sm text-white/90 line-clamp-2">
-                {conv.last_content.length > 100
-                  ? conv.last_content.substring(0, 100) + '...'
-                  : conv.last_content}
-              </div>
-            </button>
+              <button
+                onClick={() => onLoadConversation(conv.conversation_id)}
+                className="w-full text-left bg-black hover:bg-white/5 rounded-xl p-3 border border-white/5 hover:border-white/10 transition-all"
+              >
+                <div className="text-xs text-white/50 mb-1">
+                  {new Date(conv.updated_at).toLocaleString()}
+                </div>
+                <div className="text-sm text-white/90 line-clamp-2 pr-8">
+                  {conv.last_content.length > 100
+                    ? conv.last_content.substring(0, 100) + '...'
+                    : conv.last_content}
+                </div>
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDeleteConversation(conv.conversation_id)
+                }}
+                className="absolute top-3 right-3 p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 transition-all border border-red-500/20"
+                title="Delete conversation"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
           ))
         )}
       </div>
@@ -1194,6 +1212,7 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [currentProject, setCurrentProject] = useState<{id: string, name: string, document_count: number} | null>(null)
 
   // Track last spoken message to avoid re-speaking
   const lastSpokenMessageIdRef = useRef<string | null>(null)
@@ -1447,7 +1466,7 @@ export default function App() {
       const data = await getJson<{
         ok: boolean
         conversation_id: string
-        messages: Array<{ role: string; content: string; created_at: string }>
+        messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
       }>(
         settings.backendUrl,
         `/conversations/${convId}/messages`,
@@ -1460,6 +1479,7 @@ export default function App() {
             id: `loaded-${idx}`,
             role: m.role as 'user' | 'assistant',
             text: m.content,
+            media: m.media || undefined,
           }))
         )
         setShowHistory(false)
@@ -1468,6 +1488,68 @@ export default function App() {
       console.error('Failed to load conversation:', err)
     }
   }, [settings.backendUrl, authHeaders])
+
+  const deleteConversation = useCallback(async (convId: string) => {
+    // Confirm deletion
+    if (!confirm('Delete this conversation? This will remove all messages permanently.')) {
+      return
+    }
+
+    try {
+      const response = await fetch(
+        `${settings.backendUrl.replace(/\/+$/, '')}/conversations/${convId}`,
+        {
+          method: 'DELETE',
+          headers: authHeaders,
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+
+      const data = await response.json()
+      if (data.ok) {
+        // Remove from local conversations list
+        setConversations((prev) => prev.filter((c) => c.conversation_id !== convId))
+
+        // If we're currently viewing this conversation, clear the messages
+        if (conversationId === convId) {
+          setMessages([])
+          setConversationId('')
+        }
+      }
+    } catch (err) {
+      console.error('Failed to delete conversation:', err)
+      alert(`Failed to delete conversation: ${err}`)
+    }
+  }, [settings.backendUrl, authHeaders, conversationId])
+
+  // Load project info on mount if project mode is active
+  useEffect(() => {
+    const loadProjectInfo = async () => {
+      const projectId = localStorage.getItem('homepilot_current_project')
+      if (projectId && mode === 'chat') {
+        try {
+          const response = await fetch(
+            `${settings.backendUrl.replace(/\/+$/, '')}/projects/${projectId}`,
+            { headers: authHeaders }
+          )
+          if (response.ok) {
+            const data = await response.json()
+            setCurrentProject({
+              id: projectId,
+              name: data.project.name,
+              document_count: data.project.document_count || 0
+            })
+          }
+        } catch (error) {
+          console.error('Error loading project info:', error)
+        }
+      }
+    }
+    loadProjectInfo()
+  }, [mode, settings.backendUrl, authHeaders])
 
   // Fetch conversations when history panel is opened
   useEffect(() => {
@@ -1663,15 +1745,18 @@ export default function App() {
           )
         )
       } catch (err: any) {
+        const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
+        // Distinguish between upload failure and processing failure
+        const failureType = errorMsg.includes('upload') || errorMsg.includes('413') || errorMsg.includes('File too large')
+          ? 'Upload failed'
+          : 'Processing failed'
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
               ? {
                   ...m,
                   pending: false,
-                  text: `Upload failed: ${
-                    typeof err?.message === 'string' ? err.message : 'backend error.'
-                  }`,
+                  text: `${failureType}: ${errorMsg}`,
                 }
               : m
           )
@@ -1695,6 +1780,144 @@ export default function App() {
     void sendTextOrIntent(v)
     setInput('')
   }, [input, sendTextOrIntent])
+
+  // Handle edit from image viewer
+  const handleEditFromViewer = useCallback(
+    async (imageUrl: string) => {
+      setLightbox(null)
+      setMode('edit')
+
+      const tmpId = uuid()
+      const userMsg: Msg = { id: uuid(), role: 'user', text: `Edit image: ${imageUrl}` }
+      const pendingMsg: Msg = { id: tmpId, role: 'assistant', text: 'Preparing to edit...', pending: true }
+      setMessages((prev) => [...prev, userMsg, pendingMsg])
+
+      try {
+        // Fetch the image and convert to File
+        const response = await fetch(imageUrl)
+        const blob = await response.blob()
+        const filename = imageUrl.split('/').pop() || 'image.png'
+        const file = new File([blob], filename, { type: blob.type })
+
+        // Upload the file
+        const fd = new FormData()
+        fd.append('file', file)
+        const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
+        const uploadedUrl = up.url as string
+
+        // Trigger edit workflow with default prompt
+        const editPrompt = 'make it more vibrant and detailed'
+        const data = await postJson<any>(
+          settings.backendUrl,
+          '/chat',
+          {
+            message: `edit ${uploadedUrl} ${editPrompt}`,
+            conversation_id: conversationId,
+            fun_mode: settings.funMode,
+            mode: 'edit',
+            provider: settingsDraft.providerChat,
+            provider_base_url: settingsDraft.baseUrlChat || undefined,
+            provider_model: settingsDraft.modelChat,
+          },
+          authHeaders
+        )
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tmpId
+              ? { ...msg, pending: false, text: data.text ?? 'Done.', media: data.media ?? null }
+              : msg
+          )
+        )
+      } catch (error: any) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tmpId
+              ? { ...msg, pending: false, text: `Edit failed: ${error.message || 'Unknown error'}` }
+              : msg
+          )
+        )
+      }
+    },
+    [authHeaders, conversationId, settings, settingsDraft]
+  )
+
+  // Handle video generation from image viewer
+  const handleGenerateVideoFromViewer = useCallback(
+    async (imageUrl: string, videoPrompt: string) => {
+      setLightbox(null)
+      setMode('animate')
+
+      const tmpId = uuid()
+      const userMsg: Msg = {
+        id: uuid(),
+        role: 'user',
+        text: `Generate video: ${videoPrompt}`,
+      }
+      const pendingMsg: Msg = {
+        id: tmpId,
+        role: 'assistant',
+        text: 'Creating animation...',
+        pending: true,
+      }
+      setMessages((prev) => [...prev, userMsg, pendingMsg])
+
+      try {
+        // Fetch the image and convert to File
+        const response = await fetch(imageUrl)
+        const blob = await response.blob()
+        const filename = imageUrl.split('/').pop() || 'image.png'
+        const file = new File([blob], filename, { type: blob.type })
+
+        // Upload the file
+        const fd = new FormData()
+        fd.append('file', file)
+        const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
+        const uploadedUrl = up.url as string
+
+        // Trigger animate workflow
+        const data = await postJson<any>(
+          settings.backendUrl,
+          '/chat',
+          {
+            message: `animate ${uploadedUrl} ${videoPrompt}`,
+            conversation_id: conversationId,
+            fun_mode: settings.funMode,
+            mode: 'animate',
+            provider: settingsDraft.providerChat,
+            provider_base_url: settingsDraft.baseUrlChat || undefined,
+            provider_model: settingsDraft.modelChat,
+            vidModel: settingsDraft.modelVideo,
+            vidSeconds: settingsDraft.vidSeconds,
+            vidFps: settingsDraft.vidFps,
+            nsfwMode: settingsDraft.nsfwMode,
+          },
+          authHeaders
+        )
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tmpId
+              ? { ...msg, pending: false, text: data.text ?? 'Done.', media: data.media ?? null }
+              : msg
+          )
+        )
+      } catch (error: any) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tmpId
+              ? {
+                  ...msg,
+                  pending: false,
+                  text: `Video generation failed: ${error.message || 'Unknown error'}`,
+                }
+              : msg
+          )
+        )
+      }
+    },
+    [authHeaders, conversationId, settings, settingsDraft]
+  )
 
   return (
     <div className="flex h-screen bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
@@ -1721,6 +1944,7 @@ export default function App() {
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
             onLoadConversation={loadConversation}
+            onDeleteConversation={deleteConversation}
             onClose={() => setShowHistory(false)}
           />
         )}
@@ -1731,13 +1955,22 @@ export default function App() {
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')
             if (currentProjectId && mode === 'chat') {
+              const projectName = currentProject?.name || 'Project'
+              const docCount = currentProject?.document_count || 0
+
               return (
                 <div className="inline-flex items-center gap-2 bg-blue-600/20 text-blue-400 text-xs font-semibold px-4 py-2 rounded-full border border-blue-600/30">
                   <Folder size={12} />
-                  <span>Project Mode</span>
+                  <span>{projectName}</span>
+                  {docCount > 0 && (
+                    <span className="px-1.5 py-0.5 bg-blue-600/30 rounded text-[10px]" title={`${docCount} document chunks`}>
+                      📚 {docCount}
+                    </span>
+                  )}
                   <button
                     onClick={() => {
                       localStorage.removeItem('homepilot_current_project')
+                      setCurrentProject(null)
                       onNewConversation() // Start fresh conversation
                     }}
                     className="ml-1 p-0.5 hover:bg-blue-600/30 rounded-full transition-colors"
@@ -1769,11 +2002,59 @@ export default function App() {
           <ProjectsView
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
-            onProjectSelect={(projectId) => {
-              // When a project is selected, switch to chat mode with project context
-              // Store project ID for later use in chat
-              localStorage.setItem('homepilot_current_project', projectId)
-              setMode('chat')
+            onProjectSelect={async (projectId) => {
+              try {
+                // Fetch project info to get instructions and document count
+                const response = await fetch(
+                  `${settingsDraft.backendUrl.replace(/\/+$/, '')}/projects/${projectId}`,
+                  {
+                    headers: authHeaders,
+                  }
+                )
+
+                if (response.ok) {
+                  const data = await response.json()
+                  const project = data.project
+
+                  // Store project ID and info for chat context
+                  localStorage.setItem('homepilot_current_project', projectId)
+                  setCurrentProject({
+                    id: projectId,
+                    name: project.name,
+                    document_count: project.document_count || 0
+                  })
+
+                  // Start new conversation for this project
+                  onNewConversation()
+
+                  // Add welcome message explaining the project
+                  const documentInfo = project.document_count > 0
+                    ? `\n\n📚 **Knowledge Base**: ${project.document_count} document chunks indexed. I have access to your uploaded documents and will reference them when relevant.`
+                    : project.is_example
+                    ? '\n\n💡 **Tip**: Upload documents in Project mode to enable document-based chat.'
+                    : ''
+
+                  const welcomeMsg: Msg = {
+                    id: `welcome-${Date.now()}`,
+                    role: 'assistant',
+                    text: `# ${project.name}\n\n${project.description || 'Welcome to your project!'}\n\n**Instructions**: ${project.instructions || 'No specific instructions set.'}${documentInfo}\n\nHow can I help you today?`,
+                    pending: false,
+                  }
+
+                  setMessages([welcomeMsg])
+                  setMode('chat')
+                } else {
+                  // Fallback if fetch fails
+                  localStorage.setItem('homepilot_current_project', projectId)
+                  setCurrentProject(null)
+                  setMode('chat')
+                }
+              } catch (error) {
+                console.error('Error fetching project:', error)
+                // Fallback
+                localStorage.setItem('homepilot_current_project', projectId)
+                setMode('chat')
+              }
             }}
           />
         ) : mode === 'imagine' ? (
@@ -1855,30 +2136,14 @@ export default function App() {
         )}
       </main>
 
-      {/* Lightbox */}
+      {/* Image Viewer with Edit and Video Generation */}
       {lightbox ? (
-        <div
-          className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-8 backdrop-blur-md animate-in fade-in duration-200"
-          onClick={() => setLightbox(null)}
-          role="dialog"
-          aria-modal="true"
-        >
-          <button
-            type="button"
-            className="absolute top-6 right-6 p-2 bg-white/10 rounded-full hover:bg-white/20 transition-colors"
-            onClick={() => setLightbox(null)}
-            aria-label="Close preview"
-          >
-            <X size={24} />
-          </button>
-
-          <img
-            src={lightbox}
-            className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl border border-white/10"
-            onClick={(e) => e.stopPropagation()}
-            alt="preview"
-          />
-        </div>
+        <ImageViewer
+          imageUrl={lightbox}
+          onClose={() => setLightbox(null)}
+          onEdit={handleEditFromViewer}
+          onGenerateVideo={handleGenerateVideoFromViewer}
+        />
       ) : null}
     </div>
   )
