@@ -3,6 +3,20 @@
   "description": "HomePilot Model Catalog - Curated models for all providers",
   "version": "1.0.0",
   "last_updated": "2026-01-21",
+  "_comment": "🧪 EXPERIMENTAL: Add Civitai models using scripts/download.py --add-civitai --version-id <ID> --type <image|video>",
+  "_experimental_example": {
+    "civitai_model_template": {
+      "id": "model_file_name.safetensors",
+      "label": "Model Name (Civitai)",
+      "description": "Model description from Civitai",
+      "size_gb": 2.0,
+      "download_url": "https://civitai.com/api/download/models/<version_id>",
+      "install_path": "models/checkpoints/",
+      "civitai_version_id": "version_id_here",
+      "civitai_model_id": "model_id_here"
+    },
+    "usage": "Run: python scripts/download.py --add-civitai --version-id 128713 --type image"
+  },
   "providers": {
     "ollama": {
       "chat": [
