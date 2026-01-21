@@ -61,6 +61,9 @@ export type ModelsParams = {
   baseUrlChat?: string
   baseUrlImages?: string
   baseUrlVideo?: string
+
+  // Experimental features
+  experimentalCivitai?: boolean
 }
 
 // -----------------------------------------------------------------------------
@@ -203,16 +206,30 @@ export default function ModelsView(props: ModelsParams) {
   const [installBusy, setInstallBusy] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
+  // Civitai-specific state
+  const [civitaiVersionId, setCivitaiVersionId] = useState<string>('')
+
   // Filter providers based on model type
   const availableProviders = useMemo(() => {
     if (modelType === 'chat') {
-      // For chat: all providers EXCEPT comfyui
-      return providers.filter(p => p.name !== 'comfyui')
+      // For chat: all providers EXCEPT comfyui and civitai
+      return providers.filter(p => p.name !== 'comfyui' && p.name !== 'civitai')
     } else {
-      // For image/video: ONLY comfyui
-      return providers.filter(p => p.name === 'comfyui')
+      // For image/video: comfyui + civitai (if experimental enabled)
+      const filtered = providers.filter(p => p.name === 'comfyui')
+
+      // Add Civitai if experimental enabled
+      if (props.experimentalCivitai) {
+        filtered.push({
+          name: 'civitai',
+          label: '🧪 Civitai (Experimental)',
+          kind: modelType as any,
+        })
+      }
+
+      return filtered
     }
-  }, [providers, modelType])
+  }, [providers, modelType, props.experimentalCivitai])
 
   useEffect(() => {
     // When modelType changes, update provider + baseUrl defaults
@@ -278,11 +295,12 @@ export default function ModelsView(props: ModelsParams) {
 
   // Load installed models (only for local providers)
   const refreshInstalled = async () => {
-    // Skip fetching installed models for remote API providers
-    // They don't have "installed" models - they're remote services
-    const isRemoteProvider = ['openai', 'claude', 'watsonx'].includes(provider)
+    // Skip fetching installed models for remote API providers and Civitai
+    // Remote providers: they're cloud services, not local installations
+    // Civitai: download-only provider, models get installed to ComfyUI after download
+    const skipProviders = ['openai', 'claude', 'watsonx', 'civitai']
 
-    if (isRemoteProvider) {
+    if (skipProviders.includes(provider)) {
       setInstalled([])
       setInstalledError(null)
       setInstalledLoading(false)
@@ -380,23 +398,8 @@ export default function ModelsView(props: ModelsParams) {
   }, [supportedForSelection, installed, installedSet])
 
   const tryInstall = async (modelId: string, install?: ModelCatalogEntry['install']) => {
-    // If backend doesn't support /models/install, we fall back to guidance
-    if (provider === 'ollama') {
-      const cmd = `ollama pull ${modelId}`
-      navigator.clipboard?.writeText(cmd).catch(() => {})
-      setToast(`Install command copied. Run in terminal: ${cmd}`)
-    } else if (provider === 'comfyui') {
-      const modelName = modelId
-      const hint = `Model: ${modelName}\nSee comfyui/workflows/MODELS_README.md for download URLs and installation paths.`
-      navigator.clipboard?.writeText(hint).catch(() => {})
-      setToast('Model info copied. Check MODELS_README.md for download instructions.')
-    } else {
-      setToast('Remote providers do not support local installation.')
-      return
-    }
-
-    // If backend install endpoint exists, try it.
     setInstallBusy(modelId)
+
     try {
       const body: InstallRequest = {
         provider,
@@ -405,19 +408,45 @@ export default function ModelsView(props: ModelsParams) {
         base_url: baseUrl.trim() || undefined,
         options: {},
       }
+
+      // Add civitai_version_id if provider is civitai
+      if (provider === 'civitai') {
+        if (!civitaiVersionId.trim()) {
+          setToast('Please enter a Civitai version ID')
+          setInstallBusy(null)
+          return
+        }
+        (body as any).civitai_version_id = civitaiVersionId.trim()
+        setToast(`Starting Civitai download for version ${civitaiVersionId}...`)
+      } else {
+        setToast(`Starting download for ${modelId}...`)
+      }
+
       const res = await postJson<InstallResponse>(backendUrl, '/models/install', body, authKey)
+
       if (res?.ok) {
-        setToast(res.message || 'Installation initiated successfully.')
+        setToast(res.message || `Successfully installed ${modelId}`)
+        // Refresh installed list after successful installation
+        setTimeout(() => {
+          refreshInstalled()
+        }, 2000)
       } else {
         setToast(res?.message || 'Installation request sent.')
       }
-      // After a short delay refresh installed list
-      setTimeout(() => {
-        refreshInstalled()
-      }, 1500)
     } catch (e: any) {
-      // Endpoint not implemented yet → keep UI usable
-      // (already showed copy hint above)
+      // Fallback to copy-paste instructions if API fails
+      if (provider === 'ollama') {
+        const cmd = `ollama pull ${modelId}`
+        navigator.clipboard?.writeText(cmd).catch(() => {})
+        setToast(`API failed. Command copied: ${cmd}`)
+      } else if (provider === 'comfyui') {
+        navigator.clipboard?.writeText(`Run: python scripts/download.py --model ${modelId}`).catch(() => {})
+        setToast('API failed. Download command copied to clipboard.')
+      } else if (provider === 'civitai') {
+        setToast(`Installation failed: ${e?.message || String(e)}`)
+      } else {
+        setToast(`Installation failed: ${e?.message || String(e)}`)
+      }
     } finally {
       setInstallBusy(null)
     }
@@ -531,11 +560,79 @@ export default function ModelsView(props: ModelsParams) {
         </div>
       </div>
 
+      {/* Civitai Input Section (only when provider is civitai) */}
+      {provider === 'civitai' && (
+        <div className="px-8 py-4 border-b border-white/10 bg-gradient-to-br from-blue-500/5 to-blue-500/0">
+          <div className="max-w-7xl">
+            <div className="flex items-start gap-4">
+              <div className="flex-1">
+                <label className="text-[10px] text-blue-400 font-bold uppercase tracking-wider block mb-2.5">
+                  🧪 Civitai Version ID
+                </label>
+                <input
+                  value={civitaiVersionId}
+                  onChange={(e) => setCivitaiVersionId(e.target.value)}
+                  placeholder="e.g., 128713 (from Civitai model URL)"
+                  className="w-full bg-white/5 border border-blue-500/20 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:border-blue-500/40 focus:bg-white/10 transition-all placeholder:text-white/30"
+                />
+                <div className="mt-2 text-[10px] text-blue-300/60 font-medium">
+                  Find the version ID in the Civitai model URL (e.g., civitai.com/models/<strong>128713</strong>)
+                </div>
+              </div>
+              <div className="flex-shrink-0 pt-7">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!civitaiVersionId.trim()) {
+                      setToast('Please enter a Civitai version ID first')
+                      return
+                    }
+                    tryInstall(civitaiVersionId, undefined)
+                  }}
+                  disabled={!civitaiVersionId.trim() || installBusy !== null}
+                  className={[
+                    "px-6 py-3 rounded-xl text-white text-sm font-bold uppercase tracking-wide transition-all shadow-lg relative overflow-hidden",
+                    installBusy !== null
+                      ? "bg-blue-700 cursor-wait shadow-blue-700/30"
+                      : !civitaiVersionId.trim()
+                      ? "bg-blue-600/50 cursor-not-allowed shadow-blue-600/10"
+                      : "bg-blue-600 hover:bg-blue-500 shadow-blue-600/20 hover:shadow-blue-600/30 hover:scale-105 active:scale-95"
+                  ].join(" ")}
+                >
+                  {installBusy !== null && (
+                    <span className="absolute inset-0 bg-gradient-to-r from-blue-700 via-blue-600 to-blue-700 animate-shimmer" style={{
+                      backgroundSize: '200% 100%',
+                      animation: 'shimmer 2s infinite linear'
+                    }} />
+                  )}
+                  <span className="relative z-10 flex items-center gap-2.5 justify-center">
+                    {installBusy !== null ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        <span>Downloading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download size={16} strokeWidth={2.5} />
+                        <span>Download from Civitai</span>
+                      </>
+                    )}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-8 py-6 scrollbar-hide">
         <div className="flex flex-col gap-4 max-w-7xl mx-auto">
-          {/* Error messages */}
-          {installedError ? (
+          {/* Error messages - hide for Civitai since it's download-only */}
+          {installedError && provider !== 'civitai' ? (
             <div className="rounded-xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-amber-500/5 p-5 text-amber-200">
               <div className="font-bold text-sm text-amber-100">Configuration Required</div>
               <div className="text-xs mt-2 text-amber-200/70 font-medium">
@@ -563,6 +660,9 @@ export default function ModelsView(props: ModelsParams) {
                 {(() => {
                   const isRemoteProvider = ['openai', 'claude', 'watsonx'].includes(provider)
                   if (installedLoading) return 'Loading…'
+                  if (provider === 'civitai') {
+                    return '🧪 Experimental: Enter version ID to download'
+                  }
                   if (isRemoteProvider) {
                     return `${supportedForSelection.length} API Models`
                   }
@@ -574,7 +674,17 @@ export default function ModelsView(props: ModelsParams) {
             <div className="divide-y divide-white/5">
               {merged.length === 0 ? (
                 <div className="p-12 text-white/50 text-sm text-center font-medium">
-                  No models found. Try changing provider/base URL and refresh.
+                  {provider === 'civitai' ? (
+                    <div className="space-y-2">
+                      <div className="text-blue-400 font-bold">🧪 Civitai Download</div>
+                      <div>Enter a Civitai version ID above to download models.</div>
+                      <div className="text-xs text-white/40">
+                        Find models at <a href="https://civitai.com" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">civitai.com</a>
+                      </div>
+                    </div>
+                  ) : (
+                    'No models found. Try changing provider/base URL and refresh.'
+                  )}
                 </div>
               ) : (
                 merged.map((row) => {
@@ -633,13 +743,38 @@ export default function ModelsView(props: ModelsParams) {
                         {canDownload ? (
                           <button
                             type="button"
-                            className="px-5 py-2.5 rounded-xl bg-white text-black hover:bg-gray-100 text-xs font-bold uppercase tracking-wide flex items-center gap-2.5 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-white/20 hover:shadow-white/30 hover:scale-105 active:scale-95"
+                            className={[
+                              "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wide flex items-center gap-2.5 transition-all shadow-lg relative overflow-hidden",
+                              installBusy === row.id
+                                ? "bg-blue-600 text-white cursor-wait shadow-blue-600/30"
+                                : "bg-white text-black hover:bg-gray-100 hover:shadow-white/30 hover:scale-105 active:scale-95 shadow-white/20"
+                            ].join(" ")}
                             disabled={installBusy === row.id}
                             onClick={() => void tryInstall(row.id, row.install)}
-                            title="Download and install model"
+                            title={installBusy === row.id ? "Downloading model... Please wait" : "Download and install model"}
                           >
-                            <Download size={15} strokeWidth={2.5} />
-                            <span>{installBusy === row.id ? 'Installing...' : 'Install'}</span>
+                            {installBusy === row.id && (
+                              <span className="absolute inset-0 bg-gradient-to-r from-blue-600 via-blue-500 to-blue-600 animate-shimmer" style={{
+                                backgroundSize: '200% 100%',
+                                animation: 'shimmer 2s infinite linear'
+                              }} />
+                            )}
+                            <span className="relative z-10 flex items-center gap-2.5">
+                              {installBusy === row.id ? (
+                                <>
+                                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  <span>Downloading...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Download size={15} strokeWidth={2.5} />
+                                  <span>Install</span>
+                                </>
+                              )}
+                            </span>
                           </button>
                         ) : null}
                       </div>
@@ -654,15 +789,41 @@ export default function ModelsView(props: ModelsParams) {
 
       {/* Toast notification */}
       {toast ? (
-        <div className="fixed bottom-8 right-8 z-50 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl border border-white/20 rounded-2xl px-6 py-4 text-sm text-white shadow-2xl shadow-black/40 animate-in slide-in-from-bottom-4 flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="font-medium">{toast}</span>
+        <div className="fixed bottom-8 right-8 z-50 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-xl border border-white/20 rounded-2xl px-6 py-4 text-sm text-white shadow-2xl shadow-black/40 animate-in slide-in-from-bottom-4 flex items-center gap-3 min-w-[320px]">
+          {toast.includes('Successfully') || toast.includes('installed') ? (
+            <div className="flex-shrink-0">
+              <CheckCircle2 size={18} className="text-emerald-400" />
+            </div>
+          ) : toast.includes('failed') || toast.includes('error') || toast.includes('Error') ? (
+            <div className="flex-shrink-0">
+              <XCircle size={18} className="text-red-400" />
+            </div>
+          ) : (
+            <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse flex-shrink-0" />
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-white/90 truncate">{toast}</div>
+            {installBusy && (
+              <div className="text-[10px] text-white/50 mt-1 font-medium">
+                Large models may take several minutes...
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
 
       <style>{`
         .scrollbar-hide::-webkit-scrollbar { display: none; }
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+
+        .animate-shimmer {
+          animation: shimmer 2s infinite linear;
+        }
       `}</style>
     </div>
   )

@@ -3,6 +3,20 @@
   "description": "HomePilot Model Catalog - Curated models for all providers",
   "version": "1.0.0",
   "last_updated": "2026-01-21",
+  "_comment": "🧪 EXPERIMENTAL: Add Civitai models using scripts/download.py --add-civitai --version-id <ID> --type <image|video>",
+  "_experimental_example": {
+    "civitai_model_template": {
+      "id": "model_file_name.safetensors",
+      "label": "Model Name (Civitai)",
+      "description": "Model description from Civitai",
+      "size_gb": 2.0,
+      "download_url": "https://civitai.com/api/download/models/<version_id>",
+      "install_path": "checkpoints/",
+      "civitai_version_id": "version_id_here",
+      "civitai_model_id": "model_id_here"
+    },
+    "usage": "Run: python scripts/download.py --add-civitai --version-id 128713 --type image"
+  },
   "providers": {
     "ollama": {
       "chat": [
@@ -82,25 +96,25 @@
           "size_gb": 6.94,
           "resolution": "1024x1024",
           "download_url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors",
-          "install_path": "models/checkpoints/"
+          "install_path": "checkpoints/"
         },
         {
           "id": "flux1-schnell.safetensors",
           "label": "Flux.1 Schnell",
-          "description": "Fast Flux model optimized for speed. 4-step generation.",
+          "description": "Fast Flux model optimized for speed. 4-step generation. Note: Requires additional files (CLIP, VAE).",
           "size_gb": 23.8,
           "resolution": "1024x1024",
           "download_url": "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/flux1-schnell.safetensors",
-          "install_path": "models/checkpoints/"
+          "install_path": "unet/"
         },
         {
           "id": "flux1-dev.safetensors",
           "label": "Flux.1 Dev",
-          "description": "High-quality Flux model for detailed generations.",
+          "description": "High-quality Flux model for detailed generations. Note: Requires additional files (CLIP, VAE).",
           "size_gb": 23.8,
           "resolution": "1024x1024",
           "download_url": "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors",
-          "install_path": "models/checkpoints/"
+          "install_path": "unet/"
         },
         {
           "id": "ponyDiffusionV6XL.safetensors",
@@ -109,7 +123,7 @@
           "size_gb": 6.46,
           "resolution": "1024x1024",
           "download_url": "https://civitai.com/api/download/models/290640",
-          "install_path": "models/checkpoints/"
+          "install_path": "checkpoints/"
         },
         {
           "id": "sd15.safetensors",
@@ -118,7 +132,7 @@
           "size_gb": 4.27,
           "resolution": "512x512",
           "download_url": "https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors",
-          "install_path": "models/checkpoints/"
+          "install_path": "checkpoints/"
         },
         {
           "id": "realisticVisionV51.safetensors",
@@ -127,7 +141,7 @@
           "size_gb": 2.13,
           "resolution": "512x512",
           "download_url": "https://civitai.com/api/download/models/130072",
-          "install_path": "models/checkpoints/"
+          "install_path": "checkpoints/"
         }
       ],
       "video": [
@@ -140,7 +154,7 @@
           "resolution": "1024x576",
           "frames": 25,
           "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt-1-1/resolve/main/svd_xt_1_1.safetensors",
-          "install_path": "models/checkpoints/"
+          "install_path": "checkpoints/"
         },
         {
           "id": "svd_xt.safetensors",
@@ -150,7 +164,7 @@
           "resolution": "1024x576",
           "frames": 25,
           "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt/resolve/main/svd_xt.safetensors",
-          "install_path": "models/checkpoints/"
+          "install_path": "checkpoints/"
         },
         {
           "id": "svd.safetensors",
@@ -160,7 +174,7 @@
           "resolution": "1024x576",
           "frames": 14,
           "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid/resolve/main/svd.safetensors",
-          "install_path": "models/checkpoints/"
+          "install_path": "checkpoints/"
         }
       ]
     },

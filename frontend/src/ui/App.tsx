@@ -1202,9 +1202,9 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState<SettingsModelV2>(() => {
     const backendUrl = localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
     const apiKey = localStorage.getItem('homepilot_api_key') || ''
-    const providerChat = (localStorage.getItem('homepilot_provider_chat') || 'openai_compat') as string
-    const providerImages = (localStorage.getItem('homepilot_provider_images') || 'openai_compat') as string
-    const providerVideo = (localStorage.getItem('homepilot_provider_video') || 'openai_compat') as string
+    const providerChat = (localStorage.getItem('homepilot_provider_chat') || 'ollama') as string
+    const providerImages = (localStorage.getItem('homepilot_provider_images') || 'ollama') as string
+    const providerVideo = (localStorage.getItem('homepilot_provider_video') || 'ollama') as string
     const baseUrlChat = localStorage.getItem('homepilot_base_url_chat') || ''
     const baseUrlImages = localStorage.getItem('homepilot_base_url_images') || ''
     const baseUrlVideo = localStorage.getItem('homepilot_base_url_video') || ''
@@ -1228,6 +1228,9 @@ export default function App() {
       // Ignore parsing errors
     }
 
+    // Prompt refinement: default to true (enabled by default for better results)
+    const promptRefinement = localStorage.getItem('homepilot_prompt_refinement') !== 'false'
+
     return {
       backendUrl,
       apiKey,
@@ -1243,6 +1246,7 @@ export default function App() {
       preset,
       ttsEnabled,
       selectedVoice,
+      promptRefinement,
     }
   })
 
@@ -1343,6 +1347,8 @@ export default function App() {
     localStorage.setItem('homepilot_tts_enabled', String(settingsDraft.ttsEnabled ?? true))
     localStorage.setItem('homepilot_voice_uri', settingsDraft.selectedVoice ?? '')
     localStorage.setItem('homepilot_nsfw_mode', String(!!settingsDraft.nsfwMode))
+    localStorage.setItem('homepilot_experimental_civitai', String(!!settingsDraft.experimentalCivitai))
+    localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
 
     // Save TTS settings to nexus_settings_v1 format (used by SpeechService)
     // This ensures the selected voice is actually used for TTS
@@ -1394,9 +1400,9 @@ export default function App() {
       setSettingsDraft({
         backendUrl: settings.backendUrl,
         apiKey: settings.apiKey,
-        providerChat: localStorage.getItem('homepilot_provider_chat') || 'openai_compat',
-        providerImages: localStorage.getItem('homepilot_provider_images') || 'openai_compat',
-        providerVideo: localStorage.getItem('homepilot_provider_video') || 'openai_compat',
+        providerChat: localStorage.getItem('homepilot_provider_chat') || 'ollama',
+        providerImages: localStorage.getItem('homepilot_provider_images') || 'ollama',
+        providerVideo: localStorage.getItem('homepilot_provider_video') || 'ollama',
         baseUrlChat: localStorage.getItem('homepilot_base_url_chat') || '',
         baseUrlImages: localStorage.getItem('homepilot_base_url_images') || '',
         baseUrlVideo: localStorage.getItem('homepilot_base_url_video') || '',
@@ -1405,6 +1411,8 @@ export default function App() {
         modelVideo: localStorage.getItem('homepilot_model_video') || '',
         preset: (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med',
         nsfwMode: localStorage.getItem('homepilot_nsfw_mode') === 'true',
+        experimentalCivitai: localStorage.getItem('homepilot_experimental_civitai') === 'true',
+        promptRefinement: localStorage.getItem('homepilot_prompt_refinement') !== 'false',
         textTemperature: parseFloat(localStorage.getItem('homepilot_text_temp') || '0.7'),
         textMaxTokens: parseInt(localStorage.getItem('homepilot_text_maxtokens') || '2048'),
         imgWidth: parseInt(localStorage.getItem('homepilot_img_width') || '1024'),
@@ -1781,6 +1789,7 @@ export default function App() {
             imgCfg={settingsDraft.imgCfg}
             imgSeed={settingsDraft.imgSeed}
             nsfwMode={settingsDraft.nsfwMode}
+            promptRefinement={settingsDraft.promptRefinement}
           />
         ) : mode === 'models' ? (
           <ModelsView
@@ -1792,6 +1801,7 @@ export default function App() {
             baseUrlChat={settingsDraft.baseUrlChat}
             baseUrlImages={settingsDraft.baseUrlImages}
             baseUrlVideo={settingsDraft.baseUrlVideo}
+            experimentalCivitai={settingsDraft.experimentalCivitai}
           />
         ) : mode === 'search' ? (
           // Search mode: use chat interface with mode-specific behavior

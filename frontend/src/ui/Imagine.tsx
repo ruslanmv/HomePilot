@@ -36,6 +36,7 @@ export type ImagineParams = {
   imgCfg?: number
   imgSeed?: number
   nsfwMode?: boolean
+  promptRefinement?: boolean
 }
 
 type ChatResponse = {
@@ -114,6 +115,10 @@ export default function ImagineView(props: ImagineParams) {
       const width = props.imgWidth && props.imgWidth > 0 ? props.imgWidth : aspectObj.genW
       const height = props.imgHeight && props.imgHeight > 0 ? props.imgHeight : aspectObj.genH
 
+      // Map 'comfyui' provider to 'ollama' for prompt refinement
+      // ComfyUI is used automatically for actual image generation
+      const llmProvider = props.providerImages === 'comfyui' ? 'ollama' : props.providerImages
+
       const data = await postJson<ChatResponse>(
         props.backendUrl,
         '/chat',
@@ -122,7 +127,7 @@ export default function ImagineView(props: ImagineParams) {
           mode: 'imagine',
 
           // Provider override fields (preferred by backend)
-          provider: props.providerImages,
+          provider: llmProvider,
           provider_base_url: props.baseUrlImages || undefined,
           provider_model: props.modelImages || undefined,
 
@@ -134,6 +139,7 @@ export default function ImagineView(props: ImagineParams) {
           imgSeed: props.imgSeed,
           imgModel: props.modelImages,
           nsfwMode: props.nsfwMode,
+          promptRefinement: props.promptRefinement ?? true,
         },
         authKey
       )
