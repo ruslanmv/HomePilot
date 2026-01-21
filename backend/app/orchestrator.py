@@ -182,29 +182,48 @@ async def orchestrate(
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
 
-        # Determine which video workflow to use based on selected model
-        video_workflow_name = "img2vid"
-        if vid_model:
-            # Map model name to workflow filename
-            video_workflow_map = {
-                "svd": "img2vid",
-                "wan-2.2": "img2vid-wan",
-                "seedream": "img2vid-seedream",
-            }
-            video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
+        try:
+            # Determine which video workflow to use based on selected model
+            video_workflow_name = "img2vid"
+            if vid_model:
+                # Map model name to workflow filename
+                video_workflow_map = {
+                    "svd": "img2vid",
+                    "wan-2.2": "img2vid-wan",
+                    "seedream": "img2vid-seedream",
+                }
+                video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
 
-        res = run_workflow(
-            video_workflow_name,
-            {
-                "image_url": image_url,
-                "motion": vid_motion if vid_motion is not None else "subtle cinematic camera drift",
-                "seconds": vid_seconds if vid_seconds is not None else 6,
-            },
-        )
-        video_url = (res.get("videos") or [None])[0]
-        text = "Here you go."
-        add_message(cid, "assistant", text)
-        return {"conversation_id": cid, "text": text, "media": {"video_url": video_url}}
+            res = run_workflow(
+                video_workflow_name,
+                {
+                    "image_path": image_url,  # Changed from image_url to image_path to match workflow
+                    "motion": vid_motion if vid_motion is not None else "subtle cinematic camera drift",
+                    "seconds": vid_seconds if vid_seconds is not None else 6,
+                },
+            )
+            video_url = (res.get("videos") or [None])[0]
+            text = "Here you go."
+            media = {"video_url": video_url}
+            add_message(cid, "assistant", text, media)
+            return {"conversation_id": cid, "text": text, "media": media}
+        except FileNotFoundError as e:
+            error_str = str(e)
+            if "svd.safetensors" in error_str.lower() or "model" in error_str.lower():
+                text = "Video generation requires the SVD (Stable Video Diffusion) model which is not installed. This is a large (~10GB) specialized model for image-to-video. Currently, only image editing is available."
+            else:
+                text = f"Video generation error: {error_str}"
+            add_message(cid, "assistant", text)
+            return {"conversation_id": cid, "text": text, "media": None}
+        except Exception as e:
+            error_str = str(e)
+            # Check for SVD-specific errors
+            if "svd.safetensors" in error_str or "CLIP_VISION" in error_str or "SVD_img2vid" in error_str:
+                text = "Video generation requires the SVD (Stable Video Diffusion) model which is not installed. This feature is currently unavailable. Try using Edit mode instead to modify images."
+            else:
+                text = f"Video generation error: {error_str}"
+            add_message(cid, "assistant", text)
+            return {"conversation_id": cid, "text": text, "media": None}
 
     # --- Edit ---
     if (m == "edit") or (image_url and EDIT_RE.search(text_in)):
@@ -213,11 +232,16 @@ async def orchestrate(
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
 
-        res = run_workflow("edit", {"image_url": image_url, "instruction": text_in})
+        res = run_workflow("edit", {
+            "image_path": image_url,  # Changed from image_url to match workflow
+            "prompt": text_in,  # Changed from instruction to match workflow
+            "negative_prompt": "blurry, low quality, distorted"  # Added default negative prompt
+        })
         images = res.get("images", []) or []
         text = "Done."
-        add_message(cid, "assistant", text)
-        return {"conversation_id": cid, "text": text, "media": {"images": images}}
+        media = {"images": images} if images else None
+        add_message(cid, "assistant", text, media)
+        return {"conversation_id": cid, "text": text, "media": media}
 
     # --- Imagine ---
     if (m == "imagine") or IMAGE_RE.search(text_in):
@@ -284,13 +308,19 @@ async def orchestrate(
 
             # Short Grok-like caption
             text = "Here you go." if images else "Generated."
-            add_message(cid, "assistant", text)
             media = {"images": images} if images else None
+            add_message(cid, "assistant", text, media)
             return {"conversation_id": cid, "text": text, "media": media}
 
         except FileNotFoundError as e:
-            # In CI/tests, workflows may not be mounted. Return a stable text-only response.
-            text = "Image generation is not configured on this server. Please set up ComfyUI workflows."
+            # Distinguish between missing workflows and missing model files
+            error_str = str(e)
+            if "Workflow file not found" in error_str:
+                text = "Image generation is not configured on this server. Please set up ComfyUI workflows."
+            elif any(keyword in error_str.lower() for keyword in ["model", "checkpoint", "safetensors", "ckpt"]):
+                text = "No models are downloaded yet. Please run 'make download-recommended' to download image generation models (~14GB)."
+            else:
+                text = f"Image generation error: Required file not found. {error_str}"
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
         except Exception as e:
