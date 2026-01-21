@@ -42,6 +42,9 @@ export type SettingsModelV2 = {
   // NSFW/Spice mode
   nsfwMode?: boolean;
 
+  // Experimental features
+  experimentalCivitai?: boolean;
+
   // Legacy generation parameters (kept for compatibility)
   textTemperature?: number;
   textMaxTokens?: number;
@@ -393,6 +396,36 @@ export default function SettingsPanel({
           {value.nsfwMode && (
             <div className="mt-2 text-[10px] text-red-400/80 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
               <span className="font-semibold">⚠ Warning:</span> Uncensored mode enabled. Use responsibly and ensure compliance with local laws.
+            </div>
+          )}
+        </div>
+
+        {/* Experimental Civitai Toggle */}
+        <div className="border-t border-white/5 pt-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-white/40 font-semibold">🧪 Experimental: Civitai</div>
+              <div className="text-[10px] text-white/35 mt-1">Enable Civitai model downloads (image/video only)</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChangeDraft({ ...value, experimentalCivitai: !value.experimentalCivitai })}
+              className={[
+                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                value.experimentalCivitai ? "bg-blue-600" : "bg-white/10",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                  value.experimentalCivitai ? "translate-x-6" : "translate-x-1",
+                ].join(" ")}
+              />
+            </button>
+          </div>
+          {value.experimentalCivitai && (
+            <div className="mt-2 text-[10px] text-blue-400/80 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2">
+              <span className="font-semibold">ℹ️ Experimental:</span> Download models from Civitai.com in the Models page. Not all models may work correctly.
             </div>
           )}
         </div>
