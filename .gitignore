@@ -22,3 +22,4 @@ backend/data/uploads/
 backend/data/comfy_cache/
  copy*
 * copy* 
+/ComfyUI
