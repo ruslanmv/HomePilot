@@ -954,6 +954,82 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to upload file: {e}"))
 
+@app.delete("/projects/{project_id}", dependencies=[Depends(require_api_key)])
+async def delete_project(project_id: str) -> JSONResponse:
+    """Delete a project and its knowledge base."""
+    try:
+        result = projects.delete_project(project_id)
+        if result:
+            return JSONResponse(status_code=200, content={"ok": True, "message": "Project deleted successfully"})
+        else:
+            return JSONResponse(status_code=404, content=_safe_err("Project not found", code="not_found"))
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete project: {e}"))
+
+@app.put("/projects/{project_id}", dependencies=[Depends(require_api_key)])
+async def update_project(project_id: str, request: Request) -> JSONResponse:
+    """Update project details."""
+    try:
+        data = await request.json()
+        result = projects.update_project(project_id, data)
+        if result:
+            return JSONResponse(status_code=200, content={"ok": True, "project": result})
+        else:
+            return JSONResponse(status_code=404, content=_safe_err("Project not found", code="not_found"))
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to update project: {e}"))
+
+@app.get("/projects/{project_id}/documents", dependencies=[Depends(require_api_key)])
+async def list_project_documents(project_id: str) -> JSONResponse:
+    """List documents in a project's knowledge base."""
+    try:
+        project = projects.get_project_by_id(project_id)
+        if not project:
+            return JSONResponse(status_code=404, content=_safe_err("Project not found", code="not_found"))
+
+        documents = project.get("files", [])
+        return JSONResponse(status_code=200, content={"ok": True, "documents": documents})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to list documents: {e}"))
+
+@app.delete("/projects/{project_id}/documents/{document_name}", dependencies=[Depends(require_api_key)])
+async def delete_project_document(project_id: str, document_name: str) -> JSONResponse:
+    """Delete a document from a project's knowledge base."""
+    try:
+        project = projects.get_project_by_id(project_id)
+        if not project:
+            return JSONResponse(status_code=404, content=_safe_err("Project not found", code="not_found"))
+
+        # Remove from files list
+        files_list = project.get("files", [])
+        updated_files = [f for f in files_list if f.get("name") != document_name]
+
+        if len(updated_files) == len(files_list):
+            return JSONResponse(status_code=404, content=_safe_err("Document not found", code="not_found"))
+
+        # Delete physical file if exists
+        for f in files_list:
+            if f.get("name") == document_name and f.get("path"):
+                try:
+                    Path(f["path"]).unlink(missing_ok=True)
+                except Exception as e:
+                    print(f"Error deleting file: {e}")
+
+        # Update project
+        db = projects._load_projects_db()
+        db[project_id]["files"] = updated_files
+        db[project_id]["updated_at"] = time.time()
+        projects._save_projects_db(db)
+
+        # Note: We can't selectively delete chunks from ChromaDB easily
+        # So we inform the user that full re-indexing would be needed
+        return JSONResponse(status_code=200, content={
+            "ok": True,
+            "message": "Document removed from project. Note: For full knowledge base update, delete and re-upload all documents."
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete document: {e}"))
+
 
 # ----------------------------
 # Chat & Upload

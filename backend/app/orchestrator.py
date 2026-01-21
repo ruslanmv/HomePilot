@@ -37,6 +37,11 @@ def route_request(mode: str, payload: Dict[str, Any]) -> str:
 
     Returns: handler name
     """
+    # CRITICAL: Check if project_id is present - if so, route to project handler
+    # This enables RAG (document chat) when a project is active
+    if payload.get("project_id"):
+        return "project"
+
     normalized = (mode or "").strip().lower()
 
     if normalized == "search":
