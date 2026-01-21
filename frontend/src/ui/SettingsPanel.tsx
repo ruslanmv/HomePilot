@@ -39,6 +39,9 @@ export type SettingsModelV2 = {
   ttsEnabled?: boolean;
   selectedVoice?: string;
 
+  // NSFW/Spice mode
+  nsfwMode?: boolean;
+
   // Legacy generation parameters (kept for compatibility)
   textTemperature?: number;
   textMaxTokens?: number;
@@ -75,6 +78,10 @@ export default function SettingsPanel({
   const [healthErr, setHealthErr] = useState<string | null>(null);
   const [dismissOllamaBanner, setDismissOllamaBanner] = useState(false);
 
+  // Voice state
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [voicesInitialized, setVoicesInitialized] = useState(false);
+
   async function fetchHealth() {
     setHealthErr(null);
     try {
@@ -101,12 +108,12 @@ export default function SettingsPanel({
     }
   }
 
-  async function fetchModelsFor(providerKey: string, baseUrlOverride?: string) {
+  async function fetchModelsFor(providerKey: string, baseUrlOverride?: string, modelType?: 'image' | 'video') {
     setModelsLoading((m) => ({ ...m, [providerKey]: true }));
     setModelsErr((m) => ({ ...m, [providerKey]: null }));
     try {
       const base = baseUrlOverride || providers?.[providerKey]?.base_url || "";
-      const url = `${value.backendUrl}/models?provider=${encodeURIComponent(providerKey)}&base_url=${encodeURIComponent(base)}`;
+      const url = `${value.backendUrl}/models?provider=${encodeURIComponent(providerKey)}&base_url=${encodeURIComponent(base)}${modelType ? `&model_type=${encodeURIComponent(modelType)}` : ''}`;
       const res = await fetch(url);
       const data = await res.json();
       if (!data.ok) throw new Error(data.message || "Failed to fetch models");
@@ -121,9 +128,55 @@ export default function SettingsPanel({
     }
   }
 
+  function loadVoices() {
+    if ('speechSynthesis' in window) {
+      const voices = window.speechSynthesis.getVoices();
+      setAvailableVoices(voices);
+      if (voices.length > 0) {
+        console.log(`[SettingsPanel] Loaded ${voices.length} voices`);
+
+        // Auto-select a natural-sounding voice on first load if none is selected
+        if (!voicesInitialized && !value.selectedVoice && voices.length > 0) {
+          // Prefer Google voices, female voices, or US English
+          const preferred = voices.find(
+            (v) =>
+              v.name.toLowerCase().includes('google') &&
+              v.name.toLowerCase().includes('us') &&
+              v.name.toLowerCase().includes('english')
+          ) ||
+            voices.find((v) => v.name.toLowerCase().includes('google') && v.lang.startsWith('en')) ||
+            voices.find((v) => v.name.toLowerCase().includes('female') && v.lang.startsWith('en')) ||
+            voices.find((v) => v.lang.startsWith('en-US')) ||
+            voices[0];
+
+          if (preferred) {
+            console.log(`[SettingsPanel] Auto-selected voice: ${preferred.name}`);
+            onChangeDraft({ ...value, selectedVoice: preferred.name });
+          }
+          setVoicesInitialized(true);
+        }
+      }
+    }
+  }
+
   useEffect(() => {
     fetchHealth();
     fetchProviders();
+
+    // Load voices for TTS
+    loadVoices();
+
+    // Voices may load asynchronously (especially on Chrome/Quest)
+    if ('speechSynthesis' in window && window.speechSynthesis.onvoiceschanged !== undefined) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+
+    // Cleanup
+    return () => {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value.backendUrl]);
 
@@ -158,12 +211,37 @@ export default function SettingsPanel({
     );
   }
 
+  function baseUrlRow(
+    label: string,
+    providerKey: ProviderKey,
+    valueUrl: string | undefined,
+    setUrl: (v: string) => void
+  ) {
+    const info = providers?.[providerKey];
+    const hint = info?.base_url || '';
+    return (
+      <div className="border-t border-white/5 pt-3">
+        <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">{label}</div>
+        <input
+          className="w-full bg-black border border-white/10 rounded-xl px-3 py-2 text-xs text-white"
+          value={valueUrl ?? ''}
+          placeholder={hint ? `Default: ${hint}` : 'Optional'}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+        <div className="mt-1 text-[10px] text-white/35">
+          Leave blank to use the backend default. Useful when running services locally (e.g. Ollama on http://localhost:11434).
+        </div>
+      </div>
+    );
+  }
+
   function modelSelectRow(
     label: string,
     providerKey: ProviderKey,
     modelValue: string,
     setModel: (m: string) => void,
-    baseUrlOverride?: string
+    baseUrlOverride?: string,
+    modelType?: 'image' | 'video'
   ) {
     const list = models[providerKey] || [];
     const loading = !!modelsLoading[providerKey];
@@ -175,7 +253,7 @@ export default function SettingsPanel({
           <div className="text-[11px] uppercase tracking-wider text-white/40 font-semibold">{label}</div>
           <button
             type="button"
-            onClick={() => fetchModelsFor(providerKey, baseUrlOverride)}
+            onClick={() => fetchModelsFor(providerKey, baseUrlOverride, modelType)}
             className="px-3 py-1.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white font-semibold disabled:opacity-50"
             disabled={loading || !providerKey}
           >
@@ -280,9 +358,44 @@ export default function SettingsPanel({
           {providerSelectRow("Video Provider", value.providerVideo, (k) => onChangeDraft({ ...value, providerVideo: k }))}
         </div>
 
-        {modelSelectRow("Chat Model", value.providerChat, value.modelChat, (m) => onChangeDraft({ ...value, modelChat: m }))}
-        {modelSelectRow("Image Model (if supported)", value.providerImages, value.modelImages, (m) => onChangeDraft({ ...value, modelImages: m }))}
-        {modelSelectRow("Video Model (if supported)", value.providerVideo, value.modelVideo, (m) => onChangeDraft({ ...value, modelVideo: m }))}
+        {baseUrlRow("Chat Base URL", value.providerChat, value.baseUrlChat, (v) => onChangeDraft({ ...value, baseUrlChat: v }))}
+        {modelSelectRow("Chat Model", value.providerChat, value.modelChat, (m) => onChangeDraft({ ...value, modelChat: m }), value.baseUrlChat)}
+
+        {baseUrlRow("Image Base URL", value.providerImages, value.baseUrlImages, (v) => onChangeDraft({ ...value, baseUrlImages: v }))}
+        {modelSelectRow("Image Model (if supported)", value.providerImages, value.modelImages, (m) => onChangeDraft({ ...value, modelImages: m }), value.baseUrlImages, value.providerImages === 'comfyui' ? 'image' : undefined)}
+
+        {baseUrlRow("Video Base URL", value.providerVideo, value.baseUrlVideo, (v) => onChangeDraft({ ...value, baseUrlVideo: v }))}
+        {modelSelectRow("Video Model (if supported)", value.providerVideo, value.modelVideo, (m) => onChangeDraft({ ...value, modelVideo: m }), value.baseUrlVideo, value.providerVideo === 'comfyui' ? 'video' : undefined)}
+
+        {/* NSFW/Spice Mode Toggle */}
+        <div className="border-t border-white/5 pt-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-white/40 font-semibold">Spice Mode (NSFW)</div>
+              <div className="text-[10px] text-white/35 mt-1">Enable uncensored content generation</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChangeDraft({ ...value, nsfwMode: !value.nsfwMode })}
+              className={[
+                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                value.nsfwMode ? "bg-red-600" : "bg-white/10",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                  value.nsfwMode ? "translate-x-6" : "translate-x-1",
+                ].join(" ")}
+              />
+            </button>
+          </div>
+          {value.nsfwMode && (
+            <div className="mt-2 text-[10px] text-red-400/80 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              <span className="font-semibold">⚠ Warning:</span> Uncensored mode enabled. Use responsibly and ensure compliance with local laws.
+            </div>
+          )}
+        </div>
 
         {/* Hardware */}
         <div className="border-t border-white/5 pt-3">
@@ -477,10 +590,16 @@ export default function SettingsPanel({
                 onChange={(e) => onChangeDraft({ ...value, selectedVoice: e.target.value })}
               >
                 <option value="">System Default</option>
-                {/* Voice options will be populated by browser */}
+                {availableVoices.map((voice) => (
+                  <option key={voice.voiceURI} value={voice.name}>
+                    {voice.name} ({voice.lang})
+                  </option>
+                ))}
               </select>
               <div className="mt-1 text-[10px] text-white/40">
-                Choose the voice personality for assistant responses
+                {availableVoices.length > 0
+                  ? `Choose from ${availableVoices.length} available voices`
+                  : 'Loading voices...'}
               </div>
             </div>
           </div>

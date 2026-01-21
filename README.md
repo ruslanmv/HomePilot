@@ -117,12 +117,28 @@ cp .env.example .env
 
 ```
 
-### 3. Add Models
+### 3. Download Models (Automated)
 
-Download your weights and place them in the mounted directories:
+HomePilot provides automated model installation with three preset options:
 
-* **LLM:** Place vLLM-compatible snapshots in `models/llm/`.
-* **ComfyUI:** Place checkpoints, VAEs, and CLIP models in `models/comfy/`.
+```bash
+# Recommended: FLUX Schnell + SDXL (~14GB)
+make download-recommended
+
+# Or choose a different preset:
+# make download-minimal      # ~7GB - FLUX Schnell only
+# make download-full         # ~65GB - All models including FLUX Dev, SD1.5, SVD
+```
+
+The script automatically:
+- ✓ Checks if models exist before downloading
+- ✓ Resumes interrupted downloads
+- ✓ Retries failed downloads with exponential backoff
+- ✓ Shows progress and summary statistics
+
+For detailed installation options and manual installation, see [MODEL_INSTALLATION.md](MODEL_INSTALLATION.md)
+
+**LLM Models** are managed separately via Ollama (auto-pulled when needed) or manually via vLLM.
 
 ### 4. Build and Run
 
@@ -173,10 +189,15 @@ HomePilot is **workflow-driven**. Instead of hardcoded pipelines, it loads JSON 
 | --- | --- |
 | `make help` | Show available commands |
 | `make install` | Install dependencies and build Docker images |
+| `make download` | Download recommended models (~14GB) |
+| `make download-minimal` | Download minimal models (~7GB) |
+| `make download-full` | Download all models (~65GB) |
+| `make download-verify` | Verify downloaded models and show disk usage |
 | `make run` | Start the full stack (detached) |
 | `make logs` | Tail logs for all services |
 | `make down` | Stop and remove containers |
 | `make health` | Run best-effort health checks |
+| `make health-check` | Comprehensive health check of all services |
 | `make dev` | Run frontend locally + backend in Docker |
 | `make clean` | Remove local artifacts and cache |
 

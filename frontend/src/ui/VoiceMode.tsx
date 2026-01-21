@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Mic, MicOff, Settings, Volume2, VolumeX, Zap, Radio, X } from "lucide-react";
 import { createVAD } from "./voice/vad";
 
 declare global {
@@ -6,6 +7,18 @@ declare global {
     SpeechService?: any;
   }
 }
+
+// Grok-like colors and styles
+const THEME = {
+  bg: "bg-[#0a0a0a]",
+  surface: "bg-[#161616]",
+  surfaceHover: "hover:bg-[#202020]",
+  border: "border-[#2a2a2a]",
+  text: "text-[#e0e0e0]",
+  textDim: "text-[#888]",
+  accent: "text-white",
+  active: "bg-white text-black",
+};
 
 export default function VoiceMode({
   onSendText,
@@ -16,15 +29,59 @@ export default function VoiceMode({
   const [handsFree, setHandsFree] = useState(false);
   const [interim, setInterim] = useState("");
   const [listening, setListening] = useState(false);
-  const [conversationLog, setConversationLog] = useState<Array<{ role: 'user' | 'assistant', text: string }>>([]);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoice, setSelectedVoice] = useState<string>(() => {
+    return localStorage.getItem('homepilot_voice_uri') || '';
+  });
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('homepilot_tts_enabled') !== 'false';
+  });
 
   const vadRef = useRef<ReturnType<typeof createVAD> | null>(null);
-  const logEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when log updates
+  // --- Logic Section ---
+
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversationLog, interim]);
+    if (!svc) return;
+
+    const loadVoices = () => {
+      const availableVoices = svc.getVoices();
+      setVoices(availableVoices);
+
+      if (!selectedVoice && availableVoices.length > 0) {
+        // Auto-select a natural voice
+        const defaultVoice = availableVoices.find((v: SpeechSynthesisVoice) =>
+          v.name.toLowerCase().includes('google') && v.lang.startsWith('en')
+        ) || availableVoices.find((v: SpeechSynthesisVoice) => v.default) || availableVoices[0];
+
+        setSelectedVoice(defaultVoice.name);
+        localStorage.setItem('homepilot_voice_uri', defaultVoice.name);
+      }
+    };
+
+    loadVoices();
+    if (window.speechSynthesis.onvoiceschanged !== undefined) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }, [svc, selectedVoice]);
+
+  useEffect(() => {
+    if (!svc || !selectedVoice) return;
+    const voice = voices.find(v => v.name === selectedVoice);
+    if (voice) {
+      svc.saveTTSConfig?.({
+        speechVoiceURI: voice.voiceURI,
+        speechVoice: voice.name,
+        speechLang: voice.lang,
+        ttsEnabled,
+      });
+    }
+  }, [svc, selectedVoice, voices, ttsEnabled]);
+
+  useEffect(() => {
+    localStorage.setItem('homepilot_tts_enabled', String(ttsEnabled));
+  }, [ttsEnabled]);
 
   useEffect(() => {
     if (!svc) return;
@@ -32,27 +89,16 @@ export default function VoiceMode({
     svc.setRecognitionCallbacks({
       onStart: () => {
         setListening(true);
-        // Pause VAD while recognition is active to avoid mic conflicts
-        if (handsFree && vadRef.current) {
-          vadRef.current.stop();
-        }
+        if (handsFree && vadRef.current) vadRef.current.stop();
       },
       onEnd: () => {
         setListening(false);
-        // Resume VAD when recognition ends
-        if (handsFree && vadRef.current) {
-          vadRef.current.start().catch((e: any) => console.warn("VAD resume failed", e));
-        }
+        if (handsFree && vadRef.current) vadRef.current.start().catch(console.warn);
       },
       onInterim: (t: string) => setInterim(t),
       onResult: (finalText: string) => {
         setInterim("");
-        if (finalText?.trim()) {
-          // Add to conversation log
-          setConversationLog(prev => [...prev, { role: 'user', text: finalText.trim() }]);
-          // Send to chat backend
-          onSendText(finalText.trim());
-        }
+        if (finalText?.trim()) onSendText(finalText.trim());
       },
       onError: (msg: string) => {
         setListening(false);
@@ -63,20 +109,15 @@ export default function VoiceMode({
 
   useEffect(() => {
     if (!handsFree) return;
-
-    // Hands-free mode: VAD triggers start/stop of STT
     vadRef.current = createVAD(
       () => {
-        // Barge-in: stop TTS immediately when user starts speaking
         if (svc?.stopSpeaking) svc.stopSpeaking();
         svc?.startSTT?.({});
       },
       () => svc?.stopSTT?.(),
       { threshold: 0.035, minSpeechMs: 250, silenceMs: 900 }
     );
-
-    vadRef.current.start().catch((e: any) => console.warn("VAD start failed", e));
-
+    vadRef.current.start().catch((e) => console.warn("VAD start failed", e));
     return () => {
       vadRef.current?.stop?.();
       vadRef.current = null;
@@ -85,11 +126,11 @@ export default function VoiceMode({
 
   if (!svc) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center px-6">
-        <div className="text-center">
+      <div className="flex-1 flex items-center justify-center">
+        <div className={`${THEME.surface} border ${THEME.border} rounded-3xl p-8 text-center max-w-md`}>
           <div className="text-6xl mb-4">🎤</div>
           <div className="text-xl font-semibold text-white mb-2">Voice Mode</div>
-          <div className="text-sm text-white/50">
+          <div className={`text-sm ${THEME.textDim}`}>
             Speech service not loaded. Please refresh the page.
           </div>
         </div>
@@ -97,75 +138,115 @@ export default function VoiceMode({
     );
   }
 
+  // --- UI Section (Grok Style) ---
+
   return (
-    <div className="flex-1 flex flex-col h-full w-full max-w-[52rem] mx-auto">
-      {/* Voice Mode Header */}
-      <div className="px-4 py-6 border-b border-white/5">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="text-4xl">🎤</div>
-          <div>
-            <div className="text-2xl font-bold text-white">Voice Mode</div>
-            <div className="text-sm text-white/50">Speak naturally with HomePilot</div>
+    <div className="flex-1 flex items-center justify-center px-4 py-8">
+      <div className={`w-full max-w-2xl mx-auto rounded-3xl border ${THEME.border} ${THEME.surface} overflow-hidden shadow-2xl transition-all duration-300`}>
+        {/* Header */}
+        <div className={`flex items-center justify-between px-6 py-4 border-b ${THEME.border}`}>
+          <div className="flex items-center gap-3">
+            {/* HomePilot Voice Icon */}
+            <div className="w-8 h-8 flex items-center justify-center bg-white text-black rounded-lg">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM12 6C13.66 6 15 7.34 15 9C15 10.66 13.66 12 12 12C10.34 12 9 10.66 9 9C9 7.34 10.34 6 12 6ZM12 20C9.33 20 7 18 7 15.5C7 15.22 7.22 15 7.5 15H16.5C16.78 15 17 15.22 17 15.5C17 18 14.67 20 12 20Z" fill="currentColor"/>
+              </svg>
+            </div>
+            <span className={`text-sm font-semibold tracking-tight ${THEME.accent}`}>HomePilot Voice</span>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+              className={`p-2 rounded-full ${THEME.textDim} hover:text-white ${THEME.surfaceHover} transition-colors`}
+            >
+              {showVoiceSettings ? <X size={18} /> : <Settings size={18} />}
+            </button>
           </div>
         </div>
-      </div>
 
-      {/* Conversation Log */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
-        {conversationLog.length === 0 && !interim && (
-          <div className="text-center text-white/40 py-12">
-            <div className="text-6xl mb-4">👋</div>
-            <div className="text-lg mb-2">Start a voice conversation</div>
-            <div className="text-sm">
-              Click <span className="font-bold">Talk</span> to speak, or enable <span className="font-bold">Hands-free</span> for continuous listening
+        {/* Main Visualizer Area */}
+        <div className="relative h-64 flex flex-col items-center justify-center p-6 bg-gradient-to-b from-transparent to-black/20">
+
+          {/* Pulsing Orb */}
+          <div className="relative mb-6">
+            <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${listening ? 'scale-110 bg-white shadow-[0_0_40px_rgba(255,255,255,0.3)]' : 'bg-[#222] scale-100'}`}>
+              {listening ? (
+                <div className="space-y-1 flex gap-1 h-8 items-center">
+                  <div className="w-1.5 bg-black animate-[bounce_1s_infinite] h-4"></div>
+                  <div className="w-1.5 bg-black animate-[bounce_1.2s_infinite] h-6"></div>
+                  <div className="w-1.5 bg-black animate-[bounce_0.8s_infinite] h-5"></div>
+                  <div className="w-1.5 bg-black animate-[bounce_1.1s_infinite] h-4"></div>
+                </div>
+              ) : (
+                <MicOff className="text-white/30" size={28} />
+              )}
             </div>
-          </div>
-        )}
-
-        {conversationLog.map((entry, idx) => (
-          <div
-            key={idx}
-            className={`flex gap-4 ${entry.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            {entry.role === 'assistant' && (
-              <div className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center flex-shrink-0 font-bold text-sm mt-1">
-                /
-              </div>
+            {listening && (
+              <div className="absolute inset-0 rounded-full border border-white/20 animate-ping"></div>
             )}
-            <div
-              className={[
-                'max-w-[85%] px-5 py-3 rounded-2xl',
-                entry.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-white/5 text-white',
-              ].join(' ')}
-            >
-              <div className="text-sm leading-relaxed">{entry.text}</div>
-            </div>
           </div>
-        ))}
 
-        {/* Interim (what user is currently saying) */}
-        {interim && (
-          <div className="flex justify-end gap-4">
-            <div className="max-w-[85%] px-5 py-3 rounded-2xl bg-blue-600/50 text-white border-2 border-blue-400">
-              <div className="text-sm leading-relaxed italic">💭 {interim}</div>
+          {/* Text Output */}
+          <div className="text-center min-h-[3rem] max-w-lg px-4">
+            {interim ? (
+              <div className="space-y-2">
+                <span className={`text-lg font-medium ${THEME.accent} animate-pulse`}>{interim}</span>
+                <div className="flex justify-center gap-1">
+                  <div className="w-1.5 h-1.5 bg-white/60 rounded-full animate-bounce"></div>
+                  <div className="w-1.5 h-1.5 bg-white/60 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                  <div className="w-1.5 h-1.5 bg-white/60 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                </div>
+              </div>
+            ) : (
+              <span className={`text-sm ${THEME.textDim}`}>
+                {listening ? "Listening..." : handsFree ? "Waiting for speech..." : "Tap mic to start"}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Settings Expandable */}
+        {showVoiceSettings && (
+          <div className={`px-6 py-4 border-t ${THEME.border} bg-[#111] animate-in slide-in-from-top-2`}>
+            <label className={`text-xs font-semibold uppercase tracking-wider ${THEME.textDim} mb-3 block`}>Voice Persona</label>
+            <select
+              className={`w-full bg-[#1a1a1a] border ${THEME.border} rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-colors appearance-none cursor-pointer`}
+              value={selectedVoice}
+              onChange={(e) => {
+                setSelectedVoice(e.target.value);
+                localStorage.setItem('homepilot_voice_uri', e.target.value);
+              }}
+            >
+              {voices.length === 0 && <option value="">Loading voices...</option>}
+              {voices.map((voice) => (
+                <option key={voice.voiceURI} value={voice.name}>
+                  {voice.name} ({voice.lang})
+                </option>
+              ))}
+            </select>
+            <div className={`mt-2 text-[10px] ${THEME.textDim}`}>
+              Choose from {voices.length} available voices
             </div>
           </div>
         )}
 
-        <div ref={logEndRef} />
-      </div>
+        {/* Control Footer */}
+        <div className={`p-4 border-t ${THEME.border} grid grid-cols-3 gap-3 bg-[#0f0f0f]`}>
 
-      {/* Voice Controls */}
-      <div className="px-4 py-4 border-t border-white/5">
-        <div className="flex items-center gap-3 mb-3">
+          {/* TTS Toggle */}
           <button
-            className={`flex-1 px-6 py-4 rounded-2xl font-bold text-lg transition-all ${
-              listening
-                ? "bg-red-600 hover:bg-red-700 text-white"
-                : "bg-blue-600 hover:bg-blue-700 text-white"
+            onClick={() => setTtsEnabled(!ttsEnabled)}
+            className={`flex flex-col items-center justify-center gap-1 py-3 rounded-xl border border-transparent transition-all ${
+              ttsEnabled ? "bg-white/10 text-white" : "hover:bg-white/5 text-[#666]"
             }`}
+          >
+            {ttsEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+            <span className="text-[10px] font-medium uppercase tracking-wide">TTS {ttsEnabled ? 'On' : 'Off'}</span>
+          </button>
+
+          {/* Main Mic Trigger */}
+          <button
             onClick={() => {
               if (listening) {
                 svc.stopSTT();
@@ -174,28 +255,30 @@ export default function VoiceMode({
                 svc.startSTT?.({});
               }
             }}
-          >
-            {listening ? "🔴 Stop Listening" : "🎤 Start Talking"}
-          </button>
-
-          <button
-            className={`px-6 py-4 rounded-2xl border-2 font-bold text-lg transition-all ${
-              handsFree
-                ? "bg-yellow-500/30 text-yellow-200 border-yellow-500/50"
-                : "bg-white/5 text-white/80 border-white/10 hover:bg-white/10"
+            className={`flex flex-col items-center justify-center gap-1 py-3 rounded-xl transition-all shadow-lg ${
+              listening
+                ? "bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20"
+                : "bg-white text-black hover:bg-gray-200"
             }`}
-            onClick={() => setHandsFree((v) => !v)}
-            title="Hands-free mode: automatically detect when you start speaking"
           >
-            {handsFree ? "🔥 Hands-free ON" : "🤚 Hands-free OFF"}
+            <Mic size={24} strokeWidth={2.5} />
           </button>
-        </div>
 
-        {/* Status */}
-        <div className="text-center text-sm text-white/60 min-h-[20px]">
-          {listening && !interim && "🎙️ Listening..."}
-          {!listening && handsFree && "🔥 Hands-free active - speak naturally"}
-          {!listening && !handsFree && "Click 'Start Talking' to begin"}
+          {/* Hands Free Toggle */}
+          <button
+            onClick={() => setHandsFree((v) => !v)}
+            className={`flex flex-col items-center justify-center gap-1 py-3 rounded-xl border transition-all ${
+              handsFree
+                ? "bg-white text-black border-white"
+                : "border-white/10 text-[#666] hover:text-white hover:bg-white/5"
+            }`}
+          >
+            {handsFree ? <Zap size={20} fill="currentColor" /> : <Radio size={20} />}
+            <span className="text-[10px] font-medium uppercase tracking-wide">
+              {handsFree ? 'Auto' : 'Manual'}
+            </span>
+          </button>
+
         </div>
       </div>
     </div>

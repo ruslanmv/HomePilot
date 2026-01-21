@@ -18,6 +18,18 @@ import {
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import VoiceMode from './VoiceMode'
+import ProjectsView from './ProjectsView'
+import ImagineView from './Imagine'
+
+// -----------------------------------------------------------------------------
+// Global type declarations
+// -----------------------------------------------------------------------------
+
+declare global {
+  interface Window {
+    SpeechService?: any;
+  }
+}
 
 // -----------------------------------------------------------------------------
 // Types (consolidated)
@@ -277,7 +289,7 @@ function SettingsPopover({
                   className="flex-1 bg-black border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-white/30 transition-colors"
                   value={value.ollamaModel}
                   onChange={(e) => onChange({ ...value, ollamaModel: e.target.value })}
-                  placeholder="llama3.1:8b"
+                  placeholder="llama3:8b"
                 />
                 <button
                   type="button"
@@ -561,7 +573,7 @@ function HistoryPanel({
   })
 
   return (
-    <div className="absolute top-0 right-0 w-96 h-full bg-[#121212] border-l border-white/10 shadow-2xl z-40 flex flex-col">
+    <div className="absolute top-0 left-0 w-96 h-full bg-[#121212] border-r border-white/10 shadow-2xl z-40 flex flex-col">
       <div className="flex items-center justify-between p-4 border-b border-white/10">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <Clock size={16} />
@@ -650,10 +662,18 @@ function Sidebar({
         <button
           type="button"
           className="w-full text-left bg-[#121212] hover:bg-[#1a1a1a] text-white/60 text-sm px-3 py-2.5 rounded-xl flex items-center gap-2 transition-colors group border border-white/5"
-          onClick={() => setShowSettings(false)}
+          onClick={() => {
+            setShowSettings(false)
+            setShowHistory(true)
+            // Focus search input after a brief delay to allow panel to render
+            setTimeout(() => {
+              const searchInput = document.querySelector('[placeholder="Search conversations..."]') as HTMLInputElement
+              searchInput?.focus()
+            }, 100)
+          }}
         >
           <Search size={16} className="group-hover:text-white/80 transition-colors" />
-          <span className="group-hover:text-white/80 transition-colors">Search</span>
+          <span className="group-hover:text-white/80 transition-colors">Search chats</span>
           <span className="ml-auto text-xs opacity-40 bg-white/5 px-1.5 py-0.5 rounded border border-white/10">
             Ctrl+K
           </span>
@@ -666,7 +686,6 @@ function Sidebar({
         <div className="flex flex-col gap-px">
           <NavItem icon={MessageSquare} label="Chat" active={mode === 'chat'} shortcut="Ctrl+J" onClick={() => setMode('chat')} />
           <NavItem icon={Mic} label="Voice" active={mode === 'voice'} shortcut="Ctrl+V" onClick={() => setMode('voice')} />
-          <NavItem icon={Search} label="Search" active={mode === 'search'} onClick={() => setMode('search')} />
           <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} />
           <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} />
           <NavItem icon={ImageIcon} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
@@ -1144,7 +1163,7 @@ export default function App() {
       localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
     const provider = (localStorage.getItem('homepilot_provider') as Provider) || 'backend'
     const ollamaUrl = localStorage.getItem('homepilot_ollama_url') || 'http://localhost:11434'
-    const ollamaModel = localStorage.getItem('homepilot_ollama_model') || 'llama3.1:8b'
+    const ollamaModel = localStorage.getItem('homepilot_ollama_model') || 'llama3:8b'
     const apiKey = localStorage.getItem('homepilot_api_key') || ''
     const funMode = localStorage.getItem('homepilot_funmode') === '1'
 
@@ -1184,12 +1203,28 @@ export default function App() {
     const providerChat = (localStorage.getItem('homepilot_provider_chat') || 'openai_compat') as string
     const providerImages = (localStorage.getItem('homepilot_provider_images') || 'openai_compat') as string
     const providerVideo = (localStorage.getItem('homepilot_provider_video') || 'openai_compat') as string
+    const baseUrlChat = localStorage.getItem('homepilot_base_url_chat') || ''
+    const baseUrlImages = localStorage.getItem('homepilot_base_url_images') || ''
+    const baseUrlVideo = localStorage.getItem('homepilot_base_url_video') || ''
     const modelChat = localStorage.getItem('homepilot_model_chat') || 'local-model'
     const modelImages = localStorage.getItem('homepilot_model_images') || ''
     const modelVideo = localStorage.getItem('homepilot_model_video') || ''
     const preset = (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med'
     const ttsEnabled = localStorage.getItem('homepilot_tts_enabled') !== 'false'
-    const selectedVoice = localStorage.getItem('homepilot_voice_uri') || ''
+
+    // Try to load voice from nexus_settings_v1 (used by SpeechService) first
+    let selectedVoice = localStorage.getItem('homepilot_voice_uri') || ''
+    try {
+      const nexusSettings = localStorage.getItem('nexus_settings_v1')
+      if (nexusSettings) {
+        const settings = JSON.parse(nexusSettings)
+        if (settings.speechVoice) {
+          selectedVoice = settings.speechVoice
+        }
+      }
+    } catch (e) {
+      // Ignore parsing errors
+    }
 
     return {
       backendUrl,
@@ -1197,6 +1232,9 @@ export default function App() {
       providerChat,
       providerImages,
       providerVideo,
+      baseUrlChat,
+      baseUrlImages,
+      baseUrlVideo,
       modelChat,
       modelImages,
       modelVideo,
@@ -1238,6 +1276,42 @@ export default function App() {
     if (messages.length > 0) endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length])
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check if user is typing in an input/textarea
+      const target = e.target as HTMLElement
+      const isInputField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'
+
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+K / Cmd+K: Open search
+        if (e.key === 'k') {
+          e.preventDefault()
+          setShowSettings(false)
+          setShowHistory(true)
+          // Focus search input after a brief delay
+          setTimeout(() => {
+            const searchInput = document.querySelector('[placeholder="Search conversations..."]') as HTMLInputElement
+            searchInput?.focus()
+          }, 100)
+        }
+        // Ctrl+J / Cmd+J: Switch to Chat mode
+        else if (e.key === 'j' && !isInputField) {
+          e.preventDefault()
+          setMode('chat')
+        }
+        // Ctrl+V / Cmd+V: Switch to Voice mode (only if not in input field to allow paste)
+        else if (e.key === 'v' && !isInputField) {
+          e.preventDefault()
+          setMode('voice')
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   const canSend = useMemo(() => input.trim().length > 0, [input])
 
   const authHeaders = useMemo(() => {
@@ -1257,12 +1331,48 @@ export default function App() {
     localStorage.setItem('homepilot_provider_chat', settingsDraft.providerChat)
     localStorage.setItem('homepilot_provider_images', settingsDraft.providerImages)
     localStorage.setItem('homepilot_provider_video', settingsDraft.providerVideo)
+    localStorage.setItem('homepilot_base_url_chat', settingsDraft.baseUrlChat || '')
+    localStorage.setItem('homepilot_base_url_images', settingsDraft.baseUrlImages || '')
+    localStorage.setItem('homepilot_base_url_video', settingsDraft.baseUrlVideo || '')
     localStorage.setItem('homepilot_model_chat', settingsDraft.modelChat)
     localStorage.setItem('homepilot_model_images', settingsDraft.modelImages)
     localStorage.setItem('homepilot_model_video', settingsDraft.modelVideo)
     localStorage.setItem('homepilot_preset_v2', settingsDraft.preset)
     localStorage.setItem('homepilot_tts_enabled', String(settingsDraft.ttsEnabled ?? true))
     localStorage.setItem('homepilot_voice_uri', settingsDraft.selectedVoice ?? '')
+    localStorage.setItem('homepilot_nsfw_mode', String(!!settingsDraft.nsfwMode))
+
+    // Save TTS settings to nexus_settings_v1 format (used by SpeechService)
+    // This ensures the selected voice is actually used for TTS
+    if (window.SpeechService && typeof window.SpeechService.saveTTSConfig === 'function') {
+      const voices = window.speechSynthesis?.getVoices() || []
+      const selectedVoiceName = settingsDraft.selectedVoice || ''
+      const selectedVoiceObj = voices.find((v) => v.name === selectedVoiceName)
+
+      const ttsConfig = {
+        speechVoice: selectedVoiceObj?.name || '',
+        speechVoiceURI: selectedVoiceObj?.voiceURI || '',
+        speechLang: selectedVoiceObj?.lang || 'en-US',
+        speechRate: 0.9,
+        speechPitch: 1.0,
+        speechVolume: 1.0,
+        ttsEnabled: settingsDraft.ttsEnabled ?? true,
+      }
+
+      console.log('[App] Saving TTS config:', ttsConfig)
+      window.SpeechService.saveTTSConfig(ttsConfig)
+    }
+
+    if (typeof settingsDraft.textTemperature === 'number') localStorage.setItem('homepilot_text_temp', String(settingsDraft.textTemperature))
+    if (typeof settingsDraft.textMaxTokens === 'number') localStorage.setItem('homepilot_text_maxtokens', String(settingsDraft.textMaxTokens))
+    if (typeof settingsDraft.imgWidth === 'number') localStorage.setItem('homepilot_img_width', String(settingsDraft.imgWidth))
+    if (typeof settingsDraft.imgHeight === 'number') localStorage.setItem('homepilot_img_height', String(settingsDraft.imgHeight))
+    if (typeof settingsDraft.imgSteps === 'number') localStorage.setItem('homepilot_img_steps', String(settingsDraft.imgSteps))
+    if (typeof settingsDraft.imgCfg === 'number') localStorage.setItem('homepilot_img_cfg', String(settingsDraft.imgCfg))
+    if (typeof settingsDraft.imgSeed === 'number') localStorage.setItem('homepilot_img_seed', String(settingsDraft.imgSeed))
+    if (typeof settingsDraft.vidSeconds === 'number') localStorage.setItem('homepilot_vid_seconds', String(settingsDraft.vidSeconds))
+    if (typeof settingsDraft.vidFps === 'number') localStorage.setItem('homepilot_vid_fps', String(settingsDraft.vidFps))
+    if (typeof settingsDraft.vidMotion === 'string') localStorage.setItem('homepilot_vid_motion', settingsDraft.vidMotion)
 
     // Also update old settings format for backward compatibility
     setSettings({
@@ -1285,10 +1395,24 @@ export default function App() {
         providerChat: localStorage.getItem('homepilot_provider_chat') || 'openai_compat',
         providerImages: localStorage.getItem('homepilot_provider_images') || 'openai_compat',
         providerVideo: localStorage.getItem('homepilot_provider_video') || 'openai_compat',
+        baseUrlChat: localStorage.getItem('homepilot_base_url_chat') || '',
+        baseUrlImages: localStorage.getItem('homepilot_base_url_images') || '',
+        baseUrlVideo: localStorage.getItem('homepilot_base_url_video') || '',
         modelChat: localStorage.getItem('homepilot_model_chat') || 'local-model',
         modelImages: localStorage.getItem('homepilot_model_images') || '',
         modelVideo: localStorage.getItem('homepilot_model_video') || '',
         preset: (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med',
+        nsfwMode: localStorage.getItem('homepilot_nsfw_mode') === 'true',
+        textTemperature: parseFloat(localStorage.getItem('homepilot_text_temp') || '0.7'),
+        textMaxTokens: parseInt(localStorage.getItem('homepilot_text_maxtokens') || '2048'),
+        imgWidth: parseInt(localStorage.getItem('homepilot_img_width') || '1024'),
+        imgHeight: parseInt(localStorage.getItem('homepilot_img_height') || '1024'),
+        imgSteps: parseInt(localStorage.getItem('homepilot_img_steps') || '20'),
+        imgCfg: parseFloat(localStorage.getItem('homepilot_img_cfg') || '5.0'),
+        imgSeed: parseInt(localStorage.getItem('homepilot_img_seed') || '-1'),
+        vidSeconds: parseInt(localStorage.getItem('homepilot_vid_seconds') || '4'),
+        vidFps: parseInt(localStorage.getItem('homepilot_vid_fps') || '8'),
+        vidMotion: localStorage.getItem('homepilot_vid_motion') || 'medium',
       })
     }
   }, [showSettings, settings])
@@ -1362,6 +1486,9 @@ export default function App() {
 
       setMessages((prev) => [...prev, user, pending])
 
+      // Get current project ID from localStorage if user selected one
+      const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+
       try {
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
@@ -1371,13 +1498,13 @@ export default function App() {
           {
             message: requestText,
             conversation_id: conversationId,
+            project_id: currentProjectId, // Include project_id for dynamic prompts
             fun_mode: settings.funMode,
             mode,
-            // Pass provider to backend - 'ollama' or null for backend default
-            provider: settings.provider === 'ollama' ? 'ollama' : null,
-            // Always pass Ollama settings so backend can use them when provider='ollama'
-            ollama_base_url: settings.ollamaUrl,
-            ollama_model: settings.ollamaModel,
+            // Use Enterprise Settings V2 provider/model/base_url
+            provider: settingsDraft.providerChat,
+            provider_base_url: settingsDraft.baseUrlChat || undefined,
+            provider_model: settingsDraft.modelChat,
             // Custom generation parameters (from settingsDraft)
             textTemperature: settingsDraft.textTemperature,
             textMaxTokens: settingsDraft.textMaxTokens,
@@ -1386,9 +1513,12 @@ export default function App() {
             imgSteps: settingsDraft.imgSteps,
             imgCfg: settingsDraft.imgCfg,
             imgSeed: settingsDraft.imgSeed,
+            imgModel: settingsDraft.modelImages,
             vidSeconds: settingsDraft.vidSeconds,
             vidFps: settingsDraft.vidFps,
             vidMotion: settingsDraft.vidMotion,
+            vidModel: settingsDraft.modelVideo,
+            nsfwMode: settingsDraft.nsfwMode,
           },
           authHeaders
         )
@@ -1427,9 +1557,7 @@ export default function App() {
       mode,
       settings.backendUrl,
       settings.funMode,
-      settings.ollamaModel,
-      settings.ollamaUrl,
-      settings.provider,
+      settingsDraft,
     ]
   )
 
@@ -1503,12 +1631,16 @@ export default function App() {
             conversation_id: conversationId,
             fun_mode: settings.funMode,
             mode: intent,
-            // FIX: Use 'provider' to match Python Pydantic model. 
-            // If settings says 'backend', send null so backend uses its own default.
-            provider: settings.provider === 'ollama' ? 'ollama' : null,
+            // Use Enterprise Settings V2 provider/model/base_url
+            provider: settingsDraft.providerChat,
+            provider_base_url: settingsDraft.baseUrlChat || undefined,
+            provider_model: settingsDraft.modelChat,
 
-            ollama_base_url: settings.ollamaUrl,
-            ollama_model: settings.ollamaModel,
+            // Video generation parameters
+            vidModel: settingsDraft.modelVideo,
+            vidSeconds: settingsDraft.vidSeconds,
+            vidFps: settingsDraft.vidFps,
+            nsfwMode: settingsDraft.nsfwMode,
           },
           authHeaders
         )
@@ -1543,9 +1675,7 @@ export default function App() {
       mode,
       settings.backendUrl,
       settings.funMode,
-      settings.ollamaModel,
-      settings.ollamaUrl,
-      settings.provider,
+      settingsDraft,
     ]
   )
 
@@ -1585,8 +1715,32 @@ export default function App() {
           />
         )}
 
-        {/* Top-right "Private" */}
+        {/* Top-right "Private" and Project Indicator */}
         <header className="absolute top-0 right-0 p-5 z-20 flex items-center gap-4">
+          {/* Project Indicator */}
+          {(() => {
+            const currentProjectId = localStorage.getItem('homepilot_current_project')
+            if (currentProjectId && mode === 'chat') {
+              return (
+                <div className="inline-flex items-center gap-2 bg-blue-600/20 text-blue-400 text-xs font-semibold px-4 py-2 rounded-full border border-blue-600/30">
+                  <Folder size={12} />
+                  <span>Project Mode</span>
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem('homepilot_current_project')
+                      onNewConversation() // Start fresh conversation
+                    }}
+                    className="ml-1 p-0.5 hover:bg-blue-600/30 rounded-full transition-colors"
+                    title="Exit project mode"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              )
+            }
+            return null
+          })()}
+
           <button
             type="button"
             className="inline-flex items-center gap-2 text-white/30 text-xs font-semibold hover:text-white transition-colors border border-transparent h-10 px-4 rounded-full hover:bg-white/5"
@@ -1601,8 +1755,33 @@ export default function App() {
 
         {mode === 'voice' ? (
           <VoiceMode onSendText={(text) => sendTextOrIntent(text)} />
-        ) : mode === 'search' || mode === 'project' ? (
-          // Search and Project modes: use chat interface with mode-specific behavior
+        ) : mode === 'project' ? (
+          <ProjectsView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            onProjectSelect={(projectId) => {
+              // When a project is selected, switch to chat mode with project context
+              // Store project ID for later use in chat
+              localStorage.setItem('homepilot_current_project', projectId)
+              setMode('chat')
+            }}
+          />
+        ) : mode === 'imagine' ? (
+          <ImagineView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            providerImages={settingsDraft.providerImages}
+            baseUrlImages={settingsDraft.baseUrlImages}
+            modelImages={settingsDraft.modelImages}
+            imgWidth={settingsDraft.imgWidth}
+            imgHeight={settingsDraft.imgHeight}
+            imgSteps={settingsDraft.imgSteps}
+            imgCfg={settingsDraft.imgCfg}
+            imgSeed={settingsDraft.imgSeed}
+            nsfwMode={settingsDraft.nsfwMode}
+          />
+        ) : mode === 'search' ? (
+          // Search mode: use chat interface with mode-specific behavior
           messages.length === 0 ? (
             <EmptyState
               mode={mode}
