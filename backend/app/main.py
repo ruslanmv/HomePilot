@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid as uuidlib
 import traceback
@@ -530,6 +531,64 @@ async def list_models(
         )
 
 
+@app.get("/model-catalog")
+async def get_model_catalog() -> JSONResponse:
+    """
+    Return the curated model catalog with recommended models for all providers.
+
+    The catalog is read from model_catalog_data.json and includes:
+    - Model IDs and labels
+    - Recommended flags
+    - Model descriptions, sizes, capabilities
+    - Download URLs and install paths (for ComfyUI)
+
+    This endpoint provides a static catalog that can be easily maintained by
+    editing the JSON file. To add/remove models, simply edit the JSON file.
+
+    Example: GET /model-catalog
+    Returns: { "ok": true, "providers": { ... }, "version": "1.0.0" }
+    """
+    try:
+        catalog_path = Path(__file__).parent / "model_catalog_data.json"
+
+        if not catalog_path.exists():
+            return JSONResponse(
+                status_code=404,
+                content=_safe_err(
+                    "Model catalog file not found. Please create model_catalog_data.json",
+                    code="catalog_not_found",
+                ),
+            )
+
+        with open(catalog_path, "r", encoding="utf-8") as f:
+            catalog_data = json.load(f)
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "version": catalog_data.get("version", "1.0.0"),
+                "last_updated": catalog_data.get("last_updated", "unknown"),
+                "providers": catalog_data.get("providers", {}),
+            },
+        )
+
+    except json.JSONDecodeError as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(
+                f"Invalid JSON in model catalog: {str(e)}",
+                code="catalog_invalid_json",
+            ),
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(
+                f"Error loading model catalog: {str(e)}",
+                code="catalog_error",
+            ),
+        )
 
 
 @app.get("/conversations")
