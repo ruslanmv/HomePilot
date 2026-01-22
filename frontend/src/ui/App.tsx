@@ -2115,6 +2115,7 @@ export default function App() {
             baseUrlImages={settingsDraft.baseUrlImages}
             baseUrlVideo={settingsDraft.baseUrlVideo}
             experimentalCivitai={settingsDraft.experimentalCivitai}
+            nsfwMode={settingsDraft.nsfwMode}
           />
         ) : mode === 'search' ? (
           // Search mode: use chat interface with mode-specific behavior

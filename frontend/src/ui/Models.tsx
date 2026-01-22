@@ -15,6 +15,15 @@ type ModelCatalogEntry = {
   id: string
   label?: string
   recommended?: boolean
+  recommended_nsfw?: boolean
+  nsfw?: boolean
+  description?: string
+  size_gb?: number
+  resolution?: string
+  frames?: number
+  // Civitai-specific fields
+  civitai_url?: string
+  civitai_version_id?: string
   // Optional install metadata (future backend support)
   install?: {
     type: 'ollama_pull' | 'http_files' | 'script'
@@ -64,6 +73,9 @@ export type ModelsParams = {
 
   // Experimental features
   experimentalCivitai?: boolean
+
+  // NSFW/Spice Mode - shows additional adult content models
+  nsfwMode?: boolean
 }
 
 // -----------------------------------------------------------------------------
@@ -86,22 +98,120 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
   },
   comfyui: {
     image: [
-      { id: 'sd_xl_base_1.0.safetensors', label: 'SDXL Base 1.0 (7GB)', recommended: true },
-      { id: 'flux1-schnell.safetensors', label: 'Flux.1 Schnell (23GB)' },
-      { id: 'flux1-dev.safetensors', label: 'Flux.1 Dev (23GB)' },
-      { id: 'ponyDiffusionV6XL.safetensors', label: 'Pony Diffusion v6 XL (7GB)' },
-      { id: 'sd15.safetensors', label: 'Stable Diffusion 1.5 (4GB)' },
-      { id: 'realisticVisionV51.safetensors', label: 'Realistic Vision v5.1 (2GB)' },
+      // Standard SFW models
+      { id: 'sd_xl_base_1.0.safetensors', label: 'SDXL Base 1.0 (7GB)', recommended: true, nsfw: false },
+      { id: 'flux1-schnell.safetensors', label: 'Flux.1 Schnell (23GB)', nsfw: false },
+      { id: 'flux1-dev.safetensors', label: 'Flux.1 Dev (23GB)', nsfw: false },
+      { id: 'sd15.safetensors', label: 'Stable Diffusion 1.5 (4GB)', nsfw: false },
+      { id: 'realisticVisionV51.safetensors', label: 'Realistic Vision v5.1 (2GB)', nsfw: false },
+      // NSFW models (shown when Spice Mode enabled)
+      { id: 'ponyDiffusionV6XL.safetensors', label: 'Pony Diffusion v6 XL (7GB)', nsfw: true },
+      { id: 'dreamshaper_8.safetensors', label: 'DreamShaper 8 (2GB)', nsfw: true, recommended_nsfw: true },
+      { id: 'deliberate_v3.safetensors', label: 'Deliberate v3 (2GB)', nsfw: true },
+      { id: 'epicrealism_pureEvolution.safetensors', label: 'epiCRealism Pure Evolution (2GB)', nsfw: true, recommended_nsfw: true },
+      { id: 'cyberrealistic_v42.safetensors', label: 'CyberRealistic v4.2 (2GB)', nsfw: true },
+      { id: 'absolutereality_v181.safetensors', label: 'AbsoluteReality v1.8.1 (2GB)', nsfw: true },
+      { id: 'aZovyaRPGArtist_v5.safetensors', label: 'aZovya RPG Artist v5 (2GB)', nsfw: true },
+      { id: 'unstableDiffusion.safetensors', label: 'Unstable Diffusion (4GB)', nsfw: true },
+      { id: 'majicmixRealistic_v7.safetensors', label: 'MajicMix Realistic v7 (2GB)', nsfw: true },
+      { id: 'bbmix_v4.safetensors', label: 'BBMix v4 (2GB)', nsfw: true },
+      { id: 'realisian_v50.safetensors', label: 'Realisian v5.0 (2GB)', nsfw: true },
     ],
     video: [
-      { id: 'svd_xt_1_1.safetensors', label: 'Stable Video Diffusion XT 1.1 (10GB)', recommended: true },
-      { id: 'svd_xt.safetensors', label: 'Stable Video Diffusion XT (10GB)' },
-      { id: 'svd.safetensors', label: 'Stable Video Diffusion (10GB)' },
+      { id: 'svd_xt_1_1.safetensors', label: 'Stable Video Diffusion XT 1.1 (10GB)', recommended: true, nsfw: false },
+      { id: 'svd_xt.safetensors', label: 'Stable Video Diffusion XT (10GB)', nsfw: false },
+      { id: 'svd.safetensors', label: 'Stable Video Diffusion (10GB)', nsfw: false },
     ],
   },
   openai_compat: {
     chat: [
       { id: 'local-model', label: 'Local Model (auto-detect)', recommended: true },
+    ],
+  },
+  civitai: {
+    image: [
+      // Recommended Civitai models for image generation
+      {
+        id: 'pony_diffusion_v6_xl',
+        label: 'Pony Diffusion V6 XL',
+        recommended: true,
+        nsfw: true,
+        description: 'Base model for character consistency and prompt adherence',
+        civitai_url: 'https://civitai.com/models/257749/pony-diffusion-v6-xl',
+        civitai_version_id: '290640'
+      },
+      {
+        id: 'cyberrealistic_pony',
+        label: 'CyberRealistic Pony',
+        recommended: true,
+        nsfw: true,
+        description: 'Best blend of Pony prompt understanding with photorealism',
+        civitai_url: 'https://civitai.com/models/443821/cyberrealistic-pony',
+        civitai_version_id: '544666'
+      },
+      {
+        id: 'realvisxl_v50',
+        label: 'RealVisXL V5.0',
+        recommended: true,
+        nsfw: false,
+        description: 'Gold standard for photorealistic skin texture and lighting',
+        civitai_url: 'https://civitai.com/models/139562/realvisxl-v50',
+        civitai_version_id: '361593'
+      },
+      {
+        id: 'juggernaut_xl',
+        label: 'Juggernaut XL',
+        recommended: true,
+        nsfw: false,
+        description: 'Cinematic and moody photorealism',
+        civitai_url: 'https://civitai.com/models/133005/juggernaut-xl',
+        civitai_version_id: '471120'
+      },
+      {
+        id: 'flux1_checkpoint',
+        label: 'Flux.1 Checkpoint (Easy)',
+        nsfw: false,
+        description: 'High-quality Flux checkpoint for ComfyUI',
+        civitai_url: 'https://civitai.com/models/628682/flux-1-checkpoint-easy-to-use',
+        civitai_version_id: '704954'
+      },
+    ],
+    video: [
+      // Recommended Civitai models for video generation
+      {
+        id: 'ltx_video_workflow',
+        label: 'LTX Video (I2V)',
+        recommended: true,
+        nsfw: false,
+        description: 'Fast, lightweight video generation for RTX cards',
+        civitai_url: 'https://civitai.com/models/995093/ltx-image-to-video-with-stg-caption-and-clip-extend-workflow',
+        civitai_version_id: '1119428'
+      },
+      {
+        id: 'mochi_1_pack',
+        label: 'Mochi 1 Video Pack',
+        recommended: true,
+        nsfw: false,
+        description: 'High motion fidelity video model',
+        civitai_url: 'https://civitai.com/models/886896/donut-mochi-pack-video-generation',
+        civitai_version_id: '992820'
+      },
+      {
+        id: 'animatediff_sdxl',
+        label: 'AnimateDiff SDXL',
+        nsfw: false,
+        description: 'Animate SDXL images using AnimateDiff',
+        civitai_url: 'https://civitai.com/models/331700/odinson-sdxl-animatediff',
+        civitai_version_id: '373089'
+      },
+      {
+        id: 'animatediff_lightning',
+        label: 'AnimateDiff Lightning',
+        nsfw: false,
+        description: 'Fast 4-step AnimateDiff model',
+        civitai_url: 'https://civitai.com/models/500187/animatediff-lightning',
+        civitai_version_id: '554533'
+      },
     ],
   },
 }
@@ -335,17 +445,32 @@ export default function ModelsView(props: ModelsParams) {
   }, [provider, modelType, baseUrl, backendUrl])
 
   const supportedForSelection: ModelCatalogEntry[] = useMemo(() => {
+    let list: ModelCatalogEntry[] = []
+
     // Try backend catalog first
     const p = catalog?.providers?.[provider]
     if (p) {
-      const list = p?.[modelType] || []
-      if (Array.isArray(list) && list.length > 0) return list
+      const catalogList = p?.[modelType] || []
+      if (Array.isArray(catalogList) && catalogList.length > 0) {
+        list = catalogList
+      }
     }
 
     // Fallback to hardcoded catalogs if backend catalog not available
-    const fallback = FALLBACK_CATALOGS[provider]?.[modelType]
-    return Array.isArray(fallback) ? fallback : []
-  }, [catalog, provider, modelType])
+    if (list.length === 0) {
+      const fallback = FALLBACK_CATALOGS[provider]?.[modelType]
+      list = Array.isArray(fallback) ? fallback : []
+    }
+
+    // Filter based on NSFW mode:
+    // - When nsfwMode is OFF: show only non-NSFW models (nsfw !== true)
+    // - When nsfwMode is ON: show ALL models (both SFW and NSFW)
+    if (!props.nsfwMode) {
+      list = list.filter((m) => m.nsfw !== true)
+    }
+
+    return list
+  }, [catalog, provider, modelType, props.nsfwMode])
 
   const installedSet = useMemo(() => new Set(installed), [installed])
 
@@ -358,6 +483,11 @@ export default function ModelsView(props: ModelsParams) {
       id: string
       label: string
       recommended?: boolean
+      recommended_nsfw?: boolean
+      nsfw?: boolean
+      description?: string
+      civitai_url?: string
+      civitai_version_id?: string
       status: 'installed' | 'missing' | 'installed_unsupported'
       install?: ModelCatalogEntry['install']
     }> = []
@@ -368,6 +498,11 @@ export default function ModelsView(props: ModelsParams) {
         id: s.id,
         label: safeLabel(s.id, s.label),
         recommended: s.recommended,
+        recommended_nsfw: s.recommended_nsfw,
+        nsfw: s.nsfw,
+        description: s.description,
+        civitai_url: s.civitai_url,
+        civitai_version_id: s.civitai_version_id,
         status: installedSet.has(s.id) ? 'installed' : 'missing',
         install: s.install,
       })
@@ -384,10 +519,13 @@ export default function ModelsView(props: ModelsParams) {
       }
     }
 
-    // Sorting: recommended → installed → missing → unsupported
+    // Sorting: recommended → recommended_nsfw → installed → missing → unsupported
     rows.sort((a, b) => {
-      const ar = a.recommended ? 0 : 1
-      const br = b.recommended ? 0 : 1
+      // Priority: recommended (or recommended_nsfw in NSFW mode) first
+      const isRecommendedA = a.recommended || (props.nsfwMode && a.recommended_nsfw)
+      const isRecommendedB = b.recommended || (props.nsfwMode && b.recommended_nsfw)
+      const ar = isRecommendedA ? 0 : 1
+      const br = isRecommendedB ? 0 : 1
       if (ar !== br) return ar - br
       const order = (s: string) =>
         s === 'installed' ? 0 : s === 'missing' ? 1 : 2
@@ -395,7 +533,7 @@ export default function ModelsView(props: ModelsParams) {
     })
 
     return rows
-  }, [supportedForSelection, installed, installedSet])
+  }, [supportedForSelection, installed, installedSet, props.nsfwMode])
 
   const tryInstall = async (modelId: string, install?: ModelCatalogEntry['install']) => {
     setInstallBusy(modelId)
@@ -564,10 +702,11 @@ export default function ModelsView(props: ModelsParams) {
       {provider === 'civitai' && (
         <div className="px-8 py-4 border-b border-white/10 bg-gradient-to-br from-blue-500/5 to-blue-500/0">
           <div className="max-w-7xl">
-            <div className="flex items-start gap-4">
+            {/* Manual Version ID Input */}
+            <div className="flex items-start gap-4 mb-6">
               <div className="flex-1">
                 <label className="text-[10px] text-blue-400 font-bold uppercase tracking-wider block mb-2.5">
-                  🧪 Civitai Version ID
+                  🧪 Custom Civitai Version ID
                 </label>
                 <input
                   value={civitaiVersionId}
@@ -576,7 +715,7 @@ export default function ModelsView(props: ModelsParams) {
                   className="w-full bg-white/5 border border-blue-500/20 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:border-blue-500/40 focus:bg-white/10 transition-all placeholder:text-white/30"
                 />
                 <div className="mt-2 text-[10px] text-blue-300/60 font-medium">
-                  Find the version ID in the Civitai model URL (e.g., civitai.com/models/<strong>128713</strong>)
+                  Enter a version ID from any Civitai model URL (e.g., civitai.com/models/<strong>128713</strong>)
                 </div>
               </div>
               <div className="flex-shrink-0 pt-7">
@@ -617,11 +756,21 @@ export default function ModelsView(props: ModelsParams) {
                     ) : (
                       <>
                         <Download size={16} strokeWidth={2.5} />
-                        <span>Download from Civitai</span>
+                        <span>Download Custom</span>
                       </>
                     )}
                   </span>
                 </button>
+              </div>
+            </div>
+
+            {/* Recommended Models Info */}
+            <div className="border-t border-blue-500/20 pt-4">
+              <div className="text-[10px] text-blue-400 font-bold uppercase tracking-wider mb-3">
+                ⭐ Recommended {modelType === 'image' ? 'Image' : 'Video'} Models from Civitai
+              </div>
+              <div className="text-[10px] text-blue-300/60 font-medium">
+                Click "Install" on any model below to download directly from Civitai. Models are installed to your ComfyUI models folder.
               </div>
             </div>
           </div>
@@ -661,7 +810,7 @@ export default function ModelsView(props: ModelsParams) {
                   const isRemoteProvider = ['openai', 'claude', 'watsonx'].includes(provider)
                   if (installedLoading) return 'Loading…'
                   if (provider === 'civitai') {
-                    return '🧪 Experimental: Enter version ID to download'
+                    return `🧪 ${supportedForSelection.length} Recommended Models`
                   }
                   if (isRemoteProvider) {
                     return `${supportedForSelection.length} API Models`
@@ -702,10 +851,11 @@ export default function ModelsView(props: ModelsParams) {
                       ? 'Available'
                       : 'Custom'
 
-                  // Only allow downloads for local providers (Ollama, ComfyUI)
+                  // Only allow downloads for local providers (Ollama, ComfyUI, Civitai)
                   // Remote API providers (OpenAI, Claude, Watsonx, openai_compat) don't support local installation
-                  const isLocalProvider = provider === 'ollama' || provider === 'comfyui'
+                  const isLocalProvider = provider === 'ollama' || provider === 'comfyui' || provider === 'civitai'
                   const canDownload = row.status === 'missing' && isLocalProvider
+                  const isCivitai = provider === 'civitai'
 
                   return (
                     <div key={row.id} className="p-5 flex items-center justify-between gap-4 hover:bg-white/[0.02] transition-all group">
@@ -720,10 +870,38 @@ export default function ModelsView(props: ModelsParams) {
                               ⭐ Recommended
                             </div>
                           ) : null}
+                          {row.recommended_nsfw && props.nsfwMode ? (
+                            <div className="px-3 py-1.5 rounded-lg border border-pink-500/30 bg-pink-500/10 text-[10px] font-bold uppercase tracking-wider text-pink-200">
+                              🔥 NSFW Pick
+                            </div>
+                          ) : null}
+                          {row.nsfw ? (
+                            <div className="px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-[10px] font-bold uppercase tracking-wider text-red-200">
+                              🌶️ Adult
+                            </div>
+                          ) : null}
+                          {isCivitai && row.civitai_version_id ? (
+                            <div className="px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-[10px] font-bold uppercase tracking-wider text-cyan-200">
+                              v{row.civitai_version_id}
+                            </div>
+                          ) : null}
                         </div>
 
                         <div className="font-bold text-base text-white truncate group-hover:text-white transition-colors">{row.label}</div>
                         <div className="text-[11px] text-white/40 font-mono truncate mt-1">{row.id}</div>
+                        {row.description ? (
+                          <div className="text-[11px] text-white/30 truncate mt-1">{row.description}</div>
+                        ) : null}
+                        {isCivitai && row.civitai_url ? (
+                          <a
+                            href={row.civitai_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] text-blue-400 hover:text-blue-300 underline mt-1 inline-block"
+                          >
+                            View on Civitai →
+                          </a>
+                        ) : null}
                       </div>
 
                       <div className="flex items-center gap-3 flex-shrink-0">
@@ -747,11 +925,21 @@ export default function ModelsView(props: ModelsParams) {
                               "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wide flex items-center gap-2.5 transition-all shadow-lg relative overflow-hidden",
                               installBusy === row.id
                                 ? "bg-blue-600 text-white cursor-wait shadow-blue-600/30"
+                                : isCivitai
+                                ? "bg-cyan-600 text-white hover:bg-cyan-500 hover:shadow-cyan-600/30 hover:scale-105 active:scale-95 shadow-cyan-600/20"
                                 : "bg-white text-black hover:bg-gray-100 hover:shadow-white/30 hover:scale-105 active:scale-95 shadow-white/20"
                             ].join(" ")}
                             disabled={installBusy === row.id}
-                            onClick={() => void tryInstall(row.id, row.install)}
-                            title={installBusy === row.id ? "Downloading model... Please wait" : "Download and install model"}
+                            onClick={() => {
+                              // For Civitai, use the version ID if available
+                              if (isCivitai && row.civitai_version_id) {
+                                setCivitaiVersionId(row.civitai_version_id)
+                                void tryInstall(row.civitai_version_id, row.install)
+                              } else {
+                                void tryInstall(row.id, row.install)
+                              }
+                            }}
+                            title={installBusy === row.id ? "Downloading model... Please wait" : isCivitai ? "Download from Civitai" : "Download and install model"}
                           >
                             {installBusy === row.id && (
                               <span className="absolute inset-0 bg-gradient-to-r from-blue-600 via-blue-500 to-blue-600 animate-shimmer" style={{
