@@ -92,6 +92,7 @@
           "id": "sd_xl_base_1.0.safetensors",
           "label": "SDXL Base 1.0",
           "recommended": true,
+          "nsfw": false,
           "description": "Stable Diffusion XL base model. Best balance of quality and speed.",
           "size_gb": 6.94,
           "resolution": "1024x1024",
@@ -101,6 +102,7 @@
         {
           "id": "flux1-schnell.safetensors",
           "label": "Flux.1 Schnell",
+          "nsfw": false,
           "description": "Fast Flux model optimized for speed. 4-step generation. Note: Requires additional files (CLIP, VAE).",
           "size_gb": 23.8,
           "resolution": "1024x1024",
@@ -110,6 +112,7 @@
         {
           "id": "flux1-dev.safetensors",
           "label": "Flux.1 Dev",
+          "nsfw": false,
           "description": "High-quality Flux model for detailed generations. Note: Requires additional files (CLIP, VAE).",
           "size_gb": 23.8,
           "resolution": "1024x1024",
@@ -119,7 +122,8 @@
         {
           "id": "ponyDiffusionV6XL.safetensors",
           "label": "Pony Diffusion v6 XL",
-          "description": "SDXL-based model fine-tuned for anime/illustration styles.",
+          "nsfw": true,
+          "description": "SDXL-based model fine-tuned for anime/illustration. Uncensored, supports NSFW content.",
           "size_gb": 6.46,
           "resolution": "1024x1024",
           "download_url": "https://civitai.com/api/download/models/290640",
@@ -128,6 +132,7 @@
         {
           "id": "sd15.safetensors",
           "label": "Stable Diffusion 1.5",
+          "nsfw": false,
           "description": "Classic SD 1.5 model. Fast, lightweight.",
           "size_gb": 4.27,
           "resolution": "512x512",
@@ -137,10 +142,113 @@
         {
           "id": "realisticVisionV51.safetensors",
           "label": "Realistic Vision v5.1",
+          "nsfw": false,
           "description": "Photorealistic SD 1.5 model.",
           "size_gb": 2.13,
           "resolution": "512x512",
           "download_url": "https://civitai.com/api/download/models/130072",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "dreamshaper_8.safetensors",
+          "label": "DreamShaper 8",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Versatile model for artistic and realistic styles. Uncensored, excellent for NSFW content.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/128713",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "deliberate_v3.safetensors",
+          "label": "Deliberate v3",
+          "nsfw": true,
+          "description": "High-quality photorealistic model. Uncensored, great for adult content generation.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/156110",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "epicrealism_pureEvolution.safetensors",
+          "label": "epiCRealism Pure Evolution",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Ultra-realistic model for photorealistic generations. Fully uncensored for adult content.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/143906",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "cyberrealistic_v42.safetensors",
+          "label": "CyberRealistic v4.2",
+          "nsfw": true,
+          "description": "Photorealistic model optimized for portraits and figures. Uncensored NSFW support.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/138176",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "absolutereality_v181.safetensors",
+          "label": "AbsoluteReality v1.8.1",
+          "nsfw": true,
+          "description": "Highly realistic model for lifelike images. Full NSFW capability.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/132760",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "aZovyaRPGArtist_v5.safetensors",
+          "label": "aZovya RPG Artist v5",
+          "nsfw": true,
+          "description": "Fantasy/RPG style artwork model. Supports uncensored adult content.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/119009",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "unstableDiffusion.safetensors",
+          "label": "Unstable Diffusion",
+          "nsfw": true,
+          "description": "Community model trained without content restrictions. Designed for adult content.",
+          "size_gb": 4.27,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/75754",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "majicmixRealistic_v7.safetensors",
+          "label": "MajicMix Realistic v7",
+          "nsfw": true,
+          "description": "Asian-focused photorealistic model. Uncensored for NSFW generations.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/176425",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "bbmix_v4.safetensors",
+          "label": "BBMix v4",
+          "nsfw": true,
+          "description": "Versatile model for realistic and semi-realistic styles. Full NSFW support.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/89927",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "realisian_v50.safetensors",
+          "label": "Realisian v5.0",
+          "nsfw": true,
+          "description": "Photorealistic model with excellent skin textures. Uncensored adult content support.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "download_url": "https://civitai.com/api/download/models/121822",
           "install_path": "checkpoints/"
         }
       ],
@@ -149,6 +257,7 @@
           "id": "svd_xt_1_1.safetensors",
           "label": "Stable Video Diffusion XT 1.1",
           "recommended": true,
+          "nsfw": false,
           "description": "Latest SVD model with 25 frames, 1024x576 resolution.",
           "size_gb": 9.56,
           "resolution": "1024x576",
@@ -159,6 +268,7 @@
         {
           "id": "svd_xt.safetensors",
           "label": "Stable Video Diffusion XT",
+          "nsfw": false,
           "description": "Extended temporal model with 25 frames.",
           "size_gb": 9.56,
           "resolution": "1024x576",
@@ -169,12 +279,139 @@
         {
           "id": "svd.safetensors",
           "label": "Stable Video Diffusion",
+          "nsfw": false,
           "description": "Base SVD model with 14 frames.",
           "size_gb": 9.56,
           "resolution": "1024x576",
           "frames": 14,
           "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid/resolve/main/svd.safetensors",
           "install_path": "checkpoints/"
+        }
+      ]
+    },
+    "civitai": {
+      "_comment": "Recommended Civitai models - use version ID for download",
+      "image": [
+        {
+          "id": "pony_diffusion_v6_xl",
+          "label": "Pony Diffusion V6 XL",
+          "recommended": true,
+          "nsfw": true,
+          "description": "The base model for character consistency and prompt adherence. Best for anime/illustration.",
+          "size_gb": 6.46,
+          "resolution": "1024x1024",
+          "civitai_url": "https://civitai.com/models/257749/pony-diffusion-v6-xl",
+          "civitai_version_id": "290640",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "cyberrealistic_pony",
+          "label": "CyberRealistic Pony",
+          "recommended": true,
+          "nsfw": true,
+          "description": "Best blend of Pony's prompt understanding with photorealism. Excellent for realistic NSFW.",
+          "size_gb": 6.46,
+          "resolution": "1024x1024",
+          "civitai_url": "https://civitai.com/models/443821/cyberrealistic-pony",
+          "civitai_version_id": "544666",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "realvisxl_v50",
+          "label": "RealVisXL V5.0",
+          "recommended": true,
+          "nsfw": false,
+          "description": "The gold standard for photorealistic skin texture and lighting. SDXL-based.",
+          "size_gb": 6.94,
+          "resolution": "1024x1024",
+          "civitai_url": "https://civitai.com/models/139562/realvisxl-v50",
+          "civitai_version_id": "361593",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "juggernaut_xl",
+          "label": "Juggernaut XL",
+          "recommended": true,
+          "nsfw": false,
+          "description": "Cinematic and moody photorealism. Excellent for dramatic lighting and scenes.",
+          "size_gb": 6.94,
+          "resolution": "1024x1024",
+          "civitai_url": "https://civitai.com/models/133005/juggernaut-xl",
+          "civitai_version_id": "471120",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "flux1_checkpoint",
+          "label": "Flux.1 Checkpoint (Easy to Use)",
+          "nsfw": false,
+          "description": "High-quality Flux checkpoint packaged for easy use with ComfyUI or Forge.",
+          "size_gb": 23.8,
+          "resolution": "1024x1024",
+          "civitai_url": "https://civitai.com/models/628682/flux-1-checkpoint-easy-to-use",
+          "civitai_version_id": "704954",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "adetailer_face",
+          "label": "ADetailer Face Models",
+          "nsfw": false,
+          "description": "Face detection and enhancement models for better face quality in generations.",
+          "size_gb": 0.5,
+          "civitai_url": "https://civitai.com/models/195550",
+          "civitai_version_id": "219687",
+          "install_path": "models/adetailer/"
+        }
+      ],
+      "video": [
+        {
+          "id": "ltx_video_workflow",
+          "label": "LTX Video (Image to Video)",
+          "recommended": true,
+          "nsfw": false,
+          "description": "Fast, lightweight video generation workflow. Best for local RTX cards (8GB+ VRAM).",
+          "size_gb": 5.0,
+          "resolution": "768x512",
+          "frames": 24,
+          "civitai_url": "https://civitai.com/models/995093/ltx-image-to-video-with-stg-caption-and-clip-extend-workflow",
+          "civitai_version_id": "1119428",
+          "install_path": "models/ltx/"
+        },
+        {
+          "id": "mochi_1_pack",
+          "label": "Mochi 1 Video Pack",
+          "recommended": true,
+          "nsfw": false,
+          "description": "High motion fidelity video model. Excellent for smooth animations and motion.",
+          "size_gb": 10.0,
+          "resolution": "848x480",
+          "frames": 30,
+          "civitai_url": "https://civitai.com/models/886896/donut-mochi-pack-video-generation",
+          "civitai_version_id": "992820",
+          "install_path": "models/mochi/"
+        },
+        {
+          "id": "animatediff_sdxl",
+          "label": "AnimateDiff SDXL (Odinson)",
+          "nsfw": false,
+          "description": "Workflow to animate SDXL images using AnimateDiff. Turn still images into videos.",
+          "size_gb": 2.5,
+          "resolution": "1024x1024",
+          "frames": 16,
+          "civitai_url": "https://civitai.com/models/331700/odinson-sdxl-animatediff",
+          "civitai_version_id": "373089",
+          "install_path": "models/animatediff/"
+        },
+        {
+          "id": "animatediff_lightning",
+          "label": "AnimateDiff Lightning",
+          "nsfw": false,
+          "description": "Fast AnimateDiff model with 4-step generation. Good for quick video previews.",
+          "size_gb": 1.5,
+          "resolution": "512x512",
+          "frames": 16,
+          "civitai_url": "https://civitai.com/models/500187/animatediff-lightning",
+          "civitai_version_id": "554533",
+          "install_path": "models/animatediff/"
         }
       ]
     },
