@@ -89,34 +89,46 @@ def get_comfy_models_path() -> Path:
 def scan_installed_models(model_type: str = "image") -> List[str]:
     """
     Scan filesystem for actually installed ComfyUI models.
-    Returns list of workflow IDs that have their required files.
+    Returns list of catalog IDs (filenames) that are installed.
+    This matches the IDs used in model_catalog_data.json for proper UI display.
     """
     models_path = get_comfy_models_path()
     installed = []
 
-    # Model file to workflow mapping
+    # Model checks: catalog_id -> file path
+    # The catalog_id matches model_catalog_data.json "id" field
     if model_type == "image":
-        # Check for actual model files and map to workflow names
         checks = {
-            "sdxl": models_path / "checkpoints" / "sd_xl_base_1.0.safetensors",
-            "flux-schnell": models_path / "unet" / "flux1-schnell.safetensors",
-            "flux-dev": models_path / "unet" / "flux1-dev.safetensors",
-            "pony-xl": models_path / "checkpoints" / "ponyDiffusionV6XL.safetensors",
-            "sd15-uncensored": models_path / "checkpoints" / "dreamshaper_8.safetensors",
+            # Standard SFW models
+            "sd_xl_base_1.0.safetensors": models_path / "checkpoints" / "sd_xl_base_1.0.safetensors",
+            "flux1-schnell.safetensors": models_path / "unet" / "flux1-schnell.safetensors",
+            "flux1-dev.safetensors": models_path / "unet" / "flux1-dev.safetensors",
+            "sd15.safetensors": models_path / "checkpoints" / "v1-5-pruned-emaonly.safetensors",
+            "realisticVisionV51.safetensors": models_path / "checkpoints" / "realisticVisionV51.safetensors",
+            # NSFW models (shown when Spice Mode enabled)
+            "ponyDiffusionV6XL.safetensors": models_path / "checkpoints" / "ponyDiffusionV6XL.safetensors",
+            "dreamshaper_8.safetensors": models_path / "checkpoints" / "dreamshaper_8.safetensors",
+            "deliberate_v3.safetensors": models_path / "checkpoints" / "deliberate_v3.safetensors",
+            "epicrealism_pureEvolution.safetensors": models_path / "checkpoints" / "epicrealism_pureEvolution.safetensors",
+            "cyberrealistic_v42.safetensors": models_path / "checkpoints" / "cyberrealistic_v42.safetensors",
+            "absolutereality_v181.safetensors": models_path / "checkpoints" / "absolutereality_v181.safetensors",
+            "aZovyaRPGArtist_v5.safetensors": models_path / "checkpoints" / "aZovyaRPGArtist_v5.safetensors",
+            "unstableDiffusion.safetensors": models_path / "checkpoints" / "unstableDiffusion.safetensors",
+            "majicmixRealistic_v7.safetensors": models_path / "checkpoints" / "majicmixRealistic_v7.safetensors",
+            "bbmix_v4.safetensors": models_path / "checkpoints" / "bbmix_v4.safetensors",
+            "realisian_v50.safetensors": models_path / "checkpoints" / "realisian_v50.safetensors",
         }
     else:  # video
         checks = {
-            "svd": models_path / "checkpoints" / "svd_xt.safetensors",
+            "svd_xt_1_1.safetensors": models_path / "checkpoints" / "svd_xt_1_1.safetensors",
+            "svd_xt.safetensors": models_path / "checkpoints" / "svd_xt.safetensors",
+            "svd.safetensors": models_path / "checkpoints" / "svd.safetensors",
         }
 
     # Check which models are actually installed
-    for workflow_id, model_path in checks.items():
+    for catalog_id, model_path in checks.items():
         if model_path.exists() and model_path.stat().st_size > 0:
-            installed.append(workflow_id)
-
-    # If no models found, return the available list (backward compatibility)
-    if not installed:
-        return available_image_models() if model_type == "image" else available_video_models()
+            installed.append(catalog_id)
 
     return installed
 
