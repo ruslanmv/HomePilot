@@ -34,6 +34,15 @@ from .orchestrator import orchestrate, handle_request
 from .providers import provider_info
 from .storage import init_db, list_conversations, get_messages, delete_image_url, delete_conversation
 from .migrations import run_migrations
+from .game_mode import init_game_db, next_variation, get_session_events
+from .story_mode import (
+    init_story_db,
+    start_story,
+    next_scene,
+    get_story,
+    list_story_sessions,
+    delete_story_session,
+)
 
 # Civitai search support
 from .civitai import (
@@ -104,12 +113,21 @@ class ChatIn(BaseModel):
     imgCfg: Optional[float] = Field(None, description="Image CFG scale")
     imgSeed: Optional[int] = Field(None, description="Image generation seed (0 = random)")
     imgModel: Optional[str] = Field(None, description="Image model selection (sdxl, flux-schnell, flux-dev, pony-xl, sd15-uncensored)")
+    imgBatchSize: Optional[int] = Field(1, ge=1, le=4, description="Number of images to generate per request (1, 2, or 4)")
     vidSeconds: Optional[int] = Field(None, description="Video duration in seconds")
     vidFps: Optional[int] = Field(None, description="Video FPS")
     vidMotion: Optional[str] = Field(None, description="Video motion bucket")
     vidModel: Optional[str] = Field(None, description="Video model selection (svd, wan-2.2, seedream)")
     nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
     promptRefinement: Optional[bool] = Field(True, description="Enable AI prompt refinement for image generation (default: True)")
+    # ----------------------------
+    # Game Mode (Infinite Variations)
+    # ----------------------------
+    gameMode: Optional[bool] = Field(False, description="Enable game mode (prompt variations)")
+    gameSessionId: Optional[str] = Field(None, description="Game session id (keeps variation memory)")
+    gameStrength: Optional[float] = Field(0.65, description="Variation strength 0..1")
+    gameLocks: Optional[Dict[str, Any]] = Field(None, description="Lock settings (world/style/etc)")
+    gameWorldBible: Optional[str] = Field("", description="Optional world bible text for consistency")
 
 
 class ChatOut(BaseModel):
@@ -244,6 +262,10 @@ def _startup() -> None:
     _ensure_db_path_is_writable()
     # Database
     init_db()
+    # Initialize game mode database tables
+    init_game_db()
+    # Initialize story mode database tables
+    init_story_db()
     # Run migrations
     try:
         run_migrations()
@@ -1221,6 +1243,7 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "imgCfg": inp.imgCfg,
         "imgSeed": inp.imgSeed,
         "imgModel": inp.imgModel,
+        "imgBatchSize": inp.imgBatchSize,
         "vidSeconds": inp.vidSeconds,
         "vidFps": inp.vidFps,
         "vidMotion": inp.vidMotion,
@@ -1229,8 +1252,75 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "promptRefinement": inp.promptRefinement,
     }
 
+    # ----------------------------
+    # Game Mode: Infinite Variations
+    # Only applies to imagine + promptRefinement enabled
+    # ----------------------------
+    if (inp.mode == "imagine") and bool(inp.gameMode) and bool(inp.promptRefinement):
+        try:
+            options = {
+                "strength": float(inp.gameStrength or 0.65),
+                "locks": inp.gameLocks or {},
+                "world_bible": inp.gameWorldBible or "",
+            }
+
+            # Resolve Ollama settings for Game Mode variation generation
+            # Fallback chain: explicit ollama fields -> provider fields -> config defaults
+            game_ollama_url = (
+                inp.ollama_base_url
+                or inp.provider_base_url
+                or inp.llm_base_url
+                or OLLAMA_BASE_URL
+            )
+            # For model, only use ollama_model or llm_model (NOT provider_model which is image checkpoint)
+            game_ollama_model = (
+                inp.ollama_model
+                or inp.llm_model
+                or None  # Let game_mode.py use OLLAMA_MODEL from config
+            )
+
+            print(f"[GAME MODE] ollama_base_url={game_ollama_url}, ollama_model={game_ollama_model}")
+
+            vr = await next_variation(
+                base_prompt=inp.message,
+                session_id=inp.gameSessionId,
+                options=options,
+                ollama_base_url=game_ollama_url,
+                ollama_model=game_ollama_model,
+            )
+
+            print(f"[GAME MODE] variation_prompt={vr.variation_prompt[:100] if vr.variation_prompt else 'None'}...")
+
+            # Replace the message with the variation prompt
+            payload["message"] = vr.variation_prompt
+
+            # Attach game info into payload so we can include it in response media
+            payload["_game"] = {
+                "enabled": True,
+                "session_id": vr.session_id,
+                "counter": vr.counter,
+                "base_prompt": vr.base_prompt,
+                "variation_prompt": vr.variation_prompt,
+                "tags": vr.tags,
+            }
+
+        except Exception as e:
+            # Fail safe: if anything goes wrong, fall back to normal imagine
+            payload["_game"] = {
+                "enabled": True,
+                "error": str(e),
+            }
+
     # Route through mode-aware handler
     out = await handle_request(mode=inp.mode, payload=payload)
+
+    # Merge game metadata into media (if present)
+    game_meta = payload.get("_game")
+    if isinstance(game_meta, dict):
+        if out.get("media") is None:
+            out["media"] = {}
+        if isinstance(out.get("media"), dict):
+            out["media"]["game"] = game_meta
 
     if not isinstance(out, dict):
         out = {}
@@ -1286,3 +1376,113 @@ async def upload(request: Request, file: UploadFile = File(...)) -> JSONResponse
 
     base = _base_url_from_request(request)
     return JSONResponse(status_code=201, content={"url": f"{base}/files/{name}"})
+
+
+# ----------------------------
+# Game Mode API
+# ----------------------------
+
+@app.get("/game/sessions/{session_id}/events", dependencies=[Depends(require_api_key)])
+async def game_session_events(session_id: str, limit: int = Query(50, ge=1, le=200)) -> JSONResponse:
+    """
+    Fetch variation history for a game session.
+    Returns chronological list of generated variations with their tags.
+    """
+    try:
+        events = get_session_events(session_id, limit=limit)
+        return JSONResponse(status_code=200, content={"ok": True, "session_id": session_id, "events": events})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+
+# ----------------------------
+# Story Mode API (Studio)
+# ----------------------------
+
+class StoryStartIn(BaseModel):
+    premise: str = Field(..., min_length=3, max_length=4000)
+    title_hint: str = Field("", max_length=200)
+    options: Optional[Dict[str, Any]] = None
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+
+class StoryNextIn(BaseModel):
+    session_id: str
+    refine_image_prompt: Optional[bool] = None
+    tts_enabled: Optional[bool] = None
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+
+@app.post("/story/start", dependencies=[Depends(require_api_key)])
+async def story_start_endpoint(inp: StoryStartIn) -> JSONResponse:
+    """
+    Start a story session. Returns session_id + story bible.
+    """
+    try:
+        res = await start_story(
+            inp.premise,
+            title_hint=inp.title_hint,
+            options=inp.options,
+            ollama_base_url=inp.ollama_base_url,
+            ollama_model=inp.ollama_model,
+        )
+        return JSONResponse(status_code=200, content=res.model_dump())
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+
+
+@app.post("/story/next", dependencies=[Depends(require_api_key)])
+async def story_next_endpoint(inp: StoryNextIn) -> JSONResponse:
+    """
+    Generate next scene (narration + image prompt).
+    Frontend then calls image generation with scene.image_prompt.
+    """
+    try:
+        res = await next_scene(
+            session_id=inp.session_id,
+            refine_image_prompt=inp.refine_image_prompt,
+            tts_enabled=inp.tts_enabled,
+            ollama_base_url=inp.ollama_base_url,
+            ollama_model=inp.ollama_model,
+        )
+        return JSONResponse(status_code=200, content=res.model_dump())
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+
+
+@app.get("/story/{session_id}", dependencies=[Depends(require_api_key)])
+async def story_get_endpoint(session_id: str) -> JSONResponse:
+    """
+    Get story bible + scenes so far (for TV playback UI).
+    """
+    try:
+        data = get_story(session_id)
+        return JSONResponse(status_code=200, content=data)
+    except Exception as e:
+        return JSONResponse(status_code=404, content={"ok": False, "error": str(e)})
+
+
+@app.get("/story/sessions/list", dependencies=[Depends(require_api_key)])
+async def story_list_endpoint(limit: int = Query(50, ge=1, le=200)) -> JSONResponse:
+    """
+    List all story sessions.
+    """
+    try:
+        sessions = list_story_sessions(limit=limit)
+        return JSONResponse(status_code=200, content={"ok": True, "sessions": sessions})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+
+@app.delete("/story/{session_id}", dependencies=[Depends(require_api_key)])
+async def story_delete_endpoint(session_id: str) -> JSONResponse:
+    """
+    Delete a story session and all its scenes.
+    """
+    try:
+        deleted = delete_story_session(session_id)
+        return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
