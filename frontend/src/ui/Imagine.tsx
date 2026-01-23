@@ -49,6 +49,7 @@ type ChatResponse = {
   media?: {
     images?: string[]
     video_url?: string
+    final_prompt?: string  // The actual refined prompt sent to ComfyUI
     game?: {
       enabled?: boolean
       session_id?: string
@@ -291,14 +292,17 @@ export default function ImagineView(props: ImagineParams) {
       }
 
       const now = Date.now()
-      const displayPrompt = gameMode && data?.media?.game?.variation_prompt
-        ? data.media.game.variation_prompt
-        : t
+      // Use the actual refined/final prompt that was sent to the image model
+      // This is the real prompt that generated the image, so users can reproduce it
+      // Priority: final_prompt (refined) > variation_prompt (game mode) > original user input
+      const finalPrompt = data?.media?.final_prompt
+        || (gameMode && data?.media?.game?.variation_prompt)
+        || t
       const newItems: ImagineItem[] = urls.map((u) => ({
         id: uid(),
         url: u,
         createdAt: now,
-        prompt: displayPrompt,
+        prompt: finalPrompt,
       }))
 
       // Prepend new images at the beginning (Grok-style: new images appear at top-left)
