@@ -108,7 +108,8 @@ MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))
 # Timeouts / polling
 TOOL_TIMEOUT_S = float(os.getenv("TOOL_TIMEOUT_S", "300"))
 COMFY_POLL_INTERVAL_S = float(os.getenv("COMFY_POLL_INTERVAL_S", "1.0"))
-COMFY_POLL_MAX_S = float(os.getenv("COMFY_POLL_MAX_S", "240"))
+# Increased from 240s to 360s (6 minutes) for bigger models like SDXL
+COMFY_POLL_MAX_S = float(os.getenv("COMFY_POLL_MAX_S", "360"))
 
 def _parse_csv(value: str) -> List[str]:
     return [x.strip() for x in (value or "").split(",") if x.strip()]

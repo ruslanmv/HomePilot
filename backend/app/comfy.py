@@ -187,8 +187,18 @@ def _extract_media(history: Dict[str, Any], prompt_id: str) -> Tuple[List[str], 
 
 
 def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+    print(f"[COMFY] Running workflow: {name}")
+    print(f"[COMFY] Variables: {variables}")
+
     workflow = _load_workflow(name)
     prompt_graph = _deep_replace(workflow, variables)
+
+    # Log checkpoint being used (if present in workflow)
+    for node_id, node in prompt_graph.items():
+        if isinstance(node, dict) and node.get("class_type") == "CheckpointLoaderSimple":
+            ckpt = node.get("inputs", {}).get("ckpt_name", "unknown")
+            print(f"[COMFY] Checkpoint in workflow: {ckpt}")
+            break
 
     _validate_prompt_graph(prompt_graph, workflow_name=name)
 

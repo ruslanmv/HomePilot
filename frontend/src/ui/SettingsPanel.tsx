@@ -44,6 +44,7 @@ export type SettingsModelV2 = {
 
   // Experimental features
   experimentalCivitai?: boolean;
+  civitaiApiKey?: string;  // Optional API key for Civitai NSFW content
 
   // Prompt refinement (AI enhancement of image prompts)
   promptRefinement?: boolean;
@@ -428,7 +429,26 @@ export default function SettingsPanel({
           </div>
           {value.experimentalCivitai && (
             <div className="mt-2 text-[10px] text-blue-400/80 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2">
-              <span className="font-semibold">ℹ️ Experimental:</span> Download models from Civitai.com in the Models page. Not all models may work correctly.
+              <span className="font-semibold">ℹ️ Experimental:</span> Download and search models from Civitai.com in the Models page. Not all models may work correctly.
+            </div>
+          )}
+
+          {/* Civitai API Key (shown when both Civitai and NSFW are enabled) */}
+          {value.experimentalCivitai && value.nsfwMode && (
+            <div className="mt-3 p-3 bg-purple-500/5 border border-purple-500/20 rounded-lg">
+              <label className="text-[10px] text-purple-400/80 font-semibold uppercase tracking-wider block mb-2">
+                Civitai API Key (for NSFW content)
+              </label>
+              <input
+                type="password"
+                value={value.civitaiApiKey || ""}
+                onChange={(e) => onChangeDraft({ ...value, civitaiApiKey: e.target.value })}
+                placeholder="Optional - only needed for adult content"
+                className="w-full bg-black border border-purple-500/30 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/30 focus:border-purple-500/50 outline-none transition-colors"
+              />
+              <div className="text-[9px] text-purple-300/50 mt-1.5">
+                Get your API key at <a href="https://civitai.com/user/account" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:text-purple-300 underline">civitai.com/user/account</a>
+              </div>
             </div>
           )}
         </div>
