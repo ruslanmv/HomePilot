@@ -581,11 +581,27 @@ async def start_story(
         base_url=(ollama_base_url or OLLAMA_BASE_URL),
         model=(ollama_model or OLLAMA_MODEL),
     )
+
+    # Check for empty LLM response
+    if not text.strip():
+        raise RuntimeError(
+            "LLM returned empty content for story bible generation. "
+            "Check Ollama model configuration or try a different model."
+        )
+
     obj = _extract_json(text)
+
+    # Check for invalid/empty JSON
+    if not obj:
+        raise RuntimeError(
+            f"LLM did not return valid JSON for story bible. "
+            f"Raw response (first 500 chars): {text[:500]}"
+        )
 
     try:
         bible = StoryBible.model_validate(obj)
-    except Exception:
+    except Exception as e:
+        print(f"[STORY] WARNING: Failed to parse story bible, using fallback. Error: {e}")
         bible = StoryBible(
             title=(title_hint.strip() or "Untitled Story"),
             logline=premise[:180],
@@ -648,7 +664,23 @@ async def next_scene(
         base_url=(ollama_base_url or OLLAMA_BASE_URL),
         model=(ollama_model or OLLAMA_MODEL),
     )
+
+    # Check for empty LLM response
+    if not raw.strip():
+        raise RuntimeError(
+            "LLM returned empty content for scene generation. "
+            "Check Ollama model configuration or try a different model. "
+            "Some reasoning models return content in non-standard fields."
+        )
+
     obj = _extract_json(raw)
+
+    # Check for invalid/empty JSON
+    if not obj:
+        raise RuntimeError(
+            f"LLM did not return valid JSON for scene generation. "
+            f"Raw response (first 500 chars): {raw[:500]}"
+        )
 
     narration = _clamp_text(str(obj.get("narration") or ""), 2000)
     image_prompt = _clamp_text(str(obj.get("image_prompt") or ""), 2000)
@@ -657,9 +689,12 @@ async def next_scene(
     duration_s = max(3, min(30, duration_s))
     tags = obj.get("tags") if isinstance(obj.get("tags"), dict) else {}
 
+    # Log warning if fallbacks are used but don't silently fail
     if not narration:
+        print(f"[STORY] WARNING: No narration in LLM response, using fallback for scene {idx}")
         narration = f"Scene {idx}: The story continues."
     if not image_prompt:
+        print(f"[STORY] WARNING: No image_prompt in LLM response, using fallback for scene {idx}")
         image_prompt = f"{bible.setting}. {opts.visual_style}. cinematic still."
 
     if opts.refine_image_prompt:
