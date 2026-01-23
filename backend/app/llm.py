@@ -244,8 +244,26 @@ async def chat_ollama(
     # Normalize to OpenAI-like shape for downstream parsing
     content = ""
     msg = data.get("message")
+
+    # Primary: /api/chat schema returns message.content
     if isinstance(msg, dict):
-        content = str(msg.get("content") or "")
+        content = msg.get("content") or ""
+
+    # Fallback: Ollama /api/generate uses "response" key
+    if not content:
+        content = data.get("response") or ""
+
+    # Fallback: Some wrappers may return "content" at top-level
+    if not content:
+        content = data.get("content") or ""
+
+    content = str(content or "")
+
+    # Debug logging when content is empty (helps diagnose model-specific issues)
+    if not content.strip():
+        print(f"[OLLAMA] WARNING: empty extracted content. provider_raw keys: {list(data.keys())}")
+        if isinstance(msg, dict):
+            print(f"[OLLAMA] message keys: {list(msg.keys())}")
 
     return {
         "choices": [{"message": {"content": content}}],
