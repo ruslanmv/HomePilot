@@ -529,7 +529,12 @@ async def orchestrate(
 
             # Short Grok-like caption
             text = "Here you go." if images else "Generated."
-            media = {"images": images} if images else None
+            # Include the final refined prompt in the response so frontend can store it
+            # This is the actual prompt used for image generation
+            media = {
+                "images": images,
+                "final_prompt": refined.get("prompt", text_in),  # The actual prompt sent to ComfyUI
+            } if images else None
             add_message(cid, "assistant", text, media)
             return {"conversation_id": cid, "text": text, "media": media}
 
