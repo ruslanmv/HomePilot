@@ -73,9 +73,49 @@ export type ModelsParams = {
 
   // Experimental features
   experimentalCivitai?: boolean
+  civitaiApiKey?: string  // Optional API key for Civitai NSFW content
 
   // NSFW/Spice Mode - shows additional adult content models
   nsfwMode?: boolean
+}
+
+// Civitai search result types
+type CivitaiSearchVersion = {
+  id: string
+  name: string
+  downloadUrl?: string
+  sizeKB: number
+  trainedWords: string[]
+}
+
+type CivitaiSearchResult = {
+  id: string
+  name: string
+  type: string
+  creator: string
+  downloads: number
+  rating: number
+  ratingCount: number
+  link: string | null
+  thumbnail: string | null
+  nsfw: boolean
+  description: string
+  tags: string[]
+  versions: CivitaiSearchVersion[]
+}
+
+type CivitaiSearchResponse = {
+  ok: boolean
+  query: string
+  model_type: string
+  nsfw: boolean
+  items: CivitaiSearchResult[]
+  metadata: {
+    currentPage: number
+    pageSize: number
+    totalItems: number
+    totalPages: number
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -318,6 +358,14 @@ export default function ModelsView(props: ModelsParams) {
 
   // Civitai-specific state
   const [civitaiVersionId, setCivitaiVersionId] = useState<string>('')
+
+  // Civitai search state
+  const [civitaiQuery, setCivitaiQuery] = useState<string>('')
+  const [civitaiResults, setCivitaiResults] = useState<CivitaiSearchResult[]>([])
+  const [civitaiSearchLoading, setCivitaiSearchLoading] = useState(false)
+  const [civitaiSearchError, setCivitaiSearchError] = useState<string | null>(null)
+  const [civitaiPage, setCivitaiPage] = useState(1)
+  const [civitaiTotalPages, setCivitaiTotalPages] = useState(1)
 
   // Filter providers based on model type
   const availableProviders = useMemo(() => {
@@ -590,6 +638,100 @@ export default function ModelsView(props: ModelsParams) {
     }
   }
 
+  // Civitai search function
+  const searchCivitai = async (page = 1) => {
+    if (!civitaiQuery.trim()) {
+      setToast('Please enter a search query')
+      return
+    }
+
+    setCivitaiSearchLoading(true)
+    setCivitaiSearchError(null)
+
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(authKey ? { 'x-api-key': authKey } : {}),
+      }
+
+      // Pass Civitai API key if available and NSFW mode is enabled
+      if (props.civitaiApiKey && props.nsfwMode) {
+        headers['X-Civitai-Api-Key'] = props.civitaiApiKey
+      }
+
+      const res = await fetch(`${backendUrl}/civitai/search`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          query: civitaiQuery.trim(),
+          model_type: modelType, // 'image' or 'video'
+          nsfw: props.nsfwMode || false,
+          limit: 20,
+          page,
+          sort: 'Highest Rated',
+        }),
+      })
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(`HTTP ${res.status}: ${text}`)
+      }
+
+      const data: CivitaiSearchResponse = await res.json()
+
+      if (data.ok) {
+        setCivitaiResults(data.items || [])
+        setCivitaiPage(data.metadata?.currentPage || page)
+        setCivitaiTotalPages(data.metadata?.totalPages || 1)
+
+        if (data.items.length === 0) {
+          setToast('No models found. Try a different search term.')
+        }
+      } else {
+        throw new Error('Search failed')
+      }
+    } catch (e: any) {
+      console.error('[Civitai Search Error]', e)
+      setCivitaiSearchError(e?.message || String(e))
+      setToast(`Search failed: ${e?.message || 'Unknown error'}`)
+    } finally {
+      setCivitaiSearchLoading(false)
+    }
+  }
+
+  // Install from Civitai search result
+  const installFromCivitaiResult = async (model: CivitaiSearchResult, versionId: string) => {
+    setInstallBusy(model.id)
+
+    try {
+      const body = {
+        provider: 'civitai',
+        model_type: modelType,
+        model_id: model.id,
+        civitai_version_id: versionId,
+        civitai_api_key: props.nsfwMode ? props.civitaiApiKey : undefined,
+      }
+
+      setToast(`Starting download for ${model.name}...`)
+
+      const res = await postJson<InstallResponse>(backendUrl, '/models/install', body, authKey)
+
+      if (res?.ok) {
+        setToast(res.message || `Successfully installed ${model.name}`)
+        // Refresh installed list after successful installation
+        setTimeout(() => {
+          refreshInstalled()
+        }, 2000)
+      } else {
+        setToast(res?.message || 'Installation request sent.')
+      }
+    } catch (e: any) {
+      setToast(`Installation failed: ${e?.message || String(e)}`)
+    } finally {
+      setInstallBusy(null)
+    }
+  }
+
   // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return
@@ -702,11 +844,191 @@ export default function ModelsView(props: ModelsParams) {
       {provider === 'civitai' && (
         <div className="px-8 py-4 border-b border-white/10 bg-gradient-to-br from-blue-500/5 to-blue-500/0">
           <div className="max-w-7xl">
+            {/* Search Bar */}
+            <div className="mb-6">
+              <label className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider block mb-2.5">
+                🔍 Search Civitai Models
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  value={civitaiQuery}
+                  onChange={(e) => setCivitaiQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && searchCivitai()}
+                  placeholder={`Search ${modelType === 'video' ? 'video' : 'image'} models on Civitai...`}
+                  className="flex-1 bg-white/5 border border-cyan-500/20 rounded-xl px-4 py-3 text-sm font-medium outline-none focus:border-cyan-500/40 focus:bg-white/10 transition-all placeholder:text-white/30"
+                />
+                <button
+                  type="button"
+                  onClick={() => searchCivitai()}
+                  disabled={civitaiSearchLoading || !civitaiQuery.trim()}
+                  className={[
+                    "px-6 py-3 rounded-xl text-white text-sm font-bold uppercase tracking-wide transition-all shadow-lg",
+                    civitaiSearchLoading
+                      ? "bg-cyan-700 cursor-wait shadow-cyan-700/30"
+                      : !civitaiQuery.trim()
+                      ? "bg-cyan-600/50 cursor-not-allowed shadow-cyan-600/10"
+                      : "bg-cyan-600 hover:bg-cyan-500 shadow-cyan-600/20 hover:shadow-cyan-600/30 hover:scale-105 active:scale-95"
+                  ].join(" ")}
+                >
+                  {civitaiSearchLoading ? (
+                    <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : (
+                    'Search'
+                  )}
+                </button>
+              </div>
+              {civitaiSearchError && (
+                <div className="mt-2 text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+                  ⚠️ {civitaiSearchError}
+                </div>
+              )}
+            </div>
+
+            {/* Search Results */}
+            {civitaiResults.length > 0 && (
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
+                    Search Results ({civitaiResults.length} models)
+                  </div>
+                  {civitaiTotalPages > 1 && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => searchCivitai(civitaiPage - 1)}
+                        disabled={civitaiPage <= 1 || civitaiSearchLoading}
+                        className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                      >
+                        ← Prev
+                      </button>
+                      <span className="text-xs text-white/50">
+                        Page {civitaiPage} of {civitaiTotalPages}
+                      </span>
+                      <button
+                        onClick={() => searchCivitai(civitaiPage + 1)}
+                        disabled={civitaiPage >= civitaiTotalPages || civitaiSearchLoading}
+                        className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[400px] overflow-y-auto pr-2 scrollbar-hide">
+                  {civitaiResults.map((model) => (
+                    <div
+                      key={model.id}
+                      className="bg-white/5 border border-white/10 rounded-xl overflow-hidden hover:border-cyan-500/30 transition-all group"
+                    >
+                      {/* Thumbnail */}
+                      <div className="relative h-32 bg-black/50">
+                        {model.thumbnail ? (
+                          <img
+                            src={model.thumbnail}
+                            alt={model.name}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-white/20">
+                            <span className="text-4xl">🖼️</span>
+                          </div>
+                        )}
+                        {model.nsfw && (
+                          <span className="absolute top-2 right-2 px-2 py-1 text-[9px] font-bold uppercase bg-red-600 text-white rounded">
+                            NSFW
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div className="p-3">
+                        <div className="font-semibold text-sm text-white truncate mb-1">{model.name}</div>
+                        <div className="text-[10px] text-white/40 mb-2">by {model.creator}</div>
+
+                        <div className="flex items-center gap-3 text-[10px] text-white/50 mb-3">
+                          <span>⬇️ {model.downloads >= 1000 ? `${(model.downloads / 1000).toFixed(1)}K` : model.downloads}</span>
+                          <span>⭐ {model.rating.toFixed(1)}</span>
+                          <span>({model.ratingCount})</span>
+                        </div>
+
+                        {model.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-3">
+                            {model.tags.slice(0, 3).map((tag) => (
+                              <span key={tag} className="px-2 py-0.5 text-[9px] bg-white/5 rounded text-white/40">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Version selector and install */}
+                        {model.versions.length > 0 && (
+                          <div className="flex items-center gap-2">
+                            <select
+                              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-cyan-500/30"
+                              defaultValue={model.versions[0]?.id}
+                              id={`version-${model.id}`}
+                            >
+                              {model.versions.map((v) => (
+                                <option key={v.id} value={v.id}>
+                                  {v.name} ({(v.sizeKB / 1024 / 1024).toFixed(1)}GB)
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const select = document.getElementById(`version-${model.id}`) as HTMLSelectElement
+                                const versionId = select?.value || model.versions[0]?.id
+                                installFromCivitaiResult(model, versionId)
+                              }}
+                              disabled={installBusy === model.id}
+                              className={[
+                                "px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all",
+                                installBusy === model.id
+                                  ? "bg-cyan-700 text-white cursor-wait"
+                                  : "bg-cyan-600 text-white hover:bg-cyan-500"
+                              ].join(" ")}
+                            >
+                              {installBusy === model.id ? (
+                                <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                              ) : (
+                                <Download size={12} />
+                              )}
+                              Install
+                            </button>
+                          </div>
+                        )}
+
+                        {model.link && (
+                          <a
+                            href={model.link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block mt-2 text-[10px] text-cyan-400 hover:text-cyan-300"
+                          >
+                            View on Civitai →
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Manual Version ID Input */}
-            <div className="flex items-start gap-4 mb-6">
+            <div className="flex items-start gap-4 mb-6 border-t border-white/10 pt-4">
               <div className="flex-1">
                 <label className="text-[10px] text-blue-400 font-bold uppercase tracking-wider block mb-2.5">
-                  🧪 Custom Civitai Version ID
+                  📋 Direct Version ID (Advanced)
                 </label>
                 <input
                   value={civitaiVersionId}
@@ -756,7 +1078,7 @@ export default function ModelsView(props: ModelsParams) {
                     ) : (
                       <>
                         <Download size={16} strokeWidth={2.5} />
-                        <span>Download Custom</span>
+                        <span>Download</span>
                       </>
                     )}
                   </span>

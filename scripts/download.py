@@ -67,6 +67,15 @@ DEFAULT_HEADERS = {
     "User-Agent": "HomePilot-Downloader/1.0",
 }
 
+def get_civitai_headers() -> Dict[str, str]:
+    """Get headers for Civitai API requests, including API key if available."""
+    headers = DEFAULT_HEADERS.copy()
+    api_key = os.environ.get("CIVITAI_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        print("      Using Civitai API key from environment")
+    return headers
+
 # -----------------------------------------------------------------------------
 # Utilities
 # -----------------------------------------------------------------------------
@@ -107,6 +116,7 @@ def download_file(
     expected_size: Optional[int] = None,
     show_progress: bool = True,
     resume: bool = True,
+    custom_headers: Optional[Dict[str, str]] = None,
 ) -> Tuple[bool, str]:
     """
     Download a file with progress bar and resume support.
@@ -115,7 +125,7 @@ def download_file(
     dest.parent.mkdir(parents=True, exist_ok=True)
     temp_file = dest.with_suffix(dest.suffix + ".part")
 
-    headers = DEFAULT_HEADERS.copy()
+    headers = custom_headers.copy() if custom_headers else DEFAULT_HEADERS.copy()
 
     # Resume support
     start_pos = 0
@@ -336,7 +346,8 @@ def civitai_get_version_info(version_id: str) -> Optional[Dict[str, Any]]:
     url = f"{CIVITAI_API_BASE}/model-versions/{version_id}"
 
     try:
-        response = requests.get(url, headers=DEFAULT_HEADERS, timeout=30)
+        headers = get_civitai_headers()
+        response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -435,7 +446,9 @@ def download_civitai_model(
     print(f"      Starting download... (this may take several minutes for large models)")
     print()
 
-    success, message = download_file(download_url, dest_path)
+    # Use Civitai headers (includes API key if available)
+    civitai_headers = get_civitai_headers()
+    success, message = download_file(download_url, dest_path, custom_headers=civitai_headers)
 
     print()
     print(f"{'='*80}")
