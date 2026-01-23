@@ -19,7 +19,11 @@ import {
   BookOpen,
   Users,
   MapPin,
+  Monitor,
 } from 'lucide-react'
+import { useTVModeStore } from './studio/stores/tvModeStore'
+import type { TVScene } from './studio/stores/tvModeStore'
+import { TVModeContainer } from './studio/components/TVMode'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -139,6 +143,9 @@ async function deleteJson<T>(baseUrl: string, path: string, apiKey?: string): Pr
 export default function StudioView(props: StudioParams) {
   const authKey = (props.apiKey || '').trim()
 
+  // TV Mode state
+  const { isActive: tvModeActive, enterTVMode, addScene: addTVScene, updateSceneImageByIdx, setSceneImageStatusByIdx } = useTVModeStore()
+
   // View state
   const [view, setView] = useState<'list' | 'create' | 'player'>('list')
   const [showModeChooser, setShowModeChooser] = useState(false)
@@ -201,6 +208,10 @@ export default function StudioView(props: StudioParams) {
   const [isGeneratingScene, setIsGeneratingScene] = useState(false)
   const [isGeneratingImage, setIsGeneratingImage] = useState(false)
   const [showBible, setShowBible] = useState(false)
+
+  // Image generation queue to prevent dropped requests
+  const imageQueueRef = useRef<Set<number>>(new Set())
+  const imageInFlightRef = useRef<number | null>(null)
   const [isMuted, setIsMuted] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
@@ -332,12 +343,30 @@ export default function StudioView(props: StudioParams) {
     }
   }
 
-  const generateImageForScene = async (scene: Scene) => {
-    if (isGeneratingImage) return
-    setIsGeneratingImage(true)
+  // Process the image generation queue
+  const processImageQueue = useCallback(async () => {
+    // Already processing?
+    if (imageInFlightRef.current !== null) return
+
+    // Get next scene idx from queue
+    const nextIdx = imageQueueRef.current.values().next().value
+    if (nextIdx === undefined) {
+      setIsGeneratingImage(false)
+      return
+    }
+
+    imageInFlightRef.current = nextIdx
+    imageQueueRef.current.delete(nextIdx)
 
     try {
       const llmProvider = props.providerImages === 'comfyui' ? 'ollama' : props.providerImages
+
+      // Find the scene to get its image_prompt
+      const scene = currentStory?.scenes.find(s => s.idx === nextIdx)
+      if (!scene) {
+        console.warn(`Scene ${nextIdx} not found for image generation`)
+        return
+      }
 
       const data = await postJson<{
         media?: { images?: string[] }
@@ -349,7 +378,6 @@ export default function StudioView(props: StudioParams) {
           mode: 'imagine',
           provider: llmProvider,
           provider_base_url: props.baseUrlImages,
-          // Use imgModel for image model selection (not provider_model which is for LLM)
           imgModel: props.modelImages || undefined,
           imgWidth: props.imgWidth || 1344,
           imgHeight: props.imgHeight || 768,
@@ -368,9 +396,14 @@ export default function StudioView(props: StudioParams) {
           if (!prev) return prev
           return {
             ...prev,
-            scenes: prev.scenes.map((s) => (s.idx === scene.idx ? { ...s, image_url: imageUrl } : s)),
+            scenes: prev.scenes.map((s) => (s.idx === nextIdx ? { ...s, image_url: imageUrl } : s)),
           }
         })
+
+        // Also update TV Mode store if active (for sync) - use ByIdx variant
+        if (tvModeActive) {
+          updateSceneImageByIdx(nextIdx, imageUrl)
+        }
 
         // Persist image URL to database so it survives page reload
         try {
@@ -379,7 +412,7 @@ export default function StudioView(props: StudioParams) {
             '/story/scene/image',
             {
               session_id: currentStory.session_id,
-              scene_idx: scene.idx,
+              scene_idx: nextIdx,
               image_url: imageUrl,
             },
             authKey
@@ -392,9 +425,35 @@ export default function StudioView(props: StudioParams) {
     } catch (err: any) {
       console.error('Failed to generate image:', err)
     } finally {
-      setIsGeneratingImage(false)
+      imageInFlightRef.current = null
+      // Process next item in queue if any
+      if (imageQueueRef.current.size > 0) {
+        processImageQueue()
+      } else {
+        setIsGeneratingImage(false)
+      }
     }
-  }
+  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, currentStory, tvModeActive, updateSceneImageByIdx])
+
+  // Enqueue image generation for a scene
+  const generateImageForScene = useCallback((scene: Scene | TVScene) => {
+    // Already has image?
+    const hasImage = Boolean((scene as Scene).image_url || (scene as TVScene).image_url || (scene as TVScene).image)
+    if (hasImage) return
+
+    // Already in queue or in flight?
+    if (imageQueueRef.current.has(scene.idx) || imageInFlightRef.current === scene.idx) return
+
+    // Mark as generating in TV Mode store
+    if (tvModeActive) {
+      setSceneImageStatusByIdx(scene.idx, 'generating')
+    }
+
+    // Add to queue and start processing
+    imageQueueRef.current.add(scene.idx)
+    setIsGeneratingImage(true)
+    processImageQueue()
+  }, [tvModeActive, setSceneImageStatusByIdx, processImageQueue])
 
   // Auto-play logic
   useEffect(() => {
@@ -427,6 +486,62 @@ export default function StudioView(props: StudioParams) {
       setIsFullscreen(false)
     }
   }
+
+  // Handle entering TV Mode
+  const handleEnterTVMode = useCallback(() => {
+    if (!currentStory || currentStory.scenes.length === 0) return
+
+    // Convert scenes to TV Mode format
+    const tvScenes = currentStory.scenes.map((scene) => ({
+      ...scene,
+      status: 'ready' as const,
+    }))
+
+    enterTVMode(currentStory.session_id, currentStory.title, tvScenes, currentSceneIndex)
+  }, [currentStory, currentSceneIndex, enterTVMode])
+
+  // Generate next scene for TV Mode (prefetching)
+  const generateNextForTVMode = useCallback(async () => {
+    if (!currentStory) return null
+
+    try {
+      const data = await postJson<{
+        ok: boolean
+        session_id: string
+        title: string
+        scene: Scene
+        bible: StoryBible
+      }>(
+        props.backendUrl,
+        '/story/next',
+        {
+          session_id: currentStory.session_id,
+          refine_image_prompt: props.promptRefinement ?? true,
+        },
+        authKey
+      )
+
+      // Add new scene to current story state
+      setCurrentStory((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          scenes: [...prev.scenes, data.scene],
+        }
+      })
+
+      // Generate image for the new scene in background
+      generateImageForScene(data.scene)
+
+      return {
+        ...data.scene,
+        status: 'ready' as const,
+      }
+    } catch (error) {
+      console.error('TV Mode generate error:', error)
+      throw error
+    }
+  }, [currentStory, props.backendUrl, props.promptRefinement, authKey])
 
   const currentScene = currentStory?.scenes[currentSceneIndex]
 
@@ -844,6 +959,17 @@ export default function StudioView(props: StudioParams) {
                 </>
               )}
             </button>
+
+            <button
+              onClick={handleEnterTVMode}
+              disabled={!currentStory || currentStory.scenes.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 text-purple-300 border border-purple-500/30 rounded-full transition-all disabled:opacity-50"
+              type="button"
+              title="Watch story in immersive TV Mode"
+            >
+              <Monitor size={16} />
+              TV Mode
+            </button>
           </div>
         </div>
       </div>
@@ -1021,6 +1147,14 @@ export default function StudioView(props: StudioParams) {
           overflow: hidden;
         }
       `}</style>
+
+      {/* TV Mode Overlay */}
+      {tvModeActive && (
+        <TVModeContainer
+          onGenerateNext={generateNextForTVMode}
+          onEnsureImage={generateImageForScene}
+        />
+      )}
     </div>
   )
 }
