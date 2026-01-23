@@ -3,7 +3,7 @@ SHELL := /bin/bash
 # Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
-.PHONY: help install setup run up down logs health dev build test clean download download-minimal download-recommended download-full download-verify start start-backend start-frontend
+.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-verify start start-backend start-frontend
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -276,6 +276,37 @@ up: ## Development: Start stack WITHOUT Ollama container (use host Ollama)
 
 down: ## Stop all containers (including Ollama if running)
 	docker compose -f infra/docker-compose.yml --profile ollama down
+
+stop: ## Stop all local HomePilot processes (kills processes on ports 3000, 8000, 8188)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Stopping HomePilot Services"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@# Kill processes by port (works on Linux/macOS/WSL)
+	@for port in 3000 8000 8188; do \
+		echo "Checking port $$port..."; \
+		pid=$$(lsof -ti :$$port 2>/dev/null || true); \
+		if [ -n "$$pid" ]; then \
+			echo "  Killing process(es) on port $$port: $$pid"; \
+			echo "$$pid" | xargs -r kill -9 2>/dev/null || true; \
+		else \
+			echo "  No process on port $$port"; \
+		fi; \
+	done
+	@# Also kill by process name as backup (in case lsof misses something)
+	@echo ""
+	@echo "Cleaning up by process name..."
+	@-pkill -9 -f "ComfyUI/main.py" 2>/dev/null && echo "  Killed ComfyUI" || true
+	@-pkill -9 -f "uvicorn app.main:app" 2>/dev/null && echo "  Killed backend" || true
+	@-pkill -9 -f "vite.*--port 3000" 2>/dev/null && echo "  Killed frontend" || true
+	@echo "  Done"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ All HomePilot services stopped"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "You can now safely run: make start"
+	@echo ""
 
 logs: ## Tail logs
 	docker compose -f infra/docker-compose.yml logs -f --tail=200

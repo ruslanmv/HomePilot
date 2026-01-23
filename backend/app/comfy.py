@@ -205,15 +205,33 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     timeout = httpx.Timeout(60.0, connect=60.0)
     with httpx.Client(timeout=timeout) as client:
         prompt_id = _post_prompt(client, prompt_graph)
+        print(f"[COMFY] Prompt queued with ID: {prompt_id}")
 
         started = time.time()
         while True:
             history = _get_history(client, prompt_id)
 
             entry = history.get(prompt_id)
-            if isinstance(entry, dict) and entry.get("outputs"):
-                images, videos = _extract_media(history, prompt_id)
-                return {"images": images, "videos": videos, "prompt_id": prompt_id}
+            if isinstance(entry, dict):
+                # Check if job completed (has outputs key, even if empty)
+                # Also check status.completed for newer ComfyUI versions
+                status = entry.get("status", {})
+                status_completed = status.get("completed", False) if isinstance(status, dict) else False
+                has_outputs = "outputs" in entry
+
+                if has_outputs or status_completed:
+                    images, videos = _extract_media(history, prompt_id)
+                    elapsed = time.time() - started
+                    print(f"[COMFY] Workflow completed in {elapsed:.1f}s, images: {len(images)}, videos: {len(videos)}")
+
+                    # If no images were generated, log a warning
+                    if not images and not videos:
+                        print(f"[COMFY] WARNING: Workflow completed but produced no output!")
+                        # Check for execution errors in status
+                        if isinstance(status, dict) and status.get("status_str") == "error":
+                            print(f"[COMFY] Error details: {status}")
+
+                    return {"images": images, "videos": videos, "prompt_id": prompt_id}
 
             if (time.time() - started) > float(COMFY_POLL_MAX_S):
                 raise TimeoutError(

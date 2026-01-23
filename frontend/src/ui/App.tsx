@@ -24,6 +24,7 @@ import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
 import ModelsView from './Models'
 import StudioView from './Studio'
+import { CreatorStudioHost } from './CreatorStudioHost'
 import { ImageViewer } from './ImageViewer'
 
 // -----------------------------------------------------------------------------
@@ -1180,6 +1181,9 @@ export default function App() {
     return (localStorage.getItem('homepilot_mode') as Mode) || 'chat'
   })
 
+  // Studio variant: "play" for Play Studio (StudioView), "creator" for Creator Studio
+  const [studioVariant, setStudioVariant] = useState<"play" | "creator">("play")
+
   // Unified settings model
   const [settings, setSettings] = useState<SettingsModel>(() => {
     const backendUrl =
@@ -1986,7 +1990,8 @@ export default function App() {
           />
         )}
 
-        {/* Top-right "Private" and Project Indicator */}
+        {/* Top-right "Private" and Project Indicator - Hidden in Studio mode */}
+        {mode !== 'studio' && (
         <header className="absolute top-0 right-0 p-5 z-20 flex items-center gap-4">
           {/* Project Indicator */}
           {(() => {
@@ -2032,6 +2037,7 @@ export default function App() {
             <span>Private</span>
           </button>
         </header>
+        )}
 
         {mode === 'voice' ? (
           <VoiceMode onSendText={(text) => sendTextOrIntent(text)} />
@@ -2127,19 +2133,28 @@ export default function App() {
             nsfwMode={settingsDraft.nsfwMode}
           />
         ) : mode === 'studio' ? (
-          <StudioView
-            backendUrl={settingsDraft.backendUrl}
-            apiKey={settingsDraft.apiKey}
-            providerImages={settingsDraft.providerImages}
-            baseUrlImages={settingsDraft.baseUrlImages}
-            modelImages={settingsDraft.modelImages}
-            imgWidth={settingsDraft.imgWidth}
-            imgHeight={settingsDraft.imgHeight}
-            imgSteps={settingsDraft.imgSteps}
-            imgCfg={settingsDraft.imgCfg}
-            nsfwMode={settingsDraft.nsfwMode}
-            promptRefinement={settingsDraft.promptRefinement}
-          />
+          studioVariant === 'creator' ? (
+            <CreatorStudioHost
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              onSwitchToPlay={() => setStudioVariant('play')}
+            />
+          ) : (
+            <StudioView
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              providerImages={settingsDraft.providerImages}
+              baseUrlImages={settingsDraft.baseUrlImages}
+              modelImages={settingsDraft.modelImages}
+              imgWidth={settingsDraft.imgWidth}
+              imgHeight={settingsDraft.imgHeight}
+              imgSteps={settingsDraft.imgSteps}
+              imgCfg={settingsDraft.imgCfg}
+              nsfwMode={settingsDraft.nsfwMode}
+              promptRefinement={settingsDraft.promptRefinement}
+              onOpenCreatorStudio={() => setStudioVariant('creator')}
+            />
+          )
         ) : mode === 'search' ? (
           // Search mode: use chat interface with mode-specific behavior
           messages.length === 0 ? (
