@@ -35,6 +35,14 @@ from .providers import provider_info
 from .storage import init_db, list_conversations, get_messages, delete_image_url, delete_conversation
 from .migrations import run_migrations
 
+# Civitai search support
+from .civitai import (
+    CivitaiClient,
+    CivitaiSearchQuery,
+    search_and_normalize,
+    get_civitai_cache,
+)
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -594,6 +602,147 @@ async def get_model_catalog() -> JSONResponse:
         )
 
 
+# ----------------------------
+# Civitai Search API
+# ----------------------------
+
+class CivitaiSearchRequest(BaseModel):
+    """Request model for Civitai search."""
+    query: str = Field(..., min_length=1, max_length=100, description="Search query")
+    model_type: str = Field(default="image", description="Model type: 'image' or 'video'")
+    nsfw: bool = Field(default=False, description="Include NSFW results (requires API key)")
+    limit: int = Field(default=20, ge=1, le=50, description="Results per page")
+    page: int = Field(default=1, ge=1, description="Page number")
+    sort: str = Field(default="Highest Rated", description="Sort order")
+
+
+@app.post("/civitai/search")
+async def civitai_search(
+    req: CivitaiSearchRequest,
+    request: Request,
+    x_civitai_api_key: Optional[str] = None,
+) -> JSONResponse:
+    """
+    Search Civitai models.
+
+    This is an enterprise-safe backend proxy for Civitai API:
+    - API key is OPTIONAL for SFW/public searches
+    - For NSFW searches, pass X-Civitai-Api-Key header (optional)
+    - Results are cached briefly to reduce upstream rate pressure
+    - Responses are normalized to a stable schema
+
+    Example:
+        POST /civitai/search
+        {
+            "query": "anime",
+            "model_type": "image",
+            "nsfw": false,
+            "limit": 20,
+            "page": 1
+        }
+    """
+    try:
+        # Get API key from header if provided
+        api_key = request.headers.get("X-Civitai-Api-Key") or x_civitai_api_key
+
+        # Sanitize query
+        query = req.query.strip()[:100]
+        if not query:
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err("Query is required", code="invalid_query"),
+            )
+
+        # Validate model_type
+        if req.model_type not in ("image", "video"):
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err("model_type must be 'image' or 'video'", code="invalid_model_type"),
+            )
+
+        # Create client (with optional API key for NSFW)
+        # Only pass API key if NSFW is requested
+        client = CivitaiClient(api_key=api_key if req.nsfw else None)
+
+        # Build search query
+        search_query = CivitaiSearchQuery(
+            query=query,
+            model_type=req.model_type,
+            limit=req.limit,
+            page=req.page,
+            nsfw=req.nsfw,
+            sort=req.sort,
+        )
+
+        # Get cache and perform search
+        cache = get_civitai_cache()
+        results = await search_and_normalize(
+            client=client,
+            cache=cache,
+            query=search_query,
+        )
+
+        print(f"[CIVITAI] Search '{query}' returned {len(results.get('items', []))} results")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "query": query,
+                "model_type": req.model_type,
+                "nsfw": req.nsfw,
+                "items": results.get("items", []),
+                "metadata": results.get("metadata", {}),
+            },
+        )
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"Civitai API error: {e.response.status_code}"
+        print(f"[CIVITAI] {error_msg}")
+        return JSONResponse(
+            status_code=502,
+            content=_safe_err(error_msg, code="civitai_api_error"),
+        )
+    except httpx.TimeoutException:
+        print("[CIVITAI] Request timeout")
+        return JSONResponse(
+            status_code=504,
+            content=_safe_err("Civitai API timeout - try again later", code="civitai_timeout"),
+        )
+    except Exception as e:
+        print(f"[CIVITAI] Unexpected error: {e}")
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err("Search failed - please try again", code="civitai_error"),
+        )
+
+
+@app.get("/civitai/search")
+async def civitai_search_get(
+    request: Request,
+    query: str = Query(..., min_length=1, max_length=100, description="Search query"),
+    model_type: str = Query(default="image", description="Model type: 'image' or 'video'"),
+    nsfw: bool = Query(default=False, description="Include NSFW results"),
+    limit: int = Query(default=20, ge=1, le=50, description="Results per page"),
+    page: int = Query(default=1, ge=1, description="Page number"),
+    sort: str = Query(default="Highest Rated", description="Sort order"),
+) -> JSONResponse:
+    """
+    GET version of Civitai search for easier testing.
+
+    Example: GET /civitai/search?query=anime&model_type=image&limit=10
+    """
+    req = CivitaiSearchRequest(
+        query=query,
+        model_type=model_type,
+        nsfw=nsfw,
+        limit=limit,
+        page=page,
+        sort=sort,
+    )
+    return await civitai_search(req, request)
+
+
 class ModelInstallRequest(BaseModel):
     model_config = {"protected_namespaces": ()}
 
@@ -602,6 +751,7 @@ class ModelInstallRequest(BaseModel):
     model_id: str = Field(..., description="Model ID to install")
     base_url: Optional[str] = Field(None, description="Optional base URL override")
     civitai_version_id: Optional[str] = Field(None, description="Civitai version ID (for civitai provider)")
+    civitai_api_key: Optional[str] = Field(None, description="Optional Civitai API key for restricted/NSFW downloads")
 
 
 @app.post("/models/install")
@@ -687,7 +837,12 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             )
 
         # Run download script for comfyui and civitai
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        # Pass Civitai API key via environment variable (secure - not visible in process list)
+        env = os.environ.copy()
+        if req.civitai_api_key and req.provider == "civitai":
+            env["CIVITAI_API_KEY"] = req.civitai_api_key
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
 
         if result.returncode == 0:
             return JSONResponse(
@@ -1042,6 +1197,9 @@ async def chat(inp: ChatIn) -> JSONResponse:
     Stable response schema:
       { conversation_id, text, media }
     """
+    # Debug: Log incoming imgModel parameter
+    print(f"[CHAT ENDPOINT] imgModel received from frontend: '{inp.imgModel}' (type: {type(inp.imgModel).__name__ if inp.imgModel is not None else 'None'})")
+
     # Build payload for mode-aware handler
     payload = {
         "message": inp.message,

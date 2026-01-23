@@ -1399,6 +1399,7 @@ export default function App() {
     localStorage.setItem('homepilot_voice_uri', settingsDraft.selectedVoice ?? '')
     localStorage.setItem('homepilot_nsfw_mode', String(!!settingsDraft.nsfwMode))
     localStorage.setItem('homepilot_experimental_civitai', String(!!settingsDraft.experimentalCivitai))
+    localStorage.setItem('homepilot_civitai_api_key', settingsDraft.civitaiApiKey || '')
     localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
 
     // Save TTS settings to nexus_settings_v1 format (used by SpeechService)
@@ -1463,6 +1464,7 @@ export default function App() {
         preset: (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med',
         nsfwMode: localStorage.getItem('homepilot_nsfw_mode') === 'true',
         experimentalCivitai: localStorage.getItem('homepilot_experimental_civitai') === 'true',
+        civitaiApiKey: localStorage.getItem('homepilot_civitai_api_key') || '',
         promptRefinement: localStorage.getItem('homepilot_prompt_refinement') !== 'false',
         textTemperature: parseFloat(localStorage.getItem('homepilot_text_temp') || '0.7'),
         textMaxTokens: parseInt(localStorage.getItem('homepilot_text_maxtokens') || '2048'),
@@ -2115,6 +2117,7 @@ export default function App() {
             baseUrlImages={settingsDraft.baseUrlImages}
             baseUrlVideo={settingsDraft.baseUrlVideo}
             experimentalCivitai={settingsDraft.experimentalCivitai}
+            civitaiApiKey={settingsDraft.civitaiApiKey}
             nsfwMode={settingsDraft.nsfwMode}
           />
         ) : mode === 'search' ? (

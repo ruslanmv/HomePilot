@@ -10,7 +10,7 @@ from .comfy import run_workflow
 from .llm import chat as llm_chat
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
-from .config import DEFAULT_PROVIDER, ProviderName
+from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
 
 # Import specialized handlers
 from .search import run_search
@@ -79,12 +79,16 @@ async def _refine_prompt(
     Use LLM to refine user's casual prompt into a detailed image generation prompt.
     Returns dict with: prompt, negative_prompt, aspect_ratio, style
     """
+    print(f"[_refine_prompt] Calling LLM to refine prompt...")
+    print(f"[_refine_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
+
     messages = [
         {"role": "system", "content": PROMPT_REFINER_SYSTEM},
         {"role": "user", "content": user_prompt},
     ]
 
     try:
+        print(f"[_refine_prompt] Sending to llm_chat...")
         result = await llm_chat(
             messages,
             provider=provider,
@@ -93,6 +97,7 @@ async def _refine_prompt(
             base_url=provider_base_url,
             model=provider_model,
         )
+        print(f"[_refine_prompt] LLM response received")
 
         # Extract the response text
         response_text = (
@@ -101,9 +106,12 @@ async def _refine_prompt(
             .get("content", "")
         ).strip()
 
+        print(f"[_refine_prompt] Raw LLM response: '{response_text[:200]}...'")
+
         # Try to parse as JSON
         # Remove markdown code blocks if present
         if response_text.startswith("```"):
+            print(f"[_refine_prompt] Stripping markdown code blocks...")
             # Extract JSON from code block
             lines = response_text.split("\n")
             json_lines = []
@@ -115,19 +123,27 @@ async def _refine_prompt(
                 if in_block or (not line.strip().startswith("```")):
                     json_lines.append(line)
             response_text = "\n".join(json_lines).strip()
+            print(f"[_refine_prompt] After stripping: '{response_text[:200]}...'")
 
+        print(f"[_refine_prompt] Parsing JSON...")
         refined = json.loads(response_text)
+        print(f"[_refine_prompt] JSON parsed successfully")
 
         # Validate and set defaults
-        return {
+        result_dict = {
             "prompt": refined.get("prompt", user_prompt),
             "negative_prompt": refined.get("negative_prompt", "blurry, low quality, distorted"),
             "aspect_ratio": refined.get("aspect_ratio", "1:1"),
             "style": refined.get("style", "photorealistic"),
         }
+        print(f"[_refine_prompt] Returning refined prompt: '{result_dict['prompt'][:100]}...'")
+        return result_dict
 
     except Exception as e:
         # If refinement fails, return basic prompt
+        print(f"[_refine_prompt] ERROR: {type(e).__name__}: {e}")
+        import traceback
+        print(f"[_refine_prompt] Traceback: {traceback.format_exc()}")
         return {
             "prompt": user_prompt,
             "negative_prompt": "blurry, low quality, distorted",
@@ -250,23 +266,55 @@ async def orchestrate(
 
     # --- Imagine ---
     if (m == "imagine") or IMAGE_RE.search(text_in):
+        # Debug: Log received parameters
+        print(f"[IMAGE] === IMAGINE REQUEST ===")
+        print(f"[IMAGE] Raw img_model parameter: '{img_model}' (type: {type(img_model).__name__})")
+        print(f"[IMAGE] img_model is truthy: {bool(img_model)}")
+
         try:
             # Optional prompt refinement (enabled by default, can be disabled)
             if prompt_refinement:
-                # Get provider for prompt refinement
+                # Get provider for prompt refinement - use CHAT provider, NOT image provider
+                # IMPORTANT: provider_model may be the IMAGE model (e.g., dreamshaper_8.safetensors)
+                # which is NOT an LLM. We must use the proper chat model for refinement.
                 prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
+
+                # Determine the correct LLM model for refinement based on provider
+                # DO NOT use provider_model as it may be an image model!
+                if prov == "ollama":
+                    refine_base_url = provider_base_url or OLLAMA_BASE_URL
+                    refine_model = OLLAMA_MODEL  # Use default Ollama chat model
+                elif prov == "openai_compat":
+                    refine_base_url = provider_base_url or LLM_BASE_URL
+                    refine_model = LLM_MODEL  # Use default vLLM chat model
+                else:
+                    # For other providers (openai, claude), use provider_base_url but NOT provider_model
+                    # as provider_model may be the image model
+                    refine_base_url = provider_base_url
+                    refine_model = None  # Let the provider use its default
+
+                print(f"[PROMPT_REFINE] === Starting prompt refinement ===")
+                print(f"[PROMPT_REFINE] User prompt: '{text_in[:100]}...'")
+                print(f"[PROMPT_REFINE] Provider: {prov}")
+                print(f"[PROMPT_REFINE] Base URL: {refine_base_url}")
+                print(f"[PROMPT_REFINE] Model: {refine_model}")
+                print(f"[PROMPT_REFINE] (Note: img_model '{img_model}' is NOT used for refinement)")
 
                 try:
                     # Refine the prompt using LLM (Grok-like behavior)
                     refined = await _refine_prompt(
                         text_in,
                         provider=prov,
-                        provider_base_url=provider_base_url,
-                        provider_model=provider_model,
+                        provider_base_url=refine_base_url,
+                        provider_model=refine_model,
                     )
+                    print(f"[PROMPT_REFINE] SUCCESS! Refined prompt: '{refined.get('prompt', '')[:100]}...'")
+                    print(f"[PROMPT_REFINE] Negative prompt: '{refined.get('negative_prompt', '')}'")
+                    print(f"[PROMPT_REFINE] Style: {refined.get('style')}, Aspect: {refined.get('aspect_ratio')}")
                 except Exception as e:
                     # Fallback to direct mode if refinement fails (e.g., Ollama unavailable)
-                    print(f"Prompt refinement failed, using direct mode: {e}")
+                    print(f"[PROMPT_REFINE] FAILED: {e}")
+                    print(f"[PROMPT_REFINE] Falling back to direct mode with original prompt")
                     refined = {
                         "prompt": text_in,
                         "negative_prompt": "",
@@ -275,6 +323,7 @@ async def orchestrate(
                     }
             else:
                 # Direct mode: use user prompt without refinement
+                print(f"[PROMPT_REFINE] Direct mode (refinement disabled)")
                 refined = {
                     "prompt": text_in,
                     "negative_prompt": "",
@@ -296,16 +345,110 @@ async def orchestrate(
 
             # Determine which workflow to use based on selected model
             workflow_name = "txt2img"
+            checkpoint_override = None
+
             if img_model:
                 # Map model name to workflow filename
+                # Supports both short names (sdxl) and full checkpoint filenames (sd_xl_base_1.0.safetensors)
                 workflow_map = {
+                    # Short names
                     "sdxl": "txt2img",
                     "flux-schnell": "txt2img-flux-schnell",
                     "flux-dev": "txt2img-flux-dev",
                     "pony-xl": "txt2img-pony-xl",
                     "sd15-uncensored": "txt2img-sd15-uncensored",
+                    # SDXL checkpoints
+                    "sd_xl_base_1.0.safetensors": "txt2img",
+                    "ponyDiffusionV6XL.safetensors": "txt2img-pony-xl",
+                    # SD1.5 checkpoints (use sd15-uncensored workflow which supports SD1.5 architecture)
+                    "dreamshaper_8.safetensors": "txt2img-sd15-uncensored",
+                    "realisticVisionV51.safetensors": "txt2img-sd15-uncensored",
+                    "deliberate_v3.safetensors": "txt2img-sd15-uncensored",
+                    "epicrealism_pureEvolution.safetensors": "txt2img-sd15-uncensored",
+                    "sd15.safetensors": "txt2img-sd15-uncensored",
+                    # Flux checkpoints
+                    "flux1-schnell.safetensors": "txt2img-flux-schnell",
+                    "flux1-dev.safetensors": "txt2img-flux-dev",
                 }
-                workflow_name = workflow_map.get(img_model, "txt2img")
+
+                workflow_name = workflow_map.get(img_model, None)
+
+                # Known SD1.5 models that need checkpoint override
+                known_sd15_models = [
+                    "dreamshaper_8.safetensors",
+                    "realisticVisionV51.safetensors",
+                    "deliberate_v3.safetensors",
+                    "epicrealism_pureEvolution.safetensors",
+                    "sd15.safetensors",
+                ]
+
+                # If model not in explicit map, try to detect architecture from filename
+                if workflow_name is None:
+                    model_lower = img_model.lower()
+
+                    # Heuristics to detect model architecture from filename
+                    # Flux models
+                    if "flux" in model_lower:
+                        if "schnell" in model_lower:
+                            workflow_name = "txt2img-flux-schnell"
+                        else:
+                            workflow_name = "txt2img-flux-dev"
+                        print(f"[IMAGE] Auto-detected Flux model: {img_model}")
+
+                    # Pony models (usually XL-based)
+                    elif "pony" in model_lower:
+                        workflow_name = "txt2img-pony-xl"
+                        print(f"[IMAGE] Auto-detected Pony model: {img_model}")
+
+                    # SDXL models (look for XL indicators)
+                    elif any(x in model_lower for x in ["sdxl", "_xl", "-xl", "xl_"]):
+                        workflow_name = "txt2img"
+                        print(f"[IMAGE] Auto-detected SDXL model: {img_model}")
+
+                    # SD 1.5 models (common naming patterns from Civitai)
+                    elif any(x in model_lower for x in [
+                        "sd15", "sd_15", "sd1.5", "1.5",
+                        "realistic", "dreamshaper", "deliberate", "epicrealism",
+                        "anything", "abyssorangemix", "counterfeit", "chill",
+                        "ghostmix", "majicmix", "meinaunreal", "protogen",
+                        "revanimated", "unstable", "cyberrealistic", "absolute"
+                    ]):
+                        workflow_name = "txt2img-sd15-uncensored"
+                        checkpoint_override = img_model
+                        print(f"[IMAGE] Auto-detected SD1.5 model: {img_model}")
+
+                    # Default to SDXL workflow for unknown models
+                    else:
+                        workflow_name = "txt2img"
+                        print(f"[IMAGE] Unknown model architecture, defaulting to SDXL: {img_model}")
+
+                # For known SD1.5 models or short name
+                if img_model in known_sd15_models:
+                    checkpoint_override = img_model
+                elif img_model == "sd15-uncensored":
+                    # Short name used, default to dreamshaper
+                    checkpoint_override = "dreamshaper_8.safetensors"
+                # For auto-detected SD1.5 models (already set above via heuristics)
+                elif workflow_name == "txt2img-sd15-uncensored" and checkpoint_override is None:
+                    checkpoint_override = img_model
+
+                # Log model selection for debugging
+                print(f"[IMAGE] Model requested: {img_model}")
+                print(f"[IMAGE] Workflow selected: {workflow_name}")
+                if checkpoint_override:
+                    print(f"[IMAGE] Checkpoint to use: {checkpoint_override}")
+            else:
+                print("[IMAGE] No model specified, using default 'txt2img' workflow")
+
+            # Add checkpoint to variables for SD1.5 workflow (uses {{ckpt_name}} template)
+            if checkpoint_override:
+                refined["ckpt_name"] = checkpoint_override
+
+            # Debug: Log final workflow decision
+            print(f"[IMAGE] === FINAL WORKFLOW DECISION ===")
+            print(f"[IMAGE] Workflow to run: {workflow_name}")
+            print(f"[IMAGE] Checkpoint override: {checkpoint_override}")
+            print(f"[IMAGE] Variables being passed: ckpt_name={refined.get('ckpt_name', 'NOT SET')}")
 
             # Run the workflow with refined prompt and parameters
             res = run_workflow(workflow_name, refined)
