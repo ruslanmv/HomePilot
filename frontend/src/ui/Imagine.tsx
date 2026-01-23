@@ -192,6 +192,11 @@ export default function ImagineView(props: ImagineParams) {
     }
   }, [items])
 
+  // Scroll to top when entering Imagine to avoid "empty space above" if previously scrolled
+  useEffect(() => {
+    gridStartRef.current?.scrollIntoView({ block: 'start' })
+  }, [])
+
   const aspectObj = useMemo(() => {
     return ASPECT_RATIOS.find((a) => a.label === aspect) || ASPECT_RATIOS[0]
   }, [aspect])
@@ -535,8 +540,8 @@ export default function ImagineView(props: ImagineParams) {
       )}
 
       {/* Grid - Row-wise layout like Grok (fills left to right, then next row) */}
-      <div className="flex-1 overflow-y-auto px-4 pb-48 pt-20 scrollbar-hide">
-        <div className="max-w-[1600px] mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-fr">
+      <div className="flex-1 overflow-y-auto px-4 pb-48 pt-8 scrollbar-hide">
+        <div className="max-w-[1600px] mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 content-start">
           {/* Scroll anchor for auto-scroll to top (Grok-style: new images at top) */}
           <div ref={gridStartRef} className="col-span-full h-1" />
 
