@@ -69,6 +69,57 @@ def _norm_mode(mode: Optional[str]) -> str:
     return (mode or "").strip().lower()
 
 
+def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Robustly extract JSON from LLM response text.
+    Handles: markdown code blocks, partial JSON, truncated responses.
+    """
+    if not text:
+        return None
+
+    # Strip markdown code blocks if present
+    if "```" in text:
+        lines = text.split("\n")
+        json_lines = []
+        in_block = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                in_block = not in_block
+                continue
+            if in_block:
+                json_lines.append(line)
+        if json_lines:
+            text = "\n".join(json_lines).strip()
+
+    # Try direct JSON parse first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try to find and extract JSON object {...}
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    # Try to fix common JSON issues (truncated strings, missing quotes)
+    # Extract the prompt field even if JSON is malformed
+    import re
+    prompt_match = re.search(r'"prompt"\s*:\s*"([^"]*(?:\\.[^"]*)*)"', text)
+    if prompt_match:
+        prompt_value = prompt_match.group(1)
+        # Unescape common escapes
+        prompt_value = prompt_value.replace('\\"', '"').replace('\\n', '\n')
+        return {"prompt": prompt_value}
+
+    return None
+
+
 async def _refine_prompt(
     user_prompt: str,
     provider: ProviderName,
@@ -78,9 +129,20 @@ async def _refine_prompt(
     """
     Use LLM to refine user's casual prompt into a detailed image generation prompt.
     Returns dict with: prompt, negative_prompt, aspect_ratio, style
+
+    IMPORTANT: On any failure, returns the ORIGINAL user_prompt to preserve user intent.
     """
     print(f"[_refine_prompt] Calling LLM to refine prompt...")
+    print(f"[_refine_prompt] Original user prompt: '{user_prompt[:100]}...'")
     print(f"[_refine_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
+
+    # Default fallback - always preserves user's original prompt
+    fallback_result = {
+        "prompt": user_prompt,
+        "negative_prompt": "blurry, low quality, distorted",
+        "aspect_ratio": "1:1",
+        "style": "photorealistic",
+    }
 
     messages = [
         {"role": "system", "content": PROMPT_REFINER_SYSTEM},
@@ -93,7 +155,7 @@ async def _refine_prompt(
             messages,
             provider=provider,
             temperature=0.7,
-            max_tokens=300,
+            max_tokens=500,  # Increased from 300 to avoid truncation
             base_url=provider_base_url,
             model=provider_model,
         )
@@ -106,50 +168,39 @@ async def _refine_prompt(
             .get("content", "")
         ).strip()
 
-        print(f"[_refine_prompt] Raw LLM response: '{response_text[:200]}...'")
+        if not response_text:
+            print(f"[_refine_prompt] WARNING: Empty LLM response, using original prompt")
+            return fallback_result
 
-        # Try to parse as JSON
-        # Remove markdown code blocks if present
-        if response_text.startswith("```"):
-            print(f"[_refine_prompt] Stripping markdown code blocks...")
-            # Extract JSON from code block
-            lines = response_text.split("\n")
-            json_lines = []
-            in_block = False
-            for line in lines:
-                if line.strip().startswith("```"):
-                    in_block = not in_block
-                    continue
-                if in_block or (not line.strip().startswith("```")):
-                    json_lines.append(line)
-            response_text = "\n".join(json_lines).strip()
-            print(f"[_refine_prompt] After stripping: '{response_text[:200]}...'")
+        print(f"[_refine_prompt] Raw LLM response: '{response_text[:300]}...'")
 
+        # Try to parse JSON robustly
         print(f"[_refine_prompt] Parsing JSON...")
-        refined = json.loads(response_text)
-        print(f"[_refine_prompt] JSON parsed successfully")
+        refined = _extract_json_from_text(response_text)
 
-        # Validate and set defaults
-        result_dict = {
-            "prompt": refined.get("prompt", user_prompt),
-            "negative_prompt": refined.get("negative_prompt", "blurry, low quality, distorted"),
-            "aspect_ratio": refined.get("aspect_ratio", "1:1"),
-            "style": refined.get("style", "photorealistic"),
-        }
-        print(f"[_refine_prompt] Returning refined prompt: '{result_dict['prompt'][:100]}...'")
-        return result_dict
+        if refined and refined.get("prompt"):
+            refined_prompt = refined.get("prompt", "").strip()
+            if refined_prompt:
+                result_dict = {
+                    "prompt": refined_prompt,
+                    "negative_prompt": refined.get("negative_prompt", "blurry, low quality, distorted"),
+                    "aspect_ratio": refined.get("aspect_ratio", "1:1"),
+                    "style": refined.get("style", "photorealistic"),
+                }
+                print(f"[_refine_prompt] SUCCESS: Refined prompt: '{result_dict['prompt'][:100]}...'")
+                return result_dict
+
+        # JSON parsing failed or prompt field empty
+        print(f"[_refine_prompt] WARNING: JSON parsing failed or empty prompt, using original")
+        return fallback_result
 
     except Exception as e:
-        # If refinement fails, return basic prompt
+        # If refinement fails, return original user prompt (never lose user's intent)
         print(f"[_refine_prompt] ERROR: {type(e).__name__}: {e}")
         import traceback
         print(f"[_refine_prompt] Traceback: {traceback.format_exc()}")
-        return {
-            "prompt": user_prompt,
-            "negative_prompt": "blurry, low quality, distorted",
-            "aspect_ratio": "1:1",
-            "style": "photorealistic",
-        }
+        print(f"[_refine_prompt] FALLBACK: Using original user prompt")
+        return fallback_result
 
 
 async def orchestrate(
@@ -305,19 +356,20 @@ async def orchestrate(
 
                 try:
                     # Refine the prompt using LLM (Grok-like behavior)
+                    # _refine_prompt handles all logging internally and always preserves user intent on failure
                     refined = await _refine_prompt(
                         text_in,
                         provider=prov,
                         provider_base_url=refine_base_url,
                         provider_model=refine_model,
                     )
-                    print(f"[PROMPT_REFINE] SUCCESS! Refined prompt: '{refined.get('prompt', '')[:100]}...'")
-                    print(f"[PROMPT_REFINE] Negative prompt: '{refined.get('negative_prompt', '')}'")
-                    print(f"[PROMPT_REFINE] Style: {refined.get('style')}, Aspect: {refined.get('aspect_ratio')}")
+                    # Log final result (whether refined or fallback)
+                    print(f"[PROMPT_REFINE] Final prompt: '{refined.get('prompt', '')[:100]}...'")
+                    print(f"[PROMPT_REFINE] Negative: '{refined.get('negative_prompt', '')}', Style: {refined.get('style')}, Aspect: {refined.get('aspect_ratio')}")
                 except Exception as e:
                     # Fallback to direct mode if refinement fails (e.g., Ollama unavailable)
-                    print(f"[PROMPT_REFINE] FAILED: {e}")
-                    print(f"[PROMPT_REFINE] Falling back to direct mode with original prompt")
+                    print(f"[PROMPT_REFINE] EXCEPTION: {e}")
+                    print(f"[PROMPT_REFINE] Using original prompt directly")
                     refined = {
                         "prompt": text_in,
                         "negative_prompt": "",

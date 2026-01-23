@@ -288,28 +288,39 @@ def _build_variation_user_prompt(
     )
 
 
-def _safe_parse_variation(text: str) -> VariationOut:
+def _safe_parse_variation(text: str, fallback_prompt: str = "") -> VariationOut:
     """
     Robust parsing:
     - Try strict JSON
     - If it fails, fallback to using raw text as variation_prompt
+    - If raw text is empty, use fallback_prompt (the original user prompt)
     """
     raw = (text or "").strip()
+
+    # Try to parse as JSON first
     try:
         obj = json.loads(raw)
         return VariationOut.model_validate(obj)
     except Exception:
-        # Some models accidentally wrap JSON; attempt to extract first {...}
-        l = raw.find("{")
-        r = raw.rfind("}")
-        if l != -1 and r != -1 and r > l:
-            try:
-                obj = json.loads(raw[l : r + 1])
-                return VariationOut.model_validate(obj)
-            except Exception:
-                pass
-        # Fallback: use whole text as prompt
-        return VariationOut(variation_prompt=raw or "A detailed cinematic image.", tags={})
+        pass
+
+    # Some models accidentally wrap JSON; attempt to extract first {...}
+    l = raw.find("{")
+    r = raw.rfind("}")
+    if l != -1 and r != -1 and r > l:
+        try:
+            obj = json.loads(raw[l : r + 1])
+            return VariationOut.model_validate(obj)
+        except Exception:
+            pass
+
+    # If we have raw text that looks like a prompt (not JSON garbage), use it
+    if raw and not raw.startswith("{") and len(raw) > 10:
+        return VariationOut(variation_prompt=raw, tags={})
+
+    # Fallback: use the original user prompt to preserve their intent
+    # Empty string signals to caller that variation failed
+    return VariationOut(variation_prompt=fallback_prompt, tags={})
 
 
 # ----------------------------
@@ -396,12 +407,19 @@ async def next_variation(
     text = ((out.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""
     print(f"[GAME MODE VARIATION] Raw LLM response: {text[:200] if text else '(empty)'}...")
 
-    parsed = _safe_parse_variation(text)
-    print(f"[GAME MODE VARIATION] Parsed variation_prompt: {parsed.variation_prompt[:100] if parsed.variation_prompt else '(empty)'}...")
+    # Pass the original base prompt as fallback so we never lose the user's intent
+    parsed = _safe_parse_variation(text, fallback_prompt=stored_base)
 
     variation_prompt = (parsed.variation_prompt or "").strip()
+
+    # If variation is empty or same as fallback (meaning LLM failed), log it clearly
     if not variation_prompt:
+        print(f"[GAME MODE VARIATION] WARNING: Empty variation, using original prompt")
         variation_prompt = stored_base
+    elif variation_prompt == stored_base:
+        print(f"[GAME MODE VARIATION] INFO: Using original prompt (LLM returned empty)")
+    else:
+        print(f"[GAME MODE VARIATION] Parsed variation_prompt: {variation_prompt[:100]}...")
 
     tags = parsed.tags or {}
 
