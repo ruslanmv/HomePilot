@@ -16,12 +16,14 @@ import {
   Server,
   PlugZap,
   Trash2,
+  Tv2,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import VoiceMode from './VoiceMode'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
 import ModelsView from './Models'
+import StudioView from './Studio'
 import { ImageViewer } from './ImageViewer'
 
 // -----------------------------------------------------------------------------
@@ -49,7 +51,7 @@ export type Msg = {
   } | null
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio'
 type Provider = 'backend' | 'ollama'
 
 type HardwarePreset = '4060' | '4080' | 'a100' | 'custom'
@@ -709,6 +711,7 @@ function Sidebar({
           <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} />
           <NavItem icon={ImageIcon} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} />
+          <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} />
         </div>
 
@@ -2098,6 +2101,9 @@ export default function App() {
             providerImages={settingsDraft.providerImages}
             baseUrlImages={settingsDraft.baseUrlImages}
             modelImages={settingsDraft.modelImages}
+            providerChat={settingsDraft.providerChat}
+            baseUrlChat={settingsDraft.baseUrlChat}
+            modelChat={settingsDraft.modelChat}
             imgWidth={settingsDraft.imgWidth}
             imgHeight={settingsDraft.imgHeight}
             imgSteps={settingsDraft.imgSteps}
@@ -2119,6 +2125,20 @@ export default function App() {
             experimentalCivitai={settingsDraft.experimentalCivitai}
             civitaiApiKey={settingsDraft.civitaiApiKey}
             nsfwMode={settingsDraft.nsfwMode}
+          />
+        ) : mode === 'studio' ? (
+          <StudioView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            providerImages={settingsDraft.providerImages}
+            baseUrlImages={settingsDraft.baseUrlImages}
+            modelImages={settingsDraft.modelImages}
+            imgWidth={settingsDraft.imgWidth}
+            imgHeight={settingsDraft.imgHeight}
+            imgSteps={settingsDraft.imgSteps}
+            imgCfg={settingsDraft.imgCfg}
+            nsfwMode={settingsDraft.nsfwMode}
+            promptRefinement={settingsDraft.promptRefinement}
           />
         ) : mode === 'search' ? (
           // Search mode: use chat interface with mode-specific behavior

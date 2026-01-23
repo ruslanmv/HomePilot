@@ -168,6 +168,7 @@ async def orchestrate(
     img_cfg: Optional[float] = None,
     img_seed: Optional[int] = None,
     img_model: Optional[str] = None,
+    img_batch_size: Optional[int] = None,
     vid_seconds: Optional[int] = None,
     vid_fps: Optional[int] = None,
     vid_motion: Optional[str] = None,
@@ -452,9 +453,27 @@ async def orchestrate(
             print(f"[IMAGE] Checkpoint override: {checkpoint_override}")
             print(f"[IMAGE] Variables being passed: ckpt_name={refined.get('ckpt_name', 'NOT SET')}")
 
+            # Determine batch size (1, 2, or 4 images like Grok)
+            batch_size = min(max(1, img_batch_size or 1), 4)
+            print(f"[IMAGE] Batch size: {batch_size}")
+
             # Run the workflow with refined prompt and parameters
-            res = run_workflow(workflow_name, refined)
-            images = res.get("images", []) or []
+            # If batch_size > 1, run multiple times and aggregate results
+            images = []
+            for i in range(batch_size):
+                # Vary the seed for each image in the batch (unless seed is explicitly set)
+                batch_refined = refined.copy()
+                if batch_size > 1 and (img_seed is None or img_seed == 0):
+                    # Use a different seed for each image in the batch
+                    import random
+                    batch_refined["seed"] = random.randint(1, 2147483647)
+
+                print(f"[IMAGE] Generating image {i + 1}/{batch_size}...")
+                res = run_workflow(workflow_name, batch_refined)
+                batch_images = res.get("images", []) or []
+                images.extend(batch_images)
+
+            print(f"[IMAGE] Total images generated: {len(images)}")
 
             # Short Grok-like caption
             text = "Here you go." if images else "Generated."
@@ -584,6 +603,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             img_cfg=payload.get("imgCfg"),
             img_seed=payload.get("imgSeed"),
             img_model=payload.get("imgModel"),
+            img_batch_size=payload.get("imgBatchSize"),
             vid_seconds=payload.get("vidSeconds"),
             vid_fps=payload.get("vidFps"),
             vid_motion=payload.get("vidMotion"),
