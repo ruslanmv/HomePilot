@@ -259,7 +259,26 @@ async def chat_ollama(
 
     content = str(content or "")
 
-    # Debug logging when content is empty (helps diagnose model-specific issues)
+    # Fallback: Some models (e.g., reasoning models) return content in message.thinking
+    # If content is empty, try to extract JSON from thinking field
+    if not content.strip() and isinstance(msg, dict):
+        thinking = str(msg.get("thinking") or "")
+        if thinking.strip():
+            # Try to salvage JSON from thinking (only if it contains a JSON object)
+            l = thinking.find("{")
+            r = thinking.rfind("}")
+            if l != -1 and r != -1 and r > l:
+                candidate = thinking[l : r + 1].strip()
+                # Validate it's parseable JSON before using
+                try:
+                    import json
+                    json.loads(candidate)
+                    content = candidate
+                    print(f"[OLLAMA] Extracted JSON from message.thinking field")
+                except Exception:
+                    pass  # Not valid JSON, keep content empty
+
+    # Debug logging when content is still empty (helps diagnose model-specific issues)
     if not content.strip():
         print(f"[OLLAMA] WARNING: empty extracted content. provider_raw keys: {list(data.keys())}")
         if isinstance(msg, dict):

@@ -1986,7 +1986,8 @@ export default function App() {
           />
         )}
 
-        {/* Top-right "Private" and Project Indicator */}
+        {/* Top-right "Private" and Project Indicator - Hidden in Studio mode */}
+        {mode !== 'studio' && (
         <header className="absolute top-0 right-0 p-5 z-20 flex items-center gap-4">
           {/* Project Indicator */}
           {(() => {
@@ -2032,6 +2033,7 @@ export default function App() {
             <span>Private</span>
           </button>
         </header>
+        )}
 
         {mode === 'voice' ? (
           <VoiceMode onSendText={(text) => sendTextOrIntent(text)} />

@@ -304,7 +304,8 @@ export default function StudioView(props: StudioParams) {
           mode: 'imagine',
           provider: llmProvider,
           provider_base_url: props.baseUrlImages,
-          provider_model: props.modelImages,
+          // Use imgModel for image model selection (not provider_model which is for LLM)
+          imgModel: props.modelImages || undefined,
           imgWidth: props.imgWidth || 1344,
           imgHeight: props.imgHeight || 768,
           imgSteps: props.imgSteps,
