@@ -43,6 +43,7 @@ from .story_mode import (
     get_story,
     list_story_sessions,
     delete_story_session,
+    update_scene_image,
 )
 
 # Civitai search support
@@ -53,6 +54,9 @@ from .civitai import (
     get_civitai_cache,
 )
 
+# Studio module routes
+from .studio.routes import router as studio_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -62,6 +66,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include Studio routes (/studio/*)
+app.include_router(studio_router)
 
 # ----------------------------
 # Models
@@ -631,6 +638,8 @@ async def get_model_catalog() -> JSONResponse:
 
 class CivitaiSearchRequest(BaseModel):
     """Request model for Civitai search."""
+    model_config = {"protected_namespaces": ()}
+
     query: str = Field(..., min_length=1, max_length=100, description="Search query")
     model_type: str = Field(default="image", description="Model type: 'image' or 'video'")
     nsfw: bool = Field(default=False, description="Include NSFW results (requires API key)")
@@ -1506,5 +1515,27 @@ async def story_delete_endpoint(session_id: str) -> JSONResponse:
     try:
         deleted = delete_story_session(session_id)
         return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+
+class UpdateSceneImageIn(BaseModel):
+    session_id: str
+    scene_idx: int
+    image_url: str
+
+
+@app.post("/story/scene/image", dependencies=[Depends(require_api_key)])
+async def story_update_scene_image(inp: UpdateSceneImageIn) -> JSONResponse:
+    """
+    Update a scene's image_url after image generation.
+    This persists the image URL so it's available after page reload.
+    """
+    try:
+        success = update_scene_image(inp.session_id, inp.scene_idx, inp.image_url)
+        if success:
+            return JSONResponse(status_code=200, content={"ok": True})
+        else:
+            return JSONResponse(status_code=404, content={"ok": False, "error": "Scene not found"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})

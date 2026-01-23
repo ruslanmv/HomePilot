@@ -525,6 +525,11 @@ async def orchestrate(
                 batch_images = res.get("images", []) or []
                 images.extend(batch_images)
 
+                # Small delay between batch requests to let ComfyUI settle
+                if i < batch_size - 1 and batch_size > 1:
+                    import time
+                    time.sleep(0.5)
+
             print(f"[IMAGE] Total images generated: {len(images)}")
 
             # Short Grok-like caption
