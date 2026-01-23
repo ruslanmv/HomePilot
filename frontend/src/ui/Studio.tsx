@@ -75,6 +75,8 @@ export type StudioParams = {
   imgCfg?: number
   nsfwMode?: boolean
   promptRefinement?: boolean
+  // Callback to switch to Creator Studio mode
+  onOpenCreatorStudio?: () => void
 }
 
 // -----------------------------------------------------------------------------
@@ -139,6 +141,49 @@ export default function StudioView(props: StudioParams) {
 
   // View state
   const [view, setView] = useState<'list' | 'create' | 'player'>('list')
+  const [showModeChooser, setShowModeChooser] = useState(false)
+
+  // Get default story mode from localStorage
+  const getDefaultStoryMode = () => {
+    try {
+      return localStorage.getItem('hp_default_story_mode') as 'play' | 'creator' | null
+    } catch {
+      return null
+    }
+  }
+
+  const setDefaultStoryMode = (mode: 'play' | 'creator') => {
+    try {
+      localStorage.setItem('hp_default_story_mode', mode)
+    } catch {
+      // ignore
+    }
+  }
+
+  const handleNewStoryClick = () => {
+    // Always show the mode chooser when Creator Studio is available
+    // This gives users the choice each time instead of auto-remembering
+    if (props.onOpenCreatorStudio) {
+      setShowModeChooser(true)
+    } else {
+      // No Creator Studio available, go directly to Play create view
+      setView('create')
+    }
+  }
+
+  const handleChoosePlay = () => {
+    setDefaultStoryMode('play')
+    setShowModeChooser(false)
+    setView('create')
+  }
+
+  const handleChooseCreator = () => {
+    if (props.onOpenCreatorStudio) {
+      setDefaultStoryMode('creator')
+      setShowModeChooser(false)
+      props.onOpenCreatorStudio()
+    }
+  }
 
   // Story list
   const [sessions, setSessions] = useState<StorySession[]>([])
@@ -304,7 +349,8 @@ export default function StudioView(props: StudioParams) {
           mode: 'imagine',
           provider: llmProvider,
           provider_base_url: props.baseUrlImages,
-          provider_model: props.modelImages,
+          // Use imgModel for image model selection (not provider_model which is for LLM)
+          imgModel: props.modelImages || undefined,
           imgWidth: props.imgWidth || 1344,
           imgHeight: props.imgHeight || 768,
           imgSteps: props.imgSteps,
@@ -316,8 +362,8 @@ export default function StudioView(props: StudioParams) {
       )
 
       const imageUrl = data?.media?.images?.[0]
-      if (imageUrl) {
-        // Update scene with image URL
+      if (imageUrl && currentStory) {
+        // Update scene with image URL in state
         setCurrentStory((prev) => {
           if (!prev) return prev
           return {
@@ -325,6 +371,23 @@ export default function StudioView(props: StudioParams) {
             scenes: prev.scenes.map((s) => (s.idx === scene.idx ? { ...s, image_url: imageUrl } : s)),
           }
         })
+
+        // Persist image URL to database so it survives page reload
+        try {
+          await postJson(
+            props.backendUrl,
+            '/story/scene/image',
+            {
+              session_id: currentStory.session_id,
+              scene_idx: scene.idx,
+              image_url: imageUrl,
+            },
+            authKey
+          )
+        } catch (persistErr) {
+          console.error('Failed to persist image URL:', persistErr)
+          // Image is still shown in UI, just won't survive reload
+        }
       }
     } catch (err: any) {
       console.error('Failed to generate image:', err)
@@ -386,7 +449,7 @@ export default function StudioView(props: StudioParams) {
           </div>
 
           <button
-            onClick={() => setView('create')}
+            onClick={handleNewStoryClick}
             className="flex items-center gap-2 bg-purple-500 hover:bg-purple-600 px-4 py-2 rounded-full text-sm font-semibold transition-all"
             type="button"
           >
@@ -440,6 +503,78 @@ export default function StudioView(props: StudioParams) {
             </div>
           )}
         </div>
+
+        {/* Mode Chooser Modal */}
+        {showModeChooser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+            <div className="bg-[#1a1a2e] border border-white/10 rounded-2xl p-8 max-w-lg w-full mx-4 shadow-2xl">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-white">Choose Your Studio</h2>
+                <button
+                  onClick={() => setShowModeChooser(false)}
+                  className="p-2 text-white/50 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {/* Play Studio Option */}
+                <button
+                  onClick={handleChoosePlay}
+                  className="w-full p-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/30 rounded-xl text-left hover:border-purple-500/60 hover:bg-purple-500/20 transition-all group"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
+                      <Play size={24} className="text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-white mb-1">Play Story</h3>
+                      <p className="text-sm text-white/60">
+                        Simple, relaxing story creation. Just enter a premise and watch your story come to life with AI-generated scenes and images.
+                      </p>
+                      <span className="inline-block mt-2 text-xs text-purple-400 font-medium">Recommended for beginners</span>
+                    </div>
+                  </div>
+                </button>
+
+                {/* Creator Studio Option */}
+                {props.onOpenCreatorStudio && (
+                  <button
+                    onClick={handleChooseCreator}
+                    className="w-full p-6 bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border border-blue-500/30 rounded-xl text-left hover:border-blue-500/60 hover:bg-blue-500/20 transition-all group"
+                  >
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
+                        <Settings2 size={24} className="text-white" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-semibold text-white mb-1">Creator Studio</h3>
+                        <p className="text-sm text-white/60">
+                          Full project-based workflow with presets, policy controls, export options, and advanced generation settings.
+                        </p>
+                        <span className="inline-block mt-2 text-xs text-blue-400 font-medium">Advanced features</span>
+                      </div>
+                    </div>
+                  </button>
+                )}
+              </div>
+
+              <p className="text-xs text-white/40 text-center mt-6">
+                Your choice will be remembered for next time
+              </p>
+            </div>
+          </div>
+        )}
+
+        <style>{`
+          .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+        `}</style>
       </div>
     )
   }
@@ -811,6 +946,69 @@ export default function StudioView(props: StudioParams) {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mode Chooser Modal */}
+      {showModeChooser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="bg-[#1a1a2e] border border-white/10 rounded-2xl p-8 max-w-lg w-full mx-4 shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-white">Choose Your Studio</h2>
+              <button
+                onClick={() => setShowModeChooser(false)}
+                className="p-2 text-white/50 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Play Studio Option */}
+              <button
+                onClick={handleChoosePlay}
+                className="w-full p-6 bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/30 rounded-xl text-left hover:border-purple-500/60 hover:bg-purple-500/20 transition-all group"
+              >
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
+                    <Play size={24} className="text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white mb-1">Play Story</h3>
+                    <p className="text-sm text-white/60">
+                      Simple, relaxing story creation. Just enter a premise and watch your story come to life with AI-generated scenes and images.
+                    </p>
+                    <span className="inline-block mt-2 text-xs text-purple-400 font-medium">Recommended for beginners</span>
+                  </div>
+                </div>
+              </button>
+
+              {/* Creator Studio Option */}
+              {props.onOpenCreatorStudio && (
+                <button
+                  onClick={handleChooseCreator}
+                  className="w-full p-6 bg-gradient-to-r from-blue-500/10 to-cyan-500/10 border border-blue-500/30 rounded-xl text-left hover:border-blue-500/60 hover:bg-blue-500/20 transition-all group"
+                >
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center flex-shrink-0">
+                      <Settings2 size={24} className="text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-white mb-1">Creator Studio</h3>
+                      <p className="text-sm text-white/60">
+                        Full project-based workflow with presets, policy controls, export options, and advanced generation settings.
+                      </p>
+                      <span className="inline-block mt-2 text-xs text-blue-400 font-medium">Advanced features</span>
+                    </div>
+                  </div>
+                </button>
+              )}
+            </div>
+
+            <p className="text-xs text-white/40 text-center mt-6">
+              Your choice will be remembered for next time
+            </p>
           </div>
         </div>
       )}

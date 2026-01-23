@@ -250,6 +250,46 @@
           "resolution": "512x512",
           "download_url": "https://civitai.com/api/download/models/121822",
           "install_path": "checkpoints/"
+        },
+        {
+          "id": "abyssOrangeMix3_aom3a1b.safetensors",
+          "label": "AbyssOrangeMix3 (AOM3)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "anime": true,
+          "description": "Premier SD 1.5 anime model. Excellent for fan service, ecchi, and mature anime content. Rich colors, detailed illustrations.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "civitai_model_id": "9942",
+          "civitai_version_id": "101055",
+          "download_url": "https://civitai.com/api/download/models/101055",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "counterfeit_v30.safetensors",
+          "label": "Counterfeit V3.0",
+          "nsfw": true,
+          "anime": true,
+          "description": "High-quality anime model with vibrant colors. Great for detailed character art and fan service illustrations.",
+          "size_gb": 2.13,
+          "resolution": "512x512",
+          "civitai_model_id": "4468",
+          "civitai_version_id": "57618",
+          "download_url": "https://civitai.com/api/download/models/57618",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "anything_v5PrtRE.safetensors",
+          "label": "Anything V5 (Prt-RE)",
+          "nsfw": true,
+          "anime": true,
+          "description": "Versatile anime model for all styles. Supports NSFW content with excellent anatomy and composition.",
+          "size_gb": 4.27,
+          "resolution": "512x512",
+          "civitai_model_id": "9409",
+          "civitai_version_id": "100078",
+          "download_url": "https://civitai.com/api/download/models/100078",
+          "install_path": "checkpoints/"
         }
       ],
       "video": [
@@ -510,6 +550,88 @@
           "description": "Mistral's Mixture of Experts model.",
           "context_window": 32768
         }
+      ]
+    }
+  },
+  "generation_presets": {
+    "_comment": "Curated generation presets for specific use cases. Use with compatible models.",
+    "anime_fan_service_adult": {
+      "id": "anime_fan_service_adult",
+      "label": "Anime Fan Service (Adult)",
+      "description": "Preset for mature anime illustrations. Optimized for ecchi and fan service content with tasteful presentation.",
+      "content_rating": "mature",
+      "requires_mature_mode": true,
+      "recommended_models": [
+        "abyssOrangeMix3_aom3a1b.safetensors",
+        "counterfeit_v30.safetensors",
+        "anything_v5PrtRE.safetensors"
+      ],
+      "sampler_settings": {
+        "sampler": "dpm++_2m_karras",
+        "steps": 25,
+        "cfg_scale": 6.0,
+        "clip_skip": 2
+      },
+      "prompt_injection": {
+        "positive_prefix": "masterpiece, best quality, ultra-detailed, anime style, illustration, vibrant colors, professional lighting, ",
+        "positive_suffix": ", highly detailed face, beautiful eyes, dynamic pose",
+        "negative": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, deformed, disfigured, mutation, mutated, ugly, disgusting, out of frame, duplicate, poorly drawn face, poorly drawn hands"
+      },
+      "safety_guidelines": [
+        "All depicted characters must be visibly adult (18+)",
+        "Content must remain within ecchi/fan service boundaries",
+        "No explicit sexual acts or genitalia",
+        "Focus on artistic presentation and aesthetics"
+      ]
+    },
+    "anime_sfw": {
+      "id": "anime_sfw",
+      "label": "Anime (SFW)",
+      "description": "General-purpose anime preset for safe-for-work illustrations.",
+      "content_rating": "sfw",
+      "requires_mature_mode": false,
+      "recommended_models": [
+        "counterfeit_v30.safetensors",
+        "anything_v5PrtRE.safetensors"
+      ],
+      "sampler_settings": {
+        "sampler": "dpm++_2m_karras",
+        "steps": 20,
+        "cfg_scale": 7.0,
+        "clip_skip": 2
+      },
+      "prompt_injection": {
+        "positive_prefix": "masterpiece, best quality, ultra-detailed, anime style, illustration, ",
+        "positive_suffix": ", highly detailed, beautiful composition",
+        "negative": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, nsfw, nude, explicit"
+      }
+    },
+    "anime_romantic": {
+      "id": "anime_romantic",
+      "label": "Anime Romantic Scene",
+      "description": "Preset for romantic anime scenes. Tasteful intimacy without explicit content.",
+      "content_rating": "mature",
+      "requires_mature_mode": true,
+      "recommended_models": [
+        "abyssOrangeMix3_aom3a1b.safetensors",
+        "counterfeit_v30.safetensors"
+      ],
+      "sampler_settings": {
+        "sampler": "dpm++_2m_karras",
+        "steps": 28,
+        "cfg_scale": 5.5,
+        "clip_skip": 2
+      },
+      "prompt_injection": {
+        "positive_prefix": "masterpiece, best quality, ultra-detailed, anime style, romantic atmosphere, soft lighting, intimate moment, ",
+        "positive_suffix": ", emotional, tender, beautiful composition, cinematic lighting",
+        "negative": "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, deformed, ugly, explicit, pornographic, vulgar"
+      },
+      "safety_guidelines": [
+        "Focus on emotional connection and romantic atmosphere",
+        "Tasteful presentation of intimacy",
+        "All characters must be visibly adult (18+)",
+        "Suggestive but not explicit content"
       ]
     }
   }
