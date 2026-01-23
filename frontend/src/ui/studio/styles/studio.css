@@ -1,0 +1,379 @@
+/**
+ * Studio Global Styles
+ *
+ * Core CSS variables and utility classes for the Studio module.
+ */
+
+/* ============================================
+   CSS Variables - Light Theme (SFW Default)
+   ============================================ */
+:root {
+  /* Primary */
+  --studio-primary: #3B82F6;
+  --studio-primary-hover: #2563EB;
+  --studio-primary-light: #DBEAFE;
+
+  /* Background */
+  --studio-background: #F8FAFC;
+  --studio-surface: #FFFFFF;
+  --studio-surface-hover: #F1F5F9;
+
+  /* Text */
+  --studio-text: #1E293B;
+  --studio-text-muted: #64748B;
+  --studio-text-light: #94A3B8;
+
+  /* Accents */
+  --studio-success: #10B981;
+  --studio-warning: #F59E0B;
+  --studio-danger: #EF4444;
+
+  /* Borders */
+  --studio-border: #E2E8F0;
+  --studio-border-hover: #CBD5E1;
+
+  /* Shadows */
+  --studio-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --studio-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+  --studio-shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+
+  /* Badge */
+  --studio-badge-sfw: #10B981;
+  --studio-badge-mature: linear-gradient(135deg, #8B5CF6, #F59E0B);
+}
+
+/* ============================================
+   Dark Theme (Mature Mode)
+   ============================================ */
+[data-theme="mature"],
+.studio-layout[data-content-rating="mature"] {
+  --studio-primary: #8B5CF6;
+  --studio-primary-hover: #7C3AED;
+  --studio-primary-light: #2E2346;
+
+  --studio-background: #1E1B2E;
+  --studio-surface: #2A2640;
+  --studio-surface-hover: #36324D;
+
+  --studio-text: #F1F5F9;
+  --studio-text-muted: #A5A3B5;
+  --studio-text-light: #6B6980;
+
+  --studio-border: #3D3958;
+  --studio-border-hover: #4F4A6A;
+
+  --studio-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --studio-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.3);
+  --studio-shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.4);
+}
+
+/* ============================================
+   Base Styles
+   ============================================ */
+.studio-layout {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================
+   Scrollbar Styling
+   ============================================ */
+.studio-layout ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.studio-layout ::-webkit-scrollbar-track {
+  background: var(--studio-background);
+  border-radius: 4px;
+}
+
+.studio-layout ::-webkit-scrollbar-thumb {
+  background: var(--studio-border);
+  border-radius: 4px;
+}
+
+.studio-layout ::-webkit-scrollbar-thumb:hover {
+  background: var(--studio-border-hover);
+}
+
+/* ============================================
+   Utility Classes
+   ============================================ */
+
+/* Text */
+.studio-text {
+  color: var(--studio-text);
+}
+
+.studio-text-muted {
+  color: var(--studio-text-muted);
+}
+
+.studio-text-light {
+  color: var(--studio-text-light);
+}
+
+/* Background */
+.studio-bg {
+  background: var(--studio-background);
+}
+
+.studio-surface {
+  background: var(--studio-surface);
+}
+
+/* Border */
+.studio-border {
+  border: 1px solid var(--studio-border);
+}
+
+/* Rounded */
+.studio-rounded {
+  border-radius: 8px;
+}
+
+.studio-rounded-lg {
+  border-radius: 12px;
+}
+
+/* Shadow */
+.studio-shadow {
+  box-shadow: var(--studio-shadow-md);
+}
+
+/* ============================================
+   Badge Styles
+   ============================================ */
+.studio-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.studio-badge-sfw {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.studio-badge-mature {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(245, 158, 11, 0.2));
+  color: #F59E0B;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.studio-badge-nsfw {
+  background: linear-gradient(135deg, #8B5CF6, #F59E0B);
+  color: white;
+}
+
+.studio-badge-success {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+
+.studio-badge-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #D97706;
+}
+
+.studio-badge-danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #DC2626;
+}
+
+/* ============================================
+   Button Styles
+   ============================================ */
+.studio-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.studio-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.studio-btn-primary {
+  background: var(--studio-primary);
+  color: white;
+}
+
+.studio-btn-primary:hover:not(:disabled) {
+  background: var(--studio-primary-hover);
+}
+
+.studio-btn-secondary {
+  background: var(--studio-surface);
+  color: var(--studio-text);
+  border: 1px solid var(--studio-border);
+}
+
+.studio-btn-secondary:hover:not(:disabled) {
+  background: var(--studio-surface-hover);
+}
+
+.studio-btn-danger {
+  background: transparent;
+  color: var(--studio-danger);
+  border: 1px solid var(--studio-danger);
+}
+
+.studio-btn-danger:hover:not(:disabled) {
+  background: var(--studio-danger);
+  color: white;
+}
+
+/* ============================================
+   Input Styles
+   ============================================ */
+.studio-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--studio-border);
+  border-radius: 8px;
+  background: var(--studio-surface);
+  color: var(--studio-text);
+  font-size: 14px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.studio-input:focus {
+  outline: none;
+  border-color: var(--studio-primary);
+  box-shadow: 0 0 0 3px var(--studio-primary-light);
+}
+
+.studio-input::placeholder {
+  color: var(--studio-text-light);
+}
+
+.studio-textarea {
+  resize: vertical;
+  min-height: 100px;
+  font-family: inherit;
+}
+
+.studio-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 40px;
+}
+
+/* ============================================
+   Card Styles
+   ============================================ */
+.studio-card {
+  background: var(--studio-surface);
+  border: 1px solid var(--studio-border);
+  border-radius: 12px;
+  padding: 16px;
+  transition: all 0.2s;
+}
+
+.studio-card-interactive {
+  cursor: pointer;
+}
+
+.studio-card-interactive:hover {
+  border-color: var(--studio-primary);
+  box-shadow: var(--studio-shadow-md);
+}
+
+.studio-card-selected {
+  border-color: var(--studio-primary);
+  background: var(--studio-primary-light);
+}
+
+/* ============================================
+   Animation Keyframes
+   ============================================ */
+@keyframes studio-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes studio-slide-up {
+  from {
+    transform: translateY(10px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes studio-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.studio-fade-in {
+  animation: studio-fade-in 0.2s ease;
+}
+
+.studio-slide-up {
+  animation: studio-slide-up 0.3s ease;
+}
+
+.studio-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--studio-border);
+  border-top-color: var(--studio-primary);
+  border-radius: 50%;
+  animation: studio-spin 0.8s linear infinite;
+}
+
+/* ============================================
+   Responsive Utilities
+   ============================================ */
+@media (max-width: 768px) {
+  .studio-hide-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .studio-hide-desktop {
+    display: none !important;
+  }
+}
+
+/* ============================================
+   Print Styles
+   ============================================ */
+@media print {
+  .studio-layout {
+    background: white !important;
+  }
+
+  .studio-sidebar,
+  .studio-footer {
+    display: none !important;
+  }
+}
