@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -1254,9 +1255,14 @@ async def chat(inp: ChatIn) -> JSONResponse:
 
     # ----------------------------
     # Game Mode: Infinite Variations
-    # Only applies to imagine + promptRefinement enabled
+    # Works independently of promptRefinement - generates variations of user prompt
+    # If promptRefinement is also enabled, the variation will be further refined
+    # IMPORTANT: Uses timeout to prevent hanging if Ollama is slow/unresponsive
     # ----------------------------
-    if (inp.mode == "imagine") and bool(inp.gameMode) and bool(inp.promptRefinement):
+    if (inp.mode == "imagine") and bool(inp.gameMode):
+        # Preserve original message for fallback
+        original_message = inp.message
+
         try:
             options = {
                 "strength": float(inp.gameStrength or 0.65),
@@ -1281,12 +1287,17 @@ async def chat(inp: ChatIn) -> JSONResponse:
 
             print(f"[GAME MODE] ollama_base_url={game_ollama_url}, ollama_model={game_ollama_model}")
 
-            vr = await next_variation(
-                base_prompt=inp.message,
-                session_id=inp.gameSessionId,
-                options=options,
-                ollama_base_url=game_ollama_url,
-                ollama_model=game_ollama_model,
+            # Time-box the LLM call to prevent hanging (15s timeout)
+            # If Ollama is slow/unavailable, we fall back to original prompt
+            vr = await asyncio.wait_for(
+                next_variation(
+                    base_prompt=inp.message,
+                    session_id=inp.gameSessionId,
+                    options=options,
+                    ollama_base_url=game_ollama_url,
+                    ollama_model=game_ollama_model,
+                ),
+                timeout=15.0,
             )
 
             print(f"[GAME MODE] variation_prompt={vr.variation_prompt[:100] if vr.variation_prompt else 'None'}...")
@@ -1304,8 +1315,19 @@ async def chat(inp: ChatIn) -> JSONResponse:
                 "tags": vr.tags,
             }
 
+        except asyncio.TimeoutError:
+            # LLM took too long - fall back to original prompt so image still generates
+            print(f"[GAME MODE] TIMEOUT: LLM took too long, using original prompt")
+            payload["message"] = original_message
+            payload["_game"] = {
+                "enabled": True,
+                "error": "Game Mode LLM timeout - using original prompt",
+            }
+
         except Exception as e:
-            # Fail safe: if anything goes wrong, fall back to normal imagine
+            # Any other error - fall back to original prompt so image still generates
+            print(f"[GAME MODE] ERROR: {e}, using original prompt")
+            payload["message"] = original_message
             payload["_game"] = {
                 "enabled": True,
                 "error": str(e),
