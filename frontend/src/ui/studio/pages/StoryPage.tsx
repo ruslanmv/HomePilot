@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useStudioStore } from "../stores/studioStore";
+import { useTVModeStore } from "../stores/tvModeStore";
+import { TVModeContainer } from "../components/TVMode";
 import { studioFetch, studioPost } from "../lib/api";
 
 interface Genre {
@@ -60,6 +62,7 @@ interface Scene {
  */
 export const StoryPage: React.FC = () => {
   const { contentRating, matureEnabled } = useStudioStore();
+  const { isActive: tvModeActive, enterTVMode, addScene } = useTVModeStore();
 
   // Form state
   const [selectedGenre, setSelectedGenre] = useState<string>("");
@@ -291,6 +294,58 @@ ${scene.narration}
     }
   };
 
+  // Handle entering TV Mode
+  const handleEnterTVMode = useCallback(() => {
+    if (!currentSession || scenes.length === 0) return;
+
+    // Convert scenes to TV Mode format
+    const tvScenes = scenes.map((scene) => ({
+      ...scene,
+      status: "ready" as const,
+    }));
+
+    enterTVMode(currentSession.session_id, currentSession.title, tvScenes, 0);
+  }, [currentSession, scenes, enterTVMode]);
+
+  // Generate next scene for TV Mode (prefetching)
+  const generateNextForTVMode = useCallback(async () => {
+    if (!currentSession) return null;
+
+    try {
+      const sceneRes = await fetch("/story/next", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: currentSession.session_id,
+          refine_image_prompt: true,
+        }),
+      });
+
+      if (!sceneRes.ok) {
+        const errText = await sceneRes.text().catch(() => "");
+        throw new Error(`Failed to generate scene: ${sceneRes.status} ${errText}`);
+      }
+
+      const sceneData = await sceneRes.json();
+      const scene = sceneData.scene;
+
+      // Also update the main scenes array
+      setScenes((prev) => [...prev, scene]);
+
+      // Append to story text
+      const newText = `\n\n---\n\n${scene.narration}\n\n---\n*Image prompt: ${scene.image_prompt}*`;
+      setGeneratedStory((prev) => prev + newText);
+
+      return {
+        ...scene,
+        status: "ready" as const,
+      };
+    } catch (error) {
+      console.error("TV Mode generate error:", error);
+      throw error;
+    }
+  }, [currentSession]);
+
   return (
     <div className="story-page">
       <div className="story-header">
@@ -464,13 +519,28 @@ ${scene.narration}
               {/* Continue Story Button */}
               {currentSession && (
                 <div className="continue-section">
-                  <button
-                    className="continue-btn"
-                    onClick={handleContinueStory}
-                    disabled={isGenerating}
-                  >
-                    {isGenerating ? "Generating..." : "▶ Continue Story"}
-                  </button>
+                  <div className="continue-buttons">
+                    <button
+                      className="continue-btn"
+                      onClick={handleContinueStory}
+                      disabled={isGenerating}
+                    >
+                      {isGenerating ? "Generating..." : "+ Next Scene"}
+                    </button>
+                    <button
+                      className="tv-mode-btn"
+                      onClick={handleEnterTVMode}
+                      disabled={scenes.length === 0}
+                      title="Watch story in fullscreen TV Mode"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2" />
+                        <line x1="8" y1="21" x2="16" y2="21" />
+                        <line x1="12" y1="17" x2="12" y2="21" />
+                      </svg>
+                      TV Mode
+                    </button>
+                  </div>
                   <p className="scene-count">
                     {scenes.length} scene{scenes.length !== 1 ? "s" : ""} generated
                   </p>
@@ -781,9 +851,13 @@ ${scene.narration}
           margin-top: 20px;
           padding-top: 16px;
           border-top: 1px solid var(--color-border);
+        }
+
+        .continue-buttons {
           display: flex;
           align-items: center;
-          gap: 16px;
+          gap: 12px;
+          margin-bottom: 12px;
         }
 
         .continue-btn {
@@ -804,6 +878,31 @@ ${scene.narration}
         }
 
         .continue-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .tv-mode-btn {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 12px 20px;
+          background: rgba(139, 92, 246, 0.1);
+          border: 1px solid rgba(139, 92, 246, 0.3);
+          border-radius: 8px;
+          color: #8B5CF6;
+          font-size: 14px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .tv-mode-btn:hover:not(:disabled) {
+          background: rgba(139, 92, 246, 0.2);
+          border-color: rgba(139, 92, 246, 0.5);
+        }
+
+        .tv-mode-btn:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }
@@ -897,8 +996,23 @@ ${scene.narration}
           .story-form {
             width: 100%;
           }
+
+          .continue-buttons {
+            flex-direction: column;
+          }
+
+          .continue-btn,
+          .tv-mode-btn {
+            width: 100%;
+            justify-content: center;
+          }
         }
       `}</style>
+
+      {/* TV Mode Overlay */}
+      {tvModeActive && (
+        <TVModeContainer onGenerateNext={generateNextForTVMode} />
+      )}
     </div>
   );
 };
