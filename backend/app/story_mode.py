@@ -277,6 +277,42 @@ def _insert_scene(session_id: str, idx: int, scene: SceneOut) -> None:
     con.close()
 
 
+def update_scene_image(session_id: str, idx: int, image_url: str) -> bool:
+    """Update a scene's image_url and persist to database."""
+    con = _db()
+    cur = con.cursor()
+
+    # Load existing scene
+    cur.execute(
+        "SELECT scene_json FROM story_scenes WHERE session_id=? AND idx=?",
+        (session_id, int(idx)),
+    )
+    row = cur.fetchone()
+    if not row:
+        con.close()
+        return False
+
+    try:
+        scene = SceneOut.model_validate_json(row["scene_json"])
+        scene.image_url = image_url
+
+        # Save updated scene
+        cur.execute(
+            """
+            UPDATE story_scenes SET scene_json=?, created_at=?
+            WHERE session_id=? AND idx=?
+            """,
+            (scene.model_dump_json(), _now(), session_id, int(idx)),
+        )
+        con.commit()
+        con.close()
+        return True
+    except Exception as e:
+        print(f"[STORY] Failed to update scene image: {e}")
+        con.close()
+        return False
+
+
 def list_scenes(session_id: str, limit: int = 200) -> List[SceneOut]:
     limit = max(1, min(500, int(limit)))
     con = _db()
@@ -366,18 +402,72 @@ async def _ollama_chat(
     return str(text).strip()
 
 
+def _extract_first_json_object(text: str) -> str:
+    """
+    Extract the first balanced JSON object from text.
+    Handles preface/suffix text and avoids truncation issues from rfind.
+    Returns empty string if no valid balanced object found.
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+
+    start = s.find("{")
+    if start == -1:
+        return ""
+
+    depth = 0
+    in_str = False
+    esc = False
+
+    for i in range(start, len(s)):
+        ch = s[i]
+
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+
+    return ""  # incomplete/truncated
+
+
 def _extract_json(text: str) -> Dict[str, Any]:
+    """
+    Extract and parse a JSON object from LLM output.
+    Uses balanced brace extraction for robustness against:
+    - Preface text ("Here's the JSON: {...}")
+    - Suffix text
+    - Extra commentary
+    """
     raw = (text or "").strip()
+
+    # First try direct parse (ideal case: pure JSON)
     try:
         return json.loads(raw)
     except Exception:
-        l = raw.find("{")
-        r = raw.rfind("}")
-        if l != -1 and r != -1 and r > l:
-            try:
-                return json.loads(raw[l : r + 1])
-            except Exception:
-                pass
+        pass
+
+    # Use balanced brace extraction
+    candidate = _extract_first_json_object(raw)
+    if candidate:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
     return {}
 
 
@@ -425,17 +515,40 @@ def _planner_user_prompt(premise: str, title_hint: str, opts: StoryOptions) -> s
     )
 
 
-def _scene_system_prompt(allow_nsfw: bool) -> str:
+def _scene_system_prompt(allow_nsfw: bool, scene_index: int = 1) -> str:
     safety = "No graphic violence. No hate. No illegal instructions."
     if allow_nsfw:
         safety = "Keep it cinematic and safe."
+
+    # Progressive word count guidelines for better pacing
+    # Scene 1 = hook (short), later scenes progressively longer
+    if scene_index == 1:
+        length_guide = (
+            "IMPORTANT: Scene 1 is the HOOK. Keep narration SHORT: 25-50 words ONLY.\n"
+            "- Focus on a single striking visual moment or action.\n"
+            "- NO internal monologue, NO backstory, NO conclusions.\n"
+            "- Observable action only - what the camera sees.\n"
+            "- End on intrigue, not resolution.\n"
+        )
+        narration_hint = "string (25-50 words, 1-2 sentences MAX)"
+    elif scene_index == 2:
+        length_guide = "Scene 2: Build on the hook. Narration: 40-70 words (2-3 sentences).\n"
+        narration_hint = "string (40-70 words, 2-3 sentences)"
+    elif scene_index == 3:
+        length_guide = "Scene 3: Develop the story. Narration: 60-100 words (3-4 sentences).\n"
+        narration_hint = "string (60-100 words, 3-4 sentences)"
+    else:
+        length_guide = f"Scene {scene_index}: Full narrative mode. Narration: 80-120 words (4-6 sentences).\n"
+        narration_hint = "string (80-120 words, 4-6 sentences)"
+
     return (
         "You write ONE scene for a story that will be rendered as one image + narration.\n"
         "Output STRICT JSON ONLY (no markdown).\n"
         f"Safety rules: {safety}\n"
+        f"\n{length_guide}\n"
         "JSON schema:\n"
         "{\n"
-        '  "narration": "string (2-6 sentences)",\n'
+        f'  "narration": "{narration_hint}",\n'
         '  "image_prompt": "string (single prompt, no lists)",\n'
         '  "negative_prompt": "string (optional)",\n'
         '  "duration_s": 7,\n'
@@ -454,11 +567,27 @@ def _scene_user_prompt(
     idx: int,
     opts: StoryOptions,
 ) -> str:
+    # Scene-specific pacing reminder (reinforces system prompt)
+    if idx == 1:
+        pacing_reminder = (
+            "REMEMBER: This is Scene 1 - the HOOK.\n"
+            "- Keep narration to 25-50 words ONLY (1-2 sentences).\n"
+            "- Show a single striking moment. No backstory. No internal thoughts.\n"
+            "- End on intrigue, not resolution.\n\n"
+        )
+    elif idx == 2:
+        pacing_reminder = "Pacing: Scene 2 - build on the hook. 40-70 words.\n\n"
+    elif idx == 3:
+        pacing_reminder = "Pacing: Scene 3 - develop the story. 60-100 words.\n\n"
+    else:
+        pacing_reminder = f"Pacing: Scene {idx} - full narrative. 80-120 words.\n\n"
+
     return (
         f"Story title: {bible.title}\n"
         f"Logline: {bible.logline}\n"
         f"Setting: {bible.setting}\n\n"
-        "Visual rules:\n"
+        + pacing_reminder
+        + "Visual rules:\n"
         + "\n".join(f"- {x}" for x in (bible.visual_style_rules or []))
         + "\n\n"
         "Do not change:\n"
@@ -574,18 +703,68 @@ async def start_story(
     sys_msg = _planner_system_prompt()
     user_msg = _planner_user_prompt(premise, title_hint, opts)
 
+    base_url = ollama_base_url or OLLAMA_BASE_URL
+    model = ollama_model or OLLAMA_MODEL
+
+    # First attempt with generous token limit
+    print(f"[STORY] Generating story bible with model: {model}")
     text = await _ollama_chat(
         [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
         temperature=opts.temperature,
-        max_tokens=900,
-        base_url=(ollama_base_url or OLLAMA_BASE_URL),
-        model=(ollama_model or OLLAMA_MODEL),
+        max_tokens=1800,  # Increased from 900 to reduce truncation
+        base_url=base_url,
+        model=model,
     )
-    obj = _extract_json(text)
+
+    # Debug: Log what we got back
+    if text.strip():
+        print(f"[STORY] LLM response length: {len(text)} chars")
+        print(f"[STORY] LLM response (first 300 chars): {text[:300]}")
+    else:
+        print(f"[STORY] WARNING: LLM returned empty response!")
+
+    obj = _extract_json(text) if text.strip() else {}
+
+    # Retry once if JSON is invalid/empty (truncation or model misbehavior)
+    if not obj:
+        print(f"[STORY] First attempt failed (empty or invalid JSON), retrying with repair prompt...")
+        if text.strip():
+            print(f"[STORY] Failed text (first 500 chars): {text[:500]}")
+
+        repair_user = (
+            "Your previous output was invalid JSON or incomplete.\n"
+            "Return ONLY valid JSON matching this schema and NOTHING else.\n"
+            "Must be parseable by json.loads(). Must end with a single '}'.\n"
+            "Schema:\n"
+            '{"title":"string","logline":"string","setting":"string",'
+            '"visual_style_rules":["..."],'
+            '"recurring_characters":[{"name":"...","description":"..."}],'
+            '"recurring_locations":["..."],'
+            '"do_not_change":["..."]}\n\n'
+            f"Premise:\n{premise.strip()}\n"
+        )
+
+        text = await _ollama_chat(
+            [{"role": "system", "content": sys_msg}, {"role": "user", "content": repair_user}],
+            temperature=0.2,  # Lower temperature for more deterministic output
+            max_tokens=2200,  # Even more tokens for retry
+            base_url=base_url,
+            model=model,
+        )
+
+        obj = _extract_json(text) if text.strip() else {}
+
+    # Final check for empty/invalid JSON
+    if not obj:
+        raise RuntimeError(
+            f"LLM did not return valid JSON for story bible after retry. "
+            f"Raw response (first 500 chars): {text[:500] if text else '(empty)'}"
+        )
 
     try:
         bible = StoryBible.model_validate(obj)
-    except Exception:
+    except Exception as e:
+        print(f"[STORY] WARNING: Failed to parse story bible, using fallback. Error: {e}")
         bible = StoryBible(
             title=(title_hint.strip() or "Untitled Story"),
             logline=premise[:180],
@@ -638,17 +817,75 @@ async def next_scene(
     if idx > opts.max_scenes:
         raise ValueError("max scenes reached")
 
-    sys_msg = _scene_system_prompt(allow_nsfw=opts.allow_nsfw)
+    sys_msg = _scene_system_prompt(allow_nsfw=opts.allow_nsfw, scene_index=idx)
     user_msg = _scene_user_prompt(bible=bible, state=state, idx=idx, opts=opts)
 
+    base_url = ollama_base_url or OLLAMA_BASE_URL
+    model = ollama_model or OLLAMA_MODEL
+
+    print(f"[STORY] Generating scene {idx} with model: {model}")
     raw = await _ollama_chat(
         [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
         temperature=opts.temperature,
-        max_tokens=700,
-        base_url=(ollama_base_url or OLLAMA_BASE_URL),
-        model=(ollama_model or OLLAMA_MODEL),
+        max_tokens=900,  # Increased from 700
+        base_url=base_url,
+        model=model,
     )
-    obj = _extract_json(raw)
+
+    # Debug: Log what we got back
+    if raw.strip():
+        print(f"[STORY] Scene {idx} LLM response length: {len(raw)} chars")
+    else:
+        print(f"[STORY] WARNING: Scene {idx} LLM returned empty response!")
+
+    obj = _extract_json(raw) if raw.strip() else {}
+
+    # Retry once if JSON is invalid/empty
+    if not obj:
+        print(f"[STORY] Scene {idx} first attempt failed (empty or invalid JSON), retrying...")
+        if raw.strip():
+            print(f"[STORY] Failed raw (first 500 chars): {raw[:500]}")
+
+        # Scene-specific word count hint for retry
+        if idx == 1:
+            word_hint = "25-50 words (SHORT hook only)"
+        elif idx == 2:
+            word_hint = "40-70 words"
+        elif idx == 3:
+            word_hint = "60-100 words"
+        else:
+            word_hint = "80-120 words"
+
+        repair_user = (
+            "Your previous output was invalid JSON or incomplete.\n"
+            "Return ONLY valid JSON for ONE scene and NOTHING else.\n"
+            f"IMPORTANT: Scene {idx} narration must be {word_hint}.\n"
+            "Schema:\n"
+            f'{{"narration":"string ({word_hint})",'
+            '"image_prompt":"string (single prompt)",'
+            '"negative_prompt":"string",'
+            '"duration_s":7,'
+            '"tags":{"location":"...","camera":"...","mood":"...","beat":"..."}}\n\n'
+            f"Story: {bible.title}\n"
+            f"Scene number: {idx}\n"
+        )
+
+        raw = await _ollama_chat(
+            [{"role": "system", "content": sys_msg}, {"role": "user", "content": repair_user}],
+            temperature=0.3,
+            max_tokens=1200,
+            base_url=base_url,
+            model=model,
+        )
+
+        obj = _extract_json(raw) if raw.strip() else {}
+
+    # Final check for invalid/empty JSON
+    if not obj:
+        raise RuntimeError(
+            f"LLM did not return valid JSON for scene generation after retry. "
+            f"Raw response (first 500 chars): {raw[:500] if raw else '(empty)'}"
+        )
 
     narration = _clamp_text(str(obj.get("narration") or ""), 2000)
     image_prompt = _clamp_text(str(obj.get("image_prompt") or ""), 2000)
@@ -657,9 +894,12 @@ async def next_scene(
     duration_s = max(3, min(30, duration_s))
     tags = obj.get("tags") if isinstance(obj.get("tags"), dict) else {}
 
+    # Log warning if fallbacks are used but don't silently fail
     if not narration:
+        print(f"[STORY] WARNING: No narration in LLM response, using fallback for scene {idx}")
         narration = f"Scene {idx}: The story continues."
     if not image_prompt:
+        print(f"[STORY] WARNING: No image_prompt in LLM response, using fallback for scene {idx}")
         image_prompt = f"{bible.setting}. {opts.visual_style}. cinematic still."
 
     if opts.refine_image_prompt:

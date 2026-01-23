@@ -1,10 +1,53 @@
 # homepilot/backend/app/llm.py
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Dict, List, Optional, Literal
 
 import httpx
+
+
+def _extract_first_json_object(text: str) -> str:
+    """
+    Extract the first balanced JSON object from text.
+    Handles cases where JSON is embedded in extra text (e.g., "thinking" field).
+    Returns empty string if no valid balanced object found.
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+
+    start = s.find("{")
+    if start == -1:
+        return ""
+
+    depth = 0
+    in_str = False
+    esc = False
+
+    for i in range(start, len(s)):
+        ch = s[i]
+
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+
+    return ""  # incomplete/truncated
 
 from .config import (
     TOOL_TIMEOUT_S,
@@ -259,7 +302,31 @@ async def chat_ollama(
 
     content = str(content or "")
 
-    # Debug logging when content is empty (helps diagnose model-specific issues)
+    # Fallback: Some models (e.g., reasoning models like deepseek-r1) return content in message.thinking
+    # Try thinking field if:
+    # 1. content is empty, OR
+    # 2. content doesn't contain JSON but thinking does (model puts explanation in content, JSON in thinking)
+    if isinstance(msg, dict):
+        thinking = str(msg.get("thinking") or "").strip()
+        if thinking:
+            content_has_json = "{" in content
+            thinking_has_json = "{" in thinking
+
+            # Use thinking if content is empty or if thinking has JSON and content doesn't
+            should_use_thinking = (not content.strip()) or (thinking_has_json and not content_has_json)
+
+            if should_use_thinking:
+                # Use balanced brace extraction (handles "Ok here's JSON: {...}" patterns)
+                candidate = _extract_first_json_object(thinking)
+                if candidate:
+                    try:
+                        json.loads(candidate)  # Validate it's parseable
+                        content = candidate
+                        print(f"[OLLAMA] Extracted JSON object from message.thinking field")
+                    except Exception:
+                        pass  # Not valid JSON, keep original content
+
+    # Debug logging when content is still empty (helps diagnose model-specific issues)
     if not content.strip():
         print(f"[OLLAMA] WARNING: empty extracted content. provider_raw keys: {list(data.keys())}")
         if isinstance(msg, dict):
