@@ -19,7 +19,10 @@ import {
   BookOpen,
   Users,
   MapPin,
+  Monitor,
 } from 'lucide-react'
+import { useTVModeStore } from './studio/stores/tvModeStore'
+import { TVModeContainer } from './studio/components/TVMode'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -138,6 +141,9 @@ async function deleteJson<T>(baseUrl: string, path: string, apiKey?: string): Pr
 
 export default function StudioView(props: StudioParams) {
   const authKey = (props.apiKey || '').trim()
+
+  // TV Mode state
+  const { isActive: tvModeActive, enterTVMode, addScene: addTVScene, updateSceneImage } = useTVModeStore()
 
   // View state
   const [view, setView] = useState<'list' | 'create' | 'player'>('list')
@@ -372,6 +378,11 @@ export default function StudioView(props: StudioParams) {
           }
         })
 
+        // Also update TV Mode store if active (for sync)
+        if (tvModeActive) {
+          updateSceneImage(scene.idx, imageUrl)
+        }
+
         // Persist image URL to database so it survives page reload
         try {
           await postJson(
@@ -427,6 +438,62 @@ export default function StudioView(props: StudioParams) {
       setIsFullscreen(false)
     }
   }
+
+  // Handle entering TV Mode
+  const handleEnterTVMode = useCallback(() => {
+    if (!currentStory || currentStory.scenes.length === 0) return
+
+    // Convert scenes to TV Mode format
+    const tvScenes = currentStory.scenes.map((scene) => ({
+      ...scene,
+      status: 'ready' as const,
+    }))
+
+    enterTVMode(currentStory.session_id, currentStory.title, tvScenes, currentSceneIndex)
+  }, [currentStory, currentSceneIndex, enterTVMode])
+
+  // Generate next scene for TV Mode (prefetching)
+  const generateNextForTVMode = useCallback(async () => {
+    if (!currentStory) return null
+
+    try {
+      const data = await postJson<{
+        ok: boolean
+        session_id: string
+        title: string
+        scene: Scene
+        bible: StoryBible
+      }>(
+        props.backendUrl,
+        '/story/next',
+        {
+          session_id: currentStory.session_id,
+          refine_image_prompt: props.promptRefinement ?? true,
+        },
+        authKey
+      )
+
+      // Add new scene to current story state
+      setCurrentStory((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          scenes: [...prev.scenes, data.scene],
+        }
+      })
+
+      // Generate image for the new scene in background
+      generateImageForScene(data.scene)
+
+      return {
+        ...data.scene,
+        status: 'ready' as const,
+      }
+    } catch (error) {
+      console.error('TV Mode generate error:', error)
+      throw error
+    }
+  }, [currentStory, props.backendUrl, props.promptRefinement, authKey])
 
   const currentScene = currentStory?.scenes[currentSceneIndex]
 
@@ -844,6 +911,17 @@ export default function StudioView(props: StudioParams) {
                 </>
               )}
             </button>
+
+            <button
+              onClick={handleEnterTVMode}
+              disabled={!currentStory || currentStory.scenes.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 text-purple-300 border border-purple-500/30 rounded-full transition-all disabled:opacity-50"
+              type="button"
+              title="Watch story in immersive TV Mode"
+            >
+              <Monitor size={16} />
+              TV Mode
+            </button>
           </div>
         </div>
       </div>
@@ -1021,6 +1099,11 @@ export default function StudioView(props: StudioParams) {
           overflow: hidden;
         }
       `}</style>
+
+      {/* TV Mode Overlay */}
+      {tvModeActive && (
+        <TVModeContainer onGenerateNext={generateNextForTVMode} />
+      )}
     </div>
   )
 }
