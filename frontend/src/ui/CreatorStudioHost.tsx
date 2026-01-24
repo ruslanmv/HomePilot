@@ -96,8 +96,8 @@ function CreatorStudioWizard({
 }: WizardProps) {
   const authKey = (apiKey || "").trim();
 
-  // Wizard state
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  // Wizard state - 5 steps: Details, Visuals, Checks, Review, Outline
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   // Core fields
   const [title, setTitle] = useState("");
@@ -129,6 +129,11 @@ function CreatorStudioWizard({
   // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Outline generation state (Step 5)
+  const [generatingOutline, setGeneratingOutline] = useState(false);
+  const [generatedOutline, setGeneratedOutline] = useState<any>(null);
+  const [tempProjectId, setTempProjectId] = useState<string | null>(null);
 
   // Fetch available LLM models
   const fetchLLMModels = useCallback(async () => {
@@ -182,14 +187,17 @@ function CreatorStudioWizard({
   }, [goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel]);
 
   const canProceedStep1 = title.trim().length > 0;
-  const canCreate = title.trim().length > 0 && !loading;
+  const canCreate = title.trim().length > 0 && !loading && generatedOutline;
 
-  function goTo(next: 1 | 2 | 3 | 4) {
+  function goTo(next: 1 | 2 | 3 | 4 | 5) {
     setError(null);
     setStep(next);
   }
 
   function canNav(target: number) {
+    // Can navigate to previous steps or the next step
+    // But step 5 (Outline) requires going through step 4 first
+    if (target === 5) return step === 5 || (step === 4 && generatedOutline);
     return target < step || target === step + 1;
   }
 
@@ -219,10 +227,109 @@ function CreatorStudioWizard({
     setMatureConsentChecked(false);
   }
 
-  async function handleCreate() {
+  // Create project and generate outline (transition from Step 4 to Step 5)
+  async function handleGenerateOutline() {
     if (!title.trim()) {
       setError("Project name is required.");
       setStep(1);
+      return;
+    }
+
+    setGeneratingOutline(true);
+    setError(null);
+    setGeneratedOutline(null);
+
+    try {
+      // Step 1: Create the project first (if not already created)
+      let projectId = tempProjectId;
+
+      if (!projectId) {
+        const url = `${backendUrl.replace(/\/+$/, "")}/studio/videos`;
+        const payload = {
+          title: title.trim(),
+          logline: logline.trim(),
+          tags: tagsForBackend,
+          platformPreset,
+          targetDurationSec: targetSceneCount * sceneDuration,
+          contentRating,
+          policyMode: contentRating === "mature" ? "restricted" : "youtube_safe",
+          providerPolicy: {
+            allowMature: contentRating === "mature" ? !!allowMature : false,
+            allowedProviders: ["ollama"],
+            localOnly: contentRating === "mature" ? !!localOnly : true,
+          },
+        };
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(authKey ? { "x-api-key": authKey } : {}),
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status}${text ? `: ${text}` : ""}`);
+        }
+
+        const data = await res.json();
+        projectId = data.video?.id;
+
+        if (!projectId) {
+          throw new Error("No project ID returned from server");
+        }
+
+        setTempProjectId(projectId);
+      }
+
+      // Step 2: Generate the outline
+      const outlineUrl = `${backendUrl.replace(/\/+$/, "")}/studio/videos/${projectId}/generate-outline`;
+      const outlinePayload = {
+        target_scenes: targetSceneCount,
+        scene_duration: sceneDuration,
+        ollama_model: selectedLLMModel || undefined,
+      };
+
+      const outlineRes = await fetch(outlineUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authKey ? { "x-api-key": authKey } : {}),
+        },
+        body: JSON.stringify(outlinePayload),
+      });
+
+      if (!outlineRes.ok) {
+        const text = await outlineRes.text().catch(() => "");
+        throw new Error(`Failed to generate outline: HTTP ${outlineRes.status}${text ? `: ${text}` : ""}`);
+      }
+
+      const outlineData = await outlineRes.json();
+      if (!outlineData.ok || !outlineData.outline) {
+        throw new Error("Outline generation failed - no outline returned");
+      }
+
+      setGeneratedOutline(outlineData.outline);
+      setStep(5); // Move to outline review step
+
+    } catch (e: any) {
+      setError(e.message || String(e));
+    } finally {
+      setGeneratingOutline(false);
+    }
+  }
+
+  async function handleCreate() {
+    // Project should already be created during outline generation
+    if (!tempProjectId) {
+      setError("Project not created yet. Please generate outline first.");
+      return;
+    }
+
+    if (!generatedOutline) {
+      setError("No outline generated. Please generate outline first.");
       return;
     }
 
@@ -230,48 +337,10 @@ function CreatorStudioWizard({
     setError(null);
 
     try {
-      const url = `${backendUrl.replace(/\/+$/, "")}/studio/videos`;
-      const payload = {
-        title: title.trim(),
-        logline: logline.trim(),
-        tags: tagsForBackend,
-        platformPreset,
-        targetDurationSec: targetSceneCount * sceneDuration,
-        contentRating,
-        policyMode: contentRating === "mature" ? "restricted" : "youtube_safe",
-        providerPolicy: {
-          allowMature: contentRating === "mature" ? !!allowMature : false,
-          allowedProviders: ["ollama"],
-          localOnly: contentRating === "mature" ? !!localOnly : true,
-        },
-      };
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(authKey ? { "x-api-key": authKey } : {}),
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`HTTP ${res.status}${text ? `: ${text}` : ""}`);
-      }
-
-      const data = await res.json();
-      const projectId = data.video?.id;
-
-      // Project created successfully - open it in editor
-      if (projectId) {
-        onProjectCreated(projectId, { targetSceneCount, sceneDuration, llmModel: selectedLLMModel });
-      } else {
-        throw new Error("No project ID returned from server");
-      }
+      // Project already exists with outline - just open it in the editor
+      onProjectCreated(tempProjectId, { targetSceneCount, sceneDuration, llmModel: selectedLLMModel });
     } catch (e: any) {
       setError(e.message || String(e));
-      setStep(4);
     } finally {
       setLoading(false);
     }
@@ -362,10 +431,11 @@ function CreatorStudioWizard({
 
           {/* Horizontal Stepper */}
           <div className="flex justify-center py-5 border-b border-[#3f3f3f] bg-[#1f1f1f]">
-            <StepNav step={step} mine={1} label="Details" canNav={canNav(1)} onClick={() => canNav(1) && goTo(1)} />
-            <StepNav step={step} mine={2} label="Visuals" canNav={canNav(2)} onClick={() => canNav(2) && goTo(2)} />
-            <StepNav step={step} mine={3} label="Checks" canNav={canNav(3)} onClick={() => canNav(3) && goTo(3)} />
-            <StepNav step={step} mine={4} label="Review" canNav={canNav(4)} onClick={() => canNav(4) && goTo(4)} />
+            <StepNav step={step} mine={1} label="Details" canNav={canNav(1)} onClick={() => canNav(1) && goTo(1)} totalSteps={5} />
+            <StepNav step={step} mine={2} label="Visuals" canNav={canNav(2)} onClick={() => canNav(2) && goTo(2)} totalSteps={5} />
+            <StepNav step={step} mine={3} label="Checks" canNav={canNav(3)} onClick={() => canNav(3) && goTo(3)} totalSteps={5} />
+            <StepNav step={step} mine={4} label="Review" canNav={canNav(4)} onClick={() => canNav(4) && goTo(4)} totalSteps={5} />
+            <StepNav step={step} mine={5} label="Outline" canNav={canNav(5)} onClick={() => canNav(5) && goTo(5)} totalSteps={5} />
           </div>
 
           {/* Content Area */}
@@ -598,7 +668,7 @@ function CreatorStudioWizard({
             {step === 4 && (
               <div>
                 <h1 className="text-2xl font-medium">Review</h1>
-                <p className="mt-2 text-sm text-[#aaa]">Review your settings before creating the project.</p>
+                <p className="mt-2 text-sm text-[#aaa]">Review your settings, then generate your story outline.</p>
 
                 <div className="mt-6 bg-[#121212] border border-[#3f3f3f] rounded p-5">
                   <ReviewLine label="Title" value={title.trim() || "Untitled Project"} />
@@ -640,34 +710,152 @@ function CreatorStudioWizard({
                 </div>
               </div>
             )}
+
+            {/* STEP 5: Outline Generation & Review */}
+            {step === 5 && (
+              <div>
+                <h1 className="text-2xl font-medium">Story Outline</h1>
+                <p className="mt-2 text-sm text-[#aaa]">
+                  {generatingOutline
+                    ? "Generating your story outline with AI..."
+                    : "Review your AI-generated story outline before creating the project."}
+                </p>
+
+                {/* Generation Loading State */}
+                {generatingOutline && (
+                  <div className="mt-8 flex flex-col items-center justify-center py-12">
+                    <div className="w-16 h-16 border-4 border-[#3ea6ff] border-t-transparent rounded-full animate-spin" />
+                    <p className="mt-4 text-[#aaa]">Generating {targetSceneCount} scenes...</p>
+                    <p className="mt-2 text-xs text-[#666]">This may take a minute depending on your AI model</p>
+                  </div>
+                )}
+
+                {/* Error State */}
+                {error && !generatingOutline && (
+                  <div className="mt-4 p-4 bg-red-500/10 border border-red-500/30 rounded text-sm text-red-300">
+                    {error}
+                    <button
+                      className="ml-4 underline hover:text-red-200"
+                      onClick={() => {
+                        setError(null);
+                        handleGenerateOutline();
+                      }}
+                    >
+                      Try Again
+                    </button>
+                  </div>
+                )}
+
+                {/* Generated Outline Display */}
+                {generatedOutline && !generatingOutline && (
+                  <div className="mt-6 space-y-4">
+                    {/* Story Arc Summary */}
+                    {generatedOutline.story_arc && (
+                      <div className="bg-[#121212] border border-[#3f3f3f] rounded p-4">
+                        <div className="text-sm font-medium text-[#3ea6ff] mb-2">Story Arc</div>
+                        <div className="text-xs text-[#aaa] space-y-1">
+                          <div><span className="text-[#f1f1f1]">Beginning:</span> {generatedOutline.story_arc.beginning}</div>
+                          <div><span className="text-[#f1f1f1]">Rising Action:</span> {generatedOutline.story_arc.rising_action}</div>
+                          <div><span className="text-[#f1f1f1]">Climax:</span> {generatedOutline.story_arc.climax}</div>
+                          <div><span className="text-[#f1f1f1]">Resolution:</span> {generatedOutline.story_arc.resolution}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Scenes List */}
+                    <div className="bg-[#121212] border border-[#3f3f3f] rounded overflow-hidden">
+                      <div className="px-4 py-3 border-b border-[#3f3f3f] flex items-center justify-between">
+                        <span className="text-sm font-medium">Scenes ({generatedOutline.scenes?.length || 0})</span>
+                        <span className="text-xs text-[#aaa]">Click a scene to preview</span>
+                      </div>
+                      <div className="max-h-[300px] overflow-y-auto">
+                        {generatedOutline.scenes?.map((scene: any, idx: number) => (
+                          <div key={idx} className="px-4 py-3 border-b border-[#2a2a2a] last:border-b-0 hover:bg-[#1a1a1a] transition-colors">
+                            <div className="flex items-start gap-3">
+                              <div className="w-8 h-8 rounded-full bg-[#3ea6ff]/20 text-[#3ea6ff] flex items-center justify-center text-sm font-medium flex-shrink-0">
+                                {scene.scene_number || idx + 1}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-[#f1f1f1]">{scene.title}</div>
+                                <div className="text-xs text-[#aaa] mt-1 line-clamp-2">{scene.narration}</div>
+                                <details className="mt-2">
+                                  <summary className="text-xs text-[#666] cursor-pointer hover:text-[#aaa]">
+                                    View image prompt
+                                  </summary>
+                                  <div className="mt-2 p-2 bg-[#0a0a0a] rounded text-xs text-[#888] leading-relaxed">
+                                    {scene.image_prompt}
+                                  </div>
+                                </details>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Regenerate Option */}
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-[#aaa]">Not happy with the outline?</span>
+                      <button
+                        className="text-[#3ea6ff] hover:underline"
+                        onClick={() => {
+                          setGeneratedOutline(null);
+                          handleGenerateOutline();
+                        }}
+                        disabled={generatingOutline}
+                      >
+                        Regenerate Outline
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Footer */}
           <div className="px-6 py-4 border-t border-[#3f3f3f] flex justify-end gap-3">
-            {step > 1 && (
+            {step > 1 && step !== 5 && (
               <button
                 className="px-6 py-2 text-sm font-medium text-[#aaa] hover:text-[#f1f1f1] uppercase"
-                onClick={() => goTo((step - 1) as 1 | 2 | 3 | 4)}
-                disabled={loading}
+                onClick={() => goTo((step - 1) as 1 | 2 | 3 | 4 | 5)}
+                disabled={loading || generatingOutline}
               >
                 Back
+              </button>
+            )}
+            {step === 5 && !generatingOutline && (
+              <button
+                className="px-6 py-2 text-sm font-medium text-[#aaa] hover:text-[#f1f1f1] uppercase"
+                onClick={() => goTo(4)}
+                disabled={loading}
+              >
+                Back to Review
               </button>
             )}
             {step < 4 ? (
               <button
                 className="px-6 py-2 text-sm font-semibold bg-[#3ea6ff] text-black rounded-sm hover:bg-[#6ebbff] disabled:opacity-50 disabled:cursor-not-allowed uppercase"
                 disabled={step === 1 && !canProceedStep1}
-                onClick={() => goTo((step + 1) as 1 | 2 | 3 | 4)}
+                onClick={() => goTo((step + 1) as 1 | 2 | 3 | 4 | 5)}
               >
                 Next
+              </button>
+            ) : step === 4 ? (
+              <button
+                className="px-6 py-2 text-sm font-semibold bg-[#3ea6ff] text-black rounded-sm hover:bg-[#6ebbff] disabled:opacity-50 disabled:cursor-not-allowed uppercase"
+                disabled={generatingOutline || !title.trim()}
+                onClick={handleGenerateOutline}
+              >
+                {generatingOutline ? "Generating..." : "Generate Outline"}
               </button>
             ) : (
               <button
                 className="px-6 py-2 text-sm font-semibold bg-[#3ea6ff] text-black rounded-sm hover:bg-[#6ebbff] disabled:opacity-50 disabled:cursor-not-allowed uppercase"
-                disabled={!canCreate}
+                disabled={!canCreate || generatingOutline}
                 onClick={handleCreate}
               >
-                {loading ? "Creating..." : "Create"}
+                {loading ? "Creating..." : "Create Project"}
               </button>
             )}
           </div>
@@ -691,12 +879,14 @@ function StepNav({
   label,
   canNav,
   onClick,
+  totalSteps = 4,
 }: {
   step: number;
   mine: number;
   label: string;
   canNav: boolean;
   onClick: () => void;
+  totalSteps?: number;
 }) {
   const isActive = step === mine;
   const isDone = step > mine;
@@ -706,12 +896,12 @@ function StepNav({
       type="button"
       onClick={onClick}
       className={[
-        "flex flex-col items-center w-[140px] relative",
+        "flex flex-col items-center w-[120px] relative",
         canNav ? "cursor-pointer" : "cursor-default",
       ].join(" ")}
     >
       {/* Connector line */}
-      {mine < 4 && (
+      {mine < totalSteps && (
         <div
           className={[
             "absolute top-3 left-1/2 w-full h-0.5 z-0",
