@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -13,6 +14,15 @@ from pydantic import BaseModel, Field, ValidationError
 from . import storage
 from .llm import chat_ollama
 from .config import OLLAMA_BASE_URL, OLLAMA_MODEL
+
+
+# Stop tokens tuned for local models (deepseek-r1, llama3) to prevent non-JSON chatter.
+_JSON_STOP_DEFAULT: List[str] = [
+    "</think>",
+    "```",
+    "\n\nAssistant:",
+    "\n\nExplanation:",
+]
 
 
 # ----------------------------
@@ -135,6 +145,187 @@ def _push_unique(lst: List[str], value: str, max_len: int) -> None:
 
 
 # ----------------------------
+# JSON robustness helpers
+# ----------------------------
+
+_CODE_FENCE_PREFIXES = ("```json", "```JSON", "```")
+
+
+def _strip_code_fences(raw: str) -> str:
+    """Strip markdown code fences from LLM output."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    for p in _CODE_FENCE_PREFIXES:
+        if s.startswith(p):
+            s = s.split("\n", 1)[1] if "\n" in s else ""
+            break
+    if s.endswith("```"):
+        s = s[:-3]
+    return s.strip()
+
+
+def _extract_first_json_object(text: str) -> str:
+    """Extract the first balanced JSON object from text."""
+    s = (text or "").strip()
+    if not s:
+        return ""
+
+    start = s.find("{")
+    if start == -1:
+        return ""
+
+    depth = 0
+    in_str = False
+    esc = False
+
+    for i in range(start, len(s)):
+        ch = s[i]
+
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+
+    return ""
+
+
+def _repair_json_text(raw: str) -> str:
+    """Best-effort, conservative JSON repair for common LLM mistakes."""
+    s = _strip_code_fences(raw)
+
+    i = s.find("{")
+    if i > 0:
+        s = s[i:]
+
+    j = s.rfind("}")
+    if j != -1:
+        s = s[: j + 1]
+
+    # Remove trailing commas before } or ]
+    s = re.sub(r",\s*([}\]])", r"\1", s)
+
+    # Replace curly quotes with straight quotes
+    s = s.replace(""", '"').replace(""", '"').replace("'", "'")
+
+    return s.strip()
+
+
+def _extract_json_robust(raw: str) -> Dict[str, Any]:
+    """Parse JSON with multiple fallbacks + light repair."""
+    s = (raw or "").strip()
+    if not s:
+        return {}
+
+    # 1) direct parse
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+
+    # 2) brace-extract then parse
+    candidate = _extract_first_json_object(s)
+    if candidate:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    # 3) repair then parse
+    repaired = _repair_json_text(s)
+    if repaired and repaired != s:
+        try:
+            return json.loads(repaired)
+        except Exception:
+            pass
+        candidate = _extract_first_json_object(repaired)
+        if candidate:
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+
+    return {}
+
+
+def _is_placeholder_value(value: str) -> bool:
+    """
+    Detect if a value is a literal placeholder from the schema/example.
+    DeepSeek R1 sometimes returns the schema verbatim instead of generating content.
+    """
+    if not value:
+        return True
+    v = value.strip().lower()
+    # Common placeholder patterns
+    placeholders = {
+        "string",
+        "...",
+        "\"...\"",
+        "\"string\"",
+    }
+    return v in placeholders or v.startswith("...") or v == ""
+
+
+# ----------------------------
+# Subject validation (keyword overlap)
+# ----------------------------
+# Industry-standard approach: use word length filtering instead of static stopword lists.
+# Words >= 4 chars are likely content words (nouns, adjectives, verbs).
+# This is simpler, more maintainable, and language-agnostic.
+
+_MIN_KEYWORD_LENGTH = 4  # Words shorter than this are likely function words
+
+
+def _extract_keywords(text: str) -> set:
+    """
+    Extract content keywords from text using word length heuristic.
+    Words >= 4 characters are likely to be meaningful content words.
+    This avoids maintaining large stopword lists.
+    """
+    if not text:
+        return set()
+
+    # Tokenize: extract alphabetic words, lowercase
+    words = re.findall(r'\b[a-zA-Z]+\b', text.lower())
+
+    # Filter by length - words >= 4 chars are likely content words
+    # This naturally filters out: a, an, the, is, of, in, to, for, etc.
+    return {w for w in words if len(w) >= _MIN_KEYWORD_LENGTH}
+
+
+def _validate_keyword_overlap(base: str, candidate: str, min_overlap: int = 1) -> bool:
+    """
+    Validate that candidate preserves at least min_overlap keywords from base.
+    Uses simple word length filtering (>= 4 chars) as industry-standard heuristic.
+    """
+    if not base or not candidate:
+        return False
+
+    base_kw = _extract_keywords(base)
+    cand_kw = _extract_keywords(candidate)
+
+    # If base has no meaningful keywords (very short prompt), allow anything
+    if not base_kw:
+        return True
+
+    overlap = base_kw & cand_kw
+    return len(overlap) >= min_overlap
+
+
+# ----------------------------
 # DB helpers
 # ----------------------------
 
@@ -212,14 +403,20 @@ def _insert_event(session_id: str, n: int, variation_prompt: str, tags: Dict[str
 def _build_variation_system_prompt() -> str:
     return (
         "You generate *one* variation of an image prompt for a generative art system.\n"
-        "Return STRICT JSON only (no markdown):\n"
+        "Return STRICT JSON only (no markdown, no explanation):\n"
         "{\n"
-        '  "variation_prompt": "string",\n'
-        '  "tags": { "character": "...", "setting": "...", "camera": "...", "mood": "..." }\n'
+        '  "variation_prompt": "<YOUR ACTUAL CREATIVE VARIATION HERE>",\n'
+        '  "tags": { "character": "<actual character description>", "setting": "<actual setting>", "camera": "<camera angle>", "mood": "<mood>" }\n'
         "}\n"
-        "Rules:\n"
-        "- Keep the core concept aligned to the user's base prompt.\n"
-        "- Vary character identity, small details, props, camera, composition, weather, lighting.\n"
+        "CRITICAL RULES:\n"
+        "- You MUST generate ACTUAL CREATIVE CONTENT, not placeholder text.\n"
+        "- NEVER output literal 'string' or '...' - always write real descriptive text.\n"
+        "- The variation_prompt MUST be a complete, detailed image prompt.\n"
+        "- SUBJECT PRESERVATION IS MANDATORY: If the base prompt says 'girl', your variation MUST include 'girl'.\n"
+        "- If base says 'woman', output MUST include 'woman'. If 'cat', output MUST include 'cat'.\n"
+        "- NEVER change the core subject to a different entity (girl->lion is FORBIDDEN).\n"
+        "- You may vary: pose, clothing, setting, lighting, camera angle, mood, background, style.\n"
+        "- You may NOT vary: the main subject type (person stays person, animal stays same animal).\n"
         "- Avoid repeating recent variations and recently used traits.\n"
         "- Keep it a single prompt (no lists).\n"
         "- Do NOT add disallowed or unsafe content.\n"
@@ -290,36 +487,55 @@ def _build_variation_user_prompt(
 
 def _safe_parse_variation(text: str, fallback_prompt: str = "") -> VariationOut:
     """
-    Robust parsing:
-    - Try strict JSON
-    - If it fails, fallback to using raw text as variation_prompt
-    - If raw text is empty, use fallback_prompt (the original user prompt)
+    Robust parsing with placeholder detection and subject validation:
+    - Use robust JSON extraction with multiple fallbacks
+    - Detect when LLM returns literal placeholder values (e.g., "string", "...")
+    - Validate that variation preserves core subject from original prompt
+    - Fall back to original prompt if variation is invalid, placeholder, or drifted
     """
     raw = (text or "").strip()
 
-    # Try to parse as JSON first
-    try:
-        obj = json.loads(raw)
-        return VariationOut.model_validate(obj)
-    except Exception:
-        pass
+    # Use robust JSON extraction with multiple fallbacks
+    obj = _extract_json_robust(raw)
 
-    # Some models accidentally wrap JSON; attempt to extract first {...}
-    l = raw.find("{")
-    r = raw.rfind("}")
-    if l != -1 and r != -1 and r > l:
-        try:
-            obj = json.loads(raw[l : r + 1])
-            return VariationOut.model_validate(obj)
-        except Exception:
-            pass
+    if obj:
+        variation_prompt = (obj.get("variation_prompt") or "").strip()
+        tags = obj.get("tags") if isinstance(obj.get("tags"), dict) else {}
+
+        # Check if variation_prompt is a placeholder value (schema echoed back)
+        if _is_placeholder_value(variation_prompt):
+            print(f"[GAME MODE VARIATION] WARNING: LLM returned placeholder '{variation_prompt}', using original prompt")
+            return VariationOut(variation_prompt=fallback_prompt, tags={})
+
+        # Check minimum length (too short = probably garbage)
+        if len(variation_prompt) < 15:
+            print(f"[GAME MODE VARIATION] WARNING: Variation too short ({len(variation_prompt)} chars), using original prompt")
+            return VariationOut(variation_prompt=fallback_prompt, tags={})
+
+        # Subject validation: ensure variation preserves core subject from original
+        if fallback_prompt and not _validate_keyword_overlap(fallback_prompt, variation_prompt, min_overlap=1):
+            print(f"[GAME MODE VARIATION] WARNING: Subject drift detected (no keyword overlap), using original prompt")
+            print(f"[GAME MODE VARIATION] Base keywords: {_extract_keywords(fallback_prompt)}")
+            print(f"[GAME MODE VARIATION] Variation keywords: {_extract_keywords(variation_prompt)}")
+            return VariationOut(variation_prompt=fallback_prompt, tags={})
+
+        # Check if tags contain placeholder values and clean them
+        clean_tags = {}
+        for k, v in tags.items():
+            if isinstance(v, str) and not _is_placeholder_value(v):
+                clean_tags[k] = v
+
+        return VariationOut(variation_prompt=variation_prompt, tags=clean_tags)
 
     # If we have raw text that looks like a prompt (not JSON garbage), use it
-    if raw and not raw.startswith("{") and len(raw) > 10:
+    if raw and not raw.startswith("{") and len(raw) > 15:
+        # Also validate subject overlap for raw text
+        if fallback_prompt and not _validate_keyword_overlap(fallback_prompt, raw, min_overlap=1):
+            print(f"[GAME MODE VARIATION] WARNING: Raw text subject drift, using original prompt")
+            return VariationOut(variation_prompt=fallback_prompt, tags={})
         return VariationOut(variation_prompt=raw, tags={})
 
     # Fallback: use the original user prompt to preserve their intent
-    # Empty string signals to caller that variation failed
     return VariationOut(variation_prompt=fallback_prompt, tags={})
 
 
@@ -398,10 +614,12 @@ async def next_variation(
             {"role": "system", "content": sys_msg},
             {"role": "user", "content": user_msg},
         ],
-        temperature=0.75,
+        temperature=0.7,
         max_tokens=450,
         base_url=effective_base_url,
         model=effective_model,
+        response_format="json",
+        stop=_JSON_STOP_DEFAULT,
     )
 
     text = ((out.get("choices") or [{}])[0].get("message", {}) or {}).get("content", "") or ""

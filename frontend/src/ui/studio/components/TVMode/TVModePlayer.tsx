@@ -17,7 +17,7 @@ export const TVModePlayer: React.FC<TVModePlayerProps> = ({
   isImageLoading = false,
   isPrefetching = false,
 }) => {
-  const { settings, storyTitle, currentSceneIndex } = useTVModeStore();
+  const { settings, storyTitle, currentSceneIndex, chapterNumber, isLoadingNextChapter } = useTVModeStore();
   const [imageLoaded, setImageLoaded] = useState(false);
   const [displayedScene, setDisplayedScene] = useState(scene);
   const [isAnimating, setIsAnimating] = useState(false);
@@ -135,11 +135,54 @@ export const TVModePlayer: React.FC<TVModePlayerProps> = ({
       <div className={`narration-container ${settings.narrationPosition === "top" ? "narration-top" : "narration-bottom"}`}>
         <div className={`narration-text ${getNarrationSizeClass()} ${isAnimating ? "" : "visible"}`}>
           {settings.showSceneNumber && (
-            <span className="scene-indicator">Scene {displayedScene.idx + 1}</span>
+            <span className="scene-indicator">
+              {chapterNumber > 1 && `Ch.${chapterNumber} · `}Scene {displayedScene.idx + 1}
+            </span>
           )}
           <p>{displayedScene.narration}</p>
         </div>
       </div>
+
+      {/* Loading Next Chapter Overlay */}
+      {isLoadingNextChapter && (
+        <div className="chapter-loading-overlay">
+          <div className="chapter-loading-content">
+            <div className="loading-spinner" />
+            <p className="chapter-loading-title">Chapter {chapterNumber} Complete</p>
+            <p className="chapter-loading-subtitle">Loading next chapter...</p>
+          </div>
+          <style>{`
+            .chapter-loading-overlay {
+              position: absolute;
+              inset: 0;
+              background: rgba(0, 0, 0, 0.85);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              z-index: 100;
+              animation: fadeIn 0.5s ease-out;
+            }
+            .chapter-loading-content {
+              text-align: center;
+              color: white;
+            }
+            .chapter-loading-title {
+              font-size: 24px;
+              font-weight: 600;
+              margin-top: 20px;
+              margin-bottom: 8px;
+            }
+            .chapter-loading-subtitle {
+              font-size: 16px;
+              opacity: 0.7;
+            }
+            @keyframes fadeIn {
+              from { opacity: 0; }
+              to { opacity: 1; }
+            }
+          `}</style>
+        </div>
+      )}
 
       <style>{`
         .tv-player {
