@@ -338,7 +338,8 @@ export default function StudioView(props: StudioParams) {
     setIsCreating(true)
 
     try {
-      const data = await postJson<{
+      // Step 1: Create story bible
+      const storyData = await postJson<{
         ok: boolean
         session_id: string
         title: string
@@ -358,15 +359,53 @@ export default function StudioView(props: StudioParams) {
         authKey
       )
 
-      // Load the full story and switch to player
-      await loadStory(data.session_id)
+      console.log('[Studio] Story bible created:', storyData.title)
+
+      // Step 2: Auto-generate first scene
+      setIsGeneratingScene(true)
+      const sceneData = await postJson<{
+        ok: boolean
+        scene?: Scene
+        story_complete?: boolean
+        message?: string
+      }>(
+        props.backendUrl,
+        '/story/next',
+        {
+          session_id: storyData.session_id,
+          refine_image_prompt: props.promptRefinement ?? true,
+        },
+        authKey
+      )
+
+      if (!sceneData.scene) {
+        throw new Error('Failed to generate first scene')
+      }
+
+      console.log('[Studio] First scene generated')
+
+      // Step 3: Load the full story with the first scene
+      const fullStory = await fetchJson<StoryData>(props.backendUrl, `/story/${storyData.session_id}`, authKey)
+      setCurrentStory(fullStory)
+      setCurrentSceneIndex(0)
+      setIsPlaying(false)
+      setStoryComplete(false)
+
+      // Switch to player view
       setView('player')
       setPremise('')
       setTitleHint('')
+
+      // Step 4: Auto-generate image for the first scene
+      if (fullStory.scenes.length > 0) {
+        const firstScene = fullStory.scenes[0]
+        generateImageForScene(firstScene, storyData.session_id)
+      }
     } catch (err: any) {
       alert(`Failed to create story: ${err.message || err}`)
     } finally {
       setIsCreating(false)
+      setIsGeneratingScene(false)
     }
   }
 
@@ -1124,7 +1163,7 @@ export default function StudioView(props: StudioParams) {
               {isCreating ? (
                 <>
                   <div className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
-                  Creating Story Bible...
+                  {isGeneratingScene ? 'Generating First Scene...' : 'Creating Story Bible...'}
                 </>
               ) : (
                 <>
