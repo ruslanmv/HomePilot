@@ -10,7 +10,11 @@ import {
   Check,
   Loader2,
   ImageIcon,
+  Tv,
 } from "lucide-react";
+import { useTVModeStore } from "./studio/stores/tvModeStore";
+import type { TVScene } from "./studio/stores/tvModeStore";
+import { TVModeContainer } from "./studio/components/TVMode/TVModeContainer";
 
 // Types
 type SceneStatus = "pending" | "generating" | "ready" | "error";
@@ -46,6 +50,17 @@ interface CreatorStudioEditorProps {
   backendUrl: string;
   apiKey?: string;
   onExit: () => void;
+  /** Auto-generate first scene on load (for newly created projects) */
+  autoGenerateFirst?: boolean;
+  /** Target number of scenes for the project */
+  targetSceneCount?: number;
+  /** Image generation settings */
+  imageProvider?: string;
+  imageModel?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  imageSteps?: number;
+  imageCfg?: number;
 }
 
 /**
@@ -62,8 +77,22 @@ export function CreatorStudioEditor({
   backendUrl,
   apiKey,
   onExit,
+  autoGenerateFirst = false,
+  targetSceneCount = 8,
+  imageProvider = "comfyui",
+  imageModel,
+  imageWidth = 1344,
+  imageHeight = 768,
+  imageSteps,
+  imageCfg,
 }: CreatorStudioEditorProps) {
   const authKey = (apiKey || "").trim();
+  const [hasAutoTriggered, setHasAutoTriggered] = useState(false);
+
+  // TV Mode store
+  const tvModeActive = useTVModeStore((s) => s.isActive);
+  const enterTVMode = useTVModeStore((s) => s.enterTVMode);
+  const updateSceneImageByIdx = useTVModeStore((s) => s.updateSceneImageByIdx);
 
   // State
   const [project, setProject] = useState<Project | null>(null);
@@ -117,6 +146,107 @@ export function CreatorStudioEditor({
     [backendUrl, authKey]
   );
 
+  const patchApi = useCallback(
+    async <T,>(path: string, body: any): Promise<T> => {
+      const url = `${backendUrl.replace(/\/+$/, "")}${path}`;
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authKey ? { "x-api-key": authKey } : {}),
+        },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}${text ? `: ${text}` : ""}`);
+      }
+      return (await res.json()) as T;
+    },
+    [backendUrl, authKey]
+  );
+
+  // Convert Creator Studio scene to TV Mode scene format
+  const sceneToTVScene = useCallback((scene: Scene): TVScene => {
+    return {
+      idx: scene.idx,
+      narration: scene.narration || "",
+      image_prompt: scene.imagePrompt || "",
+      negative_prompt: scene.negativePrompt || "",
+      duration_s: scene.durationSec || 5,
+      tags: {},
+      image_url: scene.imageUrl || null,
+      status: scene.status === "ready" ? "ready" : "pending",
+      imageStatus: scene.imageUrl ? "ready" : "pending",
+    };
+  }, []);
+
+  // Enter TV Mode with current scenes
+  const handleEnterTVMode = useCallback(() => {
+    if (!project || scenes.length === 0) return;
+
+    const tvScenes = scenes.map(sceneToTVScene);
+    enterTVMode(projectId, project.title, tvScenes, currentSceneIndex);
+  }, [project, projectId, scenes, currentSceneIndex, enterTVMode, sceneToTVScene]);
+
+  // Generate image for a scene
+  const generateImageForScene = useCallback(
+    async (sceneId: string, imagePrompt: string, force: boolean = false) => {
+      if (isGeneratingImage && !force) {
+        console.log('[CreatorStudioEditor] Already generating image, skipping');
+        return;
+      }
+
+      setIsGeneratingImage(true);
+      console.log('[CreatorStudioEditor] Generating image for scene:', sceneId);
+
+      try {
+        const llmProvider = imageProvider === 'comfyui' ? 'ollama' : imageProvider;
+
+        const data = await postApi<{ media?: { images?: string[] } }>(
+          '/chat',
+          {
+            message: `imagine ${imagePrompt}`,
+            mode: 'imagine',
+            provider: llmProvider,
+            imgModel: imageModel || undefined,
+            imgWidth: imageWidth,
+            imgHeight: imageHeight,
+            imgSteps: imageSteps,
+            imgCfg: imageCfg,
+            promptRefinement: false,
+          }
+        );
+
+        const imageUrl = data?.media?.images?.[0];
+        if (imageUrl) {
+          console.log('[CreatorStudioEditor] Image generated:', imageUrl);
+
+          // Update scene with image URL via API
+          await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, {
+            imageUrl,
+            status: 'ready',
+          });
+
+          // Update local state
+          setScenes((prev) =>
+            prev.map((s) =>
+              s.id === sceneId ? { ...s, imageUrl, status: 'ready' as SceneStatus } : s
+            )
+          );
+          setLastSaved(new Date());
+        } else {
+          console.warn('[CreatorStudioEditor] No image returned from backend');
+        }
+      } catch (e: any) {
+        console.error('[CreatorStudioEditor] Failed to generate image:', e);
+      } finally {
+        setIsGeneratingImage(false);
+      }
+    },
+    [projectId, imageProvider, imageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage]
+  );
+
   // Load project and scenes
   useEffect(() => {
     async function loadData() {
@@ -138,10 +268,88 @@ export function CreatorStudioEditor({
     loadData();
   }, [projectId, fetchApi]);
 
+  // Auto-generate first scene when project is newly created
+  useEffect(() => {
+    if (
+      autoGenerateFirst &&
+      !hasAutoTriggered &&
+      !loading &&
+      project &&
+      scenes.length === 0 &&
+      !isGeneratingScene
+    ) {
+      console.log('[CreatorStudioEditor] Auto-generating first scene for new project');
+      setHasAutoTriggered(true);
+      generateFirstSceneWithAI();
+    }
+  }, [autoGenerateFirst, hasAutoTriggered, loading, project, scenes.length, isGeneratingScene]);
+
   // Current scene
   const currentScene = scenes[currentSceneIndex] || null;
 
-  // Generate first scene
+  // Extract visual style from project tags
+  const getVisualStyle = useCallback(() => {
+    if (!project) return "cinematic";
+    const tags = (project as any).tags || [];
+    const visualTag = tags.find((t: string) => t.startsWith("visual:"));
+    if (visualTag) {
+      const style = visualTag.replace("visual:", "").replace(/_/g, " ");
+      return style;
+    }
+    return "cinematic";
+  }, [project]);
+
+  // Extract tone from project tags
+  const getTones = useCallback(() => {
+    if (!project) return ["documentary"];
+    const tags = (project as any).tags || [];
+    const tones = tags.filter((t: string) => t.startsWith("tone:")).map((t: string) =>
+      t.replace("tone:", "").replace(/_/g, " ")
+    );
+    return tones.length > 0 ? tones : ["documentary"];
+  }, [project]);
+
+  // Generate AI-powered scene with better prompts
+  const generateFirstSceneWithAI = useCallback(async () => {
+    if (!project || isGeneratingScene) return;
+    setIsGeneratingScene(true);
+
+    try {
+      const visualStyle = getVisualStyle();
+      const tones = getTones();
+      const toneDesc = tones.join(", ");
+
+      // Build a richer AI-powered prompt
+      const narration = `The story begins. ${project.logline || `Welcome to "${project.title}".`}`;
+      const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, opening scene, establishing shot, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
+      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+
+      const data = await postApi<{ scene: Scene }>(
+        `/studio/videos/${projectId}/scenes`,
+        {
+          narration,
+          imagePrompt,
+          negativePrompt,
+          durationSec: 5.0,
+        }
+      );
+
+      setScenes((prev) => [...prev, data.scene]);
+      setCurrentSceneIndex(0);
+      setLastSaved(new Date());
+
+      // Auto-generate image for the first scene
+      console.log('[CreatorStudioEditor] Auto-generating image for first scene');
+      generateImageForScene(data.scene.id, data.scene.imagePrompt);
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Failed to create scene:', e);
+      alert(`Failed to create scene: ${e.message}`);
+    } finally {
+      setIsGeneratingScene(false);
+    }
+  }, [project, projectId, isGeneratingScene, postApi, getVisualStyle, getTones]);
+
+  // Generate first scene (non-AI fallback)
   const generateFirstScene = useCallback(async () => {
     if (!project || isGeneratingScene) return;
     setIsGeneratingScene(true);
@@ -168,19 +376,28 @@ export function CreatorStudioEditor({
     }
   }, [project, projectId, isGeneratingScene, postApi]);
 
-  // Generate next scene
+  // Generate next scene with AI-powered prompts
   const generateNextScene = useCallback(async () => {
     if (!project || isGeneratingScene) return;
     setIsGeneratingScene(true);
 
     try {
       const sceneNum = scenes.length + 1;
+      const visualStyle = getVisualStyle();
+      const tones = getTones();
+      const toneDesc = tones.join(", ");
+
+      // Build richer prompts
+      const narration = `Scene ${sceneNum}. The story continues...`;
+      const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
+      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+
       const data = await postApi<{ scene: Scene }>(
         `/studio/videos/${projectId}/scenes`,
         {
-          narration: `Scene ${sceneNum} of "${project.title}"`,
-          imagePrompt: `${project.logline || project.title}, scene ${sceneNum}, cinematic, high quality`,
-          negativePrompt: "blurry, low quality, text, watermark",
+          narration,
+          imagePrompt,
+          negativePrompt,
           durationSec: 5.0,
         }
       );
@@ -188,12 +405,68 @@ export function CreatorStudioEditor({
       setScenes((prev) => [...prev, data.scene]);
       setCurrentSceneIndex(scenes.length);
       setLastSaved(new Date());
+
+      // Auto-generate image for the new scene
+      console.log('[CreatorStudioEditor] Auto-generating image for scene:', sceneNum);
+      generateImageForScene(data.scene.id, data.scene.imagePrompt);
     } catch (e: any) {
       alert(`Failed to create scene: ${e.message}`);
     } finally {
       setIsGeneratingScene(false);
     }
-  }, [project, projectId, scenes.length, isGeneratingScene, postApi]);
+  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, generateImageForScene]);
+
+  // Generate next scene for TV Mode
+  const generateNextForTVMode = useCallback(async () => {
+    if (!project || isGeneratingScene) return null;
+
+    try {
+      const sceneNum = scenes.length + 1;
+      const visualStyle = getVisualStyle();
+      const tones = getTones();
+      const toneDesc = tones.join(", ");
+
+      const narration = `Scene ${sceneNum}. The story continues...`;
+      const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
+      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+
+      const data = await postApi<{ scene: Scene }>(
+        `/studio/videos/${projectId}/scenes`,
+        {
+          narration,
+          imagePrompt,
+          negativePrompt,
+          durationSec: 5.0,
+        }
+      );
+
+      setScenes((prev) => [...prev, data.scene]);
+
+      // Return TV scene format
+      return sceneToTVScene(data.scene);
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Failed to generate scene for TV mode:', e);
+      return null;
+    }
+  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, sceneToTVScene]);
+
+  // Ensure image for TV Mode scene
+  const ensureImageForTVMode = useCallback((tvScene: TVScene) => {
+    // Find the corresponding Creator Studio scene
+    const scene = scenes.find(s => s.idx === tvScene.idx);
+    if (!scene) return;
+
+    // If no image, generate one
+    if (!tvScene.image_url && !tvScene.image) {
+      generateImageForScene(scene.id, scene.imagePrompt).then(() => {
+        // After generation, update the TV mode store
+        const updatedScene = scenes.find(s => s.idx === tvScene.idx);
+        if (updatedScene?.imageUrl) {
+          updateSceneImageByIdx(tvScene.idx, updatedScene.imageUrl);
+        }
+      });
+    }
+  }, [scenes, generateImageForScene, updateSceneImageByIdx]);
 
   // Status badge color
   const getStatusBadge = (status: string) => {
@@ -288,6 +561,18 @@ export function CreatorStudioEditor({
               <span>Auto-save enabled</span>
             )}
           </div>
+
+          {/* Watch / TV Mode Button */}
+          {scenes.length > 0 && (
+            <button
+              onClick={handleEnterTVMode}
+              className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
+              title="Watch in TV Mode"
+            >
+              <Tv size={14} />
+              Watch
+            </button>
+          )}
 
           {/* Primary CTA */}
           {scenes.length > 0 && (
@@ -481,17 +766,36 @@ export function CreatorStudioEditor({
             <div className="flex items-center gap-3">
               <button
                 onClick={() => {
-                  // TODO: Implement regenerate image
-                  alert("Regenerate image coming soon!");
+                  if (currentScene) {
+                    generateImageForScene(currentScene.id, currentScene.imagePrompt, true);
+                  }
                 }}
-                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors"
+                disabled={isGeneratingImage || !currentScene}
+                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm transition-colors"
               >
-                <RefreshCw size={14} />
-                Regenerate
+                {isGeneratingImage ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={14} />
+                    Regenerate
+                  </>
+                )}
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* TV Mode Overlay */}
+      {tvModeActive && (
+        <TVModeContainer
+          onGenerateNext={generateNextForTVMode}
+          onEnsureImage={ensureImageForTVMode}
+        />
       )}
     </div>
   );
