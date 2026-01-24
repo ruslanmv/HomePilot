@@ -313,29 +313,11 @@ async def chat_ollama(
 
     content = str(content or "")
 
-    # Fallback: Some models (e.g., reasoning models like deepseek-r1) return content in message.thinking
-    # Try thinking field if:
-    # 1. content is empty, OR
-    # 2. content doesn't contain JSON but thinking does (model puts explanation in content, JSON in thinking)
-    if isinstance(msg, dict):
-        thinking = str(msg.get("thinking") or "").strip()
-        if thinking:
-            content_has_json = "{" in content
-            thinking_has_json = "{" in thinking
-
-            # Use thinking if content is empty or if thinking has JSON and content doesn't
-            should_use_thinking = (not content.strip()) or (thinking_has_json and not content_has_json)
-
-            if should_use_thinking:
-                # Use balanced brace extraction (handles "Ok here's JSON: {...}" patterns)
-                candidate = _extract_first_json_object(thinking)
-                if candidate:
-                    try:
-                        json.loads(candidate)  # Validate it's parseable
-                        content = candidate
-                        print(f"[OLLAMA] Extracted JSON object from message.thinking field")
-                    except Exception:
-                        pass  # Not valid JSON, keep original content
+    # NOTE: We intentionally do NOT extract JSON from message.thinking field.
+    # DeepSeek R1's "thinking" field contains reasoning traces (including schema examples),
+    # NOT the actual response. Extracting from there causes placeholder values like "string".
+    # The actual JSON response should be in message.content.
+    # If content is empty, the model failed to respond - don't guess from reasoning.
 
     # Debug logging when content is still empty (helps diagnose model-specific issues)
     if not content.strip():
