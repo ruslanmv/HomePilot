@@ -1551,6 +1551,8 @@ async def generate_scene_from_outline(
     """
     Generate a scene based on the story outline.
     Uses the pre-planned scene outline to create the scene.
+
+    Returns ok=False with reason if outline is exhausted (instead of 400 error).
     """
     v = get_video(video_id)
     if not v:
@@ -1560,11 +1562,23 @@ async def generate_scene_from_outline(
     outline = metadata.get("story_outline")
 
     if not outline or not outline.get("scenes"):
-        raise HTTPException(status_code=400, detail="No story outline found. Generate outline first.")
+        # Return structured response instead of 400 error
+        return {
+            "ok": False,
+            "reason": "no_outline",
+            "message": "No story outline found. Generate outline first or use continuation.",
+        }
 
     scenes = outline.get("scenes", [])
     if scene_index >= len(scenes):
-        raise HTTPException(status_code=400, detail=f"Scene index {scene_index} out of range. Outline has {len(scenes)} scenes.")
+        # Return structured response instead of 400 error - allows frontend to gracefully fallback
+        return {
+            "ok": False,
+            "reason": "outline_exhausted",
+            "message": f"Outline has {len(scenes)} scenes. Scene index {scene_index} is beyond the outline.",
+            "outline_scene_count": len(scenes),
+            "requested_index": scene_index,
+        }
 
     scene_plan = scenes[scene_index]
 
