@@ -182,7 +182,7 @@ export default function StudioView(props: StudioParams) {
   const authKey = (props.apiKey || '').trim()
 
   // TV Mode state
-  const { isActive: tvModeActive, enterTVMode, addScene: addTVScene, updateSceneImageByIdx, setSceneImageStatusByIdx, setStoryComplete } = useTVModeStore()
+  const { isActive: tvModeActive, enterTVMode, addScene: addTVScene, updateSceneImageByIdx, setSceneImageStatusByIdx, setStoryComplete, isStoryComplete } = useTVModeStore()
 
   // View state
   const [view, setView] = useState<'list' | 'create' | 'player'>('list')
@@ -373,6 +373,7 @@ export default function StudioView(props: StudioParams) {
       setCurrentStory(data)
       setCurrentSceneIndex(0)
       setIsPlaying(false)
+      setStoryComplete(false) // Reset story complete state when loading a different story
     } catch (err: any) {
       alert(`Failed to load story: ${err.message || err}`)
     }
@@ -429,10 +430,12 @@ export default function StudioView(props: StudioParams) {
     try {
       const data = await postJson<{
         ok: boolean
-        session_id: string
-        title: string
-        scene: Scene
-        bible: StoryBible
+        session_id?: string
+        title?: string
+        scene?: Scene
+        bible?: StoryBible
+        story_complete?: boolean
+        message?: string
       }>(
         props.backendUrl,
         '/story/next',
@@ -443,12 +446,25 @@ export default function StudioView(props: StudioParams) {
         authKey
       )
 
+      // Check if story is complete (no more scenes can be generated)
+      if (data.story_complete) {
+        console.log('[Studio] Story is complete -', data.message)
+        setStoryComplete(true)
+        alert(data.message || 'Story is complete! All scenes have been generated.')
+        return
+      }
+
+      // Make sure we have a valid scene before adding
+      if (!data.scene) {
+        throw new Error('No scene returned from backend')
+      }
+
       // Add new scene to current story
       setCurrentStory((prev) => {
         if (!prev) return prev
         return {
           ...prev,
-          scenes: [...prev.scenes, data.scene],
+          scenes: [...prev.scenes, data.scene!],
         }
       })
 
@@ -758,6 +774,7 @@ export default function StudioView(props: StudioParams) {
       // Update current story state
       setCurrentStory(newStoryData)
       setCurrentSceneIndex(0)
+      setStoryComplete(false) // Reset story complete state for new chapter
 
       return {
         sessionId: data.session_id,
@@ -1132,6 +1149,7 @@ export default function StudioView(props: StudioParams) {
         onNextScene={() => setCurrentSceneIndex((prev) => Math.min((currentStory?.scenes.length || 1) - 1, prev + 1))}
         isGeneratingScene={isGeneratingScene}
         onGenerateNextScene={generateNextScene}
+        isStoryComplete={isStoryComplete}
         currentIndex={currentSceneIndex}
         totalScenes={currentStory?.scenes.length || 0}
         onSelectScene={setCurrentSceneIndex}

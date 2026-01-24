@@ -10,6 +10,7 @@ import {
   VolumeX,
   Maximize2,
   Loader2,
+  CheckCircle2,
 } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
@@ -28,6 +29,7 @@ type StudioActionsProps = {
   // Generation controls
   isGeneratingScene?: boolean
   onGenerateNextScene?: () => void
+  isStoryComplete?: boolean
 
   // Scene progress
   currentIndex?: number
@@ -63,6 +65,7 @@ export function StudioActions({
   onNextScene,
   isGeneratingScene = false,
   onGenerateNextScene,
+  isStoryComplete = false,
   currentIndex = 0,
   totalScenes = 0,
   onSelectScene,
@@ -162,14 +165,24 @@ export function StudioActions({
             {onGenerateNextScene && (
               <button
                 onClick={onGenerateNextScene}
-                disabled={isGeneratingScene}
-                className="flex items-center gap-2 px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-full transition-colors disabled:opacity-50"
+                disabled={isGeneratingScene || isStoryComplete}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full transition-colors disabled:opacity-50 ${
+                  isStoryComplete
+                    ? 'bg-green-500/20 text-green-300 cursor-not-allowed'
+                    : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-300'
+                }`}
                 type="button"
+                title={isStoryComplete ? 'All scenes have been generated' : 'Generate next scene'}
               >
                 {isGeneratingScene ? (
                   <>
                     <Loader2 size={16} className="animate-spin" />
                     <span className="text-sm font-medium">Generating...</span>
+                  </>
+                ) : isStoryComplete ? (
+                  <>
+                    <CheckCircle2 size={16} />
+                    <span className="text-sm font-medium">Complete</span>
                   </>
                 ) : (
                   <>
