@@ -816,6 +816,7 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
     visual_style = "cinematic"
     tones = []
     goal = "entertain"
+    project_llm_model = None
 
     for tag in tags:
         if tag.startswith("visual:"):
@@ -824,6 +825,8 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
             tones.append(tag.replace("tone:", "").replace("_", " "))
         elif tag.startswith("goal:"):
             goal = tag.replace("goal:", "")
+        elif tag.startswith("llm:"):
+            project_llm_model = tag.replace("llm:", "")
 
     tone_desc = ", ".join(tones) if tones else "documentary"
 
@@ -877,7 +880,73 @@ Goal: {goal}
 Generate the complete JSON now:"""
 
     base_url = req.ollama_base_url or OLLAMA_BASE_URL
-    model = req.ollama_model or OLLAMA_MODEL or "llama3.2"
+
+    # Model selection priority: request > project tags > env var > smart default
+    model = req.ollama_model or project_llm_model or OLLAMA_MODEL
+
+    # If no model specified anywhere, try to find an available one
+    if not model:
+        # Try to get available models from Ollama
+        try:
+            import httpx
+            models_url = f"{base_url.rstrip('/')}/api/tags"
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(models_url)
+                if resp.status_code == 200:
+                    models_data = resp.json()
+                    available_models = [m.get("name") for m in models_data.get("models", [])]
+                    # Prefer llama3:8b, then any llama model, then first available
+                    for preferred in ["llama3:8b", "llama3:latest"]:
+                        if preferred in available_models:
+                            model = preferred
+                            break
+                    if not model:
+                        llama_models = [m for m in available_models if "llama" in m.lower()]
+                        if llama_models:
+                            model = llama_models[0]
+                        elif available_models:
+                            # Skip deepseek-r1 as default (has thinking output issues)
+                            non_deepseek = [m for m in available_models if "deepseek" not in m.lower()]
+                            model = non_deepseek[0] if non_deepseek else available_models[0]
+
+                    if not model and available_models:
+                        # Provide helpful error
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"No suitable LLM model found. Available models: {', '.join(available_models[:5])}. Please select a model in project settings."
+                        )
+        except httpx.RequestError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Cannot connect to Ollama at {base_url}. Please ensure Ollama is running."
+            )
+
+    # Final check - if still no model, fail with helpful message
+    if not model:
+        raise HTTPException(
+            status_code=400,
+            detail="No LLM model specified. Please select a model in project settings or set OLLAMA_MODEL environment variable."
+        )
+
+    # Verify the model exists in Ollama
+    try:
+        import httpx
+        models_url = f"{base_url.rstrip('/')}/api/tags"
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(models_url)
+            if resp.status_code == 200:
+                models_data = resp.json()
+                available_models = [m.get("name") for m in models_data.get("models", [])]
+                if model not in available_models:
+                    # Try to suggest a similar model
+                    suggestions = [m for m in available_models if model.split(":")[0] in m]
+                    suggestion_text = f" (Did you mean {suggestions[0]}?)" if suggestions else ""
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Ollama model '{model}' not found. Available models: {', '.join(available_models[:5])}{suggestion_text}"
+                    )
+    except httpx.RequestError:
+        pass  # Continue anyway, let the actual call fail if model doesn't exist
 
     print(f"[Outline] Generating outline with model: {model}")
     print(f"[Outline] Title: {v.title}, Scenes: {req.target_scenes}")
