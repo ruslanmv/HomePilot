@@ -170,15 +170,19 @@ function CreatorStudioWizard({
       if (res.ok) {
         const data = await res.json();
         if (data.models) {
-          const models = data.models.map((m: { id: string; name?: string }) => ({
-            id: m.id,
-            name: m.name || m.id,
-          }));
+          // Backend returns models as strings (e.g., ["llama3:8b", "mistral:latest"])
+          const models = data.models.map((m: string | { id: string; name?: string }) => {
+            // Handle both string format and object format
+            if (typeof m === 'string') {
+              return { id: m, name: m };
+            }
+            return { id: m.id, name: m.name || m.id };
+          });
           setAvailableLLMModels(models);
           // Auto-select first model if none selected
           if (!selectedLLMModel && models.length > 0) {
             // Prefer llama3:8b if available, otherwise first model
-            const preferred = models.find((m: AvailableModel) => m.id === "llama3:8b") || models[0];
+            const preferred = models.find((m: AvailableModel) => m.id.includes("llama3")) || models[0];
             setSelectedLLMModel(preferred.id);
           }
         }
@@ -554,6 +558,18 @@ function CreatorStudioWizard({
                 </div>
 
                 <div className="mt-6">
+                  <label className="block text-xs font-medium text-[#aaa] mb-2">Description (recommended)</label>
+                  <p className="text-xs text-[#777] mb-2">Describe what topic or subject this video will cover. This helps the AI generate better content.</p>
+                  <textarea
+                    className="w-full px-3 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-base outline-none focus:border-[#3ea6ff] resize-none"
+                    rows={3}
+                    placeholder="E.g., 'A documentary about the history of ancient Rome, focusing on the rise and fall of the empire, key emperors, and daily life of citizens.'"
+                    value={logline}
+                    onChange={(e) => setLogline(e.target.value)}
+                  />
+                </div>
+
+                <div className="mt-6">
                   <label className="block text-xs font-medium text-[#aaa] mb-3">Format</label>
                   <div className="grid grid-cols-3 gap-4">
                     <FormatCard
@@ -872,16 +888,20 @@ function CreatorStudioWizard({
                   </div>
                 )}
 
-                <div className="mt-6">
-                  <label className="block text-xs font-medium text-[#aaa] mb-2">Description (optional)</label>
-                  <textarea
-                    className="w-full px-3 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-base outline-none focus:border-[#3ea6ff] resize-none"
-                    rows={2}
-                    placeholder="A short description of your project..."
-                    value={logline}
-                    onChange={(e) => setLogline(e.target.value)}
-                  />
-                </div>
+                {/* Show description summary if provided */}
+                {logline.trim() && (
+                  <div className="mt-6 bg-[#121212] border border-[#3f3f3f] rounded p-4">
+                    <div className="text-xs font-medium text-[#aaa] mb-2">Project Description</div>
+                    <div className="text-sm text-[#f1f1f1] leading-relaxed">{logline}</div>
+                    <button
+                      type="button"
+                      onClick={() => goTo(1)}
+                      className="mt-2 text-xs text-[#3ea6ff] hover:underline"
+                    >
+                      Edit in Details step
+                    </button>
+                  </div>
+                )}
 
                 <div className="mt-4 text-sm">
                   <div className="text-[#f1f1f1]">Private project</div>

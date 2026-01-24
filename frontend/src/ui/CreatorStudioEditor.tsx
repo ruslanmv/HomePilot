@@ -274,6 +274,25 @@ export function CreatorStudioEditor({
     [backendUrl, authKey]
   );
 
+  // Sync outline with current scenes (keeps outline in sync with actual scene data)
+  const syncOutlineWithScenes = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      console.log('[CreatorStudioEditor] Syncing outline with scenes...');
+      const data = await postApi<{ ok: boolean; outline: any; scene_count: number }>(
+        `/studio/videos/${projectId}/sync-outline`,
+        {}
+      );
+      if (data.ok && data.outline) {
+        setStoryOutline(data.outline);
+        console.log(`[CreatorStudioEditor] Outline synced: ${data.scene_count} scenes`);
+      }
+    } catch (e: any) {
+      console.warn('[CreatorStudioEditor] Failed to sync outline:', e.message);
+      // Non-critical - don't alert user
+    }
+  }, [projectId, postApi]);
+
   // Generate AI-powered story outline
   const generateStoryOutline = useCallback(async () => {
     if (!project || isGeneratingOutline) return;
@@ -817,13 +836,16 @@ export function CreatorStudioEditor({
       setCurrentSceneIndex(0); // Go back to first scene
       console.log('[CreatorStudioEditor] Batch generation complete!');
 
+      // Sync outline with actual scene data to keep them in sync
+      await syncOutlineWithScenes();
+
     } catch (e: any) {
       console.error('[CreatorStudioEditor] Batch generation failed:', e);
     } finally {
       setIsBatchGenerating(false);
       setBatchProgress({ current: 0, total: 0, phase: 'scene' });
     }
-  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg]);
+  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, syncOutlineWithScenes]);
 
   // Load project and scenes
   useEffect(() => {
@@ -1019,6 +1041,9 @@ export function CreatorStudioEditor({
 
           console.log(`[CreatorStudioEditor] Generated scene ${nextSceneIndex + 1} from outline`);
           generateImageForScene(data.scene.id, data.scene.imagePrompt);
+
+          // Sync outline with new scene
+          syncOutlineWithScenes();
           return;
         }
       } catch (outlineErr: any) {
@@ -1052,12 +1077,15 @@ export function CreatorStudioEditor({
 
       console.log('[CreatorStudioEditor] Generated scene with fallback content:', sceneNum);
       generateImageForScene(data.scene.id, data.scene.imagePrompt);
+
+      // Sync outline with new scene
+      syncOutlineWithScenes();
     } catch (e: any) {
       alert(`Failed to create scene: ${e.message}`);
     } finally {
       setIsGeneratingScene(false);
     }
-  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, generateImageForScene]);
+  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, generateImageForScene, syncOutlineWithScenes]);
 
   // Generate next scene for TV Mode (uses backend outline for reliability)
   const generateNextForTVMode = useCallback(async () => {

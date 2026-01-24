@@ -1120,6 +1120,53 @@ def get_story_outline(video_id: str):
     return {"ok": True, "outline": outline}
 
 
+@router.post("/videos/{video_id}/sync-outline")
+def sync_outline_with_scenes(video_id: str):
+    """
+    Synchronize the story outline with the current scenes.
+
+    This updates the outline to reflect the actual scenes that exist,
+    adding any new scenes and removing any that were deleted.
+    """
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Get current scenes
+    current_scenes = list_scenes(video_id)
+
+    # Get existing outline
+    metadata = v.metadata if hasattr(v, 'metadata') and v.metadata else {}
+    outline = metadata.get("story_outline") or {}
+
+    # Build updated scenes list from actual scenes
+    updated_outline_scenes = []
+    for i, scene in enumerate(current_scenes):
+        updated_outline_scenes.append({
+            "scene_number": i + 1,
+            "title": f"Scene {i + 1}",  # Could extract from narration
+            "description": scene.narration[:100] if scene.narration else "",
+            "narration": scene.narration or "",
+            "image_prompt": scene.imagePrompt or "",
+            "negative_prompt": scene.negativePrompt or DEFAULT_NEGATIVE_PROMPT,
+            "duration_sec": scene.durationSec or 5.0,
+        })
+
+    # Update the outline
+    outline["scenes"] = updated_outline_scenes
+    outline["scene_count"] = len(updated_outline_scenes)
+
+    # Store updated outline
+    update_video(video_id, metadata={"story_outline": outline})
+
+    return {
+        "ok": True,
+        "outline": outline,
+        "scene_count": len(updated_outline_scenes),
+        "message": f"Outline synchronized with {len(updated_outline_scenes)} scenes"
+    }
+
+
 @router.post("/videos/{video_id}/scenes/generate-from-outline")
 async def generate_scene_from_outline(
     video_id: str,
