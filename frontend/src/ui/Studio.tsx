@@ -897,13 +897,14 @@ export default function StudioView(props: StudioParams) {
       setChapterHint('') // Clear hint after use
 
       // Add the new chapter to the sessions list so it appears in the list view
+      const now = Date.now()
       setSessions((prev) => [
         {
           id: data.session_id,
           title: data.title,
-          created_at: new Date().toISOString(),
-          scene_count: newStoryData.scenes.length,
-          status: 'draft',
+          premise: `Chapter ${data.chapter_number} continuation`,
+          created_at: now,
+          updated_at: now,
         },
         ...prev,
       ])
