@@ -467,8 +467,9 @@ export default function StudioView(props: StudioParams) {
       } else {
         console.error(`[IMAGE] Max retries (${MAX_IMAGE_RETRIES}) exceeded for scene ${nextIdx}, giving up`)
         // Mark as failed in TV Mode if active
-        if (tvModeActive) {
-          setSceneImageStatusByIdx(nextIdx, 'failed')
+        // IMPORTANT: Check current state at runtime, not closure value
+        if (useTVModeStore.getState().isActive) {
+          setSceneImageStatusByIdx(nextIdx, 'error')
         }
       }
     }
@@ -515,7 +516,9 @@ export default function StudioView(props: StudioParams) {
         })
 
         // Also update TV Mode store if active (for sync) - use ByIdx variant
-        if (tvModeActive) {
+        // IMPORTANT: Check current state at runtime, not closure value, to avoid race condition
+        // where user enters TV mode while images are generating
+        if (useTVModeStore.getState().isActive) {
           updateSceneImageByIdx(nextIdx, imageUrl)
         }
 
@@ -552,7 +555,7 @@ export default function StudioView(props: StudioParams) {
         setIsGeneratingImage(false)
       }
     }
-  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, tvModeActive, updateSceneImageByIdx, setSceneImageStatusByIdx])
+  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, updateSceneImageByIdx, setSceneImageStatusByIdx])
 
   // Enqueue image generation for a scene
   const generateImageForScene = useCallback((scene: Scene | TVScene, sessionId?: string) => {
@@ -571,7 +574,8 @@ export default function StudioView(props: StudioParams) {
     }
 
     // Mark as generating in TV Mode store
-    if (tvModeActive) {
+    // IMPORTANT: Check current state at runtime, not closure value
+    if (useTVModeStore.getState().isActive) {
       setSceneImageStatusByIdx(scene.idx, 'generating')
     }
 
@@ -583,7 +587,7 @@ export default function StudioView(props: StudioParams) {
     })
     setIsGeneratingImage(true)
     processImageQueue()
-  }, [tvModeActive, setSceneImageStatusByIdx, processImageQueue, currentStory?.session_id])
+  }, [setSceneImageStatusByIdx, processImageQueue, currentStory?.session_id])
 
   // Auto-play logic
   useEffect(() => {
