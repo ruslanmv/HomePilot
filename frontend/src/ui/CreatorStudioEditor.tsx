@@ -713,7 +713,7 @@ export function CreatorStudioEditor({
     return (
       <div className="min-h-screen w-full bg-black text-white flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
           <div className="text-white/60">Loading project...</div>
         </div>
       </div>
@@ -813,7 +813,7 @@ export function CreatorStudioEditor({
             <button
               onClick={generateNextScene}
               disabled={isGeneratingScene}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
             >
               {isGeneratingScene ? (
                 <>
@@ -846,7 +846,7 @@ export function CreatorStudioEditor({
                   className={`
                     relative rounded-lg overflow-hidden transition-all
                     ${isActive
-                      ? "ring-2 ring-purple-500 ring-offset-2 ring-offset-black"
+                      ? "ring-2 ring-blue-500 ring-offset-2 ring-offset-black"
                       : "opacity-70 hover:opacity-100"
                     }
                   `}
@@ -892,8 +892,8 @@ export function CreatorStudioEditor({
         // Empty State
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="max-w-md text-center">
-            <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center">
-              <ImageIcon size={48} className="text-purple-400/60" />
+            <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-blue-500/20 to-cyan-500/20 flex items-center justify-center">
+              <ImageIcon size={48} className="text-blue-400/60" />
             </div>
 
             <h2 className="text-2xl font-semibold text-white mb-2">No scenes yet</h2>
@@ -904,7 +904,7 @@ export function CreatorStudioEditor({
             <button
               onClick={generateFirstScene}
               disabled={isGeneratingScene}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-base font-semibold transition-colors"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-base font-semibold transition-colors"
             >
               {isGeneratingScene ? (
                 <>
@@ -940,7 +940,7 @@ export function CreatorStudioEditor({
                 <div className="w-full h-full flex flex-col items-center justify-center gap-4">
                   {isGeneratingImage ? (
                     <>
-                      <Loader2 size={32} className="animate-spin text-purple-400" />
+                      <Loader2 size={32} className="animate-spin text-blue-400" />
                       <div className="text-white/60">Generating image...</div>
                     </>
                   ) : (
@@ -1044,7 +1044,7 @@ export function CreatorStudioEditor({
             {/* Modal Header */}
             <div className="flex items-center justify-between p-5 border-b border-white/10">
               <div className="flex items-center gap-3">
-                <Edit3 size={20} className="text-purple-400" />
+                <Edit3 size={20} className="text-blue-400" />
                 <h2 className="text-lg font-semibold">Edit Scene {editingScene.idx + 1}</h2>
               </div>
               <button
@@ -1066,7 +1066,7 @@ export function CreatorStudioEditor({
                 <textarea
                   value={editNarration}
                   onChange={(e) => setEditNarration(e.target.value)}
-                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500 focus:outline-none resize-none"
+                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-blue-500 focus:outline-none resize-none"
                   rows={3}
                   placeholder="Enter narration text for this scene..."
                 />
@@ -1081,7 +1081,7 @@ export function CreatorStudioEditor({
                 <textarea
                   value={editImagePrompt}
                   onChange={(e) => setEditImagePrompt(e.target.value)}
-                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500 focus:outline-none resize-none"
+                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-blue-500 focus:outline-none resize-none"
                   rows={4}
                   placeholder="Describe the visual elements for image generation..."
                 />
@@ -1095,7 +1095,7 @@ export function CreatorStudioEditor({
                 <textarea
                   value={editNegativePrompt}
                   onChange={(e) => setEditNegativePrompt(e.target.value)}
-                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500 focus:outline-none resize-none"
+                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-blue-500 focus:outline-none resize-none"
                   rows={2}
                   placeholder="Elements to avoid in the image..."
                 />
@@ -1111,7 +1111,7 @@ export function CreatorStudioEditor({
                   <select
                     value={selectedLLMModel}
                     onChange={(e) => setSelectedLLMModel(e.target.value)}
-                    className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white focus:border-purple-500 focus:outline-none"
+                    className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white focus:border-blue-500 focus:outline-none"
                   >
                     <option value="">Default</option>
                     {availableLLMModels.map((m) => (
@@ -1128,7 +1128,7 @@ export function CreatorStudioEditor({
                   <select
                     value={selectedImageModel}
                     onChange={(e) => setSelectedImageModel(e.target.value)}
-                    className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white focus:border-purple-500 focus:outline-none"
+                    className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white focus:border-blue-500 focus:outline-none"
                   >
                     <option value="">Default</option>
                     {availableImageModels.map((m) => (
@@ -1163,7 +1163,7 @@ export function CreatorStudioEditor({
                 <button
                   onClick={saveSceneEdits}
                   disabled={isSavingScene}
-                  className="flex items-center gap-2 px-5 py-2 bg-purple-500 hover:bg-purple-600 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+                  className="flex items-center gap-2 px-5 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
                 >
                   {isSavingScene ? (
                     <>
@@ -1191,14 +1191,14 @@ export function CreatorStudioEditor({
             {/* Panel Header */}
             <div className="flex items-center justify-between p-5 border-b border-white/10">
               <div className="flex items-center gap-3">
-                <Wand2 size={20} className="text-purple-400" />
+                <Wand2 size={20} className="text-blue-400" />
                 <h2 className="text-lg font-semibold">Story Outline</h2>
               </div>
               <div className="flex items-center gap-3">
                 <button
                   onClick={generateStoryOutline}
                   disabled={isGeneratingOutline}
-                  className="flex items-center gap-2 px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
                 >
                   {isGeneratingOutline ? (
                     <>
@@ -1227,7 +1227,7 @@ export function CreatorStudioEditor({
                 <div className="space-y-6">
                   {/* Story Arc */}
                   <div className="p-4 bg-black/30 rounded-lg">
-                    <h3 className="text-sm font-semibold text-purple-400 mb-3">Story Arc</h3>
+                    <h3 className="text-sm font-semibold text-blue-400 mb-3">Story Arc</h3>
                     <div className="grid grid-cols-5 gap-2 text-xs">
                       <div className="p-2 bg-white/5 rounded">
                         <div className="text-white/50 mb-1">Beginning</div>
@@ -1291,7 +1291,7 @@ export function CreatorStudioEditor({
                                     setShowOutlinePanel(false);
                                   }}
                                   disabled={isGeneratingScene}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500 hover:bg-purple-600 disabled:opacity-50 rounded text-xs font-medium transition-colors"
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 rounded text-xs font-medium transition-colors"
                                 >
                                   <Plus size={12} />
                                   Generate
@@ -1315,7 +1315,7 @@ export function CreatorStudioEditor({
                   <button
                     onClick={generateStoryOutline}
                     disabled={isGeneratingOutline}
-                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 rounded-xl font-semibold transition-colors"
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:opacity-50 rounded-xl font-semibold transition-colors"
                   >
                     {isGeneratingOutline ? (
                       <>

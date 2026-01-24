@@ -794,44 +794,20 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
 
     tone_desc = ", ".join(tones) if tones else "documentary"
 
-    # Build the outline generation prompt
-    system_prompt = """You are a professional story planner for visual storytelling.
-Your task is to create a complete story outline with scene-by-scene breakdown.
+    # Build the outline generation prompt - more explicit about JSON-only output
+    system_prompt = """You are a story planner that outputs ONLY valid JSON.
 
-Output ONLY valid JSON. No markdown, no explanation, just the JSON object.
+CRITICAL: Your response must be ONLY a JSON object. No text before or after. No markdown. No explanations.
 
-JSON schema:
-{
-  "title": "string",
-  "logline": "string (1-2 sentences)",
-  "visual_style": "string",
-  "tone": "string",
-  "story_arc": {
-    "beginning": "string (setup/hook)",
-    "rising_action": "string (build tension)",
-    "climax": "string (peak moment)",
-    "falling_action": "string (consequences)",
-    "resolution": "string (ending)"
-  },
-  "scenes": [
-    {
-      "scene_number": 1,
-      "title": "string (brief scene title)",
-      "description": "string (what happens)",
-      "narration": "string (2-3 sentences of narration text)",
-      "image_prompt": "string (detailed visual description for image generation)",
-      "negative_prompt": "string (what to avoid in image)",
-      "duration_sec": 5.0
-    }
-  ]
-}
+Required JSON format:
+{"title":"string","logline":"string","visual_style":"string","tone":"string","story_arc":{"beginning":"string","rising_action":"string","climax":"string","falling_action":"string","resolution":"string"},"scenes":[{"scene_number":1,"title":"string","description":"string","narration":"string","image_prompt":"string","negative_prompt":"string","duration_sec":5.0}]}
 
-Guidelines:
+Rules:
+- Output ONLY the JSON object, nothing else
 - Create exactly the requested number of scenes
-- Each scene should advance the story
-- Image prompts should be detailed and include the visual style
-- Narration should be engaging and descriptive
-- Keep consistent character descriptions across scenes"""
+- Each scene narration: 2-3 engaging sentences
+- Each image_prompt: detailed visual description with the style
+- Keep consistent character descriptions"""
 
     user_prompt = f"""Create a story outline with the following parameters:
 
@@ -866,13 +842,65 @@ Make the story engaging and suitable for visual storytelling."""
         # Parse the response
         response_text = response.get("content", "") if isinstance(response, dict) else str(response)
 
-        # Try to extract JSON from the response
+        # Try to extract JSON from the response - handle multiple formats
         import re
-        json_match = re.search(r'\{[\s\S]*\}', response_text)
-        if json_match:
-            outline = json.loads(json_match.group())
-        else:
-            raise ValueError("No valid JSON found in response")
+
+        # Clean up response - remove markdown code blocks if present
+        cleaned = response_text.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        outline = None
+
+        # Try 1: Parse cleaned text directly if it starts with {
+        if cleaned.startswith("{"):
+            try:
+                outline = json.loads(cleaned)
+            except json.JSONDecodeError:
+                pass
+
+        # Try 2: Find JSON object in the text
+        if not outline:
+            # Find the outermost { and matching }
+            start_idx = response_text.find("{")
+            if start_idx != -1:
+                # Count braces to find matching close
+                depth = 0
+                end_idx = start_idx
+                for i, char in enumerate(response_text[start_idx:], start_idx):
+                    if char == "{":
+                        depth += 1
+                    elif char == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end_idx = i + 1
+                            break
+
+                if end_idx > start_idx:
+                    json_str = response_text[start_idx:end_idx]
+                    try:
+                        outline = json.loads(json_str)
+                    except json.JSONDecodeError:
+                        pass
+
+        # Try 3: Regex fallback
+        if not outline:
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if json_match:
+                try:
+                    outline = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+
+        if not outline:
+            # Log the response for debugging
+            print(f"[Outline] Failed to parse response: {response_text[:500]}...")
+            raise ValueError("No valid JSON found in response. The AI model may need a different prompt format.")
 
         # Store outline in project metadata
         update_video(video_id, metadata={"story_outline": outline})
