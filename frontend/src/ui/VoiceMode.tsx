@@ -55,8 +55,9 @@ export default function VoiceMode({
           v.name.toLowerCase().includes('google') && v.lang.startsWith('en')
         ) || availableVoices.find((v: SpeechSynthesisVoice) => v.default) || availableVoices[0];
 
-        setSelectedVoice(defaultVoice.name);
-        localStorage.setItem('homepilot_voice_uri', defaultVoice.name);
+        // Use voiceURI for consistency with speech service
+        setSelectedVoice(defaultVoice.voiceURI);
+        localStorage.setItem('homepilot_voice_uri', defaultVoice.voiceURI);
       }
     };
 
@@ -68,16 +69,9 @@ export default function VoiceMode({
 
   useEffect(() => {
     if (!svc || !selectedVoice) return;
-    const voice = voices.find(v => v.name === selectedVoice);
-    if (voice) {
-      svc.saveTTSConfig?.({
-        speechVoiceURI: voice.voiceURI,
-        speechVoice: voice.name,
-        speechLang: voice.lang,
-        ttsEnabled,
-      });
-    }
-  }, [svc, selectedVoice, voices, ttsEnabled]);
+    // Set the preferred voice URI in the speech service
+    svc.setPreferredVoiceURI?.(selectedVoice);
+  }, [svc, selectedVoice]);
 
   useEffect(() => {
     localStorage.setItem('homepilot_tts_enabled', String(ttsEnabled));
@@ -220,7 +214,7 @@ export default function VoiceMode({
             >
               {voices.length === 0 && <option value="">Loading voices...</option>}
               {voices.map((voice) => (
-                <option key={voice.voiceURI} value={voice.name}>
+                <option key={voice.voiceURI} value={voice.voiceURI}>
                   {voice.name} ({voice.lang})
                 </option>
               ))}
