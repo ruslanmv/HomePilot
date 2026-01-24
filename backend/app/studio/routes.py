@@ -1005,20 +1005,99 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
     # Use centralized anti-duplicate terms to prevent common Stable Diffusion issues
     anti_duplicate_terms = ANTI_DUPLICATE_TERMS
 
-    # Build example JSON to help the model understand the format
-    # Use a SPECIFIC example to show the AI how image prompts should relate to scene content
-    example_scene = {
-        "scene_number": 1,
-        "title": "The Dressing Room",
-        "description": "We meet Sophia in her dressing room, surrounded by mirrors and costumes, preparing for her big performance.",
-        "narration": "In the heart of the theater, Sophia sits before a wall of mirrors. Tonight is the night she has been waiting for her entire life.",
-        "image_prompt": f"{visual_style} style, young woman named Sophia sitting at a vanity table in a theater dressing room, surrounded by illuminated mirrors, elegant costumes hanging in background, warm golden lighting, anticipation in her eyes, detailed interior, high quality, single subject",
-        "negative_prompt": f"blurry, low quality, text, watermark, ugly, deformed, {anti_duplicate_terms}",
-        "duration_sec": req.scene_duration
-    }
+    # Check content rating and mature mode for adult content generation
+    content_rating = v.contentRating if hasattr(v, 'contentRating') else "sfw"
+    mature_mode_enabled = org_allows_mature() and content_rating == "mature"
 
-    # Build the outline generation prompt - emphasize specific image prompts
-    system_prompt = f"""You are a professional screenwriter. Generate a story outline as a JSON object.
+    print(f"[Outline] Content rating: {content_rating}, Mature mode enabled: {mature_mode_enabled}")
+
+    # Build example JSON based on content rating
+    if mature_mode_enabled:
+        # Mature mode: Allow adult content, fan service, sensual descriptions
+        example_scene = {
+            "scene_number": 1,
+            "title": "The Dressing Room",
+            "description": "We meet Sophia in her private dressing room, wearing elegant lingerie as she prepares for a special evening. The atmosphere is intimate and sensual.",
+            "narration": "In the soft glow of her dressing room, Sophia admires her reflection. Her silk robe barely conceals her curves as she applies the finishing touches to her makeup. Tonight will be unforgettable.",
+            "image_prompt": f"{visual_style} style, beautiful young woman named Sophia in an elegant boudoir, wearing delicate lace lingerie, sitting at a vanity mirror, soft romantic lighting, sensual atmosphere, detailed figure, alluring pose, high quality, masterpiece, solo",
+            "negative_prompt": f"blurry, low quality, text, watermark, ugly, deformed, {anti_duplicate_terms}",
+            "duration_sec": req.scene_duration
+        }
+    else:
+        # SFW mode: Keep safe for work content
+        example_scene = {
+            "scene_number": 1,
+            "title": "The Dressing Room",
+            "description": "We meet Sophia in her dressing room, surrounded by mirrors and costumes, preparing for her big performance.",
+            "narration": "In the heart of the theater, Sophia sits before a wall of mirrors. Tonight is the night she has been waiting for her entire life.",
+            "image_prompt": f"{visual_style} style, young woman named Sophia sitting at a vanity table in a theater dressing room, surrounded by illuminated mirrors, elegant costumes hanging in background, warm golden lighting, anticipation in her eyes, detailed interior, high quality, single subject",
+            "negative_prompt": f"blurry, low quality, text, watermark, ugly, deformed, {anti_duplicate_terms}",
+            "duration_sec": req.scene_duration
+        }
+
+    # Build the outline generation prompt based on content rating
+    if mature_mode_enabled:
+        # Mature mode prompt - allows adult content, fan service, sensual/explicit descriptions
+        system_prompt = f"""You are a professional adult content screenwriter. Generate a story outline as a JSON object.
+
+THIS IS MATURE/ADULT CONTENT MODE - You are ALLOWED and ENCOURAGED to:
+- Write sensual, romantic, and explicit content
+- Include fan service elements (revealing clothing, suggestive poses, intimate moments)
+- Describe physical attributes, body features, and attractive appearances in detail
+- Create romantic tension, seduction scenes, and intimate encounters
+- Use adult themes appropriate for mature audiences
+- Generate uncensored, provocative image prompts that showcase beauty and sensuality
+
+Output ONLY valid JSON with this exact structure:
+{{
+  "title": "Story Title",
+  "logline": "One sentence summary",
+  "visual_style": "{visual_style}",
+  "tone": "{tone_desc}",
+  "story_arc": {{
+    "beginning": "Setup description",
+    "rising_action": "Tension builds",
+    "climax": "Peak moment",
+    "falling_action": "Resolution begins",
+    "resolution": "Conclusion"
+  }},
+  "scenes": [
+    {json.dumps(example_scene)}
+  ]
+}}
+
+CRITICAL REQUIREMENTS FOR MATURE IMAGE PROMPTS:
+- Each image_prompt MUST be detailed and visually descriptive for adult content
+- Include specific physical descriptions: body type, clothing (or lack thereof), poses, expressions
+- Use terms like: beautiful, alluring, sensual, seductive, elegant, stunning, gorgeous
+- For intimate scenes, describe the setting, mood, and character positioning
+- Include quality boosters: masterpiece, best quality, highly detailed, professional
+- DO NOT censor or tone down the descriptions - this is mature content mode
+- Always start with "{visual_style}" style keywords
+- For single-character scenes, add "solo" or "1girl"/"1boy" to the image_prompt
+- Example mature prompt: "{visual_style} style, beautiful woman with long flowing hair, wearing revealing red dress, sensual pose on silk sheets, bedroom setting, soft romantic lighting, alluring expression, detailed figure, masterpiece, solo"
+
+CRITICAL REQUIREMENTS FOR NEGATIVE PROMPTS:
+- Every negative_prompt MUST include anti-duplicate terms: "duplicate, clone, multiple people, two heads, split image"
+- Include quality terms: "blurry, low quality, text, watermark, ugly, deformed"
+- For mature content, also add: "child, minor, underage" (ALWAYS blocked)
+
+CONTENT GUIDELINES FOR MATURE MODE:
+- Adult romantic/sensual content: ALLOWED
+- Fan service and revealing outfits: ALLOWED
+- Suggestive poses and intimate moments: ALLOWED
+- Nudity and explicit content: ALLOWED
+- ALWAYS BLOCKED: minors, non-consensual content, illegal content
+
+OTHER REQUIREMENTS:
+- Output ONLY the JSON object, no other text
+- Create exactly {req.target_scenes} scenes in the scenes array
+- Each scene narration should be 2-3 sentences with sensual/adult tone
+- Make the story coherent with romantic/adult themes from beginning to end"""
+
+    else:
+        # SFW mode prompt - safe for work content only
+        system_prompt = f"""You are a professional screenwriter. Generate a story outline as a JSON object.
 
 Output ONLY valid JSON with this exact structure:
 {{
@@ -1059,7 +1138,22 @@ OTHER REQUIREMENTS:
 - Each scene narration should be 2-3 sentences
 - Make the story coherent from beginning to end"""
 
-    user_prompt = f"""Create a {req.target_scenes}-scene story outline for:
+    # Build user prompt based on content rating
+    if mature_mode_enabled:
+        user_prompt = f"""Create a {req.target_scenes}-scene MATURE/ADULT story outline for:
+
+Title: {v.title}
+Description: {v.logline or "A compelling adult visual story"}
+Style: {visual_style}
+Tone: {tone_desc}
+Goal: {goal}
+Content Rating: MATURE (adult content allowed)
+
+Remember: This is mature mode - include sensual descriptions, fan service elements, and adult themes as appropriate for the story. Do not censor or tone down the content.
+
+Generate the complete JSON now:"""
+    else:
+        user_prompt = f"""Create a {req.target_scenes}-scene story outline for:
 
 Title: {v.title}
 Description: {v.logline or "A compelling visual story"}
