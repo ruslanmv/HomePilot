@@ -136,10 +136,13 @@ async def _refine_prompt(
     print(f"[_refine_prompt] Original user prompt: '{user_prompt[:100]}...'")
     print(f"[_refine_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
 
+    # Enhanced fallback with anti-duplicate terms to prevent doubled subjects
+    enhanced_negative = "blurry, low quality, distorted, ugly, deformed, duplicate, clone, multiple people, two heads, two faces, split image, disfigured, extra limbs"
+
     # Default fallback - always preserves user's original prompt
     fallback_result = {
         "prompt": user_prompt,
-        "negative_prompt": "blurry, low quality, distorted",
+        "negative_prompt": enhanced_negative,
         "aspect_ratio": "1:1",
         "style": "photorealistic",
     }
@@ -183,7 +186,7 @@ async def _refine_prompt(
             if refined_prompt:
                 result_dict = {
                     "prompt": refined_prompt,
-                    "negative_prompt": refined.get("negative_prompt", "blurry, low quality, distorted"),
+                    "negative_prompt": refined.get("negative_prompt", enhanced_negative),
                     "aspect_ratio": refined.get("aspect_ratio", "1:1"),
                     "style": refined.get("style", "photorealistic"),
                 }
@@ -308,7 +311,7 @@ async def orchestrate(
         res = run_workflow("edit", {
             "image_path": image_url,  # Changed from image_url to match workflow
             "prompt": text_in,  # Changed from instruction to match workflow
-            "negative_prompt": "blurry, low quality, distorted"  # Added default negative prompt
+            "negative_prompt": "blurry, low quality, distorted, ugly, deformed, duplicate, clone, multiple people, two heads, split image, disfigured, extra limbs"
         })
         images = res.get("images", []) or []
         text = "Done."
