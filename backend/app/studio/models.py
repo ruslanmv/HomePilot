@@ -97,3 +97,53 @@ class GenerationRequest(BaseModel):
 class ExportRequest(BaseModel):
     """Request to export video assets."""
     kind: Literal["zip_assets", "storyboard_pdf", "json_metadata", "slides_pack"] = "zip_assets"
+
+
+# ============================================================================
+# Scene Models
+# ============================================================================
+
+SceneStatus = Literal["pending", "generating", "ready", "error"]
+
+
+class StudioScene(BaseModel):
+    """A scene within a Studio video project."""
+    id: str
+    videoId: str
+    idx: int  # Scene order index
+
+    # Content
+    narration: str = ""
+    imagePrompt: str = ""
+    negativePrompt: str = ""
+
+    # Generated assets
+    imageUrl: Optional[str] = None
+    audioUrl: Optional[str] = None
+
+    # Generation status
+    status: SceneStatus = "pending"
+
+    # Timing
+    durationSec: float = 5.0
+    createdAt: float = 0.0
+    updatedAt: float = 0.0
+
+
+class StudioSceneCreate(BaseModel):
+    """Request payload to create a new scene."""
+    narration: str = ""
+    imagePrompt: str = ""
+    negativePrompt: str = ""
+    durationSec: float = 5.0
+
+
+class StudioSceneUpdate(BaseModel):
+    """Request payload to update a scene."""
+    narration: Optional[str] = None
+    imagePrompt: Optional[str] = None
+    negativePrompt: Optional[str] = None
+    imageUrl: Optional[str] = None
+    audioUrl: Optional[str] = None
+    status: Optional[SceneStatus] = None
+    durationSec: Optional[float] = None

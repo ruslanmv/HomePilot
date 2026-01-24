@@ -5,6 +5,13 @@ export { PolicyBanner } from "./PolicyBanner";
 export { MatureStoryWizard } from "./MatureStoryWizard";
 export { RegenerationOptions } from "./RegenerationOptions";
 
+// Preview-First Editor components for Story Mode Studio
+export { SceneChips } from "./SceneChips";
+export type { SceneChipStatus, SceneChipData } from "./SceneChips";
+export { StudioPreviewPanel } from "./StudioPreviewPanel";
+export { StudioActions } from "./StudioActions";
+export { StudioEmptyState } from "./StudioEmptyState";
+
 // New components for image generation
 export { ContentRatingToggle } from "./ContentRatingToggle";
 export { AgeVerificationModal } from "./AgeVerificationModal";
