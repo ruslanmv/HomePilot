@@ -831,17 +831,18 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
     tone_desc = ", ".join(tones) if tones else "documentary"
 
     # Build example JSON to help the model understand the format
+    # Use a SPECIFIC example to show the AI how image prompts should relate to scene content
     example_scene = {
         "scene_number": 1,
-        "title": "Opening",
-        "description": "Brief description of what happens",
-        "narration": "The narrator speaks these words to the audience.",
-        "image_prompt": f"{visual_style} style, detailed visual description here, high quality",
+        "title": "The Dressing Room",
+        "description": "We meet Sophia in her dressing room, surrounded by mirrors and costumes, preparing for her big performance.",
+        "narration": "In the heart of the theater, Sophia sits before a wall of mirrors. Tonight is the night she has been waiting for her entire life.",
+        "image_prompt": f"{visual_style} style, young woman named Sophia sitting at a vanity table in a theater dressing room, surrounded by illuminated mirrors, elegant costumes hanging in background, warm golden lighting, anticipation in her eyes, detailed interior, high quality",
         "negative_prompt": "blurry, low quality, text, watermark",
         "duration_sec": req.scene_duration
     }
 
-    # Build the outline generation prompt - simpler and more direct
+    # Build the outline generation prompt - emphasize specific image prompts
     system_prompt = f"""You are a professional screenwriter. Generate a story outline as a JSON object.
 
 Output ONLY valid JSON with this exact structure:
@@ -862,11 +863,18 @@ Output ONLY valid JSON with this exact structure:
   ]
 }}
 
-IMPORTANT:
+CRITICAL REQUIREMENTS FOR IMAGE PROMPTS:
+- Each image_prompt MUST describe the SPECIFIC characters, setting, and action from that scene's description
+- Include character names, their appearance, specific locations, and what they are doing
+- DO NOT use generic placeholders like "detailed visual description" or "scene content here"
+- The image_prompt must paint a vivid picture that matches the narration
+- Always start with "{visual_style}" style keywords
+- Example: If the scene is about "John discovers an ancient map in the library", the image_prompt should be: "{visual_style} style, man named John in a dusty old library, holding an ancient weathered map, surrounded by towering bookshelves, dust particles in light beams, expression of wonder and discovery"
+
+OTHER REQUIREMENTS:
 - Output ONLY the JSON object, no other text
 - Create exactly {req.target_scenes} scenes in the scenes array
 - Each scene narration should be 2-3 sentences
-- Each image_prompt must include "{visual_style}" style keywords
 - Make the story coherent from beginning to end"""
 
     user_prompt = f"""Create a {req.target_scenes}-scene story outline for:
