@@ -1,11 +1,34 @@
 import React from "react";
 import { useTVModeStore } from "../../stores/tvModeStore";
 
-interface TVModeSettingsProps {
-  onClose: () => void;
+interface VoiceConfig {
+  voiceURI: string;
+  rate: number;
+  pitch: number;
+  volume: number;
+  enabled: boolean;
 }
 
-export const TVModeSettings: React.FC<TVModeSettingsProps> = ({ onClose }) => {
+interface TVModeSettingsProps {
+  onClose: () => void;
+  // TTS Props
+  ttsEnabled?: boolean;
+  setTTSEnabled?: (enabled: boolean) => void;
+  ttsSupported?: boolean;
+  voices?: SpeechSynthesisVoice[];
+  voiceConfig?: VoiceConfig;
+  setVoiceConfig?: (config: Partial<VoiceConfig>) => void;
+}
+
+export const TVModeSettings: React.FC<TVModeSettingsProps> = ({
+  onClose,
+  ttsEnabled = false,
+  setTTSEnabled,
+  ttsSupported = false,
+  voices = [],
+  voiceConfig,
+  setVoiceConfig,
+}) => {
   const { settings, updateSettings, resetSettings } = useTVModeStore();
 
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -173,6 +196,96 @@ export const TVModeSettings: React.FC<TVModeSettingsProps> = ({ onClose }) => {
               Automatically start the next chapter when the current one ends
             </div>
           </div>
+
+          {/* TTS / Narration Settings */}
+          {ttsSupported && setTTSEnabled && (
+            <>
+              <div className="setting-divider" />
+              <div className="setting-group">
+                <label className="setting-label">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '8px', verticalAlign: 'middle' }}>
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </svg>
+                  Voice Narration
+                </label>
+                <div className="setting-description">Read scene narration aloud</div>
+                <label className="toggle-option" style={{ marginTop: '8px' }}>
+                  <input
+                    type="checkbox"
+                    checked={ttsEnabled}
+                    onChange={(e) => setTTSEnabled(e.target.checked)}
+                  />
+                  <span className="toggle-text">Enable voice narration</span>
+                </label>
+              </div>
+
+              {ttsEnabled && voices.length > 0 && setVoiceConfig && voiceConfig && (
+                <>
+                  {/* Voice Selection */}
+                  <div className="setting-group">
+                    <label className="setting-label">Voice</label>
+                    <div className="setting-description">Choose the narrator voice</div>
+                    <select
+                      className="voice-select"
+                      value={voiceConfig.voiceURI}
+                      onChange={(e) => setVoiceConfig({ voiceURI: e.target.value })}
+                    >
+                      <option value="">Default</option>
+                      {voices.map((voice) => (
+                        <option key={voice.voiceURI} value={voice.voiceURI}>
+                          {voice.name} ({voice.lang})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Speech Rate */}
+                  <div className="setting-group">
+                    <label className="setting-label">Speed: {voiceConfig.rate.toFixed(1)}x</label>
+                    <input
+                      type="range"
+                      className="slider"
+                      min="0.5"
+                      max="2"
+                      step="0.1"
+                      value={voiceConfig.rate}
+                      onChange={(e) => setVoiceConfig({ rate: parseFloat(e.target.value) })}
+                    />
+                  </div>
+
+                  {/* Pitch */}
+                  <div className="setting-group">
+                    <label className="setting-label">Pitch: {voiceConfig.pitch.toFixed(1)}</label>
+                    <input
+                      type="range"
+                      className="slider"
+                      min="0.5"
+                      max="2"
+                      step="0.1"
+                      value={voiceConfig.pitch}
+                      onChange={(e) => setVoiceConfig({ pitch: parseFloat(e.target.value) })}
+                    />
+                  </div>
+
+                  {/* Volume */}
+                  <div className="setting-group">
+                    <label className="setting-label">Volume: {Math.round(voiceConfig.volume * 100)}%</label>
+                    <input
+                      type="range"
+                      className="slider"
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      value={voiceConfig.volume}
+                      onChange={(e) => setVoiceConfig({ volume: parseFloat(e.target.value) })}
+                    />
+                  </div>
+                </>
+              )}
+            </>
+          )}
 
           {/* Auto-hide Delay */}
           <div className="setting-group">
@@ -345,6 +458,77 @@ export const TVModeSettings: React.FC<TVModeSettingsProps> = ({ onClose }) => {
         .toggle-text {
           font-size: 14px;
           color: rgba(255, 255, 255, 0.8);
+        }
+
+        .setting-divider {
+          height: 1px;
+          background: rgba(255, 255, 255, 0.1);
+          margin: 24px 0;
+        }
+
+        .voice-select {
+          width: 100%;
+          padding: 10px 12px;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: 8px;
+          background: rgba(0, 0, 0, 0.3);
+          color: #fff;
+          font-size: 13px;
+          cursor: pointer;
+          appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 12px center;
+          padding-right: 36px;
+        }
+
+        .voice-select:hover {
+          border-color: rgba(139, 92, 246, 0.5);
+        }
+
+        .voice-select:focus {
+          outline: none;
+          border-color: #8B5CF6;
+        }
+
+        .voice-select option {
+          background: #1a1a2e;
+          color: #fff;
+        }
+
+        .slider {
+          width: 100%;
+          height: 6px;
+          border-radius: 3px;
+          background: rgba(255, 255, 255, 0.1);
+          appearance: none;
+          cursor: pointer;
+          margin-top: 8px;
+        }
+
+        .slider::-webkit-slider-thumb {
+          appearance: none;
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #8B5CF6, #6366F1);
+          cursor: pointer;
+          box-shadow: 0 2px 6px rgba(139, 92, 246, 0.4);
+          transition: transform 0.2s;
+        }
+
+        .slider::-webkit-slider-thumb:hover {
+          transform: scale(1.1);
+        }
+
+        .slider::-moz-range-thumb {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #8B5CF6, #6366F1);
+          cursor: pointer;
+          border: none;
+          box-shadow: 0 2px 6px rgba(139, 92, 246, 0.4);
         }
 
         .settings-footer {
