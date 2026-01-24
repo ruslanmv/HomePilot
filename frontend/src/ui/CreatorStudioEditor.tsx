@@ -412,7 +412,7 @@ export function CreatorStudioEditor({
   }, []);
 
   // Open settings modal
-  const openSettingsModal = useCallback(() => {
+  const openSettingsModal = useCallback(async () => {
     if (!project) return;
 
     setSettingsTitle(project.title || "");
@@ -433,8 +433,21 @@ export function CreatorStudioEditor({
     const llmTag = tags.find((t: string) => t.startsWith("llm:"));
     setSettingsLLMModel(llmTag ? llmTag.replace("llm:", "") : selectedLLMModel);
 
+    // Fetch available models to ensure the dropdown is populated
+    try {
+      const llmData = await fetchApi<{ models: { id: string; name?: string }[] }>(
+        '/models?provider=ollama'
+      );
+      if (llmData.models) {
+        const models = llmData.models.map(m => ({ id: m.id, name: m.name || m.id }));
+        setAvailableLLMModels(models);
+      }
+    } catch (e) {
+      console.log('[CreatorStudioEditor] Failed to fetch LLM models for settings:', e);
+    }
+
     setShowSettingsModal(true);
-  }, [project, parseTagsFromProject, selectedLLMModel]);
+  }, [project, parseTagsFromProject, selectedLLMModel, fetchApi]);
 
   // Toggle tone in settings
   const toggleSettingsTone = useCallback((tone: string) => {
@@ -2332,6 +2345,7 @@ export function CreatorStudioEditor({
         <TVModeContainer
           onGenerateNext={generateNextForTVMode}
           onEnsureImage={ensureImageForTVMode}
+          onSyncOutline={syncOutlineWithScenes}
         />
       )}
 
