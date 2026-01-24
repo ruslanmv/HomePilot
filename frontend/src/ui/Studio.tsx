@@ -395,24 +395,28 @@ export default function StudioView(props: StudioParams) {
   const deleteScene = async (sceneIdx: number) => {
     if (!currentStory) return
 
+    // Find the array index before deleting
+    const deletedArrayIndex = currentStory.scenes.findIndex((s) => s.idx === sceneIdx)
+    if (deletedArrayIndex < 0) return // Scene not found
+
     try {
       await deleteJson(props.backendUrl, `/story/${currentStory.session_id}/scene/${sceneIdx}`, authKey)
 
-      // Update local state - re-index scenes and adjust current index
+      // Update local state - re-index scenes
       setCurrentStory((prev) => {
         if (!prev) return prev
         const newScenes = prev.scenes
           .filter((s) => s.idx !== sceneIdx)
           .map((s, i) => ({ ...s, idx: i })) // Re-index
 
-        // If we deleted the current scene, move to the previous one (or stay at 0)
-        const deletedArrayIndex = prev.scenes.findIndex((s) => s.idx === sceneIdx)
-        if (deletedArrayIndex >= 0 && deletedArrayIndex <= currentSceneIndex) {
-          setCurrentSceneIndex(Math.max(0, currentSceneIndex - 1))
-        }
-
         return { ...prev, scenes: newScenes }
       })
+
+      // Adjust current scene index if needed (after state update to avoid race)
+      if (deletedArrayIndex <= currentSceneIndex) {
+        const newIndex = Math.max(0, currentSceneIndex - 1)
+        setCurrentSceneIndex(newIndex)
+      }
     } catch (err: any) {
       alert(`Failed to delete scene: ${err.message || err}`)
     }

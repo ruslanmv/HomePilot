@@ -149,10 +149,11 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
           // Trigger prefetch for more scenes or show end screen
           if (scenes.length < 24 && !isPrefetching && !isStoryComplete) {
             handlePrefetch();
-          } else if (!isStoryComplete) {
+          } else if (!isStoryComplete && !isPrefetching) {
+            // Only advance to end screen if not prefetching and story not complete
             nextScene(); // This will trigger end screen via the store
           }
-          // If story is complete, do nothing - chapter transition will handle it
+          // If story is complete or prefetching, wait - chapter transition or prefetch will handle it
         } else if (nextSceneReady) {
           // Only advance if next scene's image is ready
           nextScene();
