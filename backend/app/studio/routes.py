@@ -74,6 +74,7 @@ from .exporter import (
     export_project,
     get_project_available_exports,
 )
+from ..defaults import DEFAULT_NEGATIVE_PROMPT, ANTI_DUPLICATE_TERMS
 
 router = APIRouter(prefix="/studio", tags=["studio"])
 
@@ -780,7 +781,7 @@ class SceneOutline(BaseModel):
     description: str
     narration: str
     image_prompt: str
-    negative_prompt: str = "blurry, low quality, text, watermark, ugly, deformed"
+    negative_prompt: str = DEFAULT_NEGATIVE_PROMPT  # Use centralized default
     duration_sec: float = 5.0
 
 
@@ -830,6 +831,9 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
 
     tone_desc = ", ".join(tones) if tones else "documentary"
 
+    # Use centralized anti-duplicate terms to prevent common Stable Diffusion issues
+    anti_duplicate_terms = ANTI_DUPLICATE_TERMS
+
     # Build example JSON to help the model understand the format
     # Use a SPECIFIC example to show the AI how image prompts should relate to scene content
     example_scene = {
@@ -837,8 +841,8 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
         "title": "The Dressing Room",
         "description": "We meet Sophia in her dressing room, surrounded by mirrors and costumes, preparing for her big performance.",
         "narration": "In the heart of the theater, Sophia sits before a wall of mirrors. Tonight is the night she has been waiting for her entire life.",
-        "image_prompt": f"{visual_style} style, young woman named Sophia sitting at a vanity table in a theater dressing room, surrounded by illuminated mirrors, elegant costumes hanging in background, warm golden lighting, anticipation in her eyes, detailed interior, high quality",
-        "negative_prompt": "blurry, low quality, text, watermark",
+        "image_prompt": f"{visual_style} style, young woman named Sophia sitting at a vanity table in a theater dressing room, surrounded by illuminated mirrors, elegant costumes hanging in background, warm golden lighting, anticipation in her eyes, detailed interior, high quality, single subject",
+        "negative_prompt": f"blurry, low quality, text, watermark, ugly, deformed, {anti_duplicate_terms}",
         "duration_sec": req.scene_duration
     }
 
@@ -869,7 +873,14 @@ CRITICAL REQUIREMENTS FOR IMAGE PROMPTS:
 - DO NOT use generic placeholders like "detailed visual description" or "scene content here"
 - The image_prompt must paint a vivid picture that matches the narration
 - Always start with "{visual_style}" style keywords
-- Example: If the scene is about "John discovers an ancient map in the library", the image_prompt should be: "{visual_style} style, man named John in a dusty old library, holding an ancient weathered map, surrounded by towering bookshelves, dust particles in light beams, expression of wonder and discovery"
+- For single-character scenes, add "single subject" or "solo" to the image_prompt
+- Example: If the scene is about "John discovers an ancient map in the library", the image_prompt should be: "{visual_style} style, man named John in a dusty old library, holding an ancient weathered map, surrounded by towering bookshelves, dust particles in light beams, expression of wonder and discovery, single subject"
+
+CRITICAL REQUIREMENTS FOR NEGATIVE PROMPTS:
+- Every negative_prompt MUST include anti-duplicate terms: "duplicate, clone, multiple people, two heads, split image"
+- This prevents the AI from generating doubled/cloned subjects in images
+- Always include quality terms: "blurry, low quality, text, watermark, ugly, deformed"
+- Full example: "blurry, low quality, text, watermark, ugly, deformed, duplicate, clone, multiple people, two heads, two faces, split image, disfigured, extra limbs"
 
 OTHER REQUIREMENTS:
 - Output ONLY the JSON object, no other text
@@ -1109,6 +1120,53 @@ def get_story_outline(video_id: str):
     return {"ok": True, "outline": outline}
 
 
+@router.post("/videos/{video_id}/sync-outline")
+def sync_outline_with_scenes(video_id: str):
+    """
+    Synchronize the story outline with the current scenes.
+
+    This updates the outline to reflect the actual scenes that exist,
+    adding any new scenes and removing any that were deleted.
+    """
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Get current scenes
+    current_scenes = list_scenes(video_id)
+
+    # Get existing outline
+    metadata = v.metadata if hasattr(v, 'metadata') and v.metadata else {}
+    outline = metadata.get("story_outline") or {}
+
+    # Build updated scenes list from actual scenes
+    updated_outline_scenes = []
+    for i, scene in enumerate(current_scenes):
+        updated_outline_scenes.append({
+            "scene_number": i + 1,
+            "title": f"Scene {i + 1}",  # Could extract from narration
+            "description": scene.narration[:100] if scene.narration else "",
+            "narration": scene.narration or "",
+            "image_prompt": scene.imagePrompt or "",
+            "negative_prompt": scene.negativePrompt or DEFAULT_NEGATIVE_PROMPT,
+            "duration_sec": scene.durationSec or 5.0,
+        })
+
+    # Update the outline
+    outline["scenes"] = updated_outline_scenes
+    outline["scene_count"] = len(updated_outline_scenes)
+
+    # Store updated outline
+    update_video(video_id, metadata={"story_outline": outline})
+
+    return {
+        "ok": True,
+        "outline": outline,
+        "scene_count": len(updated_outline_scenes),
+        "message": f"Outline synchronized with {len(updated_outline_scenes)} scenes"
+    }
+
+
 @router.post("/videos/{video_id}/scenes/generate-from-outline")
 async def generate_scene_from_outline(
     video_id: str,
@@ -1136,11 +1194,11 @@ async def generate_scene_from_outline(
 
     scene_plan = scenes[scene_index]
 
-    # Create the scene from the outline
+    # Create the scene from the outline - use centralized default negative prompt
     scene = create_scene(video_id, StudioSceneCreate(
         narration=scene_plan.get("narration", ""),
         imagePrompt=scene_plan.get("image_prompt", ""),
-        negativePrompt=scene_plan.get("negative_prompt", "blurry, low quality, text, watermark"),
+        negativePrompt=scene_plan.get("negative_prompt", DEFAULT_NEGATIVE_PROMPT),
         durationSec=scene_plan.get("duration_sec", 5.0),
     ))
 

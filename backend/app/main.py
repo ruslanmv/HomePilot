@@ -58,6 +58,7 @@ from .civitai import (
 
 # Studio module routes
 from .studio.routes import router as studio_router
+from .studio.repo import init_studio_db
 
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
@@ -276,6 +277,8 @@ def _startup() -> None:
     init_game_db()
     # Initialize story mode database tables
     init_story_db()
+    # Initialize Creator Studio database tables (SQLite persistence)
+    init_studio_db()
     # Run migrations
     try:
         run_migrations()
