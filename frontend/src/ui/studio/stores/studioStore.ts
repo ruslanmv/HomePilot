@@ -240,3 +240,12 @@ export const selectFavoriteImages = (state: StudioStore) =>
   state.generatedImages.filter((img: GeneratedImage) => img.favorite);
 export const selectRecentImages = (state: StudioStore) =>
   state.generatedImages.slice(0, 20);
+
+/**
+ * Get the current studio configuration (backendUrl and apiKey).
+ * Used by the API helpers to make authenticated requests.
+ */
+export function getStudioConfig() {
+  const state = useStudioStore.getState();
+  return { backendUrl: state.backendUrl, apiKey: state.apiKey };
+}

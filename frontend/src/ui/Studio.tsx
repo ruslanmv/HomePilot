@@ -1,29 +1,24 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
   Play,
   Pause,
-  SkipBack,
-  SkipForward,
   Plus,
   Settings2,
   X,
   Tv2,
   Film,
-  RefreshCw,
   Trash2,
   ChevronLeft,
-  ChevronRight,
-  Volume2,
-  VolumeX,
-  Maximize2,
   BookOpen,
   Users,
   MapPin,
-  Monitor,
+  Maximize2,
 } from 'lucide-react'
 import { useTVModeStore } from './studio/stores/tvModeStore'
 import type { TVScene } from './studio/stores/tvModeStore'
 import { TVModeContainer } from './studio/components/TVMode'
+import { SceneChips, StudioPreviewPanel, StudioActions, StudioEmptyState } from './studio/components'
+import type { SceneChipData } from './studio/components'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -58,6 +53,27 @@ type StorySession = {
   updated_at: number
 }
 
+type CreatorProject = {
+  id: string
+  title: string
+  logline: string
+  status: 'draft' | 'in_review' | 'approved' | 'archived'
+  updatedAt: number
+  platformPreset: 'youtube_16_9' | 'shorts_9_16' | 'slides_16_9'
+  contentRating: 'sfw' | 'mature'
+}
+
+// Unified project type for display
+type UnifiedProject = {
+  id: string
+  title: string
+  description: string
+  type: 'play' | 'creator'
+  status: 'draft' | 'finished'
+  updatedAt: number
+  raw: StorySession | CreatorProject
+}
+
 type StoryData = {
   ok: boolean
   session_id: string
@@ -79,13 +95,35 @@ export type StudioParams = {
   imgCfg?: number
   nsfwMode?: boolean
   promptRefinement?: boolean
-  // Callback to switch to Creator Studio mode
-  onOpenCreatorStudio?: () => void
+  // Callback to switch to Creator Studio mode (optional projectId to open existing project)
+  onOpenCreatorStudio?: (projectId?: string) => void
 }
 
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
+
+/**
+ * Format a timestamp for display, handling epoch dates (1970) gracefully.
+ * Returns "Just now" for missing/invalid dates, otherwise a formatted date.
+ */
+function formatDate(timestamp: number): string {
+  // Check for invalid/epoch dates (anything before year 2000 is likely a bug)
+  if (!timestamp || timestamp < 946684800000) { // Jan 1, 2000 in ms
+    return "Just now"
+  }
+
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+  if (diffDays === 0) return "Today"
+  if (diffDays === 1) return "Yesterday"
+  if (diffDays < 7) return `${diffDays} days ago`
+
+  return date.toLocaleDateString()
+}
 
 async function fetchJson<T>(baseUrl: string, path: string, apiKey?: string): Promise<T> {
   const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
@@ -144,7 +182,7 @@ export default function StudioView(props: StudioParams) {
   const authKey = (props.apiKey || '').trim()
 
   // TV Mode state
-  const { isActive: tvModeActive, enterTVMode, addScene: addTVScene, updateSceneImageByIdx, setSceneImageStatusByIdx } = useTVModeStore()
+  const { isActive: tvModeActive, enterTVMode, addScene: addTVScene, updateSceneImageByIdx, setSceneImageStatusByIdx, setStoryComplete, isStoryComplete } = useTVModeStore()
 
   // View state
   const [view, setView] = useState<'list' | 'create' | 'player'>('list')
@@ -194,7 +232,34 @@ export default function StudioView(props: StudioParams) {
 
   // Story list
   const [sessions, setSessions] = useState<StorySession[]>([])
+  const [creatorProjects, setCreatorProjects] = useState<CreatorProject[]>([])
   const [loadingSessions, setLoadingSessions] = useState(true)
+
+  // Unified projects list (memoized)
+  const unifiedProjects = useMemo((): UnifiedProject[] => {
+    const playProjects: UnifiedProject[] = sessions.map((s) => ({
+      id: s.id,
+      title: s.title,
+      description: s.premise,
+      type: 'play' as const,
+      status: 'draft' as const, // Play stories are always "in progress"
+      updatedAt: s.updated_at * 1000,
+      raw: s,
+    }))
+
+    const creatorProjectsMapped: UnifiedProject[] = creatorProjects.map((p) => ({
+      id: p.id,
+      title: p.title,
+      description: p.logline,
+      type: 'creator' as const,
+      status: p.status === 'approved' ? 'finished' as const : 'draft' as const,
+      updatedAt: p.updatedAt,
+      raw: p,
+    }))
+
+    // Sort by updated time, most recent first
+    return [...playProjects, ...creatorProjectsMapped].sort((a, b) => b.updatedAt - a.updatedAt)
+  }, [sessions, creatorProjects])
 
   // Create story form
   const [premise, setPremise] = useState('')
@@ -208,9 +273,15 @@ export default function StudioView(props: StudioParams) {
   const [isGeneratingScene, setIsGeneratingScene] = useState(false)
   const [isGeneratingImage, setIsGeneratingImage] = useState(false)
   const [showBible, setShowBible] = useState(false)
+  const [isCreatingChapter, setIsCreatingChapter] = useState(false)
+  const [showChapterSettings, setShowChapterSettings] = useState(false)
+  const [chapterHint, setChapterHint] = useState('')
 
   // Image generation queue to prevent dropped requests
-  const imageQueueRef = useRef<Set<number>>(new Set())
+  // Store scene data directly to avoid stale closure issues with currentStory
+  // Include retry count for automatic retries on failure
+  const imageQueueRef = useRef<Map<number, { image_prompt: string; negative_prompt?: string; session_id: string; retryCount?: number }>>(new Map())
+  const MAX_IMAGE_RETRIES = 3
   const imageInFlightRef = useRef<number | null>(null)
   const [isMuted, setIsMuted] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -226,12 +297,35 @@ export default function StudioView(props: StudioParams) {
   const loadSessions = async () => {
     setLoadingSessions(true)
     try {
-      const data = await fetchJson<{ ok: boolean; sessions: StorySession[] }>(
-        props.backendUrl,
-        '/story/sessions/list',
-        authKey
-      )
-      setSessions(data.sessions || [])
+      // Fetch both Play Story sessions and Creator Studio projects in parallel
+      const [storyData, creatorData] = await Promise.allSettled([
+        fetchJson<{ ok: boolean; sessions: StorySession[] }>(
+          props.backendUrl,
+          '/story/sessions/list',
+          authKey
+        ),
+        fetchJson<{ videos: CreatorProject[] }>(
+          props.backendUrl,
+          '/studio/videos',
+          authKey
+        ),
+      ])
+
+      // Handle Play Story sessions
+      if (storyData.status === 'fulfilled') {
+        setSessions(storyData.value.sessions || [])
+      } else {
+        console.error('Failed to load story sessions:', storyData.reason)
+        setSessions([])
+      }
+
+      // Handle Creator Studio projects (may not exist on all backends)
+      if (creatorData.status === 'fulfilled') {
+        setCreatorProjects(creatorData.value.videos || [])
+      } else {
+        // Silently fail - Creator Studio endpoint may not exist
+        setCreatorProjects([])
+      }
     } catch (err) {
       console.error('Failed to load story sessions:', err)
     } finally {
@@ -244,7 +338,8 @@ export default function StudioView(props: StudioParams) {
     setIsCreating(true)
 
     try {
-      const data = await postJson<{
+      // Step 1: Create story bible
+      const storyData = await postJson<{
         ok: boolean
         session_id: string
         title: string
@@ -264,15 +359,53 @@ export default function StudioView(props: StudioParams) {
         authKey
       )
 
-      // Load the full story and switch to player
-      await loadStory(data.session_id)
+      console.log('[Studio] Story bible created:', storyData.title)
+
+      // Step 2: Auto-generate first scene
+      setIsGeneratingScene(true)
+      const sceneData = await postJson<{
+        ok: boolean
+        scene?: Scene
+        story_complete?: boolean
+        message?: string
+      }>(
+        props.backendUrl,
+        '/story/next',
+        {
+          session_id: storyData.session_id,
+          refine_image_prompt: props.promptRefinement ?? true,
+        },
+        authKey
+      )
+
+      if (!sceneData.scene) {
+        throw new Error('Failed to generate first scene')
+      }
+
+      console.log('[Studio] First scene generated')
+
+      // Step 3: Load the full story with the first scene
+      const fullStory = await fetchJson<StoryData>(props.backendUrl, `/story/${storyData.session_id}`, authKey)
+      setCurrentStory(fullStory)
+      setCurrentSceneIndex(0)
+      setIsPlaying(false)
+      setStoryComplete(false)
+
+      // Switch to player view
       setView('player')
       setPremise('')
       setTitleHint('')
+
+      // Step 4: Auto-generate image for the first scene
+      if (fullStory.scenes.length > 0) {
+        const firstScene = fullStory.scenes[0]
+        generateImageForScene(firstScene, storyData.session_id)
+      }
     } catch (err: any) {
       alert(`Failed to create story: ${err.message || err}`)
     } finally {
       setIsCreating(false)
+      setIsGeneratingScene(false)
     }
   }
 
@@ -282,6 +415,7 @@ export default function StudioView(props: StudioParams) {
       setCurrentStory(data)
       setCurrentSceneIndex(0)
       setIsPlaying(false)
+      setStoryComplete(false) // Reset story complete state when loading a different story
     } catch (err: any) {
       alert(`Failed to load story: ${err.message || err}`)
     }
@@ -301,6 +435,56 @@ export default function StudioView(props: StudioParams) {
     }
   }
 
+  const deleteScene = async (sceneIdx: number) => {
+    if (!currentStory) {
+      console.error('[Studio] deleteScene: No current story')
+      return
+    }
+
+    console.log('[Studio] Deleting scene:', sceneIdx, 'from story:', currentStory.session_id)
+
+    // Find the array index before deleting
+    const deletedArrayIndex = currentStory.scenes.findIndex((s) => s.idx === sceneIdx)
+    if (deletedArrayIndex < 0) {
+      console.error('[Studio] deleteScene: Scene not found in array, sceneIdx:', sceneIdx)
+      return
+    }
+
+    try {
+      const result = await deleteJson<{ ok: boolean; deleted?: boolean; error?: string }>(
+        props.backendUrl,
+        `/story/${currentStory.session_id}/scene/${sceneIdx}`,
+        authKey
+      )
+      console.log('[Studio] Delete response:', result)
+
+      if (!result.ok) {
+        throw new Error(result.error || 'Delete failed')
+      }
+
+      // Update local state - re-index scenes
+      setCurrentStory((prev) => {
+        if (!prev) return prev
+        const newScenes = prev.scenes
+          .filter((s) => s.idx !== sceneIdx)
+          .map((s, i) => ({ ...s, idx: i })) // Re-index
+
+        console.log('[Studio] Updated scenes count:', newScenes.length)
+        return { ...prev, scenes: newScenes }
+      })
+
+      // Adjust current scene index if needed (after state update to avoid race)
+      if (deletedArrayIndex <= currentSceneIndex) {
+        const newIndex = Math.max(0, currentSceneIndex - 1)
+        console.log('[Studio] Adjusting currentSceneIndex from', currentSceneIndex, 'to', newIndex)
+        setCurrentSceneIndex(newIndex)
+      }
+    } catch (err: any) {
+      console.error('[Studio] Delete scene error:', err)
+      alert(`Failed to delete scene: ${err.message || err}`)
+    }
+  }
+
   const generateNextScene = async () => {
     if (!currentStory || isGeneratingScene) return
     setIsGeneratingScene(true)
@@ -308,10 +492,12 @@ export default function StudioView(props: StudioParams) {
     try {
       const data = await postJson<{
         ok: boolean
-        session_id: string
-        title: string
-        scene: Scene
-        bible: StoryBible
+        session_id?: string
+        title?: string
+        scene?: Scene
+        bible?: StoryBible
+        story_complete?: boolean
+        message?: string
       }>(
         props.backendUrl,
         '/story/next',
@@ -322,20 +508,107 @@ export default function StudioView(props: StudioParams) {
         authKey
       )
 
+      // Check if story is complete (no more scenes can be generated for this chapter)
+      if (data.story_complete) {
+        console.log('[Studio] Chapter complete -', data.message)
+        console.log('[Studio] Automatically starting next chapter...')
+
+        // Auto-continue to next chapter
+        try {
+          const chapterData = await postJson<{
+            ok: boolean
+            session_id: string
+            title: string
+            chapter_number: number
+            bible: StoryBible
+            saga_id: string
+            previous_session_id: string
+          }>(
+            props.backendUrl,
+            '/story/continue',
+            {
+              previous_session_id: currentStory.session_id,
+            },
+            authKey
+          )
+
+          console.log(`[Studio] Started chapter ${chapterData.chapter_number}: ${chapterData.title}`)
+
+          // Generate first scene of new chapter
+          const firstSceneData = await postJson<{
+            ok: boolean
+            scene?: Scene
+            story_complete?: boolean
+            message?: string
+          }>(
+            props.backendUrl,
+            '/story/next',
+            {
+              session_id: chapterData.session_id,
+              refine_image_prompt: props.promptRefinement ?? true,
+            },
+            authKey
+          )
+
+          if (!firstSceneData.scene) {
+            throw new Error('Failed to generate first scene of new chapter')
+          }
+
+          console.log('[Studio] First scene of new chapter generated')
+
+          // Load the full story with the first scene
+          const fullStory = await fetchJson<StoryData>(props.backendUrl, `/story/${chapterData.session_id}`, authKey)
+          setCurrentStory(fullStory)
+          setCurrentSceneIndex(0)
+          setStoryComplete(false)
+
+          // Add the new chapter to the sessions list
+          const now = Date.now()
+          setSessions((prev) => [
+            {
+              id: chapterData.session_id,
+              title: chapterData.title,
+              premise: `Chapter ${chapterData.chapter_number} continuation`,
+              created_at: now,
+              updated_at: now,
+            },
+            ...prev,
+          ])
+
+          // Generate image for the first scene
+          if (fullStory.scenes.length > 0) {
+            generateImageForScene(fullStory.scenes[0], chapterData.session_id)
+          }
+
+          return // Successfully continued to new chapter
+        } catch (continueErr: any) {
+          console.error('[Studio] Failed to auto-continue chapter:', continueErr)
+          // Fall back to showing completion message
+          setStoryComplete(true)
+          alert('Chapter complete! Click "New Chapter" to continue the story.')
+          return
+        }
+      }
+
+      // Make sure we have a valid scene before adding
+      if (!data.scene) {
+        throw new Error('No scene returned from backend')
+      }
+
       // Add new scene to current story
       setCurrentStory((prev) => {
         if (!prev) return prev
         return {
           ...prev,
-          scenes: [...prev.scenes, data.scene],
+          scenes: [...prev.scenes, data.scene!],
         }
       })
 
       // Move to the new scene
       setCurrentSceneIndex(currentStory.scenes.length)
 
-      // Generate image for the new scene
-      await generateImageForScene(data.scene)
+      // Generate image for the new scene (pass session_id to avoid stale closure)
+      await generateImageForScene(data.scene, currentStory.session_id)
     } catch (err: any) {
       alert(`Failed to generate scene: ${err.message || err}`)
     } finally {
@@ -348,23 +621,47 @@ export default function StudioView(props: StudioParams) {
     // Already processing?
     if (imageInFlightRef.current !== null) return
 
-    // Get next scene idx from queue
-    const nextIdx = imageQueueRef.current.values().next().value
-    if (nextIdx === undefined) {
+    // Get next scene from queue (stored with its data to avoid stale closure)
+    const nextEntry = imageQueueRef.current.entries().next().value
+    if (!nextEntry) {
       setIsGeneratingImage(false)
       return
     }
 
+    const [nextIdx, sceneData] = nextEntry as [number, { image_prompt: string; negative_prompt?: string; session_id: string; retryCount?: number }]
     imageInFlightRef.current = nextIdx
     imageQueueRef.current.delete(nextIdx)
+
+    const currentRetry = sceneData.retryCount || 0
+
+    // Helper to re-queue for retry with delay
+    const requeue = async (reason: string) => {
+      if (currentRetry < MAX_IMAGE_RETRIES) {
+        const nextRetry = currentRetry + 1
+        const delayMs = Math.min(1000 * Math.pow(2, currentRetry), 8000) // 1s, 2s, 4s, 8s max
+        console.warn(`[IMAGE] ${reason} for scene ${nextIdx}, retry ${nextRetry}/${MAX_IMAGE_RETRIES} in ${delayMs}ms`)
+
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+
+        // Re-add to queue with incremented retry count
+        imageQueueRef.current.set(nextIdx, { ...sceneData, retryCount: nextRetry })
+      } else {
+        console.error(`[IMAGE] Max retries (${MAX_IMAGE_RETRIES}) exceeded for scene ${nextIdx}, giving up`)
+        // Mark as failed in TV Mode if active
+        // IMPORTANT: Check current state at runtime, not closure value
+        if (useTVModeStore.getState().isActive) {
+          setSceneImageStatusByIdx(nextIdx, 'error')
+        }
+      }
+    }
 
     try {
       const llmProvider = props.providerImages === 'comfyui' ? 'ollama' : props.providerImages
 
-      // Find the scene to get its image_prompt
-      const scene = currentStory?.scenes.find(s => s.idx === nextIdx)
-      if (!scene) {
-        console.warn(`Scene ${nextIdx} not found for image generation`)
+      // Use stored scene data (avoids stale currentStory closure)
+      if (!sceneData?.image_prompt) {
+        console.warn(`Scene ${nextIdx} has no image_prompt for generation`)
         return
       }
 
@@ -374,7 +671,7 @@ export default function StudioView(props: StudioParams) {
         props.backendUrl,
         '/chat',
         {
-          message: `imagine ${scene.image_prompt}`,
+          message: `imagine ${sceneData.image_prompt}`,
           mode: 'imagine',
           provider: llmProvider,
           provider_base_url: props.baseUrlImages,
@@ -390,8 +687,8 @@ export default function StudioView(props: StudioParams) {
       )
 
       const imageUrl = data?.media?.images?.[0]
-      if (imageUrl && currentStory) {
-        // Update scene with image URL in state
+      if (imageUrl) {
+        // Success! Update scene with image URL in state
         setCurrentStory((prev) => {
           if (!prev) return prev
           return {
@@ -401,7 +698,9 @@ export default function StudioView(props: StudioParams) {
         })
 
         // Also update TV Mode store if active (for sync) - use ByIdx variant
-        if (tvModeActive) {
+        // IMPORTANT: Check current state at runtime, not closure value, to avoid race condition
+        // where user enters TV mode while images are generating
+        if (useTVModeStore.getState().isActive) {
           updateSceneImageByIdx(nextIdx, imageUrl)
         }
 
@@ -411,7 +710,7 @@ export default function StudioView(props: StudioParams) {
             props.backendUrl,
             '/story/scene/image',
             {
-              session_id: currentStory.session_id,
+              session_id: sceneData.session_id,
               scene_idx: nextIdx,
               image_url: imageUrl,
             },
@@ -421,9 +720,14 @@ export default function StudioView(props: StudioParams) {
           console.error('Failed to persist image URL:', persistErr)
           // Image is still shown in UI, just won't survive reload
         }
+      } else {
+        // No image returned (0 images from ComfyUI) - retry
+        await requeue('No image returned from backend')
       }
     } catch (err: any) {
       console.error('Failed to generate image:', err)
+      // Network or server error - retry
+      await requeue(`Error: ${err.message || err}`)
     } finally {
       imageInFlightRef.current = null
       // Process next item in queue if any
@@ -433,27 +737,45 @@ export default function StudioView(props: StudioParams) {
         setIsGeneratingImage(false)
       }
     }
-  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, currentStory, tvModeActive, updateSceneImageByIdx])
+  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, updateSceneImageByIdx, setSceneImageStatusByIdx])
 
   // Enqueue image generation for a scene
-  const generateImageForScene = useCallback((scene: Scene | TVScene) => {
-    // Already has image?
+  // Set force=true to regenerate even if image already exists
+  const generateImageForScene = useCallback((scene: Scene | TVScene, sessionId?: string, force: boolean = false) => {
+    // Already has image? Skip unless force regenerate
     const hasImage = Boolean((scene as Scene).image_url || (scene as TVScene).image_url || (scene as TVScene).image)
-    if (hasImage) return
+    if (hasImage && !force) return
 
     // Already in queue or in flight?
-    if (imageQueueRef.current.has(scene.idx) || imageInFlightRef.current === scene.idx) return
+    if (imageQueueRef.current.has(scene.idx) || imageInFlightRef.current === scene.idx) {
+      console.log('[Studio] Image generation already queued/in-flight for scene:', scene.idx)
+      return
+    }
+
+    // Get session_id from parameter or current story
+    const storySessionId = sessionId || currentStory?.session_id
+    if (!storySessionId) {
+      console.warn('No session_id available for image generation')
+      return
+    }
+
+    console.log('[Studio] Queueing image generation for scene:', scene.idx, force ? '(forced regenerate)' : '')
 
     // Mark as generating in TV Mode store
-    if (tvModeActive) {
+    // IMPORTANT: Check current state at runtime, not closure value
+    if (useTVModeStore.getState().isActive) {
       setSceneImageStatusByIdx(scene.idx, 'generating')
     }
 
-    // Add to queue and start processing
-    imageQueueRef.current.add(scene.idx)
+    // Add to queue with scene data (avoids stale closure when processing)
+    imageQueueRef.current.set(scene.idx, {
+      image_prompt: scene.image_prompt,
+      negative_prompt: scene.negative_prompt,
+      session_id: storySessionId,
+    })
     setIsGeneratingImage(true)
     processImageQueue()
-  }, [tvModeActive, setSceneImageStatusByIdx, processImageQueue])
+  }, [setSceneImageStatusByIdx, processImageQueue, currentStory?.session_id])
 
   // Auto-play logic
   useEffect(() => {
@@ -507,10 +829,12 @@ export default function StudioView(props: StudioParams) {
     try {
       const data = await postJson<{
         ok: boolean
-        session_id: string
-        title: string
-        scene: Scene
-        bible: StoryBible
+        session_id?: string
+        title?: string
+        scene?: Scene
+        bible?: StoryBible
+        story_complete?: boolean
+        message?: string
       }>(
         props.backendUrl,
         '/story/next',
@@ -521,27 +845,261 @@ export default function StudioView(props: StudioParams) {
         authKey
       )
 
+      // Check if chapter is complete - auto-continue to next chapter
+      if (data.story_complete) {
+        console.log('[TV Mode] Chapter complete -', data.message)
+        console.log('[TV Mode] Automatically starting next chapter...')
+
+        try {
+          // Create next chapter
+          const chapterData = await postJson<{
+            ok: boolean
+            session_id: string
+            title: string
+            chapter_number: number
+            bible: StoryBible
+            saga_id: string
+          }>(
+            props.backendUrl,
+            '/story/continue',
+            {
+              previous_session_id: currentStory.session_id,
+            },
+            authKey
+          )
+
+          console.log(`[TV Mode] Started chapter ${chapterData.chapter_number}: ${chapterData.title}`)
+
+          // Generate first scene of new chapter
+          const firstSceneData = await postJson<{
+            ok: boolean
+            scene?: Scene
+          }>(
+            props.backendUrl,
+            '/story/next',
+            {
+              session_id: chapterData.session_id,
+              refine_image_prompt: props.promptRefinement ?? true,
+            },
+            authKey
+          )
+
+          if (!firstSceneData.scene) {
+            throw new Error('Failed to generate first scene of new chapter')
+          }
+
+          console.log('[TV Mode] First scene of new chapter generated')
+
+          // Load the full story with the first scene
+          const fullStory = await fetchJson<StoryData>(props.backendUrl, `/story/${chapterData.session_id}`, authKey)
+
+          // Update current story to the new chapter
+          setCurrentStory(fullStory)
+          setStoryComplete(false)
+
+          // Generate image for the first scene
+          if (fullStory.scenes.length > 0) {
+            generateImageForScene(fullStory.scenes[0], chapterData.session_id)
+          }
+
+          // Return the first scene so TV mode continues seamlessly
+          return {
+            ...firstSceneData.scene,
+            status: 'ready' as const,
+          }
+        } catch (continueErr: any) {
+          console.error('[TV Mode] Failed to auto-continue chapter:', continueErr)
+          setStoryComplete(true)
+          return null // Fall back to showing end screen
+        }
+      }
+
+      // Make sure we have a scene
+      if (!data.scene) {
+        throw new Error('No scene returned from backend')
+      }
+
       // Add new scene to current story state
       setCurrentStory((prev) => {
         if (!prev) return prev
         return {
           ...prev,
-          scenes: [...prev.scenes, data.scene],
+          scenes: [...prev.scenes, data.scene!],
         }
       })
 
-      // Generate image for the new scene in background
-      generateImageForScene(data.scene)
+      // Generate image for the new scene in background (pass session_id to avoid stale closure)
+      generateImageForScene(data.scene, currentStory.session_id)
 
       return {
         ...data.scene,
         status: 'ready' as const,
       }
-    } catch (error) {
+    } catch (error: any) {
+      // Check if story is complete (legacy error format for backwards compatibility)
+      const errorMsg = error?.message || String(error)
+      if (errorMsg.includes('Story complete') || (errorMsg.includes('All') && errorMsg.includes('scenes have been generated'))) {
+        console.log('[TV Mode] Chapter complete (legacy) - auto-continuing...')
+
+        // Try to auto-continue to next chapter
+        try {
+          const chapterData = await postJson<{
+            ok: boolean
+            session_id: string
+            title: string
+            chapter_number: number
+            bible: StoryBible
+          }>(
+            props.backendUrl,
+            '/story/continue',
+            {
+              previous_session_id: currentStory.session_id,
+            },
+            authKey
+          )
+
+          const firstSceneData = await postJson<{
+            ok: boolean
+            scene?: Scene
+          }>(
+            props.backendUrl,
+            '/story/next',
+            {
+              session_id: chapterData.session_id,
+              refine_image_prompt: props.promptRefinement ?? true,
+            },
+            authKey
+          )
+
+          if (firstSceneData.scene) {
+            const fullStory = await fetchJson<StoryData>(props.backendUrl, `/story/${chapterData.session_id}`, authKey)
+            setCurrentStory(fullStory)
+            setStoryComplete(false)
+
+            if (fullStory.scenes.length > 0) {
+              generateImageForScene(fullStory.scenes[0], chapterData.session_id)
+            }
+
+            return {
+              ...firstSceneData.scene,
+              status: 'ready' as const,
+            }
+          }
+        } catch (continueErr) {
+          console.error('[TV Mode] Failed to auto-continue:', continueErr)
+        }
+
+        setStoryComplete(true)
+        return null
+      }
       console.error('TV Mode generate error:', error)
       throw error
     }
-  }, [currentStory, props.backendUrl, props.promptRefinement, authKey])
+  }, [currentStory, props.backendUrl, props.promptRefinement, authKey, setStoryComplete, generateImageForScene])
+
+  // Continue story as next chapter (saga mode)
+  const continueAsNextChapter = useCallback(async () => {
+    if (!currentStory) return null
+
+    try {
+      const data = await postJson<{
+        ok: boolean
+        session_id: string
+        title: string
+        chapter_number: number
+        bible: StoryBible
+        saga_id: string
+        previous_session_id: string
+      }>(
+        props.backendUrl,
+        '/story/continue',
+        {
+          previous_session_id: currentStory.session_id,
+        },
+        authKey
+      )
+
+      console.log(`[TV Mode] Started chapter ${data.chapter_number}: ${data.title}`)
+
+      // Load the new chapter's story data
+      const newStoryData = await fetchJson<StoryData>(props.backendUrl, `/story/${data.session_id}`, authKey)
+
+      // Update current story state
+      setCurrentStory(newStoryData)
+      setCurrentSceneIndex(0)
+      setStoryComplete(false) // Reset story complete state for new chapter
+
+      return {
+        sessionId: data.session_id,
+        title: data.title,
+        chapterNumber: data.chapter_number,
+        scenes: newStoryData.scenes.map((scene) => ({
+          ...scene,
+          status: 'ready' as const,
+        })),
+      }
+    } catch (error: any) {
+      console.error('Failed to continue story:', error)
+      throw error
+    }
+  }, [currentStory, props.backendUrl, authKey])
+
+  // Continue to next chapter in Studio mode (with optional hint for customization)
+  const continueChapterInStudio = useCallback(async () => {
+    if (!currentStory || isCreatingChapter) return
+
+    setIsCreatingChapter(true)
+    setShowChapterSettings(false)
+
+    try {
+      const data = await postJson<{
+        ok: boolean
+        session_id: string
+        title: string
+        chapter_number: number
+        bible: StoryBible
+        saga_id: string
+        previous_session_id: string
+      }>(
+        props.backendUrl,
+        '/story/continue',
+        {
+          previous_session_id: currentStory.session_id,
+          ...(chapterHint.trim() ? { direction_hint: chapterHint.trim() } : {}),
+        },
+        authKey
+      )
+
+      console.log(`[Studio] Started chapter ${data.chapter_number}: ${data.title}`)
+
+      // Load the new chapter's story data
+      const newStoryData = await fetchJson<StoryData>(props.backendUrl, `/story/${data.session_id}`, authKey)
+
+      // Update current story state - new chapter continues seamlessly
+      setCurrentStory(newStoryData)
+      setCurrentSceneIndex(0)
+      setStoryComplete(false)
+      setChapterHint('') // Clear hint after use
+
+      // Add the new chapter to the sessions list so it appears in the list view
+      const now = Date.now()
+      setSessions((prev) => [
+        {
+          id: data.session_id,
+          title: data.title,
+          premise: `Chapter ${data.chapter_number} continuation`,
+          created_at: now,
+          updated_at: now,
+        },
+        ...prev,
+      ])
+    } catch (error: any) {
+      console.error('Failed to create new chapter:', error)
+      alert(`Failed to create new chapter: ${error.message || error}`)
+    } finally {
+      setIsCreatingChapter(false)
+    }
+  }, [currentStory, isCreatingChapter, chapterHint, props.backendUrl, authKey, setStoryComplete])
 
   const currentScene = currentStory?.scenes[currentSceneIndex]
 
@@ -569,17 +1127,17 @@ export default function StudioView(props: StudioParams) {
             type="button"
           >
             <Plus size={16} />
-            New Story
+            Create Story
           </button>
         </div>
 
-        {/* Story List */}
+        {/* Project List */}
         <div className="flex-1 overflow-y-auto p-6">
           {loadingSessions ? (
             <div className="flex items-center justify-center h-64">
               <div className="animate-spin w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full" />
             </div>
-          ) : sessions.length === 0 ? (
+          ) : unifiedProjects.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-white/50">
               <Film size={48} className="mb-4 opacity-50" />
               <p className="text-lg font-semibold mb-2">No stories yet</p>
@@ -587,31 +1145,62 @@ export default function StudioView(props: StudioParams) {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {sessions.map((session) => (
+              {unifiedProjects.map((project) => (
                 <div
-                  key={session.id}
-                  className="bg-white/5 border border-white/10 rounded-2xl p-5 hover:border-white/20 transition-colors group cursor-pointer"
+                  key={`${project.type}-${project.id}`}
+                  className={`bg-white/5 border rounded-2xl p-5 hover:border-white/20 transition-colors group cursor-pointer ${
+                    project.type === 'creator' ? 'border-blue-500/30' : 'border-white/10'
+                  }`}
                   onClick={() => {
-                    loadStory(session.id)
-                    setView('player')
+                    if (project.type === 'play') {
+                      loadStory(project.id)
+                      setView('player')
+                    } else if (project.type === 'creator' && props.onOpenCreatorStudio) {
+                      // Open Creator Studio with project ID to open the editor
+                      props.onOpenCreatorStudio(project.id)
+                    }
                   }}
                 >
-                  <div className="flex items-start justify-between mb-3">
-                    <h3 className="text-lg font-semibold text-white">{session.title}</h3>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteStory(session.id)
-                      }}
-                      className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-300 transition-all"
-                      type="button"
+                  {/* Type & Status Badges */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        project.type === 'creator'
+                          ? 'bg-blue-500/20 text-blue-300'
+                          : 'bg-purple-500/20 text-purple-300'
+                      }`}
                     >
-                      <Trash2 size={16} />
-                    </button>
+                      {project.type === 'creator' ? 'Creator Studio' : 'Play Story'}
+                    </span>
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        project.status === 'finished'
+                          ? 'bg-green-500/20 text-green-300'
+                          : 'bg-yellow-500/20 text-yellow-300'
+                      }`}
+                    >
+                      {project.status === 'finished' ? 'Finished' : 'Draft'}
+                    </span>
                   </div>
-                  <p className="text-sm text-white/60 line-clamp-2 mb-3">{session.premise}</p>
+
+                  <div className="flex items-start justify-between mb-3">
+                    <h3 className="text-lg font-semibold text-white">{project.title}</h3>
+                    {project.type === 'play' && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          deleteStory(project.id)
+                        }}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-300 transition-all"
+                        type="button"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-sm text-white/60 line-clamp-2 mb-3">{project.description}</p>
                   <div className="text-xs text-white/40">
-                    {new Date(session.updated_at * 1000).toLocaleDateString()}
+                    {formatDate(project.updatedAt)}
                   </div>
                 </div>
               ))}
@@ -760,7 +1349,7 @@ export default function StudioView(props: StudioParams) {
               {isCreating ? (
                 <>
                   <div className="animate-spin w-5 h-5 border-2 border-white border-t-transparent rounded-full" />
-                  Creating Story Bible...
+                  {isGeneratingScene ? 'Generating First Scene...' : 'Creating Story Bible...'}
                 </>
               ) : (
                 <>
@@ -824,155 +1413,65 @@ export default function StudioView(props: StudioParams) {
         </div>
       )}
 
-      {/* Main Stage */}
-      <div className="flex-1 relative overflow-hidden bg-gradient-to-b from-black to-gray-900">
-        {/* Image Display */}
-        {currentScene?.image_url ? (
-          <img
-            src={currentScene.image_url}
-            alt={`Scene ${currentScene.idx}`}
-            className="absolute inset-0 w-full h-full object-contain transition-opacity duration-1000"
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center">
-            {isGeneratingImage ? (
-              <div className="text-center">
-                <div className="animate-spin w-12 h-12 border-3 border-purple-500 border-t-transparent rounded-full mx-auto mb-4" />
-                <p className="text-white/50">Generating image...</p>
-              </div>
-            ) : currentScene ? (
-              <div className="text-center p-8 max-w-2xl">
-                <p className="text-white/50 mb-4">No image for this scene yet</p>
-                <button
-                  onClick={() => generateImageForScene(currentScene)}
-                  className="px-6 py-3 bg-purple-500 hover:bg-purple-600 rounded-full font-semibold transition-colors"
-                  type="button"
-                >
-                  Generate Image
-                </button>
-              </div>
-            ) : (
-              <div className="text-center">
-                <p className="text-white/50 mb-4">No scenes yet</p>
-                <button
-                  onClick={generateNextScene}
-                  disabled={isGeneratingScene}
-                  className="px-6 py-3 bg-purple-500 hover:bg-purple-600 rounded-full font-semibold transition-colors disabled:opacity-50"
-                  type="button"
-                >
-                  {isGeneratingScene ? 'Generating...' : 'Generate First Scene'}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+      {/* Scene Chips Rail */}
+      {currentStory && currentStory.scenes.length > 0 && (
+        <SceneChips
+          scenes={currentStory.scenes.map((scene) => ({
+            idx: scene.idx,
+            status: scene.image_url ? 'ready' : (isGeneratingImage && scene.idx === currentScene?.idx ? 'generating' : 'pending'),
+            thumbnailUrl: scene.image_url,
+          } as SceneChipData))}
+          activeIndex={currentScene?.idx ?? 0}
+          onSelect={(sceneIdx) => {
+            // Convert scene.idx to array index
+            const arrayIndex = currentStory.scenes.findIndex(s => s.idx === sceneIdx)
+            if (arrayIndex >= 0) setCurrentSceneIndex(arrayIndex)
+          }}
+          onDelete={deleteScene}
+          className="border-b border-white/10"
+        />
+      )}
 
-        {/* Narration Subtitle */}
-        {currentScene && (
-          <div className="absolute bottom-24 left-0 right-0 flex justify-center px-8">
-            <div className="bg-black/80 backdrop-blur-sm px-6 py-4 rounded-xl max-w-3xl">
-              <p className="text-lg text-white leading-relaxed text-center">{currentScene.narration}</p>
-            </div>
-          </div>
-        )}
-      </div>
+      {/* Main Preview Area */}
+      {currentStory && currentStory.scenes.length > 0 ? (
+        <StudioPreviewPanel
+          imageUrl={currentScene?.image_url}
+          isGenerating={isGeneratingImage}
+          narration={currentScene?.narration}
+          prompt={currentScene?.image_prompt}
+          onRegenerateImage={currentScene ? () => generateImageForScene(currentScene, undefined, true) : undefined}
+        />
+      ) : (
+        <StudioEmptyState
+          isGenerating={isGeneratingScene}
+          generatingLabel="Creating your first scene..."
+          onGenerateFirstScene={generateNextScene}
+        />
+      )}
 
-      {/* Controls */}
-      <div className="border-t border-white/10 bg-black/50 backdrop-blur-sm p-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
-          {/* Left: Scene navigation */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCurrentSceneIndex((prev) => Math.max(0, prev - 1))}
-              disabled={currentSceneIndex === 0}
-              className="p-3 text-white/50 hover:text-white hover:bg-white/5 rounded-full transition-colors disabled:opacity-30"
-              type="button"
-            >
-              <SkipBack size={20} />
-            </button>
-
-            <button
-              onClick={() => setIsPlaying(!isPlaying)}
-              className="p-4 bg-purple-500 hover:bg-purple-600 rounded-full transition-colors"
-              type="button"
-            >
-              {isPlaying ? <Pause size={24} /> : <Play size={24} fill="currentColor" />}
-            </button>
-
-            <button
-              onClick={() =>
-                setCurrentSceneIndex((prev) => Math.min((currentStory?.scenes.length || 1) - 1, prev + 1))
-              }
-              disabled={!currentStory || currentSceneIndex >= currentStory.scenes.length - 1}
-              className="p-3 text-white/50 hover:text-white hover:bg-white/5 rounded-full transition-colors disabled:opacity-30"
-              type="button"
-            >
-              <SkipForward size={20} />
-            </button>
-          </div>
-
-          {/* Center: Progress */}
-          <div className="flex-1 mx-8">
-            <div className="flex gap-1">
-              {currentStory?.scenes.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setCurrentSceneIndex(i)}
-                  className={`flex-1 h-1 rounded-full transition-colors ${
-                    i === currentSceneIndex
-                      ? 'bg-purple-500'
-                      : i < currentSceneIndex
-                      ? 'bg-white/30'
-                      : 'bg-white/10'
-                  }`}
-                  type="button"
-                />
-              ))}
-            </div>
-          </div>
-
-          {/* Right: Actions */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              className="p-3 text-white/50 hover:text-white hover:bg-white/5 rounded-full transition-colors"
-              type="button"
-            >
-              {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
-            </button>
-
-            <button
-              onClick={generateNextScene}
-              disabled={isGeneratingScene}
-              className="flex items-center gap-2 px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 rounded-full transition-colors disabled:opacity-50"
-              type="button"
-            >
-              {isGeneratingScene ? (
-                <>
-                  <div className="animate-spin w-4 h-4 border-2 border-purple-300 border-t-transparent rounded-full" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Plus size={16} />
-                  Next Scene
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={handleEnterTVMode}
-              disabled={!currentStory || currentStory.scenes.length === 0}
-              className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-500/20 to-pink-500/20 hover:from-purple-500/30 hover:to-pink-500/30 text-purple-300 border border-purple-500/30 rounded-full transition-all disabled:opacity-50"
-              type="button"
-              title="Watch story in immersive TV Mode"
-            >
-              <Monitor size={16} />
-              TV Mode
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* Action Bar */}
+      <StudioActions
+        isPlaying={isPlaying}
+        onTogglePlay={() => setIsPlaying(!isPlaying)}
+        canGoBack={currentSceneIndex > 0}
+        canGoForward={currentStory ? currentSceneIndex < currentStory.scenes.length - 1 : false}
+        onPrevScene={() => setCurrentSceneIndex((prev) => Math.max(0, prev - 1))}
+        onNextScene={() => setCurrentSceneIndex((prev) => Math.min((currentStory?.scenes.length || 1) - 1, prev + 1))}
+        isGeneratingScene={isGeneratingScene}
+        onGenerateNextScene={generateNextScene}
+        isStoryComplete={isStoryComplete}
+        onContinueChapter={continueChapterInStudio}
+        isCreatingChapter={isCreatingChapter}
+        onShowChapterSettings={() => setShowChapterSettings(true)}
+        currentIndex={currentSceneIndex}
+        totalScenes={currentStory?.scenes.length || 0}
+        onSelectScene={setCurrentSceneIndex}
+        isMuted={isMuted}
+        onToggleMute={() => setIsMuted(!isMuted)}
+        onFullscreen={toggleFullscreen}
+        onEnterTVMode={handleEnterTVMode}
+        tvModeDisabled={!currentStory || currentStory.scenes.length === 0}
+      />
 
       {/* Story Bible Modal */}
       {showBible && currentStory && (
@@ -1076,6 +1575,68 @@ export default function StudioView(props: StudioParams) {
         </div>
       )}
 
+      {/* Chapter Settings Modal */}
+      {showChapterSettings && isStoryComplete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md"
+          onClick={() => setShowChapterSettings(false)}
+        >
+          <div
+            className="max-w-lg w-full bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-white/10 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <BookOpen size={20} className="text-purple-400" />
+                New Chapter Settings
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowChapterSettings(false)}
+                className="text-white/50 hover:text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-white/70 text-sm">
+                Customize the direction for the next chapter. Leave empty to let the AI continue naturally.
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium text-white/70 mb-2">
+                  Chapter Direction (Optional)
+                </label>
+                <textarea
+                  value={chapterHint}
+                  onChange={(e) => setChapterHint(e.target.value)}
+                  placeholder="e.g., 'Focus on the mysterious stranger from scene 3' or 'Add a plot twist involving...'"
+                  className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-purple-500/50 resize-none"
+                  rows={3}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowChapterSettings(false)}
+                  className="flex-1 px-4 py-3 bg-white/5 hover:bg-white/10 text-white rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={continueChapterInStudio}
+                  disabled={isCreatingChapter}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium rounded-xl transition-colors disabled:opacity-50"
+                >
+                  {isCreatingChapter ? 'Creating...' : 'Start New Chapter'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Mode Chooser Modal */}
       {showModeChooser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
@@ -1153,6 +1714,7 @@ export default function StudioView(props: StudioParams) {
         <TVModeContainer
           onGenerateNext={generateNextForTVMode}
           onEnsureImage={generateImageForScene}
+          onContinueChapter={continueAsNextChapter}
         />
       )}
     </div>
