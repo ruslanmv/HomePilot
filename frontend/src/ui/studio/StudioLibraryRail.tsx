@@ -2,8 +2,7 @@ import React from "react";
 
 export type LibraryFilter = {
   q: string;
-  status?: string;
-  preset?: string;
+  platformPreset?: string;
   contentRating?: string;
 };
 
@@ -51,26 +50,12 @@ export function StudioLibraryRail(props: Props) {
         <div className="grid grid-cols-2 gap-2 mt-2">
           <select
             className="border rounded px-2 py-1 text-sm"
-            value={f.status || ""}
+            value={f.platformPreset || ""}
             onChange={(e) =>
-              props.onChange({ ...f, status: e.target.value || undefined })
+              props.onChange({ ...f, platformPreset: e.target.value || undefined })
             }
           >
-            <option value="">Status</option>
-            <option value="draft">Draft</option>
-            <option value="in_review">In Review</option>
-            <option value="approved">Approved</option>
-            <option value="archived">Archived</option>
-          </select>
-
-          <select
-            className="border rounded px-2 py-1 text-sm"
-            value={f.preset || ""}
-            onChange={(e) =>
-              props.onChange({ ...f, preset: e.target.value || undefined })
-            }
-          >
-            <option value="">Preset</option>
+            <option value="">Platform</option>
             <option value="youtube_16_9">YouTube 16:9</option>
             <option value="shorts_9_16">Shorts 9:16</option>
             <option value="slides_16_9">Slides 16:9</option>
@@ -78,7 +63,7 @@ export function StudioLibraryRail(props: Props) {
 
           {/* Content rating filter - NSFW governance */}
           <select
-            className="border rounded px-2 py-1 text-sm col-span-2"
+            className="border rounded px-2 py-1 text-sm"
             value={f.contentRating || ""}
             onChange={(e) =>
               props.onChange({ ...f, contentRating: e.target.value || undefined })

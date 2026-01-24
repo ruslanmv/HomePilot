@@ -1,95 +1,45 @@
 /**
- * API helper for Creator Studio
+ * Creator Studio API helpers.
  *
- * Provides a consistent way to make API calls using the connection
- * info (backendUrl + apiKey) stored in the studio store.
+ * This module is used by Studio pages and expects CreatorStudioHost to provide
+ * backendUrl + apiKey via the studio store.
  */
-import { useStudioStore } from "../stores/studioStore";
 
-/**
- * Make a fetch request to the Studio backend with proper auth headers.
- *
- * @param path - The API path (e.g., "/studio/presets")
- * @param init - Optional RequestInit options
- * @returns The parsed JSON response (or text if not JSON)
- */
-export async function studioFetch<T = unknown>(
-  path: string,
-  init?: RequestInit
-): Promise<T> {
-  const { backendUrl, apiKey } = useStudioStore.getState();
+import { getStudioConfig } from "../stores/studioStore";
 
-  // Build full URL (use backendUrl if set, otherwise relative path)
-  const url = backendUrl ? `${backendUrl}${path}` : path;
+type FetchOpts = RequestInit & { signal?: AbortSignal };
 
-  // Build headers
+export async function studioFetch<T>(path: string, opts: FetchOpts = {}): Promise<T> {
+  const { backendUrl, apiKey } = getStudioConfig();
+  const url = `${backendUrl}${path}`;
+
   const headers: Record<string, string> = {
-    ...(init?.headers as Record<string, string>),
+    ...(opts.headers as any),
+    "Content-Type": "application/json",
   };
 
-  // Add Content-Type for requests with body
-  if (init?.body && !headers["Content-Type"]) {
-    headers["Content-Type"] = "application/json";
-  }
+  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
 
-  // Add auth header if API key is set
-  if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  }
-
-  const res = await fetch(url, { ...init, headers });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(
-      `${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`
-    );
-  }
-
-  const contentType = res.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) {
-    return res.json() as Promise<T>;
-  }
-
-  return res.text() as unknown as T;
+  const r = await fetch(url, { ...opts, headers });
+  // Some backends may return empty bodies (e.g., 204). Handle safely.
+  const text = await r.text();
+  const j = text ? JSON.parse(text) : {};
+  if (!r.ok) throw new Error((j as any)?.detail || (j as any)?.error || `HTTP ${r.status}`);
+  return j as T;
 }
 
-/**
- * Make a GET request to the Studio backend.
- */
-export async function studioGet<T = unknown>(path: string): Promise<T> {
-  return studioFetch<T>(path, { method: "GET" });
+export function studioGet<T>(path: string, opts: FetchOpts = {}) {
+  return studioFetch<T>(path, { ...opts, method: "GET" });
 }
 
-/**
- * Make a POST request to the Studio backend with JSON body.
- */
-export async function studioPost<T = unknown>(
-  path: string,
-  body: unknown
-): Promise<T> {
-  return studioFetch<T>(path, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+export function studioPost<T>(path: string, body: any, opts: FetchOpts = {}) {
+  return studioFetch<T>(path, { ...opts, method: "POST", body: JSON.stringify(body) });
 }
 
-/**
- * Make a PATCH request to the Studio backend with JSON body.
- */
-export async function studioPatch<T = unknown>(
-  path: string,
-  body?: unknown
-): Promise<T> {
-  return studioFetch<T>(path, {
-    method: "PATCH",
-    body: body ? JSON.stringify(body) : undefined,
-  });
+export function studioPatch<T>(path: string, body?: any, opts: FetchOpts = {}) {
+  return studioFetch<T>(path, { ...opts, method: "PATCH", body: body ? JSON.stringify(body) : undefined });
 }
 
-/**
- * Make a DELETE request to the Studio backend.
- */
-export async function studioDelete<T = unknown>(path: string): Promise<T> {
-  return studioFetch<T>(path, { method: "DELETE" });
+export function studioDelete<T>(path: string, opts: FetchOpts = {}) {
+  return studioFetch<T>(path, { ...opts, method: "DELETE" });
 }

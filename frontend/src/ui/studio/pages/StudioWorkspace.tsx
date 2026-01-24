@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { useParams, Routes, Route, Navigate, NavLink } from "react-router-dom";
 import { StudioShell } from "../StudioShell";
 import { PolicyBanner } from "../components/PolicyBanner";
+import { studioGet } from "../lib/api";
+import { studioPaths } from "../lib/studioPaths";
 
 // Tab components (stubs for now)
 import { OverviewTab } from "../tabs/OverviewTab";
@@ -22,12 +24,12 @@ type Video = {
 
 function TabBar({ id }: { id: string }) {
   const tabs = [
-    { to: `/studio/videos/${id}/overview`, label: "Overview" },
-    { to: `/studio/videos/${id}/bible`, label: "Channel Bible" },
-    { to: `/studio/videos/${id}/timeline`, label: "Timeline" },
-    { to: `/studio/videos/${id}/player`, label: "Player" },
-    { to: `/studio/videos/${id}/export`, label: "Export" },
-    { to: `/studio/videos/${id}/activity`, label: "Activity" },
+    { to: studioPaths.videoTab(id, "overview"), label: "Overview" },
+    { to: studioPaths.videoTab(id, "bible"), label: "Channel Bible" },
+    { to: studioPaths.videoTab(id, "timeline"), label: "Timeline" },
+    { to: studioPaths.videoTab(id, "player"), label: "Player" },
+    { to: studioPaths.videoTab(id, "export"), label: "Export" },
+    { to: studioPaths.videoTab(id, "activity"), label: "Activity" },
   ];
 
   return (
@@ -75,21 +77,26 @@ export function StudioWorkspace() {
     setLoading(true);
     setError(null);
 
-    fetch(`/studio/videos/${id}`)
-      .then((r) => r.json())
-      .then((j) => {
-        if (j.video) {
-          setVideo(j.video);
-        } else {
-          setError(j.detail || j.error || "Video not found");
-        }
+    const ac = new AbortController();
+
+    studioGet<{ video: Video }>(`/studio/videos/${id}`, { signal: ac.signal })
+      .then((j) => setVideo(j.video))
+      .catch((e) => {
+        // Ignore aborts to prevent noisy errors during rapid navigation.
+        if (e?.name === "AbortError") return;
+        setError(e.message || String(e));
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        // If aborted, skip state updates.
+        if (ac.signal.aborted) return;
+        setLoading(false);
+      });
+
+    return () => ac.abort();
   }, [id]);
 
   if (!id) {
-    return <Navigate to="/studio" replace />;
+    return <Navigate to={studioPaths.home()} replace />;
   }
 
   if (loading) {
@@ -100,12 +107,12 @@ export function StudioWorkspace() {
     );
   }
 
-  if (error) {
+  if (error || !video) {
     return (
       <div className="h-full w-full flex items-center justify-center">
         <div className="text-center">
-          <div className="text-sm text-red-500">{error}</div>
-          <a href="/studio" className="text-sm underline mt-2 inline-block">
+          <div className="text-sm text-red-500">{error || "Video not found"}</div>
+          <a href={studioPaths.home()} className="text-sm underline mt-2 inline-block">
             Back to Library
           </a>
         </div>
