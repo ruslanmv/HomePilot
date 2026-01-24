@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import sqlite3
 import subprocess
@@ -389,7 +390,9 @@ async def _ollama_chat(
     temperature: float,
     max_tokens: int,
     base_url: str,
-    model: str
+    model: str,
+    response_format: Optional[str] = None,
+    stop: Optional[List[str]] = None,
 ) -> str:
     resp = await chat_ollama(
         messages,
@@ -397,9 +400,20 @@ async def _ollama_chat(
         max_tokens=max_tokens,
         base_url=base_url,
         model=model,
+        response_format=response_format,
+        stop=stop,
     )
     text = (((resp.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
     return str(text).strip()
+
+
+# Stop tokens tuned for local models (deepseek-r1, llama3) to prevent non-JSON chatter.
+_JSON_STOP_DEFAULT: List[str] = [
+    "</think>",
+    "```",
+    "\n\nAssistant:",
+    "\n\nExplanation:",
+]
 
 
 def _extract_first_json_object(text: str) -> str:
@@ -469,6 +483,127 @@ def _extract_json(text: str) -> Dict[str, Any]:
             pass
 
     return {}
+
+
+# --- JSON robustness helpers ---------------------------------------------------------
+
+_CODE_FENCE_PREFIXES = ("```json", "```JSON", "```")
+
+
+def _strip_code_fences(raw: str) -> str:
+    """Strip markdown code fences from LLM output."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    for p in _CODE_FENCE_PREFIXES:
+        if s.startswith(p):
+            # drop first fence line
+            s = s.split("\n", 1)[1] if "\n" in s else ""
+            break
+    if s.endswith("```"):
+        s = s[:-3]
+    return s.strip()
+
+
+def _repair_json_text(raw: str) -> str:
+    """Best-effort, conservative JSON repair for common LLM mistakes."""
+    s = _strip_code_fences(raw)
+
+    # Trim any leading junk before first '{'
+    i = s.find("{")
+    if i > 0:
+        s = s[i:]
+
+    # Trim any trailing junk after the last '}' (helps when model adds commentary)
+    j = s.rfind("}")
+    if j != -1:
+        s = s[: j + 1]
+
+    # Remove trailing commas before } or ]
+    s = re.sub(r",\s*([}\]])", r"\1", s)
+
+    # Replace curly quotes with straight quotes (rare but happens)
+    s = s.replace(""", '"').replace(""", '"').replace("'", "'")
+
+    return s.strip()
+
+
+def _looks_truncated_json(raw: str) -> bool:
+    """Check if JSON appears truncated (has opening brace but no balanced close)."""
+    s = _strip_code_fences(raw)
+    if "{" not in s:
+        return False
+    # if we can't find a balanced object but there is an opening brace, it's likely truncation
+    return _extract_first_json_object(s) == ""
+
+
+def _extract_json_robust(raw: str) -> Dict[str, Any]:
+    """Parse JSON with multiple fallbacks + light repair."""
+    s = (raw or "").strip()
+    if not s:
+        return {}
+
+    # 1) direct parse
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+
+    # 2) brace-extract then parse
+    candidate = _extract_first_json_object(s)
+    if candidate:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    # 3) repair then parse
+    repaired = _repair_json_text(s)
+    if repaired and repaired != s:
+        try:
+            return json.loads(repaired)
+        except Exception:
+            pass
+        candidate = _extract_first_json_object(repaired)
+        if candidate:
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+
+    return {}
+
+
+async def _continue_if_truncated(
+    *,
+    sys_msg: str,
+    base_url: str,
+    model: str,
+    raw: str,
+    max_tokens: int = 320,
+) -> str:
+    """If output looks truncated, ask the model to continue the same JSON without repeating."""
+    if not _looks_truncated_json(raw):
+        return raw
+
+    print(f"[STORY] Detected truncated JSON, requesting continuation...")
+
+    cont_user = (
+        "Continue the SAME JSON object exactly where you stopped.\n"
+        "Output ONLY the remaining JSON characters needed to complete it.\n"
+        "Do NOT repeat any earlier text. Do NOT add commentary."
+    )
+
+    tail = await _ollama_chat(
+        [{"role": "system", "content": sys_msg}, {"role": "user", "content": cont_user}],
+        temperature=0.0,
+        max_tokens=max_tokens,
+        base_url=base_url,
+        model=model,
+        response_format="json",
+        stop=_JSON_STOP_DEFAULT,
+    )
+    return (raw or "") + (tail or "")
 
 
 def _clamp_text(s: str, max_len: int) -> str:
@@ -706,14 +841,16 @@ async def start_story(
     base_url = ollama_base_url or OLLAMA_BASE_URL
     model = ollama_model or OLLAMA_MODEL
 
-    # First attempt with generous token limit
+    # First attempt with JSON mode and stop tokens for robustness
     print(f"[STORY] Generating story bible with model: {model}")
     text = await _ollama_chat(
         [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
-        temperature=opts.temperature,
-        max_tokens=1800,  # Increased from 900 to reduce truncation
+        temperature=0.0,
+        max_tokens=750,
         base_url=base_url,
         model=model,
+        response_format="json",
+        stop=_JSON_STOP_DEFAULT,
     )
 
     # Debug: Log what we got back
@@ -723,7 +860,9 @@ async def start_story(
     else:
         print(f"[STORY] WARNING: LLM returned empty response!")
 
-    obj = _extract_json(text) if text.strip() else {}
+    # Handle truncation with continuation, then use robust parsing
+    text = await _continue_if_truncated(sys_msg=sys_msg, base_url=base_url, model=model, raw=text, max_tokens=260)
+    obj = _extract_json_robust(text) if text.strip() else {}
 
     # Retry once if JSON is invalid/empty (truncation or model misbehavior)
     if not obj:
@@ -746,13 +885,16 @@ async def start_story(
 
         text = await _ollama_chat(
             [{"role": "system", "content": sys_msg}, {"role": "user", "content": repair_user}],
-            temperature=0.2,  # Lower temperature for more deterministic output
-            max_tokens=2200,  # Even more tokens for retry
+            temperature=0.0,
+            max_tokens=900,
             base_url=base_url,
             model=model,
+            response_format="json",
+            stop=_JSON_STOP_DEFAULT,
         )
 
-        obj = _extract_json(text) if text.strip() else {}
+        text = await _continue_if_truncated(sys_msg=sys_msg, base_url=base_url, model=model, raw=text, max_tokens=260)
+        obj = _extract_json_robust(text) if text.strip() else {}
 
     # Final check for empty/invalid JSON
     if not obj:
@@ -826,10 +968,12 @@ async def next_scene(
     print(f"[STORY] Generating scene {idx} with model: {model}")
     raw = await _ollama_chat(
         [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
-        temperature=opts.temperature,
-        max_tokens=900,  # Increased from 700
+        temperature=0.0,
+        max_tokens=650,
         base_url=base_url,
         model=model,
+        response_format="json",
+        stop=_JSON_STOP_DEFAULT,
     )
 
     # Debug: Log what we got back
@@ -838,7 +982,9 @@ async def next_scene(
     else:
         print(f"[STORY] WARNING: Scene {idx} LLM returned empty response!")
 
-    obj = _extract_json(raw) if raw.strip() else {}
+    # Handle truncation with continuation, then use robust parsing
+    raw = await _continue_if_truncated(sys_msg=sys_msg, base_url=base_url, model=model, raw=raw, max_tokens=240)
+    obj = _extract_json_robust(raw) if raw.strip() else {}
 
     # Retry once if JSON is invalid/empty
     if not obj:
@@ -872,13 +1018,16 @@ async def next_scene(
 
         raw = await _ollama_chat(
             [{"role": "system", "content": sys_msg}, {"role": "user", "content": repair_user}],
-            temperature=0.3,
-            max_tokens=1200,
+            temperature=0.0,
+            max_tokens=750,
             base_url=base_url,
             model=model,
+            response_format="json",
+            stop=_JSON_STOP_DEFAULT,
         )
 
-        obj = _extract_json(raw) if raw.strip() else {}
+        raw = await _continue_if_truncated(sys_msg=sys_msg, base_url=base_url, model=model, raw=raw, max_tokens=240)
+        obj = _extract_json_robust(raw) if raw.strip() else {}
 
     # Final check for invalid/empty JSON
     if not obj:
@@ -907,12 +1056,21 @@ async def next_scene(
         ref_user = _refine_user_prompt(bible=bible, raw_prompt=image_prompt, raw_negative=negative_prompt, opts=opts)
         ref_raw = await _ollama_chat(
             [{"role": "system", "content": ref_sys}, {"role": "user", "content": ref_user}],
-            temperature=max(0.2, min(0.8, opts.temperature)),
-            max_tokens=450,
+            temperature=0.0,
+            max_tokens=280,
             base_url=(ollama_base_url or OLLAMA_BASE_URL),
             model=(ollama_model or OLLAMA_MODEL),
+            response_format="json",
+            stop=_JSON_STOP_DEFAULT,
         )
-        ref_obj = _extract_json(ref_raw)
+        ref_raw = await _continue_if_truncated(
+            sys_msg=ref_sys,
+            base_url=(ollama_base_url or OLLAMA_BASE_URL),
+            model=(ollama_model or OLLAMA_MODEL),
+            raw=ref_raw,
+            max_tokens=140,
+        )
+        ref_obj = _extract_json_robust(ref_raw)
         rp = ref_obj.get("image_prompt")
         rn = ref_obj.get("negative_prompt")
         if isinstance(rp, str) and rp.strip():

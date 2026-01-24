@@ -208,6 +208,8 @@ async def chat_ollama(
     max_tokens: int = 800,
     base_url: Optional[str] = None,
     model: Optional[str] = None,
+    response_format: Optional[str] = None,
+    stop: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Ollama /api/chat adapter -> returns OpenAI-style JSON for orchestrator consistency.
@@ -228,6 +230,15 @@ async def chat_ollama(
             "num_predict": int(max_tokens),
         },
     }
+
+    # If supported by your Ollama build/model, this enforces JSON-only output at decode-time.
+    # Values commonly supported: "json".
+    if response_format:
+        payload["format"] = str(response_format)
+
+    # Optional stop sequences (Ollama supports stop inside options).
+    if stop:
+        payload.setdefault("options", {})["stop"] = list(stop)
 
     async with httpx.AsyncClient(timeout=_timeout()) as client:
         if not mdl:
