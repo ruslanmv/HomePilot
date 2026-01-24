@@ -349,15 +349,38 @@ async def chat_ollama(
     if not content.strip() and isinstance(msg, dict):
         thinking = str(msg.get("thinking") or "").strip()
         if thinking:
+            print(f"[OLLAMA] Content empty, checking thinking field ({len(thinking)} chars)...")
+            print(f"[OLLAMA] Thinking (first 500 chars): {thinking[:500]}")
+
             # Try to extract JSON from thinking field
             candidate = _extract_first_json_object(thinking)
-            if candidate and not _is_placeholder_json(candidate):
-                try:
-                    json.loads(candidate)  # Validate it's parseable
-                    content = candidate
-                    print(f"[OLLAMA] Extracted valid JSON from message.thinking field (content was empty)")
-                except Exception:
-                    pass  # Not valid JSON, keep empty
+            if candidate:
+                print(f"[OLLAMA] Found JSON candidate ({len(candidate)} chars)")
+                is_placeholder = _is_placeholder_json(candidate)
+                print(f"[OLLAMA] Is placeholder JSON: {is_placeholder}")
+
+                if not is_placeholder:
+                    try:
+                        json.loads(candidate)  # Validate it's parseable
+                        content = candidate
+                        print(f"[OLLAMA] SUCCESS: Extracted valid JSON from message.thinking field")
+                    except Exception as e:
+                        print(f"[OLLAMA] JSON parse failed: {e}")
+                else:
+                    # Even if it looks like placeholder, if it's long and has real content, use it
+                    # This handles cases where schema patterns appear but there's real content too
+                    if len(candidate) > 200:
+                        try:
+                            parsed = json.loads(candidate)
+                            # Check if it has meaningful content (not just schema keys)
+                            values = str(parsed.values())
+                            if len(values) > 100 and "string" not in values.lower()[:50]:
+                                content = candidate
+                                print(f"[OLLAMA] Using thinking JSON despite placeholder pattern (has real content)")
+                        except Exception:
+                            pass
+            else:
+                print(f"[OLLAMA] No JSON object found in thinking field")
 
     # Debug logging when content is still empty (helps diagnose model-specific issues)
     if not content.strip():

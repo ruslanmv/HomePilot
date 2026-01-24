@@ -839,7 +839,9 @@ async def start_story(
     user_msg = _planner_user_prompt(premise, title_hint, opts)
 
     base_url = ollama_base_url or OLLAMA_BASE_URL
-    model = ollama_model or OLLAMA_MODEL
+    # Fallback chain for model: explicit param -> config -> hardcoded default
+    # This prevents empty model string which causes Ollama to fail
+    model = ollama_model or OLLAMA_MODEL or "llama3:8b"
 
     # First attempt with JSON mode and stop tokens for robustness
     print(f"[STORY] Generating story bible with model: {model}")
@@ -963,7 +965,8 @@ async def next_scene(
     user_msg = _scene_user_prompt(bible=bible, state=state, idx=idx, opts=opts)
 
     base_url = ollama_base_url or OLLAMA_BASE_URL
-    model = ollama_model or OLLAMA_MODEL
+    # Fallback chain for model: explicit param -> config -> hardcoded default
+    model = ollama_model or OLLAMA_MODEL or "llama3:8b"
 
     print(f"[STORY] Generating scene {idx} with model: {model}")
     raw = await _ollama_chat(
