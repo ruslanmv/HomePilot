@@ -3,14 +3,14 @@ import {
   ArrowLeft,
   Play,
   Pause,
-  ChevronLeft,
-  ChevronRight,
+  SkipBack,
+  SkipForward,
   Plus,
   RefreshCw,
   Check,
   Loader2,
   ImageIcon,
-  Tv,
+  Monitor,
   Edit3,
   Wand2,
   Save,
@@ -18,7 +18,8 @@ import {
   Settings,
   FileText,
   Sparkles,
-  Trash2,
+  AlertCircle,
+  Download,
 } from "lucide-react";
 import { useTVModeStore } from "./studio/stores/tvModeStore";
 import type { TVScene } from "./studio/stores/tvModeStore";
@@ -92,11 +93,8 @@ interface CreatorStudioEditorProps {
   backendUrl: string;
   apiKey?: string;
   onExit: () => void;
-  /** Auto-generate first scene on load (for newly created projects) */
   autoGenerateFirst?: boolean;
-  /** Target number of scenes for the project */
   targetSceneCount?: number;
-  /** Image generation settings */
   imageProvider?: string;
   imageModel?: string;
   imageWidth?: number;
@@ -106,13 +104,8 @@ interface CreatorStudioEditorProps {
 }
 
 /**
- * CreatorStudioEditor - Preview-first editor for Creator Studio projects
- *
- * Shows:
- * - Header with back button, title, status, save indicator
- * - Scene Chips rail (horizontal)
- * - Preview panel (dominant)
- * - Actions bar
+ * CreatorStudioEditor - Professional editor for Creator Studio projects
+ * Styled like Play Story mode but enhanced for creators
  */
 export function CreatorStudioEditor({
   projectId,
@@ -310,7 +303,6 @@ export function CreatorStudioEditor({
         negativePrompt: editNegativePrompt,
       });
 
-      // Update local state
       setScenes((prev) =>
         prev.map((s) =>
           s.id === editingScene.id
@@ -344,10 +336,8 @@ export function CreatorStudioEditor({
       console.log('[CreatorStudioEditor] Deleting scene:', sceneId);
       await deleteApi<{ ok: boolean }>(`/studio/videos/${projectId}/scenes/${sceneId}`);
 
-      // Find deleted scene index for adjusting current scene
       const deletedIndex = scenes.findIndex((s) => s.id === sceneId);
 
-      // Update local state - remove scene and re-index
       setScenes((prev) => {
         const newScenes = prev
           .filter((s) => s.id !== sceneId)
@@ -355,7 +345,6 @@ export function CreatorStudioEditor({
         return newScenes;
       });
 
-      // Adjust current scene index if needed
       if (deletedIndex >= 0 && deletedIndex <= currentSceneIndex) {
         setCurrentSceneIndex((prev) => Math.max(0, prev - 1));
       }
@@ -371,7 +360,6 @@ export function CreatorStudioEditor({
   // Fetch available models
   const fetchAvailableModels = useCallback(async () => {
     try {
-      // Fetch LLM models (Ollama)
       const llmData = await fetchApi<{ models: { id: string; name?: string }[] }>(
         '/models?provider=ollama'
       );
@@ -383,7 +371,6 @@ export function CreatorStudioEditor({
     }
 
     try {
-      // Fetch image models (ComfyUI)
       const imgData = await fetchApi<{ models: string[] }>(
         '/models?provider=comfyui&model_type=image'
       );
@@ -451,13 +438,11 @@ export function CreatorStudioEditor({
         if (imageUrl) {
           console.log('[CreatorStudioEditor] Image generated:', imageUrl);
 
-          // Update scene with image URL via API
           await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, {
             imageUrl,
             status: 'ready',
           });
 
-          // Update local state
           setScenes((prev) =>
             prev.map((s) =>
               s.id === sceneId ? { ...s, imageUrl, status: 'ready' as SceneStatus } : s
@@ -476,7 +461,7 @@ export function CreatorStudioEditor({
     [projectId, imageProvider, imageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage]
   );
 
-  // Generate scene from outline (defined after generateImageForScene to avoid circular dependency)
+  // Generate scene from outline
   const generateSceneFromOutline = useCallback(async (sceneIndex: number) => {
     if (!storyOutline || sceneIndex >= storyOutline.scenes.length) return;
 
@@ -492,7 +477,6 @@ export function CreatorStudioEditor({
         setCurrentSceneIndex(scenes.length);
         setLastSaved(new Date());
 
-        // Auto-generate image
         generateImageForScene(data.scene.id, data.scene.imagePrompt);
       }
     } catch (e: any) {
@@ -581,7 +565,6 @@ export function CreatorStudioEditor({
       let imagePrompt: string;
       let negativePrompt: string = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
 
-      // Use story outline if available
       if (storyOutline && storyOutline.scenes && storyOutline.scenes.length > 0) {
         const outlineScene = storyOutline.scenes[0];
         narration = outlineScene.narration;
@@ -589,7 +572,6 @@ export function CreatorStudioEditor({
         negativePrompt = outlineScene.negative_prompt || negativePrompt;
         console.log('[CreatorStudioEditor] Using story outline for first scene');
       } else {
-        // Fallback to AI-generated prompts
         const visualStyle = getVisualStyle();
         const tones = getTones();
         const toneDesc = tones.join(", ");
@@ -611,7 +593,6 @@ export function CreatorStudioEditor({
       setCurrentSceneIndex(0);
       setLastSaved(new Date());
 
-      // Auto-generate image for the first scene
       console.log('[CreatorStudioEditor] Auto-generating image for first scene');
       generateImageForScene(data.scene.id, data.scene.imagePrompt);
     } catch (e: any) {
@@ -628,7 +609,6 @@ export function CreatorStudioEditor({
     setIsGeneratingScene(true);
 
     try {
-      // Create a scene with a default prompt based on project
       const data = await postApi<{ scene: Scene }>(
         `/studio/videos/${projectId}/scenes`,
         {
@@ -649,7 +629,7 @@ export function CreatorStudioEditor({
     }
   }, [project, projectId, isGeneratingScene, postApi]);
 
-  // Generate next scene with AI-powered prompts (uses story outline if available)
+  // Generate next scene with AI-powered prompts
   const generateNextScene = useCallback(async () => {
     if (!project || isGeneratingScene) return;
     setIsGeneratingScene(true);
@@ -660,7 +640,6 @@ export function CreatorStudioEditor({
       let imagePrompt: string;
       let negativePrompt: string = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
 
-      // Use story outline if available and we haven't exceeded the planned scenes
       if (storyOutline && storyOutline.scenes && scenes.length < storyOutline.scenes.length) {
         const outlineScene = storyOutline.scenes[scenes.length];
         narration = outlineScene.narration;
@@ -668,7 +647,6 @@ export function CreatorStudioEditor({
         negativePrompt = outlineScene.negative_prompt || negativePrompt;
         console.log(`[CreatorStudioEditor] Using outline for scene ${sceneNum}: "${outlineScene.title}"`);
       } else {
-        // Fallback to AI-generated prompts
         const visualStyle = getVisualStyle();
         const tones = getTones();
         const toneDesc = tones.join(", ");
@@ -690,7 +668,6 @@ export function CreatorStudioEditor({
       setCurrentSceneIndex(scenes.length);
       setLastSaved(new Date());
 
-      // Auto-generate image for the new scene
       console.log('[CreatorStudioEditor] Auto-generating image for scene:', sceneNum);
       generateImageForScene(data.scene.id, data.scene.imagePrompt);
     } catch (e: any) {
@@ -726,7 +703,6 @@ export function CreatorStudioEditor({
 
       setScenes((prev) => [...prev, data.scene]);
 
-      // Return TV scene format
       return sceneToTVScene(data.scene);
     } catch (e: any) {
       console.error('[CreatorStudioEditor] Failed to generate scene for TV mode:', e);
@@ -736,14 +712,11 @@ export function CreatorStudioEditor({
 
   // Ensure image for TV Mode scene
   const ensureImageForTVMode = useCallback((tvScene: TVScene) => {
-    // Find the corresponding Creator Studio scene
     const scene = scenes.find(s => s.idx === tvScene.idx);
     if (!scene) return;
 
-    // If no image, generate one
     if (!tvScene.image_url && !tvScene.image) {
       generateImageForScene(scene.id, scene.imagePrompt).then(() => {
-        // After generation, update the TV mode store
         const updatedScene = scenes.find(s => s.idx === tvScene.idx);
         if (updatedScene?.imageUrl) {
           updateSceneImageByIdx(tvScene.idx, updatedScene.imageUrl);
@@ -756,25 +729,52 @@ export function CreatorStudioEditor({
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "draft":
-        return { bg: "bg-yellow-500/20", text: "text-yellow-300", label: "Draft" };
+        return { bg: "bg-amber-500/20", text: "text-amber-300", label: "Draft" };
       case "approved":
-        return { bg: "bg-green-500/20", text: "text-green-300", label: "Finished" };
+        return { bg: "bg-emerald-500/20", text: "text-emerald-300", label: "Finished" };
       case "in_review":
-        return { bg: "bg-blue-500/20", text: "text-blue-300", label: "In Review" };
+        return { bg: "bg-cyan-500/20", text: "text-cyan-300", label: "In Review" };
       case "archived":
-        return { bg: "bg-gray-500/20", text: "text-gray-300", label: "Archived" };
+        return { bg: "bg-slate-500/20", text: "text-slate-300", label: "Archived" };
       default:
-        return { bg: "bg-gray-500/20", text: "text-gray-300", label: status };
+        return { bg: "bg-slate-500/20", text: "text-slate-300", label: status };
+    }
+  };
+
+  // Scene status indicator
+  const SceneStatusIndicator = ({ status }: { status: SceneStatus }) => {
+    switch (status) {
+      case 'generating':
+        return (
+          <div className="w-4 h-4 rounded-full bg-black/60 flex items-center justify-center">
+            <Loader2 size={10} className="text-cyan-400 animate-spin" />
+          </div>
+        );
+      case 'ready':
+        return null;
+      case 'error':
+        return (
+          <div className="w-4 h-4 rounded-full bg-red-500/80 flex items-center justify-center">
+            <AlertCircle size={10} className="text-white" />
+          </div>
+        );
+      case 'pending':
+      default:
+        return (
+          <div className="w-4 h-4 rounded-full bg-black/60 flex items-center justify-center">
+            <div className="w-2 h-2 rounded-full bg-white/40" />
+          </div>
+        );
     }
   };
 
   // Loading state
   if (loading) {
     return (
-      <div className="min-h-screen w-full bg-black text-white flex items-center justify-center">
+      <div className="min-h-screen w-full bg-gradient-to-b from-black via-[#0a0a0f] to-[#0f0f18] text-white flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <div className="text-white/60">Loading project...</div>
+          <Loader2 className="w-10 h-10 animate-spin text-cyan-400" />
+          <div className="text-white/60 text-sm">Loading project...</div>
         </div>
       </div>
     );
@@ -783,13 +783,16 @@ export function CreatorStudioEditor({
   // Error state
   if (error || !project) {
     return (
-      <div className="min-h-screen w-full bg-black text-white flex items-center justify-center">
+      <div className="min-h-screen w-full bg-gradient-to-b from-black via-[#0a0a0f] to-[#0f0f18] text-white flex items-center justify-center">
         <div className="flex flex-col items-center gap-4 max-w-md text-center">
-          <div className="text-red-400 text-lg">Failed to load project</div>
-          <div className="text-white/60 text-sm">{error || "Project not found"}</div>
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-2">
+            <AlertCircle size={28} className="text-red-400" />
+          </div>
+          <div className="text-red-400 text-lg font-medium">Failed to load project</div>
+          <div className="text-white/50 text-sm">{error || "Project not found"}</div>
           <button
             onClick={onExit}
-            className="mt-4 px-6 py-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors"
+            className="mt-4 px-6 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-colors text-sm"
           >
             ← Back to Studio
           </button>
@@ -801,36 +804,36 @@ export function CreatorStudioEditor({
   const statusBadge = getStatusBadge(project.status);
 
   return (
-    <div className="min-h-screen w-full bg-black text-white flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 bg-black/80">
+    <div className="min-h-screen w-full bg-gradient-to-b from-black via-[#0a0a0f] to-[#0f0f18] text-white flex flex-col">
+      {/* Header - Compact & Cinematic */}
+      <header className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/40 backdrop-blur-md">
         <div className="flex items-center gap-4">
           <button
             onClick={onExit}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm text-white/60 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+            className="flex items-center gap-2 px-3 py-2 text-sm text-white/50 hover:text-white hover:bg-white/5 rounded-lg transition-all"
           >
             <ArrowLeft size={16} />
-            <span>Back to Studio</span>
+            <span className="hidden sm:inline">Back</span>
           </button>
 
-          <div className="h-6 w-px bg-white/20" />
+          <div className="h-6 w-px bg-white/10" />
 
           <div>
-            <div className="text-base font-semibold text-white">{project.title}</div>
-            <div className="text-xs text-white/50">
-              {scenes.length} scene{scenes.length !== 1 ? "s" : ""}
+            <h1 className="text-base font-semibold text-white">{project.title}</h1>
+            <div className="text-xs text-white/40">
+              {scenes.length} scene{scenes.length !== 1 ? "s" : ""} • Creator Studio
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* Status Badge */}
           <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${statusBadge.bg} ${statusBadge.text}`}>
             {statusBadge.label}
           </span>
 
           {/* Save Indicator */}
-          <div className="flex items-center gap-1.5 text-xs text-white/50">
+          <div className="hidden sm:flex items-center gap-1.5 text-xs text-white/40 px-2">
             {isSaving ? (
               <>
                 <Loader2 size={12} className="animate-spin" />
@@ -838,67 +841,40 @@ export function CreatorStudioEditor({
               </>
             ) : lastSaved ? (
               <>
-                <Check size={12} className="text-green-400" />
+                <Check size={12} className="text-emerald-400" />
                 <span>Saved</span>
               </>
-            ) : (
-              <span>Auto-save enabled</span>
-            )}
+            ) : null}
           </div>
 
           {/* Story Outline Button */}
           <button
             onClick={() => setShowOutlinePanel(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
+            className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm transition-all"
             title="Story Outline"
           >
-            <Wand2 size={14} />
-            Outline
+            <Wand2 size={14} className="text-cyan-400" />
+            <span className="hidden sm:inline">Outline</span>
           </button>
 
-          {/* Watch / TV Mode Button */}
-          {scenes.length > 0 && (
-            <button
-              onClick={handleEnterTVMode}
-              className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
-              title="Watch in TV Mode"
-            >
-              <Tv size={14} />
-              Watch
-            </button>
-          )}
-
-          {/* Primary CTA */}
-          {scenes.length > 0 && (
-            <button
-              onClick={generateNextScene}
-              disabled={isGeneratingScene}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
-            >
-              {isGeneratingScene ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Plus size={14} />
-                  Generate next scene
-                </>
-              )}
-            </button>
-          )}
+          {/* Export Button */}
+          <button
+            className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm transition-all"
+            title="Export project"
+          >
+            <Download size={14} />
+            <span className="hidden sm:inline">Export</span>
+          </button>
         </div>
-      </div>
+      </header>
 
-      {/* Scene Chips Rail */}
+      {/* Scene Chips Rail - Like Play Story */}
       {scenes.length > 0 && (
-        <div className="w-full overflow-x-auto border-b border-white/10 bg-black/40">
+        <div className="w-full overflow-x-auto scrollbar-hide border-b border-white/5 bg-black/20">
           <div className="flex gap-2 px-4 py-3 min-w-max">
             {scenes.map((scene, idx) => {
               const isActive = idx === currentSceneIndex;
               const hasImage = Boolean(scene.imageUrl);
-
               const isHovered = hoveredSceneIdx === idx;
               const showDelete = isHovered && scenes.length > 1;
 
@@ -912,17 +888,16 @@ export function CreatorStudioEditor({
                   <button
                     onClick={() => setCurrentSceneIndex(idx)}
                     className={`
-                      relative rounded-lg overflow-hidden transition-all
+                      relative rounded-lg overflow-hidden transition-all duration-200
                       ${isActive
-                        ? "ring-2 ring-blue-500 ring-offset-2 ring-offset-black"
-                        : "opacity-70 hover:opacity-100"
+                        ? "ring-2 ring-cyan-400 ring-offset-2 ring-offset-black scale-105"
+                        : "opacity-60 hover:opacity-100 hover:scale-102"
                       }
                     `}
                     type="button"
                     title={`Scene ${idx + 1}`}
                   >
-                    {/* Thumbnail */}
-                    <div className="w-16 h-10 flex items-center justify-center bg-white/5">
+                    <div className="w-20 h-12 flex items-center justify-center bg-white/5">
                       {hasImage ? (
                         <img
                           src={scene.imageUrl!}
@@ -930,14 +905,21 @@ export function CreatorStudioEditor({
                           className="w-full h-full object-cover"
                         />
                       ) : (
-                        <ImageIcon size={16} className="text-white/30" />
+                        <ImageIcon size={16} className="text-white/20" />
                       )}
                     </div>
 
-                    {/* Scene number badge */}
-                    <div className="absolute bottom-1 right-1 text-[10px] bg-black/60 px-1 rounded">
-                      {idx + 1}
+                    {/* Status indicator */}
+                    <div className="absolute bottom-1 right-1">
+                      <SceneStatusIndicator status={scene.status} />
                     </div>
+
+                    {/* Scene number */}
+                    {!scene.status || scene.status === 'ready' ? (
+                      <div className="absolute bottom-1 left-1 text-[10px] bg-black/70 px-1.5 rounded font-medium">
+                        {idx + 1}
+                      </div>
+                    ) : null}
                   </button>
 
                   {/* Delete button */}
@@ -947,11 +929,11 @@ export function CreatorStudioEditor({
                         e.stopPropagation();
                         deleteScene(scene.id);
                       }}
-                      className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center transition-all transform hover:scale-110 bg-black/80 text-white/70 hover:text-white hover:bg-red-500"
+                      className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center transition-all transform hover:scale-110 bg-black/90 text-white/60 hover:text-white hover:bg-red-500 border border-white/10"
                       type="button"
                       title="Delete scene"
                     >
-                      <X size={12} />
+                      <X size={10} />
                     </button>
                   )}
                 </div>
@@ -962,10 +944,14 @@ export function CreatorStudioEditor({
             <button
               onClick={generateNextScene}
               disabled={isGeneratingScene}
-              className="w-16 h-10 rounded-lg border border-dashed border-white/20 hover:border-white/40 flex items-center justify-center transition-colors disabled:opacity-50"
+              className="w-20 h-12 rounded-lg border border-dashed border-white/20 hover:border-cyan-400/50 hover:bg-cyan-400/5 flex items-center justify-center transition-all disabled:opacity-40"
               title="Add scene"
             >
-              <Plus size={16} className="text-white/40" />
+              {isGeneratingScene ? (
+                <Loader2 size={16} className="text-cyan-400 animate-spin" />
+              ) : (
+                <Plus size={16} className="text-white/40" />
+              )}
             </button>
           </div>
         </div>
@@ -973,148 +959,227 @@ export function CreatorStudioEditor({
 
       {/* Main Content */}
       {scenes.length === 0 ? (
-        // Empty State
+        // Empty State - Cinematic
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="max-w-md text-center">
-            <div className="w-24 h-24 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-blue-500/20 to-cyan-500/20 flex items-center justify-center">
-              <ImageIcon size={48} className="text-blue-400/60" />
+            <div className="w-28 h-28 mx-auto mb-8 rounded-3xl bg-gradient-to-br from-cyan-500/20 via-blue-500/10 to-transparent border border-cyan-500/20 flex items-center justify-center">
+              <ImageIcon size={48} className="text-cyan-400/60" />
             </div>
 
-            <h2 className="text-2xl font-semibold text-white mb-2">No scenes yet</h2>
-            <p className="text-white/60 mb-6">
-              Your project is ready. Generate your first scene to start creating your story.
+            <h2 className="text-2xl font-semibold text-white mb-3">Create Your First Scene</h2>
+            <p className="text-white/50 mb-8 leading-relaxed">
+              Your project is ready. Generate a scene to start bringing your story to life with AI-powered visuals.
             </p>
 
             <button
               onClick={generateFirstScene}
               disabled={isGeneratingScene}
-              className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl text-base font-semibold transition-colors"
+              className="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 disabled:opacity-50 disabled:cursor-not-allowed rounded-2xl text-base font-semibold shadow-lg shadow-cyan-500/25 transition-all"
             >
               {isGeneratingScene ? (
                 <>
-                  <Loader2 size={18} className="animate-spin" />
-                  Generating first scene...
+                  <Loader2 size={20} className="animate-spin" />
+                  Generating...
                 </>
               ) : (
                 <>
-                  <Play size={18} />
-                  Generate first scene
+                  <Play size={20} fill="currentColor" />
+                  Generate First Scene
                 </>
               )}
             </button>
 
-            <p className="text-xs text-white/40 mt-4">
-              This will create a scene based on your project settings
+            <p className="text-xs text-white/30 mt-6">
+              Powered by AI • Based on your project settings
             </p>
           </div>
         </div>
       ) : (
-        // Preview + Actions
+        // Preview + Actions - Cinematic Layout
         <div className="flex-1 flex flex-col">
-          {/* Preview Panel */}
-          <div className="flex-1 flex items-center justify-center p-6 bg-gradient-to-b from-black to-black/80">
-            <div className="relative max-w-4xl w-full aspect-video rounded-xl overflow-hidden bg-white/5">
+          {/* Preview Panel - Dominant */}
+          <div className="flex-1 relative overflow-hidden">
+            {/* Background gradient */}
+            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#0a0a0f] to-[#0f0f18]" />
+
+            {/* Main preview area */}
+            <div className="absolute inset-0 flex items-center justify-center p-6">
               {currentScene?.imageUrl ? (
-                <img
-                  src={currentScene.imageUrl}
-                  alt={`Scene ${currentSceneIndex + 1}`}
-                  className="w-full h-full object-cover"
-                />
+                <div className="relative max-w-full max-h-full group">
+                  <img
+                    src={currentScene.imageUrl}
+                    alt={`Scene ${currentSceneIndex + 1}`}
+                    className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-xl shadow-2xl shadow-black/50 transition-all duration-500"
+                  />
+
+                  {/* Regenerate overlay on hover */}
+                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black/50 rounded-xl">
+                    <button
+                      onClick={() => generateImageForScene(currentScene.id, currentScene.imagePrompt, true)}
+                      disabled={isGeneratingImage}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white text-sm font-medium hover:bg-white/20 transition-all disabled:opacity-50"
+                      type="button"
+                    >
+                      <RefreshCw size={14} className={isGeneratingImage ? 'animate-spin' : ''} />
+                      Regenerate Image
+                    </button>
+                  </div>
+
+                  {/* Generating overlay */}
+                  {isGeneratingImage && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-xl">
+                      <div className="flex flex-col items-center gap-3">
+                        <Loader2 size={36} className="text-cyan-400 animate-spin" />
+                        <span className="text-white/70 text-sm">Generating image...</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center gap-4">
+                /* Empty state when no image */
+                <div className="flex flex-col items-center justify-center text-center p-8">
                   {isGeneratingImage ? (
                     <>
-                      <Loader2 size={32} className="animate-spin text-blue-400" />
-                      <div className="text-white/60">Generating image...</div>
+                      <Loader2 size={48} className="text-cyan-400 animate-spin mb-4" />
+                      <p className="text-white/60 text-sm">Generating image...</p>
+                      {currentScene?.imagePrompt && (
+                        <p className="text-white/30 text-xs mt-2 max-w-md line-clamp-2">{currentScene.imagePrompt}</p>
+                      )}
                     </>
                   ) : (
                     <>
-                      <ImageIcon size={48} className="text-white/20" />
-                      <div className="text-white/40">No image generated yet</div>
+                      <div className="w-20 h-20 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4">
+                        <ImageIcon size={32} className="text-white/20" />
+                      </div>
+                      <p className="text-white/40 text-sm mb-4">No image for this scene</p>
+                      <button
+                        onClick={() => currentScene && generateImageForScene(currentScene.id, currentScene.imagePrompt)}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 rounded-full text-white text-sm font-medium transition-colors"
+                        type="button"
+                      >
+                        Generate Image
+                      </button>
                     </>
                   )}
                 </div>
               )}
-
-              {/* Narration overlay */}
-              {currentScene?.narration && (
-                <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
-                  <p className="text-white text-sm">{currentScene.narration}</p>
-                </div>
-              )}
             </div>
+
+            {/* Narration subtitle overlay */}
+            {currentScene?.narration && (
+              <div className="absolute bottom-8 left-0 right-0 flex justify-center px-8 pointer-events-none">
+                <div className="bg-black/80 backdrop-blur-md px-6 py-4 rounded-xl max-w-3xl shadow-xl border border-white/5">
+                  <p className="text-base md:text-lg text-white leading-relaxed text-center">
+                    {currentScene.narration}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Actions Bar */}
-          <div className="flex items-center justify-between px-6 py-4 border-t border-white/10 bg-black/80">
-            {/* Playback Controls */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCurrentSceneIndex((i) => Math.max(0, i - 1))}
-                disabled={currentSceneIndex === 0}
-                className="p-2 text-white/60 hover:text-white hover:bg-white/10 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="Previous scene"
-              >
-                <ChevronLeft size={20} />
-              </button>
+          {/* Action Bar - Like Play Story */}
+          <div className="border-t border-white/5 bg-black/60 backdrop-blur-md">
+            <div className="max-w-4xl mx-auto px-4 py-4">
+              <div className="flex items-center justify-between gap-4">
+                {/* Left: Playback controls */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentSceneIndex((i) => Math.max(0, i - 1))}
+                    disabled={currentSceneIndex === 0}
+                    className="p-3 text-white/40 hover:text-white hover:bg-white/5 rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    type="button"
+                    title="Previous scene"
+                  >
+                    <SkipBack size={20} />
+                  </button>
 
-              <button
-                onClick={() => setIsPlaying(!isPlaying)}
-                className="p-3 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
-                title={isPlaying ? "Pause" : "Play"}
-              >
-                {isPlaying ? <Pause size={20} /> : <Play size={20} />}
-              </button>
+                  <button
+                    onClick={() => setIsPlaying(!isPlaying)}
+                    className="p-4 bg-cyan-500 hover:bg-cyan-400 rounded-full transition-all shadow-lg shadow-cyan-500/25"
+                    type="button"
+                    title={isPlaying ? "Pause" : "Play"}
+                  >
+                    {isPlaying ? <Pause size={24} /> : <Play size={24} fill="currentColor" />}
+                  </button>
 
-              <button
-                onClick={() => setCurrentSceneIndex((i) => Math.min(scenes.length - 1, i + 1))}
-                disabled={currentSceneIndex >= scenes.length - 1}
-                className="p-2 text-white/60 hover:text-white hover:bg-white/10 rounded-lg disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="Next scene"
-              >
-                <ChevronRight size={20} />
-              </button>
+                  <button
+                    onClick={() => setCurrentSceneIndex((i) => Math.min(scenes.length - 1, i + 1))}
+                    disabled={currentSceneIndex >= scenes.length - 1}
+                    className="p-3 text-white/40 hover:text-white hover:bg-white/5 rounded-full transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                    type="button"
+                    title="Next scene"
+                  >
+                    <SkipForward size={20} />
+                  </button>
+                </div>
 
-              <span className="ml-2 text-sm text-white/50">
-                Scene {currentSceneIndex + 1} of {scenes.length}
-              </span>
-            </div>
+                {/* Center: Scene progress bar */}
+                <div className="flex-1 mx-4 hidden sm:block">
+                  <div className="flex gap-1">
+                    {scenes.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setCurrentSceneIndex(i)}
+                        className={`flex-1 h-1.5 rounded-full transition-all ${
+                          i === currentSceneIndex
+                            ? 'bg-cyan-400'
+                            : i < currentSceneIndex
+                            ? 'bg-white/30'
+                            : 'bg-white/10'
+                        }`}
+                        type="button"
+                        title={`Scene ${i + 1}`}
+                      />
+                    ))}
+                  </div>
+                </div>
 
-            {/* Scene Actions */}
-            <div className="flex items-center gap-3">
-              {/* Edit Scene Button */}
-              <button
-                onClick={() => currentScene && openSceneEditor(currentScene)}
-                disabled={!currentScene}
-                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm transition-colors"
-                title="Edit scene narration and prompts"
-              >
-                <Edit3 size={14} />
-                Edit
-              </button>
+                {/* Right: Actions */}
+                <div className="flex items-center gap-2">
+                  {/* Edit Scene Button */}
+                  <button
+                    onClick={() => currentScene && openSceneEditor(currentScene)}
+                    disabled={!currentScene}
+                    className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-sm transition-all disabled:opacity-40"
+                    title="Edit scene"
+                  >
+                    <Edit3 size={14} />
+                    <span className="hidden sm:inline">Edit</span>
+                  </button>
 
-              {/* Regenerate Image Button */}
-              <button
-                onClick={() => {
-                  if (currentScene) {
-                    generateImageForScene(currentScene.id, currentScene.imagePrompt, true);
-                  }
-                }}
-                disabled={isGeneratingImage || !currentScene}
-                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm transition-colors"
-              >
-                {isGeneratingImage ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw size={14} />
-                    Regenerate
-                  </>
-                )}
-              </button>
+                  {/* Generate Next Scene */}
+                  <button
+                    onClick={generateNextScene}
+                    disabled={isGeneratingScene}
+                    className="flex items-center gap-2 px-4 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/30 rounded-full text-sm transition-all disabled:opacity-50"
+                    title="Generate next scene"
+                  >
+                    {isGeneratingScene ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin" />
+                        <span className="hidden sm:inline">Generating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus size={14} />
+                        <span className="hidden sm:inline">Next Scene</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* TV Mode */}
+                  <button
+                    onClick={handleEnterTVMode}
+                    disabled={scenes.length === 0}
+                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-500/20 to-blue-500/20 hover:from-cyan-500/30 hover:to-blue-500/30 text-cyan-300 border border-cyan-500/30 rounded-full text-sm transition-all disabled:opacity-40"
+                    type="button"
+                    title="Watch in TV Mode"
+                  >
+                    <Monitor size={14} />
+                    <span className="hidden sm:inline">TV Mode</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1123,19 +1188,24 @@ export function CreatorStudioEditor({
       {/* Scene Editor Modal */}
       {showSceneEditor && editingScene && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80" onClick={() => setShowSceneEditor(false)} />
-          <div className="relative w-full max-w-2xl rounded-xl border border-white/10 bg-[#1a1a1a] shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowSceneEditor(false)} />
+          <div className="relative w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0f0f18] shadow-2xl max-h-[90vh] overflow-y-auto">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-5 border-b border-white/10">
               <div className="flex items-center gap-3">
-                <Edit3 size={20} className="text-blue-400" />
-                <h2 className="text-lg font-semibold">Edit Scene {editingScene.idx + 1}</h2>
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
+                  <Edit3 size={18} className="text-cyan-400" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold">Edit Scene {editingScene.idx + 1}</h2>
+                  <p className="text-xs text-white/40">Update narration and prompts</p>
+                </div>
               </div>
               <button
                 onClick={() => setShowSceneEditor(false)}
-                className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                className="p-2 rounded-lg hover:bg-white/5 transition-colors"
               >
-                <X size={18} />
+                <X size={18} className="text-white/40" />
               </button>
             </div>
 
@@ -1143,14 +1213,14 @@ export function CreatorStudioEditor({
             <div className="p-5 space-y-5">
               {/* Narration */}
               <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">
-                  <FileText size={14} className="inline mr-2" />
+                <label className="flex items-center gap-2 text-sm font-medium text-white/70 mb-2">
+                  <FileText size={14} />
                   Narration
                 </label>
                 <textarea
                   value={editNarration}
                   onChange={(e) => setEditNarration(e.target.value)}
-                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-blue-500 focus:outline-none resize-none"
+                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/25 focus:outline-none resize-none transition-all"
                   rows={3}
                   placeholder="Enter narration text for this scene..."
                 />
@@ -1158,14 +1228,14 @@ export function CreatorStudioEditor({
 
               {/* Image Prompt */}
               <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">
-                  <Sparkles size={14} className="inline mr-2" />
+                <label className="flex items-center gap-2 text-sm font-medium text-white/70 mb-2">
+                  <Sparkles size={14} />
                   Image Prompt
                 </label>
                 <textarea
                   value={editImagePrompt}
                   onChange={(e) => setEditImagePrompt(e.target.value)}
-                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-blue-500 focus:outline-none resize-none"
+                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/25 focus:outline-none resize-none transition-all"
                   rows={4}
                   placeholder="Describe the visual elements for image generation..."
                 />
@@ -1173,13 +1243,13 @@ export function CreatorStudioEditor({
 
               {/* Negative Prompt */}
               <div>
-                <label className="block text-sm font-medium text-white/70 mb-2">
+                <label className="text-sm font-medium text-white/70 mb-2 block">
                   Negative Prompt
                 </label>
                 <textarea
                   value={editNegativePrompt}
                   onChange={(e) => setEditNegativePrompt(e.target.value)}
-                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-blue-500 focus:outline-none resize-none"
+                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/25 focus:outline-none resize-none transition-all"
                   rows={2}
                   placeholder="Elements to avoid in the image..."
                 />
@@ -1188,14 +1258,14 @@ export function CreatorStudioEditor({
               {/* Model Selection */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-white/70 mb-2">
-                    <Settings size={14} className="inline mr-2" />
+                  <label className="flex items-center gap-2 text-sm font-medium text-white/70 mb-2">
+                    <Settings size={14} />
                     LLM Model
                   </label>
                   <select
                     value={selectedLLMModel}
                     onChange={(e) => setSelectedLLMModel(e.target.value)}
-                    className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:border-cyan-500/50 focus:outline-none transition-all"
                   >
                     <option value="">Default</option>
                     {availableLLMModels.map((m) => (
@@ -1205,14 +1275,14 @@ export function CreatorStudioEditor({
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-white/70 mb-2">
-                    <ImageIcon size={14} className="inline mr-2" />
+                  <label className="flex items-center gap-2 text-sm font-medium text-white/70 mb-2">
+                    <ImageIcon size={14} />
                     Image Model
                   </label>
                   <select
                     value={selectedImageModel}
                     onChange={(e) => setSelectedImageModel(e.target.value)}
-                    className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white focus:border-blue-500 focus:outline-none"
+                    className="w-full px-3 py-2.5 bg-black/40 border border-white/10 rounded-xl text-white focus:border-cyan-500/50 focus:outline-none transition-all"
                   >
                     <option value="">Default</option>
                     {availableImageModels.map((m) => (
@@ -1231,7 +1301,7 @@ export function CreatorStudioEditor({
                   setShowSceneEditor(false);
                 }}
                 disabled={isGeneratingImage}
-                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm transition-all"
               >
                 <RefreshCw size={14} />
                 Regenerate Image
@@ -1240,14 +1310,14 @@ export function CreatorStudioEditor({
               <div className="flex items-center gap-3">
                 <button
                   onClick={() => setShowSceneEditor(false)}
-                  className="px-4 py-2 text-sm text-white/60 hover:text-white transition-colors"
+                  className="px-4 py-2 text-sm text-white/50 hover:text-white transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={saveSceneEdits}
                   disabled={isSavingScene}
-                  className="flex items-center gap-2 px-5 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+                  className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 rounded-xl text-sm font-medium transition-all"
                 >
                   {isSavingScene ? (
                     <>
@@ -1270,19 +1340,24 @@ export function CreatorStudioEditor({
       {/* Story Outline Panel */}
       {showOutlinePanel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80" onClick={() => setShowOutlinePanel(false)} />
-          <div className="relative w-full max-w-3xl rounded-xl border border-white/10 bg-[#1a1a1a] shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowOutlinePanel(false)} />
+          <div className="relative w-full max-w-3xl rounded-2xl border border-white/10 bg-[#0f0f18] shadow-2xl max-h-[90vh] overflow-y-auto">
             {/* Panel Header */}
             <div className="flex items-center justify-between p-5 border-b border-white/10">
               <div className="flex items-center gap-3">
-                <Wand2 size={20} className="text-blue-400" />
-                <h2 className="text-lg font-semibold">Story Outline</h2>
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
+                  <Wand2 size={18} className="text-cyan-400" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold">Story Outline</h2>
+                  <p className="text-xs text-white/40">AI-powered story structure</p>
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <button
                   onClick={generateStoryOutline}
                   disabled={isGeneratingOutline}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+                  className="flex items-center gap-2 px-4 py-2 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 rounded-xl text-sm font-medium transition-all"
                 >
                   {isGeneratingOutline ? (
                     <>
@@ -1292,15 +1367,15 @@ export function CreatorStudioEditor({
                   ) : (
                     <>
                       <Sparkles size={14} />
-                      {storyOutline ? "Regenerate" : "Generate"} Outline
+                      {storyOutline ? "Regenerate" : "Generate"}
                     </>
                   )}
                 </button>
                 <button
                   onClick={() => setShowOutlinePanel(false)}
-                  className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                  className="p-2 rounded-lg hover:bg-white/5 transition-colors"
                 >
-                  <X size={18} />
+                  <X size={18} className="text-white/40" />
                 </button>
               </div>
             </div>
@@ -1310,29 +1385,15 @@ export function CreatorStudioEditor({
               {storyOutline ? (
                 <div className="space-y-6">
                   {/* Story Arc */}
-                  <div className="p-4 bg-black/30 rounded-lg">
-                    <h3 className="text-sm font-semibold text-blue-400 mb-3">Story Arc</h3>
+                  <div className="p-4 bg-black/30 rounded-xl border border-white/5">
+                    <h3 className="text-sm font-semibold text-cyan-400 mb-3">Story Arc</h3>
                     <div className="grid grid-cols-5 gap-2 text-xs">
-                      <div className="p-2 bg-white/5 rounded">
-                        <div className="text-white/50 mb-1">Beginning</div>
-                        <div className="text-white/80">{storyOutline.story_arc?.beginning || "—"}</div>
-                      </div>
-                      <div className="p-2 bg-white/5 rounded">
-                        <div className="text-white/50 mb-1">Rising</div>
-                        <div className="text-white/80">{storyOutline.story_arc?.rising_action || "—"}</div>
-                      </div>
-                      <div className="p-2 bg-white/5 rounded">
-                        <div className="text-white/50 mb-1">Climax</div>
-                        <div className="text-white/80">{storyOutline.story_arc?.climax || "—"}</div>
-                      </div>
-                      <div className="p-2 bg-white/5 rounded">
-                        <div className="text-white/50 mb-1">Falling</div>
-                        <div className="text-white/80">{storyOutline.story_arc?.falling_action || "—"}</div>
-                      </div>
-                      <div className="p-2 bg-white/5 rounded">
-                        <div className="text-white/50 mb-1">Resolution</div>
-                        <div className="text-white/80">{storyOutline.story_arc?.resolution || "—"}</div>
-                      </div>
+                      {['beginning', 'rising_action', 'climax', 'falling_action', 'resolution'].map((key, i) => (
+                        <div key={key} className="p-2.5 bg-white/5 rounded-lg">
+                          <div className="text-white/40 mb-1 capitalize">{['Beginning', 'Rising', 'Climax', 'Falling', 'Resolution'][i]}</div>
+                          <div className="text-white/80">{(storyOutline.story_arc as any)?.[key] || "—"}</div>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
@@ -1347,9 +1408,9 @@ export function CreatorStudioEditor({
                         return (
                           <div
                             key={idx}
-                            className={`p-4 rounded-lg border transition-colors ${
+                            className={`p-4 rounded-xl border transition-all ${
                               alreadyGenerated
-                                ? "bg-green-500/10 border-green-500/30"
+                                ? "bg-emerald-500/10 border-emerald-500/30"
                                 : "bg-black/30 border-white/10 hover:border-white/20"
                             }`}
                           >
@@ -1360,13 +1421,13 @@ export function CreatorStudioEditor({
                                     Scene {scene.scene_number}: {scene.title}
                                   </span>
                                   {alreadyGenerated && (
-                                    <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">
+                                    <span className="text-xs px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full">
                                       Generated
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-sm text-white/60 mb-2">{scene.description}</p>
-                                <p className="text-xs text-white/40 italic">"{scene.narration}"</p>
+                                <p className="text-sm text-white/50 mb-2">{scene.description}</p>
+                                <p className="text-xs text-white/30 italic">"{scene.narration}"</p>
                               </div>
                               {!alreadyGenerated && scenes.length === idx && (
                                 <button
@@ -1375,7 +1436,7 @@ export function CreatorStudioEditor({
                                     setShowOutlinePanel(false);
                                   }}
                                   disabled={isGeneratingScene}
-                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 rounded text-xs font-medium transition-colors"
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 rounded-lg text-xs font-medium transition-all"
                                 >
                                   <Plus size={12} />
                                   Generate
@@ -1389,26 +1450,28 @@ export function CreatorStudioEditor({
                   </div>
                 </div>
               ) : (
-                <div className="text-center py-12">
-                  <Wand2 size={48} className="mx-auto text-white/20 mb-4" />
+                <div className="text-center py-16">
+                  <div className="w-20 h-20 mx-auto rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-6">
+                    <Wand2 size={32} className="text-white/20" />
+                  </div>
                   <h3 className="text-lg font-medium text-white mb-2">No Outline Yet</h3>
-                  <p className="text-white/50 mb-6 max-w-md mx-auto">
+                  <p className="text-white/40 mb-8 max-w-md mx-auto">
                     Generate an AI-powered story outline based on your project settings.
                     This creates a complete story arc with scene-by-scene planning.
                   </p>
                   <button
                     onClick={generateStoryOutline}
                     disabled={isGeneratingOutline}
-                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 disabled:opacity-50 rounded-xl font-semibold transition-colors"
+                    className="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 disabled:opacity-50 rounded-2xl font-semibold shadow-lg shadow-cyan-500/25 transition-all"
                   >
                     {isGeneratingOutline ? (
                       <>
-                        <Loader2 size={18} className="animate-spin" />
+                        <Loader2 size={20} className="animate-spin" />
                         Generating Outline...
                       </>
                     ) : (
                       <>
-                        <Sparkles size={18} />
+                        <Sparkles size={20} />
                         Generate Story Outline
                       </>
                     )}
@@ -1427,6 +1490,18 @@ export function CreatorStudioEditor({
           onEnsureImage={ensureImageForTVMode}
         />
       )}
+
+      {/* Custom scrollbar hide */}
+      <style>{`
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .line-clamp-2 {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+      `}</style>
     </div>
   );
 }
