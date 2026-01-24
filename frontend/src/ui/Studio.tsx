@@ -825,14 +825,23 @@ export default function StudioView(props: StudioParams) {
       // Load the new chapter's story data
       const newStoryData = await fetchJson<StoryData>(props.backendUrl, `/story/${data.session_id}`, authKey)
 
-      // Update current story state
+      // Update current story state - new chapter continues seamlessly
       setCurrentStory(newStoryData)
       setCurrentSceneIndex(0)
       setStoryComplete(false)
       setChapterHint('') // Clear hint after use
 
-      // Refresh sessions list
-      fetchSessions()
+      // Add the new chapter to the sessions list so it appears in the list view
+      setSessions((prev) => [
+        {
+          id: data.session_id,
+          title: data.title,
+          created_at: new Date().toISOString(),
+          scene_count: newStoryData.scenes.length,
+          status: 'draft',
+        },
+        ...prev,
+      ])
     } catch (error: any) {
       console.error('Failed to create new chapter:', error)
       alert(`Failed to create new chapter: ${error.message || error}`)
