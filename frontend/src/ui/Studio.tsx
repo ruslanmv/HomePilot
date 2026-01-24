@@ -680,6 +680,52 @@ export default function StudioView(props: StudioParams) {
     }
   }, [currentStory, props.backendUrl, props.promptRefinement, authKey, setStoryComplete])
 
+  // Continue story as next chapter (saga mode)
+  const continueAsNextChapter = useCallback(async () => {
+    if (!currentStory) return null
+
+    try {
+      const data = await postJson<{
+        ok: boolean
+        session_id: string
+        title: string
+        chapter_number: number
+        bible: StoryBible
+        saga_id: string
+        previous_session_id: string
+      }>(
+        props.backendUrl,
+        '/story/continue',
+        {
+          previous_session_id: currentStory.session_id,
+        },
+        authKey
+      )
+
+      console.log(`[TV Mode] Started chapter ${data.chapter_number}: ${data.title}`)
+
+      // Load the new chapter's story data
+      const newStoryData = await fetchJson<StoryData>(props.backendUrl, `/story/${data.session_id}`, authKey)
+
+      // Update current story state
+      setCurrentStory(newStoryData)
+      setCurrentSceneIndex(0)
+
+      return {
+        sessionId: data.session_id,
+        title: data.title,
+        chapterNumber: data.chapter_number,
+        scenes: newStoryData.scenes.map((scene) => ({
+          ...scene,
+          status: 'ready' as const,
+        })),
+      }
+    } catch (error: any) {
+      console.error('Failed to continue story:', error)
+      throw error
+    }
+  }, [currentStory, props.backendUrl, authKey])
+
   const currentScene = currentStory?.scenes[currentSceneIndex]
 
   // -----------------------------------------------------------------------------
@@ -1226,6 +1272,7 @@ export default function StudioView(props: StudioParams) {
         <TVModeContainer
           onGenerateNext={generateNextForTVMode}
           onEnsureImage={generateImageForScene}
+          onContinueChapter={continueAsNextChapter}
         />
       )}
     </div>

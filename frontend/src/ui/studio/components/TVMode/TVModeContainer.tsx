@@ -15,14 +15,23 @@ import { TVModeControls } from "./TVModeControls";
 import { TVModeSettings } from "./TVModeSettings";
 import { TVModeEndScreen } from "./TVModeEndScreen";
 
+interface ChapterData {
+  sessionId: string;
+  title: string;
+  chapterNumber: number;
+  scenes: TVScene[];
+}
+
 interface TVModeContainerProps {
   onGenerateNext: () => Promise<any>;
   onEnsureImage?: (scene: TVScene) => void;
+  onContinueChapter?: () => Promise<ChapterData | null>;
 }
 
 export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   onGenerateNext,
   onEnsureImage,
+  onContinueChapter,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const controlsTimerRef = useRef<number | null>(null);
@@ -39,6 +48,8 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     showEndScreen,
     isPrefetching,
     isStoryComplete,
+    isLoadingNextChapter,
+    chapterNumber,
     settings,
     exitTVMode,
     togglePlay,
@@ -52,6 +63,8 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     setPrefetching,
     setPrefetchError,
     setFullscreen,
+    setLoadingNextChapter,
+    startNextChapter,
   } = useTVModeStore();
 
   const currentScene = useTVModeStore(selectCurrentScene);
@@ -197,6 +210,50 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
       handlePrefetch();
     }
   }, [isPlaying, isLastScene, scenes.length, isPrefetching, isStoryComplete, handlePrefetch]);
+
+  // Auto-continue to next chapter when story is complete (saga mode)
+  useEffect(() => {
+    if (!isStoryComplete || !settings.sagaMode || isLoadingNextChapter || !onContinueChapter) {
+      return;
+    }
+
+    // Only trigger when we're on the last scene and it's playing
+    if (!isLastScene) return;
+
+    // Start loading next chapter after a brief pause
+    const timer = setTimeout(async () => {
+      console.log(`[TV Mode] Chapter ${chapterNumber} complete, loading next chapter...`);
+      setLoadingNextChapter(true);
+
+      try {
+        const chapterData = await onContinueChapter();
+        if (chapterData) {
+          startNextChapter(
+            chapterData.sessionId,
+            chapterData.title,
+            chapterData.scenes,
+            chapterData.chapterNumber
+          );
+          console.log(`[TV Mode] Started chapter ${chapterData.chapterNumber}: ${chapterData.title}`);
+        }
+      } catch (error) {
+        console.error('[TV Mode] Failed to continue to next chapter:', error);
+        setLoadingNextChapter(false);
+        // Show end screen on failure
+      }
+    }, 2000); // 2 second pause between chapters
+
+    return () => clearTimeout(timer);
+  }, [
+    isStoryComplete,
+    settings.sagaMode,
+    isLoadingNextChapter,
+    isLastScene,
+    chapterNumber,
+    onContinueChapter,
+    setLoadingNextChapter,
+    startNextChapter,
+  ]);
 
   // Keyboard controls
   useEffect(() => {

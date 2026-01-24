@@ -25,6 +25,8 @@ export interface TVModeSettings {
   narrationSize: "small" | "medium" | "large";
   showSceneNumber: boolean;
   pauseOnEnd: boolean;
+  // Saga Mode: auto-continue to next chapter when story ends
+  sagaMode: boolean;
 }
 
 interface TVModeState {
@@ -35,6 +37,11 @@ interface TVModeState {
   // Session
   sessionId: string | null;
   storyTitle: string;
+
+  // Saga tracking
+  sagaId: string | null; // ID of first chapter (saga root)
+  chapterNumber: number; // Current chapter number (1-based)
+  isLoadingNextChapter: boolean; // True while fetching next chapter
 
   // Playback State
   isPlaying: boolean;
@@ -99,6 +106,10 @@ interface TVModeActions {
   setPrefetchError: (error: string | null) => void;
   setStoryComplete: (complete: boolean) => void;
 
+  // Saga mode (chapter continuation)
+  setLoadingNextChapter: (loading: boolean) => void;
+  startNextChapter: (sessionId: string, title: string, scenes: TVScene[], chapterNumber: number) => void;
+
   // UI control
   showControls: () => void;
   hideControls: () => void;
@@ -119,6 +130,7 @@ const DEFAULT_SETTINGS: TVModeSettings = {
   narrationSize: "medium",
   showSceneNumber: true,
   pauseOnEnd: true,
+  sagaMode: true, // Auto-continue to next chapter by default
 };
 
 const initialState: TVModeState = {
@@ -126,6 +138,9 @@ const initialState: TVModeState = {
   isFullscreen: false,
   sessionId: null,
   storyTitle: "",
+  sagaId: null,
+  chapterNumber: 1,
+  isLoadingNextChapter: false,
   isPlaying: false,
   currentSceneIndex: 0,
   scenes: [],
@@ -161,6 +176,9 @@ export const useTVModeStore = create<TVModeStore>()(
           isActive: true,
           sessionId,
           storyTitle,
+          sagaId: sessionId, // First chapter becomes the saga root
+          chapterNumber: 1,
+          isLoadingNextChapter: false,
           scenes: tvScenes,
           currentSceneIndex: startIndex,
           isPlaying: true,
@@ -283,6 +301,30 @@ export const useTVModeStore = create<TVModeStore>()(
       setPrefetching: (isPrefetching) => set({ isPrefetching }),
       setPrefetchError: (error) => set({ prefetchError: error }),
       setStoryComplete: (complete) => set({ isStoryComplete: complete }),
+
+      // Saga mode (chapter continuation)
+      setLoadingNextChapter: (loading) => set({ isLoadingNextChapter: loading }),
+      startNextChapter: (sessionId, title, scenes, chapterNumber) => {
+        // Convert scenes to TV scenes with proper status
+        const tvScenes: TVScene[] = scenes.map((scene) => ({
+          ...scene,
+          status: "ready" as const,
+          imageStatus: (scene.image_url || scene.image) ? "ready" as const : "pending" as const,
+        }));
+
+        set({
+          sessionId,
+          storyTitle: title,
+          chapterNumber,
+          isLoadingNextChapter: false,
+          scenes: tvScenes,
+          currentSceneIndex: 0,
+          isPlaying: true,
+          isStoryComplete: false,
+          prefetchError: null,
+          showEndScreen: false,
+        });
+      },
 
       // UI control
       showControls: () => set({ controlsVisible: true }),

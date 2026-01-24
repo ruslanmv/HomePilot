@@ -60,6 +60,20 @@ def init_story_db() -> None:
         """
     )
 
+    # Add saga columns if they don't exist (for chapter continuation feature)
+    try:
+        cur.execute("ALTER TABLE story_sessions ADD COLUMN saga_id TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    try:
+        cur.execute("ALTER TABLE story_sessions ADD COLUMN parent_session_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        cur.execute("ALTER TABLE story_sessions ADD COLUMN chapter_number INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass
+
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS story_scenes(
@@ -190,6 +204,25 @@ class StoryNextResponse(BaseModel):
     bible: StoryBible
 
 
+class StoryContinueRequest(BaseModel):
+    """Request to continue a story as the next chapter in a saga."""
+    previous_session_id: str
+    title_hint: str = Field("", max_length=200)  # Optional title for the new chapter
+    options: Optional[Dict[str, Any]] = None
+
+
+class StoryContinueResponse(BaseModel):
+    """Response when starting a new chapter continuation."""
+    ok: bool = True
+    session_id: str  # New session ID for this chapter
+    title: str
+    chapter_number: int  # 1-based chapter number
+    bible: StoryBible
+    options: StoryOptions
+    saga_id: str  # ID of the first chapter (saga root)
+    previous_session_id: str  # ID of the previous chapter
+
+
 # --------------------------------------------------------------------------------------
 # DB helpers
 # --------------------------------------------------------------------------------------
@@ -212,21 +245,27 @@ def _save_session(
     options: StoryOptions,
     bible: StoryBible,
     state: StoryState,
+    saga_id: Optional[str] = None,
+    parent_session_id: Optional[str] = None,
+    chapter_number: int = 1,
 ) -> None:
     con = _db()
     cur = con.cursor()
     ts = _now()
     cur.execute(
         """
-        INSERT INTO story_sessions(id, created_at, updated_at, title, premise, options_json, bible_json, state_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO story_sessions(id, created_at, updated_at, title, premise, options_json, bible_json, state_json, saga_id, parent_session_id, chapter_number)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             updated_at=excluded.updated_at,
             title=excluded.title,
             premise=excluded.premise,
             options_json=excluded.options_json,
             bible_json=excluded.bible_json,
-            state_json=excluded.state_json
+            state_json=excluded.state_json,
+            saga_id=excluded.saga_id,
+            parent_session_id=excluded.parent_session_id,
+            chapter_number=excluded.chapter_number
         """,
         (
             session_id,
@@ -237,13 +276,38 @@ def _save_session(
             options.model_dump_json(),
             bible.model_dump_json(),
             state.model_dump_json(),
+            saga_id,
+            parent_session_id,
+            chapter_number,
         ),
     )
     con.commit()
     con.close()
 
 
+@dataclass
+class SessionData:
+    """Full session data including saga info."""
+    title: str
+    premise: str
+    options: StoryOptions
+    bible: StoryBible
+    state: StoryState
+    saga_id: Optional[str] = None
+    parent_session_id: Optional[str] = None
+    chapter_number: int = 1
+
+
 def _load_session(session_id: str) -> Optional[Tuple[str, str, StoryOptions, StoryBible, StoryState]]:
+    """Load session data (backwards compatible)."""
+    data = _load_session_full(session_id)
+    if not data:
+        return None
+    return data.title, data.premise, data.options, data.bible, data.state
+
+
+def _load_session_full(session_id: str) -> Optional[SessionData]:
+    """Load full session data including saga info."""
     con = _db()
     cur = con.cursor()
     cur.execute("SELECT * FROM story_sessions WHERE id=?", (session_id,))
@@ -278,7 +342,21 @@ def _load_session(session_id: str) -> Optional[Tuple[str, str, StoryOptions, Sto
     except Exception:
         state = StoryState()
 
-    return title, premise, options, bible, state
+    # Get saga fields (may be None for old sessions)
+    saga_id = row["saga_id"] if "saga_id" in row.keys() else None
+    parent_session_id = row["parent_session_id"] if "parent_session_id" in row.keys() else None
+    chapter_number = row["chapter_number"] if "chapter_number" in row.keys() else 1
+
+    return SessionData(
+        title=title,
+        premise=premise,
+        options=options,
+        bible=bible,
+        state=state,
+        saga_id=saga_id,
+        parent_session_id=parent_session_id,
+        chapter_number=chapter_number or 1,
+    )
 
 
 def _insert_scene(session_id: str, idx: int, scene: SceneOut) -> None:
@@ -1112,6 +1190,187 @@ async def start_story(
     )
 
     return StoryStartResponse(session_id=session_id, title=title, bible=bible, options=opts)
+
+
+async def continue_story(
+    previous_session_id: str,
+    *,
+    title_hint: str = "",
+    options: Optional[Dict[str, Any]] = None,
+    ollama_base_url: Optional[str] = None,
+    ollama_model: Optional[str] = None,
+) -> StoryContinueResponse:
+    """
+    Continue a story as the next chapter in a saga.
+    Uses the previous story's ending as the starting point for the new chapter.
+    Maintains character, setting, and style continuity.
+    """
+    init_story_db()
+
+    # Load previous story data
+    prev_data = _load_session_full(previous_session_id)
+    if not prev_data:
+        raise ValueError("Previous session not found")
+
+    # Get previous story's scenes to understand how it ended
+    prev_scenes = list_scenes(previous_session_id, limit=500)
+    last_scene_narration = prev_scenes[-1].narration if prev_scenes else ""
+
+    # Determine saga info
+    # If previous story was already part of a saga, continue that saga
+    # Otherwise, start a new saga with the previous story as chapter 1
+    saga_id = prev_data.saga_id or previous_session_id
+    chapter_number = prev_data.chapter_number + 1
+
+    # Merge options (new options override previous)
+    try:
+        opts = StoryOptions.model_validate({**prev_data.options.model_dump(), **(options or {})})
+    except ValidationError:
+        opts = prev_data.options
+
+    base_url = ollama_base_url or OLLAMA_BASE_URL
+    model = ollama_model or OLLAMA_MODEL or "llama3:8b"
+
+    # Create continuation prompt
+    continuation_sys = (
+        "You are a story continuation planner. You create the next chapter of an ongoing saga.\n"
+        "Output ONLY valid JSON. No markdown, no explanation, just the JSON object.\n"
+        "The new chapter must:\n"
+        "- Continue naturally from where the previous chapter ended\n"
+        "- Keep the same characters, setting, and visual style\n"
+        "- Introduce a new story arc/conflict for this chapter\n"
+        "- Have its own beginning, climax, and resolution\n"
+        "JSON schema:\n"
+        "{\n"
+        '  "title": "string (Chapter X: Title)",\n'
+        '  "logline": "string (1-2 sentences summarizing this chapter)",\n'
+        '  "setting": "string (same as previous, can add new locations)",\n'
+        '  "visual_style_rules": ["rule1", "rule2", ...],\n'
+        '  "recurring_characters": [{"name": "string", "description": "string"}, ...],\n'
+        '  "recurring_locations": ["location1", "location2", ...],\n'
+        '  "do_not_change": ["rule1", "rule2", ...],\n'
+        '  "story_arc": {\n'
+        '    "beginning": "string",\n'
+        '    "rising_action": "string",\n'
+        '    "climax": "string",\n'
+        '    "falling_action": "string",\n'
+        '    "resolution": "string"\n'
+        '  },\n'
+        '  "scene_outline": ["Scene 1: ...", "Scene 2: ...", ...],\n'
+        '  "total_scenes": 8\n'
+        "}\n"
+    )
+
+    continuation_user = (
+        f"Continue this saga as Chapter {chapter_number}.\n\n"
+        f"PREVIOUS CHAPTER INFO:\n"
+        f"- Title: {prev_data.bible.title}\n"
+        f"- Setting: {prev_data.bible.setting}\n"
+        f"- Characters: {json.dumps([c.get('name', '') + ': ' + c.get('description', '') for c in prev_data.bible.recurring_characters])}\n"
+        f"- Visual style: {', '.join(prev_data.bible.visual_style_rules[:3])}\n"
+        f"- How it ended: {last_scene_narration[:500]}\n"
+        f"- Story so far summary: {prev_data.state.summary_so_far[:800]}\n\n"
+        f"{'Title hint: ' + title_hint if title_hint.strip() else ''}\n\n"
+        f"Create the next chapter (8-12 scenes) that:\n"
+        f"- Picks up where the previous chapter left off\n"
+        f"- Keeps the same characters and setting\n"
+        f"- Introduces new challenges/adventures\n"
+        f"- Has its own complete story arc within the chapter\n"
+    )
+
+    print(f"[STORY] Generating chapter {chapter_number} continuation with model: {model}")
+    text = await _ollama_chat(
+        [{"role": "system", "content": continuation_sys}, {"role": "user", "content": continuation_user}],
+        temperature=0.0,
+        max_tokens=900,
+        base_url=base_url,
+        model=model,
+        response_format="json",
+        stop=_JSON_STOP_DEFAULT,
+    )
+
+    text = await _continue_if_truncated(sys_msg=continuation_sys, base_url=base_url, model=model, raw=text, max_tokens=300)
+    obj = _extract_json_robust(text) if text.strip() else {}
+
+    if not obj:
+        print(f"[STORY] Chapter continuation failed, using fallback based on previous chapter")
+        obj = {
+            "title": f"Chapter {chapter_number}: {title_hint or 'The Journey Continues'}",
+            "logline": f"The adventure continues as our heroes face new challenges.",
+            "setting": prev_data.bible.setting,
+            "visual_style_rules": prev_data.bible.visual_style_rules,
+            "recurring_characters": [c for c in prev_data.bible.recurring_characters],
+            "recurring_locations": prev_data.bible.recurring_locations,
+            "do_not_change": prev_data.bible.do_not_change,
+            "story_arc": {
+                "beginning": "Our heroes discover a new challenge",
+                "rising_action": "They must overcome obstacles",
+                "climax": "A major confrontation",
+                "falling_action": "Dealing with the aftermath",
+                "resolution": "A moment of peace before the next adventure",
+            },
+            "total_scenes": 8,
+        }
+
+    obj = _normalize_story_bible_json(obj)
+
+    try:
+        bible = StoryBible.model_validate(obj)
+    except Exception as e:
+        print(f"[STORY] WARNING: Failed to parse chapter bible: {e}")
+        bible = StoryBible(
+            title=f"Chapter {chapter_number}: {title_hint or 'Continuation'}",
+            logline="The story continues...",
+            setting=prev_data.bible.setting,
+            visual_style_rules=prev_data.bible.visual_style_rules,
+            recurring_characters=prev_data.bible.recurring_characters,
+            recurring_locations=prev_data.bible.recurring_locations,
+            do_not_change=prev_data.bible.do_not_change,
+        )
+
+    # Ensure title includes chapter number
+    if not bible.title.lower().startswith("chapter"):
+        bible.title = f"Chapter {chapter_number}: {bible.title}"
+
+    title = bible.title.strip()
+
+    # Start fresh state but carry over the summary from previous chapter
+    state = StoryState(
+        scene_index_next=1,
+        summary_so_far=f"Previously: {prev_data.state.summary_so_far[:500]}",
+        used_beats=[],
+        used_locations=[],
+        used_camera=[],
+        used_mood=[],
+    )
+
+    # Create new session for this chapter
+    session_id = str(uuid.uuid4())
+    premise = f"Continuation of {prev_data.bible.title}. {bible.logline}"
+
+    _save_session(
+        session_id,
+        title=title,
+        premise=premise,
+        options=opts,
+        bible=bible,
+        state=state,
+        saga_id=saga_id,
+        parent_session_id=previous_session_id,
+        chapter_number=chapter_number,
+    )
+
+    print(f"[STORY] Created chapter {chapter_number} with session_id: {session_id}")
+
+    return StoryContinueResponse(
+        session_id=session_id,
+        title=title,
+        chapter_number=chapter_number,
+        bible=bible,
+        options=opts,
+        saga_id=saga_id,
+        previous_session_id=previous_session_id,
+    )
 
 
 async def next_scene(
