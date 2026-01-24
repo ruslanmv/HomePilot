@@ -182,7 +182,7 @@ export default function StudioView(props: StudioParams) {
   const authKey = (props.apiKey || '').trim()
 
   // TV Mode state
-  const { isActive: tvModeActive, enterTVMode, addScene: addTVScene, updateSceneImageByIdx, setSceneImageStatusByIdx } = useTVModeStore()
+  const { isActive: tvModeActive, enterTVMode, addScene: addTVScene, updateSceneImageByIdx, setSceneImageStatusByIdx, setStoryComplete } = useTVModeStore()
 
   // View state
   const [view, setView] = useState<'list' | 'create' | 'player'>('list')
@@ -667,11 +667,18 @@ export default function StudioView(props: StudioParams) {
         ...data.scene,
         status: 'ready' as const,
       }
-    } catch (error) {
+    } catch (error: any) {
+      // Check if story is complete (all planned scenes generated)
+      const errorMsg = error?.message || String(error)
+      if (errorMsg.includes('Story complete') || errorMsg.includes('All') && errorMsg.includes('scenes have been generated')) {
+        console.log('[TV Mode] Story is complete - all scenes generated')
+        setStoryComplete(true)
+        return null // Return null to signal completion, not an error
+      }
       console.error('TV Mode generate error:', error)
       throw error
     }
-  }, [currentStory, props.backendUrl, props.promptRefinement, authKey])
+  }, [currentStory, props.backendUrl, props.promptRefinement, authKey, setStoryComplete])
 
   const currentScene = currentStory?.scenes[currentSceneIndex]
 
