@@ -44,6 +44,7 @@ from .story_mode import (
     get_story,
     list_story_sessions,
     delete_story_session,
+    delete_scene,
     update_scene_image,
 )
 
@@ -1508,6 +1509,15 @@ async def story_next_endpoint(inp: StoryNextIn) -> JSONResponse:
             ollama_model=inp.ollama_model,
         )
         return JSONResponse(status_code=200, content=res.model_dump())
+    except ValueError as e:
+        error_msg = str(e)
+        # Check if this is a "story complete" error
+        if "Story complete" in error_msg or "scenes have been generated" in error_msg:
+            return JSONResponse(
+                status_code=200,
+                content={"ok": True, "story_complete": True, "message": error_msg}
+            )
+        return JSONResponse(status_code=400, content={"ok": False, "error": error_msg})
     except Exception as e:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
 
@@ -1544,6 +1554,21 @@ async def story_delete_endpoint(session_id: str) -> JSONResponse:
     try:
         deleted = delete_story_session(session_id)
         return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+
+@app.delete("/story/{session_id}/scene/{scene_idx}", dependencies=[Depends(require_api_key)])
+async def story_delete_scene_endpoint(session_id: str, scene_idx: int) -> JSONResponse:
+    """
+    Delete a single scene from a story session. Remaining scenes will be re-indexed.
+    """
+    try:
+        deleted = delete_scene(session_id, scene_idx)
+        if deleted:
+            return JSONResponse(status_code=200, content={"ok": True, "deleted": True})
+        else:
+            return JSONResponse(status_code=404, content={"ok": False, "error": "Scene not found"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 

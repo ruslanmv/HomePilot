@@ -74,6 +74,12 @@ def init_story_db() -> None:
     except sqlite3.OperationalError:
         pass
 
+    # Add status column for draft/finished tracking
+    try:
+        cur.execute("ALTER TABLE story_sessions ADD COLUMN status TEXT DEFAULT 'draft'")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS story_scenes(
@@ -441,7 +447,7 @@ def list_story_sessions(limit: int = 50) -> List[Dict[str, Any]]:
     cur = con.cursor()
     cur.execute(
         """
-        SELECT id, title, premise, created_at, updated_at
+        SELECT id, title, premise, created_at, updated_at, status, chapter_number
         FROM story_sessions
         ORDER BY updated_at DESC
         LIMIT ?
@@ -459,8 +465,30 @@ def list_story_sessions(limit: int = 50) -> List[Dict[str, Any]]:
             "premise": str(r["premise"])[:200],
             "created_at": int(r["created_at"]),
             "updated_at": int(r["updated_at"]),
+            "status": str(r["status"]) if r["status"] else "draft",
+            "chapter_number": int(r["chapter_number"]) if r["chapter_number"] else 1,
         })
     return out
+
+
+def update_story_status(session_id: str, status: str) -> bool:
+    """Update a story session's status (draft/finished)."""
+    if status not in ("draft", "finished"):
+        raise ValueError("Status must be 'draft' or 'finished'")
+
+    con = _db()
+    cur = con.cursor()
+    cur.execute(
+        """
+        UPDATE story_sessions SET status=?, updated_at=?
+        WHERE id=?
+        """,
+        (status, _now(), session_id),
+    )
+    con.commit()
+    updated = cur.rowcount > 0
+    con.close()
+    return updated
 
 
 def delete_story_session(session_id: str) -> bool:
@@ -471,6 +499,49 @@ def delete_story_session(session_id: str) -> bool:
     cur.execute("DELETE FROM story_sessions WHERE id=?", (session_id,))
     con.commit()
     deleted = cur.rowcount > 0
+    con.close()
+    return deleted
+
+
+def delete_scene(session_id: str, scene_idx: int) -> bool:
+    """Delete a single scene from a story session and re-index remaining scenes."""
+    con = _db()
+    cur = con.cursor()
+
+    # Delete the specified scene
+    cur.execute(
+        "DELETE FROM story_scenes WHERE session_id=? AND idx=?",
+        (session_id, scene_idx),
+    )
+    deleted = cur.rowcount > 0
+
+    if deleted:
+        # Re-index remaining scenes (scenes with idx > deleted idx need to be decremented)
+        cur.execute(
+            """
+            SELECT idx, scene_json FROM story_scenes
+            WHERE session_id=? AND idx > ?
+            ORDER BY idx ASC
+            """,
+            (session_id, scene_idx),
+        )
+        rows = cur.fetchall()
+
+        for row in rows:
+            old_idx = row["idx"]
+            new_idx = old_idx - 1
+            scene_data = SceneOut.model_validate_json(row["scene_json"])
+            scene_data.idx = new_idx
+
+            cur.execute(
+                """
+                UPDATE story_scenes SET idx=?, scene_json=?
+                WHERE session_id=? AND idx=?
+                """,
+                (new_idx, scene_data.model_dump_json(), session_id, old_idx),
+            )
+
+    con.commit()
     con.close()
     return deleted
 
@@ -1400,6 +1471,8 @@ async def next_scene(
     max_allowed = min(total_planned_scenes, opts.max_scenes)
 
     if idx > max_allowed:
+        # Mark story as finished (no longer a draft)
+        update_story_status(session_id, "finished")
         raise ValueError(f"Story complete! All {max_allowed} scenes have been generated.")
 
     sys_msg = _scene_system_prompt(allow_nsfw=opts.allow_nsfw, scene_index=idx)

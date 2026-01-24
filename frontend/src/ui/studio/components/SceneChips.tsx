@@ -1,5 +1,5 @@
-import React from 'react'
-import { Check, Loader2, AlertCircle, ImageIcon } from 'lucide-react'
+import React, { useState } from 'react'
+import { Check, Loader2, AlertCircle, ImageIcon, X } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -18,6 +18,7 @@ type SceneChipsProps = {
   scenes: SceneChipData[]
   activeIndex: number
   onSelect: (idx: number) => void
+  onDelete?: (idx: number) => void
   className?: string
 }
 
@@ -29,8 +30,23 @@ type SceneChipsProps = {
  * Horizontal rail of scene chips, similar to Imagine's variation chips.
  * Shows scene thumbnails with status indicators - clean, minimal design.
  */
-export function SceneChips({ scenes, activeIndex, onSelect, className = '' }: SceneChipsProps) {
+export function SceneChips({ scenes, activeIndex, onSelect, onDelete, className = '' }: SceneChipsProps) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const [confirmDeleteIdx, setConfirmDeleteIdx] = useState<number | null>(null)
+
   if (scenes.length === 0) return null
+
+  const handleDeleteClick = (e: React.MouseEvent, idx: number) => {
+    e.stopPropagation()
+    if (confirmDeleteIdx === idx) {
+      // Second click - actually delete
+      onDelete?.(idx)
+      setConfirmDeleteIdx(null)
+    } else {
+      // First click - show confirmation
+      setConfirmDeleteIdx(idx)
+    }
+  }
 
   return (
     <div className={`w-full overflow-x-auto scrollbar-hide bg-black/40 ${className}`}>
@@ -38,39 +54,71 @@ export function SceneChips({ scenes, activeIndex, onSelect, className = '' }: Sc
         {scenes.map((scene) => {
           const isActive = scene.idx === activeIndex
           const hasThumb = Boolean(scene.thumbnailUrl)
+          const isHovered = hoveredIdx === scene.idx
+          const showDelete = onDelete && isHovered && scenes.length > 1
+          const isConfirming = confirmDeleteIdx === scene.idx
 
           return (
-            <button
+            <div
               key={scene.idx}
-              onClick={() => onSelect(scene.idx)}
-              className={`
-                relative rounded-lg overflow-hidden transition-all
-                ${isActive
-                  ? 'ring-2 ring-purple-500 ring-offset-2 ring-offset-black'
-                  : 'opacity-70 hover:opacity-100'
-                }
-              `}
-              type="button"
-              title={scene.label || `Scene ${scene.idx + 1}`}
+              className="relative"
+              onMouseEnter={() => setHoveredIdx(scene.idx)}
+              onMouseLeave={() => {
+                setHoveredIdx(null)
+                setConfirmDeleteIdx(null)
+              }}
             >
-              {/* Thumbnail */}
-              <div className="w-16 h-10 flex items-center justify-center bg-white/5">
-                {hasThumb ? (
-                  <img
-                    src={scene.thumbnailUrl!}
-                    alt={`Scene ${scene.idx + 1}`}
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <ImageIcon size={16} className="text-white/30" />
-                )}
-              </div>
+              <button
+                onClick={() => onSelect(scene.idx)}
+                className={`
+                  relative rounded-lg overflow-hidden transition-all
+                  ${isActive
+                    ? 'ring-2 ring-purple-500 ring-offset-2 ring-offset-black'
+                    : 'opacity-70 hover:opacity-100'
+                  }
+                `}
+                type="button"
+                title={scene.label || `Scene ${scene.idx + 1}`}
+              >
+                {/* Thumbnail */}
+                <div className="w-16 h-10 flex items-center justify-center bg-white/5">
+                  {hasThumb ? (
+                    <img
+                      src={scene.thumbnailUrl!}
+                      alt={`Scene ${scene.idx + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <ImageIcon size={16} className="text-white/30" />
+                  )}
+                </div>
 
-              {/* Status Indicator (overlay) */}
-              <div className="absolute bottom-1 right-1">
-                <StatusIndicator status={scene.status} />
-              </div>
-            </button>
+                {/* Status Indicator (overlay) */}
+                <div className="absolute bottom-1 right-1">
+                  <StatusIndicator status={scene.status} />
+                </div>
+              </button>
+
+              {/* Delete Button */}
+              {showDelete && (
+                <button
+                  onClick={(e) => handleDeleteClick(e, scene.idx)}
+                  className={`
+                    absolute -top-2 -right-2 w-5 h-5 rounded-full
+                    flex items-center justify-center
+                    transition-all transform hover:scale-110
+                    ${isConfirming
+                      ? 'bg-red-500 text-white'
+                      : 'bg-black/80 text-white/70 hover:text-white hover:bg-red-500/80'
+                    }
+                  `}
+                  type="button"
+                  title={isConfirming ? 'Click again to confirm delete' : 'Delete scene'}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
           )
         })}
       </div>

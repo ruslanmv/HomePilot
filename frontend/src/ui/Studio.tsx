@@ -392,6 +392,32 @@ export default function StudioView(props: StudioParams) {
     }
   }
 
+  const deleteScene = async (sceneIdx: number) => {
+    if (!currentStory) return
+
+    try {
+      await deleteJson(props.backendUrl, `/story/${currentStory.session_id}/scene/${sceneIdx}`, authKey)
+
+      // Update local state - re-index scenes and adjust current index
+      setCurrentStory((prev) => {
+        if (!prev) return prev
+        const newScenes = prev.scenes
+          .filter((s) => s.idx !== sceneIdx)
+          .map((s, i) => ({ ...s, idx: i })) // Re-index
+
+        // If we deleted the current scene, move to the previous one (or stay at 0)
+        const deletedArrayIndex = prev.scenes.findIndex((s) => s.idx === sceneIdx)
+        if (deletedArrayIndex >= 0 && deletedArrayIndex <= currentSceneIndex) {
+          setCurrentSceneIndex(Math.max(0, currentSceneIndex - 1))
+        }
+
+        return { ...prev, scenes: newScenes }
+      })
+    } catch (err: any) {
+      alert(`Failed to delete scene: ${err.message || err}`)
+    }
+  }
+
   const generateNextScene = async () => {
     if (!currentStory || isGeneratingScene) return
     setIsGeneratingScene(true)
@@ -641,10 +667,12 @@ export default function StudioView(props: StudioParams) {
     try {
       const data = await postJson<{
         ok: boolean
-        session_id: string
-        title: string
-        scene: Scene
-        bible: StoryBible
+        session_id?: string
+        title?: string
+        scene?: Scene
+        bible?: StoryBible
+        story_complete?: boolean
+        message?: string
       }>(
         props.backendUrl,
         '/story/next',
@@ -655,12 +683,24 @@ export default function StudioView(props: StudioParams) {
         authKey
       )
 
+      // Check if story is complete (new response format)
+      if (data.story_complete) {
+        console.log('[TV Mode] Story is complete -', data.message)
+        setStoryComplete(true)
+        return null // Return null to signal completion, not an error
+      }
+
+      // Make sure we have a scene
+      if (!data.scene) {
+        throw new Error('No scene returned from backend')
+      }
+
       // Add new scene to current story state
       setCurrentStory((prev) => {
         if (!prev) return prev
         return {
           ...prev,
-          scenes: [...prev.scenes, data.scene],
+          scenes: [...prev.scenes, data.scene!],
         }
       })
 
@@ -672,9 +712,9 @@ export default function StudioView(props: StudioParams) {
         status: 'ready' as const,
       }
     } catch (error: any) {
-      // Check if story is complete (all planned scenes generated)
+      // Check if story is complete (legacy error format for backwards compatibility)
       const errorMsg = error?.message || String(error)
-      if (errorMsg.includes('Story complete') || errorMsg.includes('All') && errorMsg.includes('scenes have been generated')) {
+      if (errorMsg.includes('Story complete') || (errorMsg.includes('All') && errorMsg.includes('scenes have been generated'))) {
         console.log('[TV Mode] Story is complete - all scenes generated')
         setStoryComplete(true)
         return null // Return null to signal completion, not an error
@@ -1056,6 +1096,7 @@ export default function StudioView(props: StudioParams) {
             const arrayIndex = currentStory.scenes.findIndex(s => s.idx === sceneIdx)
             if (arrayIndex >= 0) setCurrentSceneIndex(arrayIndex)
           }}
+          onDelete={deleteScene}
           className="border-b border-white/10"
         />
       )}

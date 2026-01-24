@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useEffect, useRef, useCallback, useState } from "react";
 import {
   useTVModeStore,
   selectCurrentScene,
@@ -14,6 +14,7 @@ import { TVModePlayer } from "./TVModePlayer";
 import { TVModeControls } from "./TVModeControls";
 import { TVModeSettings } from "./TVModeSettings";
 import { TVModeEndScreen } from "./TVModeEndScreen";
+import { TVModeChapterTransition } from "./TVModeChapterTransition";
 
 interface ChapterData {
   sessionId: string;
@@ -37,6 +38,7 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   const controlsTimerRef = useRef<number | null>(null);
   const sceneTimerRef = useRef<number | null>(null);
   const prefetchInFlightRef = useRef(false);
+  const [showChapterTransition, setShowChapterTransition] = useState(false);
 
   const {
     isActive,
@@ -211,49 +213,58 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     }
   }, [isPlaying, isLastScene, scenes.length, isPrefetching, isStoryComplete, handlePrefetch]);
 
-  // Auto-continue to next chapter when story is complete (saga mode)
+  // Show chapter transition when story is complete (saga mode)
   useEffect(() => {
-    if (!isStoryComplete || !settings.sagaMode || isLoadingNextChapter || !onContinueChapter) {
+    if (!isStoryComplete || !settings.sagaMode || !onContinueChapter) {
+      setShowChapterTransition(false);
       return;
     }
 
-    // Only trigger when we're on the last scene and it's playing
-    if (!isLastScene) return;
+    // Only show transition when we're on the last scene
+    if (!isLastScene) {
+      setShowChapterTransition(false);
+      return;
+    }
 
-    // Start loading next chapter after a brief pause
-    const timer = setTimeout(async () => {
-      console.log(`[TV Mode] Chapter ${chapterNumber} complete, loading next chapter...`);
-      setLoadingNextChapter(true);
+    // Show the chapter transition screen with countdown
+    setShowChapterTransition(true);
+  }, [isStoryComplete, settings.sagaMode, isLastScene, onContinueChapter]);
 
-      try {
-        const chapterData = await onContinueChapter();
-        if (chapterData) {
-          startNextChapter(
-            chapterData.sessionId,
-            chapterData.title,
-            chapterData.scenes,
-            chapterData.chapterNumber
-          );
-          console.log(`[TV Mode] Started chapter ${chapterData.chapterNumber}: ${chapterData.title}`);
-        }
-      } catch (error) {
-        console.error('[TV Mode] Failed to continue to next chapter:', error);
+  // Handle continuing to next chapter (called from transition screen)
+  const handleContinueToNextChapter = useCallback(async () => {
+    if (!onContinueChapter || isLoadingNextChapter) return;
+
+    console.log(`[TV Mode] Chapter ${chapterNumber} complete, loading next chapter...`);
+    setLoadingNextChapter(true);
+
+    try {
+      const chapterData = await onContinueChapter();
+      if (chapterData) {
+        setShowChapterTransition(false);
+        startNextChapter(
+          chapterData.sessionId,
+          chapterData.title,
+          chapterData.scenes,
+          chapterData.chapterNumber
+        );
+        console.log(`[TV Mode] Started chapter ${chapterData.chapterNumber}: ${chapterData.title}`);
+      } else {
+        // No more chapters available
         setLoadingNextChapter(false);
-        // Show end screen on failure
+        setShowChapterTransition(false);
       }
-    }, 2000); // 2 second pause between chapters
+    } catch (error) {
+      console.error('[TV Mode] Failed to continue to next chapter:', error);
+      setLoadingNextChapter(false);
+      setShowChapterTransition(false);
+    }
+  }, [onContinueChapter, isLoadingNextChapter, chapterNumber, setLoadingNextChapter, startNextChapter]);
 
-    return () => clearTimeout(timer);
-  }, [
-    isStoryComplete,
-    settings.sagaMode,
-    isLoadingNextChapter,
-    isLastScene,
-    chapterNumber,
-    onContinueChapter,
-    setLoadingNextChapter,
-    startNextChapter,
-  ]);
+  // Handle canceling the chapter transition
+  const handleCancelChapterTransition = useCallback(() => {
+    setShowChapterTransition(false);
+    exitTVMode();
+  }, [exitTVMode]);
 
   // Keyboard controls
   useEffect(() => {
@@ -382,7 +393,18 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
         <TVModeSettings onClose={() => setShowSettings(false)} />
       )}
 
-      {showEndScreen && (
+      {/* Chapter Transition Screen (Saga Mode) */}
+      {showChapterTransition && settings.sagaMode && onContinueChapter && (
+        <TVModeChapterTransition
+          onContinue={handleContinueToNextChapter}
+          onCancel={handleCancelChapterTransition}
+          nextChapterTitle={`Chapter ${chapterNumber + 1}`}
+          countdown={5}
+        />
+      )}
+
+      {/* End Screen (when not in saga mode or saga mode disabled) */}
+      {showEndScreen && !showChapterTransition && (
         <TVModeEndScreen
           onRestart={() => goToScene(0)}
           onExit={exitTVMode}
