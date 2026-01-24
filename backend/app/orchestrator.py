@@ -11,6 +11,8 @@ from .llm import chat as llm_chat
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
+from .defaults import DEFAULT_NEGATIVE_PROMPT, enhance_negative_prompt
+from .model_config import get_model_settings, get_architecture, MODEL_ARCHITECTURES
 
 # Import specialized handlers
 from .search import run_search
@@ -137,9 +139,10 @@ async def _refine_prompt(
     print(f"[_refine_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
 
     # Default fallback - always preserves user's original prompt
+    # Uses centralized DEFAULT_NEGATIVE_PROMPT from defaults.py
     fallback_result = {
         "prompt": user_prompt,
-        "negative_prompt": "blurry, low quality, distorted",
+        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
         "aspect_ratio": "1:1",
         "style": "photorealistic",
     }
@@ -181,13 +184,19 @@ async def _refine_prompt(
         if refined and refined.get("prompt"):
             refined_prompt = refined.get("prompt", "").strip()
             if refined_prompt:
+                # CRITICAL: Always enhance the negative prompt to include anti-duplicate terms
+                # The LLM often returns weak negatives like "avoid blurry" - we need to fix that
+                llm_negative = refined.get("negative_prompt", "")
+                enhanced_negative = enhance_negative_prompt(llm_negative)
+
                 result_dict = {
                     "prompt": refined_prompt,
-                    "negative_prompt": refined.get("negative_prompt", "blurry, low quality, distorted"),
+                    "negative_prompt": enhanced_negative,
                     "aspect_ratio": refined.get("aspect_ratio", "1:1"),
                     "style": refined.get("style", "photorealistic"),
                 }
                 print(f"[_refine_prompt] SUCCESS: Refined prompt: '{result_dict['prompt'][:100]}...'")
+                print(f"[_refine_prompt] LLM negative: '{llm_negative}' -> Enhanced: '{enhanced_negative[:80]}...'")
                 return result_dict
 
         # JSON parsing failed or prompt field empty
@@ -215,6 +224,7 @@ async def orchestrate(
     text_max_tokens: Optional[int] = None,
     img_width: Optional[int] = None,
     img_height: Optional[int] = None,
+    img_aspect_ratio: Optional[str] = None,  # NEW: Accept aspect ratio from frontend
     img_steps: Optional[int] = None,
     img_cfg: Optional[float] = None,
     img_seed: Optional[int] = None,
@@ -308,7 +318,7 @@ async def orchestrate(
         res = run_workflow("edit", {
             "image_path": image_url,  # Changed from image_url to match workflow
             "prompt": text_in,  # Changed from instruction to match workflow
-            "negative_prompt": "blurry, low quality, distorted"  # Added default negative prompt
+            "negative_prompt": DEFAULT_NEGATIVE_PROMPT  # Use centralized default from defaults.py
         })
         images = res.get("images", []) or []
         text = "Done."
@@ -372,7 +382,7 @@ async def orchestrate(
                     print(f"[PROMPT_REFINE] Using original prompt directly")
                     refined = {
                         "prompt": text_in,
-                        "negative_prompt": "",
+                        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,  # Use centralized default
                         "aspect_ratio": "1:1",
                         "style": "photorealistic",
                     }
@@ -381,144 +391,99 @@ async def orchestrate(
                 print(f"[PROMPT_REFINE] Direct mode (refinement disabled)")
                 refined = {
                     "prompt": text_in,
-                    "negative_prompt": "",
+                    "negative_prompt": DEFAULT_NEGATIVE_PROMPT,  # Use centralized default
                     "aspect_ratio": "1:1",
                     "style": "photorealistic",
                 }
 
-            # Merge custom image parameters if provided
-            if img_width is not None:
+            # =================================================================
+            # DYNAMIC PRESET SYSTEM - Prevents "two heads" issue
+            # =================================================================
+            # The root cause of duplicate subjects is SD1.5 models generating
+            # at SDXL resolutions (1024x1024). We use get_model_settings() to
+            # automatically select the correct dimensions based on model architecture.
+
+            # Determine model to use (default to dreamshaper for SD1.5)
+            model_filename = img_model or "dreamshaper_8.safetensors"
+
+            # Handle short names -> full filenames
+            short_name_map = {
+                "sdxl": "sd_xl_base_1.0.safetensors",
+                "flux-schnell": "flux1-schnell.safetensors",
+                "flux-dev": "flux1-dev.safetensors",
+                "pony-xl": "ponyDiffusionV6XL.safetensors",
+                "sd15-uncensored": "dreamshaper_8.safetensors",
+            }
+            if model_filename in short_name_map:
+                model_filename = short_name_map[model_filename]
+
+            # Get aspect ratio: prefer explicit from frontend, then LLM refinement, then default
+            # This allows the UI aspect ratio picker to override LLM suggestions
+            aspect_ratio = img_aspect_ratio or refined.get("aspect_ratio", "1:1")
+            print(f"[IMAGE] Aspect ratio source: {'frontend' if img_aspect_ratio else 'LLM refinement'}")
+
+            # Get architecture-specific settings (width, height, steps, cfg)
+            # This is the KEY fix - SD1.5 models get max 768px, SDXL/Flux get 1024px+
+            model_settings = get_model_settings(model_filename, aspect_ratio, preset="med")
+            architecture = model_settings["architecture"]
+
+            print(f"[IMAGE] === DYNAMIC PRESET SYSTEM ===")
+            print(f"[IMAGE] Model: {model_filename}")
+            print(f"[IMAGE] Architecture: {architecture}")
+            print(f"[IMAGE] Aspect ratio: {aspect_ratio}")
+            print(f"[IMAGE] Safe dimensions: {model_settings['width']}x{model_settings['height']}")
+            print(f"[IMAGE] Recommended steps: {model_settings['steps']}, CFG: {model_settings['cfg']}")
+
+            # Apply architecture-specific defaults (only if user didn't override)
+            if img_width is None:
+                refined["width"] = model_settings["width"]
+            else:
                 refined["width"] = img_width
-            if img_height is not None:
+                print(f"[IMAGE] User override width: {img_width}")
+
+            if img_height is None:
+                refined["height"] = model_settings["height"]
+            else:
                 refined["height"] = img_height
-            if img_steps is not None:
+                print(f"[IMAGE] User override height: {img_height}")
+
+            if img_steps is None:
+                refined["steps"] = model_settings["steps"]
+            else:
                 refined["steps"] = img_steps
-            if img_cfg is not None:
+
+            if img_cfg is None:
+                refined["cfg"] = model_settings["cfg"]
+            else:
                 refined["cfg"] = img_cfg
+
             if img_seed is not None:
                 refined["seed"] = img_seed
 
-            # Ensure default width/height are always set (required by workflow templates)
-            # These will be overridden by the model-specific defaults below if needed
-            if "width" not in refined:
-                refined["width"] = 1024  # SDXL default
-            if "height" not in refined:
-                refined["height"] = 1024  # SDXL default
+            # =================================================================
+            # WORKFLOW SELECTION based on architecture
+            # =================================================================
+            workflow_map = {
+                "sd15": "txt2img-sd15-uncensored",
+                "sdxl": "txt2img",
+                "flux_schnell": "txt2img-flux-schnell",
+                "flux_dev": "txt2img-flux-dev",
+            }
+            workflow_name = workflow_map.get(architecture, "txt2img")
 
-            # Determine which workflow to use based on selected model
-            workflow_name = "txt2img"
+            # Special case: Pony models use SDXL architecture but have their own workflow
+            if "pony" in model_filename.lower():
+                workflow_name = "txt2img-pony-xl"
+
+            # Set checkpoint override for SD1.5 models (workflow uses {{ckpt_name}} template)
             checkpoint_override = None
-
-            if img_model:
-                # Map model name to workflow filename
-                # Supports both short names (sdxl) and full checkpoint filenames (sd_xl_base_1.0.safetensors)
-                workflow_map = {
-                    # Short names
-                    "sdxl": "txt2img",
-                    "flux-schnell": "txt2img-flux-schnell",
-                    "flux-dev": "txt2img-flux-dev",
-                    "pony-xl": "txt2img-pony-xl",
-                    "sd15-uncensored": "txt2img-sd15-uncensored",
-                    # SDXL checkpoints
-                    "sd_xl_base_1.0.safetensors": "txt2img",
-                    "ponyDiffusionV6XL.safetensors": "txt2img-pony-xl",
-                    # SD1.5 checkpoints (use sd15-uncensored workflow which supports SD1.5 architecture)
-                    "dreamshaper_8.safetensors": "txt2img-sd15-uncensored",
-                    "realisticVisionV51.safetensors": "txt2img-sd15-uncensored",
-                    "deliberate_v3.safetensors": "txt2img-sd15-uncensored",
-                    "epicrealism_pureEvolution.safetensors": "txt2img-sd15-uncensored",
-                    "sd15.safetensors": "txt2img-sd15-uncensored",
-                    # Flux checkpoints
-                    "flux1-schnell.safetensors": "txt2img-flux-schnell",
-                    "flux1-dev.safetensors": "txt2img-flux-dev",
-                }
-
-                workflow_name = workflow_map.get(img_model, None)
-
-                # Known SD1.5 models that need checkpoint override
-                known_sd15_models = [
-                    "dreamshaper_8.safetensors",
-                    "realisticVisionV51.safetensors",
-                    "deliberate_v3.safetensors",
-                    "epicrealism_pureEvolution.safetensors",
-                    "sd15.safetensors",
-                ]
-
-                # If model not in explicit map, try to detect architecture from filename
-                if workflow_name is None:
-                    model_lower = img_model.lower()
-
-                    # Heuristics to detect model architecture from filename
-                    # Flux models
-                    if "flux" in model_lower:
-                        if "schnell" in model_lower:
-                            workflow_name = "txt2img-flux-schnell"
-                        else:
-                            workflow_name = "txt2img-flux-dev"
-                        print(f"[IMAGE] Auto-detected Flux model: {img_model}")
-
-                    # Pony models (usually XL-based)
-                    elif "pony" in model_lower:
-                        workflow_name = "txt2img-pony-xl"
-                        print(f"[IMAGE] Auto-detected Pony model: {img_model}")
-
-                    # SDXL models (look for XL indicators)
-                    elif any(x in model_lower for x in ["sdxl", "_xl", "-xl", "xl_"]):
-                        workflow_name = "txt2img"
-                        print(f"[IMAGE] Auto-detected SDXL model: {img_model}")
-
-                    # SD 1.5 models (common naming patterns from Civitai)
-                    elif any(x in model_lower for x in [
-                        "sd15", "sd_15", "sd1.5", "1.5",
-                        "realistic", "dreamshaper", "deliberate", "epicrealism",
-                        "anything", "abyssorangemix", "counterfeit", "chill",
-                        "ghostmix", "majicmix", "meinaunreal", "protogen",
-                        "revanimated", "unstable", "cyberrealistic", "absolute"
-                    ]):
-                        workflow_name = "txt2img-sd15-uncensored"
-                        checkpoint_override = img_model
-                        print(f"[IMAGE] Auto-detected SD1.5 model: {img_model}")
-
-                    # Default to SDXL workflow for unknown models
-                    else:
-                        workflow_name = "txt2img"
-                        print(f"[IMAGE] Unknown model architecture, defaulting to SDXL: {img_model}")
-
-                # For known SD1.5 models or short name
-                if img_model in known_sd15_models:
-                    checkpoint_override = img_model
-                elif img_model == "sd15-uncensored":
-                    # Short name used, default to dreamshaper
-                    checkpoint_override = "dreamshaper_8.safetensors"
-                # For auto-detected SD1.5 models (already set above via heuristics)
-                elif workflow_name == "txt2img-sd15-uncensored" and checkpoint_override is None:
-                    checkpoint_override = img_model
-
-                # Log model selection for debugging
-                print(f"[IMAGE] Model requested: {img_model}")
-                print(f"[IMAGE] Workflow selected: {workflow_name}")
-                if checkpoint_override:
-                    print(f"[IMAGE] Checkpoint to use: {checkpoint_override}")
-            else:
-                print("[IMAGE] No model specified, using default 'txt2img' workflow")
-
-            # Set model-specific dimension defaults if user didn't specify custom dimensions
-            # SD1.5 models work best at 512x512 or 512x768
-            # SDXL/Pony/Flux work best at 1024x1024 or similar
-            if workflow_name == "txt2img-sd15-uncensored":
-                if img_width is None and img_height is None:
-                    # Only override if user didn't explicitly set dimensions
-                    refined["width"] = 512
-                    refined["height"] = 768  # Portrait for better character rendering
-                    print(f"[IMAGE] Using SD1.5 optimal dimensions: 512x768")
-                # Ensure SD1.5 has a checkpoint (required by template)
-                if checkpoint_override is None:
-                    checkpoint_override = "dreamshaper_8.safetensors"
-                    print(f"[IMAGE] No checkpoint specified for SD1.5, using default: {checkpoint_override}")
-
-            # Add checkpoint to variables for SD1.5 workflow (uses {{ckpt_name}} template)
-            if checkpoint_override:
+            if architecture == "sd15":
+                checkpoint_override = model_filename
                 refined["ckpt_name"] = checkpoint_override
+
+            print(f"[IMAGE] Workflow selected: {workflow_name}")
+            if checkpoint_override:
+                print(f"[IMAGE] Checkpoint: {checkpoint_override}")
 
             # Debug: Log final workflow decision
             print(f"[IMAGE] === FINAL WORKFLOW DECISION ===")
@@ -683,6 +648,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             text_max_tokens=payload.get("textMaxTokens"),
             img_width=payload.get("imgWidth"),
             img_height=payload.get("imgHeight"),
+            img_aspect_ratio=payload.get("imgAspectRatio"),  # NEW: Pass aspect ratio
             img_steps=payload.get("imgSteps"),
             img_cfg=payload.get("imgCfg"),
             img_seed=payload.get("imgSeed"),
