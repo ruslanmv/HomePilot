@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from "react";
-import { ArrowLeft, X } from "lucide-react";
+import React, { useEffect, useState, useCallback } from "react";
+import { ArrowLeft, X, ChevronDown } from "lucide-react";
 import { useStudioStore } from "./studio/stores/studioStore";
 import { CreatorStudioEditor } from "./CreatorStudioEditor";
 
 type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9";
 type ContentRating = "sfw" | "mature";
+type AvailableModel = { id: string; name: string };
 
 interface CreatorStudioHostProps {
   backendUrl: string;
@@ -33,6 +34,8 @@ export function CreatorStudioHost({
   // Mode: "wizard" for creating new, "editor" for existing project
   const [mode, setMode] = useState<"wizard" | "editor">(initialProjectId ? "editor" : "wizard");
   const [currentProjectId, setCurrentProjectId] = useState<string | undefined>(initialProjectId);
+  const [isNewlyCreated, setIsNewlyCreated] = useState(false);
+  const [projectSettings, setProjectSettings] = useState({ targetSceneCount: 8, sceneDuration: 5, llmModel: "" });
 
   // Bootstrap connection info for API calls
   useEffect(() => {
@@ -50,6 +53,9 @@ export function CreatorStudioHost({
         backendUrl={backendUrl}
         apiKey={apiKey}
         onExit={onExit}
+        autoGenerateFirst={isNewlyCreated}
+        targetSceneCount={projectSettings.targetSceneCount}
+        defaultLLMModel={projectSettings.llmModel}
       />
     );
   }
@@ -60,9 +66,11 @@ export function CreatorStudioHost({
       backendUrl={backendUrl}
       apiKey={apiKey}
       onExit={onExit}
-      onProjectCreated={(projectId) => {
+      onProjectCreated={(projectId, settings) => {
         // Switch to editor mode with the new project
         setCurrentProjectId(projectId);
+        setIsNewlyCreated(true);  // Flag for auto-generating first scene
+        setProjectSettings(settings);
         setMode("editor");
       }}
     />
@@ -77,7 +85,7 @@ interface WizardProps {
   backendUrl: string;
   apiKey?: string;
   onExit: () => void;
-  onProjectCreated: (projectId: string) => void;
+  onProjectCreated: (projectId: string, settings: { targetSceneCount: number; sceneDuration: number; llmModel: string }) => void;
 }
 
 function CreatorStudioWizard({
@@ -105,6 +113,15 @@ function CreatorStudioWizard({
   const [visualStyle, setVisualStyle] = useState<"Cinematic" | "Digital Art" | "Anime">("Cinematic");
   const [lockIdentity, setLockIdentity] = useState(true);
 
+  // Episode/scene configuration
+  const [targetSceneCount, setTargetSceneCount] = useState(8);
+  const [sceneDuration, setSceneDuration] = useState(5);
+
+  // LLM Model selection
+  const [availableLLMModels, setAvailableLLMModels] = useState<AvailableModel[]>([]);
+  const [selectedLLMModel, setSelectedLLMModel] = useState("");
+  const [loadingModels, setLoadingModels] = useState(false);
+
   // Mature consent modal
   const [showMatureModal, setShowMatureModal] = useState(false);
   const [matureConsentChecked, setMatureConsentChecked] = useState(false);
@@ -113,6 +130,42 @@ function CreatorStudioWizard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fetch available LLM models
+  const fetchLLMModels = useCallback(async () => {
+    setLoadingModels(true);
+    try {
+      const url = `${backendUrl.replace(/\/+$/, "")}/models?provider=ollama`;
+      const res = await fetch(url, {
+        headers: authKey ? { "x-api-key": authKey } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.models) {
+          const models = data.models.map((m: { id: string; name?: string }) => ({
+            id: m.id,
+            name: m.name || m.id,
+          }));
+          setAvailableLLMModels(models);
+          // Auto-select first model if none selected
+          if (!selectedLLMModel && models.length > 0) {
+            // Prefer llama3:8b if available, otherwise first model
+            const preferred = models.find((m: AvailableModel) => m.id === "llama3:8b") || models[0];
+            setSelectedLLMModel(preferred.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.log("[Wizard] Failed to fetch LLM models:", e);
+    } finally {
+      setLoadingModels(false);
+    }
+  }, [backendUrl, authKey, selectedLLMModel]);
+
+  // Fetch models on mount
+  useEffect(() => {
+    fetchLLMModels();
+  }, [fetchLLMModels]);
+
   // Build tags for backend
   const tagsForBackend = React.useMemo(() => {
     const t: string[] = [];
@@ -120,8 +173,13 @@ function CreatorStudioWizard({
     if (visualStyle) t.push(`visual:${visualStyle.toLowerCase().replaceAll(" ", "_")}`);
     if (tones.length) t.push(...tones.map((x) => `tone:${x.toLowerCase().replaceAll(" ", "_")}`));
     if (lockIdentity) t.push("lock:identity");
+    // Include episode configuration
+    t.push(`scenes:${targetSceneCount}`);
+    t.push(`duration:${sceneDuration}`);
+    // Include selected LLM model
+    if (selectedLLMModel) t.push(`llm:${selectedLLMModel}`);
     return Array.from(new Set(t));
-  }, [goal, visualStyle, tones, lockIdentity]);
+  }, [goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel]);
 
   const canProceedStep1 = title.trim().length > 0;
   const canCreate = title.trim().length > 0 && !loading;
@@ -178,6 +236,7 @@ function CreatorStudioWizard({
         logline: logline.trim(),
         tags: tagsForBackend,
         platformPreset,
+        targetDurationSec: targetSceneCount * sceneDuration,
         contentRating,
         policyMode: contentRating === "mature" ? "restricted" : "youtube_safe",
         providerPolicy: {
@@ -206,7 +265,7 @@ function CreatorStudioWizard({
 
       // Project created successfully - open it in editor
       if (projectId) {
-        onProjectCreated(projectId);
+        onProjectCreated(projectId, { targetSceneCount, sceneDuration, llmModel: selectedLLMModel });
       } else {
         throw new Error("No project ID returned from server");
       }
@@ -365,6 +424,53 @@ function CreatorStudioWizard({
                     ))}
                   </div>
                 </div>
+
+                {/* Episode Configuration */}
+                <div className="mt-6 grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-[#aaa] mb-2">Scenes per Episode</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {[4, 6, 8, 10, 12].map((count) => (
+                        <button
+                          key={count}
+                          type="button"
+                          onClick={() => setTargetSceneCount(count)}
+                          className={[
+                            "px-4 py-2 rounded text-sm border transition-colors",
+                            targetSceneCount === count
+                              ? "bg-[#3ea6ff] text-black border-transparent font-medium"
+                              : "bg-[#282828] text-[#aaa] border-transparent hover:bg-[#3f3f3f] hover:text-[#f1f1f1]",
+                          ].join(" ")}
+                        >
+                          {count}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-[#777] mt-1">
+                      ~{targetSceneCount * sceneDuration}s total ({Math.floor(targetSceneCount * sceneDuration / 60)}:{String((targetSceneCount * sceneDuration) % 60).padStart(2, '0')})
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-[#aaa] mb-2">Scene Duration (sec)</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {[3, 5, 7, 10].map((dur) => (
+                        <button
+                          key={dur}
+                          type="button"
+                          onClick={() => setSceneDuration(dur)}
+                          className={[
+                            "px-4 py-2 rounded text-sm border transition-colors",
+                            sceneDuration === dur
+                              ? "bg-[#3ea6ff] text-black border-transparent font-medium"
+                              : "bg-[#282828] text-[#aaa] border-transparent hover:bg-[#3f3f3f] hover:text-[#f1f1f1]",
+                          ].join(" ")}
+                        >
+                          {dur}s
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -410,6 +516,38 @@ function CreatorStudioWizard({
                       </Chip>
                     ))}
                   </div>
+                </div>
+
+                {/* LLM Model Selection */}
+                <div className="mt-6">
+                  <label className="block text-xs font-medium text-[#aaa] mb-3">AI Story Model</label>
+                  <p className="text-xs text-[#777] mb-3">Select the AI model for generating outlines and narration</p>
+                  <div className="relative">
+                    <select
+                      value={selectedLLMModel}
+                      onChange={(e) => setSelectedLLMModel(e.target.value)}
+                      className="w-full px-4 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-base outline-none focus:border-[#3ea6ff] appearance-none cursor-pointer"
+                      disabled={loadingModels}
+                    >
+                      {loadingModels ? (
+                        <option value="">Loading models...</option>
+                      ) : availableLLMModels.length === 0 ? (
+                        <option value="">No models available</option>
+                      ) : (
+                        availableLLMModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#aaa] pointer-events-none" />
+                  </div>
+                  {availableLLMModels.length === 0 && !loadingModels && (
+                    <p className="text-xs text-[#ff6b6b] mt-2">
+                      No Ollama models found. Make sure Ollama is running with at least one model pulled.
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -466,6 +604,11 @@ function CreatorStudioWizard({
                   <ReviewLine label="Title" value={title.trim() || "Untitled Project"} />
                   <ReviewLine label="Format" value={platformPresetToLabel(platformPreset)} />
                   <ReviewLine label="Style" value={`${visualStyle} (${tones.length ? tones.join(", ") : "Default"})`} />
+                  <ReviewLine
+                    label="Episode Length"
+                    value={`${targetSceneCount} scenes × ${sceneDuration}s = ~${Math.floor(targetSceneCount * sceneDuration / 60)}:${String((targetSceneCount * sceneDuration) % 60).padStart(2, '0')}`}
+                  />
+                  <ReviewLine label="AI Model" value={selectedLLMModel || "Default"} />
                   <ReviewLine
                     label="Safety"
                     value={contentRating === "sfw" ? "Safe (SFW)" : "Mature (18+)"}

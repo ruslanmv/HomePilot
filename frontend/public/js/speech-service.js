@@ -26,6 +26,9 @@ class SpeechService {
         this.isSpeaking = false;
         this.currentUtterance = null;
 
+        // Preferred voice settings - load from localStorage
+        this.preferredVoiceURI = localStorage.getItem("homepilot_voice_uri") || "";
+
         this.initializeSpeechRecognition();
         this.initializeSpeechSynthesis();
     }
@@ -91,10 +94,39 @@ class SpeechService {
 
     loadVoices() {
         this.voices = this.synthesis.getVoices();
+        // Re-validate preferred voice exists after voices load
+        if (this.preferredVoiceURI && this.voices.length > 0) {
+            const exists = this.voices.find(v => v.voiceURI === this.preferredVoiceURI);
+            if (!exists) {
+                console.log('[SpeechService] Preferred voice not found, will use fallback');
+            }
+        }
     }
 
     getVoices() {
         return this.voices;
+    }
+
+    /**
+     * Set the preferred voice URI for TTS
+     * @param {string} uri - The voiceURI to use for speech synthesis
+     */
+    setPreferredVoiceURI(uri) {
+        this.preferredVoiceURI = uri || "";
+        try {
+            localStorage.setItem("homepilot_voice_uri", this.preferredVoiceURI);
+            console.log('[SpeechService] Preferred voice set to:', this.preferredVoiceURI);
+        } catch (e) {
+            console.warn('[SpeechService] Failed to save voice preference:', e);
+        }
+    }
+
+    /**
+     * Get the current preferred voice URI
+     * @returns {string} The preferred voice URI
+     */
+    getPreferredVoiceURI() {
+        return this.preferredVoiceURI;
     }
 
     setRecognitionCallbacks(callbacks = {}) {
@@ -139,8 +171,24 @@ class SpeechService {
 
         const voices = this.getVoices();
         if (voices.length > 0) {
-            const preferredVoice = voices.find(v => v.lang.startsWith('en')) || voices[0];
-            this.currentUtterance.voice = preferredVoice;
+            // Try to find the user's preferred voice by URI
+            let selectedVoice = null;
+
+            if (this.preferredVoiceURI) {
+                selectedVoice = voices.find(v => v.voiceURI === this.preferredVoiceURI);
+            }
+
+            // Fallback: find an English voice or use the first available
+            if (!selectedVoice) {
+                selectedVoice = voices.find(v => v.lang.startsWith('en')) || voices[0];
+            }
+
+            this.currentUtterance.voice = selectedVoice;
+
+            // Update language to match voice
+            if (selectedVoice && selectedVoice.lang) {
+                this.currentUtterance.lang = selectedVoice.lang;
+            }
         }
 
         this.currentUtterance.onstart = () => {
