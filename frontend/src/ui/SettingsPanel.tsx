@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
+import {
+  getModelSettings,
+  getPresetDescription,
+  detectArchitecture,
+  getArchitectureLabel,
+  type PresetName,
+} from "./modelPresets";
 
 type ProviderInfo = {
   label: string;
@@ -188,6 +195,40 @@ export default function SettingsPanel({
   }, [value.backendUrl]);
 
   const providerOptions = useMemo(() => Object.entries(providers), [providers]);
+
+  // Compute model-specific settings based on selected image model and preset
+  const currentModelSettings = useMemo(() => {
+    const model = value.modelImages || "dreamshaper_8.safetensors";
+    const preset = value.preset === "custom" ? "med" : value.preset;
+    return getModelSettings(model, "1:1", preset);
+  }, [value.modelImages, value.preset]);
+
+  const currentArchitecture = useMemo(() => {
+    return detectArchitecture(value.modelImages || "");
+  }, [value.modelImages]);
+
+  // Auto-apply preset settings when preset or model changes (except in custom mode)
+  useEffect(() => {
+    if (value.preset !== "custom") {
+      const settings = currentModelSettings;
+      // Only update if values differ to prevent infinite loops
+      if (
+        value.imgWidth !== settings.width ||
+        value.imgHeight !== settings.height ||
+        value.imgSteps !== settings.steps ||
+        value.imgCfg !== settings.cfg
+      ) {
+        onChangeDraft({
+          ...value,
+          imgWidth: settings.width,
+          imgHeight: settings.height,
+          imgSteps: settings.steps,
+          imgCfg: settings.cfg,
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value.preset, value.modelImages, currentModelSettings]);
 
   const ollamaSelected =
     value.providerChat === "ollama" ||
@@ -507,11 +548,26 @@ export default function SettingsPanel({
             ))}
           </div>
           <div className="text-[10px] text-white/35 mt-2">
-            {value.preset === "low" && "✓ Low: Quick iterations, lower quality (768x768, 16 steps)"}
-            {value.preset === "med" && "✓ Med: Balanced quality and speed (1024x1024, 24 steps)"}
-            {value.preset === "high" && "✓ High: Best quality, slower (1536x1536, 40 steps)"}
-            {value.preset === "custom" && "✓ Custom: Manual control"}
+            {value.preset === "low" && `✓ Low: ${getPresetDescription(value.modelImages || "", "low")}`}
+            {value.preset === "med" && `✓ Med: ${getPresetDescription(value.modelImages || "", "med")}`}
+            {value.preset === "high" && `✓ High: ${getPresetDescription(value.modelImages || "", "high")}`}
+            {value.preset === "custom" && "✓ Custom: Manual control (values below)"}
           </div>
+
+          {/* Architecture indicator */}
+          {value.modelImages && (
+            <div className="mt-2 text-[10px] text-blue-400/70 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-1.5">
+              <span className="font-semibold">Model:</span> {value.modelImages}
+              <span className="mx-2">→</span>
+              <span className="font-semibold">{getArchitectureLabel(currentArchitecture)}</span>
+              {currentArchitecture === "sd15" && (
+                <span className="ml-2 text-yellow-400/70">(Safe res: max 768px)</span>
+              )}
+              {currentArchitecture === "flux_schnell" && (
+                <span className="ml-2 text-purple-400/70">(Turbo: 4 steps)</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Custom Generation Parameters (shown when preset is custom) */}
@@ -550,50 +606,77 @@ export default function SettingsPanel({
 
             {/* Image Generation */}
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">Image Generation</div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[11px] uppercase tracking-wider text-white/40 font-semibold">Image Generation</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Reset to model-recommended values
+                    const settings = getModelSettings(value.modelImages || "", "1:1", "med");
+                    onChangeDraft({
+                      ...value,
+                      imgWidth: settings.width,
+                      imgHeight: settings.height,
+                      imgSteps: settings.steps,
+                      imgCfg: settings.cfg,
+                    });
+                  }}
+                  className="text-[10px] text-blue-400 hover:text-blue-300 underline"
+                >
+                  Reset to recommended
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="text-[10px] text-white/50">Width</label>
+                  <label className="text-[10px] text-white/50">
+                    Width <span className="text-white/30">(rec: {currentModelSettings.width})</span>
+                  </label>
                   <input
                     type="number"
                     className="w-full bg-black border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
-                    value={value.imgWidth ?? 1024}
+                    value={value.imgWidth ?? currentModelSettings.width}
                     onChange={(e) => onChangeDraft({ ...value, imgWidth: parseInt(e.target.value) })}
                     step="64"
-                    min="512"
+                    min="256"
                     max="2048"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-white/50">Height</label>
+                  <label className="text-[10px] text-white/50">
+                    Height <span className="text-white/30">(rec: {currentModelSettings.height})</span>
+                  </label>
                   <input
                     type="number"
                     className="w-full bg-black border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
-                    value={value.imgHeight ?? 1024}
+                    value={value.imgHeight ?? currentModelSettings.height}
                     onChange={(e) => onChangeDraft({ ...value, imgHeight: parseInt(e.target.value) })}
                     step="64"
-                    min="512"
+                    min="256"
                     max="2048"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-white/50">Steps</label>
+                  <label className="text-[10px] text-white/50">
+                    Steps <span className="text-white/30">(rec: {currentModelSettings.steps})</span>
+                  </label>
                   <input
                     type="number"
                     className="w-full bg-black border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
-                    value={value.imgSteps ?? 24}
+                    value={value.imgSteps ?? currentModelSettings.steps}
                     onChange={(e) => onChangeDraft({ ...value, imgSteps: parseInt(e.target.value) })}
                     step="1"
-                    min="8"
+                    min="1"
                     max="100"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-white/50">CFG Scale</label>
+                  <label className="text-[10px] text-white/50">
+                    CFG Scale <span className="text-white/30">(rec: {currentModelSettings.cfg})</span>
+                  </label>
                   <input
                     type="number"
                     className="w-full bg-black border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white"
-                    value={value.imgCfg ?? 7.5}
+                    value={value.imgCfg ?? currentModelSettings.cfg}
                     onChange={(e) => onChangeDraft({ ...value, imgCfg: parseFloat(e.target.value) })}
                     step="0.5"
                     min="1"
@@ -612,6 +695,16 @@ export default function SettingsPanel({
                   />
                 </div>
               </div>
+              {currentArchitecture === "sd15" && (value.imgWidth ?? 0) > 768 && (
+                <div className="mt-2 text-[10px] text-yellow-400/80 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-3 py-1.5">
+                  ⚠️ SD 1.5 models work best at max 768px. Higher resolutions may cause duplicate subjects.
+                </div>
+              )}
+              {currentArchitecture === "flux_schnell" && (value.imgSteps ?? 0) > 6 && (
+                <div className="mt-2 text-[10px] text-yellow-400/80 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-3 py-1.5">
+                  ⚠️ Flux Schnell is optimized for 4 steps. Higher values may cause over-processing.
+                </div>
+              )}
             </div>
 
             {/* Video Generation */}

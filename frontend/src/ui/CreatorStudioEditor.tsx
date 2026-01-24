@@ -177,6 +177,10 @@ export function CreatorStudioEditor({
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [hoveredSceneIdx, setHoveredSceneIdx] = useState<number | null>(null);
 
+  // Batch generation state (generates all scenes from outline)
+  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; phase: 'scene' | 'image' }>({ current: 0, total: 0, phase: 'scene' });
+
   // Project Settings Modal state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState("");
@@ -269,6 +273,25 @@ export function CreatorStudioEditor({
     },
     [backendUrl, authKey]
   );
+
+  // Sync outline with current scenes (keeps outline in sync with actual scene data)
+  const syncOutlineWithScenes = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      console.log('[CreatorStudioEditor] Syncing outline with scenes...');
+      const data = await postApi<{ ok: boolean; outline: any; scene_count: number }>(
+        `/studio/videos/${projectId}/sync-outline`,
+        {}
+      );
+      if (data.ok && data.outline) {
+        setStoryOutline(data.outline);
+        console.log(`[CreatorStudioEditor] Outline synced: ${data.scene_count} scenes`);
+      }
+    } catch (e: any) {
+      console.warn('[CreatorStudioEditor] Failed to sync outline:', e.message);
+      // Non-critical - don't alert user
+    }
+  }, [projectId, postApi]);
 
   // Generate AI-powered story outline
   const generateStoryOutline = useCallback(async () => {
@@ -652,6 +675,8 @@ export function CreatorStudioEditor({
       try {
         const llmProvider = imageProvider === 'comfyui' ? 'ollama' : imageProvider;
 
+        // Send aspect ratio to backend - Dynamic Preset System calculates correct
+        // dimensions based on model architecture (SD1.5 vs SDXL vs Flux)
         const data = await postApi<{ media?: { images?: string[] } }>(
           '/chat',
           {
@@ -659,8 +684,7 @@ export function CreatorStudioEditor({
             mode: 'imagine',
             provider: llmProvider,
             imgModel: imageModel || undefined,
-            imgWidth: imageWidth,
-            imgHeight: imageHeight,
+            imgAspectRatio: '16:9',  // Story/video format
             imgSteps: imageSteps,
             imgCfg: imageCfg,
             promptRefinement: false,
@@ -719,6 +743,109 @@ export function CreatorStudioEditor({
       setIsGeneratingScene(false);
     }
   }, [projectId, storyOutline, scenes.length, postApi, generateImageForScene]);
+
+  // Generate ALL scenes from outline in sequence (batch generation)
+  const generateAllScenesFromOutline = useCallback(async () => {
+    if (!storyOutline || !storyOutline.scenes || storyOutline.scenes.length === 0) {
+      console.log('[CreatorStudioEditor] No outline scenes to generate');
+      return;
+    }
+
+    const totalScenes = storyOutline.scenes.length;
+    console.log(`[CreatorStudioEditor] Starting batch generation of ${totalScenes} scenes`);
+
+    setIsBatchGenerating(true);
+    setBatchProgress({ current: 0, total: totalScenes, phase: 'scene' });
+
+    const generatedScenes: Scene[] = [];
+
+    try {
+      // Generate all scenes first (without images for speed)
+      for (let i = 0; i < totalScenes; i++) {
+        setBatchProgress({ current: i + 1, total: totalScenes, phase: 'scene' });
+        console.log(`[CreatorStudioEditor] Generating scene ${i + 1}/${totalScenes}`);
+
+        try {
+          const data = await postApi<{ ok: boolean; scene: Scene }>(
+            `/studio/videos/${projectId}/scenes/generate-from-outline?scene_index=${i}`,
+            {}
+          );
+
+          if (data.ok && data.scene) {
+            generatedScenes.push(data.scene);
+            setScenes((prev) => [...prev, data.scene]);
+            setCurrentSceneIndex(i);
+          }
+        } catch (sceneErr: any) {
+          console.error(`[CreatorStudioEditor] Failed to generate scene ${i + 1}:`, sceneErr);
+          // Continue with remaining scenes even if one fails
+        }
+
+        // Small delay between scene creations to avoid overwhelming the server
+        if (i < totalScenes - 1) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      console.log(`[CreatorStudioEditor] Created ${generatedScenes.length} scenes, now generating images...`);
+
+      // Now generate images for all scenes
+      for (let i = 0; i < generatedScenes.length; i++) {
+        const scene = generatedScenes[i];
+        setBatchProgress({ current: i + 1, total: generatedScenes.length, phase: 'image' });
+        console.log(`[CreatorStudioEditor] Generating image ${i + 1}/${generatedScenes.length}`);
+
+        try {
+          // Generate image inline (can't use generateImageForScene due to isGeneratingImage lock)
+          const llmProvider = imageProvider === 'comfyui' ? 'ollama' : imageProvider;
+
+          const data = await postApi<{ media?: { images?: string[] } }>(
+            '/chat',
+            {
+              message: `imagine ${scene.imagePrompt}`,
+              mode: 'imagine',
+              provider: llmProvider,
+              imgModel: imageModel || undefined,
+              imgAspectRatio: '16:9',
+              imgSteps: imageSteps,
+              imgCfg: imageCfg,
+              promptRefinement: false,
+            }
+          );
+
+          const imageUrl = data?.media?.images?.[0];
+          if (imageUrl) {
+            await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, {
+              imageUrl,
+              status: 'ready',
+            });
+
+            setScenes((prev) =>
+              prev.map((s) =>
+                s.id === scene.id ? { ...s, imageUrl, status: 'ready' as SceneStatus } : s
+              )
+            );
+          }
+        } catch (imgErr: any) {
+          console.error(`[CreatorStudioEditor] Failed to generate image for scene ${i + 1}:`, imgErr);
+          // Continue with remaining images
+        }
+      }
+
+      setLastSaved(new Date());
+      setCurrentSceneIndex(0); // Go back to first scene
+      console.log('[CreatorStudioEditor] Batch generation complete!');
+
+      // Sync outline with actual scene data to keep them in sync
+      await syncOutlineWithScenes();
+
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Batch generation failed:', e);
+    } finally {
+      setIsBatchGenerating(false);
+      setBatchProgress({ current: 0, total: 0, phase: 'scene' });
+    }
+  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, syncOutlineWithScenes]);
 
   // Load project and scenes
   useEffect(() => {
@@ -806,7 +933,7 @@ export function CreatorStudioEditor({
     try {
       let narration: string;
       let imagePrompt: string;
-      let negativePrompt: string = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+      let negativePrompt: string = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution, duplicate, clone, multiple people, two heads, two faces, split image, extra limbs";
 
       if (storyOutline && storyOutline.scenes && storyOutline.scenes.length > 0) {
         const outlineScene = storyOutline.scenes[0];
@@ -846,7 +973,7 @@ export function CreatorStudioEditor({
     }
   }, [project, projectId, isGeneratingScene, postApi, getVisualStyle, getTones, storyOutline, generateImageForScene]);
 
-  // Auto-generate first scene after outline is generated
+  // Auto-generate ALL scenes after outline is generated (batch generation)
   useEffect(() => {
     if (
       autoGenerateFirst &&
@@ -857,13 +984,14 @@ export function CreatorStudioEditor({
       storyOutline.scenes &&
       storyOutline.scenes.length > 0 &&
       scenes.length === 0 &&
-      !isGeneratingScene
+      !isGeneratingScene &&
+      !isBatchGenerating
     ) {
-      console.log('[CreatorStudioEditor] Auto-generating first scene from outline');
+      console.log('[CreatorStudioEditor] Auto-generating ALL scenes from outline');
       setHasAutoTriggered(true);
-      generateFirstSceneWithAI();
+      generateAllScenesFromOutline();
     }
-  }, [autoGenerateFirst, hasAutoTriggered, loading, project, storyOutline, scenes.length, isGeneratingScene, generateFirstSceneWithAI]);
+  }, [autoGenerateFirst, hasAutoTriggered, loading, project, storyOutline, scenes.length, isGeneratingScene, isBatchGenerating, generateAllScenesFromOutline]);
 
   // Generate first scene (non-AI fallback)
   const generateFirstScene = useCallback(async () => {
@@ -913,6 +1041,9 @@ export function CreatorStudioEditor({
 
           console.log(`[CreatorStudioEditor] Generated scene ${nextSceneIndex + 1} from outline`);
           generateImageForScene(data.scene.id, data.scene.imagePrompt);
+
+          // Sync outline with new scene
+          syncOutlineWithScenes();
           return;
         }
       } catch (outlineErr: any) {
@@ -928,7 +1059,7 @@ export function CreatorStudioEditor({
 
       const narration = `Scene ${sceneNum}. ${project.logline || `The story of "${project.title}" continues...`}`;
       const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
-      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution, duplicate, clone, multiple people, two heads, two faces, split image, extra limbs";
 
       const data = await postApi<{ scene: Scene }>(
         `/studio/videos/${projectId}/scenes`,
@@ -946,12 +1077,15 @@ export function CreatorStudioEditor({
 
       console.log('[CreatorStudioEditor] Generated scene with fallback content:', sceneNum);
       generateImageForScene(data.scene.id, data.scene.imagePrompt);
+
+      // Sync outline with new scene
+      syncOutlineWithScenes();
     } catch (e: any) {
       alert(`Failed to create scene: ${e.message}`);
     } finally {
       setIsGeneratingScene(false);
     }
-  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, generateImageForScene]);
+  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, generateImageForScene, syncOutlineWithScenes]);
 
   // Generate next scene for TV Mode (uses backend outline for reliability)
   const generateNextForTVMode = useCallback(async () => {
@@ -984,7 +1118,7 @@ export function CreatorStudioEditor({
 
       const narration = `Scene ${sceneNum}. ${project.logline || `The story of "${project.title}" continues...`}`;
       const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
-      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution, duplicate, clone, multiple people, two heads, two faces, split image, extra limbs";
 
       const data = await postApi<{ scene: Scene }>(
         `/studio/videos/${projectId}/scenes`,
@@ -1100,6 +1234,68 @@ export function CreatorStudioEditor({
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-black via-[#0a0a0f] to-[#0f0f18] text-white flex flex-col">
+      {/* Batch Generation Progress Overlay */}
+      {isBatchGenerating && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm">
+          <div className="bg-[#1a1a2e] border border-white/10 rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <div className="text-center">
+              {/* Animated Icon */}
+              <div className="mb-6 flex justify-center">
+                <div className="relative">
+                  <div className="w-20 h-20 rounded-full border-4 border-[#3ea6ff]/20" />
+                  <div
+                    className="absolute inset-0 w-20 h-20 rounded-full border-4 border-transparent border-t-[#3ea6ff] animate-spin"
+                    style={{ animationDuration: '1s' }}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    {batchProgress.phase === 'scene' ? (
+                      <Sparkles size={28} className="text-[#3ea6ff]" />
+                    ) : (
+                      <ImageIcon size={28} className="text-[#3ea6ff]" />
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Title */}
+              <h2 className="text-xl font-semibold text-white mb-2">
+                {batchProgress.phase === 'scene' ? 'Creating Scenes' : 'Generating Images'}
+              </h2>
+
+              {/* Progress Text */}
+              <p className="text-white/60 mb-6">
+                {batchProgress.phase === 'scene'
+                  ? `Building scene ${batchProgress.current} of ${batchProgress.total}...`
+                  : `Generating image ${batchProgress.current} of ${batchProgress.total}...`
+                }
+              </p>
+
+              {/* Progress Bar */}
+              <div className="mb-4">
+                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-[#3ea6ff] to-[#6ec7ff] transition-all duration-300 ease-out"
+                    style={{
+                      width: batchProgress.total > 0
+                        ? `${(batchProgress.current / batchProgress.total) * 100}%`
+                        : '0%'
+                    }}
+                  />
+                </div>
+                <div className="mt-2 text-xs text-white/40">
+                  {batchProgress.phase === 'scene' ? 'Phase 1/2: Creating scenes' : 'Phase 2/2: Generating images'}
+                </div>
+              </div>
+
+              {/* Tip */}
+              <p className="text-xs text-white/30 mt-4">
+                This may take a few minutes depending on your hardware
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header - Compact & Cinematic */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/40 backdrop-blur-md">
         <div className="flex items-center gap-4">
