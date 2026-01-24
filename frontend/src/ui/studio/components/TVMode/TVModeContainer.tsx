@@ -15,6 +15,7 @@ import { TVModeControls } from "./TVModeControls";
 import { TVModeSettings } from "./TVModeSettings";
 import { TVModeEndScreen } from "./TVModeEndScreen";
 import { TVModeChapterTransition } from "./TVModeChapterTransition";
+import { useTTSPlayback } from "../../hooks/useTTSPlayback";
 
 interface ChapterData {
   sessionId: string;
@@ -76,6 +77,27 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   const nextSceneReady = useTVModeStore(selectNextSceneReady);
   const currentImageReady = useTVModeStore(selectCurrentSceneImageReady);
   const isWaitingForImage = useTVModeStore(selectIsWaitingForImage);
+
+  // TTS Playback Integration
+  const {
+    ttsEnabled,
+    setTTSEnabled,
+    isSpeaking,
+    isPaused: ttsPaused,
+    isSupported: ttsSupported,
+    voices,
+    voiceConfig,
+    setVoiceConfig,
+    stopSpeaking,
+    pauseSpeaking,
+    resumeSpeaking,
+  } = useTTSPlayback({
+    isActive,
+    isPlaying,
+    currentScene,
+    currentSceneIndex,
+    scenes,
+  });
 
   // Enter fullscreen on mount
   useEffect(() => {
@@ -395,10 +417,22 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
         onExit={exitTVMode}
         onGoToScene={goToScene}
         onShowSettings={() => setShowSettings(true)}
+        ttsEnabled={ttsEnabled}
+        ttsSupported={ttsSupported}
+        isSpeaking={isSpeaking}
+        onToggleTTS={() => setTTSEnabled(!ttsEnabled)}
       />
 
       {showSettings && (
-        <TVModeSettings onClose={() => setShowSettings(false)} />
+        <TVModeSettings
+          onClose={() => setShowSettings(false)}
+          ttsEnabled={ttsEnabled}
+          setTTSEnabled={setTTSEnabled}
+          ttsSupported={ttsSupported}
+          voices={voices}
+          voiceConfig={voiceConfig}
+          setVoiceConfig={setVoiceConfig}
+        />
       )}
 
       {/* Chapter Transition Screen (Saga Mode) */}
