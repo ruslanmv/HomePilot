@@ -627,13 +627,17 @@ export default function StudioView(props: StudioParams) {
   }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, updateSceneImageByIdx, setSceneImageStatusByIdx])
 
   // Enqueue image generation for a scene
-  const generateImageForScene = useCallback((scene: Scene | TVScene, sessionId?: string) => {
-    // Already has image?
+  // Set force=true to regenerate even if image already exists
+  const generateImageForScene = useCallback((scene: Scene | TVScene, sessionId?: string, force: boolean = false) => {
+    // Already has image? Skip unless force regenerate
     const hasImage = Boolean((scene as Scene).image_url || (scene as TVScene).image_url || (scene as TVScene).image)
-    if (hasImage) return
+    if (hasImage && !force) return
 
     // Already in queue or in flight?
-    if (imageQueueRef.current.has(scene.idx) || imageInFlightRef.current === scene.idx) return
+    if (imageQueueRef.current.has(scene.idx) || imageInFlightRef.current === scene.idx) {
+      console.log('[Studio] Image generation already queued/in-flight for scene:', scene.idx)
+      return
+    }
 
     // Get session_id from parameter or current story
     const storySessionId = sessionId || currentStory?.session_id
@@ -641,6 +645,8 @@ export default function StudioView(props: StudioParams) {
       console.warn('No session_id available for image generation')
       return
     }
+
+    console.log('[Studio] Queueing image generation for scene:', scene.idx, force ? '(forced regenerate)' : '')
 
     // Mark as generating in TV Mode store
     // IMPORTANT: Check current state at runtime, not closure value
@@ -1208,7 +1214,7 @@ export default function StudioView(props: StudioParams) {
           isGenerating={isGeneratingImage}
           narration={currentScene?.narration}
           prompt={currentScene?.image_prompt}
-          onRegenerateImage={currentScene ? () => generateImageForScene(currentScene) : undefined}
+          onRegenerateImage={currentScene ? () => generateImageForScene(currentScene, undefined, true) : undefined}
         />
       ) : (
         <StudioEmptyState
