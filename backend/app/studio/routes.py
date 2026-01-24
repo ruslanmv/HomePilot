@@ -827,40 +827,63 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
 
     tone_desc = ", ".join(tones) if tones else "documentary"
 
-    # Build the outline generation prompt - more explicit about JSON-only output
-    system_prompt = """You are a story planner that outputs ONLY valid JSON.
+    # Build example JSON to help the model understand the format
+    example_scene = {
+        "scene_number": 1,
+        "title": "Opening",
+        "description": "Brief description of what happens",
+        "narration": "The narrator speaks these words to the audience.",
+        "image_prompt": f"{visual_style} style, detailed visual description here, high quality",
+        "negative_prompt": "blurry, low quality, text, watermark",
+        "duration_sec": req.scene_duration
+    }
 
-CRITICAL: Your response must be ONLY a JSON object. No text before or after. No markdown. No explanations.
+    # Build the outline generation prompt - simpler and more direct
+    system_prompt = f"""You are a professional screenwriter. Generate a story outline as a JSON object.
 
-Required JSON format:
-{"title":"string","logline":"string","visual_style":"string","tone":"string","story_arc":{"beginning":"string","rising_action":"string","climax":"string","falling_action":"string","resolution":"string"},"scenes":[{"scene_number":1,"title":"string","description":"string","narration":"string","image_prompt":"string","negative_prompt":"string","duration_sec":5.0}]}
+Output ONLY valid JSON with this exact structure:
+{{
+  "title": "Story Title",
+  "logline": "One sentence summary",
+  "visual_style": "{visual_style}",
+  "tone": "{tone_desc}",
+  "story_arc": {{
+    "beginning": "Setup description",
+    "rising_action": "Conflict builds",
+    "climax": "Peak moment",
+    "falling_action": "Resolution begins",
+    "resolution": "Conclusion"
+  }},
+  "scenes": [
+    {json.dumps(example_scene)}
+  ]
+}}
 
-Rules:
-- Output ONLY the JSON object, nothing else
-- Create exactly the requested number of scenes
-- Each scene narration: 2-3 engaging sentences
-- Each image_prompt: detailed visual description with the style
-- Keep consistent character descriptions"""
+IMPORTANT:
+- Output ONLY the JSON object, no other text
+- Create exactly {req.target_scenes} scenes in the scenes array
+- Each scene narration should be 2-3 sentences
+- Each image_prompt must include "{visual_style}" style keywords
+- Make the story coherent from beginning to end"""
 
-    user_prompt = f"""Create a story outline with the following parameters:
+    user_prompt = f"""Create a {req.target_scenes}-scene story outline for:
 
 Title: {v.title}
-Logline/Description: {v.logline or v.title}
-Visual Style: {visual_style}
+Description: {v.logline or "A compelling visual story"}
+Style: {visual_style}
 Tone: {tone_desc}
 Goal: {goal}
-Number of Scenes: {req.target_scenes}
-Scene Duration: {req.scene_duration} seconds each
 
-Create a complete story with a clear beginning, middle, and end.
-Each scene should have detailed narration and image prompts that match the visual style.
-Make the story engaging and suitable for visual storytelling."""
+Generate the complete JSON now:"""
 
     base_url = req.ollama_base_url or OLLAMA_BASE_URL
-    model = req.ollama_model or OLLAMA_MODEL or "llama3:8b"
+    model = req.ollama_model or OLLAMA_MODEL or "llama3.2"
+
+    print(f"[Outline] Generating outline with model: {model}")
+    print(f"[Outline] Title: {v.title}, Scenes: {req.target_scenes}")
 
     try:
-        # Call LLM to generate outline
+        # Call LLM to generate outline - use response_format="json" for better results
         response = await chat_ollama(
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -870,10 +893,28 @@ Make the story engaging and suitable for visual storytelling."""
             model=model,
             temperature=0.7,
             max_tokens=4000,
+            response_format="json",  # Tell Ollama to output JSON
         )
 
-        # Parse the response
-        response_text = response.get("content", "") if isinstance(response, dict) else str(response)
+        # Extract content from the OpenAI-compatible response format
+        # chat_ollama returns: {"choices": [{"message": {"content": ...}}], "provider_raw": ...}
+        response_text = ""
+        if isinstance(response, dict):
+            choices = response.get("choices", [])
+            if choices and isinstance(choices, list) and len(choices) > 0:
+                message = choices[0].get("message", {})
+                response_text = message.get("content", "")
+            # Fallback to direct content key
+            if not response_text:
+                response_text = response.get("content", "")
+        else:
+            response_text = str(response)
+
+        print(f"[Outline] Response length: {len(response_text)} chars")
+        print(f"[Outline] Response preview: {response_text[:300]}...")
+
+        if not response_text.strip():
+            raise ValueError("LLM returned empty response. Please try again or check Ollama is running.")
 
         # Try to extract JSON from the response - handle multiple formats
         import re
@@ -894,18 +935,31 @@ Make the story engaging and suitable for visual storytelling."""
         if cleaned.startswith("{"):
             try:
                 outline = json.loads(cleaned)
-            except json.JSONDecodeError:
-                pass
+                print("[Outline] Parsed JSON directly from cleaned response")
+            except json.JSONDecodeError as e:
+                print(f"[Outline] Direct parse failed: {e}")
 
-        # Try 2: Find JSON object in the text
+        # Try 2: Find JSON object in the text using brace matching
         if not outline:
-            # Find the outermost { and matching }
             start_idx = response_text.find("{")
             if start_idx != -1:
-                # Count braces to find matching close
                 depth = 0
                 end_idx = start_idx
+                in_string = False
+                escape_next = False
+
                 for i, char in enumerate(response_text[start_idx:], start_idx):
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    if char == "\\":
+                        escape_next = True
+                        continue
+                    if char == '"' and not escape_next:
+                        in_string = not in_string
+                        continue
+                    if in_string:
+                        continue
                     if char == "{":
                         depth += 1
                     elif char == "}":
@@ -918,22 +972,34 @@ Make the story engaging and suitable for visual storytelling."""
                     json_str = response_text[start_idx:end_idx]
                     try:
                         outline = json.loads(json_str)
-                    except json.JSONDecodeError:
-                        pass
+                        print(f"[Outline] Parsed JSON via brace matching ({len(json_str)} chars)")
+                    except json.JSONDecodeError as e:
+                        print(f"[Outline] Brace match parse failed: {e}")
 
-        # Try 3: Regex fallback
+        # Try 3: Regex fallback for simpler cases
         if not outline:
             json_match = re.search(r'\{[\s\S]*\}', response_text)
             if json_match:
                 try:
                     outline = json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    pass
+                    print("[Outline] Parsed JSON via regex")
+                except json.JSONDecodeError as e:
+                    print(f"[Outline] Regex parse failed: {e}")
 
         if not outline:
-            # Log the response for debugging
-            print(f"[Outline] Failed to parse response: {response_text[:500]}...")
+            # Log the full response for debugging
+            print(f"[Outline] FAILED - Full response:\n{response_text}")
             raise ValueError("No valid JSON found in response. The AI model may need a different prompt format.")
+
+        # Validate outline has required fields
+        if "scenes" not in outline or not isinstance(outline.get("scenes"), list):
+            print(f"[Outline] Invalid outline structure: {list(outline.keys())}")
+            raise ValueError("Outline missing 'scenes' array")
+
+        if len(outline["scenes"]) == 0:
+            raise ValueError("Outline has no scenes")
+
+        print(f"[Outline] SUCCESS - Generated {len(outline['scenes'])} scenes")
 
         # Store outline in project metadata
         update_video(video_id, metadata={"story_outline": outline})
