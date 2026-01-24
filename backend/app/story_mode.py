@@ -136,7 +136,8 @@ class StoryBible(BaseModel):
     scene_outline: List[str] = Field(default_factory=list)
 
     # Total planned scenes (story is NOT infinite)
-    total_scenes: int = Field(default=8, ge=3, le=50)
+    # Minimum 6 scenes for a complete story arc (setup, rising action, climax, falling action, resolution)
+    total_scenes: int = Field(default=8, ge=6, le=50)
 
 
 class StoryState(BaseModel):

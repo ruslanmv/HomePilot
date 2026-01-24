@@ -275,7 +275,8 @@ export default function StudioView(props: StudioParams) {
   const [showBible, setShowBible] = useState(false)
 
   // Image generation queue to prevent dropped requests
-  const imageQueueRef = useRef<Set<number>>(new Set())
+  // Store scene data directly to avoid stale closure issues with currentStory
+  const imageQueueRef = useRef<Map<number, { image_prompt: string; negative_prompt?: string; session_id: string }>>(new Map())
   const imageInFlightRef = useRef<number | null>(null)
   const [isMuted, setIsMuted] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -422,8 +423,8 @@ export default function StudioView(props: StudioParams) {
       // Move to the new scene
       setCurrentSceneIndex(currentStory.scenes.length)
 
-      // Generate image for the new scene
-      await generateImageForScene(data.scene)
+      // Generate image for the new scene (pass session_id to avoid stale closure)
+      await generateImageForScene(data.scene, currentStory.session_id)
     } catch (err: any) {
       alert(`Failed to generate scene: ${err.message || err}`)
     } finally {
@@ -436,23 +437,23 @@ export default function StudioView(props: StudioParams) {
     // Already processing?
     if (imageInFlightRef.current !== null) return
 
-    // Get next scene idx from queue
-    const nextIdx = imageQueueRef.current.values().next().value
-    if (nextIdx === undefined) {
+    // Get next scene from queue (stored with its data to avoid stale closure)
+    const nextEntry = imageQueueRef.current.entries().next().value
+    if (!nextEntry) {
       setIsGeneratingImage(false)
       return
     }
 
+    const [nextIdx, sceneData] = nextEntry as [number, { image_prompt: string; negative_prompt?: string; session_id: string }]
     imageInFlightRef.current = nextIdx
     imageQueueRef.current.delete(nextIdx)
 
     try {
       const llmProvider = props.providerImages === 'comfyui' ? 'ollama' : props.providerImages
 
-      // Find the scene to get its image_prompt
-      const scene = currentStory?.scenes.find(s => s.idx === nextIdx)
-      if (!scene) {
-        console.warn(`Scene ${nextIdx} not found for image generation`)
+      // Use stored scene data (avoids stale currentStory closure)
+      if (!sceneData?.image_prompt) {
+        console.warn(`Scene ${nextIdx} has no image_prompt for generation`)
         return
       }
 
@@ -462,7 +463,7 @@ export default function StudioView(props: StudioParams) {
         props.backendUrl,
         '/chat',
         {
-          message: `imagine ${scene.image_prompt}`,
+          message: `imagine ${sceneData.image_prompt}`,
           mode: 'imagine',
           provider: llmProvider,
           provider_base_url: props.baseUrlImages,
@@ -478,7 +479,7 @@ export default function StudioView(props: StudioParams) {
       )
 
       const imageUrl = data?.media?.images?.[0]
-      if (imageUrl && currentStory) {
+      if (imageUrl) {
         // Update scene with image URL in state
         setCurrentStory((prev) => {
           if (!prev) return prev
@@ -499,7 +500,7 @@ export default function StudioView(props: StudioParams) {
             props.backendUrl,
             '/story/scene/image',
             {
-              session_id: currentStory.session_id,
+              session_id: sceneData.session_id,
               scene_idx: nextIdx,
               image_url: imageUrl,
             },
@@ -521,10 +522,10 @@ export default function StudioView(props: StudioParams) {
         setIsGeneratingImage(false)
       }
     }
-  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, currentStory, tvModeActive, updateSceneImageByIdx])
+  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, tvModeActive, updateSceneImageByIdx])
 
   // Enqueue image generation for a scene
-  const generateImageForScene = useCallback((scene: Scene | TVScene) => {
+  const generateImageForScene = useCallback((scene: Scene | TVScene, sessionId?: string) => {
     // Already has image?
     const hasImage = Boolean((scene as Scene).image_url || (scene as TVScene).image_url || (scene as TVScene).image)
     if (hasImage) return
@@ -532,16 +533,27 @@ export default function StudioView(props: StudioParams) {
     // Already in queue or in flight?
     if (imageQueueRef.current.has(scene.idx) || imageInFlightRef.current === scene.idx) return
 
+    // Get session_id from parameter or current story
+    const storySessionId = sessionId || currentStory?.session_id
+    if (!storySessionId) {
+      console.warn('No session_id available for image generation')
+      return
+    }
+
     // Mark as generating in TV Mode store
     if (tvModeActive) {
       setSceneImageStatusByIdx(scene.idx, 'generating')
     }
 
-    // Add to queue and start processing
-    imageQueueRef.current.add(scene.idx)
+    // Add to queue with scene data (avoids stale closure when processing)
+    imageQueueRef.current.set(scene.idx, {
+      image_prompt: scene.image_prompt,
+      negative_prompt: scene.negative_prompt,
+      session_id: storySessionId,
+    })
     setIsGeneratingImage(true)
     processImageQueue()
-  }, [tvModeActive, setSceneImageStatusByIdx, processImageQueue])
+  }, [tvModeActive, setSceneImageStatusByIdx, processImageQueue, currentStory?.session_id])
 
   // Auto-play logic
   useEffect(() => {
@@ -618,8 +630,8 @@ export default function StudioView(props: StudioParams) {
         }
       })
 
-      // Generate image for the new scene in background
-      generateImageForScene(data.scene)
+      // Generate image for the new scene in background (pass session_id to avoid stale closure)
+      generateImageForScene(data.scene, currentStory.session_id)
 
       return {
         ...data.scene,
