@@ -8,6 +8,9 @@ from typing import Any, Dict, List, Optional, Literal
 import httpx
 
 
+import re
+
+
 def _extract_first_json_object(text: str) -> str:
     """
     Extract the first balanced JSON object from text.
@@ -48,6 +51,34 @@ def _extract_first_json_object(text: str) -> str:
                 return s[start : i + 1]
 
     return ""  # incomplete/truncated
+
+
+def _is_placeholder_json(text: str) -> bool:
+    """
+    Detect if extracted JSON contains placeholder values from schema examples.
+    DeepSeek R1 sometimes echoes the schema instead of generating actual content.
+    """
+    if not text or len(text) < 20:
+        return True
+
+    # Common placeholder patterns that indicate schema was echoed
+    placeholder_patterns = [
+        r'"variation_prompt"\s*:\s*"string"',
+        r'"title"\s*:\s*"string"',
+        r'"logline"\s*:\s*"string"',
+        r'"narration"\s*:\s*"string"',
+        r'"image_prompt"\s*:\s*"string"',
+        r':\s*"\.\.\."',
+        r':\s*"<[^>]+>"',  # Matches "<YOUR TEXT HERE>" patterns
+    ]
+
+    text_lower = text.lower()
+    for pattern in placeholder_patterns:
+        if re.search(pattern, text_lower):
+            return True
+
+    return False
+
 
 from .config import (
     TOOL_TIMEOUT_S,
@@ -313,11 +344,20 @@ async def chat_ollama(
 
     content = str(content or "")
 
-    # NOTE: We intentionally do NOT extract JSON from message.thinking field.
-    # DeepSeek R1's "thinking" field contains reasoning traces (including schema examples),
-    # NOT the actual response. Extracting from there causes placeholder values like "string".
-    # The actual JSON response should be in message.content.
-    # If content is empty, the model failed to respond - don't guess from reasoning.
+    # DeepSeek R1 fallback: If content is empty, try to extract from message.thinking
+    # BUT validate that it's not placeholder JSON (schema echoed back)
+    if not content.strip() and isinstance(msg, dict):
+        thinking = str(msg.get("thinking") or "").strip()
+        if thinking:
+            # Try to extract JSON from thinking field
+            candidate = _extract_first_json_object(thinking)
+            if candidate and not _is_placeholder_json(candidate):
+                try:
+                    json.loads(candidate)  # Validate it's parseable
+                    content = candidate
+                    print(f"[OLLAMA] Extracted valid JSON from message.thinking field (content was empty)")
+                except Exception:
+                    pass  # Not valid JSON, keep empty
 
     # Debug logging when content is still empty (helps diagnose model-specific issues)
     if not content.strip():
