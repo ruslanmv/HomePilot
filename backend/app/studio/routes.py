@@ -16,7 +16,7 @@ from .models import (
     StudioProjectCreate, AssetKind, TrackKind, AutosavePayload,
 )
 from .repo import (
-    list_videos, get_video, list_scenes, get_scene, create_scene, update_scene, delete_scene, update_video,
+    list_videos, get_video, list_scenes, get_scene, create_scene, update_scene, delete_scene, update_video, delete_video,
     # Professional project functions
     create_project, list_projects, get_project, update_project, delete_project,
     # Asset functions
@@ -131,6 +131,20 @@ def video_update(video_id: str, title: Optional[str] = None, logline: Optional[s
         v = update_video(video_id, **updates)
 
     return {"video": v.model_dump()}
+
+
+@router.delete("/videos/{video_id}")
+def video_delete(video_id: str):
+    """Delete a video project and all its scenes."""
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    deleted = delete_video(video_id)
+    if not deleted:
+        raise HTTPException(status_code=500, detail="Failed to delete video")
+
+    return {"ok": True}
 
 
 # ============================================================================

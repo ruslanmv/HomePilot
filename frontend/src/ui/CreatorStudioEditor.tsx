@@ -18,6 +18,7 @@ import {
   Settings,
   FileText,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { useTVModeStore } from "./studio/stores/tvModeStore";
 import type { TVScene } from "./studio/stores/tvModeStore";
@@ -165,6 +166,7 @@ export function CreatorStudioEditor({
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isGeneratingScene, setIsGeneratingScene] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [hoveredSceneIdx, setHoveredSceneIdx] = useState<number | null>(null);
 
   // API helpers
   const fetchApi = useCallback(
@@ -216,6 +218,25 @@ export function CreatorStudioEditor({
           ...(authKey ? { "x-api-key": authKey } : {}),
         },
         body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}${text ? `: ${text}` : ""}`);
+      }
+      return (await res.json()) as T;
+    },
+    [backendUrl, authKey]
+  );
+
+  const deleteApi = useCallback(
+    async <T,>(path: string): Promise<T> => {
+      const url = `${backendUrl.replace(/\/+$/, "")}${path}`;
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          ...(authKey ? { "x-api-key": authKey } : {}),
+        },
       });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
@@ -307,6 +328,45 @@ export function CreatorStudioEditor({
       setIsSavingScene(false);
     }
   }, [editingScene, editNarration, editImagePrompt, editNegativePrompt, projectId, patchApi]);
+
+  // Delete scene
+  const deleteScene = useCallback(async (sceneId: string) => {
+    if (scenes.length <= 1) {
+      alert("Cannot delete the last scene.");
+      return;
+    }
+
+    if (!window.confirm("Delete this scene? This cannot be undone.")) {
+      return;
+    }
+
+    try {
+      console.log('[CreatorStudioEditor] Deleting scene:', sceneId);
+      await deleteApi<{ ok: boolean }>(`/studio/videos/${projectId}/scenes/${sceneId}`);
+
+      // Find deleted scene index for adjusting current scene
+      const deletedIndex = scenes.findIndex((s) => s.id === sceneId);
+
+      // Update local state - remove scene and re-index
+      setScenes((prev) => {
+        const newScenes = prev
+          .filter((s) => s.id !== sceneId)
+          .map((s, i) => ({ ...s, idx: i }));
+        return newScenes;
+      });
+
+      // Adjust current scene index if needed
+      if (deletedIndex >= 0 && deletedIndex <= currentSceneIndex) {
+        setCurrentSceneIndex((prev) => Math.max(0, prev - 1));
+      }
+
+      setLastSaved(new Date());
+      console.log('[CreatorStudioEditor] Scene deleted successfully');
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Failed to delete scene:', e);
+      alert(`Failed to delete scene: ${e.message}`);
+    }
+  }, [projectId, scenes, currentSceneIndex, deleteApi]);
 
   // Fetch available models
   const fetchAvailableModels = useCallback(async () => {
@@ -839,38 +899,62 @@ export function CreatorStudioEditor({
               const isActive = idx === currentSceneIndex;
               const hasImage = Boolean(scene.imageUrl);
 
-              return (
-                <button
-                  key={scene.id}
-                  onClick={() => setCurrentSceneIndex(idx)}
-                  className={`
-                    relative rounded-lg overflow-hidden transition-all
-                    ${isActive
-                      ? "ring-2 ring-blue-500 ring-offset-2 ring-offset-black"
-                      : "opacity-70 hover:opacity-100"
-                    }
-                  `}
-                  type="button"
-                  title={`Scene ${idx + 1}`}
-                >
-                  {/* Thumbnail */}
-                  <div className="w-16 h-10 flex items-center justify-center bg-white/5">
-                    {hasImage ? (
-                      <img
-                        src={scene.imageUrl!}
-                        alt={`Scene ${idx + 1}`}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <ImageIcon size={16} className="text-white/30" />
-                    )}
-                  </div>
+              const isHovered = hoveredSceneIdx === idx;
+              const showDelete = isHovered && scenes.length > 1;
 
-                  {/* Scene number badge */}
-                  <div className="absolute bottom-1 right-1 text-[10px] bg-black/60 px-1 rounded">
-                    {idx + 1}
-                  </div>
-                </button>
+              return (
+                <div
+                  key={scene.id}
+                  className="relative"
+                  onMouseEnter={() => setHoveredSceneIdx(idx)}
+                  onMouseLeave={() => setHoveredSceneIdx(null)}
+                >
+                  <button
+                    onClick={() => setCurrentSceneIndex(idx)}
+                    className={`
+                      relative rounded-lg overflow-hidden transition-all
+                      ${isActive
+                        ? "ring-2 ring-blue-500 ring-offset-2 ring-offset-black"
+                        : "opacity-70 hover:opacity-100"
+                      }
+                    `}
+                    type="button"
+                    title={`Scene ${idx + 1}`}
+                  >
+                    {/* Thumbnail */}
+                    <div className="w-16 h-10 flex items-center justify-center bg-white/5">
+                      {hasImage ? (
+                        <img
+                          src={scene.imageUrl!}
+                          alt={`Scene ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <ImageIcon size={16} className="text-white/30" />
+                      )}
+                    </div>
+
+                    {/* Scene number badge */}
+                    <div className="absolute bottom-1 right-1 text-[10px] bg-black/60 px-1 rounded">
+                      {idx + 1}
+                    </div>
+                  </button>
+
+                  {/* Delete button */}
+                  {showDelete && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteScene(scene.id);
+                      }}
+                      className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center transition-all transform hover:scale-110 bg-black/80 text-white/70 hover:text-white hover:bg-red-500"
+                      type="button"
+                      title="Delete scene"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
               );
             })}
 
