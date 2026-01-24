@@ -273,6 +273,9 @@ export default function StudioView(props: StudioParams) {
   const [isGeneratingScene, setIsGeneratingScene] = useState(false)
   const [isGeneratingImage, setIsGeneratingImage] = useState(false)
   const [showBible, setShowBible] = useState(false)
+  const [isCreatingChapter, setIsCreatingChapter] = useState(false)
+  const [showChapterSettings, setShowChapterSettings] = useState(false)
+  const [chapterHint, setChapterHint] = useState('')
 
   // Image generation queue to prevent dropped requests
   // Store scene data directly to avoid stale closure issues with currentStory
@@ -791,6 +794,53 @@ export default function StudioView(props: StudioParams) {
     }
   }, [currentStory, props.backendUrl, authKey])
 
+  // Continue to next chapter in Studio mode (with optional hint for customization)
+  const continueChapterInStudio = useCallback(async () => {
+    if (!currentStory || isCreatingChapter) return
+
+    setIsCreatingChapter(true)
+    setShowChapterSettings(false)
+
+    try {
+      const data = await postJson<{
+        ok: boolean
+        session_id: string
+        title: string
+        chapter_number: number
+        bible: StoryBible
+        saga_id: string
+        previous_session_id: string
+      }>(
+        props.backendUrl,
+        '/story/continue',
+        {
+          previous_session_id: currentStory.session_id,
+          ...(chapterHint.trim() ? { direction_hint: chapterHint.trim() } : {}),
+        },
+        authKey
+      )
+
+      console.log(`[Studio] Started chapter ${data.chapter_number}: ${data.title}`)
+
+      // Load the new chapter's story data
+      const newStoryData = await fetchJson<StoryData>(props.backendUrl, `/story/${data.session_id}`, authKey)
+
+      // Update current story state
+      setCurrentStory(newStoryData)
+      setCurrentSceneIndex(0)
+      setStoryComplete(false)
+      setChapterHint('') // Clear hint after use
+
+      // Refresh sessions list
+      fetchSessions()
+    } catch (error: any) {
+      console.error('Failed to create new chapter:', error)
+      alert(`Failed to create new chapter: ${error.message || error}`)
+    } finally {
+      setIsCreatingChapter(false)
+    }
+  }, [currentStory, isCreatingChapter, chapterHint, props.backendUrl, authKey, setStoryComplete])
+
   const currentScene = currentStory?.scenes[currentSceneIndex]
 
   // -----------------------------------------------------------------------------
@@ -1150,6 +1200,9 @@ export default function StudioView(props: StudioParams) {
         isGeneratingScene={isGeneratingScene}
         onGenerateNextScene={generateNextScene}
         isStoryComplete={isStoryComplete}
+        onContinueChapter={continueChapterInStudio}
+        isCreatingChapter={isCreatingChapter}
+        onShowChapterSettings={() => setShowChapterSettings(true)}
         currentIndex={currentSceneIndex}
         totalScenes={currentStory?.scenes.length || 0}
         onSelectScene={setCurrentSceneIndex}
@@ -1257,6 +1310,68 @@ export default function StudioView(props: StudioParams) {
                   </ul>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Chapter Settings Modal */}
+      {showChapterSettings && isStoryComplete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md"
+          onClick={() => setShowChapterSettings(false)}
+        >
+          <div
+            className="max-w-lg w-full bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-white/10 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <BookOpen size={20} className="text-purple-400" />
+                New Chapter Settings
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowChapterSettings(false)}
+                className="text-white/50 hover:text-white"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-white/70 text-sm">
+                Customize the direction for the next chapter. Leave empty to let the AI continue naturally.
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium text-white/70 mb-2">
+                  Chapter Direction (Optional)
+                </label>
+                <textarea
+                  value={chapterHint}
+                  onChange={(e) => setChapterHint(e.target.value)}
+                  placeholder="e.g., 'Focus on the mysterious stranger from scene 3' or 'Add a plot twist involving...'"
+                  className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-purple-500/50 resize-none"
+                  rows={3}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowChapterSettings(false)}
+                  className="flex-1 px-4 py-3 bg-white/5 hover:bg-white/10 text-white rounded-xl transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={continueChapterInStudio}
+                  disabled={isCreatingChapter}
+                  className="flex-1 px-4 py-3 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-medium rounded-xl transition-colors disabled:opacity-50"
+                >
+                  {isCreatingChapter ? 'Creating...' : 'Start New Chapter'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

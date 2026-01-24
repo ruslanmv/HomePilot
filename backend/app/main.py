@@ -1469,6 +1469,7 @@ async def story_start_endpoint(inp: StoryStartIn) -> JSONResponse:
 class StoryContinueIn(BaseModel):
     previous_session_id: str
     title_hint: str = ""
+    direction_hint: str = ""
     options: Optional[Dict[str, Any]] = None
     ollama_base_url: Optional[str] = None
     ollama_model: Optional[str] = None
@@ -1485,6 +1486,7 @@ async def story_continue_endpoint(inp: StoryContinueIn) -> JSONResponse:
         res = await continue_story(
             inp.previous_session_id,
             title_hint=inp.title_hint,
+            direction_hint=inp.direction_hint,
             options=inp.options,
             ollama_base_url=inp.ollama_base_url,
             ollama_model=inp.ollama_model,

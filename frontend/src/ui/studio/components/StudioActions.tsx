@@ -10,7 +10,8 @@ import {
   VolumeX,
   Maximize2,
   Loader2,
-  CheckCircle2,
+  BookOpen,
+  Settings,
 } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
@@ -30,6 +31,9 @@ type StudioActionsProps = {
   isGeneratingScene?: boolean
   onGenerateNextScene?: () => void
   isStoryComplete?: boolean
+  onContinueChapter?: () => void
+  isCreatingChapter?: boolean
+  onShowChapterSettings?: () => void
 
   // Scene progress
   currentIndex?: number
@@ -66,6 +70,9 @@ export function StudioActions({
   isGeneratingScene = false,
   onGenerateNextScene,
   isStoryComplete = false,
+  onContinueChapter,
+  isCreatingChapter = false,
+  onShowChapterSettings,
   currentIndex = 0,
   totalScenes = 0,
   onSelectScene,
@@ -161,28 +168,41 @@ export function StudioActions({
               </button>
             )}
 
-            {/* Generate next scene */}
-            {onGenerateNextScene && (
+            {/* Chapter Settings (when story is complete) */}
+            {isStoryComplete && onShowChapterSettings && (
               <button
-                onClick={onGenerateNextScene}
-                disabled={isGeneratingScene || isStoryComplete}
+                onClick={onShowChapterSettings}
+                disabled={isCreatingChapter}
+                className="p-3 text-white/50 hover:text-white hover:bg-white/5 rounded-full transition-colors disabled:opacity-50"
+                type="button"
+                title="Chapter settings"
+              >
+                <Settings size={20} />
+              </button>
+            )}
+
+            {/* Generate next scene or New Chapter */}
+            {(onGenerateNextScene || (isStoryComplete && onContinueChapter)) && (
+              <button
+                onClick={isStoryComplete ? onContinueChapter : onGenerateNextScene}
+                disabled={isGeneratingScene || isCreatingChapter}
                 className={`flex items-center gap-2 px-4 py-2 rounded-full transition-colors disabled:opacity-50 ${
                   isStoryComplete
-                    ? 'bg-green-500/20 text-green-300 cursor-not-allowed'
+                    ? 'bg-gradient-to-r from-purple-500/30 to-pink-500/30 hover:from-purple-500/40 hover:to-pink-500/40 text-purple-200 border border-purple-500/30'
                     : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-300'
                 }`}
                 type="button"
-                title={isStoryComplete ? 'All scenes have been generated' : 'Generate next scene'}
+                title={isStoryComplete ? 'Continue with a new chapter' : 'Generate next scene'}
               >
-                {isGeneratingScene ? (
+                {isGeneratingScene || isCreatingChapter ? (
                   <>
                     <Loader2 size={16} className="animate-spin" />
-                    <span className="text-sm font-medium">Generating...</span>
+                    <span className="text-sm font-medium">{isCreatingChapter ? 'Creating Chapter...' : 'Generating...'}</span>
                   </>
                 ) : isStoryComplete ? (
                   <>
-                    <CheckCircle2 size={16} />
-                    <span className="text-sm font-medium">Complete</span>
+                    <BookOpen size={16} />
+                    <span className="text-sm font-medium">New Chapter</span>
                   </>
                 ) : (
                   <>

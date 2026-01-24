@@ -1267,6 +1267,7 @@ async def continue_story(
     previous_session_id: str,
     *,
     title_hint: str = "",
+    direction_hint: str = "",
     options: Optional[Dict[str, Any]] = None,
     ollama_base_url: Optional[str] = None,
     ollama_model: Optional[str] = None,
@@ -1332,6 +1333,14 @@ async def continue_story(
         "}\n"
     )
 
+    # Build optional hints
+    hints = []
+    if title_hint.strip():
+        hints.append(f"Title hint: {title_hint}")
+    if direction_hint.strip():
+        hints.append(f"Story direction: {direction_hint}")
+    hints_text = "\n".join(hints) + "\n\n" if hints else ""
+
     continuation_user = (
         f"Continue this saga as Chapter {chapter_number}.\n\n"
         f"PREVIOUS CHAPTER INFO:\n"
@@ -1341,7 +1350,7 @@ async def continue_story(
         f"- Visual style: {', '.join(prev_data.bible.visual_style_rules[:3])}\n"
         f"- How it ended: {last_scene_narration[:500]}\n"
         f"- Story so far summary: {prev_data.state.summary_so_far[:800]}\n\n"
-        f"{'Title hint: ' + title_hint if title_hint.strip() else ''}\n\n"
+        f"{hints_text}"
         f"Create the next chapter (8-12 scenes) that:\n"
         f"- Picks up where the previous chapter left off\n"
         f"- Keeps the same characters and setting\n"
