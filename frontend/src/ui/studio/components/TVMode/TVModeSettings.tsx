@@ -197,6 +197,20 @@ export const TVModeSettings: React.FC<TVModeSettingsProps> = ({
             </div>
           </div>
 
+          <div className="setting-group">
+            <label className="toggle-option">
+              <input
+                type="checkbox"
+                checked={settings.autoGenerateScenes}
+                onChange={(e) => updateSettings({ autoGenerateScenes: e.target.checked })}
+              />
+              <span className="toggle-text">Auto-generate new scenes</span>
+            </label>
+            <div className="setting-description" style={{ marginLeft: '28px', marginTop: '4px' }}>
+              Automatically generate new AI scenes when reaching the last scene
+            </div>
+          </div>
+
           {/* TTS / Narration Settings */}
           {ttsSupported && setTTSEnabled && (
             <>
