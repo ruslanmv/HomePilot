@@ -56,16 +56,9 @@ export default function VoicePanel({
   useEffect(() => {
     if (!svc || !selectedVoice) return;
 
-    // Save voice preference to nexus_settings_v1 for speech service
-    const voice = voices.find(v => v.voiceURI === selectedVoice);
-    if (voice) {
-      svc.saveTTSConfig?.({
-        speechVoiceURI: voice.voiceURI,
-        speechVoice: voice.name,
-        speechLang: voice.lang,
-      });
-    }
-  }, [svc, selectedVoice, voices]);
+    // Set the preferred voice URI in the speech service
+    svc.setPreferredVoiceURI?.(selectedVoice);
+  }, [svc, selectedVoice]);
 
   useEffect(() => {
     if (!svc) return;

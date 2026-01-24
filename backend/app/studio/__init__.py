@@ -52,6 +52,21 @@ from .presets import (
     get_sfw_presets,
     GenerationPreset,
 )
+from .library import (
+    list_style_kits,
+    get_style_kit,
+    list_templates,
+    get_template,
+    normalize_project_type,
+    default_canvas,
+)
+from .models import (
+    StudioProject,
+    StudioProjectCreate,
+    StyleKit,
+    TemplateDefinition,
+    CanvasSpec,
+)
 
 __all__ = [
     "router",
@@ -81,4 +96,17 @@ __all__ = [
     "get_mature_presets",
     "get_sfw_presets",
     "GenerationPreset",
+    # Library
+    "list_style_kits",
+    "get_style_kit",
+    "list_templates",
+    "get_template",
+    "normalize_project_type",
+    "default_canvas",
+    # Professional project models
+    "StudioProject",
+    "StudioProjectCreate",
+    "StyleKit",
+    "TemplateDefinition",
+    "CanvasSpec",
 ]
