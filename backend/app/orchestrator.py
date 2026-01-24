@@ -11,6 +11,7 @@ from .llm import chat as llm_chat
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
+from .defaults import DEFAULT_NEGATIVE_PROMPT, enhance_negative_prompt
 
 # Import specialized handlers
 from .search import run_search
@@ -136,13 +137,11 @@ async def _refine_prompt(
     print(f"[_refine_prompt] Original user prompt: '{user_prompt[:100]}...'")
     print(f"[_refine_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
 
-    # Enhanced fallback with anti-duplicate terms to prevent doubled subjects
-    enhanced_negative = "blurry, low quality, distorted, ugly, deformed, duplicate, clone, multiple people, two heads, two faces, split image, disfigured, extra limbs"
-
     # Default fallback - always preserves user's original prompt
+    # Uses centralized DEFAULT_NEGATIVE_PROMPT from defaults.py
     fallback_result = {
         "prompt": user_prompt,
-        "negative_prompt": enhanced_negative,
+        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
         "aspect_ratio": "1:1",
         "style": "photorealistic",
     }
@@ -184,13 +183,19 @@ async def _refine_prompt(
         if refined and refined.get("prompt"):
             refined_prompt = refined.get("prompt", "").strip()
             if refined_prompt:
+                # CRITICAL: Always enhance the negative prompt to include anti-duplicate terms
+                # The LLM often returns weak negatives like "avoid blurry" - we need to fix that
+                llm_negative = refined.get("negative_prompt", "")
+                enhanced_negative = enhance_negative_prompt(llm_negative)
+
                 result_dict = {
                     "prompt": refined_prompt,
-                    "negative_prompt": refined.get("negative_prompt", enhanced_negative),
+                    "negative_prompt": enhanced_negative,
                     "aspect_ratio": refined.get("aspect_ratio", "1:1"),
                     "style": refined.get("style", "photorealistic"),
                 }
                 print(f"[_refine_prompt] SUCCESS: Refined prompt: '{result_dict['prompt'][:100]}...'")
+                print(f"[_refine_prompt] LLM negative: '{llm_negative}' -> Enhanced: '{enhanced_negative[:80]}...'")
                 return result_dict
 
         # JSON parsing failed or prompt field empty
@@ -311,7 +316,7 @@ async def orchestrate(
         res = run_workflow("edit", {
             "image_path": image_url,  # Changed from image_url to match workflow
             "prompt": text_in,  # Changed from instruction to match workflow
-            "negative_prompt": "blurry, low quality, distorted, ugly, deformed, duplicate, clone, multiple people, two heads, split image, disfigured, extra limbs"
+            "negative_prompt": DEFAULT_NEGATIVE_PROMPT  # Use centralized default from defaults.py
         })
         images = res.get("images", []) or []
         text = "Done."
@@ -375,7 +380,7 @@ async def orchestrate(
                     print(f"[PROMPT_REFINE] Using original prompt directly")
                     refined = {
                         "prompt": text_in,
-                        "negative_prompt": "",
+                        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,  # Use centralized default
                         "aspect_ratio": "1:1",
                         "style": "photorealistic",
                     }
@@ -384,7 +389,7 @@ async def orchestrate(
                 print(f"[PROMPT_REFINE] Direct mode (refinement disabled)")
                 refined = {
                     "prompt": text_in,
-                    "negative_prompt": "",
+                    "negative_prompt": DEFAULT_NEGATIVE_PROMPT,  # Use centralized default
                     "aspect_ratio": "1:1",
                     "style": "photorealistic",
                 }

@@ -74,6 +74,7 @@ from .exporter import (
     export_project,
     get_project_available_exports,
 )
+from ..defaults import DEFAULT_NEGATIVE_PROMPT, ANTI_DUPLICATE_TERMS
 
 router = APIRouter(prefix="/studio", tags=["studio"])
 
@@ -780,7 +781,7 @@ class SceneOutline(BaseModel):
     description: str
     narration: str
     image_prompt: str
-    negative_prompt: str = "blurry, low quality, text, watermark, ugly, deformed"
+    negative_prompt: str = DEFAULT_NEGATIVE_PROMPT  # Use centralized default
     duration_sec: float = 5.0
 
 
@@ -830,8 +831,8 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
 
     tone_desc = ", ".join(tones) if tones else "documentary"
 
-    # Anti-duplicate terms to prevent common Stable Diffusion issues
-    anti_duplicate_terms = "duplicate, clone, multiple people, two heads, two faces, split image, twin, copy, disfigured, extra limbs"
+    # Use centralized anti-duplicate terms to prevent common Stable Diffusion issues
+    anti_duplicate_terms = ANTI_DUPLICATE_TERMS
 
     # Build example JSON to help the model understand the format
     # Use a SPECIFIC example to show the AI how image prompts should relate to scene content
@@ -1146,14 +1147,11 @@ async def generate_scene_from_outline(
 
     scene_plan = scenes[scene_index]
 
-    # Enhanced fallback negative prompt with anti-duplicate terms
-    default_negative = "blurry, low quality, text, watermark, ugly, deformed, duplicate, clone, multiple people, two heads, two faces, split image, disfigured, extra limbs"
-
-    # Create the scene from the outline
+    # Create the scene from the outline - use centralized default negative prompt
     scene = create_scene(video_id, StudioSceneCreate(
         narration=scene_plan.get("narration", ""),
         imagePrompt=scene_plan.get("image_prompt", ""),
-        negativePrompt=scene_plan.get("negative_prompt", default_negative),
+        negativePrompt=scene_plan.get("negative_prompt", DEFAULT_NEGATIVE_PROMPT),
         durationSec=scene_plan.get("duration_sec", 5.0),
     ))
 
