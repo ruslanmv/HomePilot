@@ -652,6 +652,8 @@ export function CreatorStudioEditor({
       try {
         const llmProvider = imageProvider === 'comfyui' ? 'ollama' : imageProvider;
 
+        // Send aspect ratio to backend - Dynamic Preset System calculates correct
+        // dimensions based on model architecture (SD1.5 vs SDXL vs Flux)
         const data = await postApi<{ media?: { images?: string[] } }>(
           '/chat',
           {
@@ -659,8 +661,7 @@ export function CreatorStudioEditor({
             mode: 'imagine',
             provider: llmProvider,
             imgModel: imageModel || undefined,
-            imgWidth: imageWidth,
-            imgHeight: imageHeight,
+            imgAspectRatio: '16:9',  // Story/video format
             imgSteps: imageSteps,
             imgCfg: imageCfg,
             promptRefinement: false,

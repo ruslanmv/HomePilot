@@ -211,9 +211,11 @@ export default function ImagineView(props: ImagineParams) {
     setShowGamePanel(false)
 
     try {
-      // Prefer explicit width/height from props; otherwise use aspect defaults.
-      const width = props.imgWidth && props.imgWidth > 0 ? props.imgWidth : aspectObj.genW
-      const height = props.imgHeight && props.imgHeight > 0 ? props.imgHeight : aspectObj.genH
+      // IMPORTANT: Send aspect ratio to backend instead of hardcoded dimensions.
+      // The backend's Dynamic Preset System will calculate correct dimensions
+      // based on the model architecture (SD1.5 vs SDXL vs Flux).
+      // Only send explicit width/height if user set them in settings.
+      const hasExplicitDimensions = props.imgWidth && props.imgWidth > 0 && props.imgHeight && props.imgHeight > 0
 
       // Map 'comfyui' provider to 'ollama' for prompt refinement
       // ComfyUI is used automatically for actual image generation
@@ -242,8 +244,11 @@ export default function ImagineView(props: ImagineParams) {
         llm_model: chatProvider !== 'ollama' ? chatModel : undefined,
 
         // Image generation params
-        imgWidth: width,
-        imgHeight: height,
+        // Send aspect ratio for backend to calculate model-appropriate dimensions
+        // Only send explicit width/height if user set them in settings (not from aspect picker)
+        imgAspectRatio: aspect,  // e.g., "16:9", "1:1", etc.
+        imgWidth: hasExplicitDimensions ? props.imgWidth : undefined,
+        imgHeight: hasExplicitDimensions ? props.imgHeight : undefined,
         imgSteps: props.imgSteps,
         imgCfg: props.imgCfg,
         imgSeed: props.imgSeed,
@@ -327,7 +332,7 @@ export default function ImagineView(props: ImagineParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, isGenerating, aspectObj, props, authKey, gameMode, gameSessionId, gameStrength, gameLocks, numImages])
+  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, gameLocks, numImages])
 
   // Auto-generation loop for Game Mode
   useEffect(() => {

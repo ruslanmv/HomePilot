@@ -224,6 +224,7 @@ async def orchestrate(
     text_max_tokens: Optional[int] = None,
     img_width: Optional[int] = None,
     img_height: Optional[int] = None,
+    img_aspect_ratio: Optional[str] = None,  # NEW: Accept aspect ratio from frontend
     img_steps: Optional[int] = None,
     img_cfg: Optional[float] = None,
     img_seed: Optional[int] = None,
@@ -416,8 +417,10 @@ async def orchestrate(
             if model_filename in short_name_map:
                 model_filename = short_name_map[model_filename]
 
-            # Get aspect ratio from LLM refinement (default to 1:1)
-            aspect_ratio = refined.get("aspect_ratio", "1:1")
+            # Get aspect ratio: prefer explicit from frontend, then LLM refinement, then default
+            # This allows the UI aspect ratio picker to override LLM suggestions
+            aspect_ratio = img_aspect_ratio or refined.get("aspect_ratio", "1:1")
+            print(f"[IMAGE] Aspect ratio source: {'frontend' if img_aspect_ratio else 'LLM refinement'}")
 
             # Get architecture-specific settings (width, height, steps, cfg)
             # This is the KEY fix - SD1.5 models get max 768px, SDXL/Flux get 1024px+
@@ -645,6 +648,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             text_max_tokens=payload.get("textMaxTokens"),
             img_width=payload.get("imgWidth"),
             img_height=payload.get("imgHeight"),
+            img_aspect_ratio=payload.get("imgAspectRatio"),  # NEW: Pass aspect ratio
             img_steps=payload.get("imgSteps"),
             img_cfg=payload.get("imgCfg"),
             img_seed=payload.get("imgSeed"),
