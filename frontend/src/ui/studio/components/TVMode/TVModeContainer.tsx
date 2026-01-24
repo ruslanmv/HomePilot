@@ -138,15 +138,21 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
       return;
     }
 
+    // Don't start timer if story is complete or chapter transition is showing
+    if (isStoryComplete || showChapterTransition) {
+      return;
+    }
+
     if (isPlaying && currentScene && !showEndScreen) {
       sceneTimerRef.current = window.setTimeout(() => {
         if (isLastScene) {
           // Trigger prefetch for more scenes or show end screen
-          if (scenes.length < 24 && !isPrefetching) {
+          if (scenes.length < 24 && !isPrefetching && !isStoryComplete) {
             handlePrefetch();
-          } else {
+          } else if (!isStoryComplete) {
             nextScene(); // This will trigger end screen via the store
           }
+          // If story is complete, do nothing - chapter transition will handle it
         } else if (nextSceneReady) {
           // Only advance if next scene's image is ready
           nextScene();
@@ -161,7 +167,8 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
         clearTimeout(sceneTimerRef.current);
       }
     };
-  }, [isPlaying, currentSceneIndex, currentScene, sceneDuration, isLastScene, showEndScreen, nextSceneReady, currentImageReady]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handlePrefetch and nextScene are stable callbacks
+  }, [isPlaying, currentSceneIndex, currentScene, sceneDuration, isLastScene, showEndScreen, nextSceneReady, currentImageReady, isStoryComplete, showChapterTransition, isPrefetching, scenes.length]);
 
   // Trigger image generation for current scene if needed
   useEffect(() => {
