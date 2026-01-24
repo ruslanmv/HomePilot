@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import sqlite3
 import subprocess
@@ -120,6 +121,22 @@ class StoryBible(BaseModel):
     recurring_characters: List[Dict[str, str]] = Field(default_factory=list)
     recurring_locations: List[str] = Field(default_factory=list)
     do_not_change: List[str] = Field(default_factory=list)
+
+    # Story arc - gives the story a clear structure with beginning, middle, end
+    story_arc: Dict[str, str] = Field(default_factory=lambda: {
+        "beginning": "",      # Setup/hook - introduce characters and world
+        "rising_action": "",  # Build tension, develop conflict
+        "climax": "",         # Peak of the story, major turning point
+        "falling_action": "", # Consequences of climax
+        "resolution": "",     # How the story ends
+    })
+
+    # Scene outline - planned scenes with brief descriptions
+    # This makes the story finite with a clear ending
+    scene_outline: List[str] = Field(default_factory=list)
+
+    # Total planned scenes (story is NOT infinite)
+    total_scenes: int = Field(default=8, ge=3, le=50)
 
 
 class StoryState(BaseModel):
@@ -389,7 +406,9 @@ async def _ollama_chat(
     temperature: float,
     max_tokens: int,
     base_url: str,
-    model: str
+    model: str,
+    response_format: Optional[str] = None,
+    stop: Optional[List[str]] = None,
 ) -> str:
     resp = await chat_ollama(
         messages,
@@ -397,9 +416,20 @@ async def _ollama_chat(
         max_tokens=max_tokens,
         base_url=base_url,
         model=model,
+        response_format=response_format,
+        stop=stop,
     )
     text = (((resp.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
     return str(text).strip()
+
+
+# Stop tokens tuned for local models (deepseek-r1, llama3) to prevent non-JSON chatter.
+_JSON_STOP_DEFAULT: List[str] = [
+    "</think>",
+    "```",
+    "\n\nAssistant:",
+    "\n\nExplanation:",
+]
 
 
 def _extract_first_json_object(text: str) -> str:
@@ -471,11 +501,224 @@ def _extract_json(text: str) -> Dict[str, Any]:
     return {}
 
 
+# --- JSON robustness helpers ---------------------------------------------------------
+
+_CODE_FENCE_PREFIXES = ("```json", "```JSON", "```")
+
+
+def _strip_code_fences(raw: str) -> str:
+    """Strip markdown code fences from LLM output."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    for p in _CODE_FENCE_PREFIXES:
+        if s.startswith(p):
+            # drop first fence line
+            s = s.split("\n", 1)[1] if "\n" in s else ""
+            break
+    if s.endswith("```"):
+        s = s[:-3]
+    return s.strip()
+
+
+def _repair_json_text(raw: str) -> str:
+    """Best-effort, conservative JSON repair for common LLM mistakes."""
+    s = _strip_code_fences(raw)
+
+    # Trim any leading junk before first '{'
+    i = s.find("{")
+    if i > 0:
+        s = s[i:]
+
+    # Trim any trailing junk after the last '}' (helps when model adds commentary)
+    j = s.rfind("}")
+    if j != -1:
+        s = s[: j + 1]
+
+    # Remove trailing commas before } or ]
+    s = re.sub(r",\s*([}\]])", r"\1", s)
+
+    # Replace curly quotes with straight quotes (rare but happens)
+    s = s.replace(""", '"').replace(""", '"').replace("'", "'")
+
+    return s.strip()
+
+
+def _looks_truncated_json(raw: str) -> bool:
+    """Check if JSON appears truncated (has opening brace but no balanced close)."""
+    s = _strip_code_fences(raw)
+    if "{" not in s:
+        return False
+    # if we can't find a balanced object but there is an opening brace, it's likely truncation
+    return _extract_first_json_object(s) == ""
+
+
+def _extract_json_robust(raw: str) -> Dict[str, Any]:
+    """Parse JSON with multiple fallbacks + light repair."""
+    s = (raw or "").strip()
+    if not s:
+        return {}
+
+    # 1) direct parse
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+
+    # 2) brace-extract then parse
+    candidate = _extract_first_json_object(s)
+    if candidate:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    # 3) repair then parse
+    repaired = _repair_json_text(s)
+    if repaired and repaired != s:
+        try:
+            return json.loads(repaired)
+        except Exception:
+            pass
+        candidate = _extract_first_json_object(repaired)
+        if candidate:
+            try:
+                return json.loads(candidate)
+            except Exception:
+                pass
+
+    return {}
+
+
+async def _continue_if_truncated(
+    *,
+    sys_msg: str,
+    base_url: str,
+    model: str,
+    raw: str,
+    max_tokens: int = 320,
+) -> str:
+    """If output looks truncated, ask the model to continue the same JSON without repeating."""
+    if not _looks_truncated_json(raw):
+        return raw
+
+    print(f"[STORY] Detected truncated JSON, requesting continuation...")
+
+    cont_user = (
+        "Continue the SAME JSON object exactly where you stopped.\n"
+        "Output ONLY the remaining JSON characters needed to complete it.\n"
+        "Do NOT repeat any earlier text. Do NOT add commentary."
+    )
+
+    tail = await _ollama_chat(
+        [{"role": "system", "content": sys_msg}, {"role": "user", "content": cont_user}],
+        temperature=0.0,
+        max_tokens=max_tokens,
+        base_url=base_url,
+        model=model,
+        response_format="json",
+        stop=_JSON_STOP_DEFAULT,
+    )
+    return (raw or "") + (tail or "")
+
+
 def _clamp_text(s: str, max_len: int) -> str:
     s = (s or "").strip()
     if len(s) > max_len:
         return s[:max_len].rstrip()
     return s
+
+
+def _normalize_string_list(items: Any) -> List[str]:
+    """
+    Normalize a list that should contain strings but might contain dicts.
+    LLMs sometimes return [{"rule": "...", "priority": 1}] instead of ["..."]
+    """
+    if not isinstance(items, list):
+        return []
+
+    result = []
+    for item in items:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, dict):
+            # Try common keys that might contain the actual text
+            for key in ["rule", "name", "description", "text", "value", "content"]:
+                if key in item and isinstance(item[key], str):
+                    result.append(item[key])
+                    break
+            else:
+                # Fallback: join all string values
+                str_vals = [str(v) for v in item.values() if isinstance(v, str)]
+                if str_vals:
+                    result.append(str_vals[0])
+    return result
+
+
+def _normalize_story_bible_json(obj: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize LLM-generated story bible JSON to match expected Pydantic schema.
+    Handles cases where LLM returns objects instead of strings in arrays.
+    """
+    if not isinstance(obj, dict):
+        return obj
+
+    # Normalize arrays that should be List[str]
+    for key in ["visual_style_rules", "recurring_locations", "do_not_change", "scene_outline"]:
+        if key in obj:
+            obj[key] = _normalize_string_list(obj[key])
+
+    # Normalize recurring_characters - should be List[Dict[str, str]]
+    if "recurring_characters" in obj and isinstance(obj["recurring_characters"], list):
+        normalized_chars = []
+        for char in obj["recurring_characters"]:
+            if isinstance(char, dict):
+                # Ensure it has name and description as strings
+                normalized_char = {}
+                for k, v in char.items():
+                    if isinstance(v, str):
+                        normalized_char[k] = v
+                    elif isinstance(v, dict):
+                        # Flatten nested dicts
+                        normalized_char[k] = str(v.get("value") or v.get("text") or list(v.values())[0] if v else "")
+                    else:
+                        normalized_char[k] = str(v)
+                if normalized_char:
+                    normalized_chars.append(normalized_char)
+            elif isinstance(char, str):
+                # Convert string to dict format
+                normalized_chars.append({"name": "Character", "description": char})
+        obj["recurring_characters"] = normalized_chars
+
+    # Normalize story_arc - should be Dict[str, str]
+    if "story_arc" in obj:
+        arc = obj["story_arc"]
+        if isinstance(arc, dict):
+            normalized_arc = {}
+            for k, v in arc.items():
+                if isinstance(v, str):
+                    normalized_arc[k] = v
+                elif isinstance(v, dict):
+                    normalized_arc[k] = str(v.get("description") or v.get("text") or list(v.values())[0] if v else "")
+                else:
+                    normalized_arc[k] = str(v) if v else ""
+            obj["story_arc"] = normalized_arc
+        elif isinstance(arc, str):
+            # If it's just a string, put it in beginning
+            obj["story_arc"] = {"beginning": arc, "rising_action": "", "climax": "", "falling_action": "", "resolution": ""}
+
+    # Normalize total_scenes - should be int
+    if "total_scenes" in obj:
+        try:
+            obj["total_scenes"] = int(obj["total_scenes"])
+        except (ValueError, TypeError):
+            obj["total_scenes"] = 8  # Default
+
+    # Ensure scene_outline has entries if total_scenes is set
+    if "total_scenes" in obj and "scene_outline" not in obj:
+        obj["scene_outline"] = []
+
+    return obj
 
 
 # --------------------------------------------------------------------------------------
@@ -486,32 +729,61 @@ def _planner_system_prompt() -> str:
     return (
         "You are a story showrunner for a visual AI TV-like story.\n"
         "You must output STRICT JSON ONLY (no markdown).\n"
-        "Create a short story bible for consistent image generation.\n"
+        "Create a COMPLETE story bible with a FINITE story arc.\n"
+        "The story MUST have a clear beginning, middle, and END.\n"
         "Keep it safe and non-graphic. No illegal content. No sexual content.\n"
         "JSON schema:\n"
         "{\n"
         '  "title": "string",\n'
-        '  "logline": "string",\n'
+        '  "logline": "string (1-2 sentences summarizing the whole story)",\n'
         '  "setting": "string",\n'
-        '  "visual_style_rules": ["..."],\n'
+        '  "visual_style_rules": ["rule1", "rule2", ...],\n'
         '  "recurring_characters": [{"name":"...","description":"..."}],\n'
-        '  "recurring_locations": ["..."],\n'
-        '  "do_not_change": ["..."]\n'
+        '  "recurring_locations": ["location1", "location2", ...],\n'
+        '  "do_not_change": ["consistency rule 1", ...],\n'
+        '  "story_arc": {\n'
+        '    "beginning": "1-2 sentences: setup, introduce characters",\n'
+        '    "rising_action": "1-2 sentences: build tension, develop conflict",\n'
+        '    "climax": "1-2 sentences: peak moment, major turning point",\n'
+        '    "falling_action": "1-2 sentences: consequences of climax",\n'
+        '    "resolution": "1-2 sentences: how the story ends"\n'
+        '  },\n'
+        '  "scene_outline": [\n'
+        '    "Scene 1: brief description of what happens",\n'
+        '    "Scene 2: brief description...",\n'
+        '    "...continue for ALL planned scenes..."\n'
+        '  ],\n'
+        '  "total_scenes": 8\n'
         "}\n"
+        "IMPORTANT:\n"
+        "- Plan the COMPLETE story from start to finish\n"
+        "- scene_outline must have exactly total_scenes entries\n"
+        "- Each scene should be 1 sentence describing what happens\n"
+        "- Story should have satisfying beginning and END\n"
     )
 
 
 def _planner_user_prompt(premise: str, title_hint: str, opts: StoryOptions) -> str:
     hint = f"Title hint: {title_hint}\n" if title_hint.strip() else ""
+    # Calculate recommended scene count based on max_scenes setting
+    recommended_scenes = min(opts.max_scenes, 12)  # Default to reasonable length
+
     return (
         f"{hint}"
         f"Premise:\n{premise.strip()}\n\n"
         "Constraints:\n"
         f"- Visual style (global): {opts.visual_style}\n"
         f"- Aspect ratio: {opts.aspect_ratio}\n"
-        "- Create 3-6 recurring characters.\n"
-        "- Create 2-6 recurring locations.\n"
-        "- Add 5-10 do_not_change rules (for consistency).\n"
+        "- Create 2-4 recurring characters with clear descriptions.\n"
+        "- Create 2-4 recurring locations.\n"
+        "- Add 3-5 do_not_change rules (for visual consistency).\n"
+        f"- Plan a complete story with {recommended_scenes} scenes (set total_scenes to this).\n"
+        "\n"
+        "Story Structure Requirements:\n"
+        "- story_arc: Write 1-2 sentences for EACH of: beginning, rising_action, climax, falling_action, resolution.\n"
+        f"- scene_outline: Write EXACTLY {recommended_scenes} scene descriptions (1 sentence each).\n"
+        "- The story MUST have a clear ending - no cliffhangers or 'to be continued'.\n"
+        "- Scene 1 = hook/setup, middle scenes = development, final scene = resolution.\n"
     )
 
 
@@ -567,6 +839,32 @@ def _scene_user_prompt(
     idx: int,
     opts: StoryOptions,
 ) -> str:
+    total_scenes = bible.total_scenes or 8
+    scene_outline = bible.scene_outline or []
+    story_arc = bible.story_arc or {}
+
+    # Determine which part of the story arc we're in
+    if idx == 1:
+        arc_phase = "BEGINNING (Setup/Hook)"
+        arc_context = story_arc.get("beginning", "Introduce the story")
+    elif idx <= total_scenes * 0.3:
+        arc_phase = "RISING ACTION"
+        arc_context = story_arc.get("rising_action", "Build tension")
+    elif idx <= total_scenes * 0.6:
+        arc_phase = "APPROACHING CLIMAX"
+        arc_context = story_arc.get("climax", "Major turning point")
+    elif idx < total_scenes:
+        arc_phase = "FALLING ACTION"
+        arc_context = story_arc.get("falling_action", "Consequences")
+    else:
+        arc_phase = "RESOLUTION (FINAL SCENE)"
+        arc_context = story_arc.get("resolution", "Conclusion")
+
+    # Get the planned scene outline for this scene
+    scene_plan = ""
+    if scene_outline and 0 < idx <= len(scene_outline):
+        scene_plan = f"\nPLANNED FOR THIS SCENE: {scene_outline[idx - 1]}\n"
+
     # Scene-specific pacing reminder (reinforces system prompt)
     if idx == 1:
         pacing_reminder = (
@@ -574,6 +872,13 @@ def _scene_user_prompt(
             "- Keep narration to 25-50 words ONLY (1-2 sentences).\n"
             "- Show a single striking moment. No backstory. No internal thoughts.\n"
             "- End on intrigue, not resolution.\n\n"
+        )
+    elif idx == total_scenes:
+        pacing_reminder = (
+            f"REMEMBER: This is the FINAL SCENE ({idx}/{total_scenes}) - RESOLUTION.\n"
+            "- This MUST conclude the story satisfactorily.\n"
+            "- Tie up loose ends. Provide closure.\n"
+            "- 80-120 words narration.\n\n"
         )
     elif idx == 2:
         pacing_reminder = "Pacing: Scene 2 - build on the hook. 40-70 words.\n\n"
@@ -586,6 +891,10 @@ def _scene_user_prompt(
         f"Story title: {bible.title}\n"
         f"Logline: {bible.logline}\n"
         f"Setting: {bible.setting}\n\n"
+        f"=== STORY PROGRESS: Scene {idx} of {total_scenes} ===\n"
+        f"Story Phase: {arc_phase}\n"
+        f"Arc Context: {arc_context}\n"
+        f"{scene_plan}\n"
         + pacing_reminder
         + "Visual rules:\n"
         + "\n".join(f"- {x}" for x in (bible.visual_style_rules or []))
@@ -597,7 +906,7 @@ def _scene_user_prompt(
         + "\n".join(f"- {c.get('name','?')}: {c.get('description','')}" for c in (bible.recurring_characters or []))
         + "\n\n"
         f"Summary so far:\n{state.summary_so_far}\n\n"
-        f"Scene number: {idx}\n"
+        f"Scene number: {idx} of {total_scenes}\n"
         f"Variation strength: {opts.variation_strength:.2f}\n\n"
         "Avoid repeating these recently used items:\n"
         f"- beats: {', '.join(state.used_beats[-12:])}\n"
@@ -704,16 +1013,20 @@ async def start_story(
     user_msg = _planner_user_prompt(premise, title_hint, opts)
 
     base_url = ollama_base_url or OLLAMA_BASE_URL
-    model = ollama_model or OLLAMA_MODEL
+    # Fallback chain for model: explicit param -> config -> hardcoded default
+    # This prevents empty model string which causes Ollama to fail
+    model = ollama_model or OLLAMA_MODEL or "llama3:8b"
 
-    # First attempt with generous token limit
+    # First attempt with JSON mode and stop tokens for robustness
     print(f"[STORY] Generating story bible with model: {model}")
     text = await _ollama_chat(
         [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
-        temperature=opts.temperature,
-        max_tokens=1800,  # Increased from 900 to reduce truncation
+        temperature=0.0,
+        max_tokens=750,
         base_url=base_url,
         model=model,
+        response_format="json",
+        stop=_JSON_STOP_DEFAULT,
     )
 
     # Debug: Log what we got back
@@ -723,7 +1036,9 @@ async def start_story(
     else:
         print(f"[STORY] WARNING: LLM returned empty response!")
 
-    obj = _extract_json(text) if text.strip() else {}
+    # Handle truncation with continuation, then use robust parsing
+    text = await _continue_if_truncated(sys_msg=sys_msg, base_url=base_url, model=model, raw=text, max_tokens=260)
+    obj = _extract_json_robust(text) if text.strip() else {}
 
     # Retry once if JSON is invalid/empty (truncation or model misbehavior)
     if not obj:
@@ -746,13 +1061,16 @@ async def start_story(
 
         text = await _ollama_chat(
             [{"role": "system", "content": sys_msg}, {"role": "user", "content": repair_user}],
-            temperature=0.2,  # Lower temperature for more deterministic output
-            max_tokens=2200,  # Even more tokens for retry
+            temperature=0.0,
+            max_tokens=900,
             base_url=base_url,
             model=model,
+            response_format="json",
+            stop=_JSON_STOP_DEFAULT,
         )
 
-        obj = _extract_json(text) if text.strip() else {}
+        text = await _continue_if_truncated(sys_msg=sys_msg, base_url=base_url, model=model, raw=text, max_tokens=260)
+        obj = _extract_json_robust(text) if text.strip() else {}
 
     # Final check for empty/invalid JSON
     if not obj:
@@ -760,6 +1078,9 @@ async def start_story(
             f"LLM did not return valid JSON for story bible after retry. "
             f"Raw response (first 500 chars): {text[:500] if text else '(empty)'}"
         )
+
+    # Normalize the JSON to handle different LLM output formats
+    obj = _normalize_story_bible_json(obj)
 
     try:
         bible = StoryBible.model_validate(obj)
@@ -814,22 +1135,29 @@ async def next_scene(
         opts.tts_enabled = bool(tts_enabled)
 
     idx = int(state.scene_index_next)
-    if idx > opts.max_scenes:
-        raise ValueError("max scenes reached")
+    # Use the bible's planned total_scenes if available, otherwise fall back to opts.max_scenes
+    total_planned_scenes = bible.total_scenes if bible.total_scenes > 0 else opts.max_scenes
+    max_allowed = min(total_planned_scenes, opts.max_scenes)
+
+    if idx > max_allowed:
+        raise ValueError(f"Story complete! All {max_allowed} scenes have been generated.")
 
     sys_msg = _scene_system_prompt(allow_nsfw=opts.allow_nsfw, scene_index=idx)
     user_msg = _scene_user_prompt(bible=bible, state=state, idx=idx, opts=opts)
 
     base_url = ollama_base_url or OLLAMA_BASE_URL
-    model = ollama_model or OLLAMA_MODEL
+    # Fallback chain for model: explicit param -> config -> hardcoded default
+    model = ollama_model or OLLAMA_MODEL or "llama3:8b"
 
     print(f"[STORY] Generating scene {idx} with model: {model}")
     raw = await _ollama_chat(
         [{"role": "system", "content": sys_msg}, {"role": "user", "content": user_msg}],
-        temperature=opts.temperature,
-        max_tokens=900,  # Increased from 700
+        temperature=0.0,
+        max_tokens=650,
         base_url=base_url,
         model=model,
+        response_format="json",
+        stop=_JSON_STOP_DEFAULT,
     )
 
     # Debug: Log what we got back
@@ -838,7 +1166,9 @@ async def next_scene(
     else:
         print(f"[STORY] WARNING: Scene {idx} LLM returned empty response!")
 
-    obj = _extract_json(raw) if raw.strip() else {}
+    # Handle truncation with continuation, then use robust parsing
+    raw = await _continue_if_truncated(sys_msg=sys_msg, base_url=base_url, model=model, raw=raw, max_tokens=240)
+    obj = _extract_json_robust(raw) if raw.strip() else {}
 
     # Retry once if JSON is invalid/empty
     if not obj:
@@ -872,13 +1202,16 @@ async def next_scene(
 
         raw = await _ollama_chat(
             [{"role": "system", "content": sys_msg}, {"role": "user", "content": repair_user}],
-            temperature=0.3,
-            max_tokens=1200,
+            temperature=0.0,
+            max_tokens=750,
             base_url=base_url,
             model=model,
+            response_format="json",
+            stop=_JSON_STOP_DEFAULT,
         )
 
-        obj = _extract_json(raw) if raw.strip() else {}
+        raw = await _continue_if_truncated(sys_msg=sys_msg, base_url=base_url, model=model, raw=raw, max_tokens=240)
+        obj = _extract_json_robust(raw) if raw.strip() else {}
 
     # Final check for invalid/empty JSON
     if not obj:
@@ -907,12 +1240,21 @@ async def next_scene(
         ref_user = _refine_user_prompt(bible=bible, raw_prompt=image_prompt, raw_negative=negative_prompt, opts=opts)
         ref_raw = await _ollama_chat(
             [{"role": "system", "content": ref_sys}, {"role": "user", "content": ref_user}],
-            temperature=max(0.2, min(0.8, opts.temperature)),
-            max_tokens=450,
+            temperature=0.0,
+            max_tokens=280,
             base_url=(ollama_base_url or OLLAMA_BASE_URL),
             model=(ollama_model or OLLAMA_MODEL),
+            response_format="json",
+            stop=_JSON_STOP_DEFAULT,
         )
-        ref_obj = _extract_json(ref_raw)
+        ref_raw = await _continue_if_truncated(
+            sys_msg=ref_sys,
+            base_url=(ollama_base_url or OLLAMA_BASE_URL),
+            model=(ollama_model or OLLAMA_MODEL),
+            raw=ref_raw,
+            max_tokens=140,
+        )
+        ref_obj = _extract_json_robust(ref_raw)
         rp = ref_obj.get("image_prompt")
         rn = ref_obj.get("negative_prompt")
         if isinstance(rp, str) and rp.strip():
