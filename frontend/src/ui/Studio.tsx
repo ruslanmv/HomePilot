@@ -508,12 +508,86 @@ export default function StudioView(props: StudioParams) {
         authKey
       )
 
-      // Check if story is complete (no more scenes can be generated)
+      // Check if story is complete (no more scenes can be generated for this chapter)
       if (data.story_complete) {
-        console.log('[Studio] Story is complete -', data.message)
-        setStoryComplete(true)
-        alert(data.message || 'Story is complete! All scenes have been generated.')
-        return
+        console.log('[Studio] Chapter complete -', data.message)
+        console.log('[Studio] Automatically starting next chapter...')
+
+        // Auto-continue to next chapter
+        try {
+          const chapterData = await postJson<{
+            ok: boolean
+            session_id: string
+            title: string
+            chapter_number: number
+            bible: StoryBible
+            saga_id: string
+            previous_session_id: string
+          }>(
+            props.backendUrl,
+            '/story/continue',
+            {
+              previous_session_id: currentStory.session_id,
+            },
+            authKey
+          )
+
+          console.log(`[Studio] Started chapter ${chapterData.chapter_number}: ${chapterData.title}`)
+
+          // Generate first scene of new chapter
+          const firstSceneData = await postJson<{
+            ok: boolean
+            scene?: Scene
+            story_complete?: boolean
+            message?: string
+          }>(
+            props.backendUrl,
+            '/story/next',
+            {
+              session_id: chapterData.session_id,
+              refine_image_prompt: props.promptRefinement ?? true,
+            },
+            authKey
+          )
+
+          if (!firstSceneData.scene) {
+            throw new Error('Failed to generate first scene of new chapter')
+          }
+
+          console.log('[Studio] First scene of new chapter generated')
+
+          // Load the full story with the first scene
+          const fullStory = await fetchJson<StoryData>(props.backendUrl, `/story/${chapterData.session_id}`, authKey)
+          setCurrentStory(fullStory)
+          setCurrentSceneIndex(0)
+          setStoryComplete(false)
+
+          // Add the new chapter to the sessions list
+          const now = Date.now()
+          setSessions((prev) => [
+            {
+              id: chapterData.session_id,
+              title: chapterData.title,
+              premise: `Chapter ${chapterData.chapter_number} continuation`,
+              created_at: now,
+              updated_at: now,
+            },
+            ...prev,
+          ])
+
+          // Generate image for the first scene
+          if (fullStory.scenes.length > 0) {
+            generateImageForScene(fullStory.scenes[0], chapterData.session_id)
+          }
+
+          return // Successfully continued to new chapter
+        } catch (continueErr: any) {
+          console.error('[Studio] Failed to auto-continue chapter:', continueErr)
+          // Fall back to showing completion message
+          setStoryComplete(true)
+          alert('Chapter complete! Click "New Chapter" to continue the story.')
+          return
+        }
       }
 
       // Make sure we have a valid scene before adding
@@ -771,11 +845,73 @@ export default function StudioView(props: StudioParams) {
         authKey
       )
 
-      // Check if story is complete (new response format)
+      // Check if chapter is complete - auto-continue to next chapter
       if (data.story_complete) {
-        console.log('[TV Mode] Story is complete -', data.message)
-        setStoryComplete(true)
-        return null // Return null to signal completion, not an error
+        console.log('[TV Mode] Chapter complete -', data.message)
+        console.log('[TV Mode] Automatically starting next chapter...')
+
+        try {
+          // Create next chapter
+          const chapterData = await postJson<{
+            ok: boolean
+            session_id: string
+            title: string
+            chapter_number: number
+            bible: StoryBible
+            saga_id: string
+          }>(
+            props.backendUrl,
+            '/story/continue',
+            {
+              previous_session_id: currentStory.session_id,
+            },
+            authKey
+          )
+
+          console.log(`[TV Mode] Started chapter ${chapterData.chapter_number}: ${chapterData.title}`)
+
+          // Generate first scene of new chapter
+          const firstSceneData = await postJson<{
+            ok: boolean
+            scene?: Scene
+          }>(
+            props.backendUrl,
+            '/story/next',
+            {
+              session_id: chapterData.session_id,
+              refine_image_prompt: props.promptRefinement ?? true,
+            },
+            authKey
+          )
+
+          if (!firstSceneData.scene) {
+            throw new Error('Failed to generate first scene of new chapter')
+          }
+
+          console.log('[TV Mode] First scene of new chapter generated')
+
+          // Load the full story with the first scene
+          const fullStory = await fetchJson<StoryData>(props.backendUrl, `/story/${chapterData.session_id}`, authKey)
+
+          // Update current story to the new chapter
+          setCurrentStory(fullStory)
+          setStoryComplete(false)
+
+          // Generate image for the first scene
+          if (fullStory.scenes.length > 0) {
+            generateImageForScene(fullStory.scenes[0], chapterData.session_id)
+          }
+
+          // Return the first scene so TV mode continues seamlessly
+          return {
+            ...firstSceneData.scene,
+            status: 'ready' as const,
+          }
+        } catch (continueErr: any) {
+          console.error('[TV Mode] Failed to auto-continue chapter:', continueErr)
+          setStoryComplete(true)
+          return null // Fall back to showing end screen
+        }
       }
 
       // Make sure we have a scene
@@ -803,14 +939,63 @@ export default function StudioView(props: StudioParams) {
       // Check if story is complete (legacy error format for backwards compatibility)
       const errorMsg = error?.message || String(error)
       if (errorMsg.includes('Story complete') || (errorMsg.includes('All') && errorMsg.includes('scenes have been generated'))) {
-        console.log('[TV Mode] Story is complete - all scenes generated')
+        console.log('[TV Mode] Chapter complete (legacy) - auto-continuing...')
+
+        // Try to auto-continue to next chapter
+        try {
+          const chapterData = await postJson<{
+            ok: boolean
+            session_id: string
+            title: string
+            chapter_number: number
+            bible: StoryBible
+          }>(
+            props.backendUrl,
+            '/story/continue',
+            {
+              previous_session_id: currentStory.session_id,
+            },
+            authKey
+          )
+
+          const firstSceneData = await postJson<{
+            ok: boolean
+            scene?: Scene
+          }>(
+            props.backendUrl,
+            '/story/next',
+            {
+              session_id: chapterData.session_id,
+              refine_image_prompt: props.promptRefinement ?? true,
+            },
+            authKey
+          )
+
+          if (firstSceneData.scene) {
+            const fullStory = await fetchJson<StoryData>(props.backendUrl, `/story/${chapterData.session_id}`, authKey)
+            setCurrentStory(fullStory)
+            setStoryComplete(false)
+
+            if (fullStory.scenes.length > 0) {
+              generateImageForScene(fullStory.scenes[0], chapterData.session_id)
+            }
+
+            return {
+              ...firstSceneData.scene,
+              status: 'ready' as const,
+            }
+          }
+        } catch (continueErr) {
+          console.error('[TV Mode] Failed to auto-continue:', continueErr)
+        }
+
         setStoryComplete(true)
-        return null // Return null to signal completion, not an error
+        return null
       }
       console.error('TV Mode generate error:', error)
       throw error
     }
-  }, [currentStory, props.backendUrl, props.promptRefinement, authKey, setStoryComplete])
+  }, [currentStory, props.backendUrl, props.promptRefinement, authKey, setStoryComplete, generateImageForScene])
 
   // Continue story as next chapter (saga mode)
   const continueAsNextChapter = useCallback(async () => {
