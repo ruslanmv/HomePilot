@@ -398,6 +398,13 @@ async def orchestrate(
             if img_seed is not None:
                 refined["seed"] = img_seed
 
+            # Ensure default width/height are always set (required by workflow templates)
+            # These will be overridden by the model-specific defaults below if needed
+            if "width" not in refined:
+                refined["width"] = 1024  # SDXL default
+            if "height" not in refined:
+                refined["height"] = 1024  # SDXL default
+
             # Determine which workflow to use based on selected model
             workflow_name = "txt2img"
             checkpoint_override = None
@@ -495,6 +502,20 @@ async def orchestrate(
             else:
                 print("[IMAGE] No model specified, using default 'txt2img' workflow")
 
+            # Set model-specific dimension defaults if user didn't specify custom dimensions
+            # SD1.5 models work best at 512x512 or 512x768
+            # SDXL/Pony/Flux work best at 1024x1024 or similar
+            if workflow_name == "txt2img-sd15-uncensored":
+                if img_width is None and img_height is None:
+                    # Only override if user didn't explicitly set dimensions
+                    refined["width"] = 512
+                    refined["height"] = 768  # Portrait for better character rendering
+                    print(f"[IMAGE] Using SD1.5 optimal dimensions: 512x768")
+                # Ensure SD1.5 has a checkpoint (required by template)
+                if checkpoint_override is None:
+                    checkpoint_override = "dreamshaper_8.safetensors"
+                    print(f"[IMAGE] No checkpoint specified for SD1.5, using default: {checkpoint_override}")
+
             # Add checkpoint to variables for SD1.5 workflow (uses {{ckpt_name}} template)
             if checkpoint_override:
                 refined["ckpt_name"] = checkpoint_override
@@ -503,6 +524,7 @@ async def orchestrate(
             print(f"[IMAGE] === FINAL WORKFLOW DECISION ===")
             print(f"[IMAGE] Workflow to run: {workflow_name}")
             print(f"[IMAGE] Checkpoint override: {checkpoint_override}")
+            print(f"[IMAGE] Dimensions: {refined.get('width', 'NOT SET')}x{refined.get('height', 'NOT SET')}")
             print(f"[IMAGE] Variables being passed: ckpt_name={refined.get('ckpt_name', 'NOT SET')}")
 
             # Determine batch size (1, 2, or 4 images like Grok)

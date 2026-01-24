@@ -39,10 +39,12 @@ from .game_mode import init_game_db, next_variation, get_session_events
 from .story_mode import (
     init_story_db,
     start_story,
+    continue_story,
     next_scene,
     get_story,
     list_story_sessions,
     delete_story_session,
+    delete_scene,
     update_scene_image,
 )
 
@@ -1464,6 +1466,36 @@ async def story_start_endpoint(inp: StoryStartIn) -> JSONResponse:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
 
 
+class StoryContinueIn(BaseModel):
+    previous_session_id: str
+    title_hint: str = ""
+    direction_hint: str = ""
+    options: Optional[Dict[str, Any]] = None
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+
+@app.post("/story/continue", dependencies=[Depends(require_api_key)])
+async def story_continue_endpoint(inp: StoryContinueIn) -> JSONResponse:
+    """
+    Continue a story as the next chapter in a saga.
+    Uses the previous story's ending as the starting point.
+    Returns new session_id + chapter bible.
+    """
+    try:
+        res = await continue_story(
+            inp.previous_session_id,
+            title_hint=inp.title_hint,
+            direction_hint=inp.direction_hint,
+            options=inp.options,
+            ollama_base_url=inp.ollama_base_url,
+            ollama_model=inp.ollama_model,
+        )
+        return JSONResponse(status_code=200, content=res.model_dump())
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+
+
 @app.post("/story/next", dependencies=[Depends(require_api_key)])
 async def story_next_endpoint(inp: StoryNextIn) -> JSONResponse:
     """
@@ -1479,6 +1511,15 @@ async def story_next_endpoint(inp: StoryNextIn) -> JSONResponse:
             ollama_model=inp.ollama_model,
         )
         return JSONResponse(status_code=200, content=res.model_dump())
+    except ValueError as e:
+        error_msg = str(e)
+        # Check if this is a "story complete" error
+        if "Story complete" in error_msg or "scenes have been generated" in error_msg:
+            return JSONResponse(
+                status_code=200,
+                content={"ok": True, "story_complete": True, "message": error_msg}
+            )
+        return JSONResponse(status_code=400, content={"ok": False, "error": error_msg})
     except Exception as e:
         return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
 
@@ -1515,6 +1556,21 @@ async def story_delete_endpoint(session_id: str) -> JSONResponse:
     try:
         deleted = delete_story_session(session_id)
         return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+
+@app.delete("/story/{session_id}/scene/{scene_idx}", dependencies=[Depends(require_api_key)])
+async def story_delete_scene_endpoint(session_id: str, scene_idx: int) -> JSONResponse:
+    """
+    Delete a single scene from a story session. Remaining scenes will be re-indexed.
+    """
+    try:
+        deleted = delete_scene(session_id, scene_idx)
+        if deleted:
+            return JSONResponse(status_code=200, content={"ok": True, "deleted": True})
+        else:
+            return JSONResponse(status_code=404, content={"ok": False, "error": "Scene not found"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 

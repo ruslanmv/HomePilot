@@ -11,8 +11,8 @@ from fastapi import APIRouter, Query, HTTPException
 from typing import Optional, Literal
 from pydantic import BaseModel, Field
 
-from .models import StudioVideoCreate, GenerationRequest, ExportRequest
-from .repo import list_videos, get_video
+from .models import StudioVideoCreate, GenerationRequest, ExportRequest, StudioSceneCreate, StudioSceneUpdate
+from .repo import list_videos, get_video, list_scenes, get_scene, create_scene, update_scene, delete_scene, update_video
 from .service import (
     create,
     policy_check_generation,
@@ -81,6 +81,84 @@ def video_detail(video_id: str):
     if not v:
         raise HTTPException(status_code=404, detail="Video not found")
     return {"video": v.model_dump()}
+
+
+@router.patch("/videos/{video_id}")
+def video_update(video_id: str, title: Optional[str] = None, logline: Optional[str] = None, status: Optional[str] = None):
+    """Update video project fields."""
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    updates = {}
+    if title is not None:
+        updates["title"] = title
+    if logline is not None:
+        updates["logline"] = logline
+    if status is not None:
+        if status not in ("draft", "in_review", "approved", "archived"):
+            raise HTTPException(status_code=400, detail="Invalid status")
+        updates["status"] = status
+
+    if updates:
+        v = update_video(video_id, **updates)
+
+    return {"video": v.model_dump()}
+
+
+# ============================================================================
+# Scenes
+# ============================================================================
+
+@router.get("/videos/{video_id}/scenes")
+def scenes_list(video_id: str):
+    """List all scenes for a video project."""
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    scenes = list_scenes(video_id)
+    return {"scenes": [s.model_dump() for s in scenes]}
+
+
+@router.post("/videos/{video_id}/scenes")
+def scene_create(video_id: str, inp: StudioSceneCreate):
+    """Create a new scene for a video project."""
+    scene = create_scene(video_id, inp)
+    if not scene:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return {"scene": scene.model_dump()}
+
+
+@router.get("/videos/{video_id}/scenes/{scene_id}")
+def scene_detail(video_id: str, scene_id: str):
+    """Get scene details."""
+    scene = get_scene(scene_id)
+    if not scene or scene.videoId != video_id:
+        raise HTTPException(status_code=404, detail="Scene not found")
+    return {"scene": scene.model_dump()}
+
+
+@router.patch("/videos/{video_id}/scenes/{scene_id}")
+def scene_update(video_id: str, scene_id: str, inp: StudioSceneUpdate):
+    """Update a scene."""
+    scene = get_scene(scene_id)
+    if not scene or scene.videoId != video_id:
+        raise HTTPException(status_code=404, detail="Scene not found")
+
+    scene = update_scene(scene_id, inp)
+    return {"scene": scene.model_dump()}
+
+
+@router.delete("/videos/{video_id}/scenes/{scene_id}")
+def scene_delete(video_id: str, scene_id: str):
+    """Delete a scene."""
+    scene = get_scene(scene_id)
+    if not scene or scene.videoId != video_id:
+        raise HTTPException(status_code=404, detail="Scene not found")
+
+    delete_scene(scene_id)
+    return {"ok": True}
 
 
 # ============================================================================
