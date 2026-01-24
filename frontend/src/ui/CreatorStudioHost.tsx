@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { ArrowLeft, X, ChevronDown } from "lucide-react";
 import { useStudioStore } from "./studio/stores/studioStore";
 import { CreatorStudioEditor } from "./CreatorStudioEditor";
+import { detectArchitecture, getArchitectureLabel } from "./modelPresets";
 
 type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9";
 type ContentRating = "sfw" | "mature";
@@ -35,7 +36,13 @@ export function CreatorStudioHost({
   const [mode, setMode] = useState<"wizard" | "editor">(initialProjectId ? "editor" : "wizard");
   const [currentProjectId, setCurrentProjectId] = useState<string | undefined>(initialProjectId);
   const [isNewlyCreated, setIsNewlyCreated] = useState(false);
-  const [projectSettings, setProjectSettings] = useState({ targetSceneCount: 8, sceneDuration: 5, llmModel: "" });
+  const [projectSettings, setProjectSettings] = useState({
+    targetSceneCount: 8,
+    sceneDuration: 5,
+    llmModel: "",
+    imageModel: "",
+    videoModel: "",
+  });
 
   // Bootstrap connection info for API calls
   useEffect(() => {
@@ -56,6 +63,7 @@ export function CreatorStudioHost({
         autoGenerateFirst={isNewlyCreated}
         targetSceneCount={projectSettings.targetSceneCount}
         defaultLLMModel={projectSettings.llmModel}
+        imageModel={projectSettings.imageModel}
       />
     );
   }
@@ -85,7 +93,13 @@ interface WizardProps {
   backendUrl: string;
   apiKey?: string;
   onExit: () => void;
-  onProjectCreated: (projectId: string, settings: { targetSceneCount: number; sceneDuration: number; llmModel: string }) => void;
+  onProjectCreated: (projectId: string, settings: {
+    targetSceneCount: number;
+    sceneDuration: number;
+    llmModel: string;
+    imageModel: string;
+    videoModel: string;
+  }) => void;
 }
 
 function CreatorStudioWizard({
@@ -121,6 +135,16 @@ function CreatorStudioWizard({
   const [availableLLMModels, setAvailableLLMModels] = useState<AvailableModel[]>([]);
   const [selectedLLMModel, setSelectedLLMModel] = useState("");
   const [loadingModels, setLoadingModels] = useState(false);
+
+  // Image Model selection (ComfyUI checkpoints)
+  const [availableImageModels, setAvailableImageModels] = useState<AvailableModel[]>([]);
+  const [selectedImageModel, setSelectedImageModel] = useState("");
+  const [loadingImageModels, setLoadingImageModels] = useState(false);
+
+  // Video Model selection (ComfyUI video models)
+  const [availableVideoModels, setAvailableVideoModels] = useState<AvailableModel[]>([]);
+  const [selectedVideoModel, setSelectedVideoModel] = useState("");
+  const [loadingVideoModels, setLoadingVideoModels] = useState(false);
 
   // Mature consent modal
   const [showMatureModal, setShowMatureModal] = useState(false);
@@ -166,10 +190,74 @@ function CreatorStudioWizard({
     }
   }, [backendUrl, authKey, selectedLLMModel]);
 
+  // Fetch available image models from ComfyUI
+  const fetchImageModels = useCallback(async () => {
+    setLoadingImageModels(true);
+    try {
+      const url = `${backendUrl.replace(/\/+$/, "")}/models?provider=comfyui&model_type=image`;
+      const res = await fetch(url, {
+        headers: authKey ? { "x-api-key": authKey } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.models) {
+          const models = data.models.map((m: string) => ({
+            id: m,
+            name: m,
+          }));
+          setAvailableImageModels(models);
+          // Auto-select first model if none selected
+          if (!selectedImageModel && models.length > 0) {
+            // Prefer dreamshaper for SD1.5 (good quality, safe)
+            const preferred = models.find((m: AvailableModel) =>
+              m.id.toLowerCase().includes("dreamshaper")
+            ) || models[0];
+            setSelectedImageModel(preferred.id);
+          }
+        }
+      }
+    } catch (e) {
+      console.log("[Wizard] Failed to fetch image models:", e);
+    } finally {
+      setLoadingImageModels(false);
+    }
+  }, [backendUrl, authKey, selectedImageModel]);
+
+  // Fetch available video models from ComfyUI
+  const fetchVideoModels = useCallback(async () => {
+    setLoadingVideoModels(true);
+    try {
+      const url = `${backendUrl.replace(/\/+$/, "")}/models?provider=comfyui&model_type=video`;
+      const res = await fetch(url, {
+        headers: authKey ? { "x-api-key": authKey } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.models) {
+          const models = data.models.map((m: string) => ({
+            id: m,
+            name: m,
+          }));
+          setAvailableVideoModels(models);
+          // Auto-select first model if none selected
+          if (!selectedVideoModel && models.length > 0) {
+            setSelectedVideoModel(models[0].id);
+          }
+        }
+      }
+    } catch (e) {
+      console.log("[Wizard] Failed to fetch video models:", e);
+    } finally {
+      setLoadingVideoModels(false);
+    }
+  }, [backendUrl, authKey, selectedVideoModel]);
+
   // Fetch models on mount
   useEffect(() => {
     fetchLLMModels();
-  }, [fetchLLMModels]);
+    fetchImageModels();
+    fetchVideoModels();
+  }, [fetchLLMModels, fetchImageModels, fetchVideoModels]);
 
   // Build tags for backend
   const tagsForBackend = React.useMemo(() => {
@@ -181,10 +269,12 @@ function CreatorStudioWizard({
     // Include episode configuration
     t.push(`scenes:${targetSceneCount}`);
     t.push(`duration:${sceneDuration}`);
-    // Include selected LLM model
+    // Include selected models
     if (selectedLLMModel) t.push(`llm:${selectedLLMModel}`);
+    if (selectedImageModel) t.push(`imageModel:${selectedImageModel}`);
+    if (selectedVideoModel) t.push(`videoModel:${selectedVideoModel}`);
     return Array.from(new Set(t));
-  }, [goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel]);
+  }, [goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, selectedVideoModel]);
 
   const canProceedStep1 = title.trim().length > 0;
   const canCreate = title.trim().length > 0 && !loading && generatedOutline;
@@ -338,7 +428,13 @@ function CreatorStudioWizard({
 
     try {
       // Project already exists with outline - just open it in the editor
-      onProjectCreated(tempProjectId, { targetSceneCount, sceneDuration, llmModel: selectedLLMModel });
+      onProjectCreated(tempProjectId, {
+        targetSceneCount,
+        sceneDuration,
+        llmModel: selectedLLMModel,
+        imageModel: selectedImageModel,
+        videoModel: selectedVideoModel,
+      });
     } catch (e: any) {
       setError(e.message || String(e));
     } finally {
@@ -619,6 +715,81 @@ function CreatorStudioWizard({
                     </p>
                   )}
                 </div>
+
+                {/* Image Model Selection */}
+                <div className="mt-6">
+                  <label className="block text-xs font-medium text-[#aaa] mb-3">Image Generation Model</label>
+                  <p className="text-xs text-[#777] mb-3">Select the model for generating scene images</p>
+                  <div className="relative">
+                    <select
+                      value={selectedImageModel}
+                      onChange={(e) => setSelectedImageModel(e.target.value)}
+                      className="w-full px-4 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-base outline-none focus:border-[#3ea6ff] appearance-none cursor-pointer"
+                      disabled={loadingImageModels}
+                    >
+                      {loadingImageModels ? (
+                        <option value="">Loading models...</option>
+                      ) : availableImageModels.length === 0 ? (
+                        <option value="">No models available</option>
+                      ) : (
+                        availableImageModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#aaa] pointer-events-none" />
+                  </div>
+                  {/* Architecture indicator */}
+                  {selectedImageModel && (
+                    <div className="mt-2 text-xs text-[#3ea6ff] bg-[#3ea6ff]/10 border border-[#3ea6ff]/20 rounded px-3 py-1.5">
+                      <span className="font-medium">{getArchitectureLabel(detectArchitecture(selectedImageModel))}</span>
+                      {detectArchitecture(selectedImageModel) === "sd15" && (
+                        <span className="ml-2 text-[#f59e0b]">(Safe resolution: max 768px)</span>
+                      )}
+                      {detectArchitecture(selectedImageModel) === "flux_schnell" && (
+                        <span className="ml-2 text-[#a855f7]">(Turbo: 4 steps)</span>
+                      )}
+                    </div>
+                  )}
+                  {availableImageModels.length === 0 && !loadingImageModels && (
+                    <p className="text-xs text-[#ff6b6b] mt-2">
+                      No image models found. Make sure ComfyUI has checkpoints in its models folder.
+                    </p>
+                  )}
+                </div>
+
+                {/* Video Model Selection */}
+                <div className="mt-6">
+                  <label className="block text-xs font-medium text-[#aaa] mb-3">Video Generation Model</label>
+                  <p className="text-xs text-[#777] mb-3">Select the model for generating scene videos (optional)</p>
+                  <div className="relative">
+                    <select
+                      value={selectedVideoModel}
+                      onChange={(e) => setSelectedVideoModel(e.target.value)}
+                      className="w-full px-4 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-base outline-none focus:border-[#3ea6ff] appearance-none cursor-pointer"
+                      disabled={loadingVideoModels}
+                    >
+                      <option value="">None (images only)</option>
+                      {loadingVideoModels ? (
+                        <option value="" disabled>Loading models...</option>
+                      ) : (
+                        availableVideoModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#aaa] pointer-events-none" />
+                  </div>
+                  {availableVideoModels.length === 0 && !loadingVideoModels && (
+                    <p className="text-xs text-[#777] mt-2">
+                      No video models found. Video generation is optional.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
 
@@ -678,7 +849,15 @@ function CreatorStudioWizard({
                     label="Episode Length"
                     value={`${targetSceneCount} scenes × ${sceneDuration}s = ~${Math.floor(targetSceneCount * sceneDuration / 60)}:${String((targetSceneCount * sceneDuration) % 60).padStart(2, '0')}`}
                   />
-                  <ReviewLine label="AI Model" value={selectedLLMModel || "Default"} />
+                  <ReviewLine label="Story AI" value={selectedLLMModel || "Default"} />
+                  <ReviewLine
+                    label="Image Model"
+                    value={selectedImageModel ? `${selectedImageModel} (${getArchitectureLabel(detectArchitecture(selectedImageModel))})` : "Default"}
+                  />
+                  <ReviewLine
+                    label="Video Model"
+                    value={selectedVideoModel || "None (images only)"}
+                  />
                   <ReviewLine
                     label="Safety"
                     value={contentRating === "sfw" ? "Safe (SFW)" : "Mature (18+)"}

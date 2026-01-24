@@ -652,6 +652,8 @@ export function CreatorStudioEditor({
       try {
         const llmProvider = imageProvider === 'comfyui' ? 'ollama' : imageProvider;
 
+        // Send aspect ratio to backend - Dynamic Preset System calculates correct
+        // dimensions based on model architecture (SD1.5 vs SDXL vs Flux)
         const data = await postApi<{ media?: { images?: string[] } }>(
           '/chat',
           {
@@ -659,8 +661,7 @@ export function CreatorStudioEditor({
             mode: 'imagine',
             provider: llmProvider,
             imgModel: imageModel || undefined,
-            imgWidth: imageWidth,
-            imgHeight: imageHeight,
+            imgAspectRatio: '16:9',  // Story/video format
             imgSteps: imageSteps,
             imgCfg: imageCfg,
             promptRefinement: false,
@@ -806,7 +807,7 @@ export function CreatorStudioEditor({
     try {
       let narration: string;
       let imagePrompt: string;
-      let negativePrompt: string = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+      let negativePrompt: string = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution, duplicate, clone, multiple people, two heads, two faces, split image, extra limbs";
 
       if (storyOutline && storyOutline.scenes && storyOutline.scenes.length > 0) {
         const outlineScene = storyOutline.scenes[0];
@@ -928,7 +929,7 @@ export function CreatorStudioEditor({
 
       const narration = `Scene ${sceneNum}. ${project.logline || `The story of "${project.title}" continues...`}`;
       const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
-      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution, duplicate, clone, multiple people, two heads, two faces, split image, extra limbs";
 
       const data = await postApi<{ scene: Scene }>(
         `/studio/videos/${projectId}/scenes`,
@@ -984,7 +985,7 @@ export function CreatorStudioEditor({
 
       const narration = `Scene ${sceneNum}. ${project.logline || `The story of "${project.title}" continues...`}`;
       const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
-      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution, duplicate, clone, multiple people, two heads, two faces, split image, extra limbs";
 
       const data = await postApi<{ scene: Scene }>(
         `/studio/videos/${projectId}/scenes`,
