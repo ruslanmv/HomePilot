@@ -397,14 +397,31 @@ export default function StudioView(props: StudioParams) {
   }
 
   const deleteScene = async (sceneIdx: number) => {
-    if (!currentStory) return
+    if (!currentStory) {
+      console.error('[Studio] deleteScene: No current story')
+      return
+    }
+
+    console.log('[Studio] Deleting scene:', sceneIdx, 'from story:', currentStory.session_id)
 
     // Find the array index before deleting
     const deletedArrayIndex = currentStory.scenes.findIndex((s) => s.idx === sceneIdx)
-    if (deletedArrayIndex < 0) return // Scene not found
+    if (deletedArrayIndex < 0) {
+      console.error('[Studio] deleteScene: Scene not found in array, sceneIdx:', sceneIdx)
+      return
+    }
 
     try {
-      await deleteJson(props.backendUrl, `/story/${currentStory.session_id}/scene/${sceneIdx}`, authKey)
+      const result = await deleteJson<{ ok: boolean; deleted?: boolean; error?: string }>(
+        props.backendUrl,
+        `/story/${currentStory.session_id}/scene/${sceneIdx}`,
+        authKey
+      )
+      console.log('[Studio] Delete response:', result)
+
+      if (!result.ok) {
+        throw new Error(result.error || 'Delete failed')
+      }
 
       // Update local state - re-index scenes
       setCurrentStory((prev) => {
@@ -413,15 +430,18 @@ export default function StudioView(props: StudioParams) {
           .filter((s) => s.idx !== sceneIdx)
           .map((s, i) => ({ ...s, idx: i })) // Re-index
 
+        console.log('[Studio] Updated scenes count:', newScenes.length)
         return { ...prev, scenes: newScenes }
       })
 
       // Adjust current scene index if needed (after state update to avoid race)
       if (deletedArrayIndex <= currentSceneIndex) {
         const newIndex = Math.max(0, currentSceneIndex - 1)
+        console.log('[Studio] Adjusting currentSceneIndex from', currentSceneIndex, 'to', newIndex)
         setCurrentSceneIndex(newIndex)
       }
     } catch (err: any) {
+      console.error('[Studio] Delete scene error:', err)
       alert(`Failed to delete scene: ${err.message || err}`)
     }
   }

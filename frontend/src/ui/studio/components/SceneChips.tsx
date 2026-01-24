@@ -32,19 +32,17 @@ type SceneChipsProps = {
  */
 export function SceneChips({ scenes, activeIndex, onSelect, onDelete, className = '' }: SceneChipsProps) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const [confirmDeleteIdx, setConfirmDeleteIdx] = useState<number | null>(null)
 
   if (scenes.length === 0) return null
 
   const handleDeleteClick = (e: React.MouseEvent, idx: number) => {
     e.stopPropagation()
-    if (confirmDeleteIdx === idx) {
-      // Second click - actually delete
+    e.preventDefault()
+
+    // Use confirm dialog for clarity
+    if (window.confirm(`Delete scene ${idx + 1}? This cannot be undone.`)) {
+      console.log('[SceneChips] Deleting scene:', idx)
       onDelete?.(idx)
-      setConfirmDeleteIdx(null)
-    } else {
-      // First click - show confirmation
-      setConfirmDeleteIdx(idx)
     }
   }
 
@@ -56,17 +54,13 @@ export function SceneChips({ scenes, activeIndex, onSelect, onDelete, className 
           const hasThumb = Boolean(scene.thumbnailUrl)
           const isHovered = hoveredIdx === scene.idx
           const showDelete = onDelete && isHovered && scenes.length > 1
-          const isConfirming = confirmDeleteIdx === scene.idx
 
           return (
             <div
               key={scene.idx}
               className="relative"
               onMouseEnter={() => setHoveredIdx(scene.idx)}
-              onMouseLeave={() => {
-                setHoveredIdx(null)
-                setConfirmDeleteIdx(null)
-              }}
+              onMouseLeave={() => setHoveredIdx(null)}
             >
               <button
                 onClick={() => onSelect(scene.idx)}
@@ -103,17 +97,9 @@ export function SceneChips({ scenes, activeIndex, onSelect, onDelete, className 
               {showDelete && (
                 <button
                   onClick={(e) => handleDeleteClick(e, scene.idx)}
-                  className={`
-                    absolute -top-2 -right-2 w-5 h-5 rounded-full
-                    flex items-center justify-center
-                    transition-all transform hover:scale-110
-                    ${isConfirming
-                      ? 'bg-red-500 text-white'
-                      : 'bg-black/80 text-white/70 hover:text-white hover:bg-red-500/80'
-                    }
-                  `}
+                  className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center transition-all transform hover:scale-110 bg-black/80 text-white/70 hover:text-white hover:bg-red-500"
                   type="button"
-                  title={isConfirming ? 'Click again to confirm delete' : 'Delete scene'}
+                  title="Delete scene"
                 >
                   <X size={12} />
                 </button>
