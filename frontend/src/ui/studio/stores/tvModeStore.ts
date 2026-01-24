@@ -45,6 +45,7 @@ interface TVModeState {
   isPrefetching: boolean;
   prefetchError: string | null;
   maxScenes: number;
+  isStoryComplete: boolean; // True when all planned scenes have been generated
 
   // UI State
   controlsVisible: boolean;
@@ -96,6 +97,7 @@ interface TVModeActions {
   // Prefetch state
   setPrefetching: (isPrefetching: boolean) => void;
   setPrefetchError: (error: string | null) => void;
+  setStoryComplete: (complete: boolean) => void;
 
   // UI control
   showControls: () => void;
@@ -130,6 +132,7 @@ const initialState: TVModeState = {
   isPrefetching: false,
   prefetchError: null,
   maxScenes: 24,
+  isStoryComplete: false,
   controlsVisible: true,
   showSettings: false,
   showEndScreen: false,
@@ -165,6 +168,7 @@ export const useTVModeStore = create<TVModeStore>()(
           showEndScreen: false,
           playbackError: null,
           prefetchError: null,
+          isStoryComplete: false, // Reset when entering new story
         });
       },
 
@@ -278,6 +282,7 @@ export const useTVModeStore = create<TVModeStore>()(
       // Prefetch state
       setPrefetching: (isPrefetching) => set({ isPrefetching }),
       setPrefetchError: (error) => set({ prefetchError: error }),
+      setStoryComplete: (complete) => set({ isStoryComplete: complete }),
 
       // UI control
       showControls: () => set({ controlsVisible: true }),
