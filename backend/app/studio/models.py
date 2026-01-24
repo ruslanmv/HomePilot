@@ -67,6 +67,9 @@ class StudioVideo(BaseModel):
     policyMode: PolicyMode = "youtube_safe"
     providerPolicy: ProviderPolicy = Field(default_factory=ProviderPolicy)
 
+    # Story outline and project metadata
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
     createdAt: float
     updatedAt: float
 

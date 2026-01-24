@@ -702,6 +702,229 @@ def nsfw_image_info():
 
 
 # ============================================================================
+# Story Outline Generation (AI-powered)
+# ============================================================================
+
+class GenerateOutlineRequest(BaseModel):
+    """Request to generate an AI-powered story outline."""
+    target_scenes: int = Field(8, ge=4, le=24)
+    scene_duration: int = Field(5, ge=3, le=15)
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+
+class SceneOutline(BaseModel):
+    """Single scene outline."""
+    scene_number: int
+    title: str
+    description: str
+    narration: str
+    image_prompt: str
+    negative_prompt: str = "blurry, low quality, text, watermark, ugly, deformed"
+    duration_sec: float = 5.0
+
+
+class StoryOutlineResponse(BaseModel):
+    """AI-generated story outline."""
+    title: str
+    logline: str
+    visual_style: str
+    tone: str
+    story_arc: dict
+    scenes: list
+
+
+@router.post("/videos/{video_id}/generate-outline")
+async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
+    """
+    Generate an AI-powered story outline based on project settings.
+
+    This uses the project's title, logline, visual style, and tone tags
+    to create a complete story arc with scene-by-scene outlines.
+    """
+    from ..llm import chat_ollama
+    from ..config import OLLAMA_BASE_URL, OLLAMA_MODEL
+    import json
+
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Extract tags from project
+    tags = v.tags if hasattr(v, 'tags') and v.tags else []
+
+    visual_style = "cinematic"
+    tones = []
+    goal = "entertain"
+
+    for tag in tags:
+        if tag.startswith("visual:"):
+            visual_style = tag.replace("visual:", "").replace("_", " ")
+        elif tag.startswith("tone:"):
+            tones.append(tag.replace("tone:", "").replace("_", " "))
+        elif tag.startswith("goal:"):
+            goal = tag.replace("goal:", "")
+
+    tone_desc = ", ".join(tones) if tones else "documentary"
+
+    # Build the outline generation prompt
+    system_prompt = """You are a professional story planner for visual storytelling.
+Your task is to create a complete story outline with scene-by-scene breakdown.
+
+Output ONLY valid JSON. No markdown, no explanation, just the JSON object.
+
+JSON schema:
+{
+  "title": "string",
+  "logline": "string (1-2 sentences)",
+  "visual_style": "string",
+  "tone": "string",
+  "story_arc": {
+    "beginning": "string (setup/hook)",
+    "rising_action": "string (build tension)",
+    "climax": "string (peak moment)",
+    "falling_action": "string (consequences)",
+    "resolution": "string (ending)"
+  },
+  "scenes": [
+    {
+      "scene_number": 1,
+      "title": "string (brief scene title)",
+      "description": "string (what happens)",
+      "narration": "string (2-3 sentences of narration text)",
+      "image_prompt": "string (detailed visual description for image generation)",
+      "negative_prompt": "string (what to avoid in image)",
+      "duration_sec": 5.0
+    }
+  ]
+}
+
+Guidelines:
+- Create exactly the requested number of scenes
+- Each scene should advance the story
+- Image prompts should be detailed and include the visual style
+- Narration should be engaging and descriptive
+- Keep consistent character descriptions across scenes"""
+
+    user_prompt = f"""Create a story outline with the following parameters:
+
+Title: {v.title}
+Logline/Description: {v.logline or v.title}
+Visual Style: {visual_style}
+Tone: {tone_desc}
+Goal: {goal}
+Number of Scenes: {req.target_scenes}
+Scene Duration: {req.scene_duration} seconds each
+
+Create a complete story with a clear beginning, middle, and end.
+Each scene should have detailed narration and image prompts that match the visual style.
+Make the story engaging and suitable for visual storytelling."""
+
+    base_url = req.ollama_base_url or OLLAMA_BASE_URL
+    model = req.ollama_model or OLLAMA_MODEL or "llama3:8b"
+
+    try:
+        # Call LLM to generate outline
+        response = await chat_ollama(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            base_url=base_url,
+            model=model,
+            temperature=0.7,
+            max_tokens=4000,
+        )
+
+        # Parse the response
+        response_text = response.get("content", "") if isinstance(response, dict) else str(response)
+
+        # Try to extract JSON from the response
+        import re
+        json_match = re.search(r'\{[\s\S]*\}', response_text)
+        if json_match:
+            outline = json.loads(json_match.group())
+        else:
+            raise ValueError("No valid JSON found in response")
+
+        # Store outline in project metadata
+        update_video(video_id, metadata={"story_outline": outline})
+
+        return {
+            "ok": True,
+            "outline": outline,
+            "model_used": model,
+        }
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse AI response: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate outline: {str(e)}")
+
+
+@router.get("/videos/{video_id}/outline")
+def get_story_outline(video_id: str):
+    """Get the stored story outline for a project."""
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    metadata = v.metadata if hasattr(v, 'metadata') and v.metadata else {}
+    outline = metadata.get("story_outline")
+
+    if not outline:
+        return {"ok": False, "outline": None, "message": "No outline generated yet"}
+
+    return {"ok": True, "outline": outline}
+
+
+@router.post("/videos/{video_id}/scenes/generate-from-outline")
+async def generate_scene_from_outline(
+    video_id: str,
+    scene_index: int = Query(..., ge=0),
+    ollama_base_url: Optional[str] = None,
+    ollama_model: Optional[str] = None,
+):
+    """
+    Generate a scene based on the story outline.
+    Uses the pre-planned scene outline to create the scene.
+    """
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    metadata = v.metadata if hasattr(v, 'metadata') and v.metadata else {}
+    outline = metadata.get("story_outline")
+
+    if not outline or not outline.get("scenes"):
+        raise HTTPException(status_code=400, detail="No story outline found. Generate outline first.")
+
+    scenes = outline.get("scenes", [])
+    if scene_index >= len(scenes):
+        raise HTTPException(status_code=400, detail=f"Scene index {scene_index} out of range. Outline has {len(scenes)} scenes.")
+
+    scene_plan = scenes[scene_index]
+
+    # Create the scene from the outline
+    scene = create_scene(video_id, StudioSceneCreate(
+        narration=scene_plan.get("narration", ""),
+        imagePrompt=scene_plan.get("image_prompt", ""),
+        negativePrompt=scene_plan.get("negative_prompt", "blurry, low quality, text, watermark"),
+        durationSec=scene_plan.get("duration_sec", 5.0),
+    ))
+
+    if not scene:
+        raise HTTPException(status_code=500, detail="Failed to create scene")
+
+    return {
+        "ok": True,
+        "scene": scene.model_dump(),
+        "from_outline": True,
+        "scene_plan": scene_plan,
+    }
+
+
+# ============================================================================
 # Health
 # ============================================================================
 

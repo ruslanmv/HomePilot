@@ -11,6 +11,13 @@ import {
   Loader2,
   ImageIcon,
   Tv,
+  Edit3,
+  Wand2,
+  Save,
+  X,
+  Settings,
+  FileText,
+  Sparkles,
 } from "lucide-react";
 import { useTVModeStore } from "./studio/stores/tvModeStore";
 import type { TVScene } from "./studio/stores/tvModeStore";
@@ -43,6 +50,40 @@ type Project = {
   contentRating: "sfw" | "mature";
   createdAt: number;
   updatedAt: number;
+  metadata?: {
+    story_outline?: StoryOutline;
+  };
+};
+
+type SceneOutline = {
+  scene_number: number;
+  title: string;
+  description: string;
+  narration: string;
+  image_prompt: string;
+  negative_prompt: string;
+  duration_sec: number;
+};
+
+type StoryOutline = {
+  title: string;
+  logline: string;
+  visual_style: string;
+  tone: string;
+  story_arc: {
+    beginning: string;
+    rising_action: string;
+    climax: string;
+    falling_action: string;
+    resolution: string;
+  };
+  scenes: SceneOutline[];
+};
+
+type AvailableModel = {
+  id: string;
+  name: string;
+  provider?: string;
 };
 
 interface CreatorStudioEditorProps {
@@ -98,6 +139,25 @@ export function CreatorStudioEditor({
   const [project, setProject] = useState<Project | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Story outline state
+  const [storyOutline, setStoryOutline] = useState<StoryOutline | null>(null);
+  const [isGeneratingOutline, setIsGeneratingOutline] = useState(false);
+  const [showOutlinePanel, setShowOutlinePanel] = useState(false);
+
+  // Scene editor state
+  const [showSceneEditor, setShowSceneEditor] = useState(false);
+  const [editingScene, setEditingScene] = useState<Scene | null>(null);
+  const [editNarration, setEditNarration] = useState("");
+  const [editImagePrompt, setEditImagePrompt] = useState("");
+  const [editNegativePrompt, setEditNegativePrompt] = useState("");
+  const [isSavingScene, setIsSavingScene] = useState(false);
+
+  // Model selection state
+  const [availableLLMModels, setAvailableLLMModels] = useState<AvailableModel[]>([]);
+  const [availableImageModels, setAvailableImageModels] = useState<AvailableModel[]>([]);
+  const [selectedLLMModel, setSelectedLLMModel] = useState<string>("");
+  const [selectedImageModel, setSelectedImageModel] = useState<string>(imageModel || "");
   const [error, setError] = useState<string | null>(null);
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -165,6 +225,115 @@ export function CreatorStudioEditor({
     },
     [backendUrl, authKey]
   );
+
+  // Generate AI-powered story outline
+  const generateStoryOutline = useCallback(async () => {
+    if (!project || isGeneratingOutline) return;
+    setIsGeneratingOutline(true);
+
+    try {
+      console.log('[CreatorStudioEditor] Generating story outline...');
+      const data = await postApi<{ ok: boolean; outline: StoryOutline; model_used: string }>(
+        `/studio/videos/${projectId}/generate-outline`,
+        {
+          target_scenes: targetSceneCount,
+          scene_duration: 5,
+          ollama_model: selectedLLMModel || undefined,
+        }
+      );
+
+      if (data.ok && data.outline) {
+        setStoryOutline(data.outline);
+        console.log('[CreatorStudioEditor] Story outline generated:', data.outline.title);
+      }
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Failed to generate outline:', e);
+      alert(`Failed to generate outline: ${e.message}`);
+    } finally {
+      setIsGeneratingOutline(false);
+    }
+  }, [project, projectId, targetSceneCount, selectedLLMModel, isGeneratingOutline, postApi]);
+
+  // Load existing story outline
+  const loadStoryOutline = useCallback(async () => {
+    try {
+      const data = await fetchApi<{ ok: boolean; outline: StoryOutline | null }>(
+        `/studio/videos/${projectId}/outline`
+      );
+      if (data.ok && data.outline) {
+        setStoryOutline(data.outline);
+      }
+    } catch (e) {
+      console.log('[CreatorStudioEditor] No existing outline found');
+    }
+  }, [projectId, fetchApi]);
+
+  // Open scene editor
+  const openSceneEditor = useCallback((scene: Scene) => {
+    setEditingScene(scene);
+    setEditNarration(scene.narration || "");
+    setEditImagePrompt(scene.imagePrompt || "");
+    setEditNegativePrompt(scene.negativePrompt || "");
+    setShowSceneEditor(true);
+  }, []);
+
+  // Save scene edits
+  const saveSceneEdits = useCallback(async () => {
+    if (!editingScene) return;
+    setIsSavingScene(true);
+
+    try {
+      await patchApi(`/studio/videos/${projectId}/scenes/${editingScene.id}`, {
+        narration: editNarration,
+        imagePrompt: editImagePrompt,
+        negativePrompt: editNegativePrompt,
+      });
+
+      // Update local state
+      setScenes((prev) =>
+        prev.map((s) =>
+          s.id === editingScene.id
+            ? { ...s, narration: editNarration, imagePrompt: editImagePrompt, negativePrompt: editNegativePrompt }
+            : s
+        )
+      );
+      setLastSaved(new Date());
+      setShowSceneEditor(false);
+      setEditingScene(null);
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Failed to save scene:', e);
+      alert(`Failed to save scene: ${e.message}`);
+    } finally {
+      setIsSavingScene(false);
+    }
+  }, [editingScene, editNarration, editImagePrompt, editNegativePrompt, projectId, patchApi]);
+
+  // Fetch available models
+  const fetchAvailableModels = useCallback(async () => {
+    try {
+      // Fetch LLM models (Ollama)
+      const llmData = await fetchApi<{ models: { id: string; name?: string }[] }>(
+        '/models?provider=ollama'
+      );
+      if (llmData.models) {
+        setAvailableLLMModels(llmData.models.map(m => ({ id: m.id, name: m.name || m.id })));
+      }
+    } catch (e) {
+      console.log('[CreatorStudioEditor] Failed to fetch LLM models:', e);
+    }
+
+    try {
+      // Fetch image models (ComfyUI)
+      const imgData = await fetchApi<{ models: string[] }>(
+        '/models?provider=comfyui&model_type=image'
+      );
+      if (imgData.models) {
+        setAvailableImageModels(imgData.models.map(m => ({ id: m, name: m })));
+      }
+    } catch (e) {
+      console.log('[CreatorStudioEditor] Failed to fetch image models:', e);
+    }
+  }, [fetchApi]);
 
   // Convert Creator Studio scene to TV Mode scene format
   const sceneToTVScene = useCallback((scene: Scene): TVScene => {
@@ -247,6 +416,33 @@ export function CreatorStudioEditor({
     [projectId, imageProvider, imageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage]
   );
 
+  // Generate scene from outline (defined after generateImageForScene to avoid circular dependency)
+  const generateSceneFromOutline = useCallback(async (sceneIndex: number) => {
+    if (!storyOutline || sceneIndex >= storyOutline.scenes.length) return;
+
+    setIsGeneratingScene(true);
+    try {
+      const data = await postApi<{ ok: boolean; scene: Scene }>(
+        `/studio/videos/${projectId}/scenes/generate-from-outline?scene_index=${sceneIndex}`,
+        {}
+      );
+
+      if (data.ok && data.scene) {
+        setScenes((prev) => [...prev, data.scene]);
+        setCurrentSceneIndex(scenes.length);
+        setLastSaved(new Date());
+
+        // Auto-generate image
+        generateImageForScene(data.scene.id, data.scene.imagePrompt);
+      }
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Failed to generate scene from outline:', e);
+      alert(`Failed to generate scene: ${e.message}`);
+    } finally {
+      setIsGeneratingScene(false);
+    }
+  }, [projectId, storyOutline, scenes.length, postApi, generateImageForScene]);
+
   // Load project and scenes
   useEffect(() => {
     async function loadData() {
@@ -267,6 +463,12 @@ export function CreatorStudioEditor({
     }
     loadData();
   }, [projectId, fetchApi]);
+
+  // Load available models and existing outline on mount
+  useEffect(() => {
+    fetchAvailableModels();
+    loadStoryOutline();
+  }, [fetchAvailableModels, loadStoryOutline]);
 
   // Auto-generate first scene when project is newly created
   useEffect(() => {
@@ -315,14 +517,25 @@ export function CreatorStudioEditor({
     setIsGeneratingScene(true);
 
     try {
-      const visualStyle = getVisualStyle();
-      const tones = getTones();
-      const toneDesc = tones.join(", ");
+      let narration: string;
+      let imagePrompt: string;
+      let negativePrompt: string = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
 
-      // Build a richer AI-powered prompt
-      const narration = `The story begins. ${project.logline || `Welcome to "${project.title}".`}`;
-      const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, opening scene, establishing shot, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
-      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+      // Use story outline if available
+      if (storyOutline && storyOutline.scenes && storyOutline.scenes.length > 0) {
+        const outlineScene = storyOutline.scenes[0];
+        narration = outlineScene.narration;
+        imagePrompt = outlineScene.image_prompt;
+        negativePrompt = outlineScene.negative_prompt || negativePrompt;
+        console.log('[CreatorStudioEditor] Using story outline for first scene');
+      } else {
+        // Fallback to AI-generated prompts
+        const visualStyle = getVisualStyle();
+        const tones = getTones();
+        const toneDesc = tones.join(", ");
+        narration = `The story begins. ${project.logline || `Welcome to "${project.title}".`}`;
+        imagePrompt = `${visualStyle} style, ${project.logline || project.title}, opening scene, establishing shot, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
+      }
 
       const data = await postApi<{ scene: Scene }>(
         `/studio/videos/${projectId}/scenes`,
@@ -347,7 +560,7 @@ export function CreatorStudioEditor({
     } finally {
       setIsGeneratingScene(false);
     }
-  }, [project, projectId, isGeneratingScene, postApi, getVisualStyle, getTones]);
+  }, [project, projectId, isGeneratingScene, postApi, getVisualStyle, getTones, storyOutline, generateImageForScene]);
 
   // Generate first scene (non-AI fallback)
   const generateFirstScene = useCallback(async () => {
@@ -376,21 +589,32 @@ export function CreatorStudioEditor({
     }
   }, [project, projectId, isGeneratingScene, postApi]);
 
-  // Generate next scene with AI-powered prompts
+  // Generate next scene with AI-powered prompts (uses story outline if available)
   const generateNextScene = useCallback(async () => {
     if (!project || isGeneratingScene) return;
     setIsGeneratingScene(true);
 
     try {
       const sceneNum = scenes.length + 1;
-      const visualStyle = getVisualStyle();
-      const tones = getTones();
-      const toneDesc = tones.join(", ");
+      let narration: string;
+      let imagePrompt: string;
+      let negativePrompt: string = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
 
-      // Build richer prompts
-      const narration = `Scene ${sceneNum}. The story continues...`;
-      const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
-      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+      // Use story outline if available and we haven't exceeded the planned scenes
+      if (storyOutline && storyOutline.scenes && scenes.length < storyOutline.scenes.length) {
+        const outlineScene = storyOutline.scenes[scenes.length];
+        narration = outlineScene.narration;
+        imagePrompt = outlineScene.image_prompt;
+        negativePrompt = outlineScene.negative_prompt || negativePrompt;
+        console.log(`[CreatorStudioEditor] Using outline for scene ${sceneNum}: "${outlineScene.title}"`);
+      } else {
+        // Fallback to AI-generated prompts
+        const visualStyle = getVisualStyle();
+        const tones = getTones();
+        const toneDesc = tones.join(", ");
+        narration = `Scene ${sceneNum}. The story continues...`;
+        imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
+      }
 
       const data = await postApi<{ scene: Scene }>(
         `/studio/videos/${projectId}/scenes`,
@@ -414,7 +638,7 @@ export function CreatorStudioEditor({
     } finally {
       setIsGeneratingScene(false);
     }
-  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, generateImageForScene]);
+  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, storyOutline, generateImageForScene]);
 
   // Generate next scene for TV Mode
   const generateNextForTVMode = useCallback(async () => {
@@ -561,6 +785,16 @@ export function CreatorStudioEditor({
               <span>Auto-save enabled</span>
             )}
           </div>
+
+          {/* Story Outline Button */}
+          <button
+            onClick={() => setShowOutlinePanel(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm font-medium transition-colors"
+            title="Story Outline"
+          >
+            <Wand2 size={14} />
+            Outline
+          </button>
 
           {/* Watch / TV Mode Button */}
           {scenes.length > 0 && (
@@ -764,6 +998,18 @@ export function CreatorStudioEditor({
 
             {/* Scene Actions */}
             <div className="flex items-center gap-3">
+              {/* Edit Scene Button */}
+              <button
+                onClick={() => currentScene && openSceneEditor(currentScene)}
+                disabled={!currentScene}
+                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm transition-colors"
+                title="Edit scene narration and prompts"
+              >
+                <Edit3 size={14} />
+                Edit
+              </button>
+
+              {/* Regenerate Image Button */}
               <button
                 onClick={() => {
                   if (currentScene) {
@@ -785,6 +1031,306 @@ export function CreatorStudioEditor({
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scene Editor Modal */}
+      {showSceneEditor && editingScene && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80" onClick={() => setShowSceneEditor(false)} />
+          <div className="relative w-full max-w-2xl rounded-xl border border-white/10 bg-[#1a1a1a] shadow-2xl max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-5 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <Edit3 size={20} className="text-purple-400" />
+                <h2 className="text-lg font-semibold">Edit Scene {editingScene.idx + 1}</h2>
+              </div>
+              <button
+                onClick={() => setShowSceneEditor(false)}
+                className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-5 space-y-5">
+              {/* Narration */}
+              <div>
+                <label className="block text-sm font-medium text-white/70 mb-2">
+                  <FileText size={14} className="inline mr-2" />
+                  Narration
+                </label>
+                <textarea
+                  value={editNarration}
+                  onChange={(e) => setEditNarration(e.target.value)}
+                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500 focus:outline-none resize-none"
+                  rows={3}
+                  placeholder="Enter narration text for this scene..."
+                />
+              </div>
+
+              {/* Image Prompt */}
+              <div>
+                <label className="block text-sm font-medium text-white/70 mb-2">
+                  <Sparkles size={14} className="inline mr-2" />
+                  Image Prompt
+                </label>
+                <textarea
+                  value={editImagePrompt}
+                  onChange={(e) => setEditImagePrompt(e.target.value)}
+                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500 focus:outline-none resize-none"
+                  rows={4}
+                  placeholder="Describe the visual elements for image generation..."
+                />
+              </div>
+
+              {/* Negative Prompt */}
+              <div>
+                <label className="block text-sm font-medium text-white/70 mb-2">
+                  Negative Prompt
+                </label>
+                <textarea
+                  value={editNegativePrompt}
+                  onChange={(e) => setEditNegativePrompt(e.target.value)}
+                  className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500 focus:outline-none resize-none"
+                  rows={2}
+                  placeholder="Elements to avoid in the image..."
+                />
+              </div>
+
+              {/* Model Selection */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-white/70 mb-2">
+                    <Settings size={14} className="inline mr-2" />
+                    LLM Model
+                  </label>
+                  <select
+                    value={selectedLLMModel}
+                    onChange={(e) => setSelectedLLMModel(e.target.value)}
+                    className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white focus:border-purple-500 focus:outline-none"
+                  >
+                    <option value="">Default</option>
+                    {availableLLMModels.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-white/70 mb-2">
+                    <ImageIcon size={14} className="inline mr-2" />
+                    Image Model
+                  </label>
+                  <select
+                    value={selectedImageModel}
+                    onChange={(e) => setSelectedImageModel(e.target.value)}
+                    className="w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-white focus:border-purple-500 focus:outline-none"
+                  >
+                    <option value="">Default</option>
+                    {availableImageModels.map((m) => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between p-5 border-t border-white/10">
+              <button
+                onClick={() => {
+                  generateImageForScene(editingScene.id, editImagePrompt, true);
+                  setShowSceneEditor(false);
+                }}
+                disabled={isGeneratingImage}
+                className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm transition-colors"
+              >
+                <RefreshCw size={14} />
+                Regenerate Image
+              </button>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowSceneEditor(false)}
+                  className="px-4 py-2 text-sm text-white/60 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveSceneEdits}
+                  disabled={isSavingScene}
+                  className="flex items-center gap-2 px-5 py-2 bg-purple-500 hover:bg-purple-600 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+                >
+                  {isSavingScene ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save size={14} />
+                      Save Changes
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Story Outline Panel */}
+      {showOutlinePanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80" onClick={() => setShowOutlinePanel(false)} />
+          <div className="relative w-full max-w-3xl rounded-xl border border-white/10 bg-[#1a1a1a] shadow-2xl max-h-[90vh] overflow-y-auto">
+            {/* Panel Header */}
+            <div className="flex items-center justify-between p-5 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <Wand2 size={20} className="text-purple-400" />
+                <h2 className="text-lg font-semibold">Story Outline</h2>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={generateStoryOutline}
+                  disabled={isGeneratingOutline}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-500 hover:bg-purple-600 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+                >
+                  {isGeneratingOutline ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={14} />
+                      {storyOutline ? "Regenerate" : "Generate"} Outline
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setShowOutlinePanel(false)}
+                  className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Panel Content */}
+            <div className="p-5">
+              {storyOutline ? (
+                <div className="space-y-6">
+                  {/* Story Arc */}
+                  <div className="p-4 bg-black/30 rounded-lg">
+                    <h3 className="text-sm font-semibold text-purple-400 mb-3">Story Arc</h3>
+                    <div className="grid grid-cols-5 gap-2 text-xs">
+                      <div className="p-2 bg-white/5 rounded">
+                        <div className="text-white/50 mb-1">Beginning</div>
+                        <div className="text-white/80">{storyOutline.story_arc?.beginning || "—"}</div>
+                      </div>
+                      <div className="p-2 bg-white/5 rounded">
+                        <div className="text-white/50 mb-1">Rising</div>
+                        <div className="text-white/80">{storyOutline.story_arc?.rising_action || "—"}</div>
+                      </div>
+                      <div className="p-2 bg-white/5 rounded">
+                        <div className="text-white/50 mb-1">Climax</div>
+                        <div className="text-white/80">{storyOutline.story_arc?.climax || "—"}</div>
+                      </div>
+                      <div className="p-2 bg-white/5 rounded">
+                        <div className="text-white/50 mb-1">Falling</div>
+                        <div className="text-white/80">{storyOutline.story_arc?.falling_action || "—"}</div>
+                      </div>
+                      <div className="p-2 bg-white/5 rounded">
+                        <div className="text-white/50 mb-1">Resolution</div>
+                        <div className="text-white/80">{storyOutline.story_arc?.resolution || "—"}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Scene Outlines */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-white/70 mb-3">
+                      Scene Outlines ({storyOutline.scenes?.length || 0} scenes)
+                    </h3>
+                    <div className="space-y-3">
+                      {storyOutline.scenes?.map((scene, idx) => {
+                        const alreadyGenerated = scenes.length > idx;
+                        return (
+                          <div
+                            key={idx}
+                            className={`p-4 rounded-lg border transition-colors ${
+                              alreadyGenerated
+                                ? "bg-green-500/10 border-green-500/30"
+                                : "bg-black/30 border-white/10 hover:border-white/20"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-sm font-medium text-white">
+                                    Scene {scene.scene_number}: {scene.title}
+                                  </span>
+                                  {alreadyGenerated && (
+                                    <span className="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">
+                                      Generated
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-sm text-white/60 mb-2">{scene.description}</p>
+                                <p className="text-xs text-white/40 italic">"{scene.narration}"</p>
+                              </div>
+                              {!alreadyGenerated && scenes.length === idx && (
+                                <button
+                                  onClick={() => {
+                                    generateSceneFromOutline(idx);
+                                    setShowOutlinePanel(false);
+                                  }}
+                                  disabled={isGeneratingScene}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500 hover:bg-purple-600 disabled:opacity-50 rounded text-xs font-medium transition-colors"
+                                >
+                                  <Plus size={12} />
+                                  Generate
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <Wand2 size={48} className="mx-auto text-white/20 mb-4" />
+                  <h3 className="text-lg font-medium text-white mb-2">No Outline Yet</h3>
+                  <p className="text-white/50 mb-6 max-w-md mx-auto">
+                    Generate an AI-powered story outline based on your project settings.
+                    This creates a complete story arc with scene-by-scene planning.
+                  </p>
+                  <button
+                    onClick={generateStoryOutline}
+                    disabled={isGeneratingOutline}
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 disabled:opacity-50 rounded-xl font-semibold transition-colors"
+                  >
+                    {isGeneratingOutline ? (
+                      <>
+                        <Loader2 size={18} className="animate-spin" />
+                        Generating Outline...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={18} />
+                        Generate Story Outline
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
