@@ -39,6 +39,7 @@ from .game_mode import init_game_db, next_variation, get_session_events
 from .story_mode import (
     init_story_db,
     start_story,
+    continue_story,
     next_scene,
     get_story,
     list_story_sessions,
@@ -1454,6 +1455,34 @@ async def story_start_endpoint(inp: StoryStartIn) -> JSONResponse:
     try:
         res = await start_story(
             inp.premise,
+            title_hint=inp.title_hint,
+            options=inp.options,
+            ollama_base_url=inp.ollama_base_url,
+            ollama_model=inp.ollama_model,
+        )
+        return JSONResponse(status_code=200, content=res.model_dump())
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"ok": False, "error": str(e)})
+
+
+class StoryContinueIn(BaseModel):
+    previous_session_id: str
+    title_hint: str = ""
+    options: Optional[Dict[str, Any]] = None
+    ollama_base_url: Optional[str] = None
+    ollama_model: Optional[str] = None
+
+
+@app.post("/story/continue", dependencies=[Depends(require_api_key)])
+async def story_continue_endpoint(inp: StoryContinueIn) -> JSONResponse:
+    """
+    Continue a story as the next chapter in a saga.
+    Uses the previous story's ending as the starting point.
+    Returns new session_id + chapter bible.
+    """
+    try:
+        res = await continue_story(
+            inp.previous_session_id,
             title_hint=inp.title_hint,
             options=inp.options,
             ollama_base_url=inp.ollama_base_url,

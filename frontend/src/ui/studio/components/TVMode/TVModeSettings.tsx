@@ -160,6 +160,20 @@ export const TVModeSettings: React.FC<TVModeSettingsProps> = ({ onClose }) => {
             </label>
           </div>
 
+          <div className="setting-group">
+            <label className="toggle-option">
+              <input
+                type="checkbox"
+                checked={settings.sagaMode}
+                onChange={(e) => updateSettings({ sagaMode: e.target.checked })}
+              />
+              <span className="toggle-text">Saga Mode (auto-continue chapters)</span>
+            </label>
+            <div className="setting-description" style={{ marginLeft: '28px', marginTop: '4px' }}>
+              Automatically start the next chapter when the current one ends
+            </div>
+          </div>
+
           {/* Auto-hide Delay */}
           <div className="setting-group">
             <label className="setting-label">Auto-hide Controls</label>

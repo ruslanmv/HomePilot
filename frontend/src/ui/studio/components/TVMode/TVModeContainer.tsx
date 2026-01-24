@@ -15,14 +15,23 @@ import { TVModeControls } from "./TVModeControls";
 import { TVModeSettings } from "./TVModeSettings";
 import { TVModeEndScreen } from "./TVModeEndScreen";
 
+interface ChapterData {
+  sessionId: string;
+  title: string;
+  chapterNumber: number;
+  scenes: TVScene[];
+}
+
 interface TVModeContainerProps {
   onGenerateNext: () => Promise<any>;
   onEnsureImage?: (scene: TVScene) => void;
+  onContinueChapter?: () => Promise<ChapterData | null>;
 }
 
 export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   onGenerateNext,
   onEnsureImage,
+  onContinueChapter,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const controlsTimerRef = useRef<number | null>(null);
@@ -38,6 +47,9 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     showSettings,
     showEndScreen,
     isPrefetching,
+    isStoryComplete,
+    isLoadingNextChapter,
+    chapterNumber,
     settings,
     exitTVMode,
     togglePlay,
@@ -51,6 +63,8 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     setPrefetching,
     setPrefetchError,
     setFullscreen,
+    setLoadingNextChapter,
+    startNextChapter,
   } = useTVModeStore();
 
   const currentScene = useTVModeStore(selectCurrentScene);
@@ -169,7 +183,8 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
 
   // Prefetch next scene
   const handlePrefetch = useCallback(async () => {
-    if (prefetchInFlightRef.current || isPrefetching || scenes.length >= 24) return;
+    // Don't prefetch if story is already complete or at max scenes
+    if (prefetchInFlightRef.current || isPrefetching || isStoryComplete || scenes.length >= 24) return;
 
     prefetchInFlightRef.current = true;
     setPrefetching(true);
@@ -180,20 +195,65 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
       if (newScene) {
         addScene(newScene);
       }
+      // If null returned, story is complete (handled by caller)
     } catch (error: any) {
       setPrefetchError(error.message || "Failed to generate next scene");
     } finally {
       setPrefetching(false);
       prefetchInFlightRef.current = false;
     }
-  }, [isPrefetching, scenes.length, onGenerateNext, addScene, setPrefetching, setPrefetchError]);
+  }, [isPrefetching, isStoryComplete, scenes.length, onGenerateNext, addScene, setPrefetching, setPrefetchError]);
 
-  // Trigger prefetch when playing and near end
+  // Trigger prefetch when playing and near end (but not if story is complete)
   useEffect(() => {
-    if (isPlaying && isLastScene && scenes.length < 24 && !isPrefetching) {
+    if (isPlaying && isLastScene && scenes.length < 24 && !isPrefetching && !isStoryComplete) {
       handlePrefetch();
     }
-  }, [isPlaying, isLastScene, scenes.length, isPrefetching, handlePrefetch]);
+  }, [isPlaying, isLastScene, scenes.length, isPrefetching, isStoryComplete, handlePrefetch]);
+
+  // Auto-continue to next chapter when story is complete (saga mode)
+  useEffect(() => {
+    if (!isStoryComplete || !settings.sagaMode || isLoadingNextChapter || !onContinueChapter) {
+      return;
+    }
+
+    // Only trigger when we're on the last scene and it's playing
+    if (!isLastScene) return;
+
+    // Start loading next chapter after a brief pause
+    const timer = setTimeout(async () => {
+      console.log(`[TV Mode] Chapter ${chapterNumber} complete, loading next chapter...`);
+      setLoadingNextChapter(true);
+
+      try {
+        const chapterData = await onContinueChapter();
+        if (chapterData) {
+          startNextChapter(
+            chapterData.sessionId,
+            chapterData.title,
+            chapterData.scenes,
+            chapterData.chapterNumber
+          );
+          console.log(`[TV Mode] Started chapter ${chapterData.chapterNumber}: ${chapterData.title}`);
+        }
+      } catch (error) {
+        console.error('[TV Mode] Failed to continue to next chapter:', error);
+        setLoadingNextChapter(false);
+        // Show end screen on failure
+      }
+    }, 2000); // 2 second pause between chapters
+
+    return () => clearTimeout(timer);
+  }, [
+    isStoryComplete,
+    settings.sagaMode,
+    isLoadingNextChapter,
+    isLastScene,
+    chapterNumber,
+    onContinueChapter,
+    setLoadingNextChapter,
+    startNextChapter,
+  ]);
 
   // Keyboard controls
   useEffect(() => {

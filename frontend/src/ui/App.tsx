@@ -1183,6 +1183,8 @@ export default function App() {
 
   // Studio variant: "play" for Play Studio (StudioView), "creator" for Creator Studio
   const [studioVariant, setStudioVariant] = useState<"play" | "creator">("play")
+  // Creator Studio project ID (for opening existing projects in editor)
+  const [creatorProjectId, setCreatorProjectId] = useState<string | undefined>(undefined)
 
   // Unified settings model
   const [settings, setSettings] = useState<SettingsModel>(() => {
@@ -2137,7 +2139,11 @@ export default function App() {
             <CreatorStudioHost
               backendUrl={settingsDraft.backendUrl}
               apiKey={settingsDraft.apiKey}
-              onSwitchToPlay={() => setStudioVariant('play')}
+              projectId={creatorProjectId}
+              onExit={() => {
+                setCreatorProjectId(undefined)
+                setStudioVariant('play')
+              }}
             />
           ) : (
             <StudioView
@@ -2152,7 +2158,10 @@ export default function App() {
               imgCfg={settingsDraft.imgCfg}
               nsfwMode={settingsDraft.nsfwMode}
               promptRefinement={settingsDraft.promptRefinement}
-              onOpenCreatorStudio={() => setStudioVariant('creator')}
+              onOpenCreatorStudio={(projectId) => {
+                setCreatorProjectId(projectId)
+                setStudioVariant('creator')
+              }}
             />
           )
         ) : mode === 'search' ? (
