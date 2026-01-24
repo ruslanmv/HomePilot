@@ -20,6 +20,14 @@ import {
   Sparkles,
   AlertCircle,
   Download,
+  Tv,
+  Smartphone,
+  Presentation,
+  Camera,
+  Palette,
+  Star,
+  Lock,
+  Shield,
 } from "lucide-react";
 import { useTVModeStore } from "./studio/stores/tvModeStore";
 import type { TVScene } from "./studio/stores/tvModeStore";
@@ -27,6 +35,8 @@ import { TVModeContainer } from "./studio/components/TVMode/TVModeContainer";
 
 // Types
 type SceneStatus = "pending" | "generating" | "ready" | "error";
+type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9";
+type ContentRating = "sfw" | "mature";
 
 type Scene = {
   id: string;
@@ -48,8 +58,9 @@ type Project = {
   title: string;
   logline: string;
   status: "draft" | "in_review" | "approved" | "archived";
-  platformPreset: string;
-  contentRating: "sfw" | "mature";
+  platformPreset: PlatformPreset;
+  contentRating: ContentRating;
+  tags?: string[];
   createdAt: number;
   updatedAt: number;
   metadata?: {
@@ -160,6 +171,20 @@ export function CreatorStudioEditor({
   const [isGeneratingScene, setIsGeneratingScene] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [hoveredSceneIdx, setHoveredSceneIdx] = useState<number | null>(null);
+
+  // Project Settings Modal state
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsTitle, setSettingsTitle] = useState("");
+  const [settingsLogline, setSettingsLogline] = useState("");
+  const [settingsPlatform, setSettingsPlatform] = useState<PlatformPreset>("youtube_16_9");
+  const [settingsGoal, setSettingsGoal] = useState<"Entertain" | "Educate" | "Inspire">("Educate");
+  const [settingsVisualStyle, setSettingsVisualStyle] = useState<"Cinematic" | "Digital Art" | "Anime">("Cinematic");
+  const [settingsTones, setSettingsTones] = useState<string[]>(["Documentary", "Calm"]);
+  const [settingsSceneCount, setSettingsSceneCount] = useState(8);
+  const [settingsSceneDuration, setSettingsSceneDuration] = useState(5);
+  const [settingsLockIdentity, setSettingsLockIdentity] = useState(true);
+  const [settingsContentRating, setSettingsContentRating] = useState<ContentRating>("sfw");
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
 
   // API helpers
   const fetchApi = useCallback(
@@ -320,6 +345,122 @@ export function CreatorStudioEditor({
       setIsSavingScene(false);
     }
   }, [editingScene, editNarration, editImagePrompt, editNegativePrompt, projectId, patchApi]);
+
+  // Parse tags from project
+  const parseTagsFromProject = useCallback((proj: Project) => {
+    const tags = proj.tags || [];
+    let goal: "Entertain" | "Educate" | "Inspire" = "Educate";
+    let visualStyle: "Cinematic" | "Digital Art" | "Anime" = "Cinematic";
+    let tones: string[] = [];
+    let lockIdentity = true;
+    let sceneCount = 8;
+    let sceneDuration = 5;
+
+    tags.forEach((tag) => {
+      if (tag.startsWith("goal:")) {
+        const g = tag.replace("goal:", "");
+        if (g === "entertain") goal = "Entertain";
+        else if (g === "educate") goal = "Educate";
+        else if (g === "inspire") goal = "Inspire";
+      } else if (tag.startsWith("visual:")) {
+        const v = tag.replace("visual:", "").replace(/_/g, " ");
+        if (v.toLowerCase() === "cinematic") visualStyle = "Cinematic";
+        else if (v.toLowerCase() === "digital art") visualStyle = "Digital Art";
+        else if (v.toLowerCase() === "anime") visualStyle = "Anime";
+      } else if (tag.startsWith("tone:")) {
+        const t = tag.replace("tone:", "").replace(/_/g, " ");
+        const capitalizedTone = t.charAt(0).toUpperCase() + t.slice(1);
+        tones.push(capitalizedTone);
+      } else if (tag === "lock:identity") {
+        lockIdentity = true;
+      } else if (tag.startsWith("scenes:")) {
+        sceneCount = parseInt(tag.replace("scenes:", ""), 10) || 8;
+      } else if (tag.startsWith("duration:")) {
+        sceneDuration = parseInt(tag.replace("duration:", ""), 10) || 5;
+      }
+    });
+
+    return { goal, visualStyle, tones, lockIdentity, sceneCount, sceneDuration };
+  }, []);
+
+  // Open settings modal
+  const openSettingsModal = useCallback(() => {
+    if (!project) return;
+
+    setSettingsTitle(project.title || "");
+    setSettingsLogline(project.logline || "");
+    setSettingsPlatform(project.platformPreset || "youtube_16_9");
+    setSettingsContentRating(project.contentRating || "sfw");
+
+    const parsed = parseTagsFromProject(project);
+    setSettingsGoal(parsed.goal);
+    setSettingsVisualStyle(parsed.visualStyle);
+    setSettingsTones(parsed.tones.length > 0 ? parsed.tones : ["Documentary", "Calm"]);
+    setSettingsSceneCount(parsed.sceneCount);
+    setSettingsSceneDuration(parsed.sceneDuration);
+    setSettingsLockIdentity(parsed.lockIdentity);
+
+    setShowSettingsModal(true);
+  }, [project, parseTagsFromProject]);
+
+  // Toggle tone in settings
+  const toggleSettingsTone = useCallback((tone: string) => {
+    setSettingsTones((prev) => {
+      if (prev.includes(tone)) {
+        return prev.filter((t) => t !== tone);
+      }
+      return [...prev, tone];
+    });
+  }, []);
+
+  // Build tags from settings
+  const buildTagsFromSettings = useCallback(() => {
+    const tags: string[] = [];
+    if (settingsGoal) tags.push(`goal:${settingsGoal.toLowerCase()}`);
+    if (settingsVisualStyle) tags.push(`visual:${settingsVisualStyle.toLowerCase().replace(/ /g, "_")}`);
+    settingsTones.forEach((t) => tags.push(`tone:${t.toLowerCase().replace(/ /g, "_")}`));
+    if (settingsLockIdentity) tags.push("lock:identity");
+    tags.push(`scenes:${settingsSceneCount}`);
+    tags.push(`duration:${settingsSceneDuration}`);
+    return tags;
+  }, [settingsGoal, settingsVisualStyle, settingsTones, settingsLockIdentity, settingsSceneCount, settingsSceneDuration]);
+
+  // Save project settings
+  const saveProjectSettings = useCallback(async () => {
+    if (!project) return;
+    setIsSavingSettings(true);
+
+    try {
+      const tags = buildTagsFromSettings();
+
+      await patchApi(`/studio/videos/${projectId}`, {
+        title: settingsTitle.trim(),
+        logline: settingsLogline.trim(),
+        platformPreset: settingsPlatform,
+        contentRating: settingsContentRating,
+        tags,
+      });
+
+      // Update local project state
+      setProject((prev) => prev ? {
+        ...prev,
+        title: settingsTitle.trim(),
+        logline: settingsLogline.trim(),
+        platformPreset: settingsPlatform,
+        contentRating: settingsContentRating,
+        tags,
+      } : null);
+
+      setLastSaved(new Date());
+      setShowSettingsModal(false);
+      console.log('[CreatorStudioEditor] Project settings saved');
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Failed to save settings:', e);
+      alert(`Failed to save settings: ${e.message}`);
+    } finally {
+      setIsSavingSettings(false);
+    }
+  }, [project, projectId, settingsTitle, settingsLogline, settingsPlatform, settingsContentRating, buildTagsFromSettings, patchApi]);
 
   // Delete scene
   const deleteScene = useCallback(async (sceneId: string) => {
@@ -846,6 +987,15 @@ export function CreatorStudioEditor({
               </>
             ) : null}
           </div>
+
+          {/* Project Settings Button */}
+          <button
+            onClick={openSettingsModal}
+            className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all"
+            title="Project Settings"
+          >
+            <Settings size={16} className="text-white/60" />
+          </button>
 
           {/* Story Outline Button */}
           <button
@@ -1478,6 +1628,321 @@ export function CreatorStudioEditor({
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Project Settings Modal */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowSettingsModal(false)} />
+          <div className="relative w-full max-w-2xl rounded-2xl border border-white/10 bg-[#0f0f18] shadow-2xl max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-5 border-b border-white/10 sticky top-0 bg-[#0f0f18] z-10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/20 flex items-center justify-center">
+                  <Settings size={18} className="text-cyan-400" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold">Project Settings</h2>
+                  <p className="text-xs text-white/40">Customize your project configuration</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="p-2 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <X size={18} className="text-white/40" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-5 space-y-6">
+              {/* Title & Description */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <FileText size={14} />
+                  Details
+                </h3>
+
+                <div>
+                  <label className="block text-xs font-medium text-white/50 mb-2">Title</label>
+                  <input
+                    type="text"
+                    value={settingsTitle}
+                    onChange={(e) => setSettingsTitle(e.target.value)}
+                    className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/25 focus:outline-none transition-all"
+                    placeholder="Project title"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-white/50 mb-2">Description</label>
+                  <textarea
+                    value={settingsLogline}
+                    onChange={(e) => setSettingsLogline(e.target.value)}
+                    className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white placeholder-white/30 focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/25 focus:outline-none resize-none transition-all"
+                    rows={2}
+                    placeholder="A short description of your project..."
+                  />
+                </div>
+              </div>
+
+              {/* Format */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <Tv size={14} />
+                  Format
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  <button
+                    onClick={() => setSettingsPlatform("youtube_16_9")}
+                    className={`p-4 rounded-xl border text-center transition-all ${
+                      settingsPlatform === "youtube_16_9"
+                        ? "border-cyan-500 bg-cyan-500/10"
+                        : "border-white/10 bg-white/5 hover:bg-white/10"
+                    }`}
+                  >
+                    <Tv size={24} className={`mx-auto mb-2 ${settingsPlatform === "youtube_16_9" ? "text-cyan-400" : "text-white/40"}`} />
+                    <div className="text-sm font-medium">YouTube Video</div>
+                    <div className="text-xs text-white/40">16:9 Landscape</div>
+                  </button>
+
+                  <button
+                    onClick={() => setSettingsPlatform("shorts_9_16")}
+                    className={`p-4 rounded-xl border text-center transition-all ${
+                      settingsPlatform === "shorts_9_16"
+                        ? "border-cyan-500 bg-cyan-500/10"
+                        : "border-white/10 bg-white/5 hover:bg-white/10"
+                    }`}
+                  >
+                    <Smartphone size={24} className={`mx-auto mb-2 ${settingsPlatform === "shorts_9_16" ? "text-cyan-400" : "text-white/40"}`} />
+                    <div className="text-sm font-medium">YouTube Short</div>
+                    <div className="text-xs text-white/40">9:16 Vertical</div>
+                  </button>
+
+                  <button
+                    onClick={() => setSettingsPlatform("slides_16_9")}
+                    className={`p-4 rounded-xl border text-center transition-all ${
+                      settingsPlatform === "slides_16_9"
+                        ? "border-cyan-500 bg-cyan-500/10"
+                        : "border-white/10 bg-white/5 hover:bg-white/10"
+                    }`}
+                  >
+                    <Presentation size={24} className={`mx-auto mb-2 ${settingsPlatform === "slides_16_9" ? "text-cyan-400" : "text-white/40"}`} />
+                    <div className="text-sm font-medium">Slides</div>
+                    <div className="text-xs text-white/40">16:9 Presentation</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Intent */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400">Intent</h3>
+                <div className="flex gap-2 flex-wrap">
+                  {(["Entertain", "Educate", "Inspire"] as const).map((g) => (
+                    <button
+                      key={g}
+                      onClick={() => setSettingsGoal(g)}
+                      className={`px-4 py-2 rounded-full text-sm border transition-all ${
+                        settingsGoal === g
+                          ? "bg-white text-black font-medium border-transparent"
+                          : "bg-white/5 text-white/60 border-white/10 hover:bg-white/10 hover:text-white"
+                      }`}
+                    >
+                      {g}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Episode Configuration */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-white/50 mb-2">Scenes per Episode</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {[4, 6, 8, 10, 12].map((count) => (
+                      <button
+                        key={count}
+                        onClick={() => setSettingsSceneCount(count)}
+                        className={`px-4 py-2 rounded-lg text-sm transition-all ${
+                          settingsSceneCount === count
+                            ? "bg-cyan-500 text-white font-medium"
+                            : "bg-white/5 text-white/60 hover:bg-white/10"
+                        }`}
+                      >
+                        {count}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-white/30 mt-1">
+                    ~{settingsSceneCount * settingsSceneDuration}s total
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-white/50 mb-2">Scene Duration</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {[3, 5, 7, 10].map((dur) => (
+                      <button
+                        key={dur}
+                        onClick={() => setSettingsSceneDuration(dur)}
+                        className={`px-4 py-2 rounded-lg text-sm transition-all ${
+                          settingsSceneDuration === dur
+                            ? "bg-cyan-500 text-white font-medium"
+                            : "bg-white/5 text-white/60 hover:bg-white/10"
+                        }`}
+                      >
+                        {dur}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Visual Style */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <Palette size={14} />
+                  Visual Style
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  <button
+                    onClick={() => setSettingsVisualStyle("Cinematic")}
+                    className={`p-3 rounded-xl border text-center transition-all ${
+                      settingsVisualStyle === "Cinematic"
+                        ? "border-cyan-500 bg-cyan-500/10"
+                        : "border-white/10 bg-white/5 hover:bg-white/10"
+                    }`}
+                  >
+                    <Camera size={20} className={`mx-auto mb-1.5 ${settingsVisualStyle === "Cinematic" ? "text-cyan-400" : "text-white/40"}`} />
+                    <div className="text-sm font-medium">Cinematic</div>
+                    <div className="text-xs text-white/40">High fidelity</div>
+                  </button>
+
+                  <button
+                    onClick={() => setSettingsVisualStyle("Digital Art")}
+                    className={`p-3 rounded-xl border text-center transition-all ${
+                      settingsVisualStyle === "Digital Art"
+                        ? "border-cyan-500 bg-cyan-500/10"
+                        : "border-white/10 bg-white/5 hover:bg-white/10"
+                    }`}
+                  >
+                    <Palette size={20} className={`mx-auto mb-1.5 ${settingsVisualStyle === "Digital Art" ? "text-cyan-400" : "text-white/40"}`} />
+                    <div className="text-sm font-medium">Digital Art</div>
+                    <div className="text-xs text-white/40">Stylized</div>
+                  </button>
+
+                  <button
+                    onClick={() => setSettingsVisualStyle("Anime")}
+                    className={`p-3 rounded-xl border text-center transition-all ${
+                      settingsVisualStyle === "Anime"
+                        ? "border-cyan-500 bg-cyan-500/10"
+                        : "border-white/10 bg-white/5 hover:bg-white/10"
+                    }`}
+                  >
+                    <Star size={20} className={`mx-auto mb-1.5 ${settingsVisualStyle === "Anime" ? "text-cyan-400" : "text-white/40"}`} />
+                    <div className="text-sm font-medium">Anime</div>
+                    <div className="text-xs text-white/40">Japanese style</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Mood & Tone */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400">Mood & Tone</h3>
+                <div className="flex gap-2 flex-wrap">
+                  {["Documentary", "Dramatic", "Calm", "Upbeat", "Dark"].map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => toggleSettingsTone(t)}
+                      className={`px-4 py-2 rounded-full text-sm border transition-all ${
+                        settingsTones.includes(t)
+                          ? "bg-white text-black font-medium border-transparent"
+                          : "bg-white/5 text-white/60 border-white/10 hover:bg-white/10 hover:text-white"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Checks */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <Shield size={14} />
+                  Checks
+                </h3>
+                <div className="bg-black/30 rounded-xl border border-white/10 divide-y divide-white/10">
+                  <label className="flex items-center justify-between p-4 cursor-pointer hover:bg-white/5 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <Lock size={16} className="text-white/40" />
+                      <div>
+                        <div className="text-sm font-medium">Consistency Lock</div>
+                        <div className="text-xs text-white/40">Keep characters stable across scenes</div>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsLockIdentity}
+                      onChange={(e) => setSettingsLockIdentity(e.target.checked)}
+                      className="w-5 h-5 accent-cyan-500"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between p-4 cursor-pointer hover:bg-white/5 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <Shield size={16} className="text-white/40" />
+                      <div>
+                        <div className="text-sm font-medium">Safe for Work (SFW)</div>
+                        <div className="text-xs text-white/40">Filter explicit content</div>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settingsContentRating === "sfw"}
+                      onChange={(e) => setSettingsContentRating(e.target.checked ? "sfw" : "mature")}
+                      className="w-5 h-5 accent-cyan-500"
+                    />
+                  </label>
+                </div>
+
+                {settingsContentRating === "mature" && (
+                  <div className="p-3 bg-purple-500/10 border border-purple-500/30 rounded-xl text-sm">
+                    <span className="font-medium text-purple-400">Mature Mode Enabled</span>
+                    <span className="text-white/50 ml-2">- This project may generate explicit content.</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-3 p-5 border-t border-white/10 sticky bottom-0 bg-[#0f0f18]">
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="px-4 py-2 text-sm text-white/50 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveProjectSettings}
+                disabled={isSavingSettings || !settingsTitle.trim()}
+                className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 rounded-xl text-sm font-medium transition-all"
+              >
+                {isSavingSettings ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save size={14} />
+                    Save Settings
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

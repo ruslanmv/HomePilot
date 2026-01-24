@@ -8,7 +8,7 @@ Mount this router in your main app:
 from __future__ import annotations
 
 from fastapi import APIRouter, Query, HTTPException
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from pydantic import BaseModel, Field
 
 from .models import (
@@ -110,22 +110,41 @@ def video_detail(video_id: str):
     return {"video": v.model_dump()}
 
 
+class VideoUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    logline: Optional[str] = None
+    status: Optional[str] = None
+    tags: Optional[List[str]] = None
+    platformPreset: Optional[str] = None
+    contentRating: Optional[str] = None
+
+
 @router.patch("/videos/{video_id}")
-def video_update(video_id: str, title: Optional[str] = None, logline: Optional[str] = None, status: Optional[str] = None):
+def video_update(video_id: str, body: VideoUpdateRequest):
     """Update video project fields."""
     v = get_video(video_id)
     if not v:
         raise HTTPException(status_code=404, detail="Video not found")
 
     updates = {}
-    if title is not None:
-        updates["title"] = title
-    if logline is not None:
-        updates["logline"] = logline
-    if status is not None:
-        if status not in ("draft", "in_review", "approved", "archived"):
+    if body.title is not None:
+        updates["title"] = body.title
+    if body.logline is not None:
+        updates["logline"] = body.logline
+    if body.status is not None:
+        if body.status not in ("draft", "in_review", "approved", "archived"):
             raise HTTPException(status_code=400, detail="Invalid status")
-        updates["status"] = status
+        updates["status"] = body.status
+    if body.tags is not None:
+        updates["tags"] = body.tags
+    if body.platformPreset is not None:
+        if body.platformPreset not in ("youtube_16_9", "shorts_9_16", "slides_16_9"):
+            raise HTTPException(status_code=400, detail="Invalid platform preset")
+        updates["platformPreset"] = body.platformPreset
+    if body.contentRating is not None:
+        if body.contentRating not in ("sfw", "mature"):
+            raise HTTPException(status_code=400, detail="Invalid content rating")
+        updates["contentRating"] = body.contentRating
 
     if updates:
         v = update_video(video_id, **updates)
