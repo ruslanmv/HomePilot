@@ -8,6 +8,9 @@ from typing import Any, Dict, List, Optional, Literal
 import httpx
 
 
+import re
+
+
 def _extract_first_json_object(text: str) -> str:
     """
     Extract the first balanced JSON object from text.
@@ -48,6 +51,34 @@ def _extract_first_json_object(text: str) -> str:
                 return s[start : i + 1]
 
     return ""  # incomplete/truncated
+
+
+def _is_placeholder_json(text: str) -> bool:
+    """
+    Detect if extracted JSON contains placeholder values from schema examples.
+    DeepSeek R1 sometimes echoes the schema instead of generating actual content.
+    """
+    if not text or len(text) < 20:
+        return True
+
+    # Common placeholder patterns that indicate schema was echoed
+    placeholder_patterns = [
+        r'"variation_prompt"\s*:\s*"string"',
+        r'"title"\s*:\s*"string"',
+        r'"logline"\s*:\s*"string"',
+        r'"narration"\s*:\s*"string"',
+        r'"image_prompt"\s*:\s*"string"',
+        r':\s*"\.\.\."',
+        r':\s*"<[^>]+>"',  # Matches "<YOUR TEXT HERE>" patterns
+    ]
+
+    text_lower = text.lower()
+    for pattern in placeholder_patterns:
+        if re.search(pattern, text_lower):
+            return True
+
+    return False
+
 
 from .config import (
     TOOL_TIMEOUT_S,
@@ -208,6 +239,8 @@ async def chat_ollama(
     max_tokens: int = 800,
     base_url: Optional[str] = None,
     model: Optional[str] = None,
+    response_format: Optional[str] = None,
+    stop: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """
     Ollama /api/chat adapter -> returns OpenAI-style JSON for orchestrator consistency.
@@ -228,6 +261,15 @@ async def chat_ollama(
             "num_predict": int(max_tokens),
         },
     }
+
+    # If supported by your Ollama build/model, this enforces JSON-only output at decode-time.
+    # Values commonly supported: "json".
+    if response_format:
+        payload["format"] = str(response_format)
+
+    # Optional stop sequences (Ollama supports stop inside options).
+    if stop:
+        payload.setdefault("options", {})["stop"] = list(stop)
 
     async with httpx.AsyncClient(timeout=_timeout()) as client:
         if not mdl:
@@ -302,29 +344,43 @@ async def chat_ollama(
 
     content = str(content or "")
 
-    # Fallback: Some models (e.g., reasoning models like deepseek-r1) return content in message.thinking
-    # Try thinking field if:
-    # 1. content is empty, OR
-    # 2. content doesn't contain JSON but thinking does (model puts explanation in content, JSON in thinking)
-    if isinstance(msg, dict):
+    # DeepSeek R1 fallback: If content is empty, try to extract from message.thinking
+    # BUT validate that it's not placeholder JSON (schema echoed back)
+    if not content.strip() and isinstance(msg, dict):
         thinking = str(msg.get("thinking") or "").strip()
         if thinking:
-            content_has_json = "{" in content
-            thinking_has_json = "{" in thinking
+            print(f"[OLLAMA] Content empty, checking thinking field ({len(thinking)} chars)...")
+            print(f"[OLLAMA] Thinking (first 500 chars): {thinking[:500]}")
 
-            # Use thinking if content is empty or if thinking has JSON and content doesn't
-            should_use_thinking = (not content.strip()) or (thinking_has_json and not content_has_json)
+            # Try to extract JSON from thinking field
+            candidate = _extract_first_json_object(thinking)
+            if candidate:
+                print(f"[OLLAMA] Found JSON candidate ({len(candidate)} chars)")
+                is_placeholder = _is_placeholder_json(candidate)
+                print(f"[OLLAMA] Is placeholder JSON: {is_placeholder}")
 
-            if should_use_thinking:
-                # Use balanced brace extraction (handles "Ok here's JSON: {...}" patterns)
-                candidate = _extract_first_json_object(thinking)
-                if candidate:
+                if not is_placeholder:
                     try:
                         json.loads(candidate)  # Validate it's parseable
                         content = candidate
-                        print(f"[OLLAMA] Extracted JSON object from message.thinking field")
-                    except Exception:
-                        pass  # Not valid JSON, keep original content
+                        print(f"[OLLAMA] SUCCESS: Extracted valid JSON from message.thinking field")
+                    except Exception as e:
+                        print(f"[OLLAMA] JSON parse failed: {e}")
+                else:
+                    # Even if it looks like placeholder, if it's long and has real content, use it
+                    # This handles cases where schema patterns appear but there's real content too
+                    if len(candidate) > 200:
+                        try:
+                            parsed = json.loads(candidate)
+                            # Check if it has meaningful content (not just schema keys)
+                            values = str(parsed.values())
+                            if len(values) > 100 and "string" not in values.lower()[:50]:
+                                content = candidate
+                                print(f"[OLLAMA] Using thinking JSON despite placeholder pattern (has real content)")
+                        except Exception:
+                            pass
+            else:
+                print(f"[OLLAMA] No JSON object found in thinking field")
 
     # Debug logging when content is still empty (helps diagnose model-specific issues)
     if not content.strip():
