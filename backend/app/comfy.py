@@ -35,14 +35,44 @@ WORKFLOWS_DIR = _get_workflows_dir()
 
 
 def _deep_replace(obj: Any, mapping: Dict[str, Any]) -> Any:
+    """
+    Recursively replace {{key}} placeholders in workflow with variable values.
+
+    Handles type conversion:
+    - If the entire string is a placeholder like "{{width}}", replace with the actual value (preserving type)
+    - If the placeholder is embedded in a string like "image_{{seed}}.png", do string replacement
+    - Numeric strings are converted to int/float as needed by ComfyUI
+    """
     if isinstance(obj, dict):
         return {k: _deep_replace(v, mapping) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_deep_replace(x, mapping) for x in obj]
     if isinstance(obj, str):
+        # Check if the entire string is a single placeholder (e.g., "{{width}}")
+        # In this case, return the value directly to preserve its type
+        stripped = obj.strip()
+        for k, v in mapping.items():
+            placeholder = f"{{{{{k}}}}}"
+            if stripped == placeholder:
+                # Return value directly, preserving type (int, float, etc.)
+                return v
+
+        # Otherwise do string replacement for embedded placeholders
         out = obj
         for k, v in mapping.items():
             out = out.replace(f"{{{{{k}}}}}", str(v))
+
+        # If the result looks like a number and was a pure placeholder replacement,
+        # try to convert it (handles cases where workflow has "{{width}}" quoted)
+        if out != obj:  # Something was replaced
+            # Try to convert pure numeric strings to their proper types
+            try:
+                if '.' in out:
+                    return float(out)
+                return int(out)
+            except ValueError:
+                pass  # Not a number, return as string
+
         return out
     return obj
 
