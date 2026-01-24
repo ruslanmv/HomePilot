@@ -435,6 +435,16 @@ export default function StudioView(props: StudioParams) {
     }
   }
 
+  const deleteCreatorProject = async (projectId: string) => {
+    if (!confirm('Delete this project and all its scenes?')) return
+    try {
+      await deleteJson(props.backendUrl, `/studio/videos/${projectId}`, authKey)
+      setCreatorProjects((prev) => prev.filter((p) => p.id !== projectId))
+    } catch (err: any) {
+      alert(`Failed to delete project: ${err.message || err}`)
+    }
+  }
+
   const deleteScene = async (sceneIdx: number) => {
     if (!currentStory) {
       console.error('[Studio] deleteScene: No current story')
@@ -1185,18 +1195,21 @@ export default function StudioView(props: StudioParams) {
 
                   <div className="flex items-start justify-between mb-3">
                     <h3 className="text-lg font-semibold text-white">{project.title}</h3>
-                    {project.type === 'play' && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (project.type === 'play') {
                           deleteStory(project.id)
-                        }}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-300 transition-all"
-                        type="button"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    )}
+                        } else {
+                          deleteCreatorProject(project.id)
+                        }
+                      }}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-300 transition-all"
+                      type="button"
+                      title="Delete project"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                   <p className="text-sm text-white/60 line-clamp-2 mb-3">{project.description}</p>
                   <div className="text-xs text-white/40">

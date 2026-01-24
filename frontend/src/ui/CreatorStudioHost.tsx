@@ -33,6 +33,8 @@ export function CreatorStudioHost({
   // Mode: "wizard" for creating new, "editor" for existing project
   const [mode, setMode] = useState<"wizard" | "editor">(initialProjectId ? "editor" : "wizard");
   const [currentProjectId, setCurrentProjectId] = useState<string | undefined>(initialProjectId);
+  const [isNewlyCreated, setIsNewlyCreated] = useState(false);
+  const [projectSettings, setProjectSettings] = useState({ targetSceneCount: 8, sceneDuration: 5 });
 
   // Bootstrap connection info for API calls
   useEffect(() => {
@@ -50,6 +52,8 @@ export function CreatorStudioHost({
         backendUrl={backendUrl}
         apiKey={apiKey}
         onExit={onExit}
+        autoGenerateFirst={isNewlyCreated}
+        targetSceneCount={projectSettings.targetSceneCount}
       />
     );
   }
@@ -60,9 +64,11 @@ export function CreatorStudioHost({
       backendUrl={backendUrl}
       apiKey={apiKey}
       onExit={onExit}
-      onProjectCreated={(projectId) => {
+      onProjectCreated={(projectId, settings) => {
         // Switch to editor mode with the new project
         setCurrentProjectId(projectId);
+        setIsNewlyCreated(true);  // Flag for auto-generating first scene
+        setProjectSettings(settings);
         setMode("editor");
       }}
     />
@@ -77,7 +83,7 @@ interface WizardProps {
   backendUrl: string;
   apiKey?: string;
   onExit: () => void;
-  onProjectCreated: (projectId: string) => void;
+  onProjectCreated: (projectId: string, settings: { targetSceneCount: number; sceneDuration: number }) => void;
 }
 
 function CreatorStudioWizard({
@@ -105,6 +111,10 @@ function CreatorStudioWizard({
   const [visualStyle, setVisualStyle] = useState<"Cinematic" | "Digital Art" | "Anime">("Cinematic");
   const [lockIdentity, setLockIdentity] = useState(true);
 
+  // Episode/scene configuration
+  const [targetSceneCount, setTargetSceneCount] = useState(8);
+  const [sceneDuration, setSceneDuration] = useState(5);
+
   // Mature consent modal
   const [showMatureModal, setShowMatureModal] = useState(false);
   const [matureConsentChecked, setMatureConsentChecked] = useState(false);
@@ -120,8 +130,11 @@ function CreatorStudioWizard({
     if (visualStyle) t.push(`visual:${visualStyle.toLowerCase().replaceAll(" ", "_")}`);
     if (tones.length) t.push(...tones.map((x) => `tone:${x.toLowerCase().replaceAll(" ", "_")}`));
     if (lockIdentity) t.push("lock:identity");
+    // Include episode configuration
+    t.push(`scenes:${targetSceneCount}`);
+    t.push(`duration:${sceneDuration}`);
     return Array.from(new Set(t));
-  }, [goal, visualStyle, tones, lockIdentity]);
+  }, [goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration]);
 
   const canProceedStep1 = title.trim().length > 0;
   const canCreate = title.trim().length > 0 && !loading;
@@ -178,6 +191,7 @@ function CreatorStudioWizard({
         logline: logline.trim(),
         tags: tagsForBackend,
         platformPreset,
+        targetDurationSec: targetSceneCount * sceneDuration,
         contentRating,
         policyMode: contentRating === "mature" ? "restricted" : "youtube_safe",
         providerPolicy: {
@@ -206,7 +220,7 @@ function CreatorStudioWizard({
 
       // Project created successfully - open it in editor
       if (projectId) {
-        onProjectCreated(projectId);
+        onProjectCreated(projectId, { targetSceneCount, sceneDuration });
       } else {
         throw new Error("No project ID returned from server");
       }
@@ -365,6 +379,53 @@ function CreatorStudioWizard({
                     ))}
                   </div>
                 </div>
+
+                {/* Episode Configuration */}
+                <div className="mt-6 grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-medium text-[#aaa] mb-2">Scenes per Episode</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {[4, 6, 8, 10, 12].map((count) => (
+                        <button
+                          key={count}
+                          type="button"
+                          onClick={() => setTargetSceneCount(count)}
+                          className={[
+                            "px-4 py-2 rounded text-sm border transition-colors",
+                            targetSceneCount === count
+                              ? "bg-[#3ea6ff] text-black border-transparent font-medium"
+                              : "bg-[#282828] text-[#aaa] border-transparent hover:bg-[#3f3f3f] hover:text-[#f1f1f1]",
+                          ].join(" ")}
+                        >
+                          {count}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-[#777] mt-1">
+                      ~{targetSceneCount * sceneDuration}s total ({Math.floor(targetSceneCount * sceneDuration / 60)}:{String((targetSceneCount * sceneDuration) % 60).padStart(2, '0')})
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-[#aaa] mb-2">Scene Duration (sec)</label>
+                    <div className="flex gap-2 flex-wrap">
+                      {[3, 5, 7, 10].map((dur) => (
+                        <button
+                          key={dur}
+                          type="button"
+                          onClick={() => setSceneDuration(dur)}
+                          className={[
+                            "px-4 py-2 rounded text-sm border transition-colors",
+                            sceneDuration === dur
+                              ? "bg-[#3ea6ff] text-black border-transparent font-medium"
+                              : "bg-[#282828] text-[#aaa] border-transparent hover:bg-[#3f3f3f] hover:text-[#f1f1f1]",
+                          ].join(" ")}
+                        >
+                          {dur}s
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -466,6 +527,10 @@ function CreatorStudioWizard({
                   <ReviewLine label="Title" value={title.trim() || "Untitled Project"} />
                   <ReviewLine label="Format" value={platformPresetToLabel(platformPreset)} />
                   <ReviewLine label="Style" value={`${visualStyle} (${tones.length ? tones.join(", ") : "Default"})`} />
+                  <ReviewLine
+                    label="Episode Length"
+                    value={`${targetSceneCount} scenes × ${sceneDuration}s = ~${Math.floor(targetSceneCount * sceneDuration / 60)}:${String((targetSceneCount * sceneDuration) % 60).padStart(2, '0')}`}
+                  />
                   <ReviewLine
                     label="Safety"
                     value={contentRating === "sfw" ? "Safe (SFW)" : "Mature (18+)"}

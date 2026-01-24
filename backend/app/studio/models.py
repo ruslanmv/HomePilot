@@ -67,6 +67,9 @@ class StudioVideo(BaseModel):
     policyMode: PolicyMode = "youtube_safe"
     providerPolicy: ProviderPolicy = Field(default_factory=ProviderPolicy)
 
+    # Story outline and project metadata
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
     createdAt: float
     updatedAt: float
 
@@ -147,3 +150,157 @@ class StudioSceneUpdate(BaseModel):
     audioUrl: Optional[str] = None
     status: Optional[SceneStatus] = None
     durationSec: Optional[float] = None
+
+
+# ============================================================================
+# Professional Project Models (Creator Studio Pro)
+# ============================================================================
+
+ProjectType = Literal["youtube_video", "youtube_short", "slides"]
+
+
+class CanvasSpec(BaseModel):
+    """Canvas/viewport specification for a project."""
+    width: int
+    height: int
+    fps: int = 30
+    safe_margin_pct: float = 0.05
+
+
+class StyleKit(BaseModel):
+    """Reusable design system with colors, fonts, spacing, and motion."""
+    id: str
+    name: str
+    description: str = ""
+    palette: Dict[str, str] = Field(default_factory=dict)
+    fonts: Dict[str, str] = Field(default_factory=dict)
+    spacing: Dict[str, float] = Field(default_factory=dict)
+    motion: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TemplateDefinition(BaseModel):
+    """Project template with predefined structure."""
+    id: str
+    name: str
+    description: str = ""
+    projectType: ProjectType
+    styleKitId: Optional[str] = None
+    frames: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class StudioProjectCreate(BaseModel):
+    """Request payload to create a new professional project."""
+    title: str
+    description: str = ""
+    tags: List[str] = Field(default_factory=list)
+    projectType: ProjectType
+    templateId: Optional[str] = None
+    styleKitId: Optional[str] = None
+    targetDurationSec: Optional[int] = None
+    contentRating: ContentRating = "sfw"
+    policyMode: PolicyMode = "youtube_safe"
+    providerPolicy: ProviderPolicy = Field(default_factory=ProviderPolicy)
+
+
+class StudioProject(BaseModel):
+    """A professional Studio project with full metadata."""
+    id: str
+    title: str
+    description: str = ""
+    tags: List[str] = Field(default_factory=list)
+    projectType: ProjectType
+    platformPreset: PlatformPreset
+    canvas: CanvasSpec
+    templateId: Optional[str] = None
+    styleKitId: Optional[str] = None
+    targetDurationSec: Optional[int] = None
+    status: VideoStatus = "draft"
+    contentRating: ContentRating = "sfw"
+    policyMode: PolicyMode = "youtube_safe"
+    providerPolicy: ProviderPolicy = Field(default_factory=ProviderPolicy)
+    createdAt: float
+    updatedAt: float
+
+
+# ============================================================================
+# Asset Models
+# ============================================================================
+
+AssetKind = Literal["image", "video", "audio", "other"]
+
+
+class StudioAsset(BaseModel):
+    """An uploaded asset (image, video, audio) for a project."""
+    id: str
+    projectId: str
+    kind: AssetKind
+    filename: str
+    mime: str
+    sizeBytes: int
+    url: str
+    createdAt: float
+
+
+# ============================================================================
+# Audio Track Models
+# ============================================================================
+
+TrackKind = Literal["voiceover", "music"]
+
+
+class AudioTrack(BaseModel):
+    """Audio track (voiceover or background music) for a project."""
+    id: str
+    projectId: str
+    kind: TrackKind
+    assetId: Optional[str] = None
+    url: Optional[str] = None
+    volume: float = 1.0
+    startSec: float = 0.0
+    endSec: Optional[float] = None
+    createdAt: float
+    updatedAt: float
+
+
+# ============================================================================
+# Caption Models
+# ============================================================================
+
+class CaptionSegment(BaseModel):
+    """A single caption/subtitle segment."""
+    id: str
+    projectId: str
+    startSec: float
+    endSec: float
+    text: str
+
+
+# ============================================================================
+# Autosave and Version Models
+# ============================================================================
+
+class AutosavePayload(BaseModel):
+    """Payload for autosave endpoint."""
+    state: Dict[str, Any] = Field(default_factory=dict)
+
+
+class VersionSnapshot(BaseModel):
+    """A saved version/snapshot of project state."""
+    id: str
+    projectId: str
+    label: str = "autosave"
+    state: Dict[str, Any] = Field(default_factory=dict)
+    createdAt: float
+
+
+# ============================================================================
+# Share Models
+# ============================================================================
+
+class ShareLink(BaseModel):
+    """A shareable read-only link to a project."""
+    token: str
+    projectId: str
+    mode: Literal["view"] = "view"
+    createdAt: float
+    expiresAt: Optional[float] = None
