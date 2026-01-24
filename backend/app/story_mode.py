@@ -613,6 +613,70 @@ def _clamp_text(s: str, max_len: int) -> str:
     return s
 
 
+def _normalize_string_list(items: Any) -> List[str]:
+    """
+    Normalize a list that should contain strings but might contain dicts.
+    LLMs sometimes return [{"rule": "...", "priority": 1}] instead of ["..."]
+    """
+    if not isinstance(items, list):
+        return []
+
+    result = []
+    for item in items:
+        if isinstance(item, str):
+            result.append(item)
+        elif isinstance(item, dict):
+            # Try common keys that might contain the actual text
+            for key in ["rule", "name", "description", "text", "value", "content"]:
+                if key in item and isinstance(item[key], str):
+                    result.append(item[key])
+                    break
+            else:
+                # Fallback: join all string values
+                str_vals = [str(v) for v in item.values() if isinstance(v, str)]
+                if str_vals:
+                    result.append(str_vals[0])
+    return result
+
+
+def _normalize_story_bible_json(obj: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize LLM-generated story bible JSON to match expected Pydantic schema.
+    Handles cases where LLM returns objects instead of strings in arrays.
+    """
+    if not isinstance(obj, dict):
+        return obj
+
+    # Normalize arrays that should be List[str]
+    for key in ["visual_style_rules", "recurring_locations", "do_not_change"]:
+        if key in obj:
+            obj[key] = _normalize_string_list(obj[key])
+
+    # Normalize recurring_characters - should be List[Dict[str, str]]
+    if "recurring_characters" in obj and isinstance(obj["recurring_characters"], list):
+        normalized_chars = []
+        for char in obj["recurring_characters"]:
+            if isinstance(char, dict):
+                # Ensure it has name and description as strings
+                normalized_char = {}
+                for k, v in char.items():
+                    if isinstance(v, str):
+                        normalized_char[k] = v
+                    elif isinstance(v, dict):
+                        # Flatten nested dicts
+                        normalized_char[k] = str(v.get("value") or v.get("text") or list(v.values())[0] if v else "")
+                    else:
+                        normalized_char[k] = str(v)
+                if normalized_char:
+                    normalized_chars.append(normalized_char)
+            elif isinstance(char, str):
+                # Convert string to dict format
+                normalized_chars.append({"name": "Character", "description": char})
+        obj["recurring_characters"] = normalized_chars
+
+    return obj
+
+
 # --------------------------------------------------------------------------------------
 # LLM prompts
 # --------------------------------------------------------------------------------------
@@ -904,6 +968,9 @@ async def start_story(
             f"LLM did not return valid JSON for story bible after retry. "
             f"Raw response (first 500 chars): {text[:500] if text else '(empty)'}"
         )
+
+    # Normalize the JSON to handle different LLM output formats
+    obj = _normalize_story_bible_json(obj)
 
     try:
         bible = StoryBible.model_validate(obj)
