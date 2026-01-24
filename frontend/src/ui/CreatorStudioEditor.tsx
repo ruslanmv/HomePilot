@@ -177,6 +177,10 @@ export function CreatorStudioEditor({
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [hoveredSceneIdx, setHoveredSceneIdx] = useState<number | null>(null);
 
+  // Batch generation state (generates all scenes from outline)
+  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; phase: 'scene' | 'image' }>({ current: 0, total: 0, phase: 'scene' });
+
   // Project Settings Modal state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState("");
@@ -721,6 +725,106 @@ export function CreatorStudioEditor({
     }
   }, [projectId, storyOutline, scenes.length, postApi, generateImageForScene]);
 
+  // Generate ALL scenes from outline in sequence (batch generation)
+  const generateAllScenesFromOutline = useCallback(async () => {
+    if (!storyOutline || !storyOutline.scenes || storyOutline.scenes.length === 0) {
+      console.log('[CreatorStudioEditor] No outline scenes to generate');
+      return;
+    }
+
+    const totalScenes = storyOutline.scenes.length;
+    console.log(`[CreatorStudioEditor] Starting batch generation of ${totalScenes} scenes`);
+
+    setIsBatchGenerating(true);
+    setBatchProgress({ current: 0, total: totalScenes, phase: 'scene' });
+
+    const generatedScenes: Scene[] = [];
+
+    try {
+      // Generate all scenes first (without images for speed)
+      for (let i = 0; i < totalScenes; i++) {
+        setBatchProgress({ current: i + 1, total: totalScenes, phase: 'scene' });
+        console.log(`[CreatorStudioEditor] Generating scene ${i + 1}/${totalScenes}`);
+
+        try {
+          const data = await postApi<{ ok: boolean; scene: Scene }>(
+            `/studio/videos/${projectId}/scenes/generate-from-outline?scene_index=${i}`,
+            {}
+          );
+
+          if (data.ok && data.scene) {
+            generatedScenes.push(data.scene);
+            setScenes((prev) => [...prev, data.scene]);
+            setCurrentSceneIndex(i);
+          }
+        } catch (sceneErr: any) {
+          console.error(`[CreatorStudioEditor] Failed to generate scene ${i + 1}:`, sceneErr);
+          // Continue with remaining scenes even if one fails
+        }
+
+        // Small delay between scene creations to avoid overwhelming the server
+        if (i < totalScenes - 1) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      console.log(`[CreatorStudioEditor] Created ${generatedScenes.length} scenes, now generating images...`);
+
+      // Now generate images for all scenes
+      for (let i = 0; i < generatedScenes.length; i++) {
+        const scene = generatedScenes[i];
+        setBatchProgress({ current: i + 1, total: generatedScenes.length, phase: 'image' });
+        console.log(`[CreatorStudioEditor] Generating image ${i + 1}/${generatedScenes.length}`);
+
+        try {
+          // Generate image inline (can't use generateImageForScene due to isGeneratingImage lock)
+          const llmProvider = imageProvider === 'comfyui' ? 'ollama' : imageProvider;
+
+          const data = await postApi<{ media?: { images?: string[] } }>(
+            '/chat',
+            {
+              message: `imagine ${scene.imagePrompt}`,
+              mode: 'imagine',
+              provider: llmProvider,
+              imgModel: imageModel || undefined,
+              imgAspectRatio: '16:9',
+              imgSteps: imageSteps,
+              imgCfg: imageCfg,
+              promptRefinement: false,
+            }
+          );
+
+          const imageUrl = data?.media?.images?.[0];
+          if (imageUrl) {
+            await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, {
+              imageUrl,
+              status: 'ready',
+            });
+
+            setScenes((prev) =>
+              prev.map((s) =>
+                s.id === scene.id ? { ...s, imageUrl, status: 'ready' as SceneStatus } : s
+              )
+            );
+          }
+        } catch (imgErr: any) {
+          console.error(`[CreatorStudioEditor] Failed to generate image for scene ${i + 1}:`, imgErr);
+          // Continue with remaining images
+        }
+      }
+
+      setLastSaved(new Date());
+      setCurrentSceneIndex(0); // Go back to first scene
+      console.log('[CreatorStudioEditor] Batch generation complete!');
+
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Batch generation failed:', e);
+    } finally {
+      setIsBatchGenerating(false);
+      setBatchProgress({ current: 0, total: 0, phase: 'scene' });
+    }
+  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg]);
+
   // Load project and scenes
   useEffect(() => {
     async function loadData() {
@@ -847,7 +951,7 @@ export function CreatorStudioEditor({
     }
   }, [project, projectId, isGeneratingScene, postApi, getVisualStyle, getTones, storyOutline, generateImageForScene]);
 
-  // Auto-generate first scene after outline is generated
+  // Auto-generate ALL scenes after outline is generated (batch generation)
   useEffect(() => {
     if (
       autoGenerateFirst &&
@@ -858,13 +962,14 @@ export function CreatorStudioEditor({
       storyOutline.scenes &&
       storyOutline.scenes.length > 0 &&
       scenes.length === 0 &&
-      !isGeneratingScene
+      !isGeneratingScene &&
+      !isBatchGenerating
     ) {
-      console.log('[CreatorStudioEditor] Auto-generating first scene from outline');
+      console.log('[CreatorStudioEditor] Auto-generating ALL scenes from outline');
       setHasAutoTriggered(true);
-      generateFirstSceneWithAI();
+      generateAllScenesFromOutline();
     }
-  }, [autoGenerateFirst, hasAutoTriggered, loading, project, storyOutline, scenes.length, isGeneratingScene, generateFirstSceneWithAI]);
+  }, [autoGenerateFirst, hasAutoTriggered, loading, project, storyOutline, scenes.length, isGeneratingScene, isBatchGenerating, generateAllScenesFromOutline]);
 
   // Generate first scene (non-AI fallback)
   const generateFirstScene = useCallback(async () => {
@@ -1101,6 +1206,68 @@ export function CreatorStudioEditor({
 
   return (
     <div className="min-h-screen w-full bg-gradient-to-b from-black via-[#0a0a0f] to-[#0f0f18] text-white flex flex-col">
+      {/* Batch Generation Progress Overlay */}
+      {isBatchGenerating && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm">
+          <div className="bg-[#1a1a2e] border border-white/10 rounded-2xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <div className="text-center">
+              {/* Animated Icon */}
+              <div className="mb-6 flex justify-center">
+                <div className="relative">
+                  <div className="w-20 h-20 rounded-full border-4 border-[#3ea6ff]/20" />
+                  <div
+                    className="absolute inset-0 w-20 h-20 rounded-full border-4 border-transparent border-t-[#3ea6ff] animate-spin"
+                    style={{ animationDuration: '1s' }}
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    {batchProgress.phase === 'scene' ? (
+                      <Sparkles size={28} className="text-[#3ea6ff]" />
+                    ) : (
+                      <ImageIcon size={28} className="text-[#3ea6ff]" />
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Title */}
+              <h2 className="text-xl font-semibold text-white mb-2">
+                {batchProgress.phase === 'scene' ? 'Creating Scenes' : 'Generating Images'}
+              </h2>
+
+              {/* Progress Text */}
+              <p className="text-white/60 mb-6">
+                {batchProgress.phase === 'scene'
+                  ? `Building scene ${batchProgress.current} of ${batchProgress.total}...`
+                  : `Generating image ${batchProgress.current} of ${batchProgress.total}...`
+                }
+              </p>
+
+              {/* Progress Bar */}
+              <div className="mb-4">
+                <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-[#3ea6ff] to-[#6ec7ff] transition-all duration-300 ease-out"
+                    style={{
+                      width: batchProgress.total > 0
+                        ? `${(batchProgress.current / batchProgress.total) * 100}%`
+                        : '0%'
+                    }}
+                  />
+                </div>
+                <div className="mt-2 text-xs text-white/40">
+                  {batchProgress.phase === 'scene' ? 'Phase 1/2: Creating scenes' : 'Phase 2/2: Generating images'}
+                </div>
+              </div>
+
+              {/* Tip */}
+              <p className="text-xs text-white/30 mt-4">
+                This may take a few minutes depending on your hardware
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header - Compact & Cinematic */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-black/40 backdrop-blur-md">
         <div className="flex items-center gap-4">
