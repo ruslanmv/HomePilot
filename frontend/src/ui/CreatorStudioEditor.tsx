@@ -2332,6 +2332,7 @@ export function CreatorStudioEditor({
         <TVModeContainer
           onGenerateNext={generateNextForTVMode}
           onEnsureImage={ensureImageForTVMode}
+          onSyncOutline={syncOutlineWithScenes}
         />
       )}
 
