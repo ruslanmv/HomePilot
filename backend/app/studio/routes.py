@@ -1587,6 +1587,224 @@ async def generate_scene_from_outline(
     }
 
 
+@router.post("/videos/{video_id}/scenes/generate-continuation")
+async def generate_scene_continuation(
+    video_id: str,
+    ollama_base_url: Optional[str] = None,
+    ollama_model: Optional[str] = None,
+):
+    """
+    Generate a continuation scene using AI based on previous scene context.
+
+    This endpoint is used when the story outline has been exhausted but the user
+    wants to continue the story. It uses the previous scenes and project context
+    to generate a coherent continuation.
+    """
+    from ..llm import chat_ollama
+    from ..config import OLLAMA_BASE_URL, OLLAMA_MODEL
+    import json
+
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Get existing scenes for context
+    existing_scenes = list_scenes(video_id)
+    if not existing_scenes:
+        raise HTTPException(status_code=400, detail="No existing scenes to continue from. Create a first scene or generate from outline.")
+
+    # Get project settings
+    metadata = v.metadata if hasattr(v, 'metadata') and v.metadata else {}
+    outline = metadata.get("story_outline", {})
+    tags = v.tags if hasattr(v, 'tags') and v.tags else []
+
+    # Extract visual style and tones from tags
+    visual_style = "cinematic"
+    tones = []
+    project_llm_model = None
+
+    for tag in tags:
+        if tag.startswith("visual:"):
+            visual_style = tag.replace("visual:", "").replace("_", " ")
+        elif tag.startswith("tone:"):
+            tones.append(tag.replace("tone:", "").replace("_", " "))
+        elif tag.startswith("llm:"):
+            project_llm_model = tag.replace("llm:", "")
+
+    tone_desc = ", ".join(tones) if tones else "documentary, calm"
+
+    # Get the last 2-3 scenes for context
+    context_scenes = existing_scenes[-3:] if len(existing_scenes) >= 3 else existing_scenes
+    scene_context = []
+    for i, scene in enumerate(context_scenes):
+        scene_context.append({
+            "scene_number": len(existing_scenes) - len(context_scenes) + i + 1,
+            "narration": scene.narration or "",
+            "image_prompt": scene.imagePrompt or "",
+        })
+
+    next_scene_number = len(existing_scenes) + 1
+
+    # Check content rating
+    content_rating = v.contentRating if hasattr(v, 'contentRating') else "sfw"
+    mature_mode_enabled = org_allows_mature() and content_rating == "mature"
+
+    # Build the continuation prompt
+    if mature_mode_enabled:
+        content_instructions = """
+CONTENT MODE: MATURE/ADULT
+- You are allowed to generate sensual, romantic, and adult content
+- Include appropriate fan service, intimate moments, and detailed physical descriptions
+- Match the tone of the previous scenes while continuing the story"""
+    else:
+        content_instructions = """
+CONTENT MODE: SAFE FOR WORK
+- Keep content appropriate for general audiences
+- Focus on storytelling, emotion, and visual interest"""
+
+    system_prompt = f"""You are a professional screenwriter continuing a visual story. Generate the next scene as a JSON object.
+
+STORY CONTEXT:
+Title: {v.title}
+Description: {v.logline or "A compelling visual story"}
+Visual Style: {visual_style}
+Tone: {tone_desc}
+Story Arc: {json.dumps(outline.get("story_arc", {})) if outline.get("story_arc") else "Continue naturally"}
+{content_instructions}
+
+PREVIOUS SCENES FOR CONTEXT:
+{json.dumps(scene_context, indent=2)}
+
+Generate the next scene (Scene {next_scene_number}) that:
+1. Continues the story naturally from where it left off
+2. Maintains consistency with characters, setting, and tone
+3. Advances the plot or character development
+4. Creates a vivid image prompt that matches the new narration
+
+Output ONLY valid JSON with this exact structure:
+{{
+  "scene_number": {next_scene_number},
+  "title": "Scene Title",
+  "description": "Brief scene description",
+  "narration": "2-3 sentences of narration text that continues the story",
+  "image_prompt": "{visual_style} style, detailed visual description of the scene matching the narration, high quality, masterpiece",
+  "negative_prompt": "blurry, low quality, text, watermark, ugly, deformed, duplicate, clone, multiple people, two heads, split image"
+}}
+
+CRITICAL: The narration and image_prompt MUST continue the story from the previous scenes, not repeat or contradict them."""
+
+    user_prompt = f"""Generate Scene {next_scene_number} continuing from the previous scenes shown above.
+
+The new scene should naturally follow the story progression and maintain visual consistency.
+
+Output the JSON now:"""
+
+    base_url = ollama_base_url or OLLAMA_BASE_URL
+    model = ollama_model or project_llm_model or OLLAMA_MODEL
+
+    # If no model specified, try to find one
+    if not model:
+        try:
+            import httpx
+            models_url = f"{base_url.rstrip('/')}/api/tags"
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(models_url)
+                if resp.status_code == 200:
+                    models_data = resp.json()
+                    available_models = [m.get("name") for m in models_data.get("models", [])]
+                    for preferred in ["llama3:8b", "llama3:latest"]:
+                        if preferred in available_models:
+                            model = preferred
+                            break
+                    if not model and available_models:
+                        model = available_models[0]
+        except Exception:
+            pass
+
+    if not model:
+        raise HTTPException(status_code=400, detail="No LLM model available. Please configure Ollama.")
+
+    print(f"[Continuation] Generating scene {next_scene_number} with model: {model}")
+
+    try:
+        response = await chat_ollama(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            base_url=base_url,
+            model=model,
+            temperature=0.7,
+            max_tokens=2000,
+            response_format="json",
+        )
+
+        # Extract content
+        response_text = ""
+        if isinstance(response, dict):
+            choices = response.get("choices", [])
+            if choices and isinstance(choices, list) and len(choices) > 0:
+                message = choices[0].get("message", {})
+                response_text = message.get("content", "")
+            if not response_text:
+                response_text = response.get("content", "")
+        else:
+            response_text = str(response)
+
+        if not response_text.strip():
+            raise ValueError("LLM returned empty response")
+
+        # Parse JSON
+        cleaned = response_text.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        scene_data = None
+        try:
+            scene_data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Try to extract JSON from response
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if json_match:
+                scene_data = json.loads(json_match.group())
+
+        if not scene_data:
+            raise ValueError("Could not parse scene data from AI response")
+
+        # Create the scene
+        scene = create_scene(video_id, StudioSceneCreate(
+            narration=scene_data.get("narration", ""),
+            imagePrompt=scene_data.get("image_prompt", ""),
+            negativePrompt=scene_data.get("negative_prompt", DEFAULT_NEGATIVE_PROMPT),
+            durationSec=scene_data.get("duration_sec", 5.0),
+        ))
+
+        if not scene:
+            raise HTTPException(status_code=500, detail="Failed to create scene")
+
+        print(f"[Continuation] Successfully generated scene {next_scene_number}")
+
+        return {
+            "ok": True,
+            "scene": scene.model_dump(),
+            "from_continuation": True,
+            "scene_data": scene_data,
+            "model_used": model,
+        }
+
+    except json.JSONDecodeError as e:
+        print(f"[Continuation] JSON parse error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse AI response: {str(e)}")
+    except Exception as e:
+        print(f"[Continuation] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate continuation: {str(e)}")
+
+
 # ============================================================================
 # Library - Style Kits and Templates
 # ============================================================================
