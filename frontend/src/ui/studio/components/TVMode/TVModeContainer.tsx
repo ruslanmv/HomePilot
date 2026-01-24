@@ -40,6 +40,7 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   const sceneTimerRef = useRef<number | null>(null);
   const prefetchInFlightRef = useRef(false);
   const [showChapterTransition, setShowChapterTransition] = useState(false);
+  const [waitingForTTS, setWaitingForTTS] = useState(false);
 
   const {
     isActive,
@@ -78,6 +79,25 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   const currentImageReady = useTVModeStore(selectCurrentSceneImageReady);
   const isWaitingForImage = useTVModeStore(selectIsWaitingForImage);
 
+  // Callback when TTS finishes speaking a scene - advance to next scene
+  const handleSceneNarrationEnd = useCallback(() => {
+    console.log("[TV Mode] TTS narration finished, advancing scene...");
+    setWaitingForTTS(false);
+
+    // Advance to next scene (similar to timer-based advance)
+    if (isLastScene) {
+      if (scenes.length < 24 && !isPrefetching && !isStoryComplete) {
+        // Trigger prefetch for more scenes
+        // handlePrefetch will be called below
+      } else if (!isStoryComplete && !isPrefetching) {
+        nextScene(); // This will trigger end screen
+      }
+    } else if (nextSceneReady) {
+      nextScene();
+    }
+    // If next scene isn't ready, the timer effect will handle waiting
+  }, [isLastScene, scenes.length, isPrefetching, isStoryComplete, nextSceneReady, nextScene]);
+
   // TTS Playback Integration
   const {
     ttsEnabled,
@@ -97,6 +117,7 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     currentScene,
     currentSceneIndex,
     scenes,
+    onSceneNarrationEnd: handleSceneNarrationEnd,
   });
 
   // Enter fullscreen on mount
@@ -148,7 +169,26 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     }
   }, [isPlaying, showSettings, settings.autoHideDelay, showControls, hideControls]);
 
-  // Scene auto-advance timer - only advances when next scene is fully ready
+  // Track when TTS starts speaking to set waitingForTTS
+  useEffect(() => {
+    if (ttsEnabled && isSpeaking && currentScene?.narration) {
+      setWaitingForTTS(true);
+    }
+  }, [ttsEnabled, isSpeaking, currentScene?.narration]);
+
+  // Reset waitingForTTS when scene changes, TTS disabled, or playback stops
+  useEffect(() => {
+    if (!ttsEnabled || !isPlaying) {
+      setWaitingForTTS(false);
+    }
+  }, [ttsEnabled, isPlaying]);
+
+  // Reset waitingForTTS when scene changes (new scene means new narration)
+  useEffect(() => {
+    setWaitingForTTS(false);
+  }, [currentSceneIndex]);
+
+  // Scene auto-advance timer - waits for TTS when enabled
   useEffect(() => {
     if (sceneTimerRef.current) {
       clearTimeout(sceneTimerRef.current);
@@ -162,6 +202,18 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
 
     // Don't start timer if story is complete or chapter transition is showing
     if (isStoryComplete || showChapterTransition) {
+      return;
+    }
+
+    // If TTS is enabled and speaking, wait for TTS to finish (via onSceneNarrationEnd callback)
+    // Don't use fixed timer in this case
+    if (ttsEnabled && isSpeaking && currentScene?.narration) {
+      console.log("[TV Mode] TTS is speaking, waiting for narration to finish before advancing...");
+      return;
+    }
+
+    // If we're still waiting for TTS to finish (callback hasn't fired yet), don't start timer
+    if (waitingForTTS) {
       return;
     }
 
@@ -191,7 +243,7 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- handlePrefetch and nextScene are stable callbacks
-  }, [isPlaying, currentSceneIndex, currentScene, sceneDuration, isLastScene, showEndScreen, nextSceneReady, currentImageReady, isStoryComplete, showChapterTransition, isPrefetching, scenes.length]);
+  }, [isPlaying, currentSceneIndex, currentScene, sceneDuration, isLastScene, showEndScreen, nextSceneReady, currentImageReady, isStoryComplete, showChapterTransition, isPrefetching, scenes.length, ttsEnabled, isSpeaking, waitingForTTS]);
 
   // Trigger image generation for current scene if needed
   useEffect(() => {

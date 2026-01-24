@@ -170,6 +170,7 @@ export function CreatorStudioEditor({
   const [error, setError] = useState<string | null>(null);
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isTTSSpeaking, setIsTTSSpeaking] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isGeneratingScene, setIsGeneratingScene] = useState(false);
@@ -566,6 +567,76 @@ export function CreatorStudioEditor({
     const tvScenes = scenes.map(sceneToTVScene);
     enterTVMode(projectId, project.title, tvScenes, currentSceneIndex);
   }, [project, projectId, scenes, currentSceneIndex, enterTVMode, sceneToTVScene]);
+
+  // Editor playback with TTS - speak scene narration when playing
+  useEffect(() => {
+    if (!isPlaying || scenes.length === 0) {
+      // Stop any ongoing speech when not playing
+      if (window.SpeechService?.stopSpeaking) {
+        window.SpeechService.stopSpeaking();
+      }
+      setIsTTSSpeaking(false);
+      return;
+    }
+
+    const currentScene = scenes[currentSceneIndex];
+    if (!currentScene?.narration) {
+      // No narration, advance to next scene after a short delay
+      const timer = setTimeout(() => {
+        if (currentSceneIndex < scenes.length - 1) {
+          setCurrentSceneIndex((i) => i + 1);
+        } else {
+          setIsPlaying(false); // End of scenes
+        }
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+
+    // Speak the current scene's narration
+    const svc = window.SpeechService;
+    if (!svc?.speak) {
+      // Fallback if no TTS - use fixed timer
+      const timer = setTimeout(() => {
+        if (currentSceneIndex < scenes.length - 1) {
+          setCurrentSceneIndex((i) => i + 1);
+        } else {
+          setIsPlaying(false);
+        }
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+
+    console.log(`[Editor] Speaking scene ${currentSceneIndex + 1} narration...`);
+    setIsTTSSpeaking(true);
+
+    svc.speak(currentScene.narration, {
+      onStart: () => setIsTTSSpeaking(true),
+      onEnd: () => {
+        setIsTTSSpeaking(false);
+        // Auto-advance to next scene after narration finishes
+        if (currentSceneIndex < scenes.length - 1) {
+          setCurrentSceneIndex((i) => i + 1);
+        } else {
+          setIsPlaying(false); // End of scenes
+        }
+      },
+      onError: () => {
+        setIsTTSSpeaking(false);
+        // On error, advance anyway after delay
+        setTimeout(() => {
+          if (currentSceneIndex < scenes.length - 1) {
+            setCurrentSceneIndex((i) => i + 1);
+          } else {
+            setIsPlaying(false);
+          }
+        }, 2000);
+      },
+    });
+
+    return () => {
+      svc.stopSpeaking?.();
+    };
+  }, [isPlaying, currentSceneIndex, scenes]);
 
   // Generate image for a scene
   const generateImageForScene = useCallback(
