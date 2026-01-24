@@ -38,6 +38,7 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     showSettings,
     showEndScreen,
     isPrefetching,
+    isStoryComplete,
     settings,
     exitTVMode,
     togglePlay,
@@ -169,7 +170,8 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
 
   // Prefetch next scene
   const handlePrefetch = useCallback(async () => {
-    if (prefetchInFlightRef.current || isPrefetching || scenes.length >= 24) return;
+    // Don't prefetch if story is already complete or at max scenes
+    if (prefetchInFlightRef.current || isPrefetching || isStoryComplete || scenes.length >= 24) return;
 
     prefetchInFlightRef.current = true;
     setPrefetching(true);
@@ -180,20 +182,21 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
       if (newScene) {
         addScene(newScene);
       }
+      // If null returned, story is complete (handled by caller)
     } catch (error: any) {
       setPrefetchError(error.message || "Failed to generate next scene");
     } finally {
       setPrefetching(false);
       prefetchInFlightRef.current = false;
     }
-  }, [isPrefetching, scenes.length, onGenerateNext, addScene, setPrefetching, setPrefetchError]);
+  }, [isPrefetching, isStoryComplete, scenes.length, onGenerateNext, addScene, setPrefetching, setPrefetchError]);
 
-  // Trigger prefetch when playing and near end
+  // Trigger prefetch when playing and near end (but not if story is complete)
   useEffect(() => {
-    if (isPlaying && isLastScene && scenes.length < 24 && !isPrefetching) {
+    if (isPlaying && isLastScene && scenes.length < 24 && !isPrefetching && !isStoryComplete) {
       handlePrefetch();
     }
-  }, [isPlaying, isLastScene, scenes.length, isPrefetching, handlePrefetch]);
+  }, [isPlaying, isLastScene, scenes.length, isPrefetching, isStoryComplete, handlePrefetch]);
 
   // Keyboard controls
   useEffect(() => {
