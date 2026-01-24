@@ -14,6 +14,11 @@ interface TVModeControlsProps {
   onExit: () => void;
   onGoToScene: (index: number) => void;
   onShowSettings: () => void;
+  // TTS Props
+  ttsEnabled?: boolean;
+  ttsSupported?: boolean;
+  isSpeaking?: boolean;
+  onToggleTTS?: () => void;
 }
 
 export const TVModeControls: React.FC<TVModeControlsProps> = ({
@@ -29,6 +34,10 @@ export const TVModeControls: React.FC<TVModeControlsProps> = ({
   onExit,
   onGoToScene,
   onShowSettings,
+  ttsEnabled = false,
+  ttsSupported = false,
+  isSpeaking = false,
+  onToggleTTS,
 }) => {
   const { storyTitle } = useTVModeStore();
   const progress = totalScenes > 0 ? ((currentIndex + 1) / totalScenes) * 100 : 0;
@@ -64,6 +73,29 @@ export const TVModeControls: React.FC<TVModeControlsProps> = ({
           <span className="scene-counter">
             {currentIndex + 1} / {totalScenes}
           </span>
+          {/* TTS Toggle Button */}
+          {ttsSupported && onToggleTTS && (
+            <button
+              className={`control-btn tts-btn ${ttsEnabled ? "tts-active" : ""} ${isSpeaking ? "speaking" : ""}`}
+              onClick={onToggleTTS}
+              aria-label={ttsEnabled ? "Disable narration" : "Enable narration"}
+              title={ttsEnabled ? "Narration On" : "Narration Off"}
+            >
+              {ttsEnabled ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill={isSpeaking ? "currentColor" : "none"} />
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <line x1="23" y1="9" x2="17" y2="15" />
+                  <line x1="17" y1="9" x2="23" y2="15" />
+                </svg>
+              )}
+            </button>
+          )}
           <button
             className="control-btn settings-btn"
             onClick={onShowSettings}
@@ -268,6 +300,23 @@ export const TVModeControls: React.FC<TVModeControlsProps> = ({
 
         .exit-btn span {
           font-size: 14px;
+        }
+
+        .tts-btn {
+          transition: all 0.2s ease;
+        }
+
+        .tts-btn.tts-active {
+          color: #8B5CF6;
+        }
+
+        .tts-btn.speaking {
+          animation: speakPulse 1s ease-in-out infinite;
+        }
+
+        @keyframes speakPulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
         }
 
         .play-btn {
