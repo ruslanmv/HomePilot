@@ -122,6 +122,22 @@ class StoryBible(BaseModel):
     recurring_locations: List[str] = Field(default_factory=list)
     do_not_change: List[str] = Field(default_factory=list)
 
+    # Story arc - gives the story a clear structure with beginning, middle, end
+    story_arc: Dict[str, str] = Field(default_factory=lambda: {
+        "beginning": "",      # Setup/hook - introduce characters and world
+        "rising_action": "",  # Build tension, develop conflict
+        "climax": "",         # Peak of the story, major turning point
+        "falling_action": "", # Consequences of climax
+        "resolution": "",     # How the story ends
+    })
+
+    # Scene outline - planned scenes with brief descriptions
+    # This makes the story finite with a clear ending
+    scene_outline: List[str] = Field(default_factory=list)
+
+    # Total planned scenes (story is NOT infinite)
+    total_scenes: int = Field(default=8, ge=3, le=50)
+
 
 class StoryState(BaseModel):
     # memory to avoid repetition + maintain continuity
@@ -648,7 +664,7 @@ def _normalize_story_bible_json(obj: Dict[str, Any]) -> Dict[str, Any]:
         return obj
 
     # Normalize arrays that should be List[str]
-    for key in ["visual_style_rules", "recurring_locations", "do_not_change"]:
+    for key in ["visual_style_rules", "recurring_locations", "do_not_change", "scene_outline"]:
         if key in obj:
             obj[key] = _normalize_string_list(obj[key])
 
@@ -674,6 +690,34 @@ def _normalize_story_bible_json(obj: Dict[str, Any]) -> Dict[str, Any]:
                 normalized_chars.append({"name": "Character", "description": char})
         obj["recurring_characters"] = normalized_chars
 
+    # Normalize story_arc - should be Dict[str, str]
+    if "story_arc" in obj:
+        arc = obj["story_arc"]
+        if isinstance(arc, dict):
+            normalized_arc = {}
+            for k, v in arc.items():
+                if isinstance(v, str):
+                    normalized_arc[k] = v
+                elif isinstance(v, dict):
+                    normalized_arc[k] = str(v.get("description") or v.get("text") or list(v.values())[0] if v else "")
+                else:
+                    normalized_arc[k] = str(v) if v else ""
+            obj["story_arc"] = normalized_arc
+        elif isinstance(arc, str):
+            # If it's just a string, put it in beginning
+            obj["story_arc"] = {"beginning": arc, "rising_action": "", "climax": "", "falling_action": "", "resolution": ""}
+
+    # Normalize total_scenes - should be int
+    if "total_scenes" in obj:
+        try:
+            obj["total_scenes"] = int(obj["total_scenes"])
+        except (ValueError, TypeError):
+            obj["total_scenes"] = 8  # Default
+
+    # Ensure scene_outline has entries if total_scenes is set
+    if "total_scenes" in obj and "scene_outline" not in obj:
+        obj["scene_outline"] = []
+
     return obj
 
 
@@ -685,32 +729,61 @@ def _planner_system_prompt() -> str:
     return (
         "You are a story showrunner for a visual AI TV-like story.\n"
         "You must output STRICT JSON ONLY (no markdown).\n"
-        "Create a short story bible for consistent image generation.\n"
+        "Create a COMPLETE story bible with a FINITE story arc.\n"
+        "The story MUST have a clear beginning, middle, and END.\n"
         "Keep it safe and non-graphic. No illegal content. No sexual content.\n"
         "JSON schema:\n"
         "{\n"
         '  "title": "string",\n'
-        '  "logline": "string",\n'
+        '  "logline": "string (1-2 sentences summarizing the whole story)",\n'
         '  "setting": "string",\n'
-        '  "visual_style_rules": ["..."],\n'
+        '  "visual_style_rules": ["rule1", "rule2", ...],\n'
         '  "recurring_characters": [{"name":"...","description":"..."}],\n'
-        '  "recurring_locations": ["..."],\n'
-        '  "do_not_change": ["..."]\n'
+        '  "recurring_locations": ["location1", "location2", ...],\n'
+        '  "do_not_change": ["consistency rule 1", ...],\n'
+        '  "story_arc": {\n'
+        '    "beginning": "1-2 sentences: setup, introduce characters",\n'
+        '    "rising_action": "1-2 sentences: build tension, develop conflict",\n'
+        '    "climax": "1-2 sentences: peak moment, major turning point",\n'
+        '    "falling_action": "1-2 sentences: consequences of climax",\n'
+        '    "resolution": "1-2 sentences: how the story ends"\n'
+        '  },\n'
+        '  "scene_outline": [\n'
+        '    "Scene 1: brief description of what happens",\n'
+        '    "Scene 2: brief description...",\n'
+        '    "...continue for ALL planned scenes..."\n'
+        '  ],\n'
+        '  "total_scenes": 8\n'
         "}\n"
+        "IMPORTANT:\n"
+        "- Plan the COMPLETE story from start to finish\n"
+        "- scene_outline must have exactly total_scenes entries\n"
+        "- Each scene should be 1 sentence describing what happens\n"
+        "- Story should have satisfying beginning and END\n"
     )
 
 
 def _planner_user_prompt(premise: str, title_hint: str, opts: StoryOptions) -> str:
     hint = f"Title hint: {title_hint}\n" if title_hint.strip() else ""
+    # Calculate recommended scene count based on max_scenes setting
+    recommended_scenes = min(opts.max_scenes, 12)  # Default to reasonable length
+
     return (
         f"{hint}"
         f"Premise:\n{premise.strip()}\n\n"
         "Constraints:\n"
         f"- Visual style (global): {opts.visual_style}\n"
         f"- Aspect ratio: {opts.aspect_ratio}\n"
-        "- Create 3-6 recurring characters.\n"
-        "- Create 2-6 recurring locations.\n"
-        "- Add 5-10 do_not_change rules (for consistency).\n"
+        "- Create 2-4 recurring characters with clear descriptions.\n"
+        "- Create 2-4 recurring locations.\n"
+        "- Add 3-5 do_not_change rules (for visual consistency).\n"
+        f"- Plan a complete story with {recommended_scenes} scenes (set total_scenes to this).\n"
+        "\n"
+        "Story Structure Requirements:\n"
+        "- story_arc: Write 1-2 sentences for EACH of: beginning, rising_action, climax, falling_action, resolution.\n"
+        f"- scene_outline: Write EXACTLY {recommended_scenes} scene descriptions (1 sentence each).\n"
+        "- The story MUST have a clear ending - no cliffhangers or 'to be continued'.\n"
+        "- Scene 1 = hook/setup, middle scenes = development, final scene = resolution.\n"
     )
 
 
@@ -766,6 +839,32 @@ def _scene_user_prompt(
     idx: int,
     opts: StoryOptions,
 ) -> str:
+    total_scenes = bible.total_scenes or 8
+    scene_outline = bible.scene_outline or []
+    story_arc = bible.story_arc or {}
+
+    # Determine which part of the story arc we're in
+    if idx == 1:
+        arc_phase = "BEGINNING (Setup/Hook)"
+        arc_context = story_arc.get("beginning", "Introduce the story")
+    elif idx <= total_scenes * 0.3:
+        arc_phase = "RISING ACTION"
+        arc_context = story_arc.get("rising_action", "Build tension")
+    elif idx <= total_scenes * 0.6:
+        arc_phase = "APPROACHING CLIMAX"
+        arc_context = story_arc.get("climax", "Major turning point")
+    elif idx < total_scenes:
+        arc_phase = "FALLING ACTION"
+        arc_context = story_arc.get("falling_action", "Consequences")
+    else:
+        arc_phase = "RESOLUTION (FINAL SCENE)"
+        arc_context = story_arc.get("resolution", "Conclusion")
+
+    # Get the planned scene outline for this scene
+    scene_plan = ""
+    if scene_outline and 0 < idx <= len(scene_outline):
+        scene_plan = f"\nPLANNED FOR THIS SCENE: {scene_outline[idx - 1]}\n"
+
     # Scene-specific pacing reminder (reinforces system prompt)
     if idx == 1:
         pacing_reminder = (
@@ -773,6 +872,13 @@ def _scene_user_prompt(
             "- Keep narration to 25-50 words ONLY (1-2 sentences).\n"
             "- Show a single striking moment. No backstory. No internal thoughts.\n"
             "- End on intrigue, not resolution.\n\n"
+        )
+    elif idx == total_scenes:
+        pacing_reminder = (
+            f"REMEMBER: This is the FINAL SCENE ({idx}/{total_scenes}) - RESOLUTION.\n"
+            "- This MUST conclude the story satisfactorily.\n"
+            "- Tie up loose ends. Provide closure.\n"
+            "- 80-120 words narration.\n\n"
         )
     elif idx == 2:
         pacing_reminder = "Pacing: Scene 2 - build on the hook. 40-70 words.\n\n"
@@ -785,6 +891,10 @@ def _scene_user_prompt(
         f"Story title: {bible.title}\n"
         f"Logline: {bible.logline}\n"
         f"Setting: {bible.setting}\n\n"
+        f"=== STORY PROGRESS: Scene {idx} of {total_scenes} ===\n"
+        f"Story Phase: {arc_phase}\n"
+        f"Arc Context: {arc_context}\n"
+        f"{scene_plan}\n"
         + pacing_reminder
         + "Visual rules:\n"
         + "\n".join(f"- {x}" for x in (bible.visual_style_rules or []))
@@ -796,7 +906,7 @@ def _scene_user_prompt(
         + "\n".join(f"- {c.get('name','?')}: {c.get('description','')}" for c in (bible.recurring_characters or []))
         + "\n\n"
         f"Summary so far:\n{state.summary_so_far}\n\n"
-        f"Scene number: {idx}\n"
+        f"Scene number: {idx} of {total_scenes}\n"
         f"Variation strength: {opts.variation_strength:.2f}\n\n"
         "Avoid repeating these recently used items:\n"
         f"- beats: {', '.join(state.used_beats[-12:])}\n"
@@ -1025,8 +1135,12 @@ async def next_scene(
         opts.tts_enabled = bool(tts_enabled)
 
     idx = int(state.scene_index_next)
-    if idx > opts.max_scenes:
-        raise ValueError("max scenes reached")
+    # Use the bible's planned total_scenes if available, otherwise fall back to opts.max_scenes
+    total_planned_scenes = bible.total_scenes if bible.total_scenes > 0 else opts.max_scenes
+    max_allowed = min(total_planned_scenes, opts.max_scenes)
+
+    if idx > max_allowed:
+        raise ValueError(f"Story complete! All {max_allowed} scenes have been generated.")
 
     sys_msg = _scene_system_prompt(allow_nsfw=opts.allow_nsfw, scene_index=idx)
     user_msg = _scene_user_prompt(bible=bible, state=state, idx=idx, opts=opts)
