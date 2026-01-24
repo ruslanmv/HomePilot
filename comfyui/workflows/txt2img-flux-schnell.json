@@ -59,8 +59,8 @@
   "5": {
     "class_type": "EmptyLatentImage",
     "inputs": {
-      "width": 1024,
-      "height": 1024,
+      "width": "{{width}}",
+      "height": "{{height}}",
       "batch_size": 1
     }
   }
