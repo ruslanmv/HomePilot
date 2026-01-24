@@ -186,6 +186,24 @@ def _extract_media(history: Dict[str, Any], prompt_id: str) -> Tuple[List[str], 
     return images, videos
 
 
+def _has_real_media(outputs: Dict[str, Any]) -> bool:
+    """
+    Check if outputs dict contains actual media files.
+    Returns False if outputs is empty or contains no images/videos/gifs.
+    """
+    if not isinstance(outputs, dict) or len(outputs) == 0:
+        return False
+
+    for node_out in outputs.values():
+        if not isinstance(node_out, dict):
+            continue
+        # Check for any actual media
+        if node_out.get("images") or node_out.get("gifs") or node_out.get("videos"):
+            return True
+
+    return False
+
+
 def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     print(f"[COMFY] Running workflow: {name}")
     print(f"[COMFY] Variables: {variables}")
@@ -213,23 +231,59 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
 
             entry = history.get(prompt_id)
             if isinstance(entry, dict):
-                # Check if job completed (has outputs key, even if empty)
-                # Also check status.completed for newer ComfyUI versions
-                status = entry.get("status", {})
-                status_completed = status.get("completed", False) if isinstance(status, dict) else False
-                has_outputs = "outputs" in entry
+                # Extract status info from entry
+                status = entry.get("status") or {}
+                status_completed = False
+                status_str = None
 
-                if has_outputs or status_completed:
+                if isinstance(status, dict):
+                    status_completed = bool(status.get("completed", False))
+                    status_str = status.get("status_str")
+
+                # Get outputs dict
+                outputs = entry.get("outputs")
+                has_any_outputs = isinstance(outputs, dict) and len(outputs) > 0
+
+                # Check if outputs contain real media files
+                has_media = _has_real_media(outputs) if outputs else False
+
+                # Check for errors
+                is_error = (
+                    (status_str == "error") or
+                    bool(entry.get("error")) or
+                    bool(entry.get("exception"))
+                )
+
+                # Completion rules (robust for all ComfyUI versions):
+                # 1. Best signal: status.completed == True
+                # 2. Stop on explicit error
+                # 3. Outputs contain real media files
+                # 4. Fallback: outputs non-empty AND status indicates success/done
+                #
+                # IMPORTANT: Do NOT use "outputs" in entry alone as completion signal
+                # because newer ComfyUI versions may have outputs={} while still running
+                is_complete = (
+                    status_completed or
+                    is_error or
+                    has_media or
+                    (has_any_outputs and status_str in (None, "success"))
+                )
+
+                if is_complete:
                     images, videos = _extract_media(history, prompt_id)
                     elapsed = time.time() - started
                     print(f"[COMFY] Workflow completed in {elapsed:.1f}s, images: {len(images)}, videos: {len(videos)}")
 
-                    # If no images were generated, log a warning
+                    # If no images were generated, log a warning with debug info
                     if not images and not videos:
                         print(f"[COMFY] WARNING: Workflow completed but produced no output!")
-                        # Check for execution errors in status
-                        if isinstance(status, dict) and status.get("status_str") == "error":
+                        print(f"[COMFY] Debug: status_completed={status_completed}, status_str={status_str}, has_any_outputs={has_any_outputs}")
+                        if is_error:
                             print(f"[COMFY] Error details: {status}")
+                            if entry.get("error"):
+                                print(f"[COMFY] Error: {entry.get('error')}")
+                            if entry.get("exception"):
+                                print(f"[COMFY] Exception: {entry.get('exception')}")
 
                     return {"images": images, "videos": videos, "prompt_id": prompt_id}
 

@@ -534,6 +534,8 @@ async def orchestrate(
             # Run the workflow with refined prompt and parameters
             # If batch_size > 1, run multiple times and aggregate results
             images = []
+            max_retries = 3  # Retry up to 3 times if a generation fails
+
             for i in range(batch_size):
                 # Vary the seed for each image in the batch (unless seed is explicitly set)
                 batch_refined = refined.copy()
@@ -543,14 +545,34 @@ async def orchestrate(
                     batch_refined["seed"] = random.randint(1, 2147483647)
 
                 print(f"[IMAGE] Generating image {i + 1}/{batch_size}...")
-                res = run_workflow(workflow_name, batch_refined)
-                batch_images = res.get("images", []) or []
+
+                # Retry logic: if generation returns 0 images, retry with backoff
+                batch_images = []
+                for attempt in range(max_retries):
+                    res = run_workflow(workflow_name, batch_refined)
+                    batch_images = res.get("images", []) or []
+
+                    if batch_images:
+                        # Success - got images
+                        break
+                    else:
+                        # Failed - wait and retry
+                        if attempt < max_retries - 1:
+                            import time
+                            wait_time = 1.0 + attempt  # 1s, 2s, 3s backoff
+                            print(f"[IMAGE] Generation returned 0 images, retrying in {wait_time}s (attempt {attempt + 2}/{max_retries})...")
+                            time.sleep(wait_time)
+                            # Change seed for retry
+                            batch_refined["seed"] = random.randint(1, 2147483647)
+                        else:
+                            print(f"[IMAGE] Generation failed after {max_retries} attempts")
+
                 images.extend(batch_images)
 
                 # Small delay between batch requests to let ComfyUI settle
                 if i < batch_size - 1 and batch_size > 1:
                     import time
-                    time.sleep(0.5)
+                    time.sleep(1.0)  # Increased delay between batch items
 
             print(f"[IMAGE] Total images generated: {len(images)}")
 
