@@ -279,58 +279,49 @@ def _is_placeholder_value(value: str) -> bool:
     return v in placeholders or v.startswith("...") or v == ""
 
 
-# Common stopwords to ignore when extracting subject keywords
-_STOPWORDS = {
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "must", "shall", "can", "need", "dare",
-    "to", "of", "in", "for", "on", "with", "at", "by", "from", "as",
-    "into", "through", "during", "before", "after", "above", "below",
-    "between", "under", "again", "further", "then", "once", "here",
-    "there", "when", "where", "why", "how", "all", "each", "few",
-    "more", "most", "other", "some", "such", "no", "nor", "not",
-    "only", "own", "same", "so", "than", "too", "very", "just",
-    "and", "but", "if", "or", "because", "until", "while", "this",
-    "that", "these", "those", "am", "its", "it", "my", "your", "his",
-    "her", "our", "their", "what", "which", "who", "whom", "i", "me",
-    "we", "you", "he", "she", "they", "them", "image", "photo", "picture",
-    "imagine", "generate", "create", "make", "show", "draw", "render",
-}
+# ----------------------------
+# Subject validation (keyword overlap)
+# ----------------------------
+# Industry-standard approach: use word length filtering instead of static stopword lists.
+# Words >= 4 chars are likely content words (nouns, adjectives, verbs).
+# This is simpler, more maintainable, and language-agnostic.
+
+_MIN_KEYWORD_LENGTH = 4  # Words shorter than this are likely function words
 
 
-def _extract_subject_keywords(prompt: str) -> set:
+def _extract_keywords(text: str) -> set:
     """
-    Extract important subject keywords from a prompt.
-    Returns a set of lowercase keywords that identify the core subject.
+    Extract content keywords from text using word length heuristic.
+    Words >= 4 characters are likely to be meaningful content words.
+    This avoids maintaining large stopword lists.
     """
-    if not prompt:
+    if not text:
         return set()
 
-    # Simple tokenization: split on non-alphanumeric, keep words > 2 chars
-    words = re.findall(r'\b[a-zA-Z]{3,}\b', prompt.lower())
+    # Tokenize: extract alphabetic words, lowercase
+    words = re.findall(r'\b[a-zA-Z]+\b', text.lower())
 
-    # Filter out stopwords and common prompt words
-    keywords = {w for w in words if w not in _STOPWORDS}
+    # Filter by length - words >= 4 chars are likely content words
+    # This naturally filters out: a, an, the, is, of, in, to, for, etc.
+    return {w for w in words if len(w) >= _MIN_KEYWORD_LENGTH}
 
-    return keywords
 
-
-def _validate_subject_overlap(base_prompt: str, candidate_prompt: str, min_overlap: int = 1) -> bool:
+def _validate_keyword_overlap(base: str, candidate: str, min_overlap: int = 1) -> bool:
     """
-    Validate that the candidate prompt preserves the core subject from base prompt.
-    Returns True if at least min_overlap subject keywords are preserved.
+    Validate that candidate preserves at least min_overlap keywords from base.
+    Uses simple word length filtering (>= 4 chars) as industry-standard heuristic.
     """
-    if not base_prompt or not candidate_prompt:
+    if not base or not candidate:
         return False
 
-    base_keywords = _extract_subject_keywords(base_prompt)
-    candidate_keywords = _extract_subject_keywords(candidate_prompt)
+    base_kw = _extract_keywords(base)
+    cand_kw = _extract_keywords(candidate)
 
-    if not base_keywords:
-        # No meaningful keywords in base prompt, allow anything
+    # If base has no meaningful keywords (very short prompt), allow anything
+    if not base_kw:
         return True
 
-    overlap = base_keywords & candidate_keywords
+    overlap = base_kw & cand_kw
     return len(overlap) >= min_overlap
 
 
@@ -522,10 +513,10 @@ def _safe_parse_variation(text: str, fallback_prompt: str = "") -> VariationOut:
             return VariationOut(variation_prompt=fallback_prompt, tags={})
 
         # Subject validation: ensure variation preserves core subject from original
-        if fallback_prompt and not _validate_subject_overlap(fallback_prompt, variation_prompt, min_overlap=1):
+        if fallback_prompt and not _validate_keyword_overlap(fallback_prompt, variation_prompt, min_overlap=1):
             print(f"[GAME MODE VARIATION] WARNING: Subject drift detected (no keyword overlap), using original prompt")
-            print(f"[GAME MODE VARIATION] Base keywords: {_extract_subject_keywords(fallback_prompt)}")
-            print(f"[GAME MODE VARIATION] Variation keywords: {_extract_subject_keywords(variation_prompt)}")
+            print(f"[GAME MODE VARIATION] Base keywords: {_extract_keywords(fallback_prompt)}")
+            print(f"[GAME MODE VARIATION] Variation keywords: {_extract_keywords(variation_prompt)}")
             return VariationOut(variation_prompt=fallback_prompt, tags={})
 
         # Check if tags contain placeholder values and clean them
@@ -539,7 +530,7 @@ def _safe_parse_variation(text: str, fallback_prompt: str = "") -> VariationOut:
     # If we have raw text that looks like a prompt (not JSON garbage), use it
     if raw and not raw.startswith("{") and len(raw) > 15:
         # Also validate subject overlap for raw text
-        if fallback_prompt and not _validate_subject_overlap(fallback_prompt, raw, min_overlap=1):
+        if fallback_prompt and not _validate_keyword_overlap(fallback_prompt, raw, min_overlap=1):
             print(f"[GAME MODE VARIATION] WARNING: Raw text subject drift, using original prompt")
             return VariationOut(variation_prompt=fallback_prompt, tags={})
         return VariationOut(variation_prompt=raw, tags={})
