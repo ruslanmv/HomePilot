@@ -820,30 +820,44 @@ export function CreatorStudioEditor({
     }
   }, [project, projectId, isGeneratingScene, postApi]);
 
-  // Generate next scene with AI-powered prompts
+  // Generate next scene with AI-powered prompts (uses backend outline for reliability)
   const generateNextScene = useCallback(async () => {
     if (!project || isGeneratingScene) return;
     setIsGeneratingScene(true);
 
     try {
-      const sceneNum = scenes.length + 1;
-      let narration: string;
-      let imagePrompt: string;
-      let negativePrompt: string = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
+      const nextSceneIndex = scenes.length;
 
-      if (storyOutline && storyOutline.scenes && scenes.length < storyOutline.scenes.length) {
-        const outlineScene = storyOutline.scenes[scenes.length];
-        narration = outlineScene.narration;
-        imagePrompt = outlineScene.image_prompt;
-        negativePrompt = outlineScene.negative_prompt || negativePrompt;
-        console.log(`[CreatorStudioEditor] Using outline for scene ${sceneNum}: "${outlineScene.title}"`);
-      } else {
-        const visualStyle = getVisualStyle();
-        const tones = getTones();
-        const toneDesc = tones.join(", ");
-        narration = `Scene ${sceneNum}. The story continues...`;
-        imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
+      // First, try to generate from outline via backend (reads outline from database - most reliable)
+      try {
+        const data = await postApi<{ ok: boolean; scene: Scene; from_outline?: boolean }>(
+          `/studio/videos/${projectId}/scenes/generate-from-outline?scene_index=${nextSceneIndex}`,
+          {}
+        );
+
+        if (data.ok && data.scene) {
+          setScenes((prev) => [...prev, data.scene]);
+          setCurrentSceneIndex(nextSceneIndex);
+          setLastSaved(new Date());
+
+          console.log(`[CreatorStudioEditor] Generated scene ${nextSceneIndex + 1} from outline`);
+          generateImageForScene(data.scene.id, data.scene.imagePrompt);
+          return;
+        }
+      } catch (outlineErr: any) {
+        // Outline not available or scene index out of range - fall back to generic
+        console.log('[CreatorStudioEditor] No outline scene available, using fallback:', outlineErr.message);
       }
+
+      // Fallback: Generate a scene based on project settings (no outline)
+      const sceneNum = scenes.length + 1;
+      const visualStyle = getVisualStyle();
+      const tones = getTones();
+      const toneDesc = tones.join(", ");
+
+      const narration = `Scene ${sceneNum}. ${project.logline || `The story of "${project.title}" continues...`}`;
+      const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
+      const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
 
       const data = await postApi<{ scene: Scene }>(
         `/studio/videos/${projectId}/scenes`,
@@ -859,26 +873,45 @@ export function CreatorStudioEditor({
       setCurrentSceneIndex(scenes.length);
       setLastSaved(new Date());
 
-      console.log('[CreatorStudioEditor] Auto-generating image for scene:', sceneNum);
+      console.log('[CreatorStudioEditor] Generated scene with fallback content:', sceneNum);
       generateImageForScene(data.scene.id, data.scene.imagePrompt);
     } catch (e: any) {
       alert(`Failed to create scene: ${e.message}`);
     } finally {
       setIsGeneratingScene(false);
     }
-  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, storyOutline, generateImageForScene]);
+  }, [project, projectId, scenes.length, isGeneratingScene, postApi, getVisualStyle, getTones, generateImageForScene]);
 
-  // Generate next scene for TV Mode
+  // Generate next scene for TV Mode (uses backend outline for reliability)
   const generateNextForTVMode = useCallback(async () => {
     if (!project || isGeneratingScene) return null;
 
     try {
+      const nextSceneIndex = scenes.length;
+
+      // First, try to generate from outline via backend
+      try {
+        const data = await postApi<{ ok: boolean; scene: Scene; from_outline?: boolean }>(
+          `/studio/videos/${projectId}/scenes/generate-from-outline?scene_index=${nextSceneIndex}`,
+          {}
+        );
+
+        if (data.ok && data.scene) {
+          setScenes((prev) => [...prev, data.scene]);
+          console.log(`[CreatorStudioEditor] TV Mode: Generated scene ${nextSceneIndex + 1} from outline`);
+          return sceneToTVScene(data.scene);
+        }
+      } catch (outlineErr: any) {
+        console.log('[CreatorStudioEditor] TV Mode: No outline available, using fallback');
+      }
+
+      // Fallback: Generate scene based on project settings
       const sceneNum = scenes.length + 1;
       const visualStyle = getVisualStyle();
       const tones = getTones();
       const toneDesc = tones.join(", ");
 
-      const narration = `Scene ${sceneNum}. The story continues...`;
+      const narration = `Scene ${sceneNum}. ${project.logline || `The story of "${project.title}" continues...`}`;
       const imagePrompt = `${visualStyle} style, ${project.logline || project.title}, scene ${sceneNum}, ${toneDesc} mood, high quality, detailed, 4k, masterpiece`;
       const negativePrompt = "blurry, low quality, text, watermark, ugly, deformed, disfigured, bad anatomy, worst quality, low resolution";
 
