@@ -276,7 +276,9 @@ export default function StudioView(props: StudioParams) {
 
   // Image generation queue to prevent dropped requests
   // Store scene data directly to avoid stale closure issues with currentStory
-  const imageQueueRef = useRef<Map<number, { image_prompt: string; negative_prompt?: string; session_id: string }>>(new Map())
+  // Include retry count for automatic retries on failure
+  const imageQueueRef = useRef<Map<number, { image_prompt: string; negative_prompt?: string; session_id: string; retryCount?: number }>>(new Map())
+  const MAX_IMAGE_RETRIES = 3
   const imageInFlightRef = useRef<number | null>(null)
   const [isMuted, setIsMuted] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -444,9 +446,32 @@ export default function StudioView(props: StudioParams) {
       return
     }
 
-    const [nextIdx, sceneData] = nextEntry as [number, { image_prompt: string; negative_prompt?: string; session_id: string }]
+    const [nextIdx, sceneData] = nextEntry as [number, { image_prompt: string; negative_prompt?: string; session_id: string; retryCount?: number }]
     imageInFlightRef.current = nextIdx
     imageQueueRef.current.delete(nextIdx)
+
+    const currentRetry = sceneData.retryCount || 0
+
+    // Helper to re-queue for retry with delay
+    const requeue = async (reason: string) => {
+      if (currentRetry < MAX_IMAGE_RETRIES) {
+        const nextRetry = currentRetry + 1
+        const delayMs = Math.min(1000 * Math.pow(2, currentRetry), 8000) // 1s, 2s, 4s, 8s max
+        console.warn(`[IMAGE] ${reason} for scene ${nextIdx}, retry ${nextRetry}/${MAX_IMAGE_RETRIES} in ${delayMs}ms`)
+
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+
+        // Re-add to queue with incremented retry count
+        imageQueueRef.current.set(nextIdx, { ...sceneData, retryCount: nextRetry })
+      } else {
+        console.error(`[IMAGE] Max retries (${MAX_IMAGE_RETRIES}) exceeded for scene ${nextIdx}, giving up`)
+        // Mark as failed in TV Mode if active
+        if (tvModeActive) {
+          setSceneImageStatusByIdx(nextIdx, 'failed')
+        }
+      }
+    }
 
     try {
       const llmProvider = props.providerImages === 'comfyui' ? 'ollama' : props.providerImages
@@ -480,7 +505,7 @@ export default function StudioView(props: StudioParams) {
 
       const imageUrl = data?.media?.images?.[0]
       if (imageUrl) {
-        // Update scene with image URL in state
+        // Success! Update scene with image URL in state
         setCurrentStory((prev) => {
           if (!prev) return prev
           return {
@@ -510,9 +535,14 @@ export default function StudioView(props: StudioParams) {
           console.error('Failed to persist image URL:', persistErr)
           // Image is still shown in UI, just won't survive reload
         }
+      } else {
+        // No image returned (0 images from ComfyUI) - retry
+        await requeue('No image returned from backend')
       }
     } catch (err: any) {
       console.error('Failed to generate image:', err)
+      // Network or server error - retry
+      await requeue(`Error: ${err.message || err}`)
     } finally {
       imageInFlightRef.current = null
       // Process next item in queue if any
@@ -522,7 +552,7 @@ export default function StudioView(props: StudioParams) {
         setIsGeneratingImage(false)
       }
     }
-  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, tvModeActive, updateSceneImageByIdx])
+  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, tvModeActive, updateSceneImageByIdx, setSceneImageStatusByIdx])
 
   // Enqueue image generation for a scene
   const generateImageForScene = useCallback((scene: Scene | TVScene, sessionId?: string) => {
