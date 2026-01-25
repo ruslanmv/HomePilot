@@ -8,7 +8,7 @@ import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settin
 type Provider = {
   name: string
   label: string
-  kind?: 'chat' | 'image' | 'video' | 'multi'
+  kind?: 'chat' | 'image' | 'video' | 'edit' | 'multi'
 }
 
 type ModelCatalogEntry = {
@@ -161,6 +161,13 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       { id: 'svd_xt_1_1.safetensors', label: 'Stable Video Diffusion XT 1.1 (10GB)', recommended: true, nsfw: false },
       { id: 'svd_xt.safetensors', label: 'Stable Video Diffusion XT (10GB)', nsfw: false },
       { id: 'svd.safetensors', label: 'Stable Video Diffusion (10GB)', nsfw: false },
+    ],
+    edit: [
+      { id: 'sd_xl_base_1.0_inpainting_0.1.safetensors', label: 'SDXL Inpainting 0.1 (7GB)', recommended: true, nsfw: false },
+      { id: 'sd-v1-5-inpainting.ckpt', label: 'SD 1.5 Inpainting (4GB)', recommended: true, nsfw: false },
+      { id: 'control_v11p_sd15_inpaint.safetensors', label: 'ControlNet Inpaint (1.5GB)', recommended: true, nsfw: false },
+      { id: 'sam_vit_h_4b8939.pth', label: 'SAM ViT-H (2.5GB)', nsfw: false },
+      { id: 'u2net.onnx', label: 'Background Remove U2Net (170MB)', nsfw: false },
     ],
   },
   openai_compat: {
@@ -331,12 +338,13 @@ export default function ModelsView(props: ModelsParams) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [providersError, setProvidersError] = useState<string | null>(null)
 
-  const [modelType, setModelType] = useState<'chat' | 'image' | 'video'>('chat')
+  const [modelType, setModelType] = useState<'chat' | 'image' | 'video' | 'edit'>('chat')
   const [provider, setProvider] = useState<string>(props.providerChat || 'ollama')
 
   const defaultBaseUrl = useMemo(() => {
     if (modelType === 'chat') return props.baseUrlChat || ''
     if (modelType === 'image') return props.baseUrlImages || ''
+    if (modelType === 'edit') return props.baseUrlImages || ''
     return props.baseUrlVideo || ''
   }, [modelType, props.baseUrlChat, props.baseUrlImages, props.baseUrlVideo])
 
@@ -664,7 +672,7 @@ export default function ModelsView(props: ModelsParams) {
         headers,
         body: JSON.stringify({
           query: civitaiQuery.trim(),
-          model_type: modelType, // 'image' or 'video'
+          model_type: modelType === 'edit' ? 'image' : modelType, // Civitai uses 'image' for edit models
           nsfw: props.nsfwMode || false,
           limit: 20,
           page,
@@ -706,7 +714,7 @@ export default function ModelsView(props: ModelsParams) {
     try {
       const body = {
         provider: 'civitai',
-        model_type: modelType,
+        model_type: modelType === 'edit' ? 'image' : modelType, // Civitai uses 'image' for edit models
         model_id: model.id,
         civitai_version_id: versionId,
         civitai_api_key: props.nsfwMode ? props.civitaiApiKey : undefined,
@@ -777,7 +785,7 @@ export default function ModelsView(props: ModelsParams) {
           <div>
             <label className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-2.5">Model Type</label>
             <div className="flex flex-col gap-1.5">
-              {(['chat', 'image', 'video'] as const).map((t) => (
+              {(['chat', 'image', 'edit', 'video'] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
