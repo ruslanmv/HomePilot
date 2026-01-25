@@ -7,9 +7,180 @@ Mount this router in your main app:
 """
 from __future__ import annotations
 
+import re
 from fastapi import APIRouter, Query, HTTPException
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Tuple
 from pydantic import BaseModel, Field
+
+
+# ============================================================================
+# JSON Repair Utilities (for handling truncated LLM responses)
+# ============================================================================
+
+def _is_truncated_json(text: str) -> bool:
+    """
+    Check if JSON appears to be truncated.
+    Returns True if the text doesn't end with proper JSON closure.
+    """
+    if not text or not text.strip():
+        return True
+
+    cleaned = text.strip()
+    # Valid JSON should end with } or ] (possibly followed by whitespace)
+    if not cleaned.endswith('}') and not cleaned.endswith(']'):
+        return True
+
+    # Count braces/brackets - if unbalanced, it's truncated
+    depth_brace = 0
+    depth_bracket = 0
+    in_string = False
+    escape_next = False
+
+    for char in cleaned:
+        if escape_next:
+            escape_next = False
+            continue
+        if char == '\\':
+            escape_next = True
+            continue
+        if char == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == '{':
+            depth_brace += 1
+        elif char == '}':
+            depth_brace -= 1
+        elif char == '[':
+            depth_bracket += 1
+        elif char == ']':
+            depth_bracket -= 1
+
+    return depth_brace != 0 or depth_bracket != 0
+
+
+def _repair_truncated_json(text: str) -> Tuple[str, bool]:
+    """
+    Attempt to repair truncated JSON by closing open structures.
+    Returns (repaired_text, was_repaired).
+
+    This handles common truncation patterns:
+    - Missing closing braces/brackets
+    - Truncated string values (closes with ")
+    - Missing array elements
+    """
+    if not text or not text.strip():
+        return text, False
+
+    cleaned = text.strip()
+
+    # Track open structures
+    open_braces = 0
+    open_brackets = 0
+    in_string = False
+    escape_next = False
+    last_char = ''
+
+    for i, char in enumerate(cleaned):
+        if escape_next:
+            escape_next = False
+            last_char = char
+            continue
+        if char == '\\':
+            escape_next = True
+            last_char = char
+            continue
+        if char == '"' and not escape_next:
+            in_string = not in_string
+            last_char = char
+            continue
+        if in_string:
+            last_char = char
+            continue
+
+        if char == '{':
+            open_braces += 1
+        elif char == '}':
+            open_braces -= 1
+        elif char == '[':
+            open_brackets += 1
+        elif char == ']':
+            open_brackets -= 1
+        last_char = char
+
+    # If already balanced, no repair needed
+    if open_braces == 0 and open_brackets == 0 and not in_string:
+        return cleaned, False
+
+    repaired = cleaned
+    was_repaired = False
+
+    # Close unclosed string
+    if in_string:
+        repaired += '"'
+        was_repaired = True
+
+    # Remove trailing incomplete fields (e.g., "key": "incomplete or "key":)
+    # Pattern: trailing comma, incomplete key-value pairs
+    repaired = re.sub(r',\s*"[^"]*"?\s*:\s*"?[^",}\]]*$', '', repaired)
+    repaired = re.sub(r',\s*$', '', repaired)  # Remove trailing comma
+
+    # Close open brackets first (inner), then braces (outer)
+    for _ in range(open_brackets):
+        repaired += ']'
+        was_repaired = True
+
+    for _ in range(open_braces):
+        repaired += '}'
+        was_repaired = True
+
+    return repaired, was_repaired
+
+
+def _extract_partial_outline(text: str) -> Optional[dict]:
+    """
+    Try to extract a partial outline from truncated JSON.
+    Even if incomplete, we may be able to salvage some scenes.
+    """
+    import json
+
+    # First, try to repair the JSON
+    repaired, was_repaired = _repair_truncated_json(text)
+
+    if was_repaired:
+        print(f"[Outline] Attempted JSON repair (added {len(repaired) - len(text)} chars)")
+
+    try:
+        parsed = json.loads(repaired)
+        if isinstance(parsed, dict):
+            # Validate we have at least the basic structure
+            if "scenes" in parsed and isinstance(parsed["scenes"], list):
+                # Filter out incomplete scenes (missing required fields)
+                valid_scenes = []
+                for scene in parsed["scenes"]:
+                    if isinstance(scene, dict):
+                        has_narration = scene.get("narration") and len(str(scene.get("narration", ""))) > 10
+                        has_prompt = scene.get("image_prompt") and len(str(scene.get("image_prompt", ""))) > 10
+                        if has_narration or has_prompt:
+                            # Ensure negative_prompt is complete
+                            if "negative_prompt" in scene:
+                                neg = scene.get("negative_prompt", "")
+                                if isinstance(neg, str) and not neg.endswith('"'):
+                                    # Truncated negative prompt - use default
+                                    from ..defaults import DEFAULT_NEGATIVE_PROMPT
+                                    scene["negative_prompt"] = DEFAULT_NEGATIVE_PROMPT
+                            valid_scenes.append(scene)
+
+                if valid_scenes:
+                    parsed["scenes"] = valid_scenes
+                    parsed["_repaired"] = was_repaired
+                    parsed["_original_scene_count"] = len(parsed.get("scenes", []))
+                    return parsed
+    except json.JSONDecodeError as e:
+        print(f"[Outline] JSON repair failed: {e}")
+
+    return None
 
 from .models import (
     StudioVideoCreate, GenerationRequest, ExportRequest, StudioSceneCreate, StudioSceneUpdate,
@@ -834,20 +1005,99 @@ async def generate_story_outline(video_id: str, req: GenerateOutlineRequest):
     # Use centralized anti-duplicate terms to prevent common Stable Diffusion issues
     anti_duplicate_terms = ANTI_DUPLICATE_TERMS
 
-    # Build example JSON to help the model understand the format
-    # Use a SPECIFIC example to show the AI how image prompts should relate to scene content
-    example_scene = {
-        "scene_number": 1,
-        "title": "The Dressing Room",
-        "description": "We meet Sophia in her dressing room, surrounded by mirrors and costumes, preparing for her big performance.",
-        "narration": "In the heart of the theater, Sophia sits before a wall of mirrors. Tonight is the night she has been waiting for her entire life.",
-        "image_prompt": f"{visual_style} style, young woman named Sophia sitting at a vanity table in a theater dressing room, surrounded by illuminated mirrors, elegant costumes hanging in background, warm golden lighting, anticipation in her eyes, detailed interior, high quality, single subject",
-        "negative_prompt": f"blurry, low quality, text, watermark, ugly, deformed, {anti_duplicate_terms}",
-        "duration_sec": req.scene_duration
-    }
+    # Check content rating and mature mode for adult content generation
+    content_rating = v.contentRating if hasattr(v, 'contentRating') else "sfw"
+    mature_mode_enabled = org_allows_mature() and content_rating == "mature"
 
-    # Build the outline generation prompt - emphasize specific image prompts
-    system_prompt = f"""You are a professional screenwriter. Generate a story outline as a JSON object.
+    print(f"[Outline] Content rating: {content_rating}, Mature mode enabled: {mature_mode_enabled}")
+
+    # Build example JSON based on content rating
+    if mature_mode_enabled:
+        # Mature mode: Allow adult content, fan service, sensual descriptions
+        example_scene = {
+            "scene_number": 1,
+            "title": "The Dressing Room",
+            "description": "We meet Sophia in her private dressing room, wearing elegant lingerie as she prepares for a special evening. The atmosphere is intimate and sensual.",
+            "narration": "In the soft glow of her dressing room, Sophia admires her reflection. Her silk robe barely conceals her curves as she applies the finishing touches to her makeup. Tonight will be unforgettable.",
+            "image_prompt": f"{visual_style} style, beautiful young woman named Sophia in an elegant boudoir, wearing delicate lace lingerie, sitting at a vanity mirror, soft romantic lighting, sensual atmosphere, detailed figure, alluring pose, high quality, masterpiece, solo",
+            "negative_prompt": f"blurry, low quality, text, watermark, ugly, deformed, {anti_duplicate_terms}",
+            "duration_sec": req.scene_duration
+        }
+    else:
+        # SFW mode: Keep safe for work content
+        example_scene = {
+            "scene_number": 1,
+            "title": "The Dressing Room",
+            "description": "We meet Sophia in her dressing room, surrounded by mirrors and costumes, preparing for her big performance.",
+            "narration": "In the heart of the theater, Sophia sits before a wall of mirrors. Tonight is the night she has been waiting for her entire life.",
+            "image_prompt": f"{visual_style} style, young woman named Sophia sitting at a vanity table in a theater dressing room, surrounded by illuminated mirrors, elegant costumes hanging in background, warm golden lighting, anticipation in her eyes, detailed interior, high quality, single subject",
+            "negative_prompt": f"blurry, low quality, text, watermark, ugly, deformed, {anti_duplicate_terms}",
+            "duration_sec": req.scene_duration
+        }
+
+    # Build the outline generation prompt based on content rating
+    if mature_mode_enabled:
+        # Mature mode prompt - allows adult content, fan service, sensual/explicit descriptions
+        system_prompt = f"""You are a professional adult content screenwriter. Generate a story outline as a JSON object.
+
+THIS IS MATURE/ADULT CONTENT MODE - You are ALLOWED and ENCOURAGED to:
+- Write sensual, romantic, and explicit content
+- Include fan service elements (revealing clothing, suggestive poses, intimate moments)
+- Describe physical attributes, body features, and attractive appearances in detail
+- Create romantic tension, seduction scenes, and intimate encounters
+- Use adult themes appropriate for mature audiences
+- Generate uncensored, provocative image prompts that showcase beauty and sensuality
+
+Output ONLY valid JSON with this exact structure:
+{{
+  "title": "Story Title",
+  "logline": "One sentence summary",
+  "visual_style": "{visual_style}",
+  "tone": "{tone_desc}",
+  "story_arc": {{
+    "beginning": "Setup description",
+    "rising_action": "Tension builds",
+    "climax": "Peak moment",
+    "falling_action": "Resolution begins",
+    "resolution": "Conclusion"
+  }},
+  "scenes": [
+    {json.dumps(example_scene)}
+  ]
+}}
+
+CRITICAL REQUIREMENTS FOR MATURE IMAGE PROMPTS:
+- Each image_prompt MUST be detailed and visually descriptive for adult content
+- Include specific physical descriptions: body type, clothing (or lack thereof), poses, expressions
+- Use terms like: beautiful, alluring, sensual, seductive, elegant, stunning, gorgeous
+- For intimate scenes, describe the setting, mood, and character positioning
+- Include quality boosters: masterpiece, best quality, highly detailed, professional
+- DO NOT censor or tone down the descriptions - this is mature content mode
+- Always start with "{visual_style}" style keywords
+- For single-character scenes, add "solo" or "1girl"/"1boy" to the image_prompt
+- Example mature prompt: "{visual_style} style, beautiful woman with long flowing hair, wearing revealing red dress, sensual pose on silk sheets, bedroom setting, soft romantic lighting, alluring expression, detailed figure, masterpiece, solo"
+
+CRITICAL REQUIREMENTS FOR NEGATIVE PROMPTS:
+- Every negative_prompt MUST include anti-duplicate terms: "duplicate, clone, multiple people, two heads, split image"
+- Include quality terms: "blurry, low quality, text, watermark, ugly, deformed"
+- For mature content, also add: "child, minor, underage" (ALWAYS blocked)
+
+CONTENT GUIDELINES FOR MATURE MODE:
+- Adult romantic/sensual content: ALLOWED
+- Fan service and revealing outfits: ALLOWED
+- Suggestive poses and intimate moments: ALLOWED
+- Nudity and explicit content: ALLOWED
+- ALWAYS BLOCKED: minors, non-consensual content, illegal content
+
+OTHER REQUIREMENTS:
+- Output ONLY the JSON object, no other text
+- Create exactly {req.target_scenes} scenes in the scenes array
+- Each scene narration should be 2-3 sentences with sensual/adult tone
+- Make the story coherent with romantic/adult themes from beginning to end"""
+
+    else:
+        # SFW mode prompt - safe for work content only
+        system_prompt = f"""You are a professional screenwriter. Generate a story outline as a JSON object.
 
 Output ONLY valid JSON with this exact structure:
 {{
@@ -888,7 +1138,22 @@ OTHER REQUIREMENTS:
 - Each scene narration should be 2-3 sentences
 - Make the story coherent from beginning to end"""
 
-    user_prompt = f"""Create a {req.target_scenes}-scene story outline for:
+    # Build user prompt based on content rating
+    if mature_mode_enabled:
+        user_prompt = f"""Create a {req.target_scenes}-scene MATURE/ADULT story outline for:
+
+Title: {v.title}
+Description: {v.logline or "A compelling adult visual story"}
+Style: {visual_style}
+Tone: {tone_desc}
+Goal: {goal}
+Content Rating: MATURE (adult content allowed)
+
+Remember: This is mature mode - include sensual descriptions, fan service elements, and adult themes as appropriate for the story. Do not censor or tone down the content.
+
+Generate the complete JSON now:"""
+    else:
+        user_prompt = f"""Create a {req.target_scenes}-scene story outline for:
 
 Title: {v.title}
 Description: {v.logline or "A compelling visual story"}
@@ -970,138 +1235,247 @@ Generate the complete JSON now:"""
     print(f"[Outline] Generating outline with model: {model}")
     print(f"[Outline] Title: {v.title}, Scenes: {req.target_scenes}")
 
-    try:
-        # Call LLM to generate outline - use response_format="json" for better results
-        response = await chat_ollama(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            base_url=base_url,
-            model=model,
-            temperature=0.7,
-            max_tokens=4000,
-            response_format="json",  # Tell Ollama to output JSON
-        )
+    # Determine max_tokens based on model
+    # DeepSeek R1 and other "thinking" models need more tokens as they use tokens for reasoning
+    is_deepseek = "deepseek" in model.lower()
+    is_thinking_model = is_deepseek or "r1" in model.lower() or "reasoning" in model.lower()
 
-        # Extract content from the OpenAI-compatible response format
-        # chat_ollama returns: {"choices": [{"message": {"content": ...}}], "provider_raw": ...}
-        response_text = ""
-        if isinstance(response, dict):
-            choices = response.get("choices", [])
-            if choices and isinstance(choices, list) and len(choices) > 0:
-                message = choices[0].get("message", {})
-                response_text = message.get("content", "")
-            # Fallback to direct content key
-            if not response_text:
-                response_text = response.get("content", "")
-        else:
-            response_text = str(response)
+    # Base tokens needed: ~300 tokens per scene for outline content
+    base_tokens = req.target_scenes * 400 + 500  # scenes + overhead
 
-        print(f"[Outline] Response length: {len(response_text)} chars")
-        print(f"[Outline] Response preview: {response_text[:300]}...")
+    if is_thinking_model:
+        # Thinking models may use 2-3x tokens for reasoning
+        max_tokens = max(8000, base_tokens * 3)
+        print(f"[Outline] Using extended max_tokens={max_tokens} for thinking model")
+    else:
+        max_tokens = max(4000, base_tokens)
 
-        if not response_text.strip():
-            raise ValueError("LLM returned empty response. Please try again or check Ollama is running.")
+    # Retry configuration
+    max_retries = 2
+    last_error = None
+    partial_outline = None
 
-        # Try to extract JSON from the response - handle multiple formats
-        import re
+    for attempt in range(max_retries + 1):
+        try:
+            if attempt > 0:
+                print(f"[Outline] Retry attempt {attempt}/{max_retries}")
+                # On retry, increase tokens further
+                max_tokens = int(max_tokens * 1.5)
 
-        # Clean up response - remove markdown code blocks if present
-        cleaned = response_text.strip()
-        if cleaned.startswith("```json"):
-            cleaned = cleaned[7:]
-        elif cleaned.startswith("```"):
-            cleaned = cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
+            # Call LLM to generate outline - use response_format="json" for better results
+            response = await chat_ollama(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                base_url=base_url,
+                model=model,
+                temperature=0.7,
+                max_tokens=max_tokens,
+                response_format="json",  # Tell Ollama to output JSON
+            )
 
-        outline = None
+            # Extract content from the OpenAI-compatible response format
+            # chat_ollama returns: {"choices": [{"message": {"content": ...}}], "provider_raw": ...}
+            response_text = ""
+            provider_raw = {}
+            if isinstance(response, dict):
+                choices = response.get("choices", [])
+                if choices and isinstance(choices, list) and len(choices) > 0:
+                    message = choices[0].get("message", {})
+                    response_text = message.get("content", "")
+                # Fallback to direct content key
+                if not response_text:
+                    response_text = response.get("content", "")
+                # Get provider raw for truncation detection
+                provider_raw = response.get("provider_raw", {})
+            else:
+                response_text = str(response)
 
-        # Try 1: Parse cleaned text directly if it starts with {
-        if cleaned.startswith("{"):
-            try:
-                outline = json.loads(cleaned)
-                print("[Outline] Parsed JSON directly from cleaned response")
-            except json.JSONDecodeError as e:
-                print(f"[Outline] Direct parse failed: {e}")
+            print(f"[Outline] Response length: {len(response_text)} chars")
+            print(f"[Outline] Response preview: {response_text[:300]}...")
 
-        # Try 2: Find JSON object in the text using brace matching
-        if not outline:
-            start_idx = response_text.find("{")
-            if start_idx != -1:
-                depth = 0
-                end_idx = start_idx
-                in_string = False
-                escape_next = False
+            # Check for truncation indicators from Ollama
+            done_reason = provider_raw.get("done_reason", "")
+            if done_reason == "length":
+                print(f"[Outline] WARNING: Response was truncated (done_reason=length)")
 
-                for i, char in enumerate(response_text[start_idx:], start_idx):
-                    if escape_next:
-                        escape_next = False
-                        continue
-                    if char == "\\":
-                        escape_next = True
-                        continue
-                    if char == '"' and not escape_next:
-                        in_string = not in_string
-                        continue
-                    if in_string:
-                        continue
-                    if char == "{":
-                        depth += 1
-                    elif char == "}":
-                        depth -= 1
-                        if depth == 0:
-                            end_idx = i + 1
-                            break
+            if not response_text.strip():
+                last_error = "LLM returned empty response. Please try again or check Ollama is running."
+                continue
 
-                if end_idx > start_idx:
-                    json_str = response_text[start_idx:end_idx]
-                    try:
-                        outline = json.loads(json_str)
-                        print(f"[Outline] Parsed JSON via brace matching ({len(json_str)} chars)")
-                    except json.JSONDecodeError as e:
-                        print(f"[Outline] Brace match parse failed: {e}")
+            # Check if response appears truncated
+            is_truncated = _is_truncated_json(response_text)
+            if is_truncated:
+                print(f"[Outline] Response appears truncated, attempting repair...")
 
-        # Try 3: Regex fallback for simpler cases
-        if not outline:
-            json_match = re.search(r'\{[\s\S]*\}', response_text)
-            if json_match:
+            # Clean up response - remove markdown code blocks if present
+            cleaned = response_text.strip()
+            if cleaned.startswith("```json"):
+                cleaned = cleaned[7:]
+            elif cleaned.startswith("```"):
+                cleaned = cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+
+            outline = None
+
+            # Try 1: Parse cleaned text directly if it starts with {
+            if cleaned.startswith("{"):
                 try:
-                    outline = json.loads(json_match.group())
-                    print("[Outline] Parsed JSON via regex")
+                    outline = json.loads(cleaned)
+                    print("[Outline] Parsed JSON directly from cleaned response")
                 except json.JSONDecodeError as e:
-                    print(f"[Outline] Regex parse failed: {e}")
+                    print(f"[Outline] Direct parse failed: {e}")
 
-        if not outline:
-            # Log the full response for debugging
-            print(f"[Outline] FAILED - Full response:\n{response_text}")
-            raise ValueError("No valid JSON found in response. The AI model may need a different prompt format.")
+            # Try 2: Find JSON object in the text using brace matching
+            if not outline:
+                start_idx = response_text.find("{")
+                if start_idx != -1:
+                    depth = 0
+                    end_idx = start_idx
+                    in_string = False
+                    escape_next = False
 
-        # Validate outline has required fields
-        if "scenes" not in outline or not isinstance(outline.get("scenes"), list):
-            print(f"[Outline] Invalid outline structure: {list(outline.keys())}")
-            raise ValueError("Outline missing 'scenes' array")
+                    for i, char in enumerate(response_text[start_idx:], start_idx):
+                        if escape_next:
+                            escape_next = False
+                            continue
+                        if char == "\\":
+                            escape_next = True
+                            continue
+                        if char == '"' and not escape_next:
+                            in_string = not in_string
+                            continue
+                        if in_string:
+                            continue
+                        if char == "{":
+                            depth += 1
+                        elif char == "}":
+                            depth -= 1
+                            if depth == 0:
+                                end_idx = i + 1
+                                break
 
-        if len(outline["scenes"]) == 0:
-            raise ValueError("Outline has no scenes")
+                    if end_idx > start_idx:
+                        json_str = response_text[start_idx:end_idx]
+                        try:
+                            outline = json.loads(json_str)
+                            print(f"[Outline] Parsed JSON via brace matching ({len(json_str)} chars)")
+                        except json.JSONDecodeError as e:
+                            print(f"[Outline] Brace match parse failed: {e}")
 
-        print(f"[Outline] SUCCESS - Generated {len(outline['scenes'])} scenes")
+            # Try 3: Regex fallback for simpler cases
+            if not outline:
+                json_match = re.search(r'\{[\s\S]*\}', response_text)
+                if json_match:
+                    try:
+                        outline = json.loads(json_match.group())
+                        print("[Outline] Parsed JSON via regex")
+                    except json.JSONDecodeError as e:
+                        print(f"[Outline] Regex parse failed: {e}")
 
-        # Store outline in project metadata
-        update_video(video_id, metadata={"story_outline": outline})
+            # Try 4: Attempt to repair truncated JSON
+            if not outline and is_truncated:
+                print("[Outline] Attempting JSON repair for truncated response...")
+                partial_outline = _extract_partial_outline(cleaned)
+                if partial_outline:
+                    scene_count = len(partial_outline.get("scenes", []))
+                    print(f"[Outline] Repair successful! Recovered {scene_count} scenes")
+                    if scene_count >= 2:  # Accept if we got at least 2 valid scenes
+                        outline = partial_outline
+                        outline["_warning"] = "Response was truncated and repaired. Some scenes may be incomplete."
 
+            if not outline:
+                # Log the full response for debugging (truncated to prevent log spam)
+                log_text = response_text[:2000] + "..." if len(response_text) > 2000 else response_text
+                print(f"[Outline] FAILED - Response (truncated for log):\n{log_text}")
+                last_error = "No valid JSON found in response. The AI model may need a different prompt format."
+
+                # If truncated, provide more specific error
+                if is_truncated:
+                    last_error = f"Response was truncated (got {len(response_text)} chars). Try using a different model or reducing scene count."
+
+                # Store partial for potential use
+                if partial_outline:
+                    last_error = f"Response was truncated but recovered {len(partial_outline.get('scenes', []))} scenes."
+
+                continue
+
+            # Validate outline has required fields
+            if "scenes" not in outline or not isinstance(outline.get("scenes"), list):
+                print(f"[Outline] Invalid outline structure: {list(outline.keys())}")
+                last_error = "Outline missing 'scenes' array"
+                continue
+
+            if len(outline["scenes"]) == 0:
+                last_error = "Outline has no scenes"
+                continue
+
+            # Ensure all scenes have required fields with defaults
+            for i, scene in enumerate(outline["scenes"]):
+                if not scene.get("negative_prompt"):
+                    scene["negative_prompt"] = DEFAULT_NEGATIVE_PROMPT
+                if not scene.get("duration_sec"):
+                    scene["duration_sec"] = req.scene_duration
+                if not scene.get("scene_number"):
+                    scene["scene_number"] = i + 1
+
+            print(f"[Outline] SUCCESS - Generated {len(outline['scenes'])} scenes")
+
+            # Store outline in project metadata
+            update_video(video_id, metadata={"story_outline": outline})
+
+            result = {
+                "ok": True,
+                "outline": outline,
+                "model_used": model,
+            }
+
+            # Add warnings if applicable
+            if outline.get("_repaired"):
+                result["warning"] = "Response was truncated and automatically repaired."
+            if outline.get("_warning"):
+                result["warning"] = outline.pop("_warning")
+
+            return result
+
+        except json.JSONDecodeError as e:
+            last_error = f"Failed to parse AI response: {str(e)}"
+            print(f"[Outline] JSON error on attempt {attempt}: {e}")
+            continue
+        except Exception as e:
+            last_error = f"Failed to generate outline: {str(e)}"
+            print(f"[Outline] Error on attempt {attempt}: {e}")
+            continue
+
+    # All retries exhausted - return error response instead of raising 500
+    # Check if we have a partial outline we can use
+    if partial_outline and len(partial_outline.get("scenes", [])) >= 2:
+        print(f"[Outline] Using partial outline with {len(partial_outline['scenes'])} scenes after retries exhausted")
+        update_video(video_id, metadata={"story_outline": partial_outline})
         return {
             "ok": True,
-            "outline": outline,
+            "outline": partial_outline,
             "model_used": model,
+            "warning": f"Response was truncated. Only {len(partial_outline['scenes'])} of {req.target_scenes} scenes were generated. You can generate more scenes manually.",
+            "partial": True,
         }
 
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to parse AI response: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate outline: {str(e)}")
+    # Return structured error response (not 500)
+    return {
+        "ok": False,
+        "error": "outline_generation_failed",
+        "message": last_error or "Failed to generate outline after multiple attempts",
+        "model_used": model,
+        "hints": [
+            "Try using a different LLM model (llama3:8b recommended)",
+            f"Reduce the number of scenes (currently {req.target_scenes})",
+            "Check that Ollama is running and responsive",
+            "The model may have run out of tokens - try a model with larger context",
+        ],
+    }
 
 
 @router.get("/videos/{video_id}/outline")
@@ -1177,6 +1551,8 @@ async def generate_scene_from_outline(
     """
     Generate a scene based on the story outline.
     Uses the pre-planned scene outline to create the scene.
+
+    Returns ok=False with reason if outline is exhausted (instead of 400 error).
     """
     v = get_video(video_id)
     if not v:
@@ -1186,11 +1562,23 @@ async def generate_scene_from_outline(
     outline = metadata.get("story_outline")
 
     if not outline or not outline.get("scenes"):
-        raise HTTPException(status_code=400, detail="No story outline found. Generate outline first.")
+        # Return structured response instead of 400 error
+        return {
+            "ok": False,
+            "reason": "no_outline",
+            "message": "No story outline found. Generate outline first or use continuation.",
+        }
 
     scenes = outline.get("scenes", [])
     if scene_index >= len(scenes):
-        raise HTTPException(status_code=400, detail=f"Scene index {scene_index} out of range. Outline has {len(scenes)} scenes.")
+        # Return structured response instead of 400 error - allows frontend to gracefully fallback
+        return {
+            "ok": False,
+            "reason": "outline_exhausted",
+            "message": f"Outline has {len(scenes)} scenes. Scene index {scene_index} is beyond the outline.",
+            "outline_scene_count": len(scenes),
+            "requested_index": scene_index,
+        }
 
     scene_plan = scenes[scene_index]
 
@@ -1211,6 +1599,224 @@ async def generate_scene_from_outline(
         "from_outline": True,
         "scene_plan": scene_plan,
     }
+
+
+@router.post("/videos/{video_id}/scenes/generate-continuation")
+async def generate_scene_continuation(
+    video_id: str,
+    ollama_base_url: Optional[str] = None,
+    ollama_model: Optional[str] = None,
+):
+    """
+    Generate a continuation scene using AI based on previous scene context.
+
+    This endpoint is used when the story outline has been exhausted but the user
+    wants to continue the story. It uses the previous scenes and project context
+    to generate a coherent continuation.
+    """
+    from ..llm import chat_ollama
+    from ..config import OLLAMA_BASE_URL, OLLAMA_MODEL
+    import json
+
+    v = get_video(video_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    # Get existing scenes for context
+    existing_scenes = list_scenes(video_id)
+    if not existing_scenes:
+        raise HTTPException(status_code=400, detail="No existing scenes to continue from. Create a first scene or generate from outline.")
+
+    # Get project settings
+    metadata = v.metadata if hasattr(v, 'metadata') and v.metadata else {}
+    outline = metadata.get("story_outline", {})
+    tags = v.tags if hasattr(v, 'tags') and v.tags else []
+
+    # Extract visual style and tones from tags
+    visual_style = "cinematic"
+    tones = []
+    project_llm_model = None
+
+    for tag in tags:
+        if tag.startswith("visual:"):
+            visual_style = tag.replace("visual:", "").replace("_", " ")
+        elif tag.startswith("tone:"):
+            tones.append(tag.replace("tone:", "").replace("_", " "))
+        elif tag.startswith("llm:"):
+            project_llm_model = tag.replace("llm:", "")
+
+    tone_desc = ", ".join(tones) if tones else "documentary, calm"
+
+    # Get the last 2-3 scenes for context
+    context_scenes = existing_scenes[-3:] if len(existing_scenes) >= 3 else existing_scenes
+    scene_context = []
+    for i, scene in enumerate(context_scenes):
+        scene_context.append({
+            "scene_number": len(existing_scenes) - len(context_scenes) + i + 1,
+            "narration": scene.narration or "",
+            "image_prompt": scene.imagePrompt or "",
+        })
+
+    next_scene_number = len(existing_scenes) + 1
+
+    # Check content rating
+    content_rating = v.contentRating if hasattr(v, 'contentRating') else "sfw"
+    mature_mode_enabled = org_allows_mature() and content_rating == "mature"
+
+    # Build the continuation prompt
+    if mature_mode_enabled:
+        content_instructions = """
+CONTENT MODE: MATURE/ADULT
+- You are allowed to generate sensual, romantic, and adult content
+- Include appropriate fan service, intimate moments, and detailed physical descriptions
+- Match the tone of the previous scenes while continuing the story"""
+    else:
+        content_instructions = """
+CONTENT MODE: SAFE FOR WORK
+- Keep content appropriate for general audiences
+- Focus on storytelling, emotion, and visual interest"""
+
+    system_prompt = f"""You are a professional screenwriter continuing a visual story. Generate the next scene as a JSON object.
+
+STORY CONTEXT:
+Title: {v.title}
+Description: {v.logline or "A compelling visual story"}
+Visual Style: {visual_style}
+Tone: {tone_desc}
+Story Arc: {json.dumps(outline.get("story_arc", {})) if outline.get("story_arc") else "Continue naturally"}
+{content_instructions}
+
+PREVIOUS SCENES FOR CONTEXT:
+{json.dumps(scene_context, indent=2)}
+
+Generate the next scene (Scene {next_scene_number}) that:
+1. Continues the story naturally from where it left off
+2. Maintains consistency with characters, setting, and tone
+3. Advances the plot or character development
+4. Creates a vivid image prompt that matches the new narration
+
+Output ONLY valid JSON with this exact structure:
+{{
+  "scene_number": {next_scene_number},
+  "title": "Scene Title",
+  "description": "Brief scene description",
+  "narration": "2-3 sentences of narration text that continues the story",
+  "image_prompt": "{visual_style} style, detailed visual description of the scene matching the narration, high quality, masterpiece",
+  "negative_prompt": "blurry, low quality, text, watermark, ugly, deformed, duplicate, clone, multiple people, two heads, split image"
+}}
+
+CRITICAL: The narration and image_prompt MUST continue the story from the previous scenes, not repeat or contradict them."""
+
+    user_prompt = f"""Generate Scene {next_scene_number} continuing from the previous scenes shown above.
+
+The new scene should naturally follow the story progression and maintain visual consistency.
+
+Output the JSON now:"""
+
+    base_url = ollama_base_url or OLLAMA_BASE_URL
+    model = ollama_model or project_llm_model or OLLAMA_MODEL
+
+    # If no model specified, try to find one
+    if not model:
+        try:
+            import httpx
+            models_url = f"{base_url.rstrip('/')}/api/tags"
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(models_url)
+                if resp.status_code == 200:
+                    models_data = resp.json()
+                    available_models = [m.get("name") for m in models_data.get("models", [])]
+                    for preferred in ["llama3:8b", "llama3:latest"]:
+                        if preferred in available_models:
+                            model = preferred
+                            break
+                    if not model and available_models:
+                        model = available_models[0]
+        except Exception:
+            pass
+
+    if not model:
+        raise HTTPException(status_code=400, detail="No LLM model available. Please configure Ollama.")
+
+    print(f"[Continuation] Generating scene {next_scene_number} with model: {model}")
+
+    try:
+        response = await chat_ollama(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            base_url=base_url,
+            model=model,
+            temperature=0.7,
+            max_tokens=2000,
+            response_format="json",
+        )
+
+        # Extract content
+        response_text = ""
+        if isinstance(response, dict):
+            choices = response.get("choices", [])
+            if choices and isinstance(choices, list) and len(choices) > 0:
+                message = choices[0].get("message", {})
+                response_text = message.get("content", "")
+            if not response_text:
+                response_text = response.get("content", "")
+        else:
+            response_text = str(response)
+
+        if not response_text.strip():
+            raise ValueError("LLM returned empty response")
+
+        # Parse JSON
+        cleaned = response_text.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        scene_data = None
+        try:
+            scene_data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Try to extract JSON from response
+            json_match = re.search(r'\{[\s\S]*\}', response_text)
+            if json_match:
+                scene_data = json.loads(json_match.group())
+
+        if not scene_data:
+            raise ValueError("Could not parse scene data from AI response")
+
+        # Create the scene
+        scene = create_scene(video_id, StudioSceneCreate(
+            narration=scene_data.get("narration", ""),
+            imagePrompt=scene_data.get("image_prompt", ""),
+            negativePrompt=scene_data.get("negative_prompt", DEFAULT_NEGATIVE_PROMPT),
+            durationSec=scene_data.get("duration_sec", 5.0),
+        ))
+
+        if not scene:
+            raise HTTPException(status_code=500, detail="Failed to create scene")
+
+        print(f"[Continuation] Successfully generated scene {next_scene_number}")
+
+        return {
+            "ok": True,
+            "scene": scene.model_dump(),
+            "from_continuation": True,
+            "scene_data": scene_data,
+            "model_used": model,
+        }
+
+    except json.JSONDecodeError as e:
+        print(f"[Continuation] JSON parse error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse AI response: {str(e)}")
+    except Exception as e:
+        print(f"[Continuation] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate continuation: {str(e)}")
 
 
 # ============================================================================

@@ -28,12 +28,14 @@ interface TVModeContainerProps {
   onGenerateNext: () => Promise<any>;
   onEnsureImage?: (scene: TVScene) => void;
   onContinueChapter?: () => Promise<ChapterData | null>;
+  onSyncOutline?: () => Promise<void>;
 }
 
 export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   onGenerateNext,
   onEnsureImage,
   onContinueChapter,
+  onSyncOutline,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const controlsTimerRef = useRef<number | null>(null);
@@ -41,6 +43,7 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   const prefetchInFlightRef = useRef(false);
   const [showChapterTransition, setShowChapterTransition] = useState(false);
   const [waitingForTTS, setWaitingForTTS] = useState(false);
+  const [waitingForNextScene, setWaitingForNextScene] = useState(false);
 
   const {
     isActive,
@@ -79,24 +82,32 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   const currentImageReady = useTVModeStore(selectCurrentSceneImageReady);
   const isWaitingForImage = useTVModeStore(selectIsWaitingForImage);
 
-  // Callback when TTS finishes speaking a scene - advance to next scene
+  // Callback when TTS finishes speaking a scene - advance when next scene is ready
+  // TTS drives continuous narration, but waits for next scene (content + image) before advancing
   const handleSceneNarrationEnd = useCallback(() => {
-    console.log("[TV Mode] TTS narration finished, advancing scene...");
+    console.log("[TV Mode] TTS narration finished for current scene");
     setWaitingForTTS(false);
 
-    // Advance to next scene (similar to timer-based advance)
     if (isLastScene) {
-      if (scenes.length < 24 && !isPrefetching && !isStoryComplete) {
-        // Trigger prefetch for more scenes
-        // handlePrefetch will be called below
+      // On last scene - check if we should generate more or end
+      if (scenes.length < 24 && !isPrefetching && !isStoryComplete && settings.autoGenerateScenes) {
+        // More scenes can be generated - set waiting state, prefetch effect will handle generation
+        console.log("[TV Mode] Last scene finished, waiting for new scene generation...");
+        setWaitingForNextScene(true);
       } else if (!isStoryComplete && !isPrefetching) {
         nextScene(); // This will trigger end screen
       }
     } else if (nextSceneReady) {
+      // Next scene is ready (content + image) - advance immediately
+      console.log("[TV Mode] Next scene ready, advancing...");
+      setWaitingForNextScene(false);
       nextScene();
+    } else {
+      // Next scene exists but not ready yet - wait for it
+      console.log("[TV Mode] Waiting for next scene to be ready (image generating)...");
+      setWaitingForNextScene(true);
     }
-    // If next scene isn't ready, the timer effect will handle waiting
-  }, [isLastScene, scenes.length, isPrefetching, isStoryComplete, nextSceneReady, nextScene]);
+  }, [isLastScene, scenes.length, isPrefetching, isStoryComplete, nextSceneReady, nextScene, settings.autoGenerateScenes]);
 
   // TTS Playback Integration
   const {
@@ -188,16 +199,28 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     setWaitingForTTS(false);
   }, [currentSceneIndex]);
 
-  // Scene auto-advance timer - waits for TTS when enabled
+  // Reset waitingForNextScene when scene changes
+  useEffect(() => {
+    setWaitingForNextScene(false);
+  }, [currentSceneIndex]);
+
+  // Advance to next scene when it becomes ready (while we're waiting for it)
+  useEffect(() => {
+    if (!waitingForNextScene || !isPlaying) return;
+
+    if (nextSceneReady) {
+      // Next scene is now ready - advance!
+      console.log("[TV Mode] Next scene now ready, advancing...");
+      setWaitingForNextScene(false);
+      nextScene();
+    }
+  }, [waitingForNextScene, nextSceneReady, isPlaying, nextScene]);
+
+  // Scene auto-advance timer - TTS drives the flow when enabled, timer only for non-TTS mode
   useEffect(() => {
     if (sceneTimerRef.current) {
       clearTimeout(sceneTimerRef.current);
       sceneTimerRef.current = null;
-    }
-
-    // Don't start timer if current scene's image isn't ready yet
-    if (!currentImageReady && currentScene) {
-      return;
     }
 
     // Don't start timer if story is complete or chapter transition is showing
@@ -205,23 +228,35 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
       return;
     }
 
-    // If TTS is enabled and speaking, wait for TTS to finish (via onSceneNarrationEnd callback)
-    // Don't use fixed timer in this case
-    if (ttsEnabled && isSpeaking && currentScene?.narration) {
-      console.log("[TV Mode] TTS is speaking, waiting for narration to finish before advancing...");
+    // When TTS is enabled, let TTS drive scene advancement (via onSceneNarrationEnd callback)
+    // TTS finishes speaking, then waits for next scene to be ready before advancing
+    if (ttsEnabled && currentScene?.narration) {
+      // TTS is controlling the flow - it will call onSceneNarrationEnd when done
+      if (isSpeaking || waitingForTTS) {
+        console.log("[TV Mode] TTS driving flow, narration in progress...");
+        return;
+      }
+      // Waiting for next scene to be ready (image generating)
+      if (waitingForNextScene) {
+        console.log("[TV Mode] TTS finished, waiting for next scene to be ready...");
+        return;
+      }
+      // TTS enabled but not speaking yet - let auto-speak effect handle it
       return;
     }
 
-    // If we're still waiting for TTS to finish (callback hasn't fired yet), don't start timer
-    if (waitingForTTS) {
+    // Non-TTS mode: use timer and wait for images
+    // Don't start timer if current scene's image isn't ready yet (visual-first mode)
+    if (!currentImageReady && currentScene) {
       return;
     }
 
     if (isPlaying && currentScene && !showEndScreen) {
       sceneTimerRef.current = window.setTimeout(() => {
         if (isLastScene) {
-          // Trigger prefetch for more scenes or show end screen
-          if (scenes.length < 24 && !isPrefetching && !isStoryComplete) {
+          // Only auto-generate if setting is enabled
+          if (scenes.length < 24 && !isPrefetching && !isStoryComplete && settings.autoGenerateScenes) {
+            // Trigger prefetch for more scenes
             handlePrefetch();
           } else if (!isStoryComplete && !isPrefetching) {
             // Only advance to end screen if not prefetching and story not complete
@@ -243,7 +278,7 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- handlePrefetch and nextScene are stable callbacks
-  }, [isPlaying, currentSceneIndex, currentScene, sceneDuration, isLastScene, showEndScreen, nextSceneReady, currentImageReady, isStoryComplete, showChapterTransition, isPrefetching, scenes.length, ttsEnabled, isSpeaking, waitingForTTS]);
+  }, [isPlaying, currentSceneIndex, currentScene, sceneDuration, isLastScene, showEndScreen, nextSceneReady, currentImageReady, isStoryComplete, showChapterTransition, isPrefetching, scenes.length, ttsEnabled, isSpeaking, waitingForTTS, waitingForNextScene, settings.autoGenerateScenes]);
 
   // Trigger image generation for current scene if needed
   useEffect(() => {
@@ -275,25 +310,38 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     setPrefetchError(null);
 
     try {
+      console.log("[TV Mode] Starting scene generation...");
       const newScene = await onGenerateNext();
       if (newScene) {
         addScene(newScene);
+        console.log("[TV Mode] New scene generated successfully:", newScene.idx);
+
+        // Sync outline after successful scene generation
+        if (onSyncOutline) {
+          try {
+            await onSyncOutline();
+            console.log("[TV Mode] Outline synced after scene generation");
+          } catch (syncError) {
+            console.warn("[TV Mode] Failed to sync outline:", syncError);
+          }
+        }
       }
       // If null returned, story is complete (handled by caller)
     } catch (error: any) {
+      console.error("[TV Mode] Scene generation failed:", error);
       setPrefetchError(error.message || "Failed to generate next scene");
     } finally {
       setPrefetching(false);
       prefetchInFlightRef.current = false;
     }
-  }, [isPrefetching, isStoryComplete, scenes.length, onGenerateNext, addScene, setPrefetching, setPrefetchError]);
+  }, [isPrefetching, isStoryComplete, scenes.length, onGenerateNext, addScene, setPrefetching, setPrefetchError, onSyncOutline]);
 
-  // Trigger prefetch when playing and near end (but not if story is complete)
+  // Trigger prefetch when playing and near end (but not if story is complete or auto-generate is disabled)
   useEffect(() => {
-    if (isPlaying && isLastScene && scenes.length < 24 && !isPrefetching && !isStoryComplete) {
+    if (isPlaying && isLastScene && scenes.length < 24 && !isPrefetching && !isStoryComplete && settings.autoGenerateScenes) {
       handlePrefetch();
     }
-  }, [isPlaying, isLastScene, scenes.length, isPrefetching, isStoryComplete, handlePrefetch]);
+  }, [isPlaying, isLastScene, scenes.length, isPrefetching, isStoryComplete, handlePrefetch, settings.autoGenerateScenes]);
 
   // Show chapter transition when story is complete (saga mode)
   useEffect(() => {

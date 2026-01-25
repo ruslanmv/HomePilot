@@ -120,6 +120,12 @@ export function useTTSPlayback({
   const lastSpokenSceneRef = useRef<number>(-1);
   const speakingPromiseRef = useRef<Promise<boolean> | null>(null);
 
+  // Use ref to always call the latest callback (avoids stale closure issues)
+  const onSceneNarrationEndRef = useRef(onSceneNarrationEnd);
+  useEffect(() => {
+    onSceneNarrationEndRef.current = onSceneNarrationEnd;
+  }, [onSceneNarrationEnd]);
+
   // Initialize and load voices
   useEffect(() => {
     if (!svc) return;
@@ -184,7 +190,8 @@ export function useTTSPlayback({
         onEnd: () => {
           setIsSpeaking(false);
           setIsPaused(false);
-          onSceneNarrationEnd?.();
+          // Use ref to always call the latest callback (avoids stale closure)
+          onSceneNarrationEndRef.current?.();
         },
         onError: (error: string) => {
           console.warn("[TTS] Speech error:", error);
@@ -198,7 +205,7 @@ export function useTTSPlayback({
       setIsSpeaking(false);
       return false;
     }
-  }, [svc, currentScene?.narration, ttsEnabled, onSceneNarrationEnd]);
+  }, [svc, currentScene?.narration, ttsEnabled]);
 
   // Stop speaking
   const stopSpeaking = useCallback(() => {

@@ -412,7 +412,7 @@ export function CreatorStudioEditor({
   }, []);
 
   // Open settings modal
-  const openSettingsModal = useCallback(() => {
+  const openSettingsModal = useCallback(async () => {
     if (!project) return;
 
     setSettingsTitle(project.title || "");
@@ -433,8 +433,21 @@ export function CreatorStudioEditor({
     const llmTag = tags.find((t: string) => t.startsWith("llm:"));
     setSettingsLLMModel(llmTag ? llmTag.replace("llm:", "") : selectedLLMModel);
 
+    // Fetch available models to ensure the dropdown is populated
+    try {
+      const llmData = await fetchApi<{ models: { id: string; name?: string }[] }>(
+        '/models?provider=ollama'
+      );
+      if (llmData.models) {
+        const models = llmData.models.map(m => ({ id: m.id, name: m.name || m.id }));
+        setAvailableLLMModels(models);
+      }
+    } catch (e) {
+      console.log('[CreatorStudioEditor] Failed to fetch LLM models for settings:', e);
+    }
+
     setShowSettingsModal(true);
-  }, [project, parseTagsFromProject, selectedLLMModel]);
+  }, [project, parseTagsFromProject, selectedLLMModel, fetchApi]);
 
   // Toggle tone in settings
   const toggleSettingsTone = useCallback((tone: string) => {
@@ -1047,11 +1060,37 @@ export function CreatorStudioEditor({
           return;
         }
       } catch (outlineErr: any) {
-        // Outline not available or scene index out of range - fall back to generic
-        console.log('[CreatorStudioEditor] No outline scene available, using fallback:', outlineErr.message);
+        // Outline not available or scene index out of range - try AI continuation
+        console.log('[CreatorStudioEditor] No outline scene available, trying AI continuation:', outlineErr.message);
       }
 
-      // Fallback: Generate a scene based on project settings (no outline)
+      // Second: Try AI-powered continuation based on previous scenes
+      if (scenes.length > 0) {
+        try {
+          console.log('[CreatorStudioEditor] Generating AI continuation from previous context...');
+          const contData = await postApi<{ ok: boolean; scene: Scene; from_continuation?: boolean }>(
+            `/studio/videos/${projectId}/scenes/generate-continuation`,
+            {}
+          );
+
+          if (contData.ok && contData.scene) {
+            setScenes((prev) => [...prev, contData.scene]);
+            setCurrentSceneIndex(nextSceneIndex);
+            setLastSaved(new Date());
+
+            console.log(`[CreatorStudioEditor] Generated scene ${nextSceneIndex + 1} via AI continuation`);
+            generateImageForScene(contData.scene.id, contData.scene.imagePrompt);
+
+            // Sync outline with new scene
+            syncOutlineWithScenes();
+            return;
+          }
+        } catch (contErr: any) {
+          console.log('[CreatorStudioEditor] AI continuation failed, using fallback:', contErr.message);
+        }
+      }
+
+      // Final fallback: Generate a scene based on project settings (no outline, no AI)
       const sceneNum = scenes.length + 1;
       const visualStyle = getVisualStyle();
       const tones = getTones();
@@ -1107,10 +1146,29 @@ export function CreatorStudioEditor({
           return sceneToTVScene(data.scene);
         }
       } catch (outlineErr: any) {
-        console.log('[CreatorStudioEditor] TV Mode: No outline available, using fallback');
+        console.log('[CreatorStudioEditor] TV Mode: No outline available, trying AI continuation');
       }
 
-      // Fallback: Generate scene based on project settings
+      // Second: Try AI-powered continuation based on previous scenes
+      if (scenes.length > 0) {
+        try {
+          console.log('[CreatorStudioEditor] TV Mode: Generating AI continuation from previous context...');
+          const contData = await postApi<{ ok: boolean; scene: Scene; from_continuation?: boolean }>(
+            `/studio/videos/${projectId}/scenes/generate-continuation`,
+            {}
+          );
+
+          if (contData.ok && contData.scene) {
+            setScenes((prev) => [...prev, contData.scene]);
+            console.log(`[CreatorStudioEditor] TV Mode: Generated scene ${nextSceneIndex + 1} via AI continuation`);
+            return sceneToTVScene(contData.scene);
+          }
+        } catch (contErr: any) {
+          console.log('[CreatorStudioEditor] TV Mode: AI continuation failed, using fallback:', contErr.message);
+        }
+      }
+
+      // Final fallback: Generate scene based on project settings
       const sceneNum = scenes.length + 1;
       const visualStyle = getVisualStyle();
       const tones = getTones();
@@ -2332,6 +2390,7 @@ export function CreatorStudioEditor({
         <TVModeContainer
           onGenerateNext={generateNextForTVMode}
           onEnsureImage={ensureImageForTVMode}
+          onSyncOutline={syncOutlineWithScenes}
         />
       )}
 
