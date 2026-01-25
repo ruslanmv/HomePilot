@@ -9,7 +9,7 @@
 
 This repository contains the **"Home Edition"**: a production-oriented stack designed to run on a local machine (ideally with an NVIDIA GPU) using Docker Compose.
 
-![HomePilot UI](assets/2026-01-25-02-10-07.png)
+![HomePilot UI](assets/2026-01-25-09-38-39.png)
 
 ---
 
