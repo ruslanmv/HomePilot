@@ -30,6 +30,7 @@ from .config import (
     MEDIA_BASE_URL,
     LLM_MODEL,
     OLLAMA_BASE_URL,
+    EDIT_SESSION_URL,
 )
 from .orchestrator import orchestrate, handle_request
 from .providers import provider_info
@@ -498,7 +499,7 @@ async def settings(request: Request) -> JSONResponse:
 async def list_models(
     provider: str = Query("openai_compat", description="Provider to list models from"),
     base_url: Optional[str] = Query(None, description="Override base URL for the provider"),
-    model_type: Optional[str] = Query(None, description="For ComfyUI: 'image' or 'video'"),
+    model_type: Optional[str] = Query(None, description="For ComfyUI: 'image', 'video', or 'edit'"),
 ) -> JSONResponse:
     """
     List available models from a provider.
@@ -522,9 +523,15 @@ async def list_models(
                 models = scan_installed_models("image")
             elif model_type == "video":
                 models = scan_installed_models("video")
+            elif model_type == "edit":
+                models = scan_installed_models("edit")
             else:
-                # Return both if not specified
-                models = scan_installed_models("image") + scan_installed_models("video")
+                # Return all if not specified
+                models = (
+                    scan_installed_models("image")
+                    + scan_installed_models("video")
+                    + scan_installed_models("edit")
+                )
 
             return JSONResponse(
                 status_code=200,
@@ -784,7 +791,7 @@ class ModelInstallRequest(BaseModel):
     model_config = {"protected_namespaces": ()}
 
     provider: str = Field(..., description="Provider (ollama, comfyui, civitai)")
-    model_type: str = Field(..., description="Model type (chat, image, video)")
+    model_type: str = Field(..., description="Model type (chat, image, video, edit)")
     model_id: str = Field(..., description="Model ID to install")
     base_url: Optional[str] = Field(None, description="Optional base URL override")
     civitai_version_id: Optional[str] = Field(None, description="Civitai version ID (for civitai provider)")
@@ -801,10 +808,23 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
     - comfyui: Downloads from catalog
     - civitai: Downloads from Civitai by version ID (experimental)
     """
+    import logging
+    import sys
+
+    logger = logging.getLogger("homepilot.install")
+    logger.setLevel(logging.INFO)
+
+    # Ensure we have a handler
+    if not logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("[INSTALL] %(message)s"))
+        logger.addHandler(handler)
+
     try:
         script_path = Path(__file__).parent.parent.parent / "scripts" / "download.py"
 
         if not script_path.exists():
+            logger.error(f"Download script not found at {script_path}")
             return JSONResponse(
                 status_code=500,
                 content=_safe_err(
@@ -812,6 +832,8 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
                     code="script_not_found",
                 ),
             )
+
+        logger.info(f"Starting model installation: provider={req.provider}, model={req.model_id}")
 
         # Build command based on provider
         cmd = ["python3", str(script_path)]
@@ -838,10 +860,28 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
 
         elif req.provider == "ollama":
             # Ollama: Use ollama pull directly
+            logger.info(f"Pulling Ollama model: {req.model_id}")
             pull_cmd = ["ollama", "pull", req.model_id]
-            result = subprocess.run(pull_cmd, capture_output=True, text=True, timeout=300)
 
-            if result.returncode == 0:
+            # Use Popen to stream output to logs
+            process = subprocess.Popen(
+                pull_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+
+            output_lines = []
+            for line in iter(process.stdout.readline, ""):
+                line = line.rstrip()
+                if line:
+                    logger.info(f"  {line}")
+                    output_lines.append(line)
+            process.wait()
+
+            if process.returncode == 0:
+                logger.info(f"Successfully pulled Ollama model: {req.model_id}")
                 return JSONResponse(
                     status_code=200,
                     content={
@@ -849,13 +889,15 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
                         "message": f"Successfully pulled {req.model_id}",
                         "provider": "ollama",
                         "model_id": req.model_id,
+                        "output": "\n".join(output_lines),
                     },
                 )
             else:
+                logger.error(f"Failed to pull Ollama model: {req.model_id}")
                 return JSONResponse(
                     status_code=500,
                     content=_safe_err(
-                        f"Ollama pull failed: {result.stderr}",
+                        f"Ollama pull failed: {output_lines[-5:] if output_lines else 'Unknown error'}",
                         code="ollama_pull_failed",
                     ),
                 )
@@ -879,9 +921,31 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
         if req.civitai_api_key and req.provider == "civitai":
             env["CIVITAI_API_KEY"] = req.civitai_api_key
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env)
+        logger.info(f"Running download script: {' '.join(cmd)}")
 
-        if result.returncode == 0:
+        # Use Popen to stream output in real-time
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env=env,
+        )
+
+        output_lines = []
+        for line in iter(process.stdout.readline, ""):
+            line = line.rstrip()
+            if line:
+                logger.info(f"  {line}")
+                output_lines.append(line)
+                # Flush stdout to ensure logs appear immediately
+                sys.stdout.flush()
+
+        process.wait()
+
+        if process.returncode == 0:
+            logger.info(f"Successfully installed model: {req.model_id}")
             return JSONResponse(
                 status_code=200,
                 content={
@@ -889,19 +953,23 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
                     "message": f"Successfully installed {req.model_id}",
                     "provider": req.provider,
                     "model_id": req.model_id,
-                    "output": result.stdout,
+                    "output": "\n".join(output_lines),
                 },
             )
         else:
+            logger.error(f"Failed to install model: {req.model_id}")
+            # Get last few lines for error message
+            error_output = "\n".join(output_lines[-10:]) if output_lines else "Unknown error"
             return JSONResponse(
                 status_code=500,
                 content=_safe_err(
-                    f"Installation failed: {result.stderr or result.stdout}",
+                    f"Installation failed: {error_output}",
                     code="installation_failed",
                 ),
             )
 
     except subprocess.TimeoutExpired:
+        logger.error(f"Installation timed out for model: {req.model_id}")
         return JSONResponse(
             status_code=500,
             content=_safe_err(
@@ -910,12 +978,151 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
             ),
         )
     except Exception as e:
+        logger.exception(f"Installation error for model {req.model_id}: {e}")
         return JSONResponse(
             status_code=500,
             content=_safe_err(
                 f"Installation error: {str(e)}",
                 code="installation_error",
             ),
+        )
+
+
+@app.get("/models/health")
+async def check_models_health(
+    model_type: Optional[str] = Query(None, description="Filter by model type: 'image', 'video', 'edit'"),
+    provider: Optional[str] = Query(None, description="Filter by provider: 'comfyui', 'civitai'"),
+) -> JSONResponse:
+    """
+    Check health status of all model download URLs.
+
+    Returns health information for each downloadable model including:
+    - status: 'healthy', 'unhealthy', 'timeout', 'error'
+    - http_status: HTTP response code
+    - response_time_ms: Time to check URL
+    - error_message: Error details if unhealthy
+
+    Use this to verify model sources before downloading.
+    """
+    import time
+    import requests
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    try:
+        # Load catalog
+        catalog_path = Path(__file__).parent / "model_catalog_data.json"
+        with open(catalog_path, "r", encoding="utf-8") as f:
+            catalog = json.load(f)
+
+        # Collect models to check
+        models_to_check = []
+        providers_data = catalog.get("providers", {})
+
+        for prov_name, prov_data in providers_data.items():
+            # Skip non-downloadable providers
+            if prov_name in ("ollama", "openai", "claude", "openai_compat", "watsonx"):
+                continue
+
+            if provider and prov_name != provider:
+                continue
+
+            for type_name, model_list in prov_data.items():
+                if model_type and type_name != model_type:
+                    continue
+
+                if not isinstance(model_list, list):
+                    continue
+
+                for model in model_list:
+                    download_url = model.get("download_url")
+                    if download_url:
+                        models_to_check.append({
+                            "id": model.get("id"),
+                            "label": model.get("label", model.get("id")),
+                            "provider": prov_name,
+                            "type": type_name,
+                            "url": download_url,
+                            "size_gb": model.get("size_gb"),
+                        })
+
+        def check_single_url(model_info):
+            """Check a single URL health."""
+            url = model_info["url"]
+            start = time.time()
+            try:
+                resp = requests.head(
+                    url,
+                    headers={"User-Agent": "HomePilot-HealthCheck/1.0"},
+                    timeout=10,
+                    allow_redirects=True,
+                )
+                elapsed_ms = int((time.time() - start) * 1000)
+
+                if resp.status_code < 400:
+                    status = "healthy"
+                    error = None
+                else:
+                    status = "unhealthy"
+                    error = f"HTTP {resp.status_code}"
+                    if "x-error-message" in resp.headers:
+                        error += f": {resp.headers['x-error-message']}"
+
+                return {
+                    **model_info,
+                    "status": status,
+                    "http_status": resp.status_code,
+                    "response_time_ms": elapsed_ms,
+                    "error": error,
+                }
+            except requests.exceptions.Timeout:
+                return {
+                    **model_info,
+                    "status": "timeout",
+                    "http_status": None,
+                    "response_time_ms": int((time.time() - start) * 1000),
+                    "error": "Request timed out",
+                }
+            except Exception as e:
+                return {
+                    **model_info,
+                    "status": "error",
+                    "http_status": None,
+                    "response_time_ms": int((time.time() - start) * 1000),
+                    "error": str(e),
+                }
+
+        # Run checks concurrently
+        results = []
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(check_single_url, m): m for m in models_to_check}
+            for future in as_completed(futures):
+                results.append(future.result())
+
+        # Calculate summary
+        healthy = len([r for r in results if r["status"] == "healthy"])
+        unhealthy = len([r for r in results if r["status"] == "unhealthy"])
+        timeout = len([r for r in results if r["status"] == "timeout"])
+        errors = len([r for r in results if r["status"] == "error"])
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "summary": {
+                    "total": len(results),
+                    "healthy": healthy,
+                    "unhealthy": unhealthy,
+                    "timeout": timeout,
+                    "error": errors,
+                },
+                "results": sorted(results, key=lambda x: (x["status"] != "healthy", x["type"], x["id"])),
+            },
+        )
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Health check failed: {str(e)}", code="health_check_error"),
         )
 
 
@@ -1598,3 +1805,192 @@ async def story_update_scene_image(inp: UpdateSceneImageIn) -> JSONResponse:
             return JSONResponse(status_code=404, content={"ok": False, "error": "Scene not found"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
+
+
+# =============================================================================
+# EDIT SESSION PROXY ROUTES
+# =============================================================================
+# These routes proxy requests to the edit-session sidecar service.
+# This allows the frontend to use a single backend URL for all requests.
+# =============================================================================
+
+# Create a shared httpx client for edit-session proxy
+_edit_session_client: Optional[httpx.AsyncClient] = None
+
+
+def get_edit_session_client() -> httpx.AsyncClient:
+    """Get or create the shared httpx client for edit-session proxy."""
+    global _edit_session_client
+    if _edit_session_client is None:
+        _edit_session_client = httpx.AsyncClient(
+            base_url=EDIT_SESSION_URL,
+            timeout=httpx.Timeout(60.0, connect=5.0),
+        )
+    return _edit_session_client
+
+
+@app.on_event("shutdown")
+async def close_edit_session_client():
+    """Clean up the httpx client on shutdown."""
+    global _edit_session_client
+    if _edit_session_client is not None:
+        await _edit_session_client.aclose()
+        _edit_session_client = None
+
+
+async def _proxy_to_edit_session(
+    request: Request,
+    path: str,
+    method: str = "GET",
+) -> JSONResponse:
+    """
+    Proxy a request to the edit-session sidecar service.
+    Forwards headers, query params, and body to the sidecar.
+    """
+    client = get_edit_session_client()
+
+    # Build URL with query params
+    url = f"/v1/edit-sessions/{path}"
+    if request.query_params:
+        url += f"?{request.query_params}"
+
+    # Forward relevant headers
+    headers = {}
+    if "authorization" in request.headers:
+        headers["authorization"] = request.headers["authorization"]
+    if "x-api-key" in request.headers:
+        headers["x-api-key"] = request.headers["x-api-key"]
+    if "content-type" in request.headers:
+        headers["content-type"] = request.headers["content-type"]
+
+    try:
+        # Get request body for non-GET requests
+        body = None
+        if method in ("POST", "PUT", "PATCH"):
+            body = await request.body()
+
+        # Make the proxied request
+        response = await client.request(
+            method=method,
+            url=url,
+            headers=headers,
+            content=body,
+        )
+
+        # Return the response
+        return JSONResponse(
+            status_code=response.status_code,
+            content=response.json() if response.content else None,
+        )
+
+    except httpx.ConnectError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "error": "Edit session service unavailable",
+                "detail": f"Cannot connect to edit-session service at {EDIT_SESSION_URL}",
+                "code": "edit_session_unavailable",
+            },
+        )
+    except httpx.TimeoutException:
+        return JSONResponse(
+            status_code=504,
+            content={
+                "ok": False,
+                "error": "Edit session service timeout",
+                "code": "edit_session_timeout",
+            },
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "error": f"Edit session proxy error: {str(e)}",
+                "code": "edit_session_proxy_error",
+            },
+        )
+
+
+@app.get("/v1/edit-sessions/{conversation_id}")
+async def get_edit_session(request: Request, conversation_id: str) -> JSONResponse:
+    """Get current state of an edit session (proxied to sidecar)."""
+    return await _proxy_to_edit_session(request, conversation_id, "GET")
+
+
+@app.delete("/v1/edit-sessions/{conversation_id}")
+async def delete_edit_session(request: Request, conversation_id: str) -> JSONResponse:
+    """Delete/clear an edit session (proxied to sidecar)."""
+    return await _proxy_to_edit_session(request, conversation_id, "DELETE")
+
+
+@app.post("/v1/edit-sessions/{conversation_id}/image")
+async def upload_edit_image(request: Request, conversation_id: str) -> JSONResponse:
+    """
+    Upload an image to start/update an edit session (proxied to sidecar).
+    Handles multipart form data.
+    """
+    client = get_edit_session_client()
+    url = f"/v1/edit-sessions/{conversation_id}/image"
+
+    # Forward headers
+    headers = {}
+    if "authorization" in request.headers:
+        headers["authorization"] = request.headers["authorization"]
+    if "x-api-key" in request.headers:
+        headers["x-api-key"] = request.headers["x-api-key"]
+
+    try:
+        # For file uploads, we need to forward the raw body with content-type
+        body = await request.body()
+        content_type = request.headers.get("content-type", "")
+
+        response = await client.post(
+            url,
+            content=body,
+            headers={**headers, "content-type": content_type},
+        )
+
+        return JSONResponse(
+            status_code=response.status_code,
+            content=response.json() if response.content else None,
+        )
+
+    except httpx.ConnectError:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "ok": False,
+                "error": "Edit session service unavailable",
+                "detail": f"Cannot connect to edit-session service at {EDIT_SESSION_URL}",
+                "code": "edit_session_unavailable",
+            },
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "error": f"Edit session proxy error: {str(e)}",
+                "code": "edit_session_proxy_error",
+            },
+        )
+
+
+@app.post("/v1/edit-sessions/{conversation_id}/message")
+async def send_edit_message(request: Request, conversation_id: str) -> JSONResponse:
+    """Send an edit instruction message (proxied to sidecar)."""
+    return await _proxy_to_edit_session(request, f"{conversation_id}/message", "POST")
+
+
+@app.post("/v1/edit-sessions/{conversation_id}/select")
+async def select_edit_image(request: Request, conversation_id: str) -> JSONResponse:
+    """Select an image from results as the new active image (proxied to sidecar)."""
+    return await _proxy_to_edit_session(request, f"{conversation_id}/select", "POST")
+
+
+@app.post("/v1/edit-sessions/{conversation_id}/revert")
+async def revert_edit_session(request: Request, conversation_id: str) -> JSONResponse:
+    """Revert to a previous state in the edit session history (proxied to sidecar)."""
+    return await _proxy_to_edit_session(request, f"{conversation_id}/revert", "POST")
