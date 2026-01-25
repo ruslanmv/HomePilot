@@ -186,8 +186,9 @@ async def _refine_prompt(
             if refined_prompt:
                 # CRITICAL: Always enhance the negative prompt to include anti-duplicate terms
                 # The LLM often returns weak negatives like "avoid blurry" - we need to fix that
+                # Pass positive prompt to detect multi-person scenes (couples, groups)
                 llm_negative = refined.get("negative_prompt", "")
-                enhanced_negative = enhance_negative_prompt(llm_negative)
+                enhanced_negative = enhance_negative_prompt(llm_negative, positive_prompt=refined_prompt)
 
                 result_dict = {
                     "prompt": refined_prompt,
