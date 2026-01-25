@@ -26,6 +26,7 @@ import ModelsView from './Models'
 import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
 import { ImageViewer } from './ImageViewer'
+import { EditTab } from './edit'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -2164,6 +2165,17 @@ export default function App() {
               }}
             />
           )
+        ) : mode === 'edit' ? (
+          // Edit mode: dedicated natural language image editing workspace
+          <EditTab
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            conversationId={conversationId}
+            onOpenLightbox={(url) => setLightbox(url)}
+            provider={settingsDraft.providerImages}
+            providerBaseUrl={settingsDraft.baseUrlImages}
+            providerModel={settingsDraft.modelImages}
+          />
         ) : mode === 'search' ? (
           // Search mode: use chat interface with mode-specific behavior
           messages.length === 0 ? (

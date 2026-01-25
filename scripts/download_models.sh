@@ -139,18 +139,31 @@ show_preset_info() {
             echo "   • FLUX Schnell (4GB) - Fast image generation"
             echo "   • SDXL Base (7GB) - High quality images"
             echo "   • Shared CLIP & VAE encoders (3GB)"
-            echo "   • Total: ~14GB"
+            echo "   Edit Mode Models:"
+            echo "   • SDXL Inpainting 0.1 (5GB) - Natural image editing"
+            echo "   • SD 1.5 Inpainting (4GB) - Fast fallback"
+            echo "   • ControlNet Inpaint (1.4GB) - Edit guidance"
+            echo "   • Total: ~24GB"
             echo "   • VRAM Required: 12-16GB"
             ;;
         full)
             echo "📦 FULL PRESET - All models for maximum flexibility"
+            echo "   Image Models:"
             echo "   • FLUX Schnell (4GB) - Fast image generation"
             echo "   • FLUX Dev (24GB) - Highest quality images"
             echo "   • SDXL Base (7GB) - High quality images"
-            echo "   • SD 1.5 (2GB) - Lightweight option"
-            echo "   • SVD (25GB) - Video generation"
-            echo "   • Shared CLIP & VAE encoders (3GB)"
-            echo "   • Total: ~65GB"
+            echo "   • SD 1.5 Dreamshaper (2GB) - Lightweight option"
+            echo "   Video Models:"
+            echo "   • SVD (10GB) - Video generation"
+            echo "   Edit Mode Models:"
+            echo "   • SDXL Inpainting 0.1 (5GB) - Natural image editing"
+            echo "   • SD 1.5 Inpainting (4GB) - Fast fallback"
+            echo "   • ControlNet Inpaint (1.4GB) - Edit guidance"
+            echo "   • SAM ViT-H (2.5GB) - Auto-mask segmentation"
+            echo "   • U2Net (170MB) - Background removal"
+            echo "   Shared:"
+            echo "   • CLIP & VAE encoders (3GB)"
+            echo "   • Total: ~63GB"
             echo "   • VRAM Required: 16-24GB (for FLUX Dev)"
             ;;
         *)
@@ -253,6 +266,83 @@ download_svd() {
     echo ""
 }
 
+# Download SDXL Inpainting (for Edit mode)
+download_sdxl_inpainting() {
+    log_info "=== Downloading SDXL Inpainting 0.1 (Edit Mode) ==="
+
+    download_file \
+        "https://huggingface.co/wangqyqq/sd_xl_base_1.0_inpainting_0.1.safetensors/resolve/main/sd_xl_base_1.0_inpainting_0.1.safetensors" \
+        "${COMFY_MODELS_DIR}/checkpoints/sd_xl_base_1.0_inpainting_0.1.safetensors" \
+        "SDXL Inpainting 0.1 Model"
+
+    echo ""
+}
+
+# Download SD 1.5 Inpainting (fast fallback for Edit mode)
+download_sd15_inpainting() {
+    log_info "=== Downloading SD 1.5 Inpainting (Edit Mode Fallback) ==="
+
+    download_file \
+        "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt" \
+        "${COMFY_MODELS_DIR}/checkpoints/sd-v1-5-inpainting.ckpt" \
+        "SD 1.5 Inpainting Model"
+
+    echo ""
+}
+
+# Download ControlNet Inpaint (guidance for Edit mode)
+download_controlnet_inpaint() {
+    log_info "=== Downloading ControlNet SD1.5 Inpaint (Edit Mode Guidance) ==="
+
+    download_file \
+        "https://huggingface.co/lllyasviel/control_v11p_sd15_inpaint/resolve/main/diffusion_pytorch_model.safetensors" \
+        "${COMFY_MODELS_DIR}/controlnet/control_v11p_sd15_inpaint.safetensors" \
+        "ControlNet SD1.5 Inpaint"
+
+    echo ""
+}
+
+# Download SAM (Segment Anything Model for Edit mode - optional)
+download_sam() {
+    log_info "=== Downloading SAM (Segment Anything Model) ==="
+
+    download_file \
+        "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth" \
+        "${COMFY_MODELS_DIR}/sams/sam_vit_h_4b8939.pth" \
+        "SAM ViT-H Model"
+
+    echo ""
+}
+
+# Download U2Net (Background Removal for Edit mode - optional)
+download_u2net() {
+    log_info "=== Downloading U2Net (Background Removal) ==="
+
+    download_file \
+        "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx" \
+        "${COMFY_MODELS_DIR}/rembg/u2net.onnx" \
+        "U2Net Background Removal Model"
+
+    echo ""
+}
+
+# Download all edit models (for recommended/full presets)
+download_edit_models() {
+    log_info "=== Downloading Edit Mode Models ==="
+    echo ""
+    download_sdxl_inpainting
+    download_sd15_inpainting
+    download_controlnet_inpaint
+}
+
+# Download extra edit models (SAM + U2Net for full preset)
+download_edit_extras() {
+    log_info "=== Downloading Edit Mode Extras (SAM + U2Net) ==="
+    echo ""
+    download_sam
+    download_u2net
+}
+
 # Display download summary
 show_summary() {
     echo ""
@@ -290,7 +380,14 @@ show_summary() {
         echo "  • flux-schnell  - Fast generation (4 steps)"
         echo "  • flux-dev      - High quality (20 steps) [full preset only]"
         echo "  • sdxl          - Stable Diffusion XL [recommended/full preset]"
-        echo "  • sd15-uncensored - Lightweight SD 1.5 [full preset only]"
+        echo "  • sd15          - Lightweight SD 1.5 [full preset only]"
+        echo ""
+        log_info "Available edit models: [recommended/full preset]"
+        echo "  • sdxl-inpainting - High quality editing at 1024px"
+        echo "  • sd15-inpainting - Fast editing fallback at 512px"
+        echo "  • controlnet-inpaint - Structure-preserving guidance"
+        echo "  • sam             - Auto-mask segmentation [full preset only]"
+        echo "  • u2net           - Background removal [full preset only]"
         echo ""
         log_info "Set IMAGE_MODEL in .env to change the default model"
     fi
@@ -313,7 +410,7 @@ main() {
     fi
 
     # Create base directories
-    mkdir -p "$COMFY_MODELS_DIR"/{checkpoints,unet,clip,vae}
+    mkdir -p "$COMFY_MODELS_DIR"/{checkpoints,unet,clip,vae,controlnet,sams,rembg}
     mkdir -p "$LLM_MODELS_DIR"
 
     log_info "Models directory: $MODELS_DIR"
@@ -329,6 +426,7 @@ main() {
             download_shared_encoders
             download_flux_schnell
             download_sdxl
+            download_edit_models
             ;;
         full)
             download_shared_encoders
@@ -337,6 +435,8 @@ main() {
             download_sdxl
             download_sd15
             download_svd
+            download_edit_models
+            download_edit_extras
             ;;
     esac
 
