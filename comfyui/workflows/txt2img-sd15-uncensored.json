@@ -3,8 +3,8 @@
     "class_type": "KSampler",
     "inputs": {
       "seed": 42,
-      "steps": 30,
-      "cfg": 7.5,
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
       "sampler_name": "dpmpp_2m",
       "scheduler": "karras",
       "denoise": 1.0,

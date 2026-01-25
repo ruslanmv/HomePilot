@@ -62,7 +62,7 @@ def enhance_negative_prompt(negative: str | None) -> str:
     # Check if anti-duplicate terms are already present
     # Updated to check for the new high-impact terms
     has_anti_duplicate = any(term in negative_lower for term in [
-        "multiple people", "two heads", "split view", "fused face"
+        "two heads", "split view", "fused face"
     ])
 
     if is_weak:
