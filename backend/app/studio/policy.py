@@ -144,10 +144,11 @@ def org_allows_mature() -> bool:
     """
     Check if organization-level policy allows mature content.
 
-    Enterprise gate: requires explicit server-side enablement.
-    Set env STUDIO_ALLOW_MATURE=1 to enable.
+    For self-hosted deployments, mature content is allowed by default when
+    content rating is set to "mature". Enterprise deployments can disable
+    by setting STUDIO_ALLOW_MATURE=0.
     """
-    return os.getenv("STUDIO_ALLOW_MATURE", "0").strip() == "1"
+    return os.getenv("STUDIO_ALLOW_MATURE", "1").strip() != "0"
 
 
 def enforce_policy(
