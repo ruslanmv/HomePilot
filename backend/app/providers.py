@@ -118,12 +118,26 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
             "bbmix_v4.safetensors": models_path / "checkpoints" / "bbmix_v4.safetensors",
             "realisian_v50.safetensors": models_path / "checkpoints" / "realisian_v50.safetensors",
         }
-    else:  # video
+    elif model_type == "video":
         checks = {
             "svd_xt_1_1.safetensors": models_path / "checkpoints" / "svd_xt_1_1.safetensors",
             "svd_xt.safetensors": models_path / "checkpoints" / "svd_xt.safetensors",
             "svd.safetensors": models_path / "checkpoints" / "svd.safetensors",
         }
+    elif model_type == "edit":
+        checks = {
+            # Inpainting backbones
+            "sd_xl_base_1.0_inpainting_0.1.safetensors": models_path / "checkpoints" / "sd_xl_base_1.0_inpainting_0.1.safetensors",
+            "sd-v1-5-inpainting.ckpt": models_path / "checkpoints" / "sd-v1-5-inpainting.ckpt",
+            # ControlNet (inpaint guidance)
+            "control_v11p_sd15_inpaint.safetensors": models_path / "controlnet" / "control_v11p_sd15_inpaint.safetensors",
+            # Optional helpers / adapters
+            "sam_vit_h_4b8939.pth": models_path / "sams" / "sam_vit_h_4b8939.pth",
+            "u2net.onnx": models_path / "rembg" / "u2net.onnx",
+        }
+    else:
+        # Unknown model_type, return empty
+        checks = {}
 
     # Check which models are actually installed
     for catalog_id, model_path in checks.items():
@@ -205,6 +219,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
                 "models_list": True,
                 "images": True,
                 "video": True,
+                "edit": True,
             },
         },
     }
