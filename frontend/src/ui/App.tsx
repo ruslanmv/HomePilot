@@ -26,6 +26,7 @@ import ModelsView from './Models'
 import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
 import { ImageViewer } from './ImageViewer'
+import { EditTab } from './edit'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -1231,8 +1232,8 @@ export default function App() {
     const backendUrl = localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
     const apiKey = localStorage.getItem('homepilot_api_key') || ''
     const providerChat = (localStorage.getItem('homepilot_provider_chat') || 'ollama') as string
-    const providerImages = (localStorage.getItem('homepilot_provider_images') || 'ollama') as string
-    const providerVideo = (localStorage.getItem('homepilot_provider_video') || 'ollama') as string
+    const providerImages = (localStorage.getItem('homepilot_provider_images') || 'comfyui') as string
+    const providerVideo = (localStorage.getItem('homepilot_provider_video') || 'comfyui') as string
     const baseUrlChat = localStorage.getItem('homepilot_base_url_chat') || ''
     const baseUrlImages = localStorage.getItem('homepilot_base_url_images') || ''
     const baseUrlVideo = localStorage.getItem('homepilot_base_url_video') || ''
@@ -1992,8 +1993,8 @@ export default function App() {
           />
         )}
 
-        {/* Top-right "Private" and Project Indicator - Hidden in Studio mode */}
-        {mode !== 'studio' && (
+        {/* Top-right "Private" and Project Indicator - Hidden in Studio and Edit modes */}
+        {mode !== 'studio' && mode !== 'edit' && (
         <header className="absolute top-0 right-0 p-5 z-20 flex items-center gap-4">
           {/* Project Indicator */}
           {(() => {
@@ -2164,6 +2165,17 @@ export default function App() {
               }}
             />
           )
+        ) : mode === 'edit' ? (
+          // Edit mode: dedicated natural language image editing workspace
+          <EditTab
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            conversationId={conversationId}
+            onOpenLightbox={(url) => setLightbox(url)}
+            provider={settingsDraft.providerImages}
+            providerBaseUrl={settingsDraft.baseUrlImages}
+            providerModel={settingsDraft.modelImages}
+          />
         ) : mode === 'search' ? (
           // Search mode: use chat interface with mode-specific behavior
           messages.length === 0 ? (

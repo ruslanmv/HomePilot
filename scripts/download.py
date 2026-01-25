@@ -55,9 +55,11 @@ CATALOG_PATH = PROJECT_ROOT / "backend" / "app" / "model_catalog_data.json"
 COMFYUI_ROOT = PROJECT_ROOT / "models" / "comfy"
 
 # Default install paths (relative to COMFYUI_ROOT)
+# Note: The catalog's install_path takes precedence; these are fallbacks
 INSTALL_PATHS = {
     "image": COMFYUI_ROOT / "checkpoints",
     "video": COMFYUI_ROOT / "checkpoints",
+    "edit": COMFYUI_ROOT / "checkpoints",
 }
 
 CIVITAI_API_BASE = "https://civitai.com/api/v1"
@@ -606,7 +608,7 @@ def main() -> int:
     # Actions
     parser.add_argument("--list", action="store_true", help="List all models in catalog")
     parser.add_argument("--model", help="Download specific model by ID")
-    parser.add_argument("--type", choices=["chat", "image", "video"], help="Filter by model type")
+    parser.add_argument("--type", choices=["chat", "image", "video", "edit"], help="Filter by model type")
     parser.add_argument("--all", action="store_true", help="Download all models of specified type")
 
     # Civitai (experimental)
