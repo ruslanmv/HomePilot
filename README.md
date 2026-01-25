@@ -9,7 +9,7 @@
 
 This repository contains the **"Home Edition"**: a production-oriented stack designed to run on a local machine (ideally with an NVIDIA GPU) using Docker Compose.
 
-![HomePilot UI](assets/2026-01-13-20-07-17.png)
+![HomePilot UI](assets/2026-01-25-02-10-07.png)
 
 ---
 
@@ -74,6 +74,7 @@ This serves as the foundation for an "enterprise mind" capable of expanding into
 
 ### Play Story Mode
 *Recommended for beginners*
+![](assets/2026-01-25-02-28-53.png)
 
 Perfect for quick, relaxed story creation:
 1. Enter your story premise (e.g., "A detective solves mysteries in a cyberpunk city")
@@ -83,7 +84,7 @@ Perfect for quick, relaxed story creation:
 
 ### Creator Studio
 *Advanced features for professionals*
-
+![](assets/2026-01-25-02-16-36.png)
 Full control over your content:
 
 #### Project Configuration
@@ -99,6 +100,9 @@ Generate a complete story structure with:
 - Scene-by-scene breakdown
 - Narration and image prompts for each scene
 - Automatic scene generation from outline
+
+![](assets/2026-01-25-02-14-17.png)
+
 
 #### Scene Management
 - Add, edit, and delete scenes
@@ -123,6 +127,8 @@ A Grok-like dark minimal interface with:
 - Responsive design for desktop and tablet
 
 ### TV Mode
+![](assets/2026-01-25-02-26-36.png)
+
 Cinematic fullscreen experience:
 - Auto-advance through scenes
 - Narration subtitle overlay
