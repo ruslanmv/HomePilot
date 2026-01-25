@@ -20,6 +20,13 @@ type ImagineItem = {
   url: string
   createdAt: number
   prompt: string
+  // Generation parameters for reproducibility
+  seed?: number
+  width?: number
+  height?: number
+  steps?: number
+  cfg?: number
+  model?: string
 }
 
 export type ImagineParams = {
@@ -39,6 +46,7 @@ export type ImagineParams = {
   imgSteps?: number
   imgCfg?: number
   imgSeed?: number
+  imgPreset?: string  // "low", "med", "high", or "custom"
   nsfwMode?: boolean
   promptRefinement?: boolean
 }
@@ -50,6 +58,14 @@ type ChatResponse = {
     images?: string[]
     video_url?: string
     final_prompt?: string  // The actual refined prompt sent to ComfyUI
+    // Generation parameters for reproducibility
+    seed?: number
+    seeds?: number[]
+    width?: number
+    height?: number
+    steps?: number
+    cfg?: number
+    model?: string
     game?: {
       enabled?: boolean
       session_id?: string
@@ -252,6 +268,7 @@ export default function ImagineView(props: ImagineParams) {
         imgSteps: props.imgSteps,
         imgCfg: props.imgCfg,
         imgSeed: props.imgSeed,
+        imgPreset: props.imgPreset || 'med',  // Send preset for architecture-aware settings
         imgModel: props.modelImages,
         nsfwMode: props.nsfwMode,
         promptRefinement: props.promptRefinement ?? true,
@@ -303,11 +320,26 @@ export default function ImagineView(props: ImagineParams) {
       const finalPrompt = data?.media?.final_prompt
         || (gameMode && data?.media?.game?.variation_prompt)
         || t
-      const newItems: ImagineItem[] = urls.map((u) => ({
+
+      // Extract generation parameters for reproducibility
+      const seeds = data?.media?.seeds || (data?.media?.seed ? [data.media.seed] : [])
+      const genWidth = data?.media?.width
+      const genHeight = data?.media?.height
+      const genSteps = data?.media?.steps
+      const genCfg = data?.media?.cfg
+      const genModel = data?.media?.model
+
+      const newItems: ImagineItem[] = urls.map((u, idx) => ({
         id: uid(),
         url: u,
         createdAt: now,
         prompt: finalPrompt,
+        seed: seeds[idx] ?? seeds[0],  // Use corresponding seed or fall back to first
+        width: genWidth,
+        height: genHeight,
+        steps: genSteps,
+        cfg: genCfg,
+        model: genModel,
       }))
 
       // Prepend new images at the beginning (Grok-style: new images appear at top-left)
@@ -851,7 +883,52 @@ export default function ImagineView(props: ImagineParams) {
                   </div>
                 </div>
 
+                {/* Seed - displayed prominently for reproducibility */}
+                {selectedImage.seed && (
+                  <div>
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                      Seed
+                    </label>
+                    <div className="text-lg text-white font-mono font-bold tracking-wide">
+                      {selectedImage.seed}
+                    </div>
+                  </div>
+                )}
+
+                {/* Resolution */}
+                {selectedImage.width && selectedImage.height && (
+                  <div>
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                      Resolution
+                    </label>
+                    <div className="text-sm text-white/80 font-mono">
+                      {selectedImage.width} × {selectedImage.height}
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-4 pt-2">
+                  {/* Steps & CFG */}
+                  {selectedImage.steps && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                        Steps
+                      </label>
+                      <div className="text-xs text-white/70 font-mono">
+                        {selectedImage.steps}
+                      </div>
+                    </div>
+                  )}
+                  {selectedImage.cfg && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                        CFG Scale
+                      </label>
+                      <div className="text-xs text-white/70 font-mono">
+                        {selectedImage.cfg}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
                       Date
@@ -869,6 +946,18 @@ export default function ImagineView(props: ImagineParams) {
                     </div>
                   </div>
                 </div>
+
+                {/* Model name */}
+                {selectedImage.model && (
+                  <div className="pt-2">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                      Model
+                    </label>
+                    <div className="text-xs text-white/60 font-mono truncate">
+                      {selectedImage.model}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Sidebar Footer / Actions */}
