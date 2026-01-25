@@ -3,12 +3,15 @@ SHELL := /bin/bash
 # Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
-.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-verify start start-backend start-frontend
+.PHONY: help install install-ffmpeg setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-verify start start-backend start-frontend
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 # --- Installation & Setup -----------------------------------------------------
+
+install-ffmpeg: ## Install FFmpeg for MP4 export (auto-detects OS)
+	@bash scripts/install_ffmpeg.sh
 
 install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -35,6 +38,9 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@cd backend && uv venv .venv --python 3.11 || uv venv .venv
 	@cd backend && uv pip install -e .
 	@cd backend && uv pip install --group dev
+	@echo ""
+	@echo "✓ Installing FFmpeg for MP4 export..."
+	@bash scripts/install_ffmpeg.sh || echo "  ⚠️  FFmpeg installation skipped (install manually for MP4 export)"
 	@echo ""
 	@echo "✓ Installing frontend dependencies..."
 	@cd frontend && npm install
