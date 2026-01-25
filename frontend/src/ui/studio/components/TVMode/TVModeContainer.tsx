@@ -179,6 +179,31 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     }
   }, [ttsEnabled, isSpeaking, currentScene?.narration]);
 
+  // Pause TTS during image generation or scene prefetching to avoid voice playing over loading
+  const wasPlayingBeforeGenerationRef = useRef(false);
+  const isGeneratingContent = isPrefetching ||
+    (currentScene?.imageStatus === "generating" && !currentImageReady);
+
+  useEffect(() => {
+    if (!ttsEnabled) return;
+
+    if (isGeneratingContent) {
+      // Content is being generated - pause TTS if it's currently speaking
+      if (isSpeaking && !ttsPaused) {
+        console.log("[TV Mode] Pausing TTS during content generation...");
+        wasPlayingBeforeGenerationRef.current = true;
+        pauseSpeaking();
+      }
+    } else {
+      // Content generation finished - resume TTS if we paused it
+      if (wasPlayingBeforeGenerationRef.current && ttsPaused && isPlaying) {
+        console.log("[TV Mode] Resuming TTS after content generation...");
+        wasPlayingBeforeGenerationRef.current = false;
+        resumeSpeaking();
+      }
+    }
+  }, [isGeneratingContent, isSpeaking, ttsPaused, ttsEnabled, isPlaying, pauseSpeaking, resumeSpeaking]);
+
   // Reset waitingForTTS when scene changes, TTS disabled, or playback stops
   useEffect(() => {
     if (!ttsEnabled || !isPlaying) {
