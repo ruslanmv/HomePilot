@@ -26,6 +26,7 @@ import ModelsView from './Models'
 import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
 import { ImageViewer } from './ImageViewer'
+import { EditTab } from './edit'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -1231,8 +1232,8 @@ export default function App() {
     const backendUrl = localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
     const apiKey = localStorage.getItem('homepilot_api_key') || ''
     const providerChat = (localStorage.getItem('homepilot_provider_chat') || 'ollama') as string
-    const providerImages = (localStorage.getItem('homepilot_provider_images') || 'ollama') as string
-    const providerVideo = (localStorage.getItem('homepilot_provider_video') || 'ollama') as string
+    const providerImages = (localStorage.getItem('homepilot_provider_images') || 'comfyui') as string
+    const providerVideo = (localStorage.getItem('homepilot_provider_video') || 'comfyui') as string
     const baseUrlChat = localStorage.getItem('homepilot_base_url_chat') || ''
     const baseUrlImages = localStorage.getItem('homepilot_base_url_images') || ''
     const baseUrlVideo = localStorage.getItem('homepilot_base_url_video') || ''
@@ -1992,13 +1993,13 @@ export default function App() {
           />
         )}
 
-        {/* Top-right "Private" and Project Indicator - Hidden in Studio mode */}
-        {mode !== 'studio' && (
+        {/* Top-right Project Indicator - Only shown in chat mode when a project is active */}
+        {mode === 'chat' && (
         <header className="absolute top-0 right-0 p-5 z-20 flex items-center gap-4">
           {/* Project Indicator */}
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')
-            if (currentProjectId && mode === 'chat') {
+            if (currentProjectId) {
               const projectName = currentProject?.name || 'Project'
               const docCount = currentProject?.document_count || 0
 
@@ -2027,17 +2028,6 @@ export default function App() {
             }
             return null
           })()}
-
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 text-white/30 text-xs font-semibold hover:text-white transition-colors border border-transparent h-10 px-4 rounded-full hover:bg-white/5"
-            onClick={() => {}}
-            aria-label="Private"
-            title="Private"
-          >
-            <Lock size={12} />
-            <span>Private</span>
-          </button>
         </header>
         )}
 
@@ -2117,6 +2107,7 @@ export default function App() {
             imgSteps={settingsDraft.imgSteps}
             imgCfg={settingsDraft.imgCfg}
             imgSeed={settingsDraft.imgSeed}
+            imgPreset={settingsDraft.preset}
             nsfwMode={settingsDraft.nsfwMode}
             promptRefinement={settingsDraft.promptRefinement}
           />
@@ -2156,6 +2147,7 @@ export default function App() {
               imgHeight={settingsDraft.imgHeight}
               imgSteps={settingsDraft.imgSteps}
               imgCfg={settingsDraft.imgCfg}
+              imgPreset={settingsDraft.preset}
               nsfwMode={settingsDraft.nsfwMode}
               promptRefinement={settingsDraft.promptRefinement}
               onOpenCreatorStudio={(projectId) => {
@@ -2164,6 +2156,17 @@ export default function App() {
               }}
             />
           )
+        ) : mode === 'edit' ? (
+          // Edit mode: dedicated natural language image editing workspace
+          <EditTab
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            conversationId={conversationId}
+            onOpenLightbox={(url) => setLightbox(url)}
+            provider={settingsDraft.providerImages}
+            providerBaseUrl={settingsDraft.baseUrlImages}
+            providerModel={settingsDraft.modelImages}
+          />
         ) : mode === 'search' ? (
           // Search mode: use chat interface with mode-specific behavior
           messages.length === 0 ? (

@@ -51,7 +51,7 @@
   "13": {
     "class_type": "KSampler",
     "inputs": {
-      "seed": 42,
+      "seed": "{{seed}}",
       "steps": 20,
       "cfg": 3.5,
       "sampler_name": "euler",
