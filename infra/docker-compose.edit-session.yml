@@ -1,0 +1,109 @@
+###############################################################################
+# HomePilot Edit Session Sidecar - Docker Compose Configuration
+#
+# This is an ADDITIVE compose file that adds the edit-session service
+# without modifying the existing HomePilot infrastructure.
+#
+# Usage:
+#   # Run alongside existing HomePilot stack
+#   docker compose -f docker-compose.yml -f docker-compose.edit-session.yml up
+#
+#   # Or run standalone (requires HomePilot backend running)
+#   docker compose -f docker-compose.edit-session.yml up
+#
+###############################################################################
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # Edit Session Service (Sidecar)
+  # ==========================================================================
+  edit-session:
+    build:
+      context: ../edit-session
+      dockerfile: Dockerfile
+    image: homepilot-edit-session:latest
+    container_name: edit-session
+    restart: unless-stopped
+    ports:
+      - "8010:8010"
+    environment:
+      # HomePilot backend connection
+      # Use 'backend' if running with main compose, otherwise adjust
+      - HOME_PILOT_BASE_URL=${HOME_PILOT_BASE_URL:-http://backend:8000}
+      - HOME_PILOT_API_KEY=${HOME_PILOT_API_KEY:-}
+
+      # Sidecar security (set for production)
+      - EDIT_SESSION_API_KEY=${EDIT_SESSION_API_KEY:-}
+
+      # Storage configuration
+      # Options: 'sqlite' (single instance) or 'redis' (multi-instance)
+      - STORE=${EDIT_SESSION_STORE:-sqlite}
+      - SQLITE_PATH=/data/edit_sessions.sqlite
+      - REDIS_URL=${EDIT_SESSION_REDIS_URL:-redis://redis:6379/0}
+
+      # Session settings
+      - TTL_SECONDS=${EDIT_SESSION_TTL:-604800}  # 7 days
+      - HISTORY_LIMIT=${EDIT_SESSION_HISTORY_LIMIT:-10}
+
+      # Upload limits
+      - MAX_UPLOAD_MB=${EDIT_SESSION_MAX_UPLOAD_MB:-20}
+
+      # Rate limiting
+      - RATE_LIMIT_RPS=${EDIT_SESSION_RATE_LIMIT_RPS:-3.0}
+      - RATE_LIMIT_BURST=${EDIT_SESSION_RATE_LIMIT_BURST:-10}
+
+      # SSRF protection - comma-separated list of allowed external hosts
+      - ALLOWED_EXTERNAL_IMAGE_HOSTS=${ALLOWED_EXTERNAL_IMAGE_HOSTS:-}
+    volumes:
+      # Persistent storage for SQLite database
+      - edit-session-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - homepilot-network
+    # Uncomment if using existing HomePilot compose
+    # depends_on:
+    #   backend:
+    #     condition: service_healthy
+
+  # ==========================================================================
+  # Optional: Redis for multi-instance deployments
+  # ==========================================================================
+  # Uncomment this section if you need Redis for session storage
+  # (recommended for Kubernetes or multi-replica deployments)
+  #
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: edit-session-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - edit-session-redis-data:/data
+  #   command: redis-server --appendonly yes
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 3s
+  #     retries: 3
+  #   networks:
+  #     - homepilot-network
+
+volumes:
+  edit-session-data:
+    driver: local
+  # Uncomment if using Redis
+  # edit-session-redis-data:
+  #   driver: local
+
+networks:
+  homepilot-network:
+    # Use external network if running with main compose
+    # external: true
+    driver: bridge

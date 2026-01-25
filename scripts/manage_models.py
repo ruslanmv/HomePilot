@@ -132,7 +132,7 @@ class ModelManager:
             return models
 
         # Scan each model type directory
-        for model_type in ['checkpoints', 'unet', 'clip', 'vae']:
+        for model_type in ['checkpoints', 'unet', 'clip', 'vae', 'controlnet', 'loras', 'sams', 'rembg']:
             type_dir = self.comfy_dir / model_type
             if not type_dir.exists():
                 continue

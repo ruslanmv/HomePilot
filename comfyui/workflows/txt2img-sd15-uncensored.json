@@ -2,7 +2,7 @@
   "3": {
     "class_type": "KSampler",
     "inputs": {
-      "seed": 42,
+      "seed": "{{seed}}",
       "steps": "{{steps}}",
       "cfg": "{{cfg}}",
       "sampler_name": "dpmpp_2m",
