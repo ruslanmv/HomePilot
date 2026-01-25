@@ -2,7 +2,7 @@
   "3": {
     "class_type": "KSampler",
     "inputs": {
-      "seed": 42,
+      "seed": "{{seed}}",
       "steps": 25,
       "cfg": 7.0,
       "sampler_name": "euler_ancestral",
