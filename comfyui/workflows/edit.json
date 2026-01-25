@@ -8,7 +8,7 @@
   "2": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "sd_xl_base_1.0.safetensors"
+      "ckpt_name": "{{ckpt_name}}"
     }
   },
   "3": {
@@ -35,12 +35,12 @@
   "6": {
     "class_type": "KSampler",
     "inputs": {
-      "seed": 42,
-      "steps": 20,
-      "cfg": 7.0,
-      "sampler_name": "euler",
-      "scheduler": "normal",
-      "denoise": 0.75,
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "{{sampler_name}}",
+      "scheduler": "{{scheduler}}",
+      "denoise": "{{denoise}}",
       "model": ["2", 0],
       "positive": ["3", 0],
       "negative": ["4", 0],
@@ -57,7 +57,7 @@
   "8": {
     "class_type": "SaveImage",
     "inputs": {
-      "filename_prefix": "ComfyUI_edit",
+      "filename_prefix": "{{filename_prefix}}",
       "images": ["7", 0]
     }
   }
