@@ -81,25 +81,26 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
   const currentImageReady = useTVModeStore(selectCurrentSceneImageReady);
   const isWaitingForImage = useTVModeStore(selectIsWaitingForImage);
 
-  // Callback when TTS finishes speaking a scene - advance to next scene
+  // Callback when TTS finishes speaking a scene - advance to next scene immediately
+  // TTS drives the flow continuously like TV - don't wait for images
   const handleSceneNarrationEnd = useCallback(() => {
-    console.log("[TV Mode] TTS narration finished, advancing scene...");
+    console.log("[TV Mode] TTS narration finished, advancing to next scene...");
     setWaitingForTTS(false);
 
-    // Advance to next scene (similar to timer-based advance)
     if (isLastScene) {
-      // Only auto-generate if setting is enabled
+      // On last scene - check if we should generate more or end
       if (scenes.length < 24 && !isPrefetching && !isStoryComplete && settings.autoGenerateScenes) {
-        // Trigger prefetch for more scenes
-        // handlePrefetch will be called below
+        // More scenes can be generated - prefetch will handle it
+        console.log("[TV Mode] Last scene, waiting for new scene generation...");
       } else if (!isStoryComplete && !isPrefetching) {
         nextScene(); // This will trigger end screen
       }
-    } else if (nextSceneReady) {
+    } else {
+      // Not last scene - advance immediately for continuous narration
+      // Don't wait for image - TTS will start on next scene regardless
       nextScene();
     }
-    // If next scene isn't ready, the timer effect will handle waiting
-  }, [isLastScene, scenes.length, isPrefetching, isStoryComplete, nextSceneReady, nextScene, settings.autoGenerateScenes]);
+  }, [isLastScene, scenes.length, isPrefetching, isStoryComplete, nextScene, settings.autoGenerateScenes]);
 
   // TTS Playback Integration
   const {
@@ -179,31 +180,6 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     }
   }, [ttsEnabled, isSpeaking, currentScene?.narration]);
 
-  // Pause TTS during image generation or scene prefetching to avoid voice playing over loading
-  const wasPlayingBeforeGenerationRef = useRef(false);
-  const isGeneratingContent = isPrefetching ||
-    (currentScene?.imageStatus === "generating" && !currentImageReady);
-
-  useEffect(() => {
-    if (!ttsEnabled) return;
-
-    if (isGeneratingContent) {
-      // Content is being generated - pause TTS if it's currently speaking
-      if (isSpeaking && !ttsPaused) {
-        console.log("[TV Mode] Pausing TTS during content generation...");
-        wasPlayingBeforeGenerationRef.current = true;
-        pauseSpeaking();
-      }
-    } else {
-      // Content generation finished - resume TTS if we paused it
-      if (wasPlayingBeforeGenerationRef.current && ttsPaused && isPlaying) {
-        console.log("[TV Mode] Resuming TTS after content generation...");
-        wasPlayingBeforeGenerationRef.current = false;
-        resumeSpeaking();
-      }
-    }
-  }, [isGeneratingContent, isSpeaking, ttsPaused, ttsEnabled, isPlaying, pauseSpeaking, resumeSpeaking]);
-
   // Reset waitingForTTS when scene changes, TTS disabled, or playback stops
   useEffect(() => {
     if (!ttsEnabled || !isPlaying) {
@@ -216,16 +192,11 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
     setWaitingForTTS(false);
   }, [currentSceneIndex]);
 
-  // Scene auto-advance timer - waits for TTS when enabled
+  // Scene auto-advance timer - TTS drives the flow when enabled, timer only for non-TTS mode
   useEffect(() => {
     if (sceneTimerRef.current) {
       clearTimeout(sceneTimerRef.current);
       sceneTimerRef.current = null;
-    }
-
-    // Don't start timer if current scene's image isn't ready yet
-    if (!currentImageReady && currentScene) {
-      return;
     }
 
     // Don't start timer if story is complete or chapter transition is showing
@@ -233,15 +204,22 @@ export const TVModeContainer: React.FC<TVModeContainerProps> = ({
       return;
     }
 
-    // If TTS is enabled and speaking, wait for TTS to finish (via onSceneNarrationEnd callback)
-    // Don't use fixed timer in this case
-    if (ttsEnabled && isSpeaking && currentScene?.narration) {
-      console.log("[TV Mode] TTS is speaking, waiting for narration to finish before advancing...");
+    // When TTS is enabled, let TTS drive scene advancement (via onSceneNarrationEnd callback)
+    // Don't wait for images - TTS is the primary driver, images are just visual background
+    if (ttsEnabled && currentScene?.narration) {
+      // TTS is controlling the flow - it will call onSceneNarrationEnd when done
+      // which advances to the next scene automatically
+      if (isSpeaking || waitingForTTS) {
+        console.log("[TV Mode] TTS driving flow, narration in progress...");
+        return;
+      }
+      // TTS enabled but not speaking yet - let auto-speak effect handle it
       return;
     }
 
-    // If we're still waiting for TTS to finish (callback hasn't fired yet), don't start timer
-    if (waitingForTTS) {
+    // Non-TTS mode: use timer and wait for images
+    // Don't start timer if current scene's image isn't ready yet (visual-first mode)
+    if (!currentImageReady && currentScene) {
       return;
     }
 
