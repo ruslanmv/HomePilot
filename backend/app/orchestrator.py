@@ -17,11 +17,36 @@ from .model_config import get_model_settings, get_architecture, MODEL_ARCHITECTU
 # Import specialized handlers
 from .search import run_search
 from .projects import run_project_chat
+from .edit_flags import parse_edit_flags, build_edit_workflow_vars, determine_workflow
 
 IMAGE_RE = re.compile(r"\b(imagine|generate|create|draw|make)\b.*\b(image|picture|photo|art)\b", re.I)
 EDIT_RE = re.compile(r"\b(edit|inpaint|replace|remove|change)\b", re.I)
 ANIM_RE = re.compile(r"\b(animate|make (a )?video|image\s*to\s*video)\b", re.I)
 URL_RE = re.compile(r"(https?://\S+)")
+
+
+def _map_ref_strength_to_denoise(ref_strength: Optional[float]) -> float:
+    """
+    Map user-friendly reference strength (0..1) to ComfyUI denoise value.
+
+    UI uses 0..1:
+      0.0 => very similar to reference
+      1.0 => more creative (less reference influence)
+
+    Comfy img2img uses denoise ~ 0.15..0.85
+      Lower denoise = more similar to input
+      Higher denoise = more variation
+    """
+    if ref_strength is None:
+        return 0.35  # Default: balanced similarity
+    try:
+        s = float(ref_strength)
+    except (TypeError, ValueError):
+        return 0.35
+    # Clamp to 0..1
+    s = max(0.0, min(1.0, s))
+    # Map to denoise range 0.15..0.85
+    return 0.15 + (0.70 * s)
 
 
 def route_request(mode: str, payload: Dict[str, Any]) -> str:
@@ -224,18 +249,21 @@ async def orchestrate(
     text_max_tokens: Optional[int] = None,
     img_width: Optional[int] = None,
     img_height: Optional[int] = None,
-    img_aspect_ratio: Optional[str] = None,  # NEW: Accept aspect ratio from frontend
+    img_aspect_ratio: Optional[str] = None,  # Accept aspect ratio from frontend
     img_steps: Optional[int] = None,
     img_cfg: Optional[float] = None,
     img_seed: Optional[int] = None,
     img_model: Optional[str] = None,
     img_batch_size: Optional[int] = None,
+    img_preset: Optional[str] = None,  # Accept preset from frontend ("low", "med", "high", "custom")
     vid_seconds: Optional[int] = None,
     vid_fps: Optional[int] = None,
     vid_motion: Optional[str] = None,
     vid_model: Optional[str] = None,
     nsfw_mode: Optional[bool] = None,
     prompt_refinement: Optional[bool] = True,
+    img_reference: Optional[str] = None,  # Reference image URL for img2img
+    img_ref_strength: Optional[float] = None,  # Reference strength 0..1 (0=similar, 1=creative)
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -315,16 +343,49 @@ async def orchestrate(
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
 
-        res = run_workflow("edit", {
-            "image_path": image_url,  # Changed from image_url to match workflow
-            "prompt": text_in,  # Changed from instruction to match workflow
-            "negative_prompt": DEFAULT_NEGATIVE_PROMPT  # Use centralized default from defaults.py
-        })
-        images = res.get("images", []) or []
-        text = "Done."
-        media = {"images": images} if images else None
-        add_message(cid, "assistant", text, media)
-        return {"conversation_id": cid, "text": text, "media": media}
+        # Parse edit flags from user instruction (e.g., --steps 30 --cfg 6.5)
+        clean_prompt, flags = parse_edit_flags(text_in)
+
+        # Build workflow variables using parsed flags
+        workflow_vars = build_edit_workflow_vars(
+            image_url=image_url,
+            prompt=clean_prompt,
+            flags=flags,
+            negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+        )
+
+        # Determine which workflow to use based on flags
+        workflow_name = determine_workflow(flags, clean_prompt)
+
+        print(f"[EDIT] === EDIT REQUEST ===")
+        print(f"[EDIT] Original instruction: '{text_in[:100]}...'")
+        print(f"[EDIT] Cleaned prompt: '{clean_prompt[:100]}...'")
+        print(f"[EDIT] Workflow: {workflow_name}")
+        print(f"[EDIT] Mode: {flags.mode}, Steps: {flags.steps}, CFG: {flags.cfg}, Denoise: {flags.denoise}")
+
+        try:
+            res = run_workflow(workflow_name, workflow_vars)
+            images = res.get("images", []) or []
+            text = "Done."
+            media = {
+                "images": images,
+                "edit_settings": flags.to_dict(),  # Include settings used in response
+            } if images else None
+            add_message(cid, "assistant", text, media)
+            return {"conversation_id": cid, "text": text, "media": media}
+        except FileNotFoundError as e:
+            # Fallback to default edit workflow if specialized workflow not found
+            print(f"[EDIT] Workflow '{workflow_name}' not found, falling back to 'edit'")
+            res = run_workflow("edit", {
+                "image_path": image_url,
+                "prompt": clean_prompt,
+                "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
+            })
+            images = res.get("images", []) or []
+            text = "Done."
+            media = {"images": images} if images else None
+            add_message(cid, "assistant", text, media)
+            return {"conversation_id": cid, "text": text, "media": media}
 
     # --- Imagine ---
     if (m == "imagine") or IMAGE_RE.search(text_in):
@@ -420,21 +481,30 @@ async def orchestrate(
             # Get aspect ratio: prefer explicit from frontend, then LLM refinement, then default
             # This allows the UI aspect ratio picker to override LLM suggestions
             aspect_ratio = img_aspect_ratio or refined.get("aspect_ratio", "1:1")
+            # IMPORTANT: Write back to refined so ComfyUI receives correct aspect_ratio
+            refined["aspect_ratio"] = aspect_ratio
             print(f"[IMAGE] Aspect ratio source: {'frontend' if img_aspect_ratio else 'LLM refinement'}")
 
             # Get architecture-specific settings (width, height, steps, cfg)
             # This is the KEY fix - SD1.5 models get max 768px, SDXL/Flux get 1024px+
-            model_settings = get_model_settings(model_filename, aspect_ratio, preset="med")
+            # Use preset from frontend if provided, otherwise default to "med"
+            preset_to_use = img_preset or "med"
+            model_settings = get_model_settings(model_filename, aspect_ratio, preset=preset_to_use)
             architecture = model_settings["architecture"]
 
             print(f"[IMAGE] === DYNAMIC PRESET SYSTEM ===")
             print(f"[IMAGE] Model: {model_filename}")
             print(f"[IMAGE] Architecture: {architecture}")
+            print(f"[IMAGE] Preset: {preset_to_use}")
             print(f"[IMAGE] Aspect ratio: {aspect_ratio}")
             print(f"[IMAGE] Safe dimensions: {model_settings['width']}x{model_settings['height']}")
             print(f"[IMAGE] Recommended steps: {model_settings['steps']}, CFG: {model_settings['cfg']}")
 
-            # Apply architecture-specific defaults (only if user didn't override)
+            # Apply architecture-specific settings based on preset
+            # When preset is "low", "med", or "high", use the computed values (ignore stale frontend values)
+            # When preset is "custom", use frontend values if provided
+            is_custom_preset = preset_to_use == "custom"
+
             if img_width is None:
                 refined["width"] = model_settings["width"]
             else:
@@ -447,15 +517,22 @@ async def orchestrate(
                 refined["height"] = img_height
                 print(f"[IMAGE] User override height: {img_height}")
 
-            if img_steps is None:
-                refined["steps"] = model_settings["steps"]
-            else:
+            # Steps and CFG: use preset values unless in custom mode
+            if is_custom_preset and img_steps is not None:
                 refined["steps"] = img_steps
-
-            if img_cfg is None:
-                refined["cfg"] = model_settings["cfg"]
+                print(f"[IMAGE] Custom steps: {img_steps}")
             else:
+                refined["steps"] = model_settings["steps"]
+                if img_steps is not None and img_steps != model_settings["steps"]:
+                    print(f"[IMAGE] Ignoring frontend steps ({img_steps}), using preset {preset_to_use}: {model_settings['steps']}")
+
+            if is_custom_preset and img_cfg is not None:
                 refined["cfg"] = img_cfg
+                print(f"[IMAGE] Custom CFG: {img_cfg}")
+            else:
+                refined["cfg"] = model_settings["cfg"]
+                if img_cfg is not None and img_cfg != model_settings["cfg"]:
+                    print(f"[IMAGE] Ignoring frontend CFG ({img_cfg}), using preset {preset_to_use}: {model_settings['cfg']}")
 
             if img_seed is not None:
                 refined["seed"] = img_seed
@@ -485,12 +562,39 @@ async def orchestrate(
             if checkpoint_override:
                 print(f"[IMAGE] Checkpoint: {checkpoint_override}")
 
+            # =================================================================
+            # REFERENCE IMAGE ROUTING (img2img similar generation)
+            # =================================================================
+            # If a reference image is provided, switch to edit workflow (img2img)
+            # This allows generating similar images based on a reference
+            if img_reference:
+                print(f"[IMAGE] === REFERENCE IMAGE MODE ===")
+                print(f"[IMAGE] Reference URL: {img_reference}")
+                print(f"[IMAGE] Reference strength: {img_ref_strength}")
+
+                # Override to use edit workflow (which is img2img)
+                workflow_name = "edit"
+
+                # Set up img2img variables
+                refined["image_path"] = img_reference
+                refined["denoise"] = _map_ref_strength_to_denoise(img_ref_strength)
+
+                # Set default sampler/scheduler for img2img
+                refined.setdefault("sampler_name", "euler")
+                refined.setdefault("scheduler", "normal")
+                refined.setdefault("filename_prefix", "homepilot_ref")
+
+                print(f"[IMAGE] Mapped denoise: {refined['denoise']:.2f}")
+                print(f"[IMAGE] Using edit workflow for img2img reference generation")
+
             # Debug: Log final workflow decision
             print(f"[IMAGE] === FINAL WORKFLOW DECISION ===")
             print(f"[IMAGE] Workflow to run: {workflow_name}")
             print(f"[IMAGE] Checkpoint override: {checkpoint_override}")
             print(f"[IMAGE] Dimensions: {refined.get('width', 'NOT SET')}x{refined.get('height', 'NOT SET')}")
             print(f"[IMAGE] Variables being passed: ckpt_name={refined.get('ckpt_name', 'NOT SET')}")
+            if img_reference:
+                print(f"[IMAGE] Reference mode: image_path={refined.get('image_path')}, denoise={refined.get('denoise')}")
 
             # Determine batch size (1, 2, or 4 images like Grok)
             batch_size = min(max(1, img_batch_size or 1), 4)
@@ -499,13 +603,23 @@ async def orchestrate(
             # Run the workflow with refined prompt and parameters
             # If batch_size > 1, run multiple times and aggregate results
             images = []
+            seeds_used = []  # Track seeds for each generated image
             for i in range(batch_size):
-                # Vary the seed for each image in the batch (unless seed is explicitly set)
                 batch_refined = refined.copy()
-                if batch_size > 1 and (img_seed is None or img_seed == 0):
-                    # Use a different seed for each image in the batch
+
+                # IMPORTANT: Always use a random seed unless user explicitly set one
+                # This prevents ComfyUI from caching/skipping identical prompts
+                # ComfyUI detects duplicate prompt graphs and skips execution,
+                # causing "Prompt executed in 0.00 seconds" with no output
+                if img_seed is None or img_seed == 0 or img_seed == -1:
                     import random
                     batch_refined["seed"] = random.randint(1, 2147483647)
+                    print(f"[IMAGE] Using random seed: {batch_refined['seed']}")
+                else:
+                    batch_refined["seed"] = img_seed
+
+                # Track the seed used for this image
+                seeds_used.append(batch_refined["seed"])
 
                 print(f"[IMAGE] Generating image {i + 1}/{batch_size}...")
                 res = run_workflow(workflow_name, batch_refined)
@@ -523,9 +637,17 @@ async def orchestrate(
             text = "Here you go." if images else "Generated."
             # Include the final refined prompt in the response so frontend can store it
             # This is the actual prompt used for image generation
+            # Also include generation parameters for reproducibility
             media = {
                 "images": images,
                 "final_prompt": refined.get("prompt", text_in),  # The actual prompt sent to ComfyUI
+                "seed": seeds_used[0] if seeds_used else None,  # Primary seed (for single image)
+                "seeds": seeds_used,  # All seeds (for batch)
+                "width": refined.get("width"),
+                "height": refined.get("height"),
+                "steps": refined.get("steps"),
+                "cfg": refined.get("cfg"),
+                "model": model_filename,
             } if images else None
             add_message(cid, "assistant", text, media)
             return {"conversation_id": cid, "text": text, "media": media}
@@ -654,10 +776,13 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             img_seed=payload.get("imgSeed"),
             img_model=payload.get("imgModel"),
             img_batch_size=payload.get("imgBatchSize"),
+            img_preset=payload.get("imgPreset"),  # Pass preset for architecture-aware settings
             vid_seconds=payload.get("vidSeconds"),
             vid_fps=payload.get("vidFps"),
             vid_motion=payload.get("vidMotion"),
             vid_model=payload.get("vidModel"),
             nsfw_mode=payload.get("nsfwMode"),
             prompt_refinement=payload.get("promptRefinement", True),
+            img_reference=payload.get("imgReference"),
+            img_ref_strength=payload.get("imgRefStrength"),
         )
