@@ -93,6 +93,7 @@ export type StudioParams = {
   imgHeight?: number
   imgSteps?: number
   imgCfg?: number
+  imgPreset?: string  // "low", "med", "high", or "custom"
   nsfwMode?: boolean
   promptRefinement?: boolean
   // Callback to switch to Creator Studio mode (optional projectId to open existing project)
@@ -690,6 +691,7 @@ export default function StudioView(props: StudioParams) {
           imgHeight: props.imgHeight || 768,
           imgSteps: props.imgSteps,
           imgCfg: props.imgCfg,
+          imgPreset: props.imgPreset || 'med',
           nsfwMode: props.nsfwMode,
           promptRefinement: false, // Already refined by story mode
         },
@@ -747,7 +749,7 @@ export default function StudioView(props: StudioParams) {
         setIsGeneratingImage(false)
       }
     }
-  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.nsfwMode, authKey, updateSceneImageByIdx, setSceneImageStatusByIdx])
+  }, [props.backendUrl, props.providerImages, props.baseUrlImages, props.modelImages, props.imgWidth, props.imgHeight, props.imgSteps, props.imgCfg, props.imgPreset, props.nsfwMode, authKey, updateSceneImageByIdx, setSceneImageStatusByIdx])
 
   // Enqueue image generation for a scene
   // Set force=true to regenerate even if image already exists
