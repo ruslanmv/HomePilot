@@ -2,13 +2,201 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
+import uuid
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+from urllib.parse import urlparse
 
 import httpx
 
-from .config import COMFY_BASE_URL, COMFY_POLL_INTERVAL_S, COMFY_POLL_MAX_S
+from .config import COMFY_BASE_URL, COMFY_POLL_INTERVAL_S, COMFY_POLL_MAX_S, UPLOAD_DIR
+
+
+def _get_comfyui_input_dir() -> Path:
+    """
+    Find ComfyUI's input directory for uploading images.
+
+    1. If COMFY_INPUT_DIR is set, use it
+    2. Try repo paths (for local development): HomePilot/ComfyUI/input or HomePilot/comfyui/input
+    3. Fallback to /comfyui/input (docker)
+    """
+    env_dir = os.getenv("COMFY_INPUT_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir)
+
+    current_file = Path(__file__).resolve()
+    repo_root = current_file.parent.parent.parent  # HomePilot root
+
+    # Try common layouts (both capitalized and lowercase)
+    candidates = [
+        repo_root / "ComfyUI" / "input",           # Capitalized ComfyUI
+        repo_root / "comfyui" / "input",           # Lowercase comfyui
+        repo_root / "comfyui" / "ComfyUI" / "input",  # Nested structure
+        repo_root / "models" / "comfy" / "input",  # Alternative location
+    ]
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            print(f"[COMFY] Using input directory: {candidate}")
+            return candidate
+
+    # Try to create if ComfyUI directory exists (try both cases)
+    for comfyui_name in ["ComfyUI", "comfyui"]:
+        comfyui_dir = repo_root / comfyui_name
+        if comfyui_dir.exists():
+            input_dir = comfyui_dir / "input"
+            input_dir.mkdir(parents=True, exist_ok=True)
+            print(f"[COMFY] Created input directory: {input_dir}")
+            return input_dir
+
+    return Path("/comfyui/input")
+
+
+def _is_url(value: str) -> bool:
+    """Check if a string is a URL."""
+    try:
+        result = urlparse(value)
+        return result.scheme in ('http', 'https')
+    except Exception:
+        return False
+
+
+def _is_local_backend_url(url: str) -> bool:
+    """
+    Check if URL points to the local backend's /files/ endpoint.
+    These URLs can be read directly from UPLOAD_DIR instead of HTTP.
+    """
+    try:
+        parsed = urlparse(url)
+        # Match localhost:8000, 127.0.0.1:8000, or any local backend URLs with /files/
+        if parsed.path.startswith('/files/'):
+            host = parsed.hostname or ''
+            if host in ('localhost', '127.0.0.1', '0.0.0.0'):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _get_local_file_path(url: str) -> Path | None:
+    """
+    Extract the local file path from a backend /files/ URL.
+    Returns None if not a valid local backend URL.
+    """
+    try:
+        parsed = urlparse(url)
+        if not parsed.path.startswith('/files/'):
+            return None
+
+        # Extract filename from /files/<filename>
+        filename = parsed.path.replace('/files/', '', 1)
+        if not filename:
+            return None
+
+        # Build the local path from UPLOAD_DIR
+        local_path = Path(UPLOAD_DIR) / filename
+        if local_path.exists():
+            return local_path
+        return None
+    except Exception:
+        return None
+
+
+def _download_image_for_comfyui(image_url: str) -> str:
+    """
+    Download an image from a URL to ComfyUI's input directory.
+
+    Returns the filename (not full path) to use in the workflow.
+    ComfyUI's LoadImage node expects just the filename, as it looks
+    in its own input directory.
+
+    Special handling for local backend URLs:
+    - If URL points to localhost:8000/files/..., read directly from UPLOAD_DIR
+    - This avoids HTTP request timeout when backend requests from itself
+    """
+    input_dir = _get_comfyui_input_dir()
+    input_dir.mkdir(parents=True, exist_ok=True)
+
+    # Extract original filename or generate a unique one
+    parsed = urlparse(image_url)
+    original_filename = os.path.basename(parsed.path)
+
+    # Ensure we have a valid extension
+    if not original_filename or '.' not in original_filename:
+        original_filename = f"edit_input_{uuid.uuid4().hex[:8]}.png"
+
+    # Use a unique filename to avoid conflicts
+    unique_id = uuid.uuid4().hex[:8]
+    base, ext = os.path.splitext(original_filename)
+    filename = f"{base}_{unique_id}{ext}"
+    dest_path = input_dir / filename
+
+    # Check if this is a local backend URL - read directly from filesystem
+    if _is_local_backend_url(image_url):
+        local_file = _get_local_file_path(image_url)
+        if local_file and local_file.exists():
+            print(f"[COMFY] Copying local file from {local_file} to {dest_path}")
+            try:
+                shutil.copy2(local_file, dest_path)
+                print(f"[COMFY] Local file copied successfully: {filename}")
+                return filename
+            except Exception as e:
+                print(f"[COMFY] WARNING: Failed to copy local file: {e}")
+                # Fall through to HTTP download as fallback
+        else:
+            print(f"[COMFY] WARNING: Local file not found at {local_file}, trying HTTP download")
+
+    print(f"[COMFY] Downloading image from {image_url} to {dest_path}")
+
+    # Download the image via HTTP
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            response = client.get(image_url)
+            response.raise_for_status()
+
+            with open(dest_path, 'wb') as f:
+                f.write(response.content)
+
+        print(f"[COMFY] Image downloaded successfully: {filename}")
+        return filename
+    except httpx.TimeoutException as e:
+        print(f"[COMFY] WARNING: HTTP download timed out: {e}")
+        raise
+    except Exception as e:
+        print(f"[COMFY] WARNING: HTTP download failed: {e}")
+        raise
+
+
+def _preprocess_image_paths(variables: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Preprocess variables to download any URL-based images to ComfyUI's input directory.
+
+    ComfyUI's LoadImage node expects local filenames in its input directory,
+    not HTTP URLs. This function downloads images from URLs and replaces
+    the URL with the local filename.
+    """
+    processed = dict(variables)
+
+    # Keys that might contain image URLs
+    image_keys = ['image_path', 'image', 'input_image', 'source_image']
+
+    for key in image_keys:
+        if key in processed and isinstance(processed[key], str):
+            value = processed[key]
+            if _is_url(value):
+                try:
+                    filename = _download_image_for_comfyui(value)
+                    processed[key] = filename
+                    print(f"[COMFY] Replaced {key} URL with local file: {filename}")
+                except Exception as e:
+                    print(f"[COMFY] WARNING: Failed to download image from {value}: {e}")
+                    # Keep the original value, will likely fail but provides better error
+
+    return processed
 
 
 def _get_workflows_dir() -> Path:
@@ -220,8 +408,14 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     print(f"[COMFY] Running workflow: {name}")
     print(f"[COMFY] Variables: {variables}")
 
+    # Preprocess image paths: download URLs to ComfyUI's input directory
+    # ComfyUI's LoadImage node expects local filenames, not URLs
+    processed_vars = _preprocess_image_paths(variables)
+    if processed_vars != variables:
+        print(f"[COMFY] Processed variables: {processed_vars}")
+
     workflow = _load_workflow(name)
-    prompt_graph = _deep_replace(workflow, variables)
+    prompt_graph = _deep_replace(workflow, processed_vars)
 
     # Log checkpoint being used (if present in workflow)
     for node_id, node in prompt_graph.items():

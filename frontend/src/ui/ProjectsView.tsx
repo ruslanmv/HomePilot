@@ -18,7 +18,7 @@ import {
   MessageSquare,
   Film,
   Trash2,
-  Edit
+  Edit,
 } from 'lucide-react';
 
 // --- Components ---
@@ -37,25 +37,31 @@ const ProjectCard = ({ icon: Icon, iconColor, title, type, description, onClick,
   <div className="relative group">
     <div
       onClick={onClick}
-      className="flex flex-col gap-3 p-4 rounded-2xl bg-[#2b2d31] hover:bg-[#32343a] transition-colors cursor-pointer border border-transparent hover:border-[#3f4148]"
+      className="flex flex-col gap-3 p-5 rounded-2xl bg-white/5 hover:bg-white/10 transition-all duration-200 cursor-pointer border border-white/10 hover:border-white/20 h-full"
     >
       <div className="flex justify-between items-start">
         <div className="flex items-center gap-3">
-          <Icon size={20} className={iconColor} strokeWidth={2.5} />
-          <h3 className="font-semibold text-sm text-gray-100">{title}</h3>
+          <div className={`w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-white/10 flex items-center justify-center ${iconColor}`}>
+            <Icon size={18} strokeWidth={2} />
+          </div>
+          <h3 className="font-semibold text-base text-white">{title}</h3>
         </div>
         {type && (
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+            type === 'TEMPLATE' || type === 'Example'
+              ? 'bg-purple-500/20 text-purple-300'
+              : 'bg-blue-500/20 text-blue-300'
+          }`}>
             {type}
           </span>
         )}
       </div>
-      <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">
+      <p className="text-sm text-white/60 leading-relaxed line-clamp-2">
         {description}
       </p>
     </div>
     {!isExample && (onDelete || onEdit) && (
-      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         {onEdit && (
           <button
             onClick={(e) => {
@@ -92,10 +98,10 @@ const TabButton = ({ active, label, onClick }: {
 }) => (
   <button
     onClick={onClick}
-    className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
       active
-        ? 'border-white text-white'
-        : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-700'
+        ? 'border-purple-500 text-white'
+        : 'border-transparent text-white/50 hover:text-white/80 hover:border-white/20'
     }`}
   >
     {label}
@@ -107,20 +113,20 @@ const FileUploadItem = ({ name, size, onRemove }: {
   size: string
   onRemove?: () => void
 }) => (
-  <div className="flex items-center justify-between p-2 rounded-lg bg-[#1e1f22] border border-[#383a40] group">
+  <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 group">
     <div className="flex items-center gap-3">
-      <div className="p-1.5 bg-[#2b2d31] rounded-md text-blue-400">
+      <div className="p-1.5 bg-purple-500/20 rounded-md text-purple-400">
         <FileText size={16} />
       </div>
       <div className="flex flex-col">
-        <span className="text-sm text-gray-200 truncate max-w-[150px]">{name}</span>
-        <span className="text-xs text-gray-500">{size}</span>
+        <span className="text-sm text-white truncate max-w-[150px]">{name}</span>
+        <span className="text-xs text-white/50">{size}</span>
       </div>
     </div>
     {onRemove && (
       <button
         onClick={onRemove}
-        className="p-1 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+        className="p-1 text-white/40 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
       >
         <X size={16} />
       </button>
@@ -141,7 +147,6 @@ const ProjectWizard = ({ onClose, onSave }: {
   const [projectType, setProjectType] = useState<'chat' | 'image' | 'video'>('chat');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Mock file upload handler
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const droppedFiles = Array.from(e.dataTransfer.files);
@@ -178,21 +183,18 @@ const ProjectWizard = ({ onClose, onSave }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div
-        className="w-full max-w-2xl bg-[#1e1f22] rounded-2xl border border-[#383a40] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+        className="w-full max-w-2xl bg-[#1a1a2e] rounded-2xl border border-white/10 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#2b2d31]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
           <div>
             <h2 className="text-lg font-semibold text-white">Create new project</h2>
-            <p className="text-xs text-gray-400">Step {step} of 2</p>
+            <p className="text-sm text-white/50">Step {step} of 2</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-gray-400 hover:text-white hover:bg-[#2b2d31] rounded-lg transition-colors"
-          >
+          <button onClick={onClose} className="p-2 text-white/50 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
             <X size={20} />
           </button>
         </div>
@@ -202,93 +204,67 @@ const ProjectWizard = ({ onClose, onSave }: {
           {step === 1 ? (
             <div className="space-y-6">
               {/* Project Type Selection */}
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-300 flex items-center gap-2">
-                  <Sparkles size={14} className="text-blue-400" />
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-white/80 flex items-center gap-2">
+                  <Sparkles size={14} className="text-purple-400" />
                   Project Type
                 </label>
                 <div className="grid grid-cols-3 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setProjectType('chat')}
-                    className={`p-4 rounded-xl border-2 transition-all ${
-                      projectType === 'chat'
-                        ? 'border-blue-500 bg-blue-500/10'
-                        : 'border-[#383a40] bg-[#2b2d31] hover:border-[#4f5158]'
-                    }`}
-                  >
-                    <MessageSquare size={24} className={`mx-auto mb-2 ${projectType === 'chat' ? 'text-blue-400' : 'text-gray-400'}`} />
-                    <div className="text-sm font-medium text-gray-200">Chat / LLM</div>
-                    <div className="text-xs text-gray-500 mt-1">Custom AI assistant</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setProjectType('image')}
-                    className={`p-4 rounded-xl border-2 transition-all ${
-                      projectType === 'image'
-                        ? 'border-purple-500 bg-purple-500/10'
-                        : 'border-[#383a40] bg-[#2b2d31] hover:border-[#4f5158]'
-                    }`}
-                  >
-                    <ImageIcon size={24} className={`mx-auto mb-2 ${projectType === 'image' ? 'text-purple-400' : 'text-gray-400'}`} />
-                    <div className="text-sm font-medium text-gray-200">Image</div>
-                    <div className="text-xs text-gray-500 mt-1">Image generation</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setProjectType('video')}
-                    className={`p-4 rounded-xl border-2 transition-all ${
-                      projectType === 'video'
-                        ? 'border-green-500 bg-green-500/10'
-                        : 'border-[#383a40] bg-[#2b2d31] hover:border-[#4f5158]'
-                    }`}
-                  >
-                    <Film size={24} className={`mx-auto mb-2 ${projectType === 'video' ? 'text-green-400' : 'text-gray-400'}`} />
-                    <div className="text-sm font-medium text-gray-200">Video</div>
-                    <div className="text-xs text-gray-500 mt-1">Video generation</div>
-                  </button>
+                  {[
+                    { id: 'chat', icon: MessageSquare, label: 'Chat / LLM', desc: 'Custom AI assistant', color: 'blue' },
+                    { id: 'image', icon: ImageIcon, label: 'Image', desc: 'Image generation', color: 'purple' },
+                    { id: 'video', icon: Film, label: 'Video', desc: 'Video generation', color: 'green' }
+                  ].map((type) => (
+                    <button
+                      key={type.id}
+                      type="button"
+                      onClick={() => setProjectType(type.id as any)}
+                      className={`p-4 rounded-xl border-2 transition-all text-left ${
+                        projectType === type.id
+                          ? `border-${type.color}-500 bg-${type.color}-500/10`
+                          : 'border-white/10 bg-white/5 hover:border-white/20'
+                      }`}
+                    >
+                      <type.icon size={24} className={`mb-2 ${projectType === type.id ? `text-${type.color}-400` : 'text-white/50'}`} />
+                      <div className="text-sm font-medium text-white">{type.label}</div>
+                      <div className="text-xs text-white/50 mt-1">{type.desc}</div>
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Project Icon & Name */}
-              <div className="space-y-4">
-                <label className="block text-sm font-medium text-gray-300">Project Identity</label>
-                <div className="flex gap-4">
-                  <button className="shrink-0 w-16 h-16 rounded-xl bg-[#2b2d31] border border-[#383a40] border-dashed hover:border-blue-500 hover:text-blue-500 flex items-center justify-center text-gray-500 transition-colors">
-                    <ImageIcon size={24} />
-                  </button>
-                  <div className="flex-1 space-y-3">
-                    <input
-                      type="text"
-                      placeholder="Project Name"
-                      value={projectName}
-                      onChange={(e) => setProjectName(e.target.value)}
-                      className="w-full bg-[#2b2d31] border border-[#383a40] rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Short description (optional)"
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      className="w-full bg-[#2b2d31] border border-[#383a40] rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                    />
-                  </div>
-                </div>
+              {/* Project Name & Description */}
+              <div className="space-y-3">
+                <label className="block text-sm font-medium text-white/80">Project Details</label>
+                <input
+                  type="text"
+                  placeholder="Project Name"
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all"
+                />
+                <input
+                  type="text"
+                  placeholder="Short description (optional)"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/40 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all"
+                />
               </div>
 
               {/* Custom Instructions */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-gray-300 flex items-center gap-2">
-                    <Sparkles size={14} className="text-blue-400" />
+                  <label className="text-sm font-medium text-white/80 flex items-center gap-2">
+                    <Sparkles size={14} className="text-purple-400" />
                     Custom Instructions
                   </label>
-                  <span className="text-xs text-gray-500">How should HomePilot behave?</span>
+                  <span className="text-xs text-white/40">How should HomePilot behave?</span>
                 </div>
                 <textarea
                   value={instructions}
                   onChange={(e) => setInstructions(e.target.value)}
-                  className="w-full h-32 bg-[#2b2d31] border border-[#383a40] rounded-xl p-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all resize-none"
+                  className="w-full h-32 bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-white placeholder-white/40 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all resize-none"
                   placeholder={
                     projectType === 'chat'
                       ? "E.g., You are an expert Python developer. Always prefer functional programming patterns..."
@@ -302,22 +278,22 @@ const ProjectWizard = ({ onClose, onSave }: {
           ) : (
             <div className="space-y-6">
               {/* Knowledge Base */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium text-gray-300">Knowledge Base</label>
-                  <span className="text-xs text-gray-500">PDF, TXT, MD supported</span>
+                  <label className="text-sm font-medium text-white/80">Knowledge Base</label>
+                  <span className="text-xs text-white/40">PDF, TXT, MD supported</span>
                 </div>
 
                 <div
-                  className="w-full h-32 border-2 border-dashed border-[#383a40] rounded-xl bg-[#2b2d31]/50 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-blue-500/50 hover:bg-[#2b2d31] transition-all"
+                  className="w-full h-32 border-2 border-dashed border-white/10 rounded-xl bg-white/5 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-purple-500/50 hover:bg-white/10 transition-all"
                   onClick={() => fileInputRef.current?.click()}
                   onDrop={handleDrop}
                   onDragOver={(e) => e.preventDefault()}
                 >
-                  <div className="p-3 bg-[#1e1f22] rounded-full text-gray-400">
+                  <div className="p-3 bg-purple-500/20 rounded-full text-purple-400">
                     <UploadCloud size={24} />
                   </div>
-                  <p className="text-sm text-gray-400">Click to upload or drag & drop</p>
+                  <p className="text-sm text-white/60">Click to upload or drag & drop</p>
                 </div>
 
                 <input
@@ -329,7 +305,6 @@ const ProjectWizard = ({ onClose, onSave }: {
                   className="hidden"
                 />
 
-                {/* File List */}
                 {files.length > 0 && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">
                     {files.map((f, i) => (
@@ -345,14 +320,14 @@ const ProjectWizard = ({ onClose, onSave }: {
               </div>
 
               {/* Settings Toggles */}
-              <div className="space-y-3 pt-4 border-t border-[#2b2d31]">
-                <label className="text-sm font-medium text-gray-300 mb-2 block">Settings</label>
-                <div className="flex items-center justify-between p-3 rounded-xl bg-[#2b2d31]">
-                  <span className="text-sm text-gray-300">Make project public</span>
+              <div className="space-y-3 pt-4 border-t border-white/10">
+                <label className="text-sm font-medium text-white/80 mb-2 block">Settings</label>
+                <div className="flex items-center justify-between p-3 rounded-xl bg-white/5">
+                  <span className="text-sm text-white/70">Make project public</span>
                   <button
                     onClick={() => setIsPublic(!isPublic)}
                     className={`w-10 h-5 rounded-full relative transition-colors ${
-                      isPublic ? 'bg-blue-600' : 'bg-[#383a40]'
+                      isPublic ? 'bg-purple-600' : 'bg-white/20'
                     }`}
                   >
                     <div
@@ -368,24 +343,24 @@ const ProjectWizard = ({ onClose, onSave }: {
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-[#2b2d31] bg-[#1e1f22] flex justify-end gap-3">
+        <div className="p-6 border-t border-white/10 bg-[#1a1a2e] flex justify-end gap-3">
           {step === 2 && (
             <button
               onClick={() => setStep(1)}
-              className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition-colors"
+              className="px-4 py-2 text-sm font-medium text-white/60 hover:text-white transition-colors"
             >
               Back
             </button>
           )}
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition-colors"
+            className="px-4 py-2 text-sm font-medium text-white/60 hover:text-white transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={() => step === 1 ? setStep(2) : handleCreate()}
-            className="px-6 py-2 bg-white text-black text-sm font-semibold rounded-xl hover:bg-gray-200 transition-colors flex items-center gap-2"
+            className="px-6 py-2 bg-purple-500 hover:bg-purple-600 text-white text-sm font-semibold rounded-full transition-colors flex items-center gap-2"
           >
             {step === 1 ? (
               <>Next <ChevronRight size={16} /></>
@@ -476,20 +451,20 @@ const EditProjectModal = ({ project, onClose, onSave, backendUrl, apiKey }: {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
       <div
-        className="w-full max-w-2xl bg-[#1e1f22] rounded-2xl border border-[#383a40] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
+        className="w-full max-w-2xl bg-[#1a1a2e] rounded-2xl border border-white/10 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#2b2d31]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
           <div>
             <h2 className="text-lg font-semibold text-white">Edit Project</h2>
-            <p className="text-xs text-gray-400">Update project details and manage documents</p>
+            <p className="text-sm text-white/50">Update project details and manage documents</p>
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-gray-400 hover:text-white hover:bg-[#2b2d31] rounded-lg transition-colors"
+            className="p-2 text-white/50 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
           >
             <X size={20} />
           </button>
@@ -499,60 +474,60 @@ const EditProjectModal = ({ project, onClose, onSave, backendUrl, apiKey }: {
         <div className="flex-1 overflow-y-auto p-6 custom-scrollbar space-y-6">
           {/* Project Name */}
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-300">Project Name</label>
+            <label className="block text-sm font-medium text-white/80">Project Name</label>
             <input
               type="text"
               value={projectName}
               onChange={(e) => setProjectName(e.target.value)}
-              className="w-full bg-[#2b2d31] border border-[#383a40] rounded-xl px-4 py-2.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all"
             />
           </div>
 
           {/* Description */}
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-300">Description</label>
+            <label className="block text-sm font-medium text-white/80">Description</label>
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full bg-[#2b2d31] border border-[#383a40] rounded-xl px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm text-white placeholder-white/40 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all"
             />
           </div>
 
           {/* Custom Instructions */}
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-300">Custom Instructions</label>
+            <label className="block text-sm font-medium text-white/80">Custom Instructions</label>
             <textarea
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
-              className="w-full h-32 bg-[#2b2d31] border border-[#383a40] rounded-xl p-4 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all resize-none"
+              className="w-full h-32 bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-white placeholder-white/40 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all resize-none"
               placeholder="How should HomePilot behave in this project?"
             />
           </div>
 
           {/* Documents */}
           <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-300">Documents ({documents.length})</label>
+            <label className="block text-sm font-medium text-white/80">Documents ({documents.length})</label>
             {documents.length === 0 ? (
-              <div className="text-sm text-gray-500 p-4 border border-[#383a40] rounded-xl bg-[#2b2d31]/50">
+              <div className="text-sm text-white/40 p-4 border border-white/10 rounded-xl bg-white/5">
                 No documents uploaded yet
               </div>
             ) : (
               <div className="space-y-2">
                 {documents.map((doc, i) => (
-                  <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-[#2b2d31] border border-[#383a40] group">
+                  <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10 group">
                     <div className="flex items-center gap-3">
-                      <div className="p-1.5 bg-[#1e1f22] rounded-md text-blue-400">
+                      <div className="p-1.5 bg-purple-500/20 rounded-md text-purple-400">
                         <FileText size={16} />
                       </div>
                       <div className="flex flex-col">
-                        <span className="text-sm text-gray-200 truncate max-w-[200px]">{doc.name}</span>
-                        <span className="text-xs text-gray-500">{doc.size} • {doc.chunks || 0} chunks</span>
+                        <span className="text-sm text-white truncate max-w-[200px]">{doc.name}</span>
+                        <span className="text-xs text-white/40">{doc.size} • {doc.chunks || 0} chunks</span>
                       </div>
                     </div>
                     <button
                       onClick={() => handleDeleteDocument(doc.name)}
-                      className="p-1.5 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg hover:bg-red-500/10"
+                      className="p-1.5 text-white/40 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg hover:bg-red-500/10"
                     >
                       <Trash2 size={16} />
                     </button>
@@ -564,17 +539,17 @@ const EditProjectModal = ({ project, onClose, onSave, backendUrl, apiKey }: {
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-[#2b2d31] bg-[#1e1f22] flex justify-end gap-3">
+        <div className="p-6 border-t border-white/10 bg-[#1a1a2e] flex justify-end gap-3">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition-colors"
+            className="px-4 py-2 text-sm font-medium text-white/60 hover:text-white transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={isLoading}
-            className="px-6 py-2 bg-white text-black text-sm font-semibold rounded-xl hover:bg-gray-200 transition-colors disabled:opacity-50"
+            className="px-6 py-2 bg-purple-500 hover:bg-purple-600 text-white text-sm font-semibold rounded-full transition-colors disabled:opacity-50"
           >
             {isLoading ? 'Saving...' : 'Save Changes'}
           </button>
@@ -595,7 +570,6 @@ const SearchModal = ({ onClose, projects, exampleProjects, onSelectProject, onCr
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Map icon names to components
   const iconMap: Record<string, React.ElementType> = {
     BookOpen,
     Briefcase,
@@ -604,11 +578,8 @@ const SearchModal = ({ onClose, projects, exampleProjects, onSelectProject, onCr
     FolderKanban
   };
 
-  // Focus input on mount
   React.useEffect(() => {
     inputRef.current?.focus();
-
-    // Close on Escape
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
@@ -616,13 +587,11 @@ const SearchModal = ({ onClose, projects, exampleProjects, onSelectProject, onCr
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  // Combine projects and examples for search
   const allItems = [
-    ...projects.map(p => ({ ...p, type: 'project', icon: 'FolderKanban', icon_color: 'text-blue-400' })),
+    ...projects.map(p => ({ ...p, type: 'project', icon: 'FolderKanban', icon_color: 'text-purple-400' })),
     ...exampleProjects.map(e => ({ ...e, type: 'example' }))
   ];
 
-  // Filter logic
   const filteredItems = query
     ? allItems.filter(item =>
         item.name.toLowerCase().includes(query.toLowerCase()) ||
@@ -641,27 +610,27 @@ const SearchModal = ({ onClose, projects, exampleProjects, onSelectProject, onCr
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] px-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+      className="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] px-4 bg-black/80 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl bg-[#1e1f22] rounded-2xl border border-[#383a40] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+        className="w-full max-w-xl bg-[#1a1a2e] rounded-2xl border border-white/10 shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Search Input Header */}
-        <div className="flex items-center gap-3 px-4 py-4 border-b border-[#2b2d31]">
-          <Search size={20} className="text-gray-400" />
+        <div className="flex items-center gap-3 px-4 py-4 border-b border-white/10">
+          <Search size={20} className="text-white/50" />
           <input
             ref={inputRef}
             type="text"
             placeholder="Search projects..."
-            className="flex-1 bg-transparent text-lg text-white placeholder-gray-500 focus:outline-none"
+            className="flex-1 bg-transparent text-lg text-white placeholder-white/40 focus:outline-none"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
           <button
             onClick={onClose}
-            className="p-1 text-gray-500 hover:text-white bg-[#2b2d31] rounded-md text-xs font-medium px-2 py-1 transition-colors"
+            className="p-1 text-white/40 hover:text-white bg-white/10 rounded-md text-xs font-medium px-2 py-1 transition-colors"
           >
             ESC
           </button>
@@ -671,38 +640,38 @@ const SearchModal = ({ onClose, projects, exampleProjects, onSelectProject, onCr
         <div className="max-h-[60vh] overflow-y-auto custom-scrollbar p-2">
           {filteredItems.length > 0 ? (
             <div className="space-y-1">
-              {query && <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase">Results ({filteredItems.length})</div>}
+              {query && <div className="px-3 py-2 text-xs font-semibold text-white/40">Results ({filteredItems.length})</div>}
               {filteredItems.map((item) => {
                 const IconComponent = iconMap[item.icon] || FolderKanban;
                 return (
                   <div
                     key={item.id}
-                    className="group flex items-center gap-4 p-3 rounded-xl hover:bg-[#2b2d31] cursor-pointer transition-colors"
+                    className="group flex items-center gap-4 p-3 rounded-xl hover:bg-white/10 cursor-pointer transition-colors"
                     onClick={() => handleItemClick(item)}
                   >
-                    <div className={`p-2 rounded-lg bg-[#2b2d31] group-hover:bg-[#383a40] transition-colors ${item.icon_color || 'text-blue-400'}`}>
+                    <div className={`p-2 rounded-lg bg-purple-500/20 ${item.icon_color || 'text-purple-400'}`}>
                       <IconComponent size={20} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-medium text-gray-200 group-hover:text-white truncate">
+                        <h4 className="text-sm font-medium text-white group-hover:text-white truncate">
                           {item.name}
                         </h4>
                         {item.type === 'example' && (
-                          <span className="text-xs font-semibold text-gray-500 uppercase">Example</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">Template</span>
                         )}
                       </div>
-                      <p className="text-xs text-gray-500 truncate">
+                      <p className="text-xs text-white/50 truncate">
                         {item.description || 'No description'}
                       </p>
                     </div>
-                    <ArrowRight size={16} className="text-gray-500 opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all" />
+                    <ArrowRight size={16} className="text-white/20 opacity-0 group-hover:opacity-100 -translate-x-2 group-hover:translate-x-0 transition-all" />
                   </div>
                 );
               })}
             </div>
           ) : (
-            <div className="py-12 text-center text-gray-500">
+            <div className="py-12 text-center text-white/50">
               <p>No projects found matching "{query}"</p>
             </div>
           )}
@@ -730,7 +699,6 @@ export default function ProjectsView({
   const [exampleProjects, setExampleProjects] = useState<any[]>([]);
   const [isLoadingExamples, setIsLoadingExamples] = useState(false);
 
-  // Map icon names to components
   const iconMap: Record<string, React.ElementType> = {
     BookOpen,
     Briefcase,
@@ -784,18 +752,17 @@ export default function ProjectsView({
     }
   };
 
-  // Define the examples grid to reuse it
   const ExamplesGrid = () => (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {exampleProjects.map((example) => {
         const IconComponent = iconMap[example.icon] || FolderKanban;
         return (
           <ProjectCard
             key={example.id}
             icon={IconComponent}
-            iconColor={example.icon_color || 'text-blue-400'}
+            iconColor={example.icon_color || 'text-purple-400'}
             title={example.name}
-            type="Example"
+            type="Template"
             description={example.description}
             onClick={() => handleCreateFromExample(example.id)}
             isExample={true}
@@ -820,9 +787,7 @@ export default function ProjectsView({
       if (response.ok) {
         const result = await response.json();
         setProjects([result.project, ...projects]);
-        // Switch to My Projects tab to show the newly created project
         setActiveTab('My Projects');
-        // Optionally select the project immediately
         onProjectSelect?.(result.project.id);
       } else {
         console.error('Failed to create project from example');
@@ -867,7 +832,6 @@ export default function ProjectsView({
         headers['x-api-key'] = apiKey;
       }
 
-      // Extract files before sending
       const files = projectData.files || [];
       const projectDataWithoutFiles = {
         ...projectData,
@@ -885,13 +849,11 @@ export default function ProjectsView({
         setProjects([result.project, ...projects]);
         setShowWizard(false);
 
-        // Upload files if any
         const actualFiles = files.filter((f: any) => f.file).map((f: any) => f.file);
         if (actualFiles.length > 0) {
           await uploadFilesToProject(result.project.id, actualFiles);
         }
 
-        // Auto-select the newly created project
         onProjectSelect?.(result.project.id);
       } else {
         console.error('Failed to create project');
@@ -901,7 +863,6 @@ export default function ProjectsView({
     }
   };
 
-  // Load projects on mount
   React.useEffect(() => {
     const loadProjects = async () => {
       try {
@@ -922,7 +883,6 @@ export default function ProjectsView({
     loadProjects();
   }, [backendUrl, apiKey]);
 
-  // Load example projects on mount
   React.useEffect(() => {
     const loadExamples = async () => {
       setIsLoadingExamples(true);
@@ -947,10 +907,7 @@ export default function ProjectsView({
   }, [backendUrl, apiKey]);
 
   return (
-    <div className="min-h-screen bg-[#1e1f22] text-gray-200 font-sans selection:bg-blue-500/30">
-
-      {/* Top Gradient Fade */}
-      <div className="fixed top-0 left-0 right-0 h-16 bg-gradient-to-b from-[#1e1f22] to-transparent z-10 pointer-events-none" />
+    <div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col">
 
       {/* Modals */}
       {showWizard && <ProjectWizard onClose={() => setShowWizard(false)} onSave={handleSaveProject} />}
@@ -976,121 +933,109 @@ export default function ProjectsView({
         />
       )}
 
-      {/* Main Content Container */}
-      <main className="px-4 sm:px-8 pt-16 pb-8 max-w-5xl mx-auto w-full">
-
-        {/* Page Header */}
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
-            Projects
-          </h1>
-
-          <div className="flex items-center gap-3">
-            {/* Search Button */}
-            <button
-              onClick={() => setShowSearch(true)}
-              className="p-2 text-gray-400 hover:text-white hover:bg-[#2b2d31] rounded-xl transition-colors"
-              title="Search projects (Ctrl+K)"
-            >
-              <Search size={20} />
-            </button>
-
-            <button
-              onClick={() => setShowWizard(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-transparent border border-[#383a40] hover:bg-[#2b2d31] text-white rounded-xl text-sm font-medium transition-colors"
-            >
-              <Plus size={16} />
-              <span className="hidden sm:inline">Create project</span>
-            </button>
+      {/* Header */}
+      <div className="flex justify-between items-center px-6 py-4 border-b border-white/10">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-white/10 flex items-center justify-center">
+            <FolderKanban size={18} className="text-purple-400" />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-white leading-tight">HomePilot</div>
+            <div className="text-xs text-white/50 leading-tight">Projects</div>
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex flex-col gap-6">
-          <div className="flex items-center border-b border-[#383a40]">
-            <TabButton
-              label="My Projects"
-              active={activeTab === 'My Projects'}
-              onClick={() => setActiveTab('My Projects')}
-            />
-            <TabButton
-              label="Shared with me"
-              active={activeTab === 'Shared'}
-              onClick={() => setActiveTab('Shared')}
-            />
-            <TabButton
-              label="Examples"
-              active={activeTab === 'Examples'}
-              onClick={() => setActiveTab('Examples')}
-            />
-          </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowSearch(true)}
+            className="p-2 text-white/50 hover:text-white hover:bg-white/10 rounded-xl transition-colors"
+            title="Search projects (Ctrl+K)"
+          >
+            <Search size={20} />
+          </button>
 
-          {/* Tab Content */}
-          <div className="flex flex-col gap-6 animate-in fade-in duration-300">
+          <button
+            onClick={() => setShowWizard(true)}
+            className="flex items-center gap-2 bg-purple-500 hover:bg-purple-600 px-4 py-2 rounded-full text-sm font-semibold transition-all"
+          >
+            <Plus size={16} />
+            Create Project
+          </button>
+        </div>
+      </div>
 
-            {activeTab === 'My Projects' && (
-              <>
-                {projects.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center p-8 gap-4 border border-[#383a40] rounded-2xl bg-[#1e1f22]/50">
-                    <div className="w-12 h-12 rounded-full bg-[#2b2d31] flex items-center justify-center text-gray-400">
-                      <FolderKanban size={24} />
-                    </div>
-                    <div className="text-center max-w-sm">
-                      <h2 className="text-base font-semibold text-white mb-1">Get started by creating a new project</h2>
-                      <p className="text-sm text-gray-400">
-                        Projects help you set custom instructions, attach files, and create specialized AI assistants.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setShowWizard(true)}
-                      className="flex items-center gap-2 px-4 py-2 mt-2 bg-transparent border border-[#383a40] hover:bg-[#2b2d31] text-white rounded-xl text-sm font-medium transition-colors"
-                    >
-                      <Plus size={16} />
-                      New project
-                    </button>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {projects.map((project) => (
-                      <ProjectCard
-                        key={project.id}
-                        icon={FolderKanban}
-                        iconColor="text-blue-400"
-                        title={project.name}
-                        type={project.project_type || 'Chat'}
-                        description={project.description || 'No description'}
-                        onClick={() => onProjectSelect?.(project.id)}
-                        onDelete={() => handleDeleteProject(project.id, project.name)}
-                        onEdit={() => handleEditProject(project.id)}
-                        isExample={false}
-                      />
-                    ))}
-                  </div>
-                )}
+      {/* Tabs */}
+      <div className="px-6 border-b border-white/10">
+        <div className="flex items-center gap-1">
+          {['My Projects', 'Shared with me', 'Examples'].map(tab => (
+            <TabButton key={tab} label={tab} active={activeTab === tab} onClick={() => setActiveTab(tab)} />
+          ))}
+        </div>
+      </div>
 
-                {/* Show examples below My Projects */}
-                {projects.length > 0 && exampleProjects.length > 0 && (
-                  <>
-                    <div className="text-xs font-semibold text-gray-500 uppercase mt-8">Example Templates</div>
-                    <ExamplesGrid />
-                  </>
-                )}
-              </>
-            )}
-
-            {activeTab === 'Shared' && (
-              <div className="flex flex-col items-center justify-center py-20 text-gray-500">
-                <p>No projects have been shared with you yet.</p>
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-6">
+        {activeTab === 'My Projects' && (
+          <>
+            {projects.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-64 text-white/50">
+                <FolderKanban size={48} className="mb-4 opacity-50" />
+                <p className="text-lg font-semibold mb-2">No projects yet</p>
+                <p className="text-sm text-white/40 mb-4">Create your first project to get started</p>
+                <button
+                  onClick={() => setShowWizard(true)}
+                  className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full text-sm font-medium transition-colors"
+                >
+                  <Plus size={16} />
+                  New project
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {projects.map((project) => (
+                  <ProjectCard
+                    key={project.id}
+                    icon={FolderKanban}
+                    iconColor="text-purple-400"
+                    title={project.name}
+                    type={project.project_type || 'Chat'}
+                    description={project.description || 'No description'}
+                    onClick={() => onProjectSelect?.(project.id)}
+                    onDelete={() => handleDeleteProject(project.id, project.name)}
+                    onEdit={() => handleEditProject(project.id)}
+                    isExample={false}
+                  />
+                ))}
               </div>
             )}
 
-            {activeTab === 'Examples' && (
-              <ExamplesGrid />
+            {/* Show examples below My Projects */}
+            {projects.length > 0 && exampleProjects.length > 0 && (
+              <>
+                <div className="text-xs font-semibold text-white/40 mt-8 mb-4">Template Projects</div>
+                <ExamplesGrid />
+              </>
             )}
+          </>
+        )}
 
+        {activeTab === 'Shared with me' && (
+          <div className="flex flex-col items-center justify-center h-64 text-white/50">
+            <p className="text-sm">No projects have been shared with you yet.</p>
           </div>
-        </div>
-      </main>
+        )}
+
+        {activeTab === 'Examples' && <ExamplesGrid />}
+      </div>
+
+      <style>{`
+        .line-clamp-2 {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+      `}</style>
     </div>
   );
 }

@@ -327,6 +327,60 @@
           "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid/resolve/main/svd.safetensors",
           "install_path": "checkpoints/"
         }
+      ],
+      "edit": [
+        {
+          "id": "sd_xl_base_1.0_inpainting_0.1.safetensors",
+          "label": "SDXL Inpainting 0.1 (Checkpoint)",
+          "recommended": true,
+          "nsfw": false,
+          "description": "High-quality inpainting backbone for natural edits (object removal, region replace) at 1024px.",
+          "size_gb": 5.14,
+          "resolution": "1024x1024",
+          "download_url": "https://huggingface.co/wangqyqq/sd_xl_base_1.0_inpainting_0.1.safetensors/resolve/main/sd_xl_base_1.0_inpainting_0.1.safetensors",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "sd-v1-5-inpainting.ckpt",
+          "label": "SD 1.5 Inpainting (Fast fallback)",
+          "recommended": true,
+          "nsfw": false,
+          "description": "Fast and stable 512px inpainting fallback. Great for low-VRAM servers.",
+          "size_gb": 4.27,
+          "resolution": "512x512",
+          "download_url": "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt",
+          "install_path": "checkpoints/"
+        },
+        {
+          "id": "control_v11p_sd15_inpaint.safetensors",
+          "label": "ControlNet SD1.5 Inpaint (Guidance)",
+          "recommended": true,
+          "nsfw": false,
+          "description": "ControlNet inpaint guidance to preserve structure and blend edits naturally (SD1.5).",
+          "size_gb": 1.45,
+          "download_url": "https://huggingface.co/lllyasviel/control_v11p_sd15_inpaint/resolve/main/diffusion_pytorch_model.safetensors",
+          "install_path": "controlnet/"
+        },
+        {
+          "id": "sam_vit_h_4b8939.pth",
+          "label": "Segment Anything (SAM ViT-H)",
+          "recommended": false,
+          "nsfw": false,
+          "description": "Optional auto-mask helper (Segment Anything Model). Useful for background removal / object selection.",
+          "size_gb": 2.56,
+          "download_url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
+          "install_path": "sams/"
+        },
+        {
+          "id": "u2net.onnx",
+          "label": "Background Remove (U2Net ONNX)",
+          "recommended": false,
+          "nsfw": false,
+          "description": "Optional background removal helper used by rembg-style workflows.",
+          "size_gb": 0.17,
+          "download_url": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx",
+          "install_path": "rembg/"
+        }
       ]
     },
     "civitai": {
