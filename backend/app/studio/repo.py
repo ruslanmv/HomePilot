@@ -19,7 +19,7 @@ from .. import storage
 from .models import (
     StudioVideo, StudioVideoCreate, StudioScene, StudioSceneCreate, StudioSceneUpdate,
     StudioProject, StudioProjectCreate, StudioAsset, AudioTrack, CaptionSegment,
-    VersionSnapshot, ShareLink, CanvasSpec, AssetKind, TrackKind,
+    VersionSnapshot, ShareLink, CanvasSpec, AssetKind, TrackKind, ProjectScene,
 )
 from .library import normalize_project_type, default_canvas
 
@@ -197,6 +197,25 @@ def init_studio_db() -> None:
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_studio_share_project ON studio_share_links(project_id)")
+
+    # Project Scenes table (for MP4 export timeline, independent from legacy video scenes)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS studio_project_scenes (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            idx INTEGER NOT NULL,
+            narration TEXT DEFAULT '',
+            image_prompt TEXT DEFAULT '',
+            negative_prompt TEXT DEFAULT '',
+            image_url TEXT,
+            audio_url TEXT,
+            duration_sec REAL DEFAULT 5.0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES studio_projects(id)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_studio_project_scenes_project ON studio_project_scenes(project_id)")
 
     con.commit()
     con.close()
@@ -1376,3 +1395,193 @@ def delete_share_link(token: str) -> bool:
     con.commit()
     con.close()
     return deleted
+
+
+# =============================================================================
+# Project Scene CRUD (for MP4 export)
+# =============================================================================
+
+def list_project_scenes(project_id: str) -> List[ProjectScene]:
+    """List all scenes for a project, ordered by idx."""
+    init_studio_db()
+    con = _db()
+    cur = con.cursor()
+    cur.execute(
+        "SELECT * FROM studio_project_scenes WHERE project_id = ? ORDER BY idx",
+        (project_id,)
+    )
+    rows = cur.fetchall()
+    con.close()
+
+    return [
+        ProjectScene(
+            id=row["id"],
+            projectId=row["project_id"],
+            idx=row["idx"],
+            narration=row["narration"] or "",
+            imagePrompt=row["image_prompt"] or "",
+            negativePrompt=row["negative_prompt"] or "",
+            imageUrl=row["image_url"],
+            audioUrl=row["audio_url"],
+            durationSec=row["duration_sec"] or 5.0,
+            createdAt=row["created_at"],
+            updatedAt=row["updated_at"],
+        )
+        for row in rows
+    ]
+
+
+def create_project_scene(
+    project_id: str,
+    narration: str = "",
+    imagePrompt: str = "",
+    negativePrompt: str = "",
+    durationSec: float = 5.0,
+    imageUrl: Optional[str] = None,
+    audioUrl: Optional[str] = None,
+) -> ProjectScene:
+    """Create a new scene for a project."""
+    init_studio_db()
+    now = _now()
+
+    # Get next index
+    existing = list_project_scenes(project_id)
+    idx = len(existing)
+
+    scene_id = str(uuid.uuid4())
+
+    con = _db()
+    cur = con.cursor()
+    cur.execute("""
+        INSERT INTO studio_project_scenes (
+            id, project_id, idx, narration, image_prompt, negative_prompt,
+            image_url, audio_url, duration_sec, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        scene_id,
+        project_id,
+        idx,
+        narration or "",
+        imagePrompt or "",
+        negativePrompt or "",
+        imageUrl,
+        audioUrl,
+        float(durationSec or 5.0),
+        now,
+        now,
+    ))
+    con.commit()
+    con.close()
+
+    touch_project(project_id)
+
+    return ProjectScene(
+        id=scene_id,
+        projectId=project_id,
+        idx=idx,
+        narration=narration or "",
+        imagePrompt=imagePrompt or "",
+        negativePrompt=negativePrompt or "",
+        imageUrl=imageUrl,
+        audioUrl=audioUrl,
+        durationSec=float(durationSec or 5.0),
+        createdAt=now,
+        updatedAt=now,
+    )
+
+
+def get_project_scene(scene_id: str) -> Optional[ProjectScene]:
+    """Get a single project scene by ID."""
+    init_studio_db()
+    con = _db()
+    cur = con.cursor()
+    cur.execute("SELECT * FROM studio_project_scenes WHERE id = ?", (scene_id,))
+    row = cur.fetchone()
+    con.close()
+
+    if not row:
+        return None
+
+    return ProjectScene(
+        id=row["id"],
+        projectId=row["project_id"],
+        idx=row["idx"],
+        narration=row["narration"] or "",
+        imagePrompt=row["image_prompt"] or "",
+        negativePrompt=row["negative_prompt"] or "",
+        imageUrl=row["image_url"],
+        audioUrl=row["audio_url"],
+        durationSec=row["duration_sec"] or 5.0,
+        createdAt=row["created_at"],
+        updatedAt=row["updated_at"],
+    )
+
+
+def patch_project_scene(scene_id: str, **fields) -> Optional[ProjectScene]:
+    """Update a project scene with the given fields."""
+    init_studio_db()
+    scene = get_project_scene(scene_id)
+    if not scene:
+        return None
+
+    # Map fields to database columns
+    column_map = {
+        "narration": "narration",
+        "imagePrompt": "image_prompt",
+        "negativePrompt": "negative_prompt",
+        "imageUrl": "image_url",
+        "audioUrl": "audio_url",
+        "durationSec": "duration_sec",
+        "idx": "idx",
+    }
+
+    updates = []
+    values = []
+    for key, value in fields.items():
+        if value is not None and key in column_map:
+            updates.append(f"{column_map[key]} = ?")
+            values.append(value)
+
+    if not updates:
+        return scene
+
+    updates.append("updated_at = ?")
+    values.append(_now())
+    values.append(scene_id)
+
+    con = _db()
+    cur = con.cursor()
+    cur.execute(
+        f"UPDATE studio_project_scenes SET {', '.join(updates)} WHERE id = ?",
+        values
+    )
+    con.commit()
+    con.close()
+
+    touch_project(scene.projectId)
+    return get_project_scene(scene_id)
+
+
+def delete_project_scene(scene_id: str) -> bool:
+    """Delete a project scene and reindex remaining scenes."""
+    init_studio_db()
+    scene = get_project_scene(scene_id)
+    if not scene:
+        return False
+
+    project_id = scene.projectId
+
+    con = _db()
+    cur = con.cursor()
+    cur.execute("DELETE FROM studio_project_scenes WHERE id = ?", (scene_id,))
+    con.commit()
+    con.close()
+
+    # Reindex remaining scenes
+    remaining = list_project_scenes(project_id)
+    for i, s in enumerate(remaining):
+        if s.idx != i:
+            patch_project_scene(s.id, idx=i)
+
+    touch_project(project_id)
+    return True

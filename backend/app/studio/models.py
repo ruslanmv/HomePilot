@@ -304,3 +304,74 @@ class ShareLink(BaseModel):
     mode: Literal["view"] = "view"
     createdAt: float
     expiresAt: Optional[float] = None
+
+
+# ============================================================================
+# Export Artifact Models (MP4 Export)
+# ============================================================================
+
+ExportKind = Literal[
+    "mp4",
+    "thumbnail_jpg",
+    "captions_srt",
+    "storyboard_pdf",
+    "slides_pdf",
+    "slides_pptx",
+    "assets_zip",
+    "json_metadata",
+    "render_log",
+]
+
+
+class ExportArtifact(BaseModel):
+    """An exported artifact (MP4, thumbnail, captions, etc.)."""
+    id: str
+    projectId: str
+    kind: ExportKind
+    url: str
+    filename: str
+    bytes: int = 0
+    createdAt: float
+
+
+# ============================================================================
+# Render Job Models (MP4 Export)
+# ============================================================================
+
+JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+
+
+class RenderJob(BaseModel):
+    """A background render job for MP4 export."""
+    id: str
+    projectId: str
+    kind: Literal["mp4"] = "mp4"
+    status: JobStatus = "queued"
+    progress: float = 0.0
+    stage: str = "queued"
+    outputUrl: Optional[str] = None
+    error: Optional[str] = None
+    createdAt: float
+    startedAt: Optional[float] = None
+    updatedAt: float
+    finishedAt: Optional[float] = None
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ============================================================================
+# Project Scene Models (for MP4 export timeline)
+# ============================================================================
+
+class ProjectScene(BaseModel):
+    """A scene in a project timeline (independent from legacy video scenes)."""
+    id: str
+    projectId: str
+    idx: int
+    narration: str = ""
+    imagePrompt: str = ""
+    negativePrompt: str = ""
+    imageUrl: Optional[str] = None
+    audioUrl: Optional[str] = None
+    durationSec: float = 5.0
+    createdAt: float
+    updatedAt: float

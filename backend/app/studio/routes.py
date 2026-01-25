@@ -7,8 +7,9 @@ Mount this router in your main app:
 """
 from __future__ import annotations
 
+import os
 import re
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, BackgroundTasks
 from typing import Optional, Literal, List, Tuple
 from pydantic import BaseModel, Field
 
@@ -200,7 +201,12 @@ from .repo import (
     create_version, list_versions, get_version, get_latest_version, delete_version,
     # Share link functions
     create_share_link, get_share_link, list_share_links, delete_share_link,
+    # Project scene functions (for MP4 export)
+    create_project_scene, list_project_scenes, get_project_scene, patch_project_scene, delete_project_scene,
 )
+from .render_jobs import create_job, get_job, list_jobs
+from .exports_repo import list_exports as list_export_artifacts
+from .render_runner import run_job
 from .service import (
     create,
     policy_check_generation,
@@ -2304,6 +2310,146 @@ class ProjectExportRequest(BaseModel):
 def project_do_export(project_id: str, req: ProjectExportRequest):
     """Export a professional project in the specified format."""
     return export_project(project_id, kind=req.kind)
+
+
+# ============================================================================
+# Project Scenes (for MP4 export timeline)
+# ============================================================================
+
+@router.get("/projects/{project_id}/scenes")
+def api_list_project_scenes(project_id: str):
+    """List all scenes for a project timeline."""
+    scenes = list_project_scenes(project_id)
+    return {"ok": True, "scenes": [s.model_dump() for s in scenes]}
+
+
+class CreateProjectSceneRequest(BaseModel):
+    """Request to create a new project scene."""
+    narration: str = ""
+    imagePrompt: str = ""
+    negativePrompt: str = ""
+    durationSec: float = 5.0
+    imageUrl: Optional[str] = None
+    audioUrl: Optional[str] = None
+
+
+@router.post("/projects/{project_id}/scenes")
+def api_create_project_scene(project_id: str, body: CreateProjectSceneRequest):
+    """Create a new scene for a project timeline."""
+    s = create_project_scene(
+        project_id=project_id,
+        narration=body.narration,
+        imagePrompt=body.imagePrompt,
+        negativePrompt=body.negativePrompt,
+        durationSec=body.durationSec,
+        imageUrl=body.imageUrl,
+        audioUrl=body.audioUrl,
+    )
+    return {"ok": True, "scene": s.model_dump()}
+
+
+class PatchProjectSceneRequest(BaseModel):
+    """Request to update a project scene."""
+    narration: Optional[str] = None
+    imagePrompt: Optional[str] = None
+    negativePrompt: Optional[str] = None
+    durationSec: Optional[float] = None
+    imageUrl: Optional[str] = None
+    audioUrl: Optional[str] = None
+    idx: Optional[int] = None
+
+
+@router.patch("/projects/{project_id}/scenes/{scene_id}")
+def api_patch_project_scene(project_id: str, scene_id: str, body: PatchProjectSceneRequest):
+    """Update a project scene."""
+    s = patch_project_scene(
+        scene_id,
+        narration=body.narration,
+        imagePrompt=body.imagePrompt,
+        negativePrompt=body.negativePrompt,
+        durationSec=body.durationSec,
+        imageUrl=body.imageUrl,
+        audioUrl=body.audioUrl,
+        idx=body.idx,
+    )
+    if not s or s.projectId != project_id:
+        raise HTTPException(status_code=404, detail="Scene not found")
+    return {"ok": True, "scene": s.model_dump()}
+
+
+@router.delete("/projects/{project_id}/scenes/{scene_id}")
+def api_delete_project_scene(project_id: str, scene_id: str):
+    """Delete a project scene."""
+    ok = delete_project_scene(scene_id)
+    return {"ok": True, "deleted": ok}
+
+
+# ============================================================================
+# MP4 Export Jobs
+# ============================================================================
+
+def _upload_dir() -> str:
+    """Get the upload directory path."""
+    return os.getenv("UPLOAD_DIR", "./uploads")
+
+
+@router.post("/projects/{project_id}/export/mp4")
+def api_export_project_mp4(project_id: str, background: BackgroundTasks):
+    """
+    Start an MP4 export job for a project.
+
+    Returns immediately with a job ID. Poll /exports/jobs/{job_id} for status.
+    When complete, the MP4 will be available in /exports artifacts.
+    """
+    # Verify project exists
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Check for scenes
+    scenes = list_project_scenes(project_id)
+    if not scenes:
+        raise HTTPException(
+            status_code=400,
+            detail="No scenes found. Add scenes to the project first via POST /projects/{id}/scenes"
+        )
+
+    # Create the job
+    job = create_job(project_id)
+
+    # Run in background thread (non-blocking)
+    background.add_task(run_job, job.id, _upload_dir())
+
+    return {
+        "ok": True,
+        "kind": "mp4",
+        "status": job.status,
+        "jobId": job.id,
+        "message": f"MP4 export started. Poll /studio/projects/{project_id}/exports/jobs/{job.id} for status.",
+    }
+
+
+@router.get("/projects/{project_id}/exports/jobs/{job_id}")
+def api_export_job_status(project_id: str, job_id: str):
+    """Get the status of an export job."""
+    job = get_job(job_id)
+    if not job or job.projectId != project_id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"ok": True, "job": job.model_dump()}
+
+
+@router.get("/projects/{project_id}/exports/jobs")
+def api_list_export_jobs(project_id: str):
+    """List all export jobs for a project."""
+    jobs = list_jobs(project_id)
+    return {"ok": True, "jobs": [j.model_dump() for j in jobs]}
+
+
+@router.get("/projects/{project_id}/exports/artifacts")
+def api_list_export_artifacts(project_id: str):
+    """List all exported artifacts (MP4s, thumbnails, etc.) for a project."""
+    items = list_export_artifacts(project_id)
+    return {"ok": True, "artifacts": [e.model_dump() for e in items]}
 
 
 # ============================================================================
