@@ -27,6 +27,8 @@ export interface TVModeSettings {
   pauseOnEnd: boolean;
   // Saga Mode: auto-continue to next chapter when story ends
   sagaMode: boolean;
+  // Auto-generate scenes: automatically generate new scenes in TV mode when reaching the last scene
+  autoGenerateScenes: boolean;
 }
 
 interface TVModeState {
@@ -131,6 +133,7 @@ const DEFAULT_SETTINGS: TVModeSettings = {
   showSceneNumber: true,
   pauseOnEnd: true,
   sagaMode: true, // Auto-continue to next chapter by default
+  autoGenerateScenes: true, // Auto-generate new scenes when on last scene by default
 };
 
 const initialState: TVModeState = {
