@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -20,6 +20,13 @@ type ImagineItem = {
   url: string
   createdAt: number
   prompt: string
+  // Generation parameters for reproducibility
+  seed?: number
+  width?: number
+  height?: number
+  steps?: number
+  cfg?: number
+  model?: string
 }
 
 export type ImagineParams = {
@@ -39,6 +46,7 @@ export type ImagineParams = {
   imgSteps?: number
   imgCfg?: number
   imgSeed?: number
+  imgPreset?: string  // "low", "med", "high", or "custom"
   nsfwMode?: boolean
   promptRefinement?: boolean
 }
@@ -50,6 +58,14 @@ type ChatResponse = {
     images?: string[]
     video_url?: string
     final_prompt?: string  // The actual refined prompt sent to ComfyUI
+    // Generation parameters for reproducibility
+    seed?: number
+    seeds?: number[]
+    width?: number
+    height?: number
+    steps?: number
+    cfg?: number
+    model?: string
     game?: {
       enabled?: boolean
       session_id?: string
@@ -181,6 +197,23 @@ export default function ImagineView(props: ImagineParams) {
   const [showVariationHistory, setShowVariationHistory] = useState(false)
   const autoGenerateRef = useRef<boolean>(false)
 
+  // Advanced Settings Panel state
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
+  const [advancedMode, setAdvancedMode] = useState(false)
+  const [customSteps, setCustomSteps] = useState(30)
+  const [customCfg, setCustomCfg] = useState(5.5)
+  const [customDenoise, setCustomDenoise] = useState(0.55)
+  const [seedLock, setSeedLock] = useState(false)
+  const [customSeed, setCustomSeed] = useState(0)
+  const [useControlNet, setUseControlNet] = useState(false)
+  const [cnStrength, setCnStrength] = useState(1.0)
+
+  // Reference Image state (for img2img similar generation)
+  const referenceInputRef = useRef<HTMLInputElement>(null)
+  const [referenceUrl, setReferenceUrl] = useState<string | null>(null)
+  const [referenceStrength, setReferenceStrength] = useState(0.35) // 0=very similar, 1=more creative
+  const [isUploadingReference, setIsUploadingReference] = useState(false)
+
   // Ref for auto-scrolling to top when new images are added (Grok-style)
   const gridStartRef = useRef<HTMLDivElement>(null)
 
@@ -202,13 +235,56 @@ export default function ImagineView(props: ImagineParams) {
     return ASPECT_RATIOS.find((a) => a.label === aspect) || ASPECT_RATIOS[0]
   }, [aspect])
 
+  // Upload reference image handler
+  const handleUploadReference = useCallback(async (file: File) => {
+    setIsUploadingReference(true)
+    try {
+      const base = props.backendUrl.replace(/\/+$/, '')
+      const url = `${base}/upload`
+
+      const fd = new FormData()
+      fd.append('file', file)
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: authKey ? { 'x-api-key': authKey } : undefined,
+        body: fd,
+      })
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => `HTTP ${res.status}`)
+        throw new Error(text)
+      }
+
+      const data = await res.json()
+      // Backend typically returns { url: "http://.../files/..." }
+      const imageUrl = data?.url || data?.file_url || data?.media_url
+      if (!imageUrl) {
+        throw new Error('Upload succeeded but no URL returned')
+      }
+
+      setReferenceUrl(imageUrl)
+    } catch (err: any) {
+      console.error('Reference upload failed:', err)
+      alert(`Failed to upload reference: ${err.message || err}`)
+    } finally {
+      setIsUploadingReference(false)
+    }
+  }, [props.backendUrl, authKey])
+
   const handleGenerate = useCallback(async (overridePrompt?: string) => {
     const t = (overridePrompt || prompt).trim()
-    if (!t || isGenerating) return
+    // Allow empty prompt when reference image is uploaded
+    if (!t && !referenceUrl) return
+    if (isGenerating) return
+
+    // Use default prompt for reference-only generation
+    const effectivePrompt = t || 'similar image'
 
     setIsGenerating(true)
     setShowAspectPanel(false)
     setShowGamePanel(false)
+    setShowAdvancedSettings(false)
 
     try {
       // IMPORTANT: Send aspect ratio to backend instead of hardcoded dimensions.
@@ -228,7 +304,7 @@ export default function ImagineView(props: ImagineParams) {
       const chatModel = props.modelChat || 'llama3:8b'
 
       const requestBody: any = {
-        message: /^\s*(imagine|generate|create|draw|make)\b/i.test(t) ? t : `imagine ${t}`,
+        message: /^\s*(imagine|generate|create|draw|make)\b/i.test(effectivePrompt) ? effectivePrompt : `imagine ${effectivePrompt}`,
         mode: 'imagine',
 
         // Provider override fields for image generation
@@ -249,13 +325,22 @@ export default function ImagineView(props: ImagineParams) {
         imgAspectRatio: aspect,  // e.g., "16:9", "1:1", etc.
         imgWidth: hasExplicitDimensions ? props.imgWidth : undefined,
         imgHeight: hasExplicitDimensions ? props.imgHeight : undefined,
-        imgSteps: props.imgSteps,
-        imgCfg: props.imgCfg,
-        imgSeed: props.imgSeed,
+        // Use custom settings if advanced mode is enabled, otherwise use props
+        imgSteps: advancedMode ? customSteps : props.imgSteps,
+        imgCfg: advancedMode ? customCfg : props.imgCfg,
+        imgSeed: advancedMode && seedLock ? customSeed : props.imgSeed,
+        imgDenoise: advancedMode ? customDenoise : undefined,
+        imgPreset: props.imgPreset || 'med',  // Send preset for architecture-aware settings
         imgModel: props.modelImages,
         nsfwMode: props.nsfwMode,
         promptRefinement: props.promptRefinement ?? true,
         imgBatchSize: numImages,
+        // ControlNet settings
+        useControlNet: advancedMode ? useControlNet : undefined,
+        cnStrength: advancedMode && useControlNet ? cnStrength : undefined,
+        // Reference image for img2img (similar image generation)
+        imgReference: referenceUrl ?? undefined,
+        imgRefStrength: referenceUrl ? referenceStrength : undefined,
       }
 
       // Add Game Mode parameters if enabled
@@ -303,11 +388,26 @@ export default function ImagineView(props: ImagineParams) {
       const finalPrompt = data?.media?.final_prompt
         || (gameMode && data?.media?.game?.variation_prompt)
         || t
-      const newItems: ImagineItem[] = urls.map((u) => ({
+
+      // Extract generation parameters for reproducibility
+      const seeds = data?.media?.seeds || (data?.media?.seed ? [data.media.seed] : [])
+      const genWidth = data?.media?.width
+      const genHeight = data?.media?.height
+      const genSteps = data?.media?.steps
+      const genCfg = data?.media?.cfg
+      const genModel = data?.media?.model
+
+      const newItems: ImagineItem[] = urls.map((u, idx) => ({
         id: uid(),
         url: u,
         createdAt: now,
         prompt: finalPrompt,
+        seed: seeds[idx] ?? seeds[0],  // Use corresponding seed or fall back to first
+        width: genWidth,
+        height: genHeight,
+        steps: genSteps,
+        cfg: genCfg,
+        model: genModel,
       }))
 
       // Prepend new images at the beginning (Grok-style: new images appear at top-left)
@@ -332,7 +432,7 @@ export default function ImagineView(props: ImagineParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, gameLocks, numImages])
+  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength])
 
   // Auto-generation loop for Game Mode
   useEffect(() => {
@@ -445,15 +545,53 @@ export default function ImagineView(props: ImagineParams) {
             </button>
           )}
 
-          <button
-            className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2 rounded-full text-sm font-semibold transition-all"
-            type="button"
-            onClick={() => {
-              alert('Reference upload is not implemented yet.')
+          {/* Reference Upload Button */}
+          <input
+            ref={referenceInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) handleUploadReference(f)
+              e.currentTarget.value = ''
             }}
+          />
+          <button
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border ${
+              referenceUrl
+                ? 'bg-purple-500/20 border-purple-500/50 text-purple-300'
+                : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
+            }`}
+            type="button"
+            onClick={() => referenceInputRef.current?.click()}
+            disabled={isUploadingReference}
           >
-            <Upload size={16} className="text-white/70" />
-            <span>Upload reference</span>
+            {isUploadingReference ? (
+              <>
+                <span className="animate-spin">⏳</span>
+                <span>Uploading...</span>
+              </>
+            ) : (
+              <>
+                <Upload size={16} />
+                <span>{referenceUrl ? 'Change reference' : 'Upload reference'}</span>
+              </>
+            )}
+          </button>
+
+          {/* Advanced Settings Toggle */}
+          <button
+            className={`p-2 rounded-full border transition-all ${
+              showAdvancedSettings
+                ? 'bg-white text-black border-white'
+                : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'
+            }`}
+            type="button"
+            onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+            title="Advanced Settings"
+          >
+            <Settings2 size={18} />
           </button>
         </div>
       </div>
@@ -548,6 +686,149 @@ export default function ImagineView(props: ImagineParams) {
         </div>
       )}
 
+      {/* Advanced Settings Panel */}
+      {showAdvancedSettings && (
+        <div className="absolute top-20 right-6 z-30 bg-black/95 border border-white/10 rounded-2xl shadow-2xl w-80 backdrop-blur-xl overflow-hidden">
+          <div className="p-5 border-b border-white/10 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Settings2 size={16} />
+              PARAMETERS
+            </h3>
+            <button type="button" onClick={() => setShowAdvancedSettings(false)} className="text-white/50 hover:text-white">
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="p-5 space-y-6 max-h-[70vh] overflow-y-auto">
+            {/* Advanced Mode Toggle */}
+            <button
+              onClick={() => setAdvancedMode(!advancedMode)}
+              className={`w-full flex items-center justify-between p-3 rounded-xl border transition-colors ${
+                advancedMode
+                  ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                  : 'bg-white/5 border-white/10 text-white/60 hover:border-white/20'
+              }`}
+            >
+              <span className="flex items-center gap-2 font-medium text-sm">
+                <Sliders size={16} />
+                Advanced Controls
+              </span>
+              {advancedMode ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </button>
+
+            {advancedMode && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Steps */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Steps</span>
+                    <span className="text-white/60">{customSteps}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={50}
+                    value={customSteps}
+                    onChange={(e) => setCustomSteps(Number(e.target.value))}
+                    className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                  />
+                </div>
+
+                {/* CFG Scale */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">CFG Scale</span>
+                    <span className="text-white/60">{customCfg.toFixed(1)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={15}
+                    step={0.5}
+                    value={customCfg}
+                    onChange={(e) => setCustomCfg(Number(e.target.value))}
+                    className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                  />
+                </div>
+
+                {/* Denoise Strength */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Denoise Strength</span>
+                    <span className="text-white/60">{customDenoise.toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={1.0}
+                    step={0.05}
+                    value={customDenoise}
+                    onChange={(e) => setCustomDenoise(Number(e.target.value))}
+                    className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                  />
+                </div>
+
+                {/* Lock Seed */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-sm text-white/80">Lock Seed</span>
+                  <button
+                    onClick={() => {
+                      if (!seedLock) setCustomSeed(Math.floor(Math.random() * 2147483647))
+                      setSeedLock(!seedLock)
+                    }}
+                    className={`w-10 h-5 rounded-full transition-colors relative ${seedLock ? 'bg-purple-500' : 'bg-white/20'}`}
+                  >
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${seedLock ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                {seedLock && (
+                  <input
+                    type="number"
+                    value={customSeed}
+                    onChange={(e) => setCustomSeed(Number(e.target.value))}
+                    className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white font-mono focus:border-purple-500/50 focus:outline-none"
+                    placeholder="Seed value"
+                  />
+                )}
+
+                {/* Use ControlNet */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-sm text-white/80">Use ControlNet</span>
+                  <button
+                    onClick={() => setUseControlNet(!useControlNet)}
+                    className={`w-10 h-5 rounded-full transition-colors relative ${useControlNet ? 'bg-purple-500' : 'bg-white/20'}`}
+                  >
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${useControlNet ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                {useControlNet && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="uppercase tracking-wider text-white/40 font-semibold">CN Strength</span>
+                      <span className="text-white/60">{cnStrength.toFixed(2)}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      value={cnStrength}
+                      onChange={(e) => setCnStrength(Number(e.target.value))}
+                      className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="p-4 rounded-xl bg-purple-900/10 border border-purple-500/20 text-xs text-purple-200/70 leading-relaxed">
+              <span className="font-bold text-purple-400 block mb-1">PRO TIP</span>
+              Enable Advanced Controls to fine-tune generation parameters. Use Lock Seed to regenerate with the same composition.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Grid - Row-wise layout like Grok (fills left to right, then next row) */}
       <div className="flex-1 overflow-y-auto px-4 pb-48 pt-8 scrollbar-hide">
         <div className="max-w-[1600px] mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 content-start">
@@ -630,6 +911,59 @@ export default function ImagineView(props: ImagineParams) {
       {/* Floating prompt bar */}
       <div className="absolute bottom-0 left-0 right-0 z-30 p-6 flex justify-center items-end bg-gradient-to-t from-black via-black/90 to-transparent h-48 pointer-events-none">
         <div className="w-full max-w-2xl relative pointer-events-auto">
+          {/* Reference Image Preview Panel */}
+          {referenceUrl && (
+            <div className="absolute bottom-[110%] left-0 right-0 bg-black/95 border border-white/10 rounded-2xl p-4 shadow-2xl mb-2 backdrop-blur-xl">
+              <div className="flex items-center gap-4">
+                <img
+                  src={referenceUrl}
+                  className="h-20 w-20 rounded-xl object-cover border border-white/20 shadow-lg"
+                  alt="Reference"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Image size={14} className="text-purple-400" />
+                      Reference Active
+                    </div>
+                    <button
+                      type="button"
+                      className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-white/50 hover:text-red-400 transition-colors"
+                      onClick={() => setReferenceUrl(null)}
+                      title="Remove reference"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-white/50">Similarity</span>
+                      <span className="text-white/70 font-mono">
+                        {referenceStrength < 0.3 ? 'Very Similar' : referenceStrength < 0.6 ? 'Balanced' : 'More Creative'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={referenceStrength}
+                      onChange={(e) => setReferenceStrength(Number(e.target.value))}
+                      className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                    />
+                    <div className="flex justify-between text-[10px] text-white/40">
+                      <span>Similar</span>
+                      <span>Creative</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 text-[10px] text-white/40 leading-relaxed">
+                Generated images will be similar to your reference. Adjust the slider to control how closely to follow the reference.
+              </div>
+            </div>
+          )}
+
           {/* Aspect panel */}
           {showAspectPanel ? (
             <div className="absolute bottom-[110%] left-0 bg-black border border-white/10 rounded-xl p-3 shadow-2xl mb-2 flex flex-col gap-3">
@@ -766,9 +1100,9 @@ export default function ImagineView(props: ImagineParams) {
 
                 <button
                   onClick={() => void handleGenerate()}
-                  disabled={!prompt.trim() || isGenerating || isAutoGenerating}
+                  disabled={(!prompt.trim() && !referenceUrl) || isGenerating || isAutoGenerating}
                   className={`ml-1 h-10 px-6 rounded-full font-semibold text-sm transition-all flex items-center gap-2 ${
-                    prompt.trim() && !isGenerating && !isAutoGenerating
+                    (prompt.trim() || referenceUrl) && !isGenerating && !isAutoGenerating
                       ? gameMode
                         ? 'bg-purple-500 text-white hover:bg-purple-600 hover:scale-[1.02]'
                         : 'bg-white text-black hover:bg-gray-200 hover:scale-[1.02]'
@@ -851,7 +1185,52 @@ export default function ImagineView(props: ImagineParams) {
                   </div>
                 </div>
 
+                {/* Seed - displayed prominently for reproducibility */}
+                {selectedImage.seed && (
+                  <div>
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                      Seed
+                    </label>
+                    <div className="text-lg text-white font-mono font-bold tracking-wide">
+                      {selectedImage.seed}
+                    </div>
+                  </div>
+                )}
+
+                {/* Resolution */}
+                {selectedImage.width && selectedImage.height && (
+                  <div>
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                      Resolution
+                    </label>
+                    <div className="text-sm text-white/80 font-mono">
+                      {selectedImage.width} × {selectedImage.height}
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-2 gap-4 pt-2">
+                  {/* Steps & CFG */}
+                  {selectedImage.steps && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                        Steps
+                      </label>
+                      <div className="text-xs text-white/70 font-mono">
+                        {selectedImage.steps}
+                      </div>
+                    </div>
+                  )}
+                  {selectedImage.cfg && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                        CFG Scale
+                      </label>
+                      <div className="text-xs text-white/70 font-mono">
+                        {selectedImage.cfg}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
                       Date
@@ -869,6 +1248,18 @@ export default function ImagineView(props: ImagineParams) {
                     </div>
                   </div>
                 </div>
+
+                {/* Model name */}
+                {selectedImage.model && (
+                  <div className="pt-2">
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                      Model
+                    </label>
+                    <div className="text-xs text-white/60 font-mono truncate">
+                      {selectedImage.model}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Sidebar Footer / Actions */}

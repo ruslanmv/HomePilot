@@ -3,7 +3,7 @@ SHELL := /bin/bash
 # Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
-.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-verify start start-backend start-frontend
+.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-edit download-verify download-health start start-backend start-frontend
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -36,6 +36,11 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@cd backend && uv pip install -e .
 	@cd backend && uv pip install --group dev
 	@echo ""
+	@echo "✓ Installing edit-session service with uv..."
+	@cd edit-session && uv venv .venv --python 3.11 || uv venv .venv
+	@cd edit-session && uv pip install -e .
+	@cd edit-session && uv pip install --group dev
+	@echo ""
 	@echo "✓ Installing frontend dependencies..."
 	@cd frontend && npm install
 	@echo ""
@@ -56,7 +61,7 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@ComfyUI/.venv/bin/pip install -r ComfyUI/requirements.txt
 	@echo ""
 	@echo "✓ Setting up model directories..."
-	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae
+	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae models/comfy/controlnet models/comfy/sams models/comfy/rembg
 	@echo "  Linking ComfyUI models to ./models/comfy..."
 	@rm -rf ComfyUI/models
 	@ln -s $$(pwd)/models/comfy ComfyUI/models
@@ -83,6 +88,8 @@ verify-install: ## Verify that all components are properly installed
 	@echo "Verifying installation..."
 	@test -f backend/.venv/bin/uvicorn || (echo "❌ backend not installed"; exit 1)
 	@echo "  ✓ Backend installed"
+	@test -f edit-session/.venv/bin/uvicorn || (echo "❌ edit-session not installed"; exit 1)
+	@echo "  ✓ Edit-session installed"
 	@test -d frontend/node_modules || (echo "❌ frontend not installed"; exit 1)
 	@echo "  ✓ Frontend installed"
 	@test -f ComfyUI/main.py || (echo "❌ ComfyUI missing"; exit 1)
@@ -122,16 +129,21 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 		echo "❌ Frontend not installed. Run: make install"; \
 		exit 1; \
 	fi
+	@if [ ! -d "edit-session/.venv" ]; then \
+		echo "❌ Edit-session not installed. Run: make install"; \
+		exit 1; \
+	fi
 	@if [ ! -f "ComfyUI/main.py" ]; then \
 		echo "⚠️  ComfyUI not found. Run: make install"; \
 		echo "    Image/video generation will not work without ComfyUI."; \
 		echo ""; \
 	fi
 	@echo "Services:"
-	@echo "  Backend:  http://localhost:8000"
-	@echo "  Frontend: http://localhost:3000"
+	@echo "  Backend:      http://localhost:8000"
+	@echo "  Edit-Session: http://localhost:8010"
+	@echo "  Frontend:     http://localhost:3000"
 	@if [ -f "ComfyUI/main.py" ]; then \
-		echo "  ComfyUI:  http://localhost:8188"; \
+		echo "  ComfyUI:      http://localhost:8188"; \
 	fi
 	@echo ""
 	@echo "Press Ctrl+C to stop ALL services"
@@ -153,6 +165,10 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 		\
 		echo "Starting backend..."; \
 		cd "$$ROOT/backend" && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 & \
+		pids="$$pids $$!"; \
+		\
+		echo "Starting edit-session service..."; \
+		cd "$$ROOT/edit-session" && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8010 & \
 		pids="$$pids $$!"; \
 		\
 		echo "Starting frontend..."; \
@@ -185,6 +201,14 @@ start-backend: ## Start backend locally with uv
 		exit 1; \
 	fi
 	@cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+start-edit-session: ## Start edit-session sidecar locally (port 8010)
+	@echo "Starting edit-session service..."
+	@if [ ! -d "edit-session/.venv" ]; then \
+		echo "Virtual environment not found. Run: make install"; \
+		exit 1; \
+	fi
+	@cd edit-session && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
 
 start-frontend: ## Start frontend locally
 	@echo "Starting frontend..."
@@ -331,11 +355,49 @@ download: download-recommended ## Download models (alias for download-recommende
 download-minimal: ## Download minimal models (~7GB - FLUX Schnell + encoders)
 	@bash scripts/download_models.sh minimal
 
-download-recommended: ## Download recommended models (~14GB - FLUX Schnell + SDXL + encoders)
+download-recommended: ## Download recommended models (~24GB - FLUX Schnell + SDXL + edit models)
 	@bash scripts/download_models.sh recommended
 
-download-full: ## Download all models (~65GB - FLUX Schnell + Dev, SDXL, SD1.5, SVD + encoders)
+download-full: ## Download all models (~63GB - FLUX, SDXL, SD1.5, SVD, all edit models)
 	@bash scripts/download_models.sh full
+
+download-edit: ## Download only edit mode models (inpainting, controlnet, etc.)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Downloading Edit Mode Models"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@mkdir -p models/comfy/checkpoints models/comfy/controlnet models/comfy/sams models/comfy/rembg
+	@echo ""
+	@echo "[1/5] Downloading SDXL Inpainting 0.1..."
+	@wget -c --progress=bar:force -O models/comfy/checkpoints/sd_xl_base_1.0_inpainting_0.1.safetensors \
+		"https://huggingface.co/wangqyqq/sd_xl_base_1.0_inpainting_0.1.safetensors/resolve/main/sd_xl_base_1.0_inpainting_0.1.safetensors" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[2/5] Downloading SD 1.5 Inpainting..."
+	@wget -c --progress=bar:force -O models/comfy/checkpoints/sd-v1-5-inpainting.ckpt \
+		"https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting/resolve/main/sd-v1-5-inpainting.ckpt" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[3/5] Downloading ControlNet Inpaint..."
+	@wget -c --progress=bar:force -O models/comfy/controlnet/control_v11p_sd15_inpaint.safetensors \
+		"https://huggingface.co/lllyasviel/control_v11p_sd15_inpaint/resolve/main/diffusion_pytorch_model.safetensors" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[4/5] Downloading SAM ViT-H..."
+	@wget -c --progress=bar:force -O models/comfy/sams/sam_vit_h_4b8939.pth \
+		"https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[5/5] Downloading U2Net..."
+	@wget -c --progress=bar:force -O models/comfy/rembg/u2net.onnx \
+		"https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ Edit mode model download complete!"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@du -sh models/comfy/checkpoints/*inpaint* models/comfy/controlnet/* models/comfy/sams/* models/comfy/rembg/* 2>/dev/null || true
+
+download-health: ## Check health of model download URLs
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Checking Model Download URL Health"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@python scripts/check_model_health.py
 
 download-verify: ## Verify downloaded models and show disk usage
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -345,10 +407,10 @@ download-verify: ## Verify downloaded models and show disk usage
 	@if [ -d "models/comfy" ]; then \
 		echo "ComfyUI Models:"; \
 		echo ""; \
-		echo "  Checkpoints:"; \
-		ls -lh models/comfy/checkpoints/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo "  Checkpoints (image generation):"; \
+		ls -lh models/comfy/checkpoints/*.safetensors models/comfy/checkpoints/*.ckpt 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
 		echo ""; \
-		echo "  UNET Models:"; \
+		echo "  UNET Models (FLUX):"; \
 		ls -lh models/comfy/unet/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
 		echo ""; \
 		echo "  CLIP Encoders:"; \
@@ -356,6 +418,15 @@ download-verify: ## Verify downloaded models and show disk usage
 		echo ""; \
 		echo "  VAE Models:"; \
 		ls -lh models/comfy/vae/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  ControlNet (edit guidance):"; \
+		ls -lh models/comfy/controlnet/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  SAM Models (segmentation):"; \
+		ls -lh models/comfy/sams/*.pth 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  Rembg Models (background removal):"; \
+		ls -lh models/comfy/rembg/*.onnx 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
 		echo ""; \
 		echo "  Total ComfyUI storage: $$(du -sh models/comfy 2>/dev/null | cut -f1)"; \
 		echo ""; \

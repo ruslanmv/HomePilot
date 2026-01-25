@@ -77,6 +77,13 @@ VIDEO_MODEL = os.getenv("VIDEO_MODEL", "svd").strip()  # svd, wan-2.2, seedream
 # NSFW Mode (enables uncensored generation)
 NSFW_MODE = os.getenv("NSFW_MODE", "false").lower() == "true"
 
+# Edit Session Sidecar Service
+# The edit-session service runs as a sidecar on port 8010
+EDIT_SESSION_URL = os.getenv(
+    "EDIT_SESSION_URL",
+    "http://edit-session:8010" if _IS_DOCKER else "http://localhost:8010",
+).rstrip("/")
+
 # Storage
 #
 # When developing locally (especially on Windows/WSL), paths like /app/... may not exist.
