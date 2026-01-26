@@ -35,9 +35,16 @@ import {
   Sliders,
   Edit3,
   Plus,
+  PaintBucket,
 } from 'lucide-react'
 
 import { EditDropzone } from './EditDropzone'
+import { MaskCanvas } from './MaskCanvas'
+import { upscaleImage } from '../enhance/upscaleApi'
+import { QuickActions } from './QuickActions'
+import { BackgroundTools } from './BackgroundTools'
+import { OutpaintTools } from './OutpaintTools'
+import type { ExtendDirection } from '../enhance/outpaintApi'
 import {
   uploadToEditSession,
   sendEditMessage,
@@ -140,6 +147,14 @@ export function EditTab({
   const [useCN, setUseCN] = useState(false)
   const [cnStrength, setCnStrength] = useState(1.0)
 
+  // State - Inpainting Mask
+  const [showMaskCanvas, setShowMaskCanvas] = useState(false)
+  const [maskDataUrl, setMaskDataUrl] = useState<string | null>(null)
+  const [uploadingMask, setUploadingMask] = useState(false)
+
+  // State - Upscaling
+  const [isUpscaling, setIsUpscaling] = useState(false)
+
   const hasImage = Boolean(active)
 
   // ==========================================================================
@@ -212,12 +227,23 @@ export function EditTab({
   // HELPERS
   // ==========================================================================
 
-  const buildEditMessage = useCallback((userText: string): string => {
-    if (!advancedMode) {
-      return userText.trim()
-    }
+  const buildEditMessage = useCallback((userText: string, maskUrl?: string | null): string => {
     const parts: string[] = [userText.trim()]
-    parts.push(`--mode ${editMode}`)
+
+    // Always include mask if provided (for inpainting)
+    if (maskUrl) {
+      parts.push(`--mask ${maskUrl}`)
+      parts.push(`--mode inpaint`)
+    }
+
+    if (!advancedMode) {
+      return parts.join(' ')
+    }
+
+    // Add advanced parameters
+    if (!maskUrl) {
+      parts.push(`--mode ${editMode}`)
+    }
     parts.push(`--steps ${steps}`)
     parts.push(`--cfg ${cfg}`)
     parts.push(`--denoise ${denoise}`)
@@ -230,6 +256,37 @@ export function EditTab({
     }
     return parts.join(' ')
   }, [advancedMode, editMode, steps, cfg, denoise, seedLock, seed, useCN, cnStrength])
+
+  // Upload mask data URL to server and get a URL
+  const uploadMask = useCallback(async (dataUrl: string): Promise<string | null> => {
+    try {
+      // Convert data URL to blob
+      const response = await fetch(dataUrl)
+      const blob = await response.blob()
+
+      // Create form data
+      const formData = new FormData()
+      formData.append('file', blob, 'mask.png')
+
+      // Upload to backend
+      const uploadUrl = `${backendUrl}/upload`
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: apiKey ? { 'x-api-key': apiKey } : {},
+        body: formData,
+      })
+
+      if (!uploadRes.ok) {
+        throw new Error(`Upload failed: ${uploadRes.status}`)
+      }
+
+      const uploadData = await uploadRes.json()
+      return uploadData.url || null
+    } catch (e) {
+      console.error('Failed to upload mask:', e)
+      return null
+    }
+  }, [backendUrl, apiKey])
 
   // ==========================================================================
   // HANDLERS - Gallery
@@ -358,11 +415,25 @@ export function EditTab({
     const trimmed = text.trim()
     if (!trimmed || !currentEditItem) return
 
-    const messageToSend = buildEditMessage(trimmed)
     setError(null)
     setBusy(true)
     setLastPrompt(trimmed)
     setResults([])
+
+    // Upload mask if one is set
+    let uploadedMaskUrl: string | null = null
+    if (maskDataUrl) {
+      setUploadingMask(true)
+      uploadedMaskUrl = await uploadMask(maskDataUrl)
+      setUploadingMask(false)
+      if (!uploadedMaskUrl) {
+        setError('Failed to upload mask. Please try again.')
+        setBusy(false)
+        return
+      }
+    }
+
+    const messageToSend = buildEditMessage(trimmed, uploadedMaskUrl)
 
     try {
       const out = await sendEditMessage({
@@ -434,6 +505,11 @@ export function EditTab({
           image_url: firstResult,
         }).catch(err => console.warn('Failed to persist active image:', err))
 
+        // Clear mask after successful edit
+        if (maskDataUrl) {
+          setMaskDataUrl(null)
+        }
+
         setResults([])
       }
     } catch (e) {
@@ -441,7 +517,7 @@ export function EditTab({
     } finally {
       setBusy(false)
     }
-  }, [currentEditItem, buildEditMessage, backendUrl, apiKey, provider, providerBaseUrl, providerModel, active, advancedMode, steps, cfg, denoise, editMode])
+  }, [currentEditItem, buildEditMessage, backendUrl, apiKey, provider, providerBaseUrl, providerModel, active, advancedMode, steps, cfg, denoise, editMode, maskDataUrl, uploadMask])
 
   const handleUse = useCallback(async (url: string) => {
     if (!currentEditItem) return
@@ -508,11 +584,211 @@ export function EditTab({
     }
   }, [prompt, runEdit])
 
+  const handleUpscale = useCallback(async () => {
+    if (!active || !currentEditItem || isUpscaling) return
+
+    setIsUpscaling(true)
+    setError(null)
+
+    try {
+      const result = await upscaleImage({
+        backendUrl,
+        apiKey,
+        imageUrl: active,
+        scale: 2,
+        model: '4x-UltraSharp.pth',
+      })
+
+      const upscaledUrl = result?.media?.images?.[0]
+      if (upscaledUrl) {
+        // Add to versions (non-destructive)
+        const now = Date.now()
+        const newVersion = {
+          url: upscaledUrl,
+          instruction: '[Upscaled 2x]',
+          created_at: now / 1000,
+          parent_url: active,
+          settings: {},
+        }
+        setVersions((prev) => [newVersion, ...prev])
+        setActive(upscaledUrl)
+
+        // Persist to backend
+        selectActiveImage({
+          backendUrl,
+          apiKey,
+          conversationId: currentEditItem.conversationId,
+          image_url: upscaledUrl,
+        }).catch(err => console.warn('Failed to persist upscaled image:', err))
+      } else {
+        setError('Upscale completed but no image was returned.')
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upscale failed')
+    } finally {
+      setIsUpscaling(false)
+    }
+  }, [active, currentEditItem, isUpscaling, backendUrl, apiKey])
+
+  // Handler for QuickActions (Enhance, Restore, Fix Faces, Upscale)
+  const handleQuickActionResult = useCallback((resultUrl: string, mode: string) => {
+    if (!currentEditItem) return
+
+    const now = Date.now()
+    const modeLabels: Record<string, string> = {
+      photo: 'Enhanced',
+      restore: 'Restored',
+      faces: 'Faces Fixed',
+      upscale: 'Upscaled',
+    }
+    const instruction = `[${modeLabels[mode] || mode}]`
+
+    const newVersion = {
+      url: resultUrl,
+      instruction,
+      created_at: now / 1000,
+      parent_url: active,
+      settings: { mode },
+    }
+
+    setVersions((prev) => [newVersion, ...prev])
+    setActive(resultUrl)
+
+    // Update gallery
+    setGalleryItems((prev) => {
+      const filtered = prev.filter(item => item.conversationId !== currentEditItem.conversationId)
+      const updatedItem: EditItem = {
+        id: currentEditItem.id,
+        url: resultUrl,
+        createdAt: now,
+        originalUrl: currentEditItem.originalUrl,
+        instruction,
+        conversationId: currentEditItem.conversationId,
+      }
+      return [updatedItem, ...filtered].slice(0, 100)
+    })
+
+    // Update current edit item reference
+    setCurrentEditItem(prev => prev ? { ...prev, url: resultUrl, createdAt: now, instruction } : prev)
+
+    // Persist to backend
+    selectActiveImage({
+      backendUrl,
+      apiKey,
+      conversationId: currentEditItem.conversationId,
+      image_url: resultUrl,
+    }).catch(err => console.warn('Failed to persist active image:', err))
+  }, [currentEditItem, active, backendUrl, apiKey])
+
+  // Handler for BackgroundTools (Remove BG, Change BG, Blur BG)
+  const handleBackgroundResult = useCallback((resultUrl: string, action: string) => {
+    if (!currentEditItem) return
+
+    const now = Date.now()
+    const actionLabels: Record<string, string> = {
+      remove: 'BG Removed',
+      replace: 'BG Changed',
+      blur: 'BG Blurred',
+    }
+    const instruction = `[${actionLabels[action] || action}]`
+
+    const newVersion = {
+      url: resultUrl,
+      instruction,
+      created_at: now / 1000,
+      parent_url: active,
+      settings: { action },
+    }
+
+    setVersions((prev) => [newVersion, ...prev])
+    setActive(resultUrl)
+
+    // Update gallery
+    setGalleryItems((prev) => {
+      const filtered = prev.filter(item => item.conversationId !== currentEditItem.conversationId)
+      const updatedItem: EditItem = {
+        id: currentEditItem.id,
+        url: resultUrl,
+        createdAt: now,
+        originalUrl: currentEditItem.originalUrl,
+        instruction,
+        conversationId: currentEditItem.conversationId,
+      }
+      return [updatedItem, ...filtered].slice(0, 100)
+    })
+
+    setCurrentEditItem(prev => prev ? { ...prev, url: resultUrl, createdAt: now, instruction } : prev)
+
+    selectActiveImage({
+      backendUrl,
+      apiKey,
+      conversationId: currentEditItem.conversationId,
+      image_url: resultUrl,
+    }).catch(err => console.warn('Failed to persist active image:', err))
+  }, [currentEditItem, active, backendUrl, apiKey])
+
+  // Handler for OutpaintTools (Extend canvas)
+  const handleOutpaintResult = useCallback((resultUrl: string, direction: ExtendDirection, newSize: [number, number]) => {
+    if (!currentEditItem) return
+
+    const now = Date.now()
+    const directionLabels: Record<string, string> = {
+      left: 'Extended Left',
+      right: 'Extended Right',
+      up: 'Extended Up',
+      down: 'Extended Down',
+      horizontal: 'Extended Horizontal',
+      vertical: 'Extended Vertical',
+      all: 'Extended All Sides',
+    }
+    const instruction = `[${directionLabels[direction] || 'Extended'}] → ${newSize[0]}×${newSize[1]}`
+
+    const newVersion = {
+      url: resultUrl,
+      instruction,
+      created_at: now / 1000,
+      parent_url: active,
+      settings: { direction, newSize },
+    }
+
+    setVersions((prev) => [newVersion, ...prev])
+    setActive(resultUrl)
+
+    // Update gallery
+    setGalleryItems((prev) => {
+      const filtered = prev.filter(item => item.conversationId !== currentEditItem.conversationId)
+      const updatedItem: EditItem = {
+        id: currentEditItem.id,
+        url: resultUrl,
+        createdAt: now,
+        originalUrl: currentEditItem.originalUrl,
+        instruction,
+        conversationId: currentEditItem.conversationId,
+      }
+      return [updatedItem, ...filtered].slice(0, 100)
+    })
+
+    setCurrentEditItem(prev => prev ? { ...prev, url: resultUrl, createdAt: now, instruction } : prev)
+
+    selectActiveImage({
+      backendUrl,
+      apiKey,
+      conversationId: currentEditItem.conversationId,
+      image_url: resultUrl,
+    }).catch(err => console.warn('Failed to persist active image:', err))
+  }, [currentEditItem, active, backendUrl, apiKey])
+
   const handleDeleteVersion = useCallback((versionUrl: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation()
+    if (e) {
+      e.stopPropagation()
+      e.preventDefault()
+    }
+
+    console.log('[EditTab] Deleting version:', versionUrl)
 
     setVersions((prev) => {
       const filtered = prev.filter(v => v.url !== versionUrl)
+      console.log('[EditTab] Versions after delete:', filtered.length)
 
       // If we deleted the active version, select the next available
       if (active === versionUrl && filtered.length > 0) {
@@ -775,13 +1051,27 @@ export function EditTab({
                   <button
                     onClick={() => active && onOpenLightbox(active)}
                     className="p-2 bg-black/80 text-white rounded-md hover:bg-white hover:text-black transition-colors"
+                    title="Full screen"
                   >
                     <Maximize2 size={16} />
+                  </button>
+                  <button
+                    onClick={handleUpscale}
+                    disabled={isUpscaling || busy}
+                    className={`p-2 rounded-md transition-colors ${
+                      isUpscaling
+                        ? 'bg-purple-500/60 text-white animate-pulse'
+                        : 'bg-purple-500/80 text-white hover:bg-purple-400'
+                    }`}
+                    title="Upscale 2x"
+                  >
+                    {isUpscaling ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                   </button>
                   <a
                     href={active!}
                     download="edited-image.png"
                     className="p-2 bg-black/80 text-white rounded-md hover:bg-white hover:text-black transition-colors"
+                    title="Download"
                   >
                     <Download size={16} />
                   </a>
@@ -844,14 +1134,10 @@ export function EditTab({
               {results.map((url, idx) => (
                 <div key={`res-${idx}`} className="snap-center shrink-0 relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-purple-500/50 cursor-pointer shadow-[0_0_20px_rgba(147,51,234,0.3)]">
                   <img src={url} className="w-full h-full object-cover" alt="Result" />
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
+                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <button onClick={() => handleUse(url)} className="text-[10px] font-bold bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-400 hover:scale-105 transition-all">
                       USE THIS
                     </button>
-                    <div className="flex gap-1">
-                      <button onClick={() => onOpenLightbox(url)} className="text-white/70 hover:text-white p-1"><Maximize2 size={12}/></button>
-                      <a href={url} download className="text-white/70 hover:text-white p-1"><Download size={12}/></a>
-                    </div>
                   </div>
                   <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-purple-500 text-[8px] font-bold text-white rounded">NEW</div>
                 </div>
@@ -873,21 +1159,30 @@ export function EditTab({
                 >
                   <img src={version.url} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="Version" />
 
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                    <button onClick={(e) => { e.stopPropagation(); onOpenLightbox(version.url) }} className="text-white/70 hover:text-white p-1"><Maximize2 size={14}/></button>
-                    <a href={version.url} download onClick={(e) => e.stopPropagation()} className="text-white/70 hover:text-white p-1"><Download size={14}/></a>
-                  </div>
+                  {/* Delete button - top right, visible on hover */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      e.preventDefault()
+                      if (window.confirm('Delete this version?')) {
+                        handleDeleteVersion(version.url, e)
+                      }
+                    }}
+                    className="absolute top-1 right-1 p-1 bg-black/60 rounded opacity-0 group-hover:opacity-100 transition-opacity text-white/50 hover:text-red-400 hover:bg-black/80"
+                    title="Delete version"
+                  >
+                    <Trash2 size={12} />
+                  </button>
 
                   <div className="absolute -bottom-16 left-1/2 -translate-x-1/2 w-40 p-2 bg-black/90 border border-white/10 rounded-lg text-[10px] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl">
                     <div className="text-white/80 truncate font-medium">{version.instruction || 'Original'}</div>
                     <div className="text-white/40 flex items-center gap-1 mt-1">
-                      <Clock size={8} />
-                      {formatTimeAgo(version.created_at)}
+                      Version {versions.length - idx}
                     </div>
                   </div>
 
                   {active === version.url && (
-                    <div className="absolute top-1 right-1 w-2 h-2 bg-white rounded-full" />
+                    <div className="absolute top-1 left-1 w-2 h-2 bg-white rounded-full" />
                   )}
                 </div>
               ))}
@@ -1042,6 +1337,93 @@ export function EditTab({
               )}
             </div>
 
+            {/* Quick Enhancement Actions */}
+            <QuickActions
+              backendUrl={backendUrl}
+              apiKey={apiKey}
+              imageUrl={active}
+              onResult={handleQuickActionResult}
+              onError={(err) => setError(err)}
+              disabled={busy}
+              compact={false}
+            />
+
+            {/* Background Tools */}
+            <BackgroundTools
+              backendUrl={backendUrl}
+              apiKey={apiKey}
+              imageUrl={active}
+              onResult={handleBackgroundResult}
+              onError={(err) => setError(err)}
+              disabled={busy}
+              compact={false}
+            />
+
+            {/* Outpaint / Extend Canvas */}
+            <OutpaintTools
+              backendUrl={backendUrl}
+              apiKey={apiKey}
+              imageUrl={active}
+              onResult={handleOutpaintResult}
+              onError={(err) => setError(err)}
+              disabled={busy}
+            />
+
+            {/* Inpainting Mask Section */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs uppercase tracking-wider text-white/40 font-semibold">
+                <span className="flex items-center gap-2">
+                  <PaintBucket size={14} />
+                  Inpainting Mask
+                </span>
+                {maskDataUrl && (
+                  <button
+                    onClick={() => setMaskDataUrl(null)}
+                    className="text-red-400 hover:text-red-300 text-[10px]"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {maskDataUrl ? (
+                <div className="space-y-2">
+                  <div className="relative rounded-lg overflow-hidden border border-purple-500/30 bg-purple-500/10">
+                    <img
+                      src={maskDataUrl}
+                      alt="Mask preview"
+                      className="w-full h-20 object-contain opacity-70"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-[10px] text-purple-300 bg-black/60 px-2 py-1 rounded">
+                        Mask Active
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowMaskCanvas(true)}
+                    className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 hover:bg-purple-500/30 transition-colors text-sm font-medium"
+                  >
+                    <PaintBucket size={14} />
+                    Edit Mask
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowMaskCanvas(true)}
+                  disabled={!active}
+                  className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-white/5 border border-white/10 text-white/60 hover:bg-purple-500/20 hover:border-purple-500/30 hover:text-purple-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                >
+                  <PaintBucket size={16} />
+                  Draw Mask for Inpainting
+                </button>
+              )}
+
+              <p className="text-[10px] text-white/30 leading-relaxed">
+                Draw a mask to edit only specific areas. White = areas to change, black = areas to preserve.
+              </p>
+            </div>
+
             {/* Version History Summary */}
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs uppercase tracking-wider text-white/40 font-semibold">
@@ -1067,25 +1449,15 @@ export function EditTab({
                       <div className="text-xs text-white/80 truncate">
                         {v.instruction || 'Original'}
                       </div>
-                      <div className="text-[10px] text-white/40 flex items-center gap-1">
-                        <Clock size={10} />
-                        {formatTimeAgo(v.created_at)}
+                      <div className="text-[10px] text-white/40">
+                        Version {versions.length - idx}
                       </div>
                     </div>
-                    <div className="flex gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity">
-                      {active !== v.url && (
-                        <button className="p-1 text-white/30 hover:text-white" title="Use this version">
-                          <RotateCcw size={12} />
-                        </button>
-                      )}
-                      <button
-                        onClick={(e) => handleDeleteVersion(v.url, e)}
-                        className="p-1 text-white/30 hover:text-red-400 transition-colors"
-                        title="Delete this version"
-                      >
-                        <Trash2 size={12} />
+                    {active !== v.url && (
+                      <button className="p-1 text-white/30 hover:text-white opacity-0 group-hover/item:opacity-100 transition-opacity" title="Use this version">
+                        <RotateCcw size={12} />
                       </button>
-                    </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1097,6 +1469,19 @@ export function EditTab({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Mask Canvas Modal */}
+      {showMaskCanvas && active && (
+        <MaskCanvas
+          imageUrl={active}
+          initialMask={maskDataUrl}
+          onSaveMask={(dataUrl) => {
+            setMaskDataUrl(dataUrl)
+            setShowMaskCanvas(false)
+          }}
+          onCancel={() => setShowMaskCanvas(false)}
+        />
       )}
 
       <style>{`

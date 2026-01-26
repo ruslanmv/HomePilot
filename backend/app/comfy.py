@@ -178,15 +178,19 @@ def _preprocess_image_paths(variables: Dict[str, Any]) -> Dict[str, Any]:
     ComfyUI's LoadImage node expects local filenames in its input directory,
     not HTTP URLs. This function downloads images from URLs and replaces
     the URL with the local filename.
+
+    Also handles local /files/... paths from the backend's upload directory.
     """
     processed = dict(variables)
 
     # Keys that might contain image URLs
-    image_keys = ['image_path', 'image', 'input_image', 'source_image']
+    image_keys = ['image_path', 'image', 'input_image', 'source_image', 'original_image_path']
 
     for key in image_keys:
         if key in processed and isinstance(processed[key], str):
             value = processed[key]
+
+            # Handle full URLs (http://... or https://...)
             if _is_url(value):
                 try:
                     filename = _download_image_for_comfyui(value)
@@ -195,6 +199,25 @@ def _preprocess_image_paths(variables: Dict[str, Any]) -> Dict[str, Any]:
                 except Exception as e:
                     print(f"[COMFY] WARNING: Failed to download image from {value}: {e}")
                     # Keep the original value, will likely fail but provides better error
+
+            # Handle local /files/... paths from backend uploads
+            elif value.startswith('/files/'):
+                try:
+                    filename = value.replace('/files/', '', 1)
+                    local_path = Path(UPLOAD_DIR) / filename
+                    if local_path.exists():
+                        # Copy to ComfyUI's input directory
+                        input_dir = _get_comfyui_input_dir()
+                        input_dir.mkdir(parents=True, exist_ok=True)
+                        dest_path = input_dir / filename
+                        import shutil
+                        shutil.copy2(local_path, dest_path)
+                        processed[key] = filename
+                        print(f"[COMFY] Copied {key} to ComfyUI input: {filename}")
+                    else:
+                        print(f"[COMFY] WARNING: Local file not found: {local_path}")
+                except Exception as e:
+                    print(f"[COMFY] WARNING: Failed to copy local file {value}: {e}")
 
     return processed
 
