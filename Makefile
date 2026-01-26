@@ -61,11 +61,19 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "  Installing ComfyUI dependencies..."
 	@ComfyUI/.venv/bin/pip install -U pip setuptools wheel >/dev/null 2>&1 || true
 	@ComfyUI/.venv/bin/pip install -r ComfyUI/requirements.txt
+	@echo "  Pinning NumPy (<2) to avoid face-restore import issues..."
+	@ComfyUI/.venv/bin/pip install "numpy<2" >/dev/null 2>&1 || true
 	@echo "  Installing face restoration dependencies (GFPGAN/CodeFormer)..."
 	@if ComfyUI/.venv/bin/pip install facexlib gfpgan >/dev/null 2>&1; then \
 		echo "  ✓ Face restoration dependencies installed"; \
 	else \
 		echo "    (optional: facexlib/gfpgan install skipped)"; \
+	fi
+	@echo "  Verifying face restore imports..."
+	@if ComfyUI/.venv/bin/python -c "import numpy; import facexlib; import gfpgan; print('  ✓ numpy', numpy.__version__, '- facexlib/gfpgan import OK')" 2>/dev/null; then \
+		true; \
+	else \
+		echo "    (warning: face restore imports failed - face enhance nodes may not work)"; \
 	fi
 	@echo "  Installing ComfyUI-Impact-Pack for face restore nodes..."
 	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-Impact-Pack" ]; then \
