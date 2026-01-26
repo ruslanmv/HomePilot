@@ -529,6 +529,51 @@ async def clear_session(conversation_id: str):
     return {"ok": True}
 
 
+@app.delete(
+    "/v1/edit-sessions/{conversation_id}/versions",
+    dependencies=[Depends(enforce_security)],
+    summary="Delete version",
+    description="Delete a specific version from the session history."
+)
+async def delete_version(conversation_id: str, image_url: str):
+    """
+    Delete a specific version from the session history.
+
+    Args:
+        conversation_id: Session identifier
+        image_url: URL of the image version to delete
+
+    Returns:
+        Updated session state with version removed
+    """
+    if not image_url:
+        raise HTTPException(
+            status_code=400,
+            detail="image_url query parameter is required"
+        )
+
+    store = get_store()
+    rec = store.delete_version(conversation_id, image_url)
+
+    return {
+        "ok": True,
+        "conversation_id": conversation_id,
+        "active_image_url": rec.active_image_url,
+        "original_image_url": rec.original_image_url,
+        "versions": [
+            VersionEntryModel(
+                url=v.url,
+                instruction=v.instruction,
+                created_at=v.created_at,
+                parent_url=v.parent_url,
+                settings=v.settings,
+            ).model_dump()
+            for v in rec.versions
+        ],
+        "history": rec.history,
+    }
+
+
 # =============================================================================
 # UTILITY ENDPOINTS
 # =============================================================================

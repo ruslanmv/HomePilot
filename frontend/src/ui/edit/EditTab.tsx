@@ -52,6 +52,7 @@ import {
   clearEditSession,
   getEditSession,
   extractImages,
+  deleteVersion,
 } from './editApi'
 import type { EditTabProps, VersionEntry } from './types'
 
@@ -786,6 +787,7 @@ export function EditTab({
 
     console.log('[EditTab] Deleting version:', versionUrl)
 
+    // Optimistically update UI immediately
     setVersions((prev) => {
       const filtered = prev.filter(v => v.url !== versionUrl)
       console.log('[EditTab] Versions after delete:', filtered.length)
@@ -794,20 +796,30 @@ export function EditTab({
       if (active === versionUrl && filtered.length > 0) {
         const newActive = filtered[0].url
         setActive(newActive)
-
-        // Persist the new active to backend
-        if (currentEditItem) {
-          selectActiveImage({
-            backendUrl,
-            apiKey,
-            conversationId: currentEditItem.conversationId,
-            image_url: newActive,
-          }).catch(err => console.warn('Failed to persist active image:', err))
-        }
+      } else if (active === versionUrl && filtered.length === 0) {
+        setActive(null)
       }
 
       return filtered
     })
+
+    // Persist deletion to backend
+    if (currentEditItem) {
+      deleteVersion({
+        backendUrl,
+        apiKey,
+        conversationId: currentEditItem.conversationId,
+        image_url: versionUrl,
+      })
+        .then((response) => {
+          console.log('[EditTab] Version deleted from backend:', response)
+          // Update active from backend response if it changed
+          if (response.active_image_url !== active) {
+            setActive(response.active_image_url || null)
+          }
+        })
+        .catch(err => console.warn('Failed to delete version from backend:', err))
+    }
   }, [active, currentEditItem, backendUrl, apiKey])
 
   // ==========================================================================

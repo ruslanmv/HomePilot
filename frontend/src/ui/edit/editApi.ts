@@ -206,6 +206,35 @@ export async function revertToHistory(params: {
 }
 
 /**
+ * Delete a specific version from the session history.
+ *
+ * @param params - Delete parameters
+ * @returns Updated session state
+ */
+export async function deleteVersion(params: {
+  backendUrl: string
+  apiKey?: string
+  conversationId: string
+  image_url: string
+}): Promise<EditSessionState & { ok: boolean }> {
+  const { backendUrl, apiKey, conversationId, image_url } = params
+  const base = backendUrl.replace(/\/+$/, '')
+  const url = `${base}/v1/edit-sessions/${encodeURIComponent(conversationId)}/versions?image_url=${encodeURIComponent(image_url)}`
+
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: { ...authHeaders(apiKey) },
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => `HTTP ${res.status}`)
+    throw new Error(text)
+  }
+
+  return res.json()
+}
+
+/**
  * Extract image URLs from a HomePilot response.
  *
  * Handles various response shapes:

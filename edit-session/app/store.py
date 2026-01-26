@@ -187,6 +187,19 @@ class BaseStore:
         """
         raise NotImplementedError
 
+    def delete_version(self, conversation_id: str, image_url: str) -> SessionRecord:
+        """
+        Delete a specific version from the session history.
+
+        Args:
+            conversation_id: Unique session identifier
+            image_url: URL of the version to delete
+
+        Returns:
+            Updated SessionRecord with version removed
+        """
+        raise NotImplementedError
+
 
 class SQLiteStore(BaseStore):
     """
@@ -442,6 +455,33 @@ class SQLiteStore(BaseStore):
         finally:
             con.close()
 
+    def delete_version(self, conversation_id: str, image_url: str) -> SessionRecord:
+        """Delete a specific version from the session history."""
+        rec = self.get(conversation_id)
+
+        # Filter out the version with matching URL
+        original_count = len(rec.versions)
+        versions = [v for v in rec.versions if v.url != image_url]
+
+        # If nothing was removed, return as-is
+        if len(versions) == original_count:
+            return rec
+
+        # If we deleted the active image, set new active to most recent remaining
+        active_url = rec.active_image_url
+        if active_url == image_url:
+            active_url = versions[0].url if versions else None
+
+        rec = SessionRecord(
+            conversation_id=conversation_id,
+            active_image_url=active_url,
+            versions=versions,
+            updated_at=time.time(),
+            original_image_url=rec.original_image_url,
+        )
+        self._save(rec)
+        return rec
+
 
 class RedisStore(BaseStore):
     """
@@ -594,6 +634,33 @@ class RedisStore(BaseStore):
     def clear(self, conversation_id: str) -> None:
         """Clear session data."""
         self.r.delete(self._key(conversation_id))
+
+    def delete_version(self, conversation_id: str, image_url: str) -> SessionRecord:
+        """Delete a specific version from the session history."""
+        rec = self.get(conversation_id)
+
+        # Filter out the version with matching URL
+        original_count = len(rec.versions)
+        versions = [v for v in rec.versions if v.url != image_url]
+
+        # If nothing was removed, return as-is
+        if len(versions) == original_count:
+            return rec
+
+        # If we deleted the active image, set new active to most recent remaining
+        active_url = rec.active_image_url
+        if active_url == image_url:
+            active_url = versions[0].url if versions else None
+
+        rec = SessionRecord(
+            conversation_id=conversation_id,
+            active_image_url=active_url,
+            versions=versions,
+            updated_at=time.time(),
+            original_image_url=rec.original_image_url,
+        )
+        self._save(rec)
+        return rec
 
     def health_check(self) -> bool:
         """
