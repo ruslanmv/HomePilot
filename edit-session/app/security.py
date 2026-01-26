@@ -147,6 +147,11 @@ def validate_select_url(image_url: str, home_pilot_base_url: str) -> None:
     Raises:
         HTTPException: 400 if URL is invalid or host not allowed
     """
+    # Allow relative /files/... paths from the local backend
+    # These are safe as they reference files in the backend's upload directory
+    if image_url.startswith('/files/'):
+        return
+
     try:
         parsed = urlparse(image_url)
     except Exception:

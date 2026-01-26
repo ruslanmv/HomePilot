@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2 } from 'lucide-react'
+import { upscaleImage } from './enhance/upscaleApi'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -169,6 +170,7 @@ export default function ImagineView(props: ImagineParams) {
   })
 
   const [isGenerating, setIsGenerating] = useState(false)
+  const [upscalingId, setUpscalingId] = useState<string | null>(null)
 
   // Selection state for Lightbox (Grok-style detail view)
   const [selectedImage, setSelectedImage] = useState<ImagineItem | null>(null)
@@ -495,6 +497,53 @@ export default function ImagineView(props: ImagineParams) {
       }
     } catch (err: any) {
       alert(`Failed to delete image: ${err.message || err}`)
+    }
+  }
+
+  const handleUpscale = async (item: ImagineItem, e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation()
+    }
+
+    if (upscalingId) {
+      alert('Already upscaling an image. Please wait.')
+      return
+    }
+
+    try {
+      setUpscalingId(item.id)
+
+      const result = await upscaleImage({
+        backendUrl: props.backendUrl,
+        apiKey: authKey,
+        imageUrl: item.url,
+        scale: 2,
+        model: '4x-UltraSharp.pth',
+      })
+
+      const upscaledUrl = result?.media?.images?.[0]
+      if (upscaledUrl) {
+        // Add upscaled image to gallery (non-destructive - keeps original)
+        const newItem: ImagineItem = {
+          id: `upscale-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          url: upscaledUrl,
+          createdAt: Date.now(),
+          prompt: `[Upscaled 2x] ${item.prompt}`,
+          seed: item.seed,
+          width: (item.width ?? 1024) * 2,
+          height: (item.height ?? 1024) * 2,
+          steps: item.steps,
+          cfg: item.cfg,
+          model: item.model,
+        }
+        setItems((prev) => [newItem, ...prev])
+      } else {
+        alert('Upscale completed but no image was returned.')
+      }
+    } catch (err: any) {
+      alert(`Failed to upscale image: ${err.message || err}`)
+    } finally {
+      setUpscalingId(null)
     }
   }
 
@@ -890,6 +939,19 @@ export default function ImagineView(props: ImagineParams) {
                     }}
                   >
                     <MoreHorizontal size={18} />
+                  </button>
+                  <button
+                    className={`backdrop-blur-md p-2 rounded-full transition-colors ${
+                      upscalingId === img.id
+                        ? 'bg-purple-500/40 text-purple-300 animate-pulse'
+                        : 'bg-purple-500/20 hover:bg-purple-500/40 text-purple-300 hover:text-purple-200'
+                    }`}
+                    type="button"
+                    title="Upscale 2x"
+                    disabled={upscalingId !== null}
+                    onClick={(e) => handleUpscale(img, e)}
+                  >
+                    <Maximize2 size={18} />
                   </button>
                   <button
                     className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors"

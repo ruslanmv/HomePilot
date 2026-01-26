@@ -169,6 +169,14 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       { id: 'sam_vit_h_4b8939.pth', label: 'SAM ViT-H (2.5GB)', nsfw: false },
       { id: 'u2net.onnx', label: 'Background Remove U2Net (170MB)', nsfw: false },
     ],
+    enhance: [
+      { id: '4x-UltraSharp.pth', label: '4x UltraSharp (Upscale)', recommended: true, nsfw: false, description: 'Sharp, clean 4x upscaler for general photos.' },
+      { id: 'RealESRGAN_x4plus.pth', label: 'RealESRGAN x4+ (Photo)', recommended: true, nsfw: false, description: 'Excellent photo upscaling with natural texture recovery.' },
+      { id: 'realesr-general-x4v3.pth', label: 'Real-ESRGAN General x4v3', nsfw: false, description: 'General-purpose Real-ESRGAN model, good for mixed content.' },
+      { id: 'SwinIR_4x.pth', label: 'SwinIR 4x (Restore)', nsfw: false, description: 'Restoration upscaler for compression and mild blur cleanup.' },
+      { id: 'GFPGANv1.4.pth', label: 'GFPGAN v1.4 (Face Restore)', nsfw: false, description: 'Optional face restoration after heavy edits or upscaling.' },
+      { id: 'u2net.onnx', label: 'U2Net (Background Remove)', recommended: true, nsfw: false, description: 'Background removal for Edit mode. Downloads to ~/.u2net or models/comfy/rembg.' },
+    ],
   },
   openai_compat: {
     chat: [
@@ -338,13 +346,14 @@ export default function ModelsView(props: ModelsParams) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [providersError, setProvidersError] = useState<string | null>(null)
 
-  const [modelType, setModelType] = useState<'chat' | 'image' | 'video' | 'edit'>('chat')
+  const [modelType, setModelType] = useState<'chat' | 'image' | 'video' | 'edit' | 'enhance'>('chat')
   const [provider, setProvider] = useState<string>(props.providerChat || 'ollama')
 
   const defaultBaseUrl = useMemo(() => {
     if (modelType === 'chat') return props.baseUrlChat || ''
     if (modelType === 'image') return props.baseUrlImages || ''
     if (modelType === 'edit') return props.baseUrlImages || ''
+    if (modelType === 'enhance') return props.baseUrlImages || ''
     return props.baseUrlVideo || ''
   }, [modelType, props.baseUrlChat, props.baseUrlImages, props.baseUrlVideo])
 
@@ -381,7 +390,7 @@ export default function ModelsView(props: ModelsParams) {
       // For chat: all providers EXCEPT comfyui and civitai
       return providers.filter(p => p.name !== 'comfyui' && p.name !== 'civitai')
     } else {
-      // For image/video: comfyui + civitai (if experimental enabled)
+      // For image/video/edit/enhance: comfyui + civitai (if experimental enabled)
       const filtered = providers.filter(p => p.name === 'comfyui')
 
       // Add Civitai if experimental enabled
@@ -785,7 +794,7 @@ export default function ModelsView(props: ModelsParams) {
           <div>
             <label className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-2.5">Model Type</label>
             <div className="flex flex-col gap-1.5">
-              {(['chat', 'image', 'edit', 'video'] as const).map((t) => (
+              {(['chat', 'image', 'edit', 'video', 'enhance'] as const).map((t) => (
                 <button
                   key={t}
                   type="button"

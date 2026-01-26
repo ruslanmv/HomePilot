@@ -11,5 +11,8 @@ RUN git clone https://github.com/comfyanonymous/ComfyUI.git . \
  && python3 -m pip install --upgrade pip \
  && pip install -r requirements.txt
 
+# Install face restoration dependencies (required for GFPGAN/CodeFormer nodes)
+RUN pip install facexlib gfpgan
+
 EXPOSE 8188
 CMD ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188"]
