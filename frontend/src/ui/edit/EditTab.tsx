@@ -35,9 +35,12 @@ import {
   Sliders,
   Edit3,
   Plus,
+  PaintBucket,
 } from 'lucide-react'
 
 import { EditDropzone } from './EditDropzone'
+import { MaskCanvas } from './MaskCanvas'
+import { upscaleImage } from '../enhance/upscaleApi'
 import {
   uploadToEditSession,
   sendEditMessage,
@@ -140,6 +143,14 @@ export function EditTab({
   const [useCN, setUseCN] = useState(false)
   const [cnStrength, setCnStrength] = useState(1.0)
 
+  // State - Inpainting Mask
+  const [showMaskCanvas, setShowMaskCanvas] = useState(false)
+  const [maskDataUrl, setMaskDataUrl] = useState<string | null>(null)
+  const [uploadingMask, setUploadingMask] = useState(false)
+
+  // State - Upscaling
+  const [isUpscaling, setIsUpscaling] = useState(false)
+
   const hasImage = Boolean(active)
 
   // ==========================================================================
@@ -212,12 +223,23 @@ export function EditTab({
   // HELPERS
   // ==========================================================================
 
-  const buildEditMessage = useCallback((userText: string): string => {
-    if (!advancedMode) {
-      return userText.trim()
-    }
+  const buildEditMessage = useCallback((userText: string, maskUrl?: string | null): string => {
     const parts: string[] = [userText.trim()]
-    parts.push(`--mode ${editMode}`)
+
+    // Always include mask if provided (for inpainting)
+    if (maskUrl) {
+      parts.push(`--mask ${maskUrl}`)
+      parts.push(`--mode inpaint`)
+    }
+
+    if (!advancedMode) {
+      return parts.join(' ')
+    }
+
+    // Add advanced parameters
+    if (!maskUrl) {
+      parts.push(`--mode ${editMode}`)
+    }
     parts.push(`--steps ${steps}`)
     parts.push(`--cfg ${cfg}`)
     parts.push(`--denoise ${denoise}`)
@@ -230,6 +252,37 @@ export function EditTab({
     }
     return parts.join(' ')
   }, [advancedMode, editMode, steps, cfg, denoise, seedLock, seed, useCN, cnStrength])
+
+  // Upload mask data URL to server and get a URL
+  const uploadMask = useCallback(async (dataUrl: string): Promise<string | null> => {
+    try {
+      // Convert data URL to blob
+      const response = await fetch(dataUrl)
+      const blob = await response.blob()
+
+      // Create form data
+      const formData = new FormData()
+      formData.append('file', blob, 'mask.png')
+
+      // Upload to backend
+      const uploadUrl = `${backendUrl}/upload`
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: apiKey ? { 'x-api-key': apiKey } : {},
+        body: formData,
+      })
+
+      if (!uploadRes.ok) {
+        throw new Error(`Upload failed: ${uploadRes.status}`)
+      }
+
+      const uploadData = await uploadRes.json()
+      return uploadData.url || null
+    } catch (e) {
+      console.error('Failed to upload mask:', e)
+      return null
+    }
+  }, [backendUrl, apiKey])
 
   // ==========================================================================
   // HANDLERS - Gallery
@@ -358,11 +411,25 @@ export function EditTab({
     const trimmed = text.trim()
     if (!trimmed || !currentEditItem) return
 
-    const messageToSend = buildEditMessage(trimmed)
     setError(null)
     setBusy(true)
     setLastPrompt(trimmed)
     setResults([])
+
+    // Upload mask if one is set
+    let uploadedMaskUrl: string | null = null
+    if (maskDataUrl) {
+      setUploadingMask(true)
+      uploadedMaskUrl = await uploadMask(maskDataUrl)
+      setUploadingMask(false)
+      if (!uploadedMaskUrl) {
+        setError('Failed to upload mask. Please try again.')
+        setBusy(false)
+        return
+      }
+    }
+
+    const messageToSend = buildEditMessage(trimmed, uploadedMaskUrl)
 
     try {
       const out = await sendEditMessage({
@@ -434,6 +501,11 @@ export function EditTab({
           image_url: firstResult,
         }).catch(err => console.warn('Failed to persist active image:', err))
 
+        // Clear mask after successful edit
+        if (maskDataUrl) {
+          setMaskDataUrl(null)
+        }
+
         setResults([])
       }
     } catch (e) {
@@ -441,7 +513,7 @@ export function EditTab({
     } finally {
       setBusy(false)
     }
-  }, [currentEditItem, buildEditMessage, backendUrl, apiKey, provider, providerBaseUrl, providerModel, active, advancedMode, steps, cfg, denoise, editMode])
+  }, [currentEditItem, buildEditMessage, backendUrl, apiKey, provider, providerBaseUrl, providerModel, active, advancedMode, steps, cfg, denoise, editMode, maskDataUrl, uploadMask])
 
   const handleUse = useCallback(async (url: string) => {
     if (!currentEditItem) return
@@ -507,6 +579,52 @@ export function EditTab({
       setPrompt('')
     }
   }, [prompt, runEdit])
+
+  const handleUpscale = useCallback(async () => {
+    if (!active || !currentEditItem || isUpscaling) return
+
+    setIsUpscaling(true)
+    setError(null)
+
+    try {
+      const result = await upscaleImage({
+        backendUrl,
+        apiKey,
+        imageUrl: active,
+        scale: 2,
+        model: '4x-UltraSharp.pth',
+      })
+
+      const upscaledUrl = result?.media?.images?.[0]
+      if (upscaledUrl) {
+        // Add to versions (non-destructive)
+        const now = Date.now()
+        const newVersion = {
+          url: upscaledUrl,
+          instruction: '[Upscaled 2x]',
+          created_at: now / 1000,
+          parent_url: active,
+          settings: {},
+        }
+        setVersions((prev) => [newVersion, ...prev])
+        setActive(upscaledUrl)
+
+        // Persist to backend
+        selectActiveImage({
+          backendUrl,
+          apiKey,
+          conversationId: currentEditItem.conversationId,
+          image_url: upscaledUrl,
+        }).catch(err => console.warn('Failed to persist upscaled image:', err))
+      } else {
+        setError('Upscale completed but no image was returned.')
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Upscale failed')
+    } finally {
+      setIsUpscaling(false)
+    }
+  }, [active, currentEditItem, isUpscaling, backendUrl, apiKey])
 
   const handleDeleteVersion = useCallback((versionUrl: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
@@ -775,13 +893,27 @@ export function EditTab({
                   <button
                     onClick={() => active && onOpenLightbox(active)}
                     className="p-2 bg-black/80 text-white rounded-md hover:bg-white hover:text-black transition-colors"
+                    title="Full screen"
                   >
                     <Maximize2 size={16} />
+                  </button>
+                  <button
+                    onClick={handleUpscale}
+                    disabled={isUpscaling || busy}
+                    className={`p-2 rounded-md transition-colors ${
+                      isUpscaling
+                        ? 'bg-purple-500/60 text-white animate-pulse'
+                        : 'bg-purple-500/80 text-white hover:bg-purple-400'
+                    }`}
+                    title="Upscale 2x"
+                  >
+                    {isUpscaling ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
                   </button>
                   <a
                     href={active!}
                     download="edited-image.png"
                     className="p-2 bg-black/80 text-white rounded-md hover:bg-white hover:text-black transition-colors"
+                    title="Download"
                   >
                     <Download size={16} />
                   </a>
@@ -1042,6 +1174,61 @@ export function EditTab({
               )}
             </div>
 
+            {/* Inpainting Mask Section */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs uppercase tracking-wider text-white/40 font-semibold">
+                <span className="flex items-center gap-2">
+                  <PaintBucket size={14} />
+                  Inpainting Mask
+                </span>
+                {maskDataUrl && (
+                  <button
+                    onClick={() => setMaskDataUrl(null)}
+                    className="text-red-400 hover:text-red-300 text-[10px]"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {maskDataUrl ? (
+                <div className="space-y-2">
+                  <div className="relative rounded-lg overflow-hidden border border-purple-500/30 bg-purple-500/10">
+                    <img
+                      src={maskDataUrl}
+                      alt="Mask preview"
+                      className="w-full h-20 object-contain opacity-70"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-[10px] text-purple-300 bg-black/60 px-2 py-1 rounded">
+                        Mask Active
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowMaskCanvas(true)}
+                    className="w-full flex items-center justify-center gap-2 p-2.5 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-300 hover:bg-purple-500/30 transition-colors text-sm font-medium"
+                  >
+                    <PaintBucket size={14} />
+                    Edit Mask
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowMaskCanvas(true)}
+                  disabled={!active}
+                  className="w-full flex items-center justify-center gap-2 p-3 rounded-xl bg-white/5 border border-white/10 text-white/60 hover:bg-purple-500/20 hover:border-purple-500/30 hover:text-purple-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                >
+                  <PaintBucket size={16} />
+                  Draw Mask for Inpainting
+                </button>
+              )}
+
+              <p className="text-[10px] text-white/30 leading-relaxed">
+                Draw a mask to edit only specific areas. White = areas to change, black = areas to preserve.
+              </p>
+            </div>
+
             {/* Version History Summary */}
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs uppercase tracking-wider text-white/40 font-semibold">
@@ -1097,6 +1284,19 @@ export function EditTab({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Mask Canvas Modal */}
+      {showMaskCanvas && active && (
+        <MaskCanvas
+          imageUrl={active}
+          initialMask={maskDataUrl}
+          onSaveMask={(dataUrl) => {
+            setMaskDataUrl(dataUrl)
+            setShowMaskCanvas(false)
+          }}
+          onCancel={() => setShowMaskCanvas(false)}
+        />
       )}
 
       <style>{`

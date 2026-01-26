@@ -386,7 +386,7 @@ def main() -> int:
 
     parser.add_argument(
         "--type", "-t",
-        choices=["chat", "image", "video", "edit"],
+        choices=["chat", "image", "video", "edit", "enhance"],
         help="Filter by model type",
     )
     parser.add_argument(
