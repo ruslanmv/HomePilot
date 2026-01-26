@@ -56,15 +56,15 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	fi
 	@echo "  Setting up ComfyUI virtual environment..."
 	@if [ ! -d "ComfyUI/.venv" ]; then \
-		python3 -m venv ComfyUI/.venv; \
+		uv venv ComfyUI/.venv --python 3.11 || uv venv ComfyUI/.venv; \
 	fi
-	@echo "  Installing ComfyUI dependencies..."
-	@ComfyUI/.venv/bin/pip install -U pip setuptools wheel >/dev/null 2>&1 || true
-	@ComfyUI/.venv/bin/pip install -r ComfyUI/requirements.txt
+	@echo "  Installing ComfyUI dependencies (using uv for speed)..."
+	@uv pip install --python ComfyUI/.venv/bin/python -U pip setuptools wheel >/dev/null 2>&1 || true
+	@uv pip install --python ComfyUI/.venv/bin/python -r ComfyUI/requirements.txt
 	@echo "  Pinning NumPy (<2) to avoid face-restore import issues..."
-	@ComfyUI/.venv/bin/pip install "numpy<2" >/dev/null 2>&1 || true
+	@uv pip install --python ComfyUI/.venv/bin/python "numpy<2" >/dev/null 2>&1 || true
 	@echo "  Installing face restoration dependencies (GFPGAN/CodeFormer)..."
-	@if ComfyUI/.venv/bin/pip install facexlib gfpgan >/dev/null 2>&1; then \
+	@if uv pip install --python ComfyUI/.venv/bin/python facexlib gfpgan >/dev/null 2>&1; then \
 		echo "  ✓ Face restoration dependencies installed"; \
 	else \
 		echo "    (optional: facexlib/gfpgan install skipped)"; \
@@ -79,7 +79,7 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-Impact-Pack" ]; then \
 		mkdir -p ComfyUI/custom_nodes && \
 		if git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack 2>/dev/null && \
-		   ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-Impact-Pack/requirements.txt >/dev/null 2>&1; then \
+		   uv pip install --python ComfyUI/.venv/bin/python -r ComfyUI/custom_nodes/ComfyUI-Impact-Pack/requirements.txt >/dev/null 2>&1; then \
 			echo "  ✓ ComfyUI-Impact-Pack installed"; \
 		else \
 			echo "    (optional: Impact-Pack install skipped)"; \
