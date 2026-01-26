@@ -3,7 +3,7 @@ SHELL := /bin/bash
 # Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
-.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-edit download-verify download-health start start-backend start-frontend
+.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-edit download-enhance download-verify download-health start start-backend start-frontend
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -61,7 +61,7 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@ComfyUI/.venv/bin/pip install -r ComfyUI/requirements.txt
 	@echo ""
 	@echo "✓ Setting up model directories..."
-	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae models/comfy/controlnet models/comfy/sams models/comfy/rembg
+	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae models/comfy/controlnet models/comfy/sams models/comfy/rembg models/comfy/upscale_models models/comfy/gfpgan
 	@echo "  Linking ComfyUI models to ./models/comfy..."
 	@rm -rf ComfyUI/models
 	@ln -s $$(pwd)/models/comfy ComfyUI/models
@@ -393,6 +393,38 @@ download-edit: ## Download only edit mode models (inpainting, controlnet, etc.)
 	@echo ""
 	@du -sh models/comfy/checkpoints/*inpaint* models/comfy/controlnet/* models/comfy/sams/* models/comfy/rembg/* 2>/dev/null || true
 
+download-enhance: ## Download upscale/enhance models (4x-UltraSharp, RealESRGAN, SwinIR, GFPGAN)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Downloading Upscale/Enhance Models"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@mkdir -p models/comfy/upscale_models models/comfy/gfpgan
+	@echo ""
+	@echo "[1/5] Downloading 4x-UltraSharp (REQUIRED - default upscaler)..."
+	@wget -c --progress=bar:force -O models/comfy/upscale_models/4x-UltraSharp.pth \
+		"https://huggingface.co/philz1337x/upscaler/resolve/main/4x-UltraSharp.pth" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[2/5] Downloading RealESRGAN x4+ (Photo upscaler)..."
+	@wget -c --progress=bar:force -O models/comfy/upscale_models/RealESRGAN_x4plus.pth \
+		"https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[3/5] Downloading SwinIR 4x (Restoration upscaler)..."
+	@wget -c --progress=bar:force -O models/comfy/upscale_models/SwinIR_4x.pth \
+		"https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[4/5] Downloading Real-ESRGAN General x4v3 (Mixed content)..."
+	@wget -c --progress=bar:force -O models/comfy/upscale_models/realesr-general-x4v3.pth \
+		"https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[5/5] Downloading GFPGAN v1.4 (Face restoration)..."
+	@wget -c --progress=bar:force -O models/comfy/gfpgan/GFPGANv1.4.pth \
+		"https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ Upscale/Enhance model download complete!"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@du -sh models/comfy/upscale_models/* models/comfy/gfpgan/* 2>/dev/null || true
+
 download-health: ## Check health of model download URLs
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Checking Model Download URL Health"
@@ -427,6 +459,12 @@ download-verify: ## Verify downloaded models and show disk usage
 		echo ""; \
 		echo "  Rembg Models (background removal):"; \
 		ls -lh models/comfy/rembg/*.onnx 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  Upscale Models (image enhancement):"; \
+		ls -lh models/comfy/upscale_models/*.pth 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  GFPGAN Models (face restoration):"; \
+		ls -lh models/comfy/gfpgan/*.pth 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
 		echo ""; \
 		echo "  Total ComfyUI storage: $$(du -sh models/comfy 2>/dev/null | cut -f1)"; \
 		echo ""; \

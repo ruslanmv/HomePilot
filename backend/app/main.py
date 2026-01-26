@@ -61,6 +61,18 @@ from .civitai import (
 from .studio.routes import router as studio_router
 from .studio.repo import init_studio_db
 
+# Upscale module routes
+from .upscale import router as upscale_router
+
+# Enhance module routes
+from .enhance import router as enhance_router
+
+# Background module routes
+from .background import router as background_router
+
+# Outpaint module routes
+from .outpaint import router as outpaint_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -73,6 +85,18 @@ app.add_middleware(
 
 # Include Studio routes (/studio/*)
 app.include_router(studio_router)
+
+# Include Upscale routes (/v1/upscale)
+app.include_router(upscale_router)
+
+# Include Enhance routes (/v1/enhance)
+app.include_router(enhance_router)
+
+# Include Background routes (/v1/background)
+app.include_router(background_router)
+
+# Include Outpaint routes (/v1/outpaint)
+app.include_router(outpaint_router)
 
 # ----------------------------
 # Models
@@ -530,12 +554,15 @@ async def list_models(
                 models = scan_installed_models("video")
             elif model_type == "edit":
                 models = scan_installed_models("edit")
+            elif model_type == "enhance":
+                models = scan_installed_models("enhance")
             else:
                 # Return all if not specified
                 models = (
                     scan_installed_models("image")
                     + scan_installed_models("video")
                     + scan_installed_models("edit")
+                    + scan_installed_models("enhance")
                 )
 
             return JSONResponse(

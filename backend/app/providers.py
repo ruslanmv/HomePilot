@@ -135,6 +135,17 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
             "sam_vit_h_4b8939.pth": models_path / "sams" / "sam_vit_h_4b8939.pth",
             "u2net.onnx": models_path / "rembg" / "u2net.onnx",
         }
+    elif model_type == "enhance":
+        checks = {
+            # ComfyUI upscale / restoration weights
+            "4x-UltraSharp.pth": models_path / "upscale_models" / "4x-UltraSharp.pth",
+            "RealESRGAN_x4plus.pth": models_path / "upscale_models" / "RealESRGAN_x4plus.pth",
+            "realesr-general-x4v3.pth": models_path / "upscale_models" / "realesr-general-x4v3.pth",
+            "SwinIR_4x.pth": models_path / "upscale_models" / "SwinIR_4x.pth",
+            # Optional face restoration
+            "GFPGANv1.4.pth": models_path / "gfpgan" / "GFPGANv1.4.pth",
+            "codeformer.pth": models_path / "codeformer" / "codeformer.pth",
+        }
     else:
         # Unknown model_type, return empty
         checks = {}
