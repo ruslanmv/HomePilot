@@ -1,0 +1,28 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "FaceRestoreModelLoader",
+    "inputs": {
+      "model_name": "{{model_name}}"
+    }
+  },
+  "3": {
+    "class_type": "FaceRestoreWithModel",
+    "inputs": {
+      "facerestore_model": ["2", 0],
+      "image": ["1", 0]
+    }
+  },
+  "4": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["3", 0],
+      "filename_prefix": "{{filename_prefix}}"
+    }
+  }
+}

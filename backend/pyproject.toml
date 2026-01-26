@@ -19,6 +19,13 @@ dependencies = [
   "starlette==0.37.2",
   "chromadb>=0.4.0",
   "PyPDF2>=3.0.0",
+  "Pillow>=10.0.0",
+  # Background removal dependencies (ONNX-based, Python 3.11+ compatible)
+  # Uses U2Net model directly via ONNX Runtime, avoiding rembg's numba dependency
+  "numpy>=1.24.0",
+  "onnxruntime>=1.15.0",
+  "pooch>=1.6.0",
+  "scikit-image>=0.21.0",
 ]
 
 [dependency-groups]

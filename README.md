@@ -15,6 +15,14 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
+### 🖼️ Edit Studio Enhancements
+One-click image editing tools integrated into the Edit page:
+- **Quick Enhance** - Enhance photo quality, restore artifacts, fix faces
+- **Upscale** - 2x/4x resolution increase with UltraSharp AI
+- **Background Tools** - Remove, replace, or blur backgrounds
+- **Outpaint** - Extend canvas in any direction (7 options)
+- **Capabilities API** - Runtime feature availability checking (`/v1/capabilities`)
+
 ### 🎬 Creator Studio
 A professional content creation suite for YouTube creators, educators, and enterprises:
 - **AI Story Outline Generation** - Generate complete story arcs with scene-by-scene planning
@@ -436,6 +444,8 @@ ProjectTemplate(
 - [x] TV Mode for immersive playback
 - [x] Project settings modal
 - [x] Export functionality (PDF, PPTX, ZIP)
+- [x] Edit Studio: Quick Enhance, Upscale 2x/4x, Background Tools, Outpaint
+- [x] Capabilities API for runtime feature checks
 
 ### In Progress
 - [ ] Voice narration with TTS
