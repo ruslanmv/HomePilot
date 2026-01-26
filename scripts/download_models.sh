@@ -131,6 +131,8 @@ show_preset_info() {
             echo "📦 MINIMAL PRESET - Fast setup with essential models"
             echo "   • FLUX Schnell (4GB) - Fast image generation"
             echo "   • Shared CLIP & VAE encoders (3GB)"
+            echo "   Upscale (Essential):"
+            echo "   • 4x-UltraSharp (80MB) - Required for upscaling"
             echo "   • Total: ~7GB"
             echo "   • VRAM Required: 12-16GB"
             ;;
@@ -143,7 +145,14 @@ show_preset_info() {
             echo "   • SDXL Inpainting 0.1 (5GB) - Natural image editing"
             echo "   • SD 1.5 Inpainting (4GB) - Fast fallback"
             echo "   • ControlNet Inpaint (1.4GB) - Edit guidance"
-            echo "   • Total: ~24GB"
+            echo "   • U2Net (170MB) - Background removal"
+            echo "   Upscale/Enhance Models:"
+            echo "   • 4x-UltraSharp (80MB) - Sharp upscaling"
+            echo "   • RealESRGAN x4+ (80MB) - Photo upscaling"
+            echo "   • SwinIR 4x (150MB) - Restoration"
+            echo "   • Real-ESRGAN General (80MB) - Mixed content"
+            echo "   • GFPGAN v1.4 (350MB) - Face restoration"
+            echo "   • Total: ~25GB"
             echo "   • VRAM Required: 12-16GB"
             ;;
         full)
@@ -161,9 +170,15 @@ show_preset_info() {
             echo "   • ControlNet Inpaint (1.4GB) - Edit guidance"
             echo "   • SAM ViT-H (2.5GB) - Auto-mask segmentation"
             echo "   • U2Net (170MB) - Background removal"
+            echo "   Upscale/Enhance Models:"
+            echo "   • 4x-UltraSharp (80MB) - Sharp upscaling"
+            echo "   • RealESRGAN x4+ (80MB) - Photo upscaling"
+            echo "   • SwinIR 4x (150MB) - Restoration"
+            echo "   • Real-ESRGAN General (80MB) - Mixed content"
+            echo "   • GFPGAN v1.4 (350MB) - Face restoration"
             echo "   Shared:"
             echo "   • CLIP & VAE encoders (3GB)"
-            echo "   • Total: ~63GB"
+            echo "   • Total: ~64GB"
             echo "   • VRAM Required: 16-24GB (for FLUX Dev)"
             ;;
         *)
@@ -326,6 +341,77 @@ download_u2net() {
     echo ""
 }
 
+# Download 4x-UltraSharp (MANDATORY upscaler for minimal preset)
+download_upscale_essential() {
+    log_info "=== Downloading 4x-UltraSharp (Essential Upscaler) ==="
+
+    download_file \
+        "https://huggingface.co/philz1337x/upscaler/resolve/main/4x-UltraSharp.pth" \
+        "${COMFY_MODELS_DIR}/upscale_models/4x-UltraSharp.pth" \
+        "4x-UltraSharp Upscaler (REQUIRED)"
+
+    echo ""
+}
+
+# Download RealESRGAN x4+ (excellent for photos)
+download_realesrgan() {
+    log_info "=== Downloading RealESRGAN x4+ (Photo Upscaler) ==="
+
+    download_file \
+        "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" \
+        "${COMFY_MODELS_DIR}/upscale_models/RealESRGAN_x4plus.pth" \
+        "RealESRGAN x4+ Photo Upscaler"
+
+    echo ""
+}
+
+# Download SwinIR 4x (restoration upscaler)
+download_swinir() {
+    log_info "=== Downloading SwinIR 4x (Restoration Upscaler) ==="
+
+    download_file \
+        "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth" \
+        "${COMFY_MODELS_DIR}/upscale_models/SwinIR_4x.pth" \
+        "SwinIR 4x Restoration Upscaler"
+
+    echo ""
+}
+
+# Download Real-ESRGAN General x4v3 (mixed content)
+download_realesrgan_general() {
+    log_info "=== Downloading Real-ESRGAN General x4v3 ==="
+
+    download_file \
+        "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth" \
+        "${COMFY_MODELS_DIR}/upscale_models/realesr-general-x4v3.pth" \
+        "Real-ESRGAN General x4v3 Upscaler"
+
+    echo ""
+}
+
+# Download GFPGAN v1.4 (face restoration)
+download_gfpgan() {
+    log_info "=== Downloading GFPGAN v1.4 (Face Restoration) ==="
+
+    download_file \
+        "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth" \
+        "${COMFY_MODELS_DIR}/gfpgan/GFPGANv1.4.pth" \
+        "GFPGAN v1.4 Face Restoration"
+
+    echo ""
+}
+
+# Download all upscale/enhance models (for recommended/full presets)
+download_upscale_models() {
+    log_info "=== Downloading Upscale/Enhance Models ==="
+    echo ""
+    download_upscale_essential
+    download_realesrgan
+    download_swinir
+    download_realesrgan_general
+    download_gfpgan
+}
+
 # Download all edit models (for recommended/full presets)
 download_edit_models() {
     log_info "=== Downloading Edit Mode Models ==="
@@ -386,8 +472,15 @@ show_summary() {
         echo "  • sdxl-inpainting - High quality editing at 1024px"
         echo "  • sd15-inpainting - Fast editing fallback at 512px"
         echo "  • controlnet-inpaint - Structure-preserving guidance"
+        echo "  • u2net           - Background removal"
         echo "  • sam             - Auto-mask segmentation [full preset only]"
-        echo "  • u2net           - Background removal [full preset only]"
+        echo ""
+        log_info "Available upscale/enhance models:"
+        echo "  • 4x-UltraSharp    - Sharp, clean upscaling (default)"
+        echo "  • RealESRGAN x4+   - Photo upscaling [recommended/full preset]"
+        echo "  • SwinIR 4x        - Restoration upscaler [recommended/full preset]"
+        echo "  • Real-ESRGAN Gen  - Mixed content [recommended/full preset]"
+        echo "  • GFPGAN v1.4      - Face restoration [recommended/full preset]"
         echo ""
         log_info "Set IMAGE_MODEL in .env to change the default model"
     fi
@@ -410,7 +503,7 @@ main() {
     fi
 
     # Create base directories
-    mkdir -p "$COMFY_MODELS_DIR"/{checkpoints,unet,clip,vae,controlnet,sams,rembg}
+    mkdir -p "$COMFY_MODELS_DIR"/{checkpoints,unet,clip,vae,controlnet,sams,rembg,upscale_models,gfpgan}
     mkdir -p "$LLM_MODELS_DIR"
 
     log_info "Models directory: $MODELS_DIR"
@@ -421,12 +514,15 @@ main() {
         minimal)
             download_shared_encoders
             download_flux_schnell
+            download_upscale_essential  # Required for upscaling to work
             ;;
         recommended)
             download_shared_encoders
             download_flux_schnell
             download_sdxl
             download_edit_models
+            download_u2net  # Background removal for Edit mode
+            download_upscale_models  # All upscale/enhance models
             ;;
         full)
             download_shared_encoders
@@ -437,6 +533,7 @@ main() {
             download_svd
             download_edit_models
             download_edit_extras
+            download_upscale_models  # All upscale/enhance models
             ;;
     esac
 
