@@ -414,8 +414,8 @@ export default function ModelsView(props: ModelsParams) {
       // For image/video/edit/enhance: comfyui + civitai (if experimental enabled)
       const filtered = providers.filter(p => p.name === 'comfyui')
 
-      // Add Civitai if experimental enabled
-      if (props.experimentalCivitai) {
+      // Add Civitai only for image/video (Civitai API only supports these types)
+      if (props.experimentalCivitai && (modelType === 'image' || modelType === 'video')) {
         filtered.push({
           name: 'civitai',
           label: '🧪 Civitai (Experimental)',
