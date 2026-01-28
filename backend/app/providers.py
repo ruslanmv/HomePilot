@@ -120,9 +120,20 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
         }
     elif model_type == "video":
         checks = {
+            # SVD models
             "svd_xt_1_1.safetensors": models_path / "checkpoints" / "svd_xt_1_1.safetensors",
             "svd_xt.safetensors": models_path / "checkpoints" / "svd_xt.safetensors",
             "svd.safetensors": models_path / "checkpoints" / "svd.safetensors",
+            # LTX-Video
+            "ltx-video-2b-v0.9.1.safetensors": models_path / "checkpoints" / "ltx-video-2b-v0.9.1.safetensors",
+            # HunyuanVideo GGUF pack (check primary unet file)
+            "hunyuanvideo_t2v_720p_gguf_q4_k_m_pack": models_path / "unet" / "hunyuanvideo-q4_k_m.gguf",
+            # Wan 2.2 pack (check primary diffusion model)
+            "wan2.2_5b_fp16_pack": models_path / "diffusion_models" / "wan2.2_ti2v_5B_fp16.safetensors",
+            # Mochi FP8 pack (check primary diffusion model)
+            "mochi_preview_fp8_pack": models_path / "diffusion_models" / "mochi_preview_fp8_scaled.safetensors",
+            # CogVideoX snapshot (check diffusers directory exists)
+            "cogvideox1.5_5b_i2v_snapshot": models_path / "diffusers" / "CogVideoX1.5-5B-I2V",
         }
     elif model_type == "edit":
         checks = {

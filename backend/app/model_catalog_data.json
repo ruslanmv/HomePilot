@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "HomePilot Model Catalog - Curated models for all providers",
   "version": "1.0.0",
-  "last_updated": "2026-01-21",
+  "last_updated": "2026-01-28",
   "_comment": "🧪 EXPERIMENTAL: Add Civitai models using scripts/download.py --add-civitai --version-id <ID> --type <image|video>",
   "_experimental_example": {
     "civitai_model_template": {
@@ -326,6 +326,149 @@
           "frames": 14,
           "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid/resolve/main/svd.safetensors",
           "install_path": "checkpoints/"
+        },
+        {
+          "id": "ltx-video-2b-v0.9.1.safetensors",
+          "label": "LTX-Video 2B v0.9.1 (I2V/T2V)",
+          "recommended": true,
+          "nsfw": false,
+          "description": "Lightricks LTX-Video checkpoint. Fast, lightweight - best for RTX 4080. Single file install.",
+          "size_gb": 5.72,
+          "resolution": "varies",
+          "frames": 80,
+          "install_path": "checkpoints/",
+          "install": {
+            "type": "hf_files",
+            "requires_custom_nodes": ["ComfyUI-LTXVideo"],
+            "hint": "After install: use LTX workflows/nodes in ComfyUI to load the checkpoint.",
+            "files": [
+              {
+                "repo_id": "Lightricks/LTX-Video",
+                "filename": "ltx-video-2b-v0.9.1.safetensors",
+                "dest": "checkpoints/ltx-video-2b-v0.9.1.safetensors"
+              }
+            ]
+          }
+        },
+        {
+          "id": "hunyuanvideo_t2v_720p_gguf_q4_k_m_pack",
+          "label": "HunyuanVideo T2V 720p GGUF Q4_K_M Pack",
+          "recommended": true,
+          "nsfw": false,
+          "description": "GGUF UNet + required encoders + VAE. Optimized for RTX 4080 (16GB). Requires ComfyUI-GGUF nodes.",
+          "size_gb": 9.5,
+          "resolution": "720p",
+          "frames": 80,
+          "install_path": "checkpoints/",
+          "install": {
+            "type": "hf_files",
+            "requires_custom_nodes": ["ComfyUI-GGUF"],
+            "hint": "After install: install ComfyUI-GGUF via ComfyUI Manager, restart ComfyUI, then load HunyuanVideo GGUF workflows.",
+            "files": [
+              {
+                "repo_id": "city96/HunyuanVideo-gguf",
+                "filename": "hunyuan-video-t2v-720p-Q4_K_M.gguf",
+                "dest": "unet/hunyuan-video-t2v-720p-Q4_K_M.gguf"
+              },
+              {
+                "repo_id": "Comfy-Org/HunyuanVideo_repackaged",
+                "filename": "split_files/text_encoders/clip_l.safetensors",
+                "dest": "text_encoders/clip_l.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/HunyuanVideo_repackaged",
+                "filename": "split_files/text_encoders/llava_llama3_fp8_scaled.safetensors",
+                "dest": "text_encoders/llava_llama3_fp8_scaled.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/HunyuanVideo_repackaged",
+                "filename": "split_files/vae/hunyuan_video_vae_bf16.safetensors",
+                "dest": "vae/hunyuan_video_vae_bf16.safetensors"
+              }
+            ]
+          }
+        },
+        {
+          "id": "wan2.2_5b_fp16_pack",
+          "label": "Wan 2.2 5B FP16 Pack",
+          "recommended": true,
+          "nsfw": false,
+          "description": "Official Comfy-Org repack. Strong motion + modern open video. Good for RTX 4080.",
+          "size_gb": 21.5,
+          "resolution": "varies",
+          "frames": 80,
+          "install_path": "checkpoints/",
+          "install": {
+            "type": "hf_files",
+            "hint": "After install: use ComfyUI Wan2.2 workflows (Load Diffusion Model = wan2.2_ti2v_5B_fp16).",
+            "files": [
+              {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "filename": "split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+                "dest": "diffusion_models/wan2.2_ti2v_5B_fp16.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "filename": "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "dest": "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/Wan_2.2_ComfyUI_Repackaged",
+                "filename": "split_files/vae/wan2.2_vae.safetensors",
+                "dest": "vae/wan2.2_vae.safetensors"
+              }
+            ]
+          }
+        },
+        {
+          "id": "mochi_preview_fp8_pack",
+          "label": "Mochi 1 Preview FP8 Pack",
+          "recommended": false,
+          "nsfw": false,
+          "description": "Mochi diffusion FP8 + T5XXL FP8 + Mochi VAE. Heavier model - may push 16GB VRAM limits.",
+          "size_gb": 28.0,
+          "resolution": "480p",
+          "frames": 80,
+          "install_path": "checkpoints/",
+          "install": {
+            "type": "hf_files",
+            "hint": "After install: update ComfyUI and use Mochi workflows. May require lowering settings on 16GB cards.",
+            "files": [
+              {
+                "repo_id": "Comfy-Org/mochi_preview_repackaged",
+                "filename": "split_files/diffusion_models/mochi_preview_fp8_scaled.safetensors",
+                "dest": "diffusion_models/mochi_preview_fp8_scaled.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/mochi_preview_repackaged",
+                "filename": "split_files/text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+                "dest": "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors"
+              },
+              {
+                "repo_id": "Comfy-Org/mochi_preview_repackaged",
+                "filename": "split_files/vae/mochi_vae.safetensors",
+                "dest": "vae/mochi_vae.safetensors"
+              }
+            ]
+          }
+        },
+        {
+          "id": "cogvideox1.5_5b_i2v_snapshot",
+          "label": "CogVideoX 1.5 5B I2V (Diffusers)",
+          "recommended": false,
+          "nsfw": false,
+          "description": "Downloads entire Diffusers-style repo. Requires ComfyUI CogVideoX wrapper. May need tuning on 16GB.",
+          "size_gb": 20.0,
+          "resolution": "varies",
+          "frames": 80,
+          "install_path": "checkpoints/",
+          "install": {
+            "type": "hf_snapshot",
+            "repo_id": "THUDM/CogVideoX1.5-5B-I2V",
+            "dest_dir": "diffusers/CogVideoX1.5-5B-I2V",
+            "requires_custom_nodes": ["ComfyUI-CogVideoXWrapper"],
+            "hint": "After install: configure your CogVideoX ComfyUI wrapper to point to this diffusers folder."
+          }
         }
       ],
       "edit": [
