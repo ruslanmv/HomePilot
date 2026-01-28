@@ -530,6 +530,171 @@ async def settings(request: Request) -> JSONResponse:
     )
 
 
+# -----------------------------------------------------------------------------
+# API Keys Management (Optional - for gated HuggingFace / Civitai models)
+# -----------------------------------------------------------------------------
+
+from .api_keys import (
+    get_api_keys_status,
+    get_api_key,
+    set_api_key,
+    delete_api_key,
+)
+
+
+class ApiKeySetRequest(BaseModel):
+    """Request to set an API key."""
+    provider: str = Field(..., description="Provider: 'huggingface' or 'civitai'")
+    key: str = Field(..., description="The API key/token")
+
+
+class ApiKeyTestRequest(BaseModel):
+    """Request to test an API key."""
+    provider: str = Field(..., description="Provider to test")
+    key: Optional[str] = Field(None, description="Key to test (uses stored if not provided)")
+
+
+@app.get("/settings/api-keys")
+async def get_api_keys_endpoint() -> JSONResponse:
+    """
+    Get status of configured API keys (masked, not actual values).
+
+    API keys are OPTIONAL - HomePilot works without them.
+    Keys are only needed for:
+    - Gated HuggingFace models (FLUX, SVD XT 1.1)
+    - NSFW/restricted Civitai models
+    """
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "keys": get_api_keys_status(),
+            "note": "API keys are optional. Only needed for gated/restricted models.",
+        },
+    )
+
+
+@app.post("/settings/api-keys")
+async def set_api_key_endpoint(req: ApiKeySetRequest) -> JSONResponse:
+    """Set an API key for a provider (huggingface or civitai)."""
+    if req.provider not in ("huggingface", "civitai"):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": f"Unknown provider: {req.provider}. Use 'huggingface' or 'civitai'."},
+        )
+
+    set_api_key(req.provider, req.key)  # type: ignore
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "message": f"API key for {req.provider} saved successfully",
+            "status": get_api_keys_status()[req.provider],
+        },
+    )
+
+
+@app.delete("/settings/api-keys/{provider}")
+async def delete_api_key_endpoint(provider: str) -> JSONResponse:
+    """Remove a stored API key."""
+    if provider not in ("huggingface", "civitai"):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": f"Unknown provider: {provider}. Use 'huggingface' or 'civitai'."},
+        )
+
+    deleted = delete_api_key(provider)  # type: ignore
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "deleted": deleted,
+            "message": f"API key for {provider} {'removed' if deleted else 'was not set'}",
+        },
+    )
+
+
+@app.post("/settings/api-keys/test")
+async def test_api_key_endpoint(req: ApiKeyTestRequest) -> JSONResponse:
+    """
+    Test if an API key is valid by making a test request to the provider.
+    If no key is provided in the request, tests the stored/env key.
+    """
+    if req.provider not in ("huggingface", "civitai"):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": f"Unknown provider: {req.provider}"},
+        )
+
+    key = req.key.strip() if req.key else get_api_key(req.provider)  # type: ignore
+    if not key:
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "valid": False,
+                "message": f"No API key provided or stored for {req.provider}",
+            },
+        )
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            if req.provider == "huggingface":
+                # Test HF token by getting user info
+                r = await client.get(
+                    "https://huggingface.co/api/whoami-v2",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    return JSONResponse(content={
+                        "ok": True,
+                        "valid": True,
+                        "message": f"Authenticated as: {data.get('name', 'unknown')}",
+                        "username": data.get("name"),
+                    })
+                else:
+                    return JSONResponse(content={
+                        "ok": True,
+                        "valid": False,
+                        "message": f"Invalid token (HTTP {r.status_code})",
+                    })
+
+            elif req.provider == "civitai":
+                # Test Civitai key by getting current user
+                r = await client.get(
+                    "https://civitai.com/api/v1/me",
+                    headers={"Authorization": f"Bearer {key}"},
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    return JSONResponse(content={
+                        "ok": True,
+                        "valid": True,
+                        "message": f"Authenticated as: {data.get('username', 'unknown')}",
+                        "username": data.get("username"),
+                    })
+                else:
+                    return JSONResponse(content={
+                        "ok": True,
+                        "valid": False,
+                        "message": f"Invalid API key (HTTP {r.status_code})",
+                    })
+
+    except Exception as e:
+        return JSONResponse(content={
+            "ok": True,
+            "valid": False,
+            "message": f"Connection error: {str(e)}",
+        })
+
+    return JSONResponse(content={"ok": True, "valid": False, "message": "Unknown error"})
+
+
 @app.get("/models")
 async def list_models(
     provider: str = Query("openai_compat", description="Provider to list models from"),
