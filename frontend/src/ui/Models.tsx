@@ -702,7 +702,8 @@ export default function ModelsView(props: ModelsParams) {
         headers,
         body: JSON.stringify({
           query: civitaiQuery.trim(),
-          model_type: modelType === 'edit' ? 'image' : modelType, // Civitai uses 'image' for edit models
+          // Civitai only supports 'image' or 'video' - map other types appropriately
+          model_type: modelType === 'video' ? 'video' : 'image',
           nsfw: props.nsfwMode || false,
           limit: 20,
           page,
