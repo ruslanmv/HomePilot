@@ -172,13 +172,13 @@ def hf_download_to(repo_id: str, filename: str, dest: Path) -> None:
     Token priority:
     1. HF_TOKEN environment variable
     2. Stored key in .env.json
-    3. HF CLI login token (token=True fallback)
+    3. None (anonymous download for public repos)
     """
     _need_hf()
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    # Get token from env or stored keys, fallback to True (uses HF CLI login)
-    token = get_hf_token() or True
+    # Get token from env or stored keys, None allows anonymous download for public repos
+    token = get_hf_token()
     src_path = hf_hub_download(repo_id=repo_id, filename=filename, token=token)
     shutil.copy2(src_path, dest)
 
@@ -190,13 +190,13 @@ def hf_snapshot_to(repo_id: str, dest_dir: Path, allow_patterns: Optional[List[s
     Token priority:
     1. HF_TOKEN environment variable
     2. Stored key in .env.json
-    3. HF CLI login token (token=True fallback)
+    3. None (anonymous download for public repos)
     """
     _need_hf()
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get token from env or stored keys, fallback to True (uses HF CLI login)
-    token = get_hf_token() or True
+    # Get token from env or stored keys, None allows anonymous download for public repos
+    token = get_hf_token()
     snapshot_download(
         repo_id=repo_id,
         local_dir=str(dest_dir),
