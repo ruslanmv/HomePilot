@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2 } from 'lucide-react'
+import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -24,11 +24,20 @@ type ModelCatalogEntry = {
   // Civitai-specific fields
   civitai_url?: string
   civitai_version_id?: string
-  // Optional install metadata (future backend support)
+  // Optional install metadata (backend-supported)
   install?: {
-    type: 'ollama_pull' | 'http_files' | 'script'
+    type: 'ollama_pull' | 'http_files' | 'hf_files' | 'hf_snapshot' | 'script'
     hint?: string
-    files?: Array<{ url: string; dest: string; sha256?: string }>
+    requires_custom_nodes?: string[]
+    files?: Array<{
+      url?: string
+      repo_id?: string
+      filename?: string
+      dest: string
+      sha256?: string
+    }>
+    repo_id?: string
+    dest_dir?: string
   }
 }
 
@@ -161,6 +170,11 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       { id: 'svd_xt_1_1.safetensors', label: 'Stable Video Diffusion XT 1.1 (10GB)', recommended: true, nsfw: false },
       { id: 'svd_xt.safetensors', label: 'Stable Video Diffusion XT (10GB)', nsfw: false },
       { id: 'svd.safetensors', label: 'Stable Video Diffusion (10GB)', nsfw: false },
+      { id: 'ltx-video-2b-v0.9.1.safetensors', label: 'LTX-Video 2B v0.9.1 (6GB)', recommended: true, nsfw: false, description: 'Best for RTX 4080. Fast, lightweight video model.' },
+      { id: 'hunyuanvideo_t2v_720p_gguf_q4_k_m_pack', label: 'HunyuanVideo GGUF Q4_K_M Pack (10GB)', recommended: true, nsfw: false, description: 'GGUF pack for 16GB cards. Requires ComfyUI-GGUF.' },
+      { id: 'wan2.2_5b_fp16_pack', label: 'Wan 2.2 5B FP16 Pack (22GB)', recommended: true, nsfw: false, description: 'Strong motion + modern video. Official Comfy-Org repack.' },
+      { id: 'mochi_preview_fp8_pack', label: 'Mochi 1 Preview FP8 Pack (28GB)', nsfw: false, description: 'Heavier model - may push VRAM limits on 16GB.' },
+      { id: 'cogvideox1.5_5b_i2v_snapshot', label: 'CogVideoX 1.5 5B I2V (20GB)', nsfw: false, description: 'Diffusers-style repo. Requires CogVideoX wrapper.' },
     ],
     edit: [
       { id: 'sd_xl_base_1.0_inpainting_0.1.safetensors', label: 'SDXL Inpainting 0.1 (7GB)', recommended: true, nsfw: false },
@@ -384,6 +398,13 @@ export default function ModelsView(props: ModelsParams) {
   const [civitaiPage, setCivitaiPage] = useState(1)
   const [civitaiTotalPages, setCivitaiTotalPages] = useState(1)
 
+  // API Keys state (optional - for gated models)
+  const [apiKeysExpanded, setApiKeysExpanded] = useState(false)
+  const [apiKeysStatus, setApiKeysStatus] = useState<Record<string, { configured: boolean; source: string; masked: string | null }>>({})
+  const [apiKeyInput, setApiKeyInput] = useState<{ huggingface: string; civitai: string }>({ huggingface: '', civitai: '' })
+  const [apiKeyTesting, setApiKeyTesting] = useState<string | null>(null)
+  const [apiKeySaving, setApiKeySaving] = useState<string | null>(null)
+
   // Filter providers based on model type
   const availableProviders = useMemo(() => {
     if (modelType === 'chat') {
@@ -393,8 +414,8 @@ export default function ModelsView(props: ModelsParams) {
       // For image/video/edit/enhance: comfyui + civitai (if experimental enabled)
       const filtered = providers.filter(p => p.name === 'comfyui')
 
-      // Add Civitai if experimental enabled
-      if (props.experimentalCivitai) {
+      // Add Civitai only for image/video (Civitai API only supports these types)
+      if (props.experimentalCivitai && (modelType === 'image' || modelType === 'video')) {
         filtered.push({
           name: 'civitai',
           label: '🧪 Civitai (Experimental)',
@@ -681,7 +702,8 @@ export default function ModelsView(props: ModelsParams) {
         headers,
         body: JSON.stringify({
           query: civitaiQuery.trim(),
-          model_type: modelType === 'edit' ? 'image' : modelType, // Civitai uses 'image' for edit models
+          // Civitai only supports 'image' or 'video' - map other types appropriately
+          model_type: modelType === 'video' ? 'video' : 'image',
           nsfw: props.nsfwMode || false,
           limit: 20,
           page,
@@ -749,6 +771,94 @@ export default function ModelsView(props: ModelsParams) {
     }
   }
 
+  // API Keys management functions
+  const loadApiKeysStatus = async () => {
+    try {
+      const data = await getJson<{ ok: boolean; keys: Record<string, any> }>(backendUrl, '/settings/api-keys', authKey)
+      if (data.keys) {
+        setApiKeysStatus(data.keys)
+      }
+    } catch (e) {
+      // API keys endpoint not available - that's OK, it's optional
+      console.debug('[API Keys] Endpoint not available:', e)
+    }
+  }
+
+  const saveApiKey = async (provider: 'huggingface' | 'civitai') => {
+    const key = apiKeyInput[provider].trim()
+    if (!key) {
+      setToast(`Please enter a ${provider === 'huggingface' ? 'HuggingFace' : 'Civitai'} API key`)
+      return
+    }
+
+    setApiKeySaving(provider)
+    try {
+      const res = await postJson<{ ok: boolean; message?: string }>(
+        backendUrl,
+        '/settings/api-keys',
+        { provider, key },
+        authKey
+      )
+      if (res.ok) {
+        setToast(res.message || `${provider} API key saved successfully`)
+        setApiKeyInput(prev => ({ ...prev, [provider]: '' }))
+        await loadApiKeysStatus()
+      } else {
+        setToast(`Failed to save ${provider} API key`)
+      }
+    } catch (e: any) {
+      setToast(`Error saving API key: ${e?.message || String(e)}`)
+    } finally {
+      setApiKeySaving(null)
+    }
+  }
+
+  const testApiKey = async (provider: 'huggingface' | 'civitai') => {
+    setApiKeyTesting(provider)
+    try {
+      const keyToTest = apiKeyInput[provider].trim() || undefined
+      const res = await postJson<{ ok: boolean; valid: boolean; message: string; username?: string }>(
+        backendUrl,
+        '/settings/api-keys/test',
+        { provider, key: keyToTest },
+        authKey
+      )
+      if (res.valid) {
+        setToast(`${provider} key valid: ${res.message}`)
+      } else {
+        setToast(`${provider} key invalid: ${res.message}`)
+      }
+    } catch (e: any) {
+      setToast(`Error testing API key: ${e?.message || String(e)}`)
+    } finally {
+      setApiKeyTesting(null)
+    }
+  }
+
+  const deleteApiKey = async (provider: 'huggingface' | 'civitai') => {
+    try {
+      const res = await fetch(`${backendUrl}/settings/api-keys/${provider}`, {
+        method: 'DELETE',
+        headers: authKey ? { 'x-api-key': authKey } : {},
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setToast(data.message || `${provider} API key removed`)
+        await loadApiKeysStatus()
+      }
+    } catch (e: any) {
+      setToast(`Error removing API key: ${e?.message || String(e)}`)
+    }
+  }
+
+  // Load API keys status when expanded
+  useEffect(() => {
+    if (apiKeysExpanded) {
+      loadApiKeysStatus()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKeysExpanded])
+
   // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return
@@ -785,8 +895,218 @@ export default function ModelsView(props: ModelsParams) {
             <RefreshCw size={15} className={installedLoading ? 'animate-spin' : ''} />
             Refresh Installed
           </button>
+
+          {/* API Keys Settings Button */}
+          <button
+            type="button"
+            onClick={() => setApiKeysExpanded(true)}
+            className="p-2.5 rounded-xl bg-transparent hover:bg-white/5 border border-transparent hover:border-white/10 text-white/40 hover:text-white/70 transition-all"
+            title="API Keys (for gated models)"
+          >
+            <Key size={16} />
+          </button>
         </div>
       </div>
+
+      {/* API Keys Modal */}
+      {apiKeysExpanded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => setApiKeysExpanded(false)}
+          />
+
+          {/* Modal */}
+          <div className="relative bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-white/[0.02]">
+              <div className="flex items-center gap-3">
+                <Key size={18} className="text-white/50" />
+                <div>
+                  <h2 className="text-lg font-bold text-white">API Keys</h2>
+                  <p className="text-xs text-white/40">Optional - for gated HuggingFace and Civitai models</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setApiKeysExpanded(false)}
+                className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-white/70 transition-all"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* HuggingFace Token */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-sm font-bold text-white">HuggingFace Token</div>
+                    <div className="text-[10px] text-white/40 mt-0.5">For FLUX, SVD XT 1.1, gated models</div>
+                  </div>
+                  {apiKeysStatus.huggingface?.configured && (
+                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                      apiKeysStatus.huggingface.source === 'environment'
+                        ? 'bg-blue-500/20 text-blue-300'
+                        : 'bg-emerald-500/20 text-emerald-300'
+                    }`}>
+                      {apiKeysStatus.huggingface.source === 'environment' ? 'ENV' : 'Stored'}
+                    </span>
+                  )}
+                </div>
+
+                {apiKeysStatus.huggingface?.configured ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
+                      <span className="text-emerald-400 text-sm">✓</span>
+                      <span className="text-xs text-white/60 font-mono">{apiKeysStatus.huggingface.masked}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => testApiKey('huggingface')}
+                        disabled={apiKeyTesting === 'huggingface'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                      >
+                        {apiKeyTesting === 'huggingface' ? 'Testing...' : 'Test'}
+                      </button>
+                      {apiKeysStatus.huggingface.source !== 'environment' && (
+                        <button
+                          onClick={() => deleteApiKey('huggingface')}
+                          className="px-3 py-2 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 transition-all"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={apiKeyInput.huggingface}
+                      onChange={(e) => setApiKeyInput(prev => ({ ...prev, huggingface: e.target.value }))}
+                      placeholder="hf_xxxxxxxxxxxxxxxxxx"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-white/30 transition-all placeholder:text-white/20"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => testApiKey('huggingface')}
+                        disabled={!apiKeyInput.huggingface.trim() || apiKeyTesting === 'huggingface'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                      >
+                        {apiKeyTesting === 'huggingface' ? 'Testing...' : 'Test'}
+                      </button>
+                      <button
+                        onClick={() => saveApiKey('huggingface')}
+                        disabled={!apiKeyInput.huggingface.trim() || apiKeySaving === 'huggingface'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50"
+                      >
+                        {apiKeySaving === 'huggingface' ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                    <a
+                      href="https://huggingface.co/settings/tokens"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-blue-400 hover:text-blue-300"
+                    >
+                      Get token from huggingface.co →
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              {/* Civitai API Key */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-sm font-bold text-white">Civitai API Key</div>
+                    <div className="text-[10px] text-white/40 mt-0.5">For NSFW and restricted downloads</div>
+                  </div>
+                  {apiKeysStatus.civitai?.configured && (
+                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                      apiKeysStatus.civitai.source === 'environment'
+                        ? 'bg-blue-500/20 text-blue-300'
+                        : 'bg-emerald-500/20 text-emerald-300'
+                    }`}>
+                      {apiKeysStatus.civitai.source === 'environment' ? 'ENV' : 'Stored'}
+                    </span>
+                  )}
+                </div>
+
+                {apiKeysStatus.civitai?.configured ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
+                      <span className="text-emerald-400 text-sm">✓</span>
+                      <span className="text-xs text-white/60 font-mono">{apiKeysStatus.civitai.masked}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => testApiKey('civitai')}
+                        disabled={apiKeyTesting === 'civitai'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                      >
+                        {apiKeyTesting === 'civitai' ? 'Testing...' : 'Test'}
+                      </button>
+                      {apiKeysStatus.civitai.source !== 'environment' && (
+                        <button
+                          onClick={() => deleteApiKey('civitai')}
+                          className="px-3 py-2 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 transition-all"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={apiKeyInput.civitai}
+                      onChange={(e) => setApiKeyInput(prev => ({ ...prev, civitai: e.target.value }))}
+                      placeholder="xxxxxxxxxxxxxxxxxxxxxxxx"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-white/30 transition-all placeholder:text-white/20"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => testApiKey('civitai')}
+                        disabled={!apiKeyInput.civitai.trim() || apiKeyTesting === 'civitai'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                      >
+                        {apiKeyTesting === 'civitai' ? 'Testing...' : 'Test'}
+                      </button>
+                      <button
+                        onClick={() => saveApiKey('civitai')}
+                        disabled={!apiKeyInput.civitai.trim() || apiKeySaving === 'civitai'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50"
+                      >
+                        {apiKeySaving === 'civitai' ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                    <a
+                      href="https://civitai.com/user/account"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-blue-400 hover:text-blue-300"
+                    >
+                      Get API key from civitai.com →
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-white/10 bg-white/[0.02]">
+              <p className="text-[11px] text-white/30">
+                Keys are stored locally and never sent to external servers except for authentication.
+                Environment variables (HF_TOKEN, CIVITAI_API_KEY) take precedence over stored keys.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Controls */}
       <div className="px-8 py-5 border-b border-white/10 bg-white/[0.01]">
@@ -1231,6 +1551,29 @@ export default function ModelsView(props: ModelsParams) {
                         {row.description ? (
                           <div className="text-[11px] text-white/30 truncate mt-1">{row.description}</div>
                         ) : null}
+
+                        {/* Pack metadata - shows file count, required nodes, and hints */}
+                        {row.install?.files && row.install.files.length > 1 ? (
+                          <div className="text-[11px] text-purple-400/80 mt-1">
+                            Pack: <span className="font-semibold">{row.install.files.length}</span> files
+                          </div>
+                        ) : null}
+
+                        {row.install?.requires_custom_nodes && row.install.requires_custom_nodes.length > 0 ? (
+                          <div className="text-[11px] text-amber-400/70 mt-1 truncate">
+                            Requires:{" "}
+                            <span className="font-semibold">
+                              {row.install.requires_custom_nodes.join(", ")}
+                            </span>
+                          </div>
+                        ) : null}
+
+                        {row.install?.hint ? (
+                          <div className="text-[11px] text-white/25 mt-1 truncate">
+                            {row.install.hint}
+                          </div>
+                        ) : null}
+
                         {isCivitai && row.civitai_url ? (
                           <a
                             href={row.civitai_url}
