@@ -398,6 +398,13 @@ export default function ModelsView(props: ModelsParams) {
   const [civitaiPage, setCivitaiPage] = useState(1)
   const [civitaiTotalPages, setCivitaiTotalPages] = useState(1)
 
+  // API Keys state (optional - for gated models)
+  const [apiKeysExpanded, setApiKeysExpanded] = useState(false)
+  const [apiKeysStatus, setApiKeysStatus] = useState<Record<string, { configured: boolean; source: string; masked: string | null }>>({})
+  const [apiKeyInput, setApiKeyInput] = useState<{ huggingface: string; civitai: string }>({ huggingface: '', civitai: '' })
+  const [apiKeyTesting, setApiKeyTesting] = useState<string | null>(null)
+  const [apiKeySaving, setApiKeySaving] = useState<string | null>(null)
+
   // Filter providers based on model type
   const availableProviders = useMemo(() => {
     if (modelType === 'chat') {
@@ -763,6 +770,94 @@ export default function ModelsView(props: ModelsParams) {
     }
   }
 
+  // API Keys management functions
+  const loadApiKeysStatus = async () => {
+    try {
+      const data = await getJson<{ ok: boolean; keys: Record<string, any> }>(backendUrl, '/settings/api-keys', authKey)
+      if (data.keys) {
+        setApiKeysStatus(data.keys)
+      }
+    } catch (e) {
+      // API keys endpoint not available - that's OK, it's optional
+      console.debug('[API Keys] Endpoint not available:', e)
+    }
+  }
+
+  const saveApiKey = async (provider: 'huggingface' | 'civitai') => {
+    const key = apiKeyInput[provider].trim()
+    if (!key) {
+      setToast(`Please enter a ${provider === 'huggingface' ? 'HuggingFace' : 'Civitai'} API key`)
+      return
+    }
+
+    setApiKeySaving(provider)
+    try {
+      const res = await postJson<{ ok: boolean; message?: string }>(
+        backendUrl,
+        '/settings/api-keys',
+        { provider, key },
+        authKey
+      )
+      if (res.ok) {
+        setToast(res.message || `${provider} API key saved successfully`)
+        setApiKeyInput(prev => ({ ...prev, [provider]: '' }))
+        await loadApiKeysStatus()
+      } else {
+        setToast(`Failed to save ${provider} API key`)
+      }
+    } catch (e: any) {
+      setToast(`Error saving API key: ${e?.message || String(e)}`)
+    } finally {
+      setApiKeySaving(null)
+    }
+  }
+
+  const testApiKey = async (provider: 'huggingface' | 'civitai') => {
+    setApiKeyTesting(provider)
+    try {
+      const keyToTest = apiKeyInput[provider].trim() || undefined
+      const res = await postJson<{ ok: boolean; valid: boolean; message: string; username?: string }>(
+        backendUrl,
+        '/settings/api-keys/test',
+        { provider, key: keyToTest },
+        authKey
+      )
+      if (res.valid) {
+        setToast(`${provider} key valid: ${res.message}`)
+      } else {
+        setToast(`${provider} key invalid: ${res.message}`)
+      }
+    } catch (e: any) {
+      setToast(`Error testing API key: ${e?.message || String(e)}`)
+    } finally {
+      setApiKeyTesting(null)
+    }
+  }
+
+  const deleteApiKey = async (provider: 'huggingface' | 'civitai') => {
+    try {
+      const res = await fetch(`${backendUrl}/settings/api-keys/${provider}`, {
+        method: 'DELETE',
+        headers: authKey ? { 'x-api-key': authKey } : {},
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setToast(data.message || `${provider} API key removed`)
+        await loadApiKeysStatus()
+      }
+    } catch (e: any) {
+      setToast(`Error removing API key: ${e?.message || String(e)}`)
+    }
+  }
+
+  // Load API keys status when expanded
+  useEffect(() => {
+    if (apiKeysExpanded) {
+      loadApiKeysStatus()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKeysExpanded])
+
   // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return
@@ -869,6 +964,181 @@ export default function ModelsView(props: ModelsParams) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* API Keys Section (Collapsible - Hidden by default) */}
+      <div className="px-8 py-3 border-b border-white/10 bg-white/[0.01]">
+        <button
+          type="button"
+          onClick={() => setApiKeysExpanded(!apiKeysExpanded)}
+          className="flex items-center gap-2 text-xs text-white/50 hover:text-white/70 transition-colors"
+        >
+          <span className={`transition-transform ${apiKeysExpanded ? 'rotate-90' : ''}`}>▶</span>
+          <span className="font-semibold uppercase tracking-wider">API Keys</span>
+          <span className="text-white/30">(Optional - for gated models)</span>
+        </button>
+
+        {apiKeysExpanded && (
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-5xl">
+            {/* HuggingFace Token */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-sm font-bold text-white">HuggingFace Token</div>
+                  <div className="text-[10px] text-white/40 mt-0.5">For FLUX, SVD XT 1.1, and other gated models</div>
+                </div>
+                {apiKeysStatus.huggingface?.configured && (
+                  <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                    apiKeysStatus.huggingface.source === 'environment'
+                      ? 'bg-blue-500/20 text-blue-300'
+                      : 'bg-emerald-500/20 text-emerald-300'
+                  }`}>
+                    {apiKeysStatus.huggingface.source === 'environment' ? 'ENV' : 'Stored'}
+                  </span>
+                )}
+              </div>
+
+              {apiKeysStatus.huggingface?.configured ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
+                    <span className="text-emerald-400 text-sm">✓</span>
+                    <span className="text-xs text-white/60 font-mono">{apiKeysStatus.huggingface.masked}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => testApiKey('huggingface')}
+                      disabled={apiKeyTesting === 'huggingface'}
+                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                    >
+                      {apiKeyTesting === 'huggingface' ? 'Testing...' : 'Test'}
+                    </button>
+                    {apiKeysStatus.huggingface.source !== 'environment' && (
+                      <button
+                        onClick={() => deleteApiKey('huggingface')}
+                        className="px-3 py-2 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 transition-all"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    type="password"
+                    value={apiKeyInput.huggingface}
+                    onChange={(e) => setApiKeyInput(prev => ({ ...prev, huggingface: e.target.value }))}
+                    placeholder="hf_xxxxxxxxxxxxxxxxxx"
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-white/30 transition-all placeholder:text-white/20"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => testApiKey('huggingface')}
+                      disabled={!apiKeyInput.huggingface.trim() || apiKeyTesting === 'huggingface'}
+                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                    >
+                      {apiKeyTesting === 'huggingface' ? 'Testing...' : 'Test'}
+                    </button>
+                    <button
+                      onClick={() => saveApiKey('huggingface')}
+                      disabled={!apiKeyInput.huggingface.trim() || apiKeySaving === 'huggingface'}
+                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50"
+                    >
+                      {apiKeySaving === 'huggingface' ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                  <a
+                    href="https://huggingface.co/settings/tokens"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-blue-400 hover:text-blue-300"
+                  >
+                    Get token from huggingface.co →
+                  </a>
+                </div>
+              )}
+            </div>
+
+            {/* Civitai API Key */}
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="text-sm font-bold text-white">Civitai API Key</div>
+                  <div className="text-[10px] text-white/40 mt-0.5">For NSFW and restricted model downloads</div>
+                </div>
+                {apiKeysStatus.civitai?.configured && (
+                  <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                    apiKeysStatus.civitai.source === 'environment'
+                      ? 'bg-blue-500/20 text-blue-300'
+                      : 'bg-emerald-500/20 text-emerald-300'
+                  }`}>
+                    {apiKeysStatus.civitai.source === 'environment' ? 'ENV' : 'Stored'}
+                  </span>
+                )}
+              </div>
+
+              {apiKeysStatus.civitai?.configured ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
+                    <span className="text-emerald-400 text-sm">✓</span>
+                    <span className="text-xs text-white/60 font-mono">{apiKeysStatus.civitai.masked}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => testApiKey('civitai')}
+                      disabled={apiKeyTesting === 'civitai'}
+                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                    >
+                      {apiKeyTesting === 'civitai' ? 'Testing...' : 'Test'}
+                    </button>
+                    {apiKeysStatus.civitai.source !== 'environment' && (
+                      <button
+                        onClick={() => deleteApiKey('civitai')}
+                        className="px-3 py-2 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 transition-all"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <input
+                    type="password"
+                    value={apiKeyInput.civitai}
+                    onChange={(e) => setApiKeyInput(prev => ({ ...prev, civitai: e.target.value }))}
+                    placeholder="xxxxxxxxxxxxxxxxxxxxxxxx"
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-white/30 transition-all placeholder:text-white/20"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => testApiKey('civitai')}
+                      disabled={!apiKeyInput.civitai.trim() || apiKeyTesting === 'civitai'}
+                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                    >
+                      {apiKeyTesting === 'civitai' ? 'Testing...' : 'Test'}
+                    </button>
+                    <button
+                      onClick={() => saveApiKey('civitai')}
+                      disabled={!apiKeyInput.civitai.trim() || apiKeySaving === 'civitai'}
+                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50"
+                    >
+                      {apiKeySaving === 'civitai' ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                  <a
+                    href="https://civitai.com/user/account"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-blue-400 hover:text-blue-300"
+                  >
+                    Get API key from civitai.com →
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Civitai Input Section (only when provider is civitai) */}

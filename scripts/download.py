@@ -80,6 +80,54 @@ DEFAULT_HEADERS = {
     "User-Agent": "HomePilot-Downloader/1.0",
 }
 
+# Storage for API keys (same location as backend)
+ENV_JSON_FILE = PROJECT_ROOT / "backend" / "data" / ".env.json"
+
+
+# -----------------------------------------------------------------------------
+# API Keys Support (Optional - for gated models)
+# -----------------------------------------------------------------------------
+
+def get_stored_api_key(provider: str) -> Optional[str]:
+    """
+    Read API key from HomePilot's stored keys (.env.json).
+    Returns None if not configured (this is normal - keys are optional).
+    """
+    if not ENV_JSON_FILE.exists():
+        return None
+    try:
+        with open(ENV_JSON_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            api_keys = data.get("api_keys", {})
+            key = api_keys.get(provider, "").strip()
+            return key if key else None
+    except (json.JSONDecodeError, IOError):
+        return None
+
+
+def get_hf_token() -> Optional[str]:
+    """
+    Get HuggingFace token.
+    Priority: Environment variable > Stored key
+    Returns None if not configured (keys are optional).
+    """
+    env_token = os.getenv("HF_TOKEN", "").strip()
+    if env_token:
+        return env_token
+    return get_stored_api_key("huggingface")
+
+
+def get_civitai_key() -> Optional[str]:
+    """
+    Get Civitai API key.
+    Priority: Environment variable > Stored key
+    Returns None if not configured (keys are optional).
+    """
+    env_key = os.getenv("CIVITAI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    return get_stored_api_key("civitai")
+
 
 # -----------------------------------------------------------------------------
 # Hugging Face / Model Pack Support
@@ -120,27 +168,41 @@ def hf_download_to(repo_id: str, filename: str, dest: Path) -> None:
     """
     Download a specific file from Hugging Face and copy it into dest.
     Uses HF cache for the actual download, then copies to ComfyUI folder.
+
+    Token priority:
+    1. HF_TOKEN environment variable
+    2. Stored key in .env.json
+    3. HF CLI login token (token=True fallback)
     """
     _need_hf()
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    # token=True means: use local HF login token if present; supports gated models
-    src_path = hf_hub_download(repo_id=repo_id, filename=filename, token=True)
+    # Get token from env or stored keys, fallback to True (uses HF CLI login)
+    token = get_hf_token() or True
+    src_path = hf_hub_download(repo_id=repo_id, filename=filename, token=token)
     shutil.copy2(src_path, dest)
 
 
 def hf_snapshot_to(repo_id: str, dest_dir: Path, allow_patterns: Optional[List[str]] = None) -> None:
     """
     Download an entire Hugging Face repo snapshot into dest_dir (Diffusers-style repos).
+
+    Token priority:
+    1. HF_TOKEN environment variable
+    2. Stored key in .env.json
+    3. HF CLI login token (token=True fallback)
     """
     _need_hf()
     dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get token from env or stored keys, fallback to True (uses HF CLI login)
+    token = get_hf_token() or True
     snapshot_download(
         repo_id=repo_id,
         local_dir=str(dest_dir),
         local_dir_use_symlinks=False,
         allow_patterns=allow_patterns,
-        token=True,
+        token=token,
     )
 
 
@@ -286,12 +348,19 @@ def install_from_install_block(model_id: str, model_data: Dict[str, Any]) -> boo
 
 
 def get_civitai_headers() -> Dict[str, str]:
-    """Get headers for Civitai API requests, including API key if available."""
+    """
+    Get headers for Civitai API requests, including API key if available.
+
+    API key priority:
+    1. CIVITAI_API_KEY environment variable
+    2. Stored key in .env.json
+    """
     headers = DEFAULT_HEADERS.copy()
-    api_key = os.environ.get("CIVITAI_API_KEY")
+    api_key = get_civitai_key()
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-        print("      Using Civitai API key from environment")
+        source = "environment" if os.environ.get("CIVITAI_API_KEY") else "stored settings"
+        print(f"      Using Civitai API key from {source}")
     return headers
 
 # -----------------------------------------------------------------------------
