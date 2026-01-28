@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2 } from 'lucide-react'
+import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -894,8 +894,218 @@ export default function ModelsView(props: ModelsParams) {
             <RefreshCw size={15} className={installedLoading ? 'animate-spin' : ''} />
             Refresh Installed
           </button>
+
+          {/* API Keys Settings Button */}
+          <button
+            type="button"
+            onClick={() => setApiKeysExpanded(true)}
+            className="p-2.5 rounded-xl bg-transparent hover:bg-white/5 border border-transparent hover:border-white/10 text-white/40 hover:text-white/70 transition-all"
+            title="API Keys (for gated models)"
+          >
+            <Key size={16} />
+          </button>
         </div>
       </div>
+
+      {/* API Keys Modal */}
+      {apiKeysExpanded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => setApiKeysExpanded(false)}
+          />
+
+          {/* Modal */}
+          <div className="relative bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-white/[0.02]">
+              <div className="flex items-center gap-3">
+                <Key size={18} className="text-white/50" />
+                <div>
+                  <h2 className="text-lg font-bold text-white">API Keys</h2>
+                  <p className="text-xs text-white/40">Optional - for gated HuggingFace and Civitai models</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setApiKeysExpanded(false)}
+                className="p-2 rounded-lg hover:bg-white/5 text-white/40 hover:text-white/70 transition-all"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* HuggingFace Token */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-sm font-bold text-white">HuggingFace Token</div>
+                    <div className="text-[10px] text-white/40 mt-0.5">For FLUX, SVD XT 1.1, gated models</div>
+                  </div>
+                  {apiKeysStatus.huggingface?.configured && (
+                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                      apiKeysStatus.huggingface.source === 'environment'
+                        ? 'bg-blue-500/20 text-blue-300'
+                        : 'bg-emerald-500/20 text-emerald-300'
+                    }`}>
+                      {apiKeysStatus.huggingface.source === 'environment' ? 'ENV' : 'Stored'}
+                    </span>
+                  )}
+                </div>
+
+                {apiKeysStatus.huggingface?.configured ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
+                      <span className="text-emerald-400 text-sm">✓</span>
+                      <span className="text-xs text-white/60 font-mono">{apiKeysStatus.huggingface.masked}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => testApiKey('huggingface')}
+                        disabled={apiKeyTesting === 'huggingface'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                      >
+                        {apiKeyTesting === 'huggingface' ? 'Testing...' : 'Test'}
+                      </button>
+                      {apiKeysStatus.huggingface.source !== 'environment' && (
+                        <button
+                          onClick={() => deleteApiKey('huggingface')}
+                          className="px-3 py-2 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 transition-all"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={apiKeyInput.huggingface}
+                      onChange={(e) => setApiKeyInput(prev => ({ ...prev, huggingface: e.target.value }))}
+                      placeholder="hf_xxxxxxxxxxxxxxxxxx"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-white/30 transition-all placeholder:text-white/20"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => testApiKey('huggingface')}
+                        disabled={!apiKeyInput.huggingface.trim() || apiKeyTesting === 'huggingface'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                      >
+                        {apiKeyTesting === 'huggingface' ? 'Testing...' : 'Test'}
+                      </button>
+                      <button
+                        onClick={() => saveApiKey('huggingface')}
+                        disabled={!apiKeyInput.huggingface.trim() || apiKeySaving === 'huggingface'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50"
+                      >
+                        {apiKeySaving === 'huggingface' ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                    <a
+                      href="https://huggingface.co/settings/tokens"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-blue-400 hover:text-blue-300"
+                    >
+                      Get token from huggingface.co →
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              {/* Civitai API Key */}
+              <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-sm font-bold text-white">Civitai API Key</div>
+                    <div className="text-[10px] text-white/40 mt-0.5">For NSFW and restricted downloads</div>
+                  </div>
+                  {apiKeysStatus.civitai?.configured && (
+                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                      apiKeysStatus.civitai.source === 'environment'
+                        ? 'bg-blue-500/20 text-blue-300'
+                        : 'bg-emerald-500/20 text-emerald-300'
+                    }`}>
+                      {apiKeysStatus.civitai.source === 'environment' ? 'ENV' : 'Stored'}
+                    </span>
+                  )}
+                </div>
+
+                {apiKeysStatus.civitai?.configured ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
+                      <span className="text-emerald-400 text-sm">✓</span>
+                      <span className="text-xs text-white/60 font-mono">{apiKeysStatus.civitai.masked}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => testApiKey('civitai')}
+                        disabled={apiKeyTesting === 'civitai'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                      >
+                        {apiKeyTesting === 'civitai' ? 'Testing...' : 'Test'}
+                      </button>
+                      {apiKeysStatus.civitai.source !== 'environment' && (
+                        <button
+                          onClick={() => deleteApiKey('civitai')}
+                          className="px-3 py-2 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 transition-all"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={apiKeyInput.civitai}
+                      onChange={(e) => setApiKeyInput(prev => ({ ...prev, civitai: e.target.value }))}
+                      placeholder="xxxxxxxxxxxxxxxxxxxxxxxx"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-white/30 transition-all placeholder:text-white/20"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => testApiKey('civitai')}
+                        disabled={!apiKeyInput.civitai.trim() || apiKeyTesting === 'civitai'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                      >
+                        {apiKeyTesting === 'civitai' ? 'Testing...' : 'Test'}
+                      </button>
+                      <button
+                        onClick={() => saveApiKey('civitai')}
+                        disabled={!apiKeyInput.civitai.trim() || apiKeySaving === 'civitai'}
+                        className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50"
+                      >
+                        {apiKeySaving === 'civitai' ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                    <a
+                      href="https://civitai.com/user/account"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-blue-400 hover:text-blue-300"
+                    >
+                      Get API key from civitai.com →
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-white/10 bg-white/[0.02]">
+              <p className="text-[11px] text-white/30">
+                Keys are stored locally and never sent to external servers except for authentication.
+                Environment variables (HF_TOKEN, CIVITAI_API_KEY) take precedence over stored keys.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Controls */}
       <div className="px-8 py-5 border-b border-white/10 bg-white/[0.01]">
@@ -964,181 +1174,6 @@ export default function ModelsView(props: ModelsParams) {
             </div>
           </div>
         </div>
-      </div>
-
-      {/* API Keys Section (Collapsible - Hidden by default) */}
-      <div className="px-8 py-3 border-b border-white/10 bg-white/[0.01]">
-        <button
-          type="button"
-          onClick={() => setApiKeysExpanded(!apiKeysExpanded)}
-          className="flex items-center gap-2 text-xs text-white/50 hover:text-white/70 transition-colors"
-        >
-          <span className={`transition-transform ${apiKeysExpanded ? 'rotate-90' : ''}`}>▶</span>
-          <span className="font-semibold uppercase tracking-wider">API Keys</span>
-          <span className="text-white/30">(Optional - for gated models)</span>
-        </button>
-
-        {apiKeysExpanded && (
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-5xl">
-            {/* HuggingFace Token */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-sm font-bold text-white">HuggingFace Token</div>
-                  <div className="text-[10px] text-white/40 mt-0.5">For FLUX, SVD XT 1.1, and other gated models</div>
-                </div>
-                {apiKeysStatus.huggingface?.configured && (
-                  <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                    apiKeysStatus.huggingface.source === 'environment'
-                      ? 'bg-blue-500/20 text-blue-300'
-                      : 'bg-emerald-500/20 text-emerald-300'
-                  }`}>
-                    {apiKeysStatus.huggingface.source === 'environment' ? 'ENV' : 'Stored'}
-                  </span>
-                )}
-              </div>
-
-              {apiKeysStatus.huggingface?.configured ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
-                    <span className="text-emerald-400 text-sm">✓</span>
-                    <span className="text-xs text-white/60 font-mono">{apiKeysStatus.huggingface.masked}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => testApiKey('huggingface')}
-                      disabled={apiKeyTesting === 'huggingface'}
-                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
-                    >
-                      {apiKeyTesting === 'huggingface' ? 'Testing...' : 'Test'}
-                    </button>
-                    {apiKeysStatus.huggingface.source !== 'environment' && (
-                      <button
-                        onClick={() => deleteApiKey('huggingface')}
-                        className="px-3 py-2 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 transition-all"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    value={apiKeyInput.huggingface}
-                    onChange={(e) => setApiKeyInput(prev => ({ ...prev, huggingface: e.target.value }))}
-                    placeholder="hf_xxxxxxxxxxxxxxxxxx"
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-white/30 transition-all placeholder:text-white/20"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => testApiKey('huggingface')}
-                      disabled={!apiKeyInput.huggingface.trim() || apiKeyTesting === 'huggingface'}
-                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
-                    >
-                      {apiKeyTesting === 'huggingface' ? 'Testing...' : 'Test'}
-                    </button>
-                    <button
-                      onClick={() => saveApiKey('huggingface')}
-                      disabled={!apiKeyInput.huggingface.trim() || apiKeySaving === 'huggingface'}
-                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50"
-                    >
-                      {apiKeySaving === 'huggingface' ? 'Saving...' : 'Save'}
-                    </button>
-                  </div>
-                  <a
-                    href="https://huggingface.co/settings/tokens"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[10px] text-blue-400 hover:text-blue-300"
-                  >
-                    Get token from huggingface.co →
-                  </a>
-                </div>
-              )}
-            </div>
-
-            {/* Civitai API Key */}
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-sm font-bold text-white">Civitai API Key</div>
-                  <div className="text-[10px] text-white/40 mt-0.5">For NSFW and restricted model downloads</div>
-                </div>
-                {apiKeysStatus.civitai?.configured && (
-                  <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                    apiKeysStatus.civitai.source === 'environment'
-                      ? 'bg-blue-500/20 text-blue-300'
-                      : 'bg-emerald-500/20 text-emerald-300'
-                  }`}>
-                    {apiKeysStatus.civitai.source === 'environment' ? 'ENV' : 'Stored'}
-                  </span>
-                )}
-              </div>
-
-              {apiKeysStatus.civitai?.configured ? (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2">
-                    <span className="text-emerald-400 text-sm">✓</span>
-                    <span className="text-xs text-white/60 font-mono">{apiKeysStatus.civitai.masked}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => testApiKey('civitai')}
-                      disabled={apiKeyTesting === 'civitai'}
-                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
-                    >
-                      {apiKeyTesting === 'civitai' ? 'Testing...' : 'Test'}
-                    </button>
-                    {apiKeysStatus.civitai.source !== 'environment' && (
-                      <button
-                        onClick={() => deleteApiKey('civitai')}
-                        className="px-3 py-2 text-xs font-semibold rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20 transition-all"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <input
-                    type="password"
-                    value={apiKeyInput.civitai}
-                    onChange={(e) => setApiKeyInput(prev => ({ ...prev, civitai: e.target.value }))}
-                    placeholder="xxxxxxxxxxxxxxxxxxxxxxxx"
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-white/30 transition-all placeholder:text-white/20"
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => testApiKey('civitai')}
-                      disabled={!apiKeyInput.civitai.trim() || apiKeyTesting === 'civitai'}
-                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
-                    >
-                      {apiKeyTesting === 'civitai' ? 'Testing...' : 'Test'}
-                    </button>
-                    <button
-                      onClick={() => saveApiKey('civitai')}
-                      disabled={!apiKeyInput.civitai.trim() || apiKeySaving === 'civitai'}
-                      className="flex-1 px-3 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-all disabled:opacity-50"
-                    >
-                      {apiKeySaving === 'civitai' ? 'Saving...' : 'Save'}
-                    </button>
-                  </div>
-                  <a
-                    href="https://civitai.com/user/account"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[10px] text-blue-400 hover:text-blue-300"
-                  >
-                    Get API key from civitai.com →
-                  </a>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Civitai Input Section (only when provider is civitai) */}
