@@ -24,11 +24,20 @@ type ModelCatalogEntry = {
   // Civitai-specific fields
   civitai_url?: string
   civitai_version_id?: string
-  // Optional install metadata (future backend support)
+  // Optional install metadata (backend-supported)
   install?: {
-    type: 'ollama_pull' | 'http_files' | 'script'
+    type: 'ollama_pull' | 'http_files' | 'hf_files' | 'hf_snapshot' | 'script'
     hint?: string
-    files?: Array<{ url: string; dest: string; sha256?: string }>
+    requires_custom_nodes?: string[]
+    files?: Array<{
+      url?: string
+      repo_id?: string
+      filename?: string
+      dest: string
+      sha256?: string
+    }>
+    repo_id?: string
+    dest_dir?: string
   }
 }
 
@@ -161,6 +170,11 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       { id: 'svd_xt_1_1.safetensors', label: 'Stable Video Diffusion XT 1.1 (10GB)', recommended: true, nsfw: false },
       { id: 'svd_xt.safetensors', label: 'Stable Video Diffusion XT (10GB)', nsfw: false },
       { id: 'svd.safetensors', label: 'Stable Video Diffusion (10GB)', nsfw: false },
+      { id: 'ltx-video-2b-v0.9.1.safetensors', label: 'LTX-Video 2B v0.9.1 (6GB)', recommended: true, nsfw: false, description: 'Best for RTX 4080. Fast, lightweight video model.' },
+      { id: 'hunyuanvideo_t2v_720p_gguf_q4_k_m_pack', label: 'HunyuanVideo GGUF Q4_K_M Pack (10GB)', recommended: true, nsfw: false, description: 'GGUF pack for 16GB cards. Requires ComfyUI-GGUF.' },
+      { id: 'wan2.2_5b_fp16_pack', label: 'Wan 2.2 5B FP16 Pack (22GB)', recommended: true, nsfw: false, description: 'Strong motion + modern video. Official Comfy-Org repack.' },
+      { id: 'mochi_preview_fp8_pack', label: 'Mochi 1 Preview FP8 Pack (28GB)', nsfw: false, description: 'Heavier model - may push VRAM limits on 16GB.' },
+      { id: 'cogvideox1.5_5b_i2v_snapshot', label: 'CogVideoX 1.5 5B I2V (20GB)', nsfw: false, description: 'Diffusers-style repo. Requires CogVideoX wrapper.' },
     ],
     edit: [
       { id: 'sd_xl_base_1.0_inpainting_0.1.safetensors', label: 'SDXL Inpainting 0.1 (7GB)', recommended: true, nsfw: false },
@@ -1231,6 +1245,29 @@ export default function ModelsView(props: ModelsParams) {
                         {row.description ? (
                           <div className="text-[11px] text-white/30 truncate mt-1">{row.description}</div>
                         ) : null}
+
+                        {/* Pack metadata - shows file count, required nodes, and hints */}
+                        {row.install?.files && row.install.files.length > 1 ? (
+                          <div className="text-[11px] text-purple-400/80 mt-1">
+                            Pack: <span className="font-semibold">{row.install.files.length}</span> files
+                          </div>
+                        ) : null}
+
+                        {row.install?.requires_custom_nodes && row.install.requires_custom_nodes.length > 0 ? (
+                          <div className="text-[11px] text-amber-400/70 mt-1 truncate">
+                            Requires:{" "}
+                            <span className="font-semibold">
+                              {row.install.requires_custom_nodes.join(", ")}
+                            </span>
+                          </div>
+                        ) : null}
+
+                        {row.install?.hint ? (
+                          <div className="text-[11px] text-white/25 mt-1 truncate">
+                            {row.install.hint}
+                          </div>
+                        ) : null}
+
                         {isCivitai && row.civitai_url ? (
                           <a
                             href={row.civitai_url}

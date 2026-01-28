@@ -34,6 +34,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+import shutil
 
 try:
     import requests
@@ -42,6 +43,15 @@ except ImportError:
     print("ERROR: Missing required packages. Install with:")
     print("  pip install requests tqdm")
     sys.exit(1)
+
+# Optional dependency: only required for HF-based installs (model packs)
+try:
+    from huggingface_hub import hf_hub_download, snapshot_download  # type: ignore
+    _HAS_HF = True
+except Exception:
+    hf_hub_download = None
+    snapshot_download = None
+    _HAS_HF = False
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -69,6 +79,211 @@ CIVITAI_DOWNLOAD_BASE = "https://civitai.com/api/download/models"
 DEFAULT_HEADERS = {
     "User-Agent": "HomePilot-Downloader/1.0",
 }
+
+
+# -----------------------------------------------------------------------------
+# Hugging Face / Model Pack Support
+# -----------------------------------------------------------------------------
+
+def _need_hf() -> None:
+    """Check if huggingface_hub is installed, exit with error if not."""
+    if not _HAS_HF:
+        print("ERROR: This model requires Hugging Face downloads, but huggingface_hub is not installed.")
+        print("Install it with:")
+        print("  pip install huggingface_hub")
+        sys.exit(1)
+
+
+def normalize_rel_path(p: str) -> str:
+    """
+    Normalize legacy catalog paths.
+    - If a path starts with 'models/', strip it.
+    - Return a clean relative path (no leading slash).
+    """
+    p = p.replace("\\", "/")
+    if p.startswith("models/"):
+        p = p[len("models/"):]
+    p = p.lstrip("/")
+    return p
+
+
+def comfy_dest_path(rel_dest: str) -> Path:
+    """
+    Convert a relative model destination (inside ComfyUI models root) into a Path.
+    HomePilot's ComfyUI root is PROJECT_ROOT/models/comfy
+    """
+    rel_dest = normalize_rel_path(rel_dest)
+    return COMFYUI_ROOT / rel_dest
+
+
+def hf_download_to(repo_id: str, filename: str, dest: Path) -> None:
+    """
+    Download a specific file from Hugging Face and copy it into dest.
+    Uses HF cache for the actual download, then copies to ComfyUI folder.
+    """
+    _need_hf()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    # token=True means: use local HF login token if present; supports gated models
+    src_path = hf_hub_download(repo_id=repo_id, filename=filename, token=True)
+    shutil.copy2(src_path, dest)
+
+
+def hf_snapshot_to(repo_id: str, dest_dir: Path, allow_patterns: Optional[List[str]] = None) -> None:
+    """
+    Download an entire Hugging Face repo snapshot into dest_dir (Diffusers-style repos).
+    """
+    _need_hf()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_download(
+        repo_id=repo_id,
+        local_dir=str(dest_dir),
+        local_dir_use_symlinks=False,
+        allow_patterns=allow_patterns,
+        token=True,
+    )
+
+
+def install_from_install_block(model_id: str, model_data: Dict[str, Any]) -> bool:
+    """
+    New behavior: support install packs and HF sources.
+    Returns True if handled, False if caller should fallback to download_url flow.
+
+    Supported install types:
+      - hf_files: list of files from HF repos -> ComfyUI folder destinations
+      - hf_snapshot: download a whole repo snapshot into a target directory
+      - http_files: list of direct URLs -> destinations (uses existing download_file)
+    """
+    install = model_data.get("install")
+    if not isinstance(install, dict):
+        return False
+
+    install_type = install.get("type")
+
+    # ----------------------------
+    # hf_files (multi-file packs)
+    # ----------------------------
+    if install_type == "hf_files":
+        files = install.get("files")
+        if not isinstance(files, list) or not files:
+            print(f"ERROR: install.type=hf_files but no install.files[] for model: {model_id}")
+            sys.exit(1)
+
+        print(f"      Pack contains {len(files)} files")
+
+        for idx, f in enumerate(files, start=1):
+            if not isinstance(f, dict):
+                continue
+            repo_id = f.get("repo_id")
+            filename = f.get("filename")
+            dest_rel = f.get("dest")
+            sha256 = f.get("sha256")
+            url = f.get("url")  # optional override for non-HF sources
+
+            if not dest_rel:
+                print(f"ERROR: Missing dest in install.files entry (index {idx})")
+                sys.exit(1)
+
+            dest = comfy_dest_path(dest_rel)
+
+            if dest.exists():
+                print(f"      [Exists] {dest_rel}")
+                continue
+
+            print(f"      [{idx}/{len(files)}] {dest_rel}")
+            if url:
+                ok, msg = download_file(url, dest)
+                if not ok:
+                    print(f"ERROR: {msg}")
+                    sys.exit(1)
+            else:
+                if not repo_id or not filename:
+                    print(f"ERROR: Missing repo_id/filename for install.files entry (index {idx})")
+                    sys.exit(1)
+                hf_download_to(repo_id=repo_id, filename=filename, dest=dest)
+
+            if sha256:
+                if not verify_sha256(dest, sha256):
+                    print(f"ERROR: SHA256 mismatch for {dest.name}")
+                    sys.exit(1)
+
+        hint = install.get("hint")
+        if hint:
+            print(f"\n      Note: {hint}")
+        req_nodes = install.get("requires_custom_nodes")
+        if req_nodes:
+            print("\n      Required ComfyUI custom nodes:")
+            for n in req_nodes:
+                print(f"        - {n}")
+        return True
+
+    # ----------------------------
+    # http_files (multi direct URLs)
+    # ----------------------------
+    if install_type == "http_files":
+        files = install.get("files")
+        if not isinstance(files, list) or not files:
+            print(f"ERROR: install.type=http_files but no install.files[] for model: {model_id}")
+            sys.exit(1)
+
+        print(f"      Pack contains {len(files)} files")
+        for idx, f in enumerate(files, start=1):
+            url = f.get("url")
+            dest_rel = f.get("dest")
+            sha256 = f.get("sha256")
+            if not url or not dest_rel:
+                print(f"ERROR: http_files entries require url + dest (index {idx})")
+                sys.exit(1)
+            dest = comfy_dest_path(dest_rel)
+            if dest.exists():
+                print(f"      [Exists] {dest_rel}")
+                continue
+            print(f"      [{idx}/{len(files)}] {dest_rel}")
+            ok, msg = download_file(url, dest)
+            if not ok:
+                print(f"ERROR: {msg}")
+                sys.exit(1)
+            if sha256 and not verify_sha256(dest, sha256):
+                print(f"ERROR: SHA256 mismatch for {dest.name}")
+                sys.exit(1)
+
+        hint = install.get("hint")
+        if hint:
+            print(f"\n      Note: {hint}")
+        req_nodes = install.get("requires_custom_nodes")
+        if req_nodes:
+            print("\n      Required ComfyUI custom nodes:")
+            for n in req_nodes:
+                print(f"        - {n}")
+        return True
+
+    # ----------------------------
+    # hf_snapshot (Diffusers repos)
+    # ----------------------------
+    if install_type == "hf_snapshot":
+        repo_id = install.get("repo_id")
+        dest_rel = install.get("dest_dir")
+        allow_patterns = install.get("allow_patterns")  # optional
+        if not repo_id or not dest_rel:
+            print(f"ERROR: hf_snapshot requires install.repo_id and install.dest_dir for model: {model_id}")
+            sys.exit(1)
+        dest_dir = comfy_dest_path(dest_rel)
+        print(f"      Snapshot download: {repo_id} -> {dest_dir}")
+        hf_snapshot_to(repo_id=repo_id, dest_dir=dest_dir, allow_patterns=allow_patterns)
+
+        hint = install.get("hint")
+        if hint:
+            print(f"\n      Note: {hint}")
+        req_nodes = install.get("requires_custom_nodes")
+        if req_nodes:
+            print("\n      Required ComfyUI custom nodes:")
+            for n in req_nodes:
+                print(f"        - {n}")
+        return True
+
+    # Unknown install type -> fallback to download_url
+    return False
+
 
 def get_civitai_headers() -> Dict[str, str]:
     """Get headers for Civitai API requests, including API key if available."""
@@ -269,8 +484,20 @@ def download_catalog_model(model_id: str, output_dir: Optional[str] = None) -> i
     print(f"      Name: {model_data.get('label', model_id)}")
     print()
 
-    # Step 2: Validate download URL
+    # Step 2: Validate download source (supports install packs OR download_url)
     print(f"[2/3] 🔗 Validating download source...")
+
+    # If this entry has an install block (packs / HF downloads), run it
+    if provider == "comfyui" and isinstance(model_data.get("install"), dict):
+        print("      Install method: catalog install block")
+        handled = install_from_install_block(model_id=model_id, model_data=model_data)
+        if handled:
+            print()
+            print(f"{'='*80}")
+            print("SUCCESS: Model pack installed")
+            print(f"{'='*80}")
+            return 0
+
     download_url = model_data.get("download_url")
     if not download_url:
         print(f"      ✗ No download URL for model '{model_id}'")
