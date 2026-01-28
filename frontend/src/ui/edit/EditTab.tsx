@@ -364,11 +364,25 @@ export function EditTab({
     setInitialized(false)
   }, [])
 
-  const handleDeleteItem = useCallback((item: EditItem, e?: React.MouseEvent) => {
+  const handleDeleteItem = useCallback(async (item: EditItem, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     if (!confirm('Delete this edited image from gallery?')) return
+
+    // Remove from local gallery state (and localStorage via effect)
     setGalleryItems((prev) => prev.filter((i) => i.id !== item.id))
-  }, [])
+
+    // Also delete backend session data to ensure persistence
+    try {
+      await clearEditSession({
+        backendUrl,
+        apiKey,
+        conversationId: item.conversationId,
+      })
+    } catch (err) {
+      // Silently ignore - backend session may not exist or already deleted
+      console.warn('[EditTab] Failed to clear backend session:', err)
+    }
+  }, [backendUrl, apiKey])
 
   // ==========================================================================
   // HANDLERS - Editor
@@ -1040,40 +1054,43 @@ export function EditTab({
               <EditDropzone onPickFile={handlePickFile} disabled={busy} />
             </div>
           ) : (
-            <div className="relative w-full h-full p-8 flex items-center justify-center">
+            <div className="relative w-full h-full p-8 pb-32 flex items-center justify-center">
               <div className="relative group max-w-full max-h-full shadow-2xl">
                 <img
                   src={active!}
                   alt="Active Canvas"
-                  className="max-w-full max-h-[75vh] object-contain rounded-sm shadow-[0_0_50px_rgba(0,0,0,0.5)] border border-white/5"
+                  className="max-w-full max-h-[65vh] object-contain rounded-sm shadow-[0_0_50px_rgba(0,0,0,0.5)] border border-white/5"
                 />
-                <div className="absolute bottom-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                {/* Invisible hover extension to keep buttons accessible */}
+                <div className="absolute -bottom-2 -right-2 -left-2 h-16 pointer-events-none" />
+                {/* Action buttons - positioned inside image bounds with z-index above bottom bar */}
+                <div className="absolute bottom-3 right-3 z-30 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-auto">
                   <button
                     onClick={() => active && onOpenLightbox(active)}
-                    className="p-2 bg-black/80 text-white rounded-md hover:bg-white hover:text-black transition-colors"
+                    className="p-2.5 bg-black/90 text-white rounded-lg hover:bg-white hover:text-black transition-colors shadow-lg backdrop-blur-sm border border-white/10"
                     title="Full screen"
                   >
-                    <Maximize2 size={16} />
+                    <Maximize2 size={18} />
                   </button>
                   <button
                     onClick={handleUpscale}
                     disabled={isUpscaling || busy}
-                    className={`p-2 rounded-md transition-colors ${
+                    className={`p-2.5 rounded-lg transition-colors shadow-lg backdrop-blur-sm border border-white/10 ${
                       isUpscaling
-                        ? 'bg-purple-500/60 text-white animate-pulse'
-                        : 'bg-purple-500/80 text-white hover:bg-purple-400'
+                        ? 'bg-purple-500/80 text-white animate-pulse'
+                        : 'bg-purple-500/90 text-white hover:bg-purple-400'
                     }`}
                     title="Upscale 2x"
                   >
-                    {isUpscaling ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                    {isUpscaling ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
                   </button>
                   <a
                     href={active!}
                     download="edited-image.png"
-                    className="p-2 bg-black/80 text-white rounded-md hover:bg-white hover:text-black transition-colors"
+                    className="p-2.5 bg-black/90 text-white rounded-lg hover:bg-white hover:text-black transition-colors shadow-lg backdrop-blur-sm border border-white/10"
                     title="Download"
                   >
-                    <Download size={16} />
+                    <Download size={18} />
                   </a>
                 </div>
 
