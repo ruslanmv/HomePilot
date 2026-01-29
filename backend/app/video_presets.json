@@ -36,14 +36,14 @@
           "max_frames": 25
         },
         "ltx": {
-          "width": 640,
-          "height": 384,
-          "fps": 12,
-          "frames": 17,
-          "steps": 22,
-          "cfg": 2.8,
-          "denoise": 0.75,
-          "max_frames": 17
+          "width": 768,
+          "height": 512,
+          "fps": 24,
+          "frames": 48,
+          "steps": 30,
+          "cfg": 3.5,
+          "denoise": 0.85,
+          "max_frames": 48
         },
         "wan": {
           "width": 640,
@@ -68,12 +68,12 @@
         "width": 768,
         "height": 512,
         "fps": 12,
-        "seconds": 3,
-        "frames": 33,
+        "seconds": 4,
+        "frames": 48,
         "steps": 30,
         "cfg": 3.5,
         "denoise": 0.85,
-        "max_frames": 33
+        "max_frames": 96
       },
       "model_overrides": {
         "svd": {
@@ -90,11 +90,11 @@
           "width": 768,
           "height": 512,
           "fps": 24,
-          "frames": 33,
-          "steps": 34,
+          "frames": 96,
+          "steps": 40,
           "cfg": 3.5,
           "denoise": 0.85,
-          "max_frames": 33
+          "max_frames": 96
         },
         "wan": {
           "width": 832,
@@ -161,11 +161,11 @@
           "width": 768,
           "height": 512,
           "fps": 24,
-          "frames": 65,
-          "steps": 44,
-          "cfg": 4.0,
+          "frames": 96,
+          "steps": 40,
+          "cfg": 3.5,
           "denoise": 0.85,
-          "max_frames": 65
+          "max_frames": 120
         },
         "wan": {
           "width": 832,
@@ -242,11 +242,11 @@
           "width": 768,
           "height": 512,
           "fps": 24,
-          "frames": 97,
+          "frames": 144,
           "steps": 50,
-          "cfg": 4.0,
+          "cfg": 3.5,
           "denoise": 0.85,
-          "max_frames": 97
+          "max_frames": 144
         },
         "wan": {
           "width": 832,
@@ -300,10 +300,9 @@
       "notes": "SVD always uses exactly 25 frames"
     },
     "ltx": {
-      "frame_rule": "8n+1",
-      "valid_frames": [9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97],
+      "frame_rule": "any",
       "min_frames": 9,
-      "notes": "LTX requires frames in format 8n+1"
+      "notes": "LTX works best with frames = seconds * fps (no rounding needed)"
     },
     "mochi": {
       "frame_rule": "6n+1",
