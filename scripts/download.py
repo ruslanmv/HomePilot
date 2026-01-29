@@ -64,6 +64,24 @@ CATALOG_PATH = PROJECT_ROOT / "backend" / "app" / "model_catalog_data.json"
 # ComfyUI models root - consistent with download_models.sh
 COMFYUI_ROOT = PROJECT_ROOT / "models" / "comfy"
 
+# ComfyUI installation root (for custom_nodes)
+def get_comfyui_install_root() -> Path:
+    """
+    Find the ComfyUI installation directory (where custom_nodes lives).
+    Checks common locations in order of priority.
+    """
+    candidates = [
+        PROJECT_ROOT / "ComfyUI",           # Local development
+        Path("/ComfyUI"),                   # Docker container
+        Path.home() / "ComfyUI",            # Home directory
+        Path("/mnt/c/workspace/homegrok/homepilot/ComfyUI"),  # WSL specific
+    ]
+    for p in candidates:
+        if p.exists() and (p / "custom_nodes").exists():
+            return p
+    # Fallback to first candidate (will create if needed)
+    return candidates[0]
+
 # Default install paths (relative to COMFYUI_ROOT)
 # Note: The catalog's install_path takes precedence; these are fallbacks
 INSTALL_PATHS = {
@@ -81,7 +99,7 @@ DEFAULT_HEADERS = {
 }
 
 # Storage for API keys (same location as backend)
-ENV_JSON_FILE = PROJECT_ROOT / "backend" / "data" / ".env.json"
+ENV_JSON_FILE = PROJECT_ROOT / "backend" / ".env.json"
 
 
 # -----------------------------------------------------------------------------
@@ -343,6 +361,59 @@ def install_from_install_block(model_id: str, model_data: Dict[str, Any]) -> boo
                 print(f"        - {n}")
         return True
 
+    if install_type == "git_repo":
+        repo_url = install.get("repo_url")
+        dest_rel = install.get("dest_dir")
+        if not repo_url or not dest_rel:
+            print(f"ERROR: git_repo requires repo_url and dest_dir for model: {model_id}")
+            sys.exit(1)
+
+        # Normalize and validate the destination path
+        dest_rel = normalize_rel_path(dest_rel)
+        if dest_rel.startswith(".."):
+            print(f"ERROR: invalid dest_dir path (directory traversal not allowed): {dest_rel}")
+            sys.exit(1)
+
+        # For custom_nodes, install relative to ComfyUI root
+        comfyui_root = get_comfyui_install_root()
+        dest_dir = comfyui_root / dest_rel
+        dest_dir.parent.mkdir(parents=True, exist_ok=True)
+
+        if dest_dir.exists():
+            # Check if it's a non-empty directory (already installed)
+            try:
+                if any(dest_dir.iterdir()):
+                    print(f"      [Exists] {dest_rel}")
+                    hint = install.get("hint")
+                    if hint:
+                        print(f"      Note: {hint}")
+                    return True
+            except Exception:
+                pass
+
+        print(f"      Cloning {repo_url}")
+        print(f"      -> {dest_dir}")
+
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1", repo_url, str(dest_dir)],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode != 0:
+                print(f"ERROR: git clone failed: {result.stderr}")
+                sys.exit(1)
+            print("      Clone successful!")
+        except FileNotFoundError:
+            print("ERROR: git is not installed. Please install git and try again.")
+            sys.exit(1)
+
+        hint = install.get("hint")
+        if hint:
+            print(f"\n      Note: {hint}")
+        return True
+
     # Unknown install type -> fallback to download_url
     return False
 
@@ -408,11 +479,21 @@ def download_file(
     """
     Download a file with progress bar and resume support.
     Returns (success, message).
+
+    Automatically adds authentication headers for:
+    - HuggingFace URLs (uses HF_TOKEN env var or stored key)
+    - Civitai URLs (uses custom_headers passed by caller)
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     temp_file = dest.with_suffix(dest.suffix + ".part")
 
     headers = custom_headers.copy() if custom_headers else DEFAULT_HEADERS.copy()
+
+    # Automatically add HuggingFace authentication for gated models
+    if "huggingface.co/" in url and "/resolve/" in url:
+        hf_token = get_hf_token()
+        if hf_token and "Authorization" not in headers:
+            headers["Authorization"] = f"Bearer {hf_token}"
 
     # Resume support
     start_pos = 0
@@ -461,6 +542,25 @@ def download_file(
 
         return True, f"Downloaded {dest.name} ({total_size / (1024**2):.1f} MB)"
 
+    except requests.exceptions.HTTPError as e:
+        # Provide helpful message for HuggingFace authentication errors
+        if e.response is not None and e.response.status_code == 401 and "huggingface.co" in url:
+            hf_token = get_hf_token()
+            if not hf_token:
+                return False, (
+                    f"Failed to download: 401 Unauthorized - This is a gated HuggingFace model.\n"
+                    f"         To download gated models:\n"
+                    f"         1. Accept the license at: https://huggingface.co/{url.split('huggingface.co/')[1].split('/resolve')[0]}\n"
+                    f"         2. Create a HuggingFace token at: https://huggingface.co/settings/tokens\n"
+                    f"         3. Set HF_TOKEN environment variable OR configure in HomePilot Settings > API Keys"
+                )
+            else:
+                return False, (
+                    f"Failed to download: 401 Unauthorized - HuggingFace token provided but access denied.\n"
+                    f"         Please ensure you have accepted the model license at:\n"
+                    f"         https://huggingface.co/{url.split('huggingface.co/')[1].split('/resolve')[0]}"
+                )
+        return False, f"Failed to download: {str(e)}"
     except Exception as e:
         return False, f"Failed to download: {str(e)}"
 

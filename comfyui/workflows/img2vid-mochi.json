@@ -1,0 +1,112 @@
+{
+  "_meta": {
+    "title": "Mochi 1 Preview Image to Video",
+    "description": "Video generation using Mochi 1 Preview FP8. Heavier model - may need settings tuning on 16GB VRAM.",
+    "optimal_settings": {
+      "resolution": "848x480",
+      "frames": "37-163 (6n+1)",
+      "cfg": "4.5",
+      "steps": "50",
+      "fps": "24"
+    },
+    "requirements": ["T5XXL encoder", "Mochi VAE"]
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "mochi_preview_dit_fp8_e4m3fn.safetensors",
+      "weight_dtype": "fp8_e4m3fn"
+    }
+  },
+  "3": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "t5xxl_fp8_e4m3fn.safetensors",
+      "type": "mochi"
+    }
+  },
+  "4": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "mochi_vae.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}, high quality video, smooth cinematic motion",
+      "clip": ["3", 0]
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "blurry, low quality, distorted, watermark, text",
+      "clip": ["3", 0]
+    }
+  },
+  "7": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": ["1", 0],
+      "upscale_method": "lanczos",
+      "megapixels": 0.4,
+      "resolution_steps": 64
+    }
+  },
+  "8": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": ["7", 0],
+      "vae": ["4", 0]
+    }
+  },
+  "9": {
+    "class_type": "EmptyMochiLatentVideo",
+    "inputs": {
+      "width": 848,
+      "height": 480,
+      "length": "{{frames}}",
+      "batch_size": 1
+    }
+  },
+  "10": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": 50,
+      "cfg": 4.5,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": ["2", 0],
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "latent_image": ["9", 0]
+    }
+  },
+  "11": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["10", 0],
+      "vae": ["4", 0]
+    }
+  },
+  "12": {
+    "class_type": "SaveAnimatedWEBP",
+    "inputs": {
+      "images": ["11", 0],
+      "fps": "{{fps}}",
+      "lossless": false,
+      "quality": 85,
+      "method": "default",
+      "filename_prefix": "mochi_video"
+    }
+  }
+}

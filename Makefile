@@ -3,7 +3,7 @@ SHELL := /bin/bash
 # Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
-.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-edit download-enhance download-verify download-health start start-backend start-frontend
+.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-edit download-enhance download-video download-verify download-health start start-backend start-frontend
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -446,6 +446,34 @@ download-enhance: ## Download upscale/enhance models (4x-UltraSharp, RealESRGAN,
 	@echo ""
 	@du -sh models/comfy/upscale_models/* models/comfy/gfpgan/* 2>/dev/null || true
 
+download-video: ## Download video generation models (LTX-Video recommended, ~6GB)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Downloading Video Generation Models"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "Available video models:"
+	@echo "  • LTX-Video 2B v0.9.1 (RECOMMENDED) - 5.72 GB, fast, works on RTX 4080+"
+	@echo "  • SVD XT 1.1 (gated - requires HF token) - 9.56 GB"
+	@echo "  • HunyuanVideo GGUF Q4 (pack) - 9.5 GB total"
+	@echo "  • Wan 2.2 5B (pack) - 21.5 GB total"
+	@echo "  • Mochi FP8 (pack) - 28 GB total"
+	@echo ""
+	@echo "[1/1] Downloading LTX-Video 2B v0.9.1 (recommended)..."
+	@python3 scripts/download.py --model ltx-video-2b-v0.9.1.safetensors || echo "  ⚠️  Failed - check output above"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ Video model download complete!"
+	@echo ""
+	@echo "  To download additional video models, use:"
+	@echo "    python3 scripts/download.py --model <model_id>"
+	@echo ""
+	@echo "  Available models:"
+	@echo "    • svd_xt_1_1.safetensors (requires HF token + license acceptance)"
+	@echo "    • hunyuanvideo_t2v_720p_gguf_q4_k_m_pack"
+	@echo "    • wan2.2_5b_fp16_pack"
+	@echo "    • mochi_preview_fp8_pack"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+
 download-health: ## Check health of model download URLs
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Checking Model Download URL Health"
@@ -463,8 +491,11 @@ download-verify: ## Verify downloaded models and show disk usage
 		echo "  Checkpoints (image generation):"; \
 		ls -lh models/comfy/checkpoints/*.safetensors models/comfy/checkpoints/*.ckpt 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
 		echo ""; \
-		echo "  UNET Models (FLUX):"; \
-		ls -lh models/comfy/unet/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo "  UNET Models (FLUX/Video):"; \
+		ls -lh models/comfy/unet/*.safetensors models/comfy/unet/*.gguf 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  Diffusion Models (Video):"; \
+		ls -lh models/comfy/diffusion_models/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
 		echo ""; \
 		echo "  CLIP Encoders:"; \
 		ls -lh models/comfy/clip/*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \

@@ -1,0 +1,102 @@
+{
+  "_meta": {
+    "title": "LTX-Video Image to Video",
+    "description": "Image-to-video using LTX-Video 2B with built-in ComfyUI nodes. Requires T5 text encoder in clip folder.",
+    "optimal_settings": {
+      "resolution": "768x512",
+      "cfg": "3.0-4.0",
+      "steps": "30-50",
+      "fps": "24",
+      "frames": "Must be 8n+1 (e.g., 25, 33, 41, 49, 57, 65, 73, 81, 89, 97)"
+    }
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ltx-video-2b-v0.9.1.safetensors"
+    }
+  },
+  "3": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "t5xxl_fp16.safetensors",
+      "type": "ltxv"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}, smooth motion, high quality, cinematic",
+      "clip": ["3", 0]
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "blurry, low quality, distorted, watermark, text, static, frozen, jittery",
+      "clip": ["3", 0]
+    }
+  },
+  "6": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": ["1", 0],
+      "upscale_method": "lanczos",
+      "megapixels": 0.4,
+      "resolution_steps": 32
+    }
+  },
+  "7": {
+    "class_type": "LTXVImgToVideo",
+    "inputs": {
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "vae": ["2", 2],
+      "image": ["6", 0],
+      "width": 768,
+      "height": 512,
+      "length": "{{frames}}",
+      "batch_size": 1,
+      "strength": 0.85
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": 40,
+      "cfg": 3.5,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1.0,
+      "model": ["2", 0],
+      "positive": ["7", 0],
+      "negative": ["7", 1],
+      "latent_image": ["7", 2]
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["2", 2]
+    }
+  },
+  "10": {
+    "class_type": "SaveAnimatedWEBP",
+    "inputs": {
+      "images": ["9", 0],
+      "fps": "{{fps}}",
+      "lossless": false,
+      "quality": 85,
+      "method": "default",
+      "filename_prefix": "ltx_video"
+    }
+  }
+}
