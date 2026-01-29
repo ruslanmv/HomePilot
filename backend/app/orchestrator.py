@@ -681,7 +681,6 @@ async def orchestrate(
                 # ComfyUI detects duplicate prompt graphs and skips execution,
                 # causing "Prompt executed in 0.00 seconds" with no output
                 if img_seed is None or img_seed == 0 or img_seed == -1:
-                    import random
                     batch_refined["seed"] = random.randint(1, 2147483647)
                     print(f"[IMAGE] Using random seed: {batch_refined['seed']}")
                 else:

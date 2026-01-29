@@ -81,7 +81,7 @@ DEFAULT_HEADERS = {
 }
 
 # Storage for API keys (same location as backend)
-ENV_JSON_FILE = PROJECT_ROOT / "backend" / "data" / ".env.json"
+ENV_JSON_FILE = PROJECT_ROOT / "backend" / ".env.json"
 
 
 # -----------------------------------------------------------------------------
