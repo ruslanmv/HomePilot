@@ -340,11 +340,14 @@ async def orchestrate(
 
             # Use preset system to get workflow variables
             # Preset provides base values, user overrides take precedence
+            # NOTE: Don't pass vid_fps when using presets - let the preset's model-specific
+            # fps be used. The frontend sends vid_fps=8 as default, which would override
+            # the correct model-specific fps (e.g., 24 for LTX).
             preset_vars = video_presets.apply_preset_to_workflow_vars(
                 preset_name=vid_preset,  # None defaults to 'medium'
                 model_name=vid_model,
                 vid_seconds=vid_seconds,
-                vid_fps=vid_fps,
+                vid_fps=None,  # Let preset determine fps based on model
                 vid_steps=vid_steps,
                 vid_cfg=vid_cfg,
                 vid_denoise=vid_denoise,
