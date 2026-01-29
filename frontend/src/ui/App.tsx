@@ -22,6 +22,7 @@ import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './Se
 import VoiceMode from './VoiceMode'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
+import AnimateView from './Animate'
 import ModelsView from './Models'
 import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
@@ -2166,6 +2167,23 @@ export default function App() {
             provider={settingsDraft.providerImages}
             providerBaseUrl={settingsDraft.baseUrlImages}
             providerModel={settingsDraft.modelImages}
+          />
+        ) : mode === 'animate' ? (
+          // Animate mode: Grok-style video generation gallery
+          <AnimateView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            providerVideo={settingsDraft.providerVideo}
+            baseUrlVideo={settingsDraft.baseUrlVideo}
+            modelVideo={settingsDraft.modelVideo}
+            providerChat={settingsDraft.providerChat}
+            baseUrlChat={settingsDraft.baseUrlChat}
+            modelChat={settingsDraft.modelChat}
+            vidSeconds={settingsDraft.vidSeconds}
+            vidFps={settingsDraft.vidFps}
+            vidMotion={settingsDraft.vidMotion}
+            nsfwMode={settingsDraft.nsfwMode}
+            promptRefinement={settingsDraft.promptRefinement}
           />
         ) : mode === 'search' ? (
           // Search mode: use chat interface with mode-specific behavior
