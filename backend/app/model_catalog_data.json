@@ -303,7 +303,9 @@
           "resolution": "1024x576",
           "frames": 25,
           "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt-1-1/resolve/main/svd_xt_1_1.safetensors",
-          "install_path": "checkpoints/"
+          "install_path": "checkpoints/",
+          "requires_addons": [],
+          "recommends_addons": ["ComfyUI-VideoHelperSuite"]
         },
         {
           "id": "svd_xt.safetensors",
@@ -332,11 +334,13 @@
           "label": "LTX-Video 2B v0.9.1 (I2V/T2V)",
           "recommended": true,
           "nsfw": false,
-          "description": "Lightricks LTX-Video checkpoint. Fast, lightweight - best for RTX 4080. Single file install.",
-          "size_gb": 5.72,
+          "description": "Lightricks LTX-Video checkpoint + T5 text encoder. Fast, lightweight - best for RTX 4080.",
+          "size_gb": 10.5,
           "resolution": "varies",
           "frames": 80,
           "install_path": "checkpoints/",
+          "requires_addons": ["ComfyUI-LTXVideo"],
+          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
           "install": {
             "type": "hf_files",
             "requires_custom_nodes": ["ComfyUI-LTXVideo"],
@@ -346,6 +350,11 @@
                 "repo_id": "Lightricks/LTX-Video",
                 "filename": "ltx-video-2b-v0.9.1.safetensors",
                 "dest": "checkpoints/ltx-video-2b-v0.9.1.safetensors"
+              },
+              {
+                "repo_id": "comfyanonymous/flux_text_encoders",
+                "filename": "t5xxl_fp16.safetensors",
+                "dest": "clip/t5xxl_fp16.safetensors"
               }
             ]
           }
@@ -360,6 +369,8 @@
           "resolution": "720p",
           "frames": 80,
           "install_path": "checkpoints/",
+          "requires_addons": ["ComfyUI-GGUF"],
+          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
           "install": {
             "type": "hf_files",
             "requires_custom_nodes": ["ComfyUI-GGUF"],
@@ -398,6 +409,8 @@
           "resolution": "varies",
           "frames": 80,
           "install_path": "checkpoints/",
+          "requires_addons": [],
+          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
           "install": {
             "type": "hf_files",
             "hint": "After install: use ComfyUI Wan2.2 workflows (Load Diffusion Model = wan2.2_ti2v_5B_fp16).",
@@ -430,6 +443,8 @@
           "resolution": "480p",
           "frames": 80,
           "install_path": "checkpoints/",
+          "requires_addons": [],
+          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
           "install": {
             "type": "hf_files",
             "hint": "After install: update ComfyUI and use Mochi workflows. May require lowering settings on 16GB cards.",
@@ -462,6 +477,8 @@
           "resolution": "varies",
           "frames": 80,
           "install_path": "checkpoints/",
+          "requires_addons": ["ComfyUI-CogVideoXWrapper"],
+          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
           "install": {
             "type": "hf_snapshot",
             "repo_id": "THUDM/CogVideoX1.5-5B-I2V",
@@ -576,6 +593,73 @@
           "size_gb": 0.35,
           "download_url": "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth",
           "install_path": "gfpgan/"
+        }
+      ],
+      "addons": [
+        {
+          "id": "ComfyUI-VideoHelperSuite",
+          "label": "Video Helper Suite (VHS)",
+          "recommended": true,
+          "description": "Essential video tools: MP4/WebM export, video loading, frame manipulation. Enables proper video output instead of animated WEBP.",
+          "install": {
+            "type": "git_repo",
+            "repo_url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
+            "dest_dir": "custom_nodes/ComfyUI-VideoHelperSuite",
+            "hint": "Restart ComfyUI after install. Requires ffmpeg in PATH for video encoding."
+          },
+          "provides_nodes": ["VHS_VideoCombine", "VHS_LoadVideo", "VHS_SplitVideo"]
+        },
+        {
+          "id": "ComfyUI-LTXVideo",
+          "label": "LTX-Video Nodes",
+          "recommended": true,
+          "description": "Native LTX-Video nodes for optimal performance with LTX-Video checkpoints.",
+          "install": {
+            "type": "git_repo",
+            "repo_url": "https://github.com/Lightricks/ComfyUI-LTXVideo",
+            "dest_dir": "custom_nodes/ComfyUI-LTXVideo",
+            "hint": "Restart ComfyUI after install."
+          },
+          "provides_nodes": ["LTXVLoader", "LTXVSampler", "LTXVConditioning"]
+        },
+        {
+          "id": "ComfyUI-GGUF",
+          "label": "GGUF Model Loader",
+          "recommended": true,
+          "description": "Load GGUF quantized models. Required for HunyuanVideo GGUF and other quantized models.",
+          "install": {
+            "type": "git_repo",
+            "repo_url": "https://github.com/city96/ComfyUI-GGUF",
+            "dest_dir": "custom_nodes/ComfyUI-GGUF",
+            "hint": "Restart ComfyUI after install."
+          },
+          "provides_nodes": ["UnetLoaderGGUF", "DualCLIPLoaderGGUF"]
+        },
+        {
+          "id": "ComfyUI-CogVideoXWrapper",
+          "label": "CogVideoX Wrapper",
+          "recommended": false,
+          "description": "Nodes to run CogVideoX Diffusers pipelines in ComfyUI.",
+          "install": {
+            "type": "git_repo",
+            "repo_url": "https://github.com/kijai/ComfyUI-CogVideoXWrapper",
+            "dest_dir": "custom_nodes/ComfyUI-CogVideoXWrapper",
+            "hint": "Restart ComfyUI after install."
+          },
+          "provides_nodes": ["CogVideoXDiffusersLoader", "CogVideoXSampler", "CogVideoXDecode"]
+        },
+        {
+          "id": "ComfyUI-Impact-Pack",
+          "label": "Impact Pack",
+          "recommended": true,
+          "description": "Essential nodes for segmentation, face detection, and advanced image workflows.",
+          "install": {
+            "type": "git_repo",
+            "repo_url": "https://github.com/ltdrdata/ComfyUI-Impact-Pack",
+            "dest_dir": "custom_nodes/ComfyUI-Impact-Pack",
+            "hint": "Restart ComfyUI after install. Some features require additional model downloads."
+          },
+          "provides_nodes": ["SAMLoader", "FaceDetailer", "BboxDetectorSEGS"]
         }
       ]
     },

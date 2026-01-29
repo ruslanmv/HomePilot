@@ -261,6 +261,10 @@ async def orchestrate(
     vid_fps: Optional[int] = None,
     vid_motion: Optional[str] = None,
     vid_model: Optional[str] = None,
+    vid_steps: Optional[int] = None,
+    vid_cfg: Optional[float] = None,
+    vid_denoise: Optional[float] = None,
+    vid_seed: Optional[int] = None,
     nsfw_mode: Optional[bool] = None,
     prompt_refinement: Optional[bool] = True,
     img_reference: Optional[str] = None,  # Reference image URL for img2img
@@ -332,23 +336,35 @@ async def orchestrate(
                     }
                     video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
 
-            # Calculate frames from seconds (default to 8 fps for most models)
-            fps = 8
+            # Calculate frames from seconds - use model-specific fps
+            # LTX-Video works best with 24 fps, others default to 8 fps
+            if detected_model_type == "ltx":
+                fps = 24
+            else:
+                fps = 8
             seconds = vid_seconds if vid_seconds is not None else 4
             frames = seconds * fps
 
-            res = run_workflow(
-                video_workflow_name,
-                {
-                    "image_path": image_url,
-                    "prompt": text_in.replace("animate", "").strip() or "smooth natural motion",
-                    "motion": vid_motion if vid_motion is not None else "medium",
-                    "seconds": seconds,
-                    "frames": frames,
-                    "fps": fps,
-                    "seed": random.randint(0, 2**32 - 1),
-                },
-            )
+            # LTX-Video requires frames >= 9 (minimum for the node)
+            if detected_model_type == "ltx" and frames < 9:
+                frames = 9
+
+            # Build workflow variables with defaults for advanced parameters
+            workflow_vars = {
+                "image_path": image_url,
+                "prompt": text_in.replace("animate", "").strip() or "smooth natural motion",
+                "motion": vid_motion if vid_motion is not None else "medium",
+                "seconds": seconds,
+                "frames": frames,
+                "fps": fps,
+                "seed": vid_seed if vid_seed is not None else random.randint(0, 2**32 - 1),
+                # Advanced parameters with sensible defaults
+                "steps": vid_steps if vid_steps is not None else 40,
+                "cfg": vid_cfg if vid_cfg is not None else 3.5,
+                "denoise": vid_denoise if vid_denoise is not None else 0.85,
+            }
+
+            res = run_workflow(video_workflow_name, workflow_vars)
             video_url = (res.get("videos") or [None])[0]
             images = res.get("images") or []
 
@@ -364,7 +380,11 @@ async def orchestrate(
 
             if video_url:
                 text = "Here's your animated video!"
-                media = {"video_url": video_url}
+                media = {
+                    "video_url": video_url,
+                    "seed": workflow_vars["seed"],
+                    "model": vid_model,
+                }
                 add_message(cid, "assistant", text, media)
                 return {"conversation_id": cid, "text": text, "media": media}
             elif images:
@@ -859,6 +879,10 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             vid_fps=payload.get("vidFps"),
             vid_motion=payload.get("vidMotion"),
             vid_model=payload.get("vidModel"),
+            vid_steps=payload.get("vidSteps"),
+            vid_cfg=payload.get("vidCfg"),
+            vid_denoise=payload.get("vidDenoise"),
+            vid_seed=payload.get("vidSeed"),
             nsfw_mode=payload.get("nsfwMode"),
             prompt_refinement=payload.get("promptRefinement", True),
             img_reference=payload.get("imgReference"),

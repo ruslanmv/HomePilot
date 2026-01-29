@@ -727,6 +727,8 @@ async def list_models(
                 models = scan_installed_models("edit")
             elif model_type == "enhance":
                 models = scan_installed_models("enhance")
+            elif model_type == "addons":
+                models = scan_installed_models("addons")
             else:
                 # Return all if not specified
                 models = (
@@ -734,6 +736,7 @@ async def list_models(
                     + scan_installed_models("video")
                     + scan_installed_models("edit")
                     + scan_installed_models("enhance")
+                    + scan_installed_models("addons")
                 )
 
             return JSONResponse(
