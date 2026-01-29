@@ -1,7 +1,15 @@
 {
   "_meta": {
-    "title": "SVD Image to Video",
-    "description": "Image-to-video generation using Stable Video Diffusion"
+    "title": "SVD XT 1.1 Image to Video",
+    "description": "Image-to-video using Stable Video Diffusion XT 1.1",
+    "optimal_settings": {
+      "resolution": "1024x576",
+      "frames": "25 (svd_xt)",
+      "motion_bucket_id": "127 (default)",
+      "cfg": "2.5",
+      "steps": "20-25",
+      "fps": "6-8"
+    }
   },
   "1": {
     "class_type": "LoadImage",

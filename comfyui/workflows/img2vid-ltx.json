@@ -1,8 +1,13 @@
 {
   "_meta": {
     "title": "LTX-Video Image to Video",
-    "description": "Image-to-video generation using LTX-Video 2B model. Requires ComfyUI-LTXVideo custom nodes.",
-    "requirements": ["ComfyUI-LTXVideo"]
+    "description": "Image-to-video using LTX-Video 2B. Requires ComfyUI-LTXVideo nodes.",
+    "optimal_settings": {
+      "resolution": "768x512",
+      "cfg": "2.5-3.5",
+      "steps": "20-30",
+      "fps": "24"
+    }
   },
   "1": {
     "class_type": "LoadImage",
@@ -11,71 +16,80 @@
     }
   },
   "2": {
-    "class_type": "LTXVLoader",
+    "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "ltx-video-2b-v0.9.1.safetensors",
-      "dtype": "bfloat16"
+      "ckpt_name": "ltx-video-2b-v0.9.1.safetensors"
     }
   },
   "3": {
-    "class_type": "LTXVConditioning",
+    "class_type": "CLIPTextEncode",
     "inputs": {
-      "positive_prompt": "{{prompt}}",
-      "negative_prompt": "low quality, blurry, distorted, watermark",
-      "frame_rate": "{{fps}}"
-    },
-    "_meta": {
-      "title": "LTX Conditioning"
+      "text": "{{prompt}}, smooth motion, high quality, detailed",
+      "clip": ["2", 1]
     }
   },
   "4": {
-    "class_type": "ImageResize",
+    "class_type": "CLIPTextEncode",
     "inputs": {
-      "image": ["1", 0],
-      "width": 768,
-      "height": 512,
-      "method": "lanczos"
-    },
-    "_meta": {
-      "title": "Resize for LTX"
+      "text": "blurry, low quality, distorted, watermark, text, static, frozen",
+      "clip": ["2", 1]
     }
   },
   "5": {
-    "class_type": "LTXVSampler",
+    "class_type": "ImageScaleToTotalPixels",
     "inputs": {
-      "seed": "{{seed}}",
-      "steps": 30,
-      "cfg": 3.0,
-      "model": ["2", 0],
-      "positive": ["3", 0],
-      "negative": ["3", 1],
-      "image": ["4", 0],
-      "frame_count": "{{frames}}"
+      "image": ["1", 0],
+      "upscale_method": "lanczos",
+      "megapixels": 0.4
     },
-    "_meta": {
-      "title": "LTX Video Sampler"
-    }
+    "_meta": {"title": "Scale to ~768x512"}
   },
   "6": {
-    "class_type": "VAEDecode",
+    "class_type": "VAEEncode",
     "inputs": {
-      "samples": ["5", 0],
-      "vae": ["2", 1]
+      "pixels": ["5", 0],
+      "vae": ["2", 2]
     }
   },
   "7": {
+    "class_type": "RepeatLatentBatch",
+    "inputs": {
+      "samples": ["6", 0],
+      "amount": "{{frames}}"
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": 25,
+      "cfg": 3.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.85,
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["7", 0]
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["2", 2]
+    }
+  },
+  "10": {
     "class_type": "VHS_VideoCombine",
     "inputs": {
-      "images": ["6", 0],
+      "images": ["9", 0],
       "frame_rate": "{{fps}}",
       "loop_count": 0,
       "filename_prefix": "ltx_video",
       "format": "video/h264-mp4",
       "pingpong": false,
       "save_output": true
-    },
-    "_meta": {
-      "title": "Save Video"
     }
   }
 }
