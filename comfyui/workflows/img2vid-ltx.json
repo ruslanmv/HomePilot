@@ -63,15 +63,15 @@
       "height": 512,
       "length": "{{frames}}",
       "batch_size": 1,
-      "strength": 0.85
+      "strength": "{{denoise}}"
     }
   },
   "8": {
     "class_type": "KSampler",
     "inputs": {
       "seed": "{{seed}}",
-      "steps": 40,
-      "cfg": 3.5,
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
       "sampler_name": "euler",
       "scheduler": "normal",
       "denoise": 1.0,
