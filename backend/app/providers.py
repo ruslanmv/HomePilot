@@ -96,6 +96,7 @@ def get_comfyui_root() -> Path:
         repo_root / "ComfyUI",           # Local development
         Path("/ComfyUI"),                # Docker container
         Path.home() / "ComfyUI",         # Home directory
+        Path("/mnt/c/workspace/homegrok/homepilot/ComfyUI"),  # WSL specific
     ]
     for p in candidates:
         if p.exists() and (p / "custom_nodes").exists():
