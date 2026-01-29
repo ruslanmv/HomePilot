@@ -332,10 +332,18 @@ async def orchestrate(
                     }
                     video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
 
-            # Calculate frames from seconds (default to 8 fps for most models)
-            fps = 8
+            # Calculate frames from seconds - use model-specific fps
+            # LTX-Video works best with 24 fps, others default to 8 fps
+            if detected_model_type == "ltx":
+                fps = 24
+            else:
+                fps = 8
             seconds = vid_seconds if vid_seconds is not None else 4
             frames = seconds * fps
+
+            # LTX-Video requires frames >= 9 (minimum for the node)
+            if detected_model_type == "ltx" and frames < 9:
+                frames = 9
 
             res = run_workflow(
                 video_workflow_name,
