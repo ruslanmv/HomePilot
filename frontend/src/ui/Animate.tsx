@@ -227,6 +227,7 @@ export default function AnimateView(props: AnimateParams) {
         vidSeconds: seconds,
         vidFps: fps,
         vidMotion: motion,
+        vidModel: props.modelVideo || undefined,
 
         // Provider settings
         provider: props.providerVideo === 'comfyui' ? 'ollama' : props.providerVideo,

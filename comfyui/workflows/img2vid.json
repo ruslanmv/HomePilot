@@ -1,4 +1,8 @@
 {
+  "_meta": {
+    "title": "SVD Image to Video",
+    "description": "Image-to-video generation using Stable Video Diffusion"
+  },
   "1": {
     "class_type": "LoadImage",
     "inputs": {
@@ -6,16 +10,23 @@
     }
   },
   "2": {
-    "class_type": "CheckpointLoaderSimple",
+    "class_type": "ImageOnlyCheckpointLoader",
     "inputs": {
-      "ckpt_name": "svd.safetensors"
+      "ckpt_name": "svd_xt_1_1.safetensors"
     }
   },
   "3": {
-    "class_type": "VAEEncode",
+    "class_type": "SVD_img2vid_Conditioning",
     "inputs": {
-      "pixels": ["1", 0],
-      "vae": ["2", 2]
+      "clip_vision": ["2", 1],
+      "init_image": ["1", 0],
+      "vae": ["2", 2],
+      "width": 1024,
+      "height": 576,
+      "video_frames": "{{frames}}",
+      "motion_bucket_id": 127,
+      "fps": "{{fps}}",
+      "augmentation_level": 0.0
     }
   },
   "4": {
@@ -26,20 +37,6 @@
     }
   },
   "5": {
-    "class_type": "SVD_img2vid_Conditioning",
-    "inputs": {
-      "clip_vision": ["2", 1],
-      "init_image": ["1", 0],
-      "vae": ["2", 2],
-      "width": 1024,
-      "height": 576,
-      "video_frames": 25,
-      "motion_bucket_id": 127,
-      "fps": 6,
-      "augmentation_level": 0.0
-    }
-  },
-  "6": {
     "class_type": "KSampler",
     "inputs": {
       "seed": "{{seed}}",
@@ -49,23 +46,31 @@
       "scheduler": "karras",
       "denoise": 1.0,
       "model": ["4", 0],
-      "positive": ["5", 0],
-      "negative": ["5", 1],
-      "latent_image": ["5", 2]
+      "positive": ["3", 0],
+      "negative": ["3", 1],
+      "latent_image": ["3", 2]
     }
   },
-  "7": {
+  "6": {
     "class_type": "VAEDecode",
     "inputs": {
-      "samples": ["6", 0],
+      "samples": ["5", 0],
       "vae": ["2", 2]
     }
   },
-  "8": {
-    "class_type": "SaveImage",
+  "7": {
+    "class_type": "VHS_VideoCombine",
     "inputs": {
-      "filename_prefix": "img2vid_frames",
-      "images": ["7", 0]
+      "images": ["6", 0],
+      "frame_rate": "{{fps}}",
+      "loop_count": 0,
+      "filename_prefix": "svd_video",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true
+    },
+    "_meta": {
+      "title": "Save Video"
     }
   }
 }
