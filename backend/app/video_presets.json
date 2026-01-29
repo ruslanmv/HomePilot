@@ -17,11 +17,12 @@
         "width": 640,
         "height": 360,
         "fps": 8,
-        "seconds": 3,
+        "seconds": 2,
         "frames": 25,
         "steps": 20,
         "cfg": 2.5,
-        "denoise": 0.75
+        "denoise": 0.75,
+        "max_frames": 25
       },
       "model_overrides": {
         "svd": {
@@ -31,25 +32,28 @@
           "frames": 25,
           "steps": 16,
           "cfg": 2.2,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 25
         },
         "ltx": {
           "width": 640,
           "height": 384,
           "fps": 12,
-          "frames": 9,
+          "frames": 17,
           "steps": 22,
           "cfg": 2.8,
-          "denoise": 0.75
+          "denoise": 0.75,
+          "max_frames": 17
         },
         "wan": {
           "width": 640,
           "height": 384,
           "fps": 8,
-          "frames": 33,
+          "frames": 25,
           "steps": 22,
           "cfg": 4.0,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 33
         }
       }
     },
@@ -64,11 +68,12 @@
         "width": 768,
         "height": 512,
         "fps": 12,
-        "seconds": 4,
+        "seconds": 3,
         "frames": 33,
         "steps": 30,
         "cfg": 3.5,
-        "denoise": 0.85
+        "denoise": 0.85,
+        "max_frames": 33
       },
       "model_overrides": {
         "svd": {
@@ -78,7 +83,8 @@
           "frames": 25,
           "steps": 20,
           "cfg": 2.5,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 25
         },
         "ltx": {
           "width": 768,
@@ -87,7 +93,8 @@
           "frames": 33,
           "steps": 34,
           "cfg": 3.5,
-          "denoise": 0.85
+          "denoise": 0.85,
+          "max_frames": 33
         },
         "wan": {
           "width": 832,
@@ -96,7 +103,8 @@
           "frames": 49,
           "steps": 30,
           "cfg": 5.0,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 49
         },
         "hunyuan": {
           "width": 848,
@@ -105,7 +113,8 @@
           "frames": 45,
           "steps": 30,
           "cfg": 6.0,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 45
         },
         "mochi": {
           "width": 848,
@@ -114,7 +123,8 @@
           "frames": 37,
           "steps": 40,
           "cfg": 4.5,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 37
         }
       }
     },
@@ -129,11 +139,12 @@
         "width": 1024,
         "height": 576,
         "fps": 24,
-        "seconds": 6,
+        "seconds": 4,
         "frames": 49,
         "steps": 40,
         "cfg": 4.0,
-        "denoise": 0.9
+        "denoise": 0.9,
+        "max_frames": 65
       },
       "model_overrides": {
         "svd": {
@@ -143,7 +154,8 @@
           "frames": 25,
           "steps": 20,
           "cfg": 2.5,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 25
         },
         "ltx": {
           "width": 768,
@@ -152,7 +164,8 @@
           "frames": 65,
           "steps": 44,
           "cfg": 4.0,
-          "denoise": 0.85
+          "denoise": 0.85,
+          "max_frames": 65
         },
         "wan": {
           "width": 832,
@@ -161,7 +174,8 @@
           "frames": 81,
           "steps": 34,
           "cfg": 5.0,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 81
         },
         "hunyuan": {
           "width": 848,
@@ -170,7 +184,8 @@
           "frames": 97,
           "steps": 30,
           "cfg": 6.0,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 97
         },
         "mochi": {
           "width": 848,
@@ -179,7 +194,8 @@
           "frames": 85,
           "steps": 50,
           "cfg": 4.5,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 85
         },
         "cogvideo": {
           "width": 720,
@@ -188,7 +204,8 @@
           "frames": 49,
           "steps": 50,
           "cfg": 6.0,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 49
         }
       }
     },
@@ -203,11 +220,12 @@
         "width": 1024,
         "height": 576,
         "fps": 24,
-        "seconds": 8,
+        "seconds": 6,
         "frames": 97,
         "steps": 50,
         "cfg": 5.0,
-        "denoise": 0.95
+        "denoise": 0.95,
+        "max_frames": 129
       },
       "model_overrides": {
         "svd": {
@@ -217,7 +235,8 @@
           "frames": 25,
           "steps": 25,
           "cfg": 2.5,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 25
         },
         "ltx": {
           "width": 768,
@@ -226,7 +245,8 @@
           "frames": 97,
           "steps": 50,
           "cfg": 4.0,
-          "denoise": 0.85
+          "denoise": 0.85,
+          "max_frames": 97
         },
         "wan": {
           "width": 832,
@@ -235,7 +255,8 @@
           "frames": 81,
           "steps": 40,
           "cfg": 5.5,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 97
         },
         "hunyuan": {
           "width": 848,
@@ -244,7 +265,8 @@
           "frames": 129,
           "steps": 35,
           "cfg": 6.0,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 129
         },
         "mochi": {
           "width": 848,
@@ -253,7 +275,8 @@
           "frames": 163,
           "steps": 60,
           "cfg": 4.5,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 163
         },
         "cogvideo": {
           "width": 720,
@@ -262,7 +285,8 @@
           "frames": 49,
           "steps": 60,
           "cfg": 6.0,
-          "denoise": 1.0
+          "denoise": 1.0,
+          "max_frames": 49
         }
       }
     }

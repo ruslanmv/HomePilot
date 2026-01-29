@@ -302,10 +302,11 @@ async def orchestrate(
 
         try:
             # Determine which video workflow to use based on selected model
-            video_workflow_name = "img2vid"
-            detected_model_type = None
+            video_workflow_name = "img2vid"  # Default to SVD (lightest, most compatible)
+            detected_model_type = "svd"  # Default to SVD
 
-            if vid_model:
+            # Normalize vid_model - handle None, "None", empty string
+            if vid_model and vid_model.lower() not in ("none", "null", ""):
                 # Map model filename or short name to workflow
                 # Support both full filenames and short names
                 vid_model_lower = vid_model.lower()
@@ -330,22 +331,29 @@ async def orchestrate(
                     detected_model_type = "cogvideo"
                     video_workflow_name = "img2vid-cogvideo"
                 else:
-                    # Legacy short name mapping
+                    # Legacy short name mapping - defaults to SVD
                     video_workflow_map = {
                         "svd": "img2vid",
                         "wan-2.2": "img2vid-wan",
                         "seedream": "img2vid-seedream",
                     }
                     video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
+                    detected_model_type = "svd"  # Default to SVD for unknown models
+            else:
+                # No model specified - use SVD as the safest default
+                vid_model = None  # Normalize to Python None
+                detected_model_type = "svd"
+                video_workflow_name = "img2vid"
 
             # Use preset system to get workflow variables
             # Preset provides base values, user overrides take precedence
             # NOTE: Don't pass vid_fps when using presets - let the preset's model-specific
             # fps be used. The frontend sends vid_fps=8 as default, which would override
             # the correct model-specific fps (e.g., 24 for LTX).
+            # Pass detected_model_type to ensure correct model-specific settings are used
             preset_vars = video_presets.apply_preset_to_workflow_vars(
                 preset_name=vid_preset,  # None defaults to 'medium'
-                model_name=vid_model,
+                model_name=detected_model_type,  # Use detected type, not raw vid_model
                 vid_seconds=vid_seconds,
                 vid_fps=None,  # Let preset determine fps based on model
                 vid_steps=vid_steps,

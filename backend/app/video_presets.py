@@ -253,6 +253,12 @@ def apply_preset_to_workflow_vars(
         result["frames"] = enforce_frame_rule(model_type, frames)
         result["seconds"] = vid_seconds
 
+    # Enforce max_frames cap to prevent GPU overload
+    max_frames = result.get("max_frames")
+    if max_frames and result.get("frames", 0) > max_frames:
+        # Cap to max_frames, then enforce frame rule again
+        result["frames"] = enforce_frame_rule(model_type, max_frames)
+
     # Add seed if provided
     if vid_seed is not None:
         result["seed"] = vid_seed
