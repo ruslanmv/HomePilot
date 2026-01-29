@@ -355,8 +355,10 @@ async def orchestrate(
             # If no video, check for animated images (WEBP/GIF from SaveAnimatedWEBP)
             if not video_url and images:
                 # Animated WEBP/GIF files should be treated as videos
+                # URL format: http://.../view?filename=xxx.webp&subfolder=&type=output
                 for img in images:
-                    if img.lower().endswith(('.webp', '.gif')):
+                    img_lower = img.lower()
+                    if '.webp' in img_lower or '.gif' in img_lower:
                         video_url = img
                         break
 
