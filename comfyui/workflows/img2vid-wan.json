@@ -57,7 +57,8 @@
     "inputs": {
       "image": ["1", 0],
       "upscale_method": "lanczos",
-      "megapixels": 0.4
+      "megapixels": 0.4,
+      "resolution_steps": 64
     }
   },
   "8": {
