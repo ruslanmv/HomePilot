@@ -1,0 +1,94 @@
+{
+  "_meta": {
+    "title": "LTX-Video Image to Video",
+    "description": "Image-to-video using LTX-Video 2B. Requires ComfyUI-LTXVideo nodes.",
+    "optimal_settings": {
+      "resolution": "768x512",
+      "cfg": "2.5-3.5",
+      "steps": "20-30",
+      "fps": "24"
+    }
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "ltx-video-2b-v0.9.1.safetensors"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "{{prompt}}, smooth motion, high quality, detailed",
+      "clip": ["2", 1]
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "blurry, low quality, distorted, watermark, text, static, frozen",
+      "clip": ["2", 1]
+    }
+  },
+  "5": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": ["1", 0],
+      "upscale_method": "lanczos",
+      "megapixels": 0.4
+    },
+    "_meta": {"title": "Scale to ~768x512"}
+  },
+  "6": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": ["5", 0],
+      "vae": ["2", 2]
+    }
+  },
+  "7": {
+    "class_type": "RepeatLatentBatch",
+    "inputs": {
+      "samples": ["6", 0],
+      "amount": "{{frames}}"
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": 25,
+      "cfg": 3.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.85,
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["7", 0]
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["2", 2]
+    }
+  },
+  "10": {
+    "class_type": "SaveAnimatedWEBP",
+    "inputs": {
+      "images": ["9", 0],
+      "fps": "{{fps}}",
+      "lossless": false,
+      "quality": 85,
+      "method": "default",
+      "filename_prefix": "ltx_video"
+    }
+  }
+}

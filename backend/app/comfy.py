@@ -288,6 +288,15 @@ def _deep_replace(obj: Any, mapping: Dict[str, Any]) -> Any:
     return obj
 
 
+def _strip_meta_keys(obj: Any) -> Any:
+    """Recursively strip _meta and other underscore-prefixed keys from workflow."""
+    if isinstance(obj, dict):
+        return {k: _strip_meta_keys(v) for k, v in obj.items() if not k.startswith("_")}
+    if isinstance(obj, list):
+        return [_strip_meta_keys(x) for x in obj]
+    return obj
+
+
 def _load_workflow(name: str) -> Dict[str, Any]:
     p = WORKFLOWS_DIR / f"{name}.json"
     if not p.exists():
@@ -295,7 +304,10 @@ def _load_workflow(name: str) -> Dict[str, Any]:
             f"Workflow file not found: {p}. "
             f"Set COMFY_WORKFLOWS_DIR or mount workflows into {WORKFLOWS_DIR}."
         )
-    return json.loads(p.read_text(encoding="utf-8"))
+    workflow = json.loads(p.read_text(encoding="utf-8"))
+    # Strip metadata keys (like _meta) that ComfyUI doesn't understand
+    # These are used for documentation in our workflow files
+    return _strip_meta_keys(workflow)
 
 
 def _validate_prompt_graph(prompt_graph: Dict[str, Any], *, workflow_name: str) -> None:

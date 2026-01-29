@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 import uuid
 from typing import Any, Dict, Optional, Literal
@@ -296,41 +297,119 @@ async def orchestrate(
         try:
             # Determine which video workflow to use based on selected model
             video_workflow_name = "img2vid"
+            detected_model_type = None
+
             if vid_model:
-                # Map model name to workflow filename
-                video_workflow_map = {
-                    "svd": "img2vid",
-                    "wan-2.2": "img2vid-wan",
-                    "seedream": "img2vid-seedream",
-                }
-                video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
+                # Map model filename or short name to workflow
+                # Support both full filenames and short names
+                vid_model_lower = vid_model.lower()
+
+                # Detect model type from filename
+                if "ltx" in vid_model_lower or "ltx-video" in vid_model_lower:
+                    detected_model_type = "ltx"
+                    video_workflow_name = "img2vid-ltx"
+                elif "svd" in vid_model_lower:
+                    detected_model_type = "svd"
+                    video_workflow_name = "img2vid"
+                elif "wan" in vid_model_lower:
+                    detected_model_type = "wan"
+                    video_workflow_name = "img2vid-wan"
+                elif "mochi" in vid_model_lower:
+                    detected_model_type = "mochi"
+                    video_workflow_name = "img2vid-mochi"
+                elif "hunyuan" in vid_model_lower:
+                    detected_model_type = "hunyuan"
+                    video_workflow_name = "img2vid-hunyuan"
+                elif "cogvideo" in vid_model_lower:
+                    detected_model_type = "cogvideo"
+                    video_workflow_name = "img2vid-cogvideo"
+                else:
+                    # Legacy short name mapping
+                    video_workflow_map = {
+                        "svd": "img2vid",
+                        "wan-2.2": "img2vid-wan",
+                        "seedream": "img2vid-seedream",
+                    }
+                    video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
+
+            # Calculate frames from seconds (default to 8 fps for most models)
+            fps = 8
+            seconds = vid_seconds if vid_seconds is not None else 4
+            frames = seconds * fps
 
             res = run_workflow(
                 video_workflow_name,
                 {
-                    "image_path": image_url,  # Changed from image_url to image_path to match workflow
-                    "motion": vid_motion if vid_motion is not None else "subtle cinematic camera drift",
-                    "seconds": vid_seconds if vid_seconds is not None else 6,
+                    "image_path": image_url,
+                    "prompt": text_in.replace("animate", "").strip() or "smooth natural motion",
+                    "motion": vid_motion if vid_motion is not None else "medium",
+                    "seconds": seconds,
+                    "frames": frames,
+                    "fps": fps,
+                    "seed": random.randint(0, 2**32 - 1),
                 },
             )
             video_url = (res.get("videos") or [None])[0]
-            text = "Here you go."
-            media = {"video_url": video_url}
-            add_message(cid, "assistant", text, media)
-            return {"conversation_id": cid, "text": text, "media": media}
+            images = res.get("images") or []
+
+            # If no video, check for animated images (WEBP/GIF from SaveAnimatedWEBP)
+            if not video_url and images:
+                # Animated WEBP/GIF files should be treated as videos
+                # URL format: http://.../view?filename=xxx.webp&subfolder=&type=output
+                for img in images:
+                    img_lower = img.lower()
+                    if '.webp' in img_lower or '.gif' in img_lower:
+                        video_url = img
+                        break
+
+            if video_url:
+                text = "Here's your animated video!"
+                media = {"video_url": video_url}
+                add_message(cid, "assistant", text, media)
+                return {"conversation_id": cid, "text": text, "media": media}
+            elif images:
+                # Fall back to showing frames if no animated output
+                text = f"Generated {len(images)} frames."
+                media = {"images": images}
+                add_message(cid, "assistant", text, media)
+                return {"conversation_id": cid, "text": text, "media": media}
+            else:
+                raise RuntimeError("No video or images returned from workflow")
         except FileNotFoundError as e:
             error_str = str(e)
-            if "svd.safetensors" in error_str.lower() or "model" in error_str.lower():
-                text = "Video generation requires the SVD (Stable Video Diffusion) model which is not installed. This is a large (~10GB) specialized model for image-to-video. Currently, only image editing is available."
+            # Provide helpful messages based on detected model type
+            if detected_model_type == "ltx":
+                text = (
+                    "LTX-Video workflow not found. LTX-Video requires the ComfyUI-LTXVideo custom nodes. "
+                    "Install them via ComfyUI Manager or from: https://github.com/Lightricks/ComfyUI-LTXVideo\n\n"
+                    "After installing, restart ComfyUI and try again."
+                )
+            elif "svd.safetensors" in error_str.lower() or "model" in error_str.lower():
+                text = "Video generation requires a video model. Install one from Settings > Models > Video tab."
             else:
-                text = f"Video generation error: {error_str}"
+                text = f"Video workflow error: {error_str}"
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
         except Exception as e:
             error_str = str(e)
-            # Check for SVD-specific errors
-            if "svd.safetensors" in error_str or "CLIP_VISION" in error_str or "SVD_img2vid" in error_str:
-                text = "Video generation requires the SVD (Stable Video Diffusion) model which is not installed. This feature is currently unavailable. Try using Edit mode instead to modify images."
+            # Check for model-specific errors
+            if "ltx" in error_str.lower() and ("not found" in error_str.lower() or "class_type" in error_str.lower()):
+                text = (
+                    "LTX-Video generation failed. This model requires ComfyUI-LTXVideo custom nodes.\n\n"
+                    "Install via ComfyUI Manager or from: https://github.com/Lightricks/ComfyUI-LTXVideo\n"
+                    "Then restart ComfyUI and try again."
+                )
+            elif "svd.safetensors" in error_str or "CLIP_VISION" in error_str or "SVD_img2vid" in error_str:
+                text = (
+                    "SVD (Stable Video Diffusion) model is not installed. "
+                    "Either install SVD from Settings > Models > Video, or select a different video model like LTX-Video."
+                )
+            elif "ckpt_name" in error_str and "not in" in error_str:
+                # Model not found in ComfyUI's checkpoint list
+                text = (
+                    f"Video model not found in ComfyUI. The selected model may not be installed correctly.\n\n"
+                    f"Please verify the model file exists in your ComfyUI models folder and restart ComfyUI."
+                )
             else:
                 text = f"Video generation error: {error_str}"
             add_message(cid, "assistant", text)
@@ -612,7 +691,6 @@ async def orchestrate(
                 # ComfyUI detects duplicate prompt graphs and skips execution,
                 # causing "Prompt executed in 0.00 seconds" with no output
                 if img_seed is None or img_seed == 0 or img_seed == -1:
-                    import random
                     batch_refined["seed"] = random.randint(1, 2147483647)
                     print(f"[IMAGE] Using random seed: {batch_refined['seed']}")
                 else:

@@ -123,22 +123,24 @@ export default function SettingsPanel({
   }
 
   async function fetchModelsFor(providerKey: string, baseUrlOverride?: string, modelType?: 'image' | 'video') {
-    setModelsLoading((m) => ({ ...m, [providerKey]: true }));
-    setModelsErr((m) => ({ ...m, [providerKey]: null }));
+    // Use compound key for storing models by provider + type (to separate image vs video models)
+    const stateKey = modelType ? `${providerKey}_${modelType}` : providerKey;
+    setModelsLoading((m) => ({ ...m, [stateKey]: true }));
+    setModelsErr((m) => ({ ...m, [stateKey]: null }));
     try {
       const base = baseUrlOverride || providers?.[providerKey]?.base_url || "";
       const url = `${value.backendUrl}/models?provider=${encodeURIComponent(providerKey)}&base_url=${encodeURIComponent(base)}${modelType ? `&model_type=${encodeURIComponent(modelType)}` : ''}`;
       const res = await fetch(url);
       const data = await res.json();
       if (!data.ok) throw new Error(data.message || "Failed to fetch models");
-      setModels((prev) => ({ ...prev, [providerKey]: data.models || [] }));
+      setModels((prev) => ({ ...prev, [stateKey]: data.models || [] }));
       if (!data.models || data.models.length === 0) {
-        setModelsErr((m) => ({ ...m, [providerKey]: "No models returned by provider." }));
+        setModelsErr((m) => ({ ...m, [stateKey]: "No models returned by provider." }));
       }
     } catch (e: any) {
-      setModelsErr((m) => ({ ...m, [providerKey]: e?.message || String(e) }));
+      setModelsErr((m) => ({ ...m, [stateKey]: e?.message || String(e) }));
     } finally {
-      setModelsLoading((m) => ({ ...m, [providerKey]: false }));
+      setModelsLoading((m) => ({ ...m, [stateKey]: false }));
     }
   }
 
@@ -291,9 +293,11 @@ export default function SettingsPanel({
     baseUrlOverride?: string,
     modelType?: 'image' | 'video'
   ) {
-    const list = models[providerKey] || [];
-    const loading = !!modelsLoading[providerKey];
-    const err = modelsErr[providerKey];
+    // Use compound key for provider + type (to separate image vs video models)
+    const stateKey = modelType ? `${providerKey}_${modelType}` : providerKey;
+    const list = models[stateKey] || [];
+    const loading = !!modelsLoading[stateKey];
+    const err = modelsErr[stateKey];
 
     return (
       <div className="border-t border-white/5 pt-3">
