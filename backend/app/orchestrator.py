@@ -350,21 +350,29 @@ async def orchestrate(
                 },
             )
             video_url = (res.get("videos") or [None])[0]
-            # If no video, check for images (some workflows output image sequences)
-            if not video_url:
-                images = res.get("images") or []
-                if images:
-                    text = f"Generated {len(images)} frames. Video encoding may require additional setup."
-                    media = {"images": images}
-                    add_message(cid, "assistant", text, media)
-                    return {"conversation_id": cid, "text": text, "media": media}
-                else:
-                    raise RuntimeError("No video or images returned from workflow")
+            images = res.get("images") or []
 
-            text = "Here's your animated video!"
-            media = {"video_url": video_url}
-            add_message(cid, "assistant", text, media)
-            return {"conversation_id": cid, "text": text, "media": media}
+            # If no video, check for animated images (WEBP/GIF from SaveAnimatedWEBP)
+            if not video_url and images:
+                # Animated WEBP/GIF files should be treated as videos
+                for img in images:
+                    if img.lower().endswith(('.webp', '.gif')):
+                        video_url = img
+                        break
+
+            if video_url:
+                text = "Here's your animated video!"
+                media = {"video_url": video_url}
+                add_message(cid, "assistant", text, media)
+                return {"conversation_id": cid, "text": text, "media": media}
+            elif images:
+                # Fall back to showing frames if no animated output
+                text = f"Generated {len(images)} frames."
+                media = {"images": images}
+                add_message(cid, "assistant", text, media)
+                return {"conversation_id": cid, "text": text, "media": media}
+            else:
+                raise RuntimeError("No video or images returned from workflow")
         except FileNotFoundError as e:
             error_str = str(e)
             # Provide helpful messages based on detected model type

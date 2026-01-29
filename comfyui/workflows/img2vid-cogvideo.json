@@ -75,15 +75,14 @@
     }
   },
   "9": {
-    "class_type": "VHS_VideoCombine",
+    "class_type": "SaveAnimatedWEBP",
     "inputs": {
       "images": ["8", 0],
-      "frame_rate": "{{fps}}",
-      "loop_count": 0,
-      "filename_prefix": "cogvideo",
-      "format": "video/h264-mp4",
-      "pingpong": false,
-      "save_output": true
+      "fps": "{{fps}}",
+      "lossless": false,
+      "quality": 85,
+      "method": "default",
+      "filename_prefix": "cogvideo"
     }
   }
 }
