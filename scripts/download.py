@@ -81,7 +81,7 @@ DEFAULT_HEADERS = {
 }
 
 # Storage for API keys (same location as backend)
-ENV_JSON_FILE = PROJECT_ROOT / "backend" / "data" / ".env.json"
+ENV_JSON_FILE = PROJECT_ROOT / "backend" / ".env.json"
 
 
 # -----------------------------------------------------------------------------
@@ -408,11 +408,21 @@ def download_file(
     """
     Download a file with progress bar and resume support.
     Returns (success, message).
+
+    Automatically adds authentication headers for:
+    - HuggingFace URLs (uses HF_TOKEN env var or stored key)
+    - Civitai URLs (uses custom_headers passed by caller)
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     temp_file = dest.with_suffix(dest.suffix + ".part")
 
     headers = custom_headers.copy() if custom_headers else DEFAULT_HEADERS.copy()
+
+    # Automatically add HuggingFace authentication for gated models
+    if "huggingface.co/" in url and "/resolve/" in url:
+        hf_token = get_hf_token()
+        if hf_token and "Authorization" not in headers:
+            headers["Authorization"] = f"Bearer {hf_token}"
 
     # Resume support
     start_pos = 0
@@ -461,6 +471,25 @@ def download_file(
 
         return True, f"Downloaded {dest.name} ({total_size / (1024**2):.1f} MB)"
 
+    except requests.exceptions.HTTPError as e:
+        # Provide helpful message for HuggingFace authentication errors
+        if e.response is not None and e.response.status_code == 401 and "huggingface.co" in url:
+            hf_token = get_hf_token()
+            if not hf_token:
+                return False, (
+                    f"Failed to download: 401 Unauthorized - This is a gated HuggingFace model.\n"
+                    f"         To download gated models:\n"
+                    f"         1. Accept the license at: https://huggingface.co/{url.split('huggingface.co/')[1].split('/resolve')[0]}\n"
+                    f"         2. Create a HuggingFace token at: https://huggingface.co/settings/tokens\n"
+                    f"         3. Set HF_TOKEN environment variable OR configure in HomePilot Settings > API Keys"
+                )
+            else:
+                return False, (
+                    f"Failed to download: 401 Unauthorized - HuggingFace token provided but access denied.\n"
+                    f"         Please ensure you have accepted the model license at:\n"
+                    f"         https://huggingface.co/{url.split('huggingface.co/')[1].split('/resolve')[0]}"
+                )
+        return False, f"Failed to download: {str(e)}"
     except Exception as e:
         return False, f"Failed to download: {str(e)}"
 
