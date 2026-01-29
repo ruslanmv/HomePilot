@@ -1,0 +1,88 @@
+{
+  "_meta": {
+    "title": "CogVideoX 1.5 5B I2V",
+    "description": "Image-to-video using CogVideoX 1.5 5B. Requires ComfyUI-CogVideoXWrapper.",
+    "optimal_settings": {
+      "resolution": "720x480",
+      "frames": "49",
+      "cfg": "6.0",
+      "steps": "50",
+      "fps": "8"
+    },
+    "requirements": ["ComfyUI-CogVideoXWrapper"]
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "CogVideoXDiffusersLoader",
+    "inputs": {
+      "model_path": "cogvideox1.5_5b_i2v_snapshot",
+      "precision": "bf16",
+      "quantization": "disabled"
+    }
+  },
+  "3": {
+    "class_type": "CogVideoXTextEncode",
+    "inputs": {
+      "prompt": "{{prompt}}, high quality video, smooth motion, cinematic",
+      "pipeline": ["2", 0]
+    }
+  },
+  "4": {
+    "class_type": "CogVideoXTextEncode",
+    "inputs": {
+      "prompt": "blurry, low quality, distorted, watermark, static",
+      "pipeline": ["2", 0]
+    }
+  },
+  "5": {
+    "class_type": "ImageScaleToTotalPixels",
+    "inputs": {
+      "image": ["1", 0],
+      "upscale_method": "lanczos",
+      "megapixels": 0.35
+    }
+  },
+  "6": {
+    "class_type": "CogVideoXImageEncode",
+    "inputs": {
+      "image": ["5", 0],
+      "pipeline": ["2", 0]
+    }
+  },
+  "7": {
+    "class_type": "CogVideoXSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": 50,
+      "cfg": 6.0,
+      "num_frames": "{{frames}}",
+      "pipeline": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "image_latent": ["6", 0]
+    }
+  },
+  "8": {
+    "class_type": "CogVideoXDecode",
+    "inputs": {
+      "samples": ["7", 0],
+      "pipeline": ["2", 0]
+    }
+  },
+  "9": {
+    "class_type": "SaveAnimatedWEBP",
+    "inputs": {
+      "images": ["8", 0],
+      "fps": "{{fps}}",
+      "lossless": false,
+      "quality": 85,
+      "method": "default",
+      "filename_prefix": "cogvideo"
+    }
+  }
+}

@@ -509,6 +509,8 @@ export default function ModelsView(props: ModelsParams) {
       const q = new URLSearchParams()
       q.set('provider', provider)
       if (baseUrl.trim()) q.set('base_url', baseUrl.trim())
+      // Pass model_type so backend returns correct installed models for this type
+      if (modelType && provider === 'comfyui') q.set('model_type', modelType)
 
       const data = await getJson<ModelsListResponse>(backendUrl, `/models?${q.toString()}`, authKey)
       setInstalled(Array.isArray(data.models) ? data.models : [])
