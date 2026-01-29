@@ -334,8 +334,8 @@
           "label": "LTX-Video 2B v0.9.1 (I2V/T2V)",
           "recommended": true,
           "nsfw": false,
-          "description": "Lightricks LTX-Video checkpoint. Fast, lightweight - best for RTX 4080. Single file install.",
-          "size_gb": 5.72,
+          "description": "Lightricks LTX-Video checkpoint + T5 text encoder. Fast, lightweight - best for RTX 4080.",
+          "size_gb": 10.5,
           "resolution": "varies",
           "frames": 80,
           "install_path": "checkpoints/",
@@ -350,6 +350,11 @@
                 "repo_id": "Lightricks/LTX-Video",
                 "filename": "ltx-video-2b-v0.9.1.safetensors",
                 "dest": "checkpoints/ltx-video-2b-v0.9.1.safetensors"
+              },
+              {
+                "repo_id": "comfyanonymous/flux_text_encoders",
+                "filename": "t5xxl_fp16.safetensors",
+                "dest": "clip/t5xxl_fp16.safetensors"
               }
             ]
           }
