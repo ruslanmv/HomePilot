@@ -1,0 +1,81 @@
+{
+  "_meta": {
+    "title": "LTX-Video Image to Video",
+    "description": "Image-to-video generation using LTX-Video 2B model. Requires ComfyUI-LTXVideo custom nodes.",
+    "requirements": ["ComfyUI-LTXVideo"]
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "LTXVLoader",
+    "inputs": {
+      "ckpt_name": "ltx-video-2b-v0.9.1.safetensors",
+      "dtype": "bfloat16"
+    }
+  },
+  "3": {
+    "class_type": "LTXVConditioning",
+    "inputs": {
+      "positive_prompt": "{{prompt}}",
+      "negative_prompt": "low quality, blurry, distorted, watermark",
+      "frame_rate": "{{fps}}"
+    },
+    "_meta": {
+      "title": "LTX Conditioning"
+    }
+  },
+  "4": {
+    "class_type": "ImageResize",
+    "inputs": {
+      "image": ["1", 0],
+      "width": 768,
+      "height": 512,
+      "method": "lanczos"
+    },
+    "_meta": {
+      "title": "Resize for LTX"
+    }
+  },
+  "5": {
+    "class_type": "LTXVSampler",
+    "inputs": {
+      "seed": "{{seed}}",
+      "steps": 30,
+      "cfg": 3.0,
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["3", 1],
+      "image": ["4", 0],
+      "frame_count": "{{frames}}"
+    },
+    "_meta": {
+      "title": "LTX Video Sampler"
+    }
+  },
+  "6": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["5", 0],
+      "vae": ["2", 1]
+    }
+  },
+  "7": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["6", 0],
+      "frame_rate": "{{fps}}",
+      "loop_count": 0,
+      "filename_prefix": "ltx_video",
+      "format": "video/h264-mp4",
+      "pingpong": false,
+      "save_output": true
+    },
+    "_meta": {
+      "title": "Save Video"
+    }
+  }
+}
