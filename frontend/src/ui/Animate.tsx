@@ -81,6 +81,14 @@ const FPS_PRESETS = [
   { label: '24 fps', value: 24 },
 ]
 
+// Quality presets
+const QUALITY_PRESETS = [
+  { id: 'low', label: 'Low', short: 'Fast', description: 'For 6-8GB VRAM. Fastest generation.' },
+  { id: 'medium', label: 'Medium', short: 'Balanced', description: 'For 10-12GB VRAM. Good quality/speed balance.' },
+  { id: 'high', label: 'High', short: 'Quality', description: 'For 16GB+ VRAM. Higher quality output.' },
+  { id: 'ultra', label: 'Ultra', short: 'Maximum', description: 'For 24GB+ VRAM. Best quality, longest clips.' },
+]
+
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
@@ -154,6 +162,7 @@ export default function AnimateView(props: AnimateParams) {
   const [fps, setFps] = useState(props.vidFps || 8)
   const [motion, setMotion] = useState(props.vidMotion || 'medium')
   const [showSettingsPanel, setShowSettingsPanel] = useState(false)
+  const [qualityPreset, setQualityPreset] = useState('medium')
 
   // Advanced Controls state
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
@@ -249,6 +258,7 @@ export default function AnimateView(props: AnimateParams) {
         vidFps: fps,
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
+        vidPreset: qualityPreset,
 
         // Advanced parameters (when enabled)
         ...(advancedMode && {
@@ -317,7 +327,7 @@ export default function AnimateView(props: AnimateParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed])
+  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed])
 
   const handleDelete = useCallback((item: AnimateItem, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -473,6 +483,30 @@ export default function AnimateView(props: AnimateParams) {
             >
               <X size={16} />
             </button>
+          </div>
+
+          {/* Quality Preset */}
+          <div className="mb-4">
+            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
+              Quality Preset
+            </label>
+            <div className="grid grid-cols-4 gap-2">
+              {QUALITY_PRESETS.map((q) => (
+                <button
+                  key={q.id}
+                  onClick={() => setQualityPreset(q.id)}
+                  title={q.description}
+                  className={`py-2 px-2 rounded-lg text-sm font-medium transition-colors ${
+                    qualityPreset === q.id
+                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="text-xs font-bold">{q.label}</div>
+                  <div className="text-[9px] text-white/40 mt-0.5">{q.short}</div>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Duration */}
@@ -829,7 +863,7 @@ export default function AnimateView(props: AnimateParams) {
                 </>
               ) : null}
               <span>·</span>
-              <span>{seconds}s @ {fps}fps · {motion} motion</span>
+              <span>{qualityPreset} · {seconds}s @ {fps}fps · {motion} motion</span>
             </div>
           </div>
         </div>

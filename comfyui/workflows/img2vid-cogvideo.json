@@ -59,8 +59,8 @@
     "class_type": "CogVideoXSampler",
     "inputs": {
       "seed": "{{seed}}",
-      "steps": 50,
-      "cfg": 6.0,
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
       "num_frames": "{{frames}}",
       "pipeline": ["2", 0],
       "positive": ["3", 0],

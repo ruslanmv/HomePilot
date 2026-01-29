@@ -14,6 +14,7 @@ from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
 from .defaults import DEFAULT_NEGATIVE_PROMPT, enhance_negative_prompt
 from .model_config import get_model_settings, get_architecture, MODEL_ARCHITECTURES
+from . import video_presets
 
 # Import specialized handlers
 from .search import run_search
@@ -265,6 +266,7 @@ async def orchestrate(
     vid_cfg: Optional[float] = None,
     vid_denoise: Optional[float] = None,
     vid_seed: Optional[int] = None,
+    vid_preset: Optional[str] = None,  # Quality preset: 'low', 'medium', 'high', 'ultra'
     nsfw_mode: Optional[bool] = None,
     prompt_refinement: Optional[bool] = True,
     img_reference: Optional[str] = None,  # Reference image URL for img2img
@@ -336,32 +338,32 @@ async def orchestrate(
                     }
                     video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
 
-            # Calculate frames from seconds - use model-specific fps
-            # LTX-Video works best with 24 fps, others default to 8 fps
-            if detected_model_type == "ltx":
-                fps = 24
-            else:
-                fps = 8
-            seconds = vid_seconds if vid_seconds is not None else 4
-            frames = seconds * fps
+            # Use preset system to get workflow variables
+            # Preset provides base values, user overrides take precedence
+            preset_vars = video_presets.apply_preset_to_workflow_vars(
+                preset_name=vid_preset,  # None defaults to 'medium'
+                model_name=vid_model,
+                vid_seconds=vid_seconds,
+                vid_fps=vid_fps,
+                vid_steps=vid_steps,
+                vid_cfg=vid_cfg,
+                vid_denoise=vid_denoise,
+                vid_seed=vid_seed,
+            )
 
-            # LTX-Video requires frames >= 9 (minimum for the node)
-            if detected_model_type == "ltx" and frames < 9:
-                frames = 9
-
-            # Build workflow variables with defaults for advanced parameters
+            # Build final workflow variables
             workflow_vars = {
                 "image_path": image_url,
                 "prompt": text_in.replace("animate", "").strip() or "smooth natural motion",
                 "motion": vid_motion if vid_motion is not None else "medium",
-                "seconds": seconds,
-                "frames": frames,
-                "fps": fps,
-                "seed": vid_seed if vid_seed is not None else random.randint(0, 2**32 - 1),
-                # Advanced parameters with sensible defaults
-                "steps": vid_steps if vid_steps is not None else 40,
-                "cfg": vid_cfg if vid_cfg is not None else 3.5,
-                "denoise": vid_denoise if vid_denoise is not None else 0.85,
+                # Use preset values (with user overrides already applied)
+                "seconds": preset_vars.get("seconds", vid_seconds or 4),
+                "frames": preset_vars.get("frames", 33),
+                "fps": preset_vars.get("fps", 8),
+                "seed": preset_vars.get("seed", random.randint(0, 2**32 - 1)),
+                "steps": preset_vars.get("steps", 30),
+                "cfg": preset_vars.get("cfg", 3.5),
+                "denoise": preset_vars.get("denoise", 0.85),
             }
 
             res = run_workflow(video_workflow_name, workflow_vars)
@@ -883,6 +885,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             vid_cfg=payload.get("vidCfg"),
             vid_denoise=payload.get("vidDenoise"),
             vid_seed=payload.get("vidSeed"),
+            vid_preset=payload.get("vidPreset"),
             nsfw_mode=payload.get("nsfwMode"),
             prompt_refinement=payload.get("promptRefinement", True),
             img_reference=payload.get("imgReference"),

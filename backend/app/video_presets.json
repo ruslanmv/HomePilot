@@ -1,0 +1,323 @@
+{
+  "schema_version": "1.0",
+  "defaults": {
+    "sampler": "euler",
+    "scheduler": "normal",
+    "notes": "sampler/scheduler are informational; workflows may hardcode them."
+  },
+
+  "presets": {
+    "low": {
+      "ui": {
+        "label": "Low (Fast)",
+        "short": "Fastest + most stable",
+        "description": "For 6-8GB VRAM or older GPUs. Prioritizes speed and stability."
+      },
+      "base": {
+        "width": 640,
+        "height": 360,
+        "fps": 8,
+        "seconds": 3,
+        "frames": 25,
+        "steps": 20,
+        "cfg": 2.5,
+        "denoise": 0.75
+      },
+      "model_overrides": {
+        "svd": {
+          "width": 640,
+          "height": 360,
+          "fps": 6,
+          "frames": 25,
+          "steps": 16,
+          "cfg": 2.2,
+          "denoise": 1.0
+        },
+        "ltx": {
+          "width": 640,
+          "height": 384,
+          "fps": 12,
+          "frames": 9,
+          "steps": 22,
+          "cfg": 2.8,
+          "denoise": 0.75
+        },
+        "wan": {
+          "width": 640,
+          "height": 384,
+          "fps": 8,
+          "frames": 33,
+          "steps": 22,
+          "cfg": 4.0,
+          "denoise": 1.0
+        }
+      }
+    },
+
+    "medium": {
+      "ui": {
+        "label": "Medium (Balanced)",
+        "short": "Quality vs speed",
+        "description": "For 10-12GB VRAM. Good balance of quality and generation time."
+      },
+      "base": {
+        "width": 768,
+        "height": 512,
+        "fps": 12,
+        "seconds": 4,
+        "frames": 33,
+        "steps": 30,
+        "cfg": 3.5,
+        "denoise": 0.85
+      },
+      "model_overrides": {
+        "svd": {
+          "width": 1024,
+          "height": 576,
+          "fps": 8,
+          "frames": 25,
+          "steps": 20,
+          "cfg": 2.5,
+          "denoise": 1.0
+        },
+        "ltx": {
+          "width": 768,
+          "height": 512,
+          "fps": 24,
+          "frames": 33,
+          "steps": 34,
+          "cfg": 3.5,
+          "denoise": 0.85
+        },
+        "wan": {
+          "width": 832,
+          "height": 480,
+          "fps": 12,
+          "frames": 49,
+          "steps": 30,
+          "cfg": 5.0,
+          "denoise": 1.0
+        },
+        "hunyuan": {
+          "width": 848,
+          "height": 480,
+          "fps": 16,
+          "frames": 45,
+          "steps": 30,
+          "cfg": 6.0,
+          "denoise": 1.0
+        },
+        "mochi": {
+          "width": 848,
+          "height": 480,
+          "fps": 16,
+          "frames": 37,
+          "steps": 40,
+          "cfg": 4.5,
+          "denoise": 1.0
+        }
+      }
+    },
+
+    "high": {
+      "ui": {
+        "label": "High (Quality)",
+        "short": "Highest quality",
+        "description": "For 16GB+ VRAM. Maximum quality and longer clips."
+      },
+      "base": {
+        "width": 1024,
+        "height": 576,
+        "fps": 24,
+        "seconds": 6,
+        "frames": 49,
+        "steps": 40,
+        "cfg": 4.0,
+        "denoise": 0.9
+      },
+      "model_overrides": {
+        "svd": {
+          "width": 1024,
+          "height": 576,
+          "fps": 8,
+          "frames": 25,
+          "steps": 20,
+          "cfg": 2.5,
+          "denoise": 1.0
+        },
+        "ltx": {
+          "width": 768,
+          "height": 512,
+          "fps": 24,
+          "frames": 65,
+          "steps": 44,
+          "cfg": 4.0,
+          "denoise": 0.85
+        },
+        "wan": {
+          "width": 832,
+          "height": 480,
+          "fps": 16,
+          "frames": 81,
+          "steps": 34,
+          "cfg": 5.0,
+          "denoise": 1.0
+        },
+        "hunyuan": {
+          "width": 848,
+          "height": 480,
+          "fps": 24,
+          "frames": 97,
+          "steps": 30,
+          "cfg": 6.0,
+          "denoise": 1.0
+        },
+        "mochi": {
+          "width": 848,
+          "height": 480,
+          "fps": 24,
+          "frames": 85,
+          "steps": 50,
+          "cfg": 4.5,
+          "denoise": 1.0
+        },
+        "cogvideo": {
+          "width": 720,
+          "height": 480,
+          "fps": 8,
+          "frames": 49,
+          "steps": 50,
+          "cfg": 6.0,
+          "denoise": 1.0
+        }
+      }
+    },
+
+    "ultra": {
+      "ui": {
+        "label": "Ultra (Maximum)",
+        "short": "Best possible",
+        "description": "For 24GB+ VRAM. Longest clips with maximum detail."
+      },
+      "base": {
+        "width": 1024,
+        "height": 576,
+        "fps": 24,
+        "seconds": 8,
+        "frames": 97,
+        "steps": 50,
+        "cfg": 5.0,
+        "denoise": 0.95
+      },
+      "model_overrides": {
+        "svd": {
+          "width": 1024,
+          "height": 576,
+          "fps": 8,
+          "frames": 25,
+          "steps": 25,
+          "cfg": 2.5,
+          "denoise": 1.0
+        },
+        "ltx": {
+          "width": 768,
+          "height": 512,
+          "fps": 24,
+          "frames": 97,
+          "steps": 50,
+          "cfg": 4.0,
+          "denoise": 0.85
+        },
+        "wan": {
+          "width": 832,
+          "height": 480,
+          "fps": 24,
+          "frames": 81,
+          "steps": 40,
+          "cfg": 5.5,
+          "denoise": 1.0
+        },
+        "hunyuan": {
+          "width": 848,
+          "height": 480,
+          "fps": 24,
+          "frames": 129,
+          "steps": 35,
+          "cfg": 6.0,
+          "denoise": 1.0
+        },
+        "mochi": {
+          "width": 848,
+          "height": 480,
+          "fps": 24,
+          "frames": 163,
+          "steps": 60,
+          "cfg": 4.5,
+          "denoise": 1.0
+        },
+        "cogvideo": {
+          "width": 720,
+          "height": 480,
+          "fps": 8,
+          "frames": 49,
+          "steps": 60,
+          "cfg": 6.0,
+          "denoise": 1.0
+        }
+      }
+    }
+  },
+
+  "model_rules": {
+    "svd": {
+      "frame_rule": "fixed",
+      "fixed_frames": 25,
+      "fixed_denoise": 1.0,
+      "notes": "SVD always uses exactly 25 frames"
+    },
+    "ltx": {
+      "frame_rule": "8n+1",
+      "valid_frames": [9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97],
+      "min_frames": 9,
+      "notes": "LTX requires frames in format 8n+1"
+    },
+    "mochi": {
+      "frame_rule": "6n+1",
+      "valid_frames": [37, 43, 49, 55, 61, 67, 73, 79, 85, 91, 97, 103, 109, 115, 121, 127, 133, 139, 145, 151, 157, 163],
+      "min_frames": 37,
+      "notes": "Mochi requires frames in format 6n+1, minimum 37"
+    },
+    "wan": {
+      "frame_rule": "any",
+      "notes": "Wan supports any frame count"
+    },
+    "hunyuan": {
+      "frame_rule": "any",
+      "notes": "HunyuanVideo supports any frame count"
+    },
+    "cogvideo": {
+      "frame_rule": "any",
+      "fixed_frames": 49,
+      "notes": "CogVideo typically uses 49 frames"
+    }
+  },
+
+  "vram_auto_select": {
+    "rules": [
+      {"max_vram_gb": 8, "preset": "low"},
+      {"max_vram_gb": 12, "preset": "medium"},
+      {"max_vram_gb": 20, "preset": "high"},
+      {"max_vram_gb": 999, "preset": "ultra"}
+    ],
+    "fallback": "medium"
+  },
+
+  "model_min_vram": {
+    "svd": 6,
+    "ltx": 8,
+    "wan": 10,
+    "hunyuan": 12,
+    "mochi": 16,
+    "cogvideo": 16
+  }
+}
