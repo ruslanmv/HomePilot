@@ -110,6 +110,14 @@ function formatDuration(seconds: number): string {
   return `${secs}s`
 }
 
+// Check if URL points to an animated image (WEBP/GIF) vs video (MP4/WebM)
+// Animated WEBP/GIF must use <img> tag, videos use <video> tag
+function isAnimatedImage(url: string): boolean {
+  const lower = url.toLowerCase()
+  // ComfyUI URLs look like: /view?filename=xxx.webp&subfolder=...
+  return lower.includes('.webp') || lower.includes('.gif')
+}
+
 // -----------------------------------------------------------------------------
 // Component
 // -----------------------------------------------------------------------------
@@ -445,20 +453,28 @@ export default function AnimateView(props: AnimateParams) {
               onClick={() => setSelectedVideo(item)}
               className="relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 hover:border-purple-500/30 transition-colors cursor-pointer aspect-video"
             >
-              <video
-                src={item.videoUrl}
-                poster={item.posterUrl}
-                muted
-                loop
-                playsInline
-                preload="metadata"
-                className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                onMouseEnter={(e) => e.currentTarget.play()}
-                onMouseLeave={(e) => {
-                  e.currentTarget.pause()
-                  e.currentTarget.currentTime = 0
-                }}
-              />
+              {isAnimatedImage(item.videoUrl) ? (
+                <img
+                  src={item.videoUrl}
+                  alt="Generated animation"
+                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                />
+              ) : (
+                <video
+                  src={item.videoUrl}
+                  poster={item.posterUrl}
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                  onMouseEnter={(e) => e.currentTarget.play()}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.pause()
+                    e.currentTarget.currentTime = 0
+                  }}
+                />
+              )}
 
               {/* Play indicator */}
               <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -685,14 +701,22 @@ export default function AnimateView(props: AnimateParams) {
           >
             {/* Left: Video Container */}
             <div className="flex-1 bg-black/50 flex items-center justify-center p-4 min-h-[400px] relative">
-              <video
-                src={selectedVideo.videoUrl}
-                poster={selectedVideo.posterUrl}
-                controls
-                autoPlay
-                loop
-                className="max-h-full max-w-full object-contain shadow-lg rounded-lg"
-              />
+              {isAnimatedImage(selectedVideo.videoUrl) ? (
+                <img
+                  src={selectedVideo.videoUrl}
+                  alt="Generated animation"
+                  className="max-h-full max-w-full object-contain shadow-lg rounded-lg"
+                />
+              ) : (
+                <video
+                  src={selectedVideo.videoUrl}
+                  poster={selectedVideo.posterUrl}
+                  controls
+                  autoPlay
+                  loop
+                  className="max-h-full max-w-full object-contain shadow-lg rounded-lg"
+                />
+              )}
             </div>
 
             {/* Right: Sidebar Details */}
