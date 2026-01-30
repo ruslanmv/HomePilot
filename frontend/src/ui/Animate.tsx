@@ -169,7 +169,7 @@ export default function AnimateView(props: AnimateParams) {
   const [advancedMode, setAdvancedMode] = useState(false)
   const [customSteps, setCustomSteps] = useState(30)
   const [customCfg, setCustomCfg] = useState(3.5)
-  const [customDenoise, setCustomDenoise] = useState(0.65)
+  const [customDenoise, setCustomDenoise] = useState(0.55)
   const [seedLock, setSeedLock] = useState(false)
   const [customSeed, setCustomSeed] = useState(0)
 

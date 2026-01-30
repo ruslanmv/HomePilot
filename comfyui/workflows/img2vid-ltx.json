@@ -32,14 +32,14 @@
   "4": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "{{prompt}}, smooth motion, high quality, cinematic",
+      "text": "{{prompt}}, smooth motion, high quality, cinematic, consistent face, natural facial features, anatomically correct",
       "clip": ["3", 0]
     }
   },
   "5": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "blurry, low quality, distorted, watermark, text, static, frozen, jittery",
+      "text": "blurry, low quality, distorted, watermark, text, static, frozen, jittery, deformed face, ugly face, distorted face, disfigured, mutated, bad anatomy, wrong proportions, extra limbs, malformed hands, bad hands",
       "clip": ["3", 0]
     }
   },

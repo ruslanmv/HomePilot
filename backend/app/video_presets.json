@@ -41,8 +41,8 @@
           "fps": 24,
           "frames": 48,
           "steps": 30,
-          "cfg": 4.0,
-          "denoise": 0.65,
+          "cfg": 5.0,
+          "denoise": 0.55,
           "max_frames": 48
         },
         "wan": {
@@ -92,8 +92,8 @@
           "fps": 24,
           "frames": 96,
           "steps": 40,
-          "cfg": 4.0,
-          "denoise": 0.65,
+          "cfg": 5.0,
+          "denoise": 0.55,
           "max_frames": 96
         },
         "wan": {
@@ -163,8 +163,8 @@
           "fps": 24,
           "frames": 96,
           "steps": 40,
-          "cfg": 4.0,
-          "denoise": 0.65,
+          "cfg": 5.0,
+          "denoise": 0.55,
           "max_frames": 120
         },
         "wan": {
@@ -244,8 +244,8 @@
           "fps": 24,
           "frames": 144,
           "steps": 50,
-          "cfg": 4.0,
-          "denoise": 0.65,
+          "cfg": 5.0,
+          "denoise": 0.55,
           "max_frames": 144
         },
         "wan": {
