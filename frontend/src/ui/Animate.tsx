@@ -89,6 +89,13 @@ const QUALITY_PRESETS = [
   { id: 'ultra', label: 'Ultra', short: 'Maximum', description: 'For 24GB+ VRAM. Best quality, longest clips.' },
 ]
 
+// Recommended default values for LTX-Video (optimal for quality)
+const DEFAULT_ADVANCED_PARAMS = {
+  steps: 32,
+  cfg: 4.0,
+  denoise: 0.80, // 0.75-0.85 is optimal for LTX-Video
+}
+
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
@@ -167,11 +174,20 @@ export default function AnimateView(props: AnimateParams) {
   // Advanced Controls state
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
   const [advancedMode, setAdvancedMode] = useState(false)
-  const [customSteps, setCustomSteps] = useState(30)
-  const [customCfg, setCustomCfg] = useState(3.5)
-  const [customDenoise, setCustomDenoise] = useState(0.55)
+  const [customSteps, setCustomSteps] = useState(DEFAULT_ADVANCED_PARAMS.steps)
+  const [customCfg, setCustomCfg] = useState(DEFAULT_ADVANCED_PARAMS.cfg)
+  const [customDenoise, setCustomDenoise] = useState(DEFAULT_ADVANCED_PARAMS.denoise)
   const [seedLock, setSeedLock] = useState(false)
   const [customSeed, setCustomSeed] = useState(0)
+
+  // Reset advanced parameters to recommended defaults
+  const resetAdvancedParams = useCallback(() => {
+    setCustomSteps(DEFAULT_ADVANCED_PARAMS.steps)
+    setCustomCfg(DEFAULT_ADVANCED_PARAMS.cfg)
+    setCustomDenoise(DEFAULT_ADVANCED_PARAMS.denoise)
+    setSeedLock(false)
+    setCustomSeed(0)
+  }, [])
 
   // Reference Image state (source image for animation)
   const referenceInputRef = useRef<HTMLInputElement>(null)
@@ -361,9 +377,20 @@ export default function AnimateView(props: AnimateParams) {
               <Settings2 size={16} />
               PARAMETERS
             </h3>
-            <button type="button" onClick={() => setShowAdvancedSettings(false)} className="text-white/50 hover:text-white">
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={resetAdvancedParams}
+                className="text-white/50 hover:text-purple-400 transition-colors flex items-center gap-1 text-xs"
+                title="Reset to recommended defaults"
+              >
+                <RefreshCw size={14} />
+                Reset
+              </button>
+              <button type="button" onClick={() => setShowAdvancedSettings(false)} className="text-white/50 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
           <div className="p-5 space-y-6 max-h-[70vh] overflow-y-auto">
