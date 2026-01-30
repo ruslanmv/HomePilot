@@ -39,11 +39,11 @@
           "width": 768,
           "height": 512,
           "fps": 24,
-          "frames": 48,
-          "steps": 30,
-          "cfg": 5.0,
+          "frames": 49,
+          "steps": 28,
+          "cfg": 4.0,
           "denoise": 0.55,
-          "max_frames": 48
+          "max_frames": 49
         },
         "wan": {
           "width": 640,
@@ -90,11 +90,11 @@
           "width": 768,
           "height": 512,
           "fps": 24,
-          "frames": 96,
-          "steps": 40,
-          "cfg": 5.0,
+          "frames": 97,
+          "steps": 32,
+          "cfg": 4.0,
           "denoise": 0.55,
-          "max_frames": 96
+          "max_frames": 97
         },
         "wan": {
           "width": 832,
@@ -161,11 +161,11 @@
           "width": 768,
           "height": 512,
           "fps": 24,
-          "frames": 96,
+          "frames": 97,
           "steps": 40,
-          "cfg": 5.0,
+          "cfg": 4.5,
           "denoise": 0.55,
-          "max_frames": 120
+          "max_frames": 97
         },
         "wan": {
           "width": 832,
@@ -242,11 +242,11 @@
           "width": 768,
           "height": 512,
           "fps": 24,
-          "frames": 144,
+          "frames": 145,
           "steps": 50,
-          "cfg": 5.0,
+          "cfg": 4.5,
           "denoise": 0.55,
-          "max_frames": 144
+          "max_frames": 145
         },
         "wan": {
           "width": 832,
@@ -300,9 +300,10 @@
       "notes": "SVD always uses exactly 25 frames"
     },
     "ltx": {
-      "frame_rule": "any",
-      "min_frames": 9,
-      "notes": "LTX works best with frames = seconds * fps (no rounding needed)"
+      "frame_rule": "8n+1",
+      "valid_frames": [9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 113, 121, 129, 137, 145, 153],
+      "min_frames": 25,
+      "notes": "LTX requires frames in 8n+1 format (e.g. 49, 97, 145). For seconds->frames use ceil strategy."
     },
     "mochi": {
       "frame_rule": "6n+1",

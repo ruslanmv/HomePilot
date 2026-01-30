@@ -27,6 +27,30 @@ ANIM_RE = re.compile(r"\b(animate|make (a )?video|image\s*to\s*video)\b", re.I)
 URL_RE = re.compile(r"(https?://\S+)")
 
 
+def _clean_video_prompt(text: str) -> str:
+    """
+    Clean a video prompt by removing URLs and command words.
+
+    URLs in prompts (like "http://localhost:8000/files/...") confuse the text encoder
+    and degrade video quality. This function strips them out while preserving
+    the actual descriptive content.
+
+    Args:
+        text: Raw user input text
+
+    Returns:
+        Cleaned prompt suitable for video generation
+    """
+    # Remove URLs first (they can be long and contain confusing tokens)
+    cleaned = URL_RE.sub("", text)
+    # Remove common command words
+    cleaned = cleaned.replace("animate", "").strip()
+    # Collapse multiple spaces
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # Return cleaned prompt or a sensible default
+    return cleaned or "smooth natural motion"
+
+
 def _map_ref_strength_to_denoise(ref_strength: Optional[float]) -> float:
     """
     Map user-friendly reference strength (0..1) to ComfyUI denoise value.
@@ -365,7 +389,7 @@ async def orchestrate(
             # Build final workflow variables
             workflow_vars = {
                 "image_path": image_url,
-                "prompt": text_in.replace("animate", "").strip() or "smooth natural motion",
+                "prompt": _clean_video_prompt(text_in),
                 "motion": vid_motion if vid_motion is not None else "medium",
                 # Use preset values (with user overrides already applied)
                 "seconds": preset_vars.get("seconds", vid_seconds or 4),

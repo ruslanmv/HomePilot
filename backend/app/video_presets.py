@@ -95,13 +95,14 @@ def get_preset_for_vram(vram_gb: Optional[float] = None) -> str:
     return fallback
 
 
-def enforce_frame_rule(model_type: Optional[str], frames: int) -> int:
+def enforce_frame_rule(model_type: Optional[str], frames: int, strategy: str = "closest") -> int:
     """
     Enforce model-specific frame rules.
 
     Args:
         model_type: The detected model type
         frames: Requested frame count
+        strategy: "closest" (default) or "ceil" (round up to next valid)
 
     Returns:
         Adjusted frame count that satisfies model requirements
@@ -126,10 +127,21 @@ def enforce_frame_rule(model_type: Optional[str], frames: int) -> int:
         if frames < min_frames:
             return min_frames
 
-        # Find closest valid frame count
+        # Find valid frame count based on strategy
         if valid:
-            closest = min(valid, key=lambda x: abs(x - frames) if x >= min_frames else float('inf'))
-            return closest
+            valid_filtered = sorted([f for f in valid if f >= min_frames])
+            if valid_filtered:
+                if strategy == "ceil":
+                    # Round up to next valid frame count
+                    for v in valid_filtered:
+                        if v >= frames:
+                            return v
+                    # If frames exceeds all valid, return max valid
+                    return valid_filtered[-1]
+                else:
+                    # Default: find closest valid frame count
+                    closest = min(valid_filtered, key=lambda x: abs(x - frames))
+                    return closest
 
         # Calculate: find n such that 8n+1 is closest to frames
         n = max(1, (frames - 1) // 8)
@@ -249,8 +261,8 @@ def apply_preset_to_workflow_vars(
     if vid_seconds is not None:
         fps = result.get("fps", 8)
         frames = vid_seconds * fps
-        # Enforce frame rules
-        result["frames"] = enforce_frame_rule(model_type, frames)
+        # Enforce frame rules with ceil strategy (round up to ensure requested duration)
+        result["frames"] = enforce_frame_rule(model_type, frames, strategy="ceil")
         result["seconds"] = vid_seconds
 
     # Enforce max_frames cap to prevent GPU overload
