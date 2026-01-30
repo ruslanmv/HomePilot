@@ -1778,9 +1778,10 @@ async def chat(inp: ChatIn) -> JSONResponse:
 
         try:
             options = {
-                "strength": float(inp.gameStrength or 0.65),
-                # Only pass spicy_strength if NSFW mode is enabled
-                "spicy_strength": float(inp.gameSpicyStrength or 0.0) if inp.nsfwMode else 0.0,
+                # Use explicit None check to allow 0.0 as a valid value (Preservation Mode)
+                "strength": float(inp.gameStrength) if inp.gameStrength is not None else 0.65,
+                # Only pass spicy_strength if NSFW mode is enabled (also use None check for 0.0)
+                "spicy_strength": float(inp.gameSpicyStrength) if inp.gameSpicyStrength is not None and inp.nsfwMode else 0.0,
                 "locks": inp.gameLocks or {},
                 "world_bible": inp.gameWorldBible or "",
             }
