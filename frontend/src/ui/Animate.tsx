@@ -169,7 +169,7 @@ export default function AnimateView(props: AnimateParams) {
   const [advancedMode, setAdvancedMode] = useState(false)
   const [customSteps, setCustomSteps] = useState(30)
   const [customCfg, setCustomCfg] = useState(3.5)
-  const [customDenoise, setCustomDenoise] = useState(0.85)
+  const [customDenoise, setCustomDenoise] = useState(0.65)
   const [seedLock, setSeedLock] = useState(false)
   const [customSeed, setCustomSeed] = useState(0)
 
@@ -418,11 +418,15 @@ export default function AnimateView(props: AnimateParams) {
                   />
                 </div>
 
-                {/* Denoise Strength */}
+                {/* Creativity / Denoise Strength */}
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs">
-                    <span className="uppercase tracking-wider text-white/40 font-semibold">Denoise Strength</span>
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Creativity</span>
                     <span className="text-white/60">{customDenoise.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] text-white/30 mb-1">
+                    <span>More Faithful</span>
+                    <span>More Creative</span>
                   </div>
                   <input
                     type="range"
