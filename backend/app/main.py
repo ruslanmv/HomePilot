@@ -530,6 +530,86 @@ async def settings(request: Request) -> JSONResponse:
     )
 
 
+@app.get("/video-presets")
+async def get_video_presets(
+    model: Optional[str] = Query(None, description="Video model type: svd, ltx, wan, hunyuan, mochi, cogvideo"),
+    preset: Optional[str] = Query(None, description="Quality preset: low, medium, high, ultra"),
+) -> JSONResponse:
+    """
+    Get video generation preset values.
+
+    Returns model-specific settings for the selected quality preset.
+    If no model is specified, returns base preset values.
+    If no preset is specified, returns 'medium' preset.
+
+    Example: GET /video-presets?model=ltx&preset=medium
+    Returns: { steps: 32, cfg: 4.0, denoise: 0.55, fps: 24, frames: 97, ... }
+    """
+    try:
+        presets_path = Path(__file__).parent / "video_presets.json"
+
+        if not presets_path.exists():
+            return JSONResponse(
+                status_code=404,
+                content=_safe_err("Video presets file not found", code="presets_not_found"),
+            )
+
+        with open(presets_path, "r", encoding="utf-8") as f:
+            presets_data = json.load(f)
+
+        # Default to medium preset
+        preset_name = preset or "medium"
+        if preset_name not in presets_data.get("presets", {}):
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err(
+                    f"Unknown preset: {preset_name}. Valid presets: low, medium, high, ultra",
+                    code="invalid_preset",
+                ),
+            )
+
+        preset_config = presets_data["presets"][preset_name]
+        base_values = preset_config.get("base", {})
+
+        # If model specified, merge with model-specific overrides
+        if model:
+            model_lower = model.lower()
+            model_overrides = preset_config.get("model_overrides", {}).get(model_lower, {})
+            # Merge base with overrides (overrides take precedence)
+            result_values = {**base_values, **model_overrides}
+        else:
+            result_values = base_values
+
+        # Get model rules if available
+        model_rules = {}
+        if model:
+            model_lower = model.lower()
+            model_rules = presets_data.get("model_rules", {}).get(model_lower, {})
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "preset": preset_name,
+                "model": model,
+                "values": result_values,
+                "model_rules": model_rules,
+                "ui": preset_config.get("ui", {}),
+            },
+        )
+
+    except json.JSONDecodeError as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Invalid JSON in presets file: {str(e)}", code="presets_invalid_json"),
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Error loading presets: {str(e)}", code="presets_error"),
+        )
+
+
 # -----------------------------------------------------------------------------
 # API Keys Management (Optional - for gated HuggingFace / Civitai models)
 # -----------------------------------------------------------------------------

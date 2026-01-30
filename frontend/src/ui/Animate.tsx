@@ -89,11 +89,20 @@ const QUALITY_PRESETS = [
   { id: 'ultra', label: 'Ultra', short: 'Maximum', description: 'For 24GB+ VRAM. Best quality, longest clips.' },
 ]
 
-// Recommended default values for LTX-Video (optimal for quality)
-const DEFAULT_ADVANCED_PARAMS = {
-  steps: 32,
-  cfg: 4.0,
-  denoise: 0.80, // 0.75-0.85 is optimal for LTX-Video
+// Fallback default values (used when API is unavailable)
+const FALLBACK_ADVANCED_PARAMS = {
+  steps: 30,
+  cfg: 3.5,
+  denoise: 0.85,
+}
+
+// Type for preset values from API
+type PresetValues = {
+  steps?: number
+  cfg?: number
+  denoise?: number
+  fps?: number
+  frames?: number
 }
 
 // -----------------------------------------------------------------------------
@@ -174,20 +183,69 @@ export default function AnimateView(props: AnimateParams) {
   // Advanced Controls state
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
   const [advancedMode, setAdvancedMode] = useState(false)
-  const [customSteps, setCustomSteps] = useState(DEFAULT_ADVANCED_PARAMS.steps)
-  const [customCfg, setCustomCfg] = useState(DEFAULT_ADVANCED_PARAMS.cfg)
-  const [customDenoise, setCustomDenoise] = useState(DEFAULT_ADVANCED_PARAMS.denoise)
+  const [customSteps, setCustomSteps] = useState(FALLBACK_ADVANCED_PARAMS.steps)
+  const [customCfg, setCustomCfg] = useState(FALLBACK_ADVANCED_PARAMS.cfg)
+  const [customDenoise, setCustomDenoise] = useState(FALLBACK_ADVANCED_PARAMS.denoise)
   const [seedLock, setSeedLock] = useState(false)
   const [customSeed, setCustomSeed] = useState(0)
 
-  // Reset advanced parameters to recommended defaults
+  // Preset defaults from API (model-specific)
+  const [presetDefaults, setPresetDefaults] = useState<PresetValues>(FALLBACK_ADVANCED_PARAMS)
+
+  // Detect model type from model filename
+  const detectedModelType = useMemo(() => {
+    const model = (props.modelVideo || '').toLowerCase()
+    if (model.includes('ltx')) return 'ltx'
+    if (model.includes('svd')) return 'svd'
+    if (model.includes('wan')) return 'wan'
+    if (model.includes('hunyuan')) return 'hunyuan'
+    if (model.includes('mochi')) return 'mochi'
+    if (model.includes('cogvideo')) return 'cogvideo'
+    return null // Unknown model, use base preset
+  }, [props.modelVideo])
+
+  // Fetch preset defaults when model or quality changes
+  useEffect(() => {
+    const fetchPresets = async () => {
+      try {
+        const base = props.backendUrl.replace(/\/+$/, '')
+        const params = new URLSearchParams()
+        if (detectedModelType) params.set('model', detectedModelType)
+        params.set('preset', qualityPreset)
+
+        const res = await fetch(`${base}/video-presets?${params}`, {
+          headers: authKey ? { 'x-api-key': authKey } : undefined,
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          if (data.ok && data.values) {
+            setPresetDefaults({
+              steps: data.values.steps ?? FALLBACK_ADVANCED_PARAMS.steps,
+              cfg: data.values.cfg ?? FALLBACK_ADVANCED_PARAMS.cfg,
+              denoise: data.values.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise,
+              fps: data.values.fps,
+              frames: data.values.frames,
+            })
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch video presets:', err)
+        // Keep using fallback defaults
+      }
+    }
+
+    fetchPresets()
+  }, [props.backendUrl, authKey, detectedModelType, qualityPreset])
+
+  // Reset advanced parameters to preset defaults (model-specific)
   const resetAdvancedParams = useCallback(() => {
-    setCustomSteps(DEFAULT_ADVANCED_PARAMS.steps)
-    setCustomCfg(DEFAULT_ADVANCED_PARAMS.cfg)
-    setCustomDenoise(DEFAULT_ADVANCED_PARAMS.denoise)
+    setCustomSteps(presetDefaults.steps ?? FALLBACK_ADVANCED_PARAMS.steps)
+    setCustomCfg(presetDefaults.cfg ?? FALLBACK_ADVANCED_PARAMS.cfg)
+    setCustomDenoise(presetDefaults.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise)
     setSeedLock(false)
     setCustomSeed(0)
-  }, [])
+  }, [presetDefaults])
 
   // Reference Image state (source image for animation)
   const referenceInputRef = useRef<HTMLInputElement>(null)
