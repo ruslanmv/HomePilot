@@ -442,7 +442,9 @@ def _build_variation_user_prompt(
         return ", ".join(vals)
 
     # Strength guidance:
-    if options.strength < 0.34:
+    if options.strength < 0.1:
+        strength_hint = "Minimal variation. Keep the prompt nearly identical. Only improve clarity/quality, do NOT change any details, subjects, or composition. Preserve the exact same scene."
+    elif options.strength < 0.34:
         strength_hint = "Subtle variation. Mostly keep composition/style; change 1-2 details."
     elif options.strength < 0.67:
         strength_hint = "Medium variation. Change character + 2-4 scene details; keep theme consistent."
