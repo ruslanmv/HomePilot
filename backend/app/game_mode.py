@@ -442,7 +442,9 @@ def _build_variation_user_prompt(
         return ", ".join(vals)
 
     # Strength guidance:
-    if options.strength < 0.34:
+    if options.strength < 0.1:
+        strength_hint = "Minimal variation. Keep the prompt nearly identical. Only improve clarity/quality, do NOT change any details, subjects, or composition. Preserve the exact same scene."
+    elif options.strength < 0.34:
         strength_hint = "Subtle variation. Mostly keep composition/style; change 1-2 details."
     elif options.strength < 0.67:
         strength_hint = "Medium variation. Change character + 2-4 scene details; keep theme consistent."
@@ -596,6 +598,26 @@ async def next_variation(
         opts = GameOptions.model_validate(merged)
     except ValidationError:
         opts = GameOptions()
+
+    # Preservation Mode: when strength == 0.0, skip LLM variation entirely
+    # This allows users to use Game Mode's auto-generation while preserving their exact prompt
+    if opts.strength == 0.0:
+        print(f"[GAME MODE] Preservation Mode: strength=0.0, returning original prompt unchanged")
+
+        # Still update counter for tracking
+        counter = int(counter) + 1
+
+        # Save session and event (preserves history for session continuity)
+        _save_session(session_id, stored_base, opts.model_dump(), memory, counter)
+        _insert_event(session_id, counter, stored_base, {})
+
+        return VariationResult(
+            session_id=session_id,
+            counter=counter,
+            base_prompt=stored_base,
+            variation_prompt=stored_base,  # Return original prompt unchanged
+            tags={},
+        )
 
     # Call Ollama
     sys_msg = _build_variation_system_prompt()
