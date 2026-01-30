@@ -70,6 +70,54 @@ def detect_model_type(model_name: Optional[str]) -> Optional[str]:
     return None
 
 
+def get_negative_prompt(
+    model_type: Optional[str],
+    user_override: Optional[str] = None,
+    max_length: int = 500,
+) -> str:
+    """
+    Get the negative prompt for video generation.
+
+    Priority chain:
+    1. User override (from Advanced Settings) - highest priority
+    2. Model default (from model_rules.default_negative_prompt) - base default
+    3. Empty string - fallback
+
+    Args:
+        model_type: The detected model type ('ltx', 'svd', 'wan', etc.)
+        user_override: Optional user-provided negative prompt
+        max_length: Maximum length to truncate to (prevents prompt overflow)
+
+    Returns:
+        Cleaned negative prompt string
+    """
+    import re
+
+    # Priority 1: User override
+    if user_override is not None and user_override.strip():
+        prompt = user_override.strip()
+    else:
+        # Priority 2: Model default from rules
+        presets = _load_presets()
+        rules = presets.get("model_rules", {})
+
+        if model_type and model_type in rules:
+            prompt = rules[model_type].get("default_negative_prompt", "")
+        else:
+            prompt = ""
+
+    # Clean the prompt:
+    # - Remove URLs (security + text encoder confusion)
+    prompt = re.sub(r"https?://\S+", "", prompt)
+    # - Normalize whitespace
+    prompt = re.sub(r"\s+", " ", prompt).strip()
+    # - Truncate to max length
+    if len(prompt) > max_length:
+        prompt = prompt[:max_length].rsplit(",", 1)[0].strip()
+
+    return prompt
+
+
 def get_preset_for_vram(vram_gb: Optional[float] = None) -> str:
     """
     Auto-select a preset based on available VRAM.
@@ -222,6 +270,7 @@ def apply_preset_to_workflow_vars(
     vid_cfg: Optional[float] = None,
     vid_denoise: Optional[float] = None,
     vid_seed: Optional[int] = None,
+    vid_negative_prompt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Convenience function to apply preset with user overrides.
@@ -232,6 +281,7 @@ def apply_preset_to_workflow_vars(
         preset_name: Preset to use ('low', 'medium', 'high', 'ultra', or None for medium)
         model_name: Full model filename to detect type from
         vid_*: Optional user overrides from Advanced Controls
+        vid_negative_prompt: Optional user override for negative prompt
 
     Returns:
         Dict with all workflow variables ready to use
@@ -274,6 +324,9 @@ def apply_preset_to_workflow_vars(
     # Add seed if provided
     if vid_seed is not None:
         result["seed"] = vid_seed
+
+    # Add negative prompt (model default or user override)
+    result["negative_prompt"] = get_negative_prompt(model_type, vid_negative_prompt)
 
     return result
 

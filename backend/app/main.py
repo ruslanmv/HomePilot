@@ -160,6 +160,7 @@ class ChatIn(BaseModel):
     vidFps: Optional[int] = Field(None, description="Video FPS")
     vidMotion: Optional[str] = Field(None, description="Video motion bucket")
     vidModel: Optional[str] = Field(None, description="Video model selection (svd, wan-2.2, seedream)")
+    vidNegativePrompt: Optional[str] = Field(None, description="Custom negative prompt for video generation")
     nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
     promptRefinement: Optional[bool] = Field(True, description="Enable AI prompt refinement for image generation (default: True)")
     # ----------------------------
@@ -1756,6 +1757,7 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "vidFps": inp.vidFps,
         "vidMotion": inp.vidMotion,
         "vidModel": inp.vidModel,
+        "vidNegativePrompt": inp.vidNegativePrompt,
         "nsfwMode": inp.nsfwMode,
         "promptRefinement": inp.promptRefinement,
         # Reference image for img2img similar generation

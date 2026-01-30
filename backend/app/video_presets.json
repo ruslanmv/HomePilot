@@ -297,31 +297,37 @@
       "frame_rule": "fixed",
       "fixed_frames": 25,
       "fixed_denoise": 1.0,
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter",
       "notes": "SVD always uses exactly 25 frames"
     },
     "ltx": {
       "frame_rule": "8n+1",
       "valid_frames": [9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 113, 121, 129, 137, 145, 153],
       "min_frames": 25,
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, warping, deformed, extra limbs, disfigured face",
       "notes": "LTX requires frames in 8n+1 format (e.g. 49, 97, 145). For seconds->frames use ceil strategy."
     },
     "mochi": {
       "frame_rule": "6n+1",
       "valid_frames": [37, 43, 49, 55, 61, 67, 73, 79, 85, 91, 97, 103, 109, 115, 121, 127, 133, 139, 145, 151, 157, 163],
       "min_frames": 37,
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, deformed",
       "notes": "Mochi requires frames in format 6n+1, minimum 37"
     },
     "wan": {
       "frame_rule": "any",
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, deformed",
       "notes": "Wan supports any frame count"
     },
     "hunyuan": {
       "frame_rule": "any",
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, deformed",
       "notes": "HunyuanVideo supports any frame count"
     },
     "cogvideo": {
       "frame_rule": "any",
       "fixed_frames": 49,
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter",
       "notes": "CogVideo typically uses 49 frames"
     }
   },

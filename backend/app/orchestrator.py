@@ -291,6 +291,7 @@ async def orchestrate(
     vid_denoise: Optional[float] = None,
     vid_seed: Optional[int] = None,
     vid_preset: Optional[str] = None,  # Quality preset: 'low', 'medium', 'high', 'ultra'
+    vid_negative_prompt: Optional[str] = None,  # Custom negative prompt for video
     nsfw_mode: Optional[bool] = None,
     prompt_refinement: Optional[bool] = True,
     img_reference: Optional[str] = None,  # Reference image URL for img2img
@@ -384,12 +385,14 @@ async def orchestrate(
                 vid_cfg=vid_cfg,
                 vid_denoise=vid_denoise,
                 vid_seed=vid_seed,
+                vid_negative_prompt=vid_negative_prompt,
             )
 
             # Build final workflow variables
             workflow_vars = {
                 "image_path": image_url,
                 "prompt": _clean_video_prompt(text_in),
+                "negative_prompt": preset_vars.get("negative_prompt", ""),
                 "motion": vid_motion if vid_motion is not None else "medium",
                 # Use preset values (with user overrides already applied)
                 "seconds": preset_vars.get("seconds", vid_seconds or 4),
@@ -921,6 +924,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             vid_denoise=payload.get("vidDenoise"),
             vid_seed=payload.get("vidSeed"),
             vid_preset=payload.get("vidPreset"),
+            vid_negative_prompt=payload.get("vidNegativePrompt"),
             nsfw_mode=payload.get("nsfwMode"),
             prompt_refinement=payload.get("promptRefinement", True),
             img_reference=payload.get("imgReference"),

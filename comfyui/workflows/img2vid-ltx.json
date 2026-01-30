@@ -39,7 +39,7 @@
   "5": {
     "class_type": "CLIPTextEncode",
     "inputs": {
-      "text": "blurry, low quality, distorted, watermark, text, static, frozen, jittery, deformed face, ugly face, distorted face, disfigured, mutated, bad anatomy, wrong proportions, extra limbs, malformed hands, bad hands",
+      "text": "{{negative_prompt}}",
       "clip": ["3", 0]
     }
   },

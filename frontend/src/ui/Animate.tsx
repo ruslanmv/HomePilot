@@ -103,6 +103,7 @@ type PresetValues = {
   denoise?: number
   fps?: number
   frames?: number
+  negativePrompt?: string
 }
 
 // -----------------------------------------------------------------------------
@@ -188,6 +189,8 @@ export default function AnimateView(props: AnimateParams) {
   const [customDenoise, setCustomDenoise] = useState(FALLBACK_ADVANCED_PARAMS.denoise)
   const [seedLock, setSeedLock] = useState(false)
   const [customSeed, setCustomSeed] = useState(0)
+  const [customNegativePrompt, setCustomNegativePrompt] = useState('')
+  const [showNegativePrompt, setShowNegativePrompt] = useState(false)
 
   // Preset defaults from API (model-specific)
   const [presetDefaults, setPresetDefaults] = useState<PresetValues>(FALLBACK_ADVANCED_PARAMS)
@@ -226,6 +229,7 @@ export default function AnimateView(props: AnimateParams) {
               denoise: data.values.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise,
               fps: data.values.fps,
               frames: data.values.frames,
+              negativePrompt: data.model_rules?.default_negative_prompt ?? '',
             })
           }
         }
@@ -245,6 +249,8 @@ export default function AnimateView(props: AnimateParams) {
     setCustomDenoise(presetDefaults.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise)
     setSeedLock(false)
     setCustomSeed(0)
+    setCustomNegativePrompt('')
+    setShowNegativePrompt(false)
   }, [presetDefaults])
 
   // Reference Image state (source image for animation)
@@ -340,6 +346,7 @@ export default function AnimateView(props: AnimateParams) {
           vidCfg: customCfg,
           vidDenoise: customDenoise,
           ...(seedLock && { vidSeed: customSeed }),
+          ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
         }),
 
         // Provider settings
@@ -522,6 +529,32 @@ export default function AnimateView(props: AnimateParams) {
                     onChange={(e) => setCustomDenoise(Number(e.target.value))}
                     className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
                   />
+                </div>
+
+                {/* Custom Negative Prompt */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                    <span className="text-sm text-white/80">Custom Negative Prompt</span>
+                    <button
+                      onClick={() => setShowNegativePrompt(!showNegativePrompt)}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${showNegativePrompt ? 'bg-purple-500' : 'bg-white/20'}`}
+                    >
+                      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${showNegativePrompt ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
+                  </div>
+                  {showNegativePrompt && (
+                    <div className="space-y-2">
+                      <textarea
+                        value={customNegativePrompt}
+                        onChange={(e) => setCustomNegativePrompt(e.target.value)}
+                        placeholder={presetDefaults.negativePrompt || 'text, watermark, logo, low quality, blurry, flicker, jitter, deformed'}
+                        className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white focus:border-purple-500/50 focus:outline-none resize-none h-20"
+                      />
+                      <p className="text-[10px] text-white/40">
+                        Leave empty to use model default. Separate terms with commas.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Lock Seed */}
