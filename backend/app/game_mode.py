@@ -94,6 +94,7 @@ class GameOptions(BaseModel):
     Controls how diverse the variations are.
     """
     strength: float = Field(0.65, ge=0.0, le=1.0)  # 0 subtle -> 1 wild
+    spicy_strength: float = Field(0.0, ge=0.0, le=1.0)  # 0 off -> 1 bold (only when nsfwMode enabled)
     locks: GameLocks = Field(default_factory=GameLocks)
 
     # How aggressively to avoid repeats:
@@ -466,6 +467,16 @@ def _build_variation_user_prompt(
         lock_notes.append("Keep time of day consistent.")
     if not lock_notes:
         lock_notes.append("No locks. Free to vary widely while staying on-theme.")
+
+    # Spicy guidance (only when spicy_strength > 0, meaning nsfwMode is enabled)
+    if options.spicy_strength > 0:
+        if options.spicy_strength < 0.34:
+            spicy_hint = "Add subtle allure: elegant poses, tasteful glamour, hint of sensuality."
+        elif options.spicy_strength < 0.67:
+            spicy_hint = "Add moderate sensuality: romantic mood, suggestive poses, fan service elements."
+        else:
+            spicy_hint = "Add bold adult themes: sensual, provocative, explicit romantic elements."
+        lock_notes.append(spicy_hint)
 
     world_bible = (options.world_bible or "").strip()
     world_bible_txt = f"\nWorld bible:\n{world_bible}\n" if world_bible else ""

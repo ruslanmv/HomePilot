@@ -169,6 +169,7 @@ class ChatIn(BaseModel):
     gameMode: Optional[bool] = Field(False, description="Enable game mode (prompt variations)")
     gameSessionId: Optional[str] = Field(None, description="Game session id (keeps variation memory)")
     gameStrength: Optional[float] = Field(0.65, description="Variation strength 0..1")
+    gameSpicyStrength: Optional[float] = Field(0.0, description="Spicy variation strength 0..1 (only used when nsfwMode + gameMode)")
     gameLocks: Optional[Dict[str, Any]] = Field(None, description="Lock settings (world/style/etc)")
     gameWorldBible: Optional[str] = Field("", description="Optional world bible text for consistency")
     # ----------------------------
@@ -1778,6 +1779,8 @@ async def chat(inp: ChatIn) -> JSONResponse:
         try:
             options = {
                 "strength": float(inp.gameStrength or 0.65),
+                # Only pass spicy_strength if NSFW mode is enabled
+                "spicy_strength": float(inp.gameSpicyStrength or 0.0) if inp.nsfwMode else 0.0,
                 "locks": inp.gameLocks or {},
                 "world_bible": inp.gameWorldBible or "",
             }
