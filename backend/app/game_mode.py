@@ -599,6 +599,26 @@ async def next_variation(
     except ValidationError:
         opts = GameOptions()
 
+    # Preservation Mode: when strength == 0.0, skip LLM variation entirely
+    # This allows users to use Game Mode's auto-generation while preserving their exact prompt
+    if opts.strength == 0.0:
+        print(f"[GAME MODE] Preservation Mode: strength=0.0, returning original prompt unchanged")
+
+        # Still update counter for tracking
+        counter = int(counter) + 1
+
+        # Save session and event (preserves history for session continuity)
+        _save_session(session_id, stored_base, opts.model_dump(), memory, counter)
+        _insert_event(session_id, counter, stored_base, {})
+
+        return VariationResult(
+            session_id=session_id,
+            counter=counter,
+            base_prompt=stored_base,
+            variation_prompt=stored_base,  # Return original prompt unchanged
+            tags={},
+        )
+
     # Call Ollama
     sys_msg = _build_variation_system_prompt()
     user_msg = _build_variation_user_prompt(base_prompt=stored_base, options=opts, memory=memory, counter=counter)
