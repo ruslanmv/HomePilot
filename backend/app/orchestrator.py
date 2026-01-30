@@ -14,6 +14,7 @@ from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
 from .defaults import DEFAULT_NEGATIVE_PROMPT, enhance_negative_prompt
 from .model_config import get_model_settings, get_architecture, MODEL_ARCHITECTURES
+from . import video_presets
 
 # Import specialized handlers
 from .search import run_search
@@ -24,6 +25,30 @@ IMAGE_RE = re.compile(r"\b(imagine|generate|create|draw|make)\b.*\b(image|pictur
 EDIT_RE = re.compile(r"\b(edit|inpaint|replace|remove|change)\b", re.I)
 ANIM_RE = re.compile(r"\b(animate|make (a )?video|image\s*to\s*video)\b", re.I)
 URL_RE = re.compile(r"(https?://\S+)")
+
+
+def _clean_video_prompt(text: str) -> str:
+    """
+    Clean a video prompt by removing URLs and command words.
+
+    URLs in prompts (like "http://localhost:8000/files/...") confuse the text encoder
+    and degrade video quality. This function strips them out while preserving
+    the actual descriptive content.
+
+    Args:
+        text: Raw user input text
+
+    Returns:
+        Cleaned prompt suitable for video generation
+    """
+    # Remove URLs first (they can be long and contain confusing tokens)
+    cleaned = URL_RE.sub("", text)
+    # Remove common command words
+    cleaned = cleaned.replace("animate", "").strip()
+    # Collapse multiple spaces
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # Return cleaned prompt or a sensible default
+    return cleaned or "smooth natural motion"
 
 
 def _map_ref_strength_to_denoise(ref_strength: Optional[float]) -> float:
@@ -261,6 +286,12 @@ async def orchestrate(
     vid_fps: Optional[int] = None,
     vid_motion: Optional[str] = None,
     vid_model: Optional[str] = None,
+    vid_steps: Optional[int] = None,
+    vid_cfg: Optional[float] = None,
+    vid_denoise: Optional[float] = None,
+    vid_seed: Optional[int] = None,
+    vid_preset: Optional[str] = None,  # Quality preset: 'low', 'medium', 'high', 'ultra'
+    vid_negative_prompt: Optional[str] = None,  # Custom negative prompt for video
     nsfw_mode: Optional[bool] = None,
     prompt_refinement: Optional[bool] = True,
     img_reference: Optional[str] = None,  # Reference image URL for img2img
@@ -296,10 +327,11 @@ async def orchestrate(
 
         try:
             # Determine which video workflow to use based on selected model
-            video_workflow_name = "img2vid"
-            detected_model_type = None
+            video_workflow_name = "img2vid"  # Default to SVD (lightest, most compatible)
+            detected_model_type = "svd"  # Default to SVD
 
-            if vid_model:
+            # Normalize vid_model - handle None, "None", empty string
+            if vid_model and vid_model.lower() not in ("none", "null", ""):
                 # Map model filename or short name to workflow
                 # Support both full filenames and short names
                 vid_model_lower = vid_model.lower()
@@ -324,31 +356,55 @@ async def orchestrate(
                     detected_model_type = "cogvideo"
                     video_workflow_name = "img2vid-cogvideo"
                 else:
-                    # Legacy short name mapping
+                    # Legacy short name mapping - defaults to SVD
                     video_workflow_map = {
                         "svd": "img2vid",
                         "wan-2.2": "img2vid-wan",
                         "seedream": "img2vid-seedream",
                     }
                     video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
+                    detected_model_type = "svd"  # Default to SVD for unknown models
+            else:
+                # No model specified - use SVD as the safest default
+                vid_model = None  # Normalize to Python None
+                detected_model_type = "svd"
+                video_workflow_name = "img2vid"
 
-            # Calculate frames from seconds (default to 8 fps for most models)
-            fps = 8
-            seconds = vid_seconds if vid_seconds is not None else 4
-            frames = seconds * fps
-
-            res = run_workflow(
-                video_workflow_name,
-                {
-                    "image_path": image_url,
-                    "prompt": text_in.replace("animate", "").strip() or "smooth natural motion",
-                    "motion": vid_motion if vid_motion is not None else "medium",
-                    "seconds": seconds,
-                    "frames": frames,
-                    "fps": fps,
-                    "seed": random.randint(0, 2**32 - 1),
-                },
+            # Use preset system to get workflow variables
+            # Preset provides base values, user overrides take precedence
+            # NOTE: Don't pass vid_fps when using presets - let the preset's model-specific
+            # fps be used. The frontend sends vid_fps=8 as default, which would override
+            # the correct model-specific fps (e.g., 24 for LTX).
+            # Pass detected_model_type to ensure correct model-specific settings are used
+            preset_vars = video_presets.apply_preset_to_workflow_vars(
+                preset_name=vid_preset,  # None defaults to 'medium'
+                model_name=detected_model_type,  # Use detected type, not raw vid_model
+                vid_seconds=vid_seconds,
+                vid_fps=None,  # Let preset determine fps based on model
+                vid_steps=vid_steps,
+                vid_cfg=vid_cfg,
+                vid_denoise=vid_denoise,
+                vid_seed=vid_seed,
+                vid_negative_prompt=vid_negative_prompt,
             )
+
+            # Build final workflow variables
+            workflow_vars = {
+                "image_path": image_url,
+                "prompt": _clean_video_prompt(text_in),
+                "negative_prompt": preset_vars.get("negative_prompt", ""),
+                "motion": vid_motion if vid_motion is not None else "medium",
+                # Use preset values (with user overrides already applied)
+                "seconds": preset_vars.get("seconds", vid_seconds or 4),
+                "frames": preset_vars.get("frames", 33),
+                "fps": preset_vars.get("fps", 8),
+                "seed": preset_vars.get("seed", random.randint(0, 2**32 - 1)),
+                "steps": preset_vars.get("steps", 30),
+                "cfg": preset_vars.get("cfg", 3.5),
+                "denoise": preset_vars.get("denoise", 0.85),
+            }
+
+            res = run_workflow(video_workflow_name, workflow_vars)
             video_url = (res.get("videos") or [None])[0]
             images = res.get("images") or []
 
@@ -364,7 +420,11 @@ async def orchestrate(
 
             if video_url:
                 text = "Here's your animated video!"
-                media = {"video_url": video_url}
+                media = {
+                    "video_url": video_url,
+                    "seed": workflow_vars["seed"],
+                    "model": vid_model,
+                }
                 add_message(cid, "assistant", text, media)
                 return {"conversation_id": cid, "text": text, "media": media}
             elif images:
@@ -859,6 +919,12 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             vid_fps=payload.get("vidFps"),
             vid_motion=payload.get("vidMotion"),
             vid_model=payload.get("vidModel"),
+            vid_steps=payload.get("vidSteps"),
+            vid_cfg=payload.get("vidCfg"),
+            vid_denoise=payload.get("vidDenoise"),
+            vid_seed=payload.get("vidSeed"),
+            vid_preset=payload.get("vidPreset"),
+            vid_negative_prompt=payload.get("vidNegativePrompt"),
             nsfw_mode=payload.get("nsfwMode"),
             prompt_refinement=payload.get("promptRefinement", True),
             img_reference=payload.get("imgReference"),

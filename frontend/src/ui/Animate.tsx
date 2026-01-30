@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, Maximize2, Clock, Zap, Sliders, Loader2 } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2 } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -19,6 +19,10 @@ type AnimateItem = {
   fps?: number
   motion?: string
   model?: string
+  // Advanced parameters
+  steps?: number
+  cfg?: number
+  denoise?: number
 }
 
 export type AnimateParams = {
@@ -76,6 +80,31 @@ const FPS_PRESETS = [
   { label: '16 fps', value: 16 },
   { label: '24 fps', value: 24 },
 ]
+
+// Quality presets
+const QUALITY_PRESETS = [
+  { id: 'low', label: 'Low', short: 'Fast', description: 'For 6-8GB VRAM. Fastest generation.' },
+  { id: 'medium', label: 'Medium', short: 'Balanced', description: 'For 10-12GB VRAM. Good quality/speed balance.' },
+  { id: 'high', label: 'High', short: 'Quality', description: 'For 16GB+ VRAM. Higher quality output.' },
+  { id: 'ultra', label: 'Ultra', short: 'Maximum', description: 'For 24GB+ VRAM. Best quality, longest clips.' },
+]
+
+// Fallback default values (used when API is unavailable)
+const FALLBACK_ADVANCED_PARAMS = {
+  steps: 30,
+  cfg: 3.5,
+  denoise: 0.85,
+}
+
+// Type for preset values from API
+type PresetValues = {
+  steps?: number
+  cfg?: number
+  denoise?: number
+  fps?: number
+  frames?: number
+  negativePrompt?: string
+}
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -150,6 +179,79 @@ export default function AnimateView(props: AnimateParams) {
   const [fps, setFps] = useState(props.vidFps || 8)
   const [motion, setMotion] = useState(props.vidMotion || 'medium')
   const [showSettingsPanel, setShowSettingsPanel] = useState(false)
+  const [qualityPreset, setQualityPreset] = useState('medium')
+
+  // Advanced Controls state
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
+  const [advancedMode, setAdvancedMode] = useState(false)
+  const [customSteps, setCustomSteps] = useState(FALLBACK_ADVANCED_PARAMS.steps)
+  const [customCfg, setCustomCfg] = useState(FALLBACK_ADVANCED_PARAMS.cfg)
+  const [customDenoise, setCustomDenoise] = useState(FALLBACK_ADVANCED_PARAMS.denoise)
+  const [seedLock, setSeedLock] = useState(false)
+  const [customSeed, setCustomSeed] = useState(0)
+  const [customNegativePrompt, setCustomNegativePrompt] = useState('')
+  const [showNegativePrompt, setShowNegativePrompt] = useState(false)
+
+  // Preset defaults from API (model-specific)
+  const [presetDefaults, setPresetDefaults] = useState<PresetValues>(FALLBACK_ADVANCED_PARAMS)
+
+  // Detect model type from model filename
+  const detectedModelType = useMemo(() => {
+    const model = (props.modelVideo || '').toLowerCase()
+    if (model.includes('ltx')) return 'ltx'
+    if (model.includes('svd')) return 'svd'
+    if (model.includes('wan')) return 'wan'
+    if (model.includes('hunyuan')) return 'hunyuan'
+    if (model.includes('mochi')) return 'mochi'
+    if (model.includes('cogvideo')) return 'cogvideo'
+    return null // Unknown model, use base preset
+  }, [props.modelVideo])
+
+  // Fetch preset defaults when model or quality changes
+  useEffect(() => {
+    const fetchPresets = async () => {
+      try {
+        const base = props.backendUrl.replace(/\/+$/, '')
+        const params = new URLSearchParams()
+        if (detectedModelType) params.set('model', detectedModelType)
+        params.set('preset', qualityPreset)
+
+        const res = await fetch(`${base}/video-presets?${params}`, {
+          headers: authKey ? { 'x-api-key': authKey } : undefined,
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          if (data.ok && data.values) {
+            setPresetDefaults({
+              steps: data.values.steps ?? FALLBACK_ADVANCED_PARAMS.steps,
+              cfg: data.values.cfg ?? FALLBACK_ADVANCED_PARAMS.cfg,
+              denoise: data.values.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise,
+              fps: data.values.fps,
+              frames: data.values.frames,
+              negativePrompt: data.model_rules?.default_negative_prompt ?? '',
+            })
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch video presets:', err)
+        // Keep using fallback defaults
+      }
+    }
+
+    fetchPresets()
+  }, [props.backendUrl, authKey, detectedModelType, qualityPreset])
+
+  // Reset advanced parameters to preset defaults (model-specific)
+  const resetAdvancedParams = useCallback(() => {
+    setCustomSteps(presetDefaults.steps ?? FALLBACK_ADVANCED_PARAMS.steps)
+    setCustomCfg(presetDefaults.cfg ?? FALLBACK_ADVANCED_PARAMS.cfg)
+    setCustomDenoise(presetDefaults.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise)
+    setSeedLock(false)
+    setCustomSeed(0)
+    setCustomNegativePrompt('')
+    setShowNegativePrompt(false)
+  }, [presetDefaults])
 
   // Reference Image state (source image for animation)
   const referenceInputRef = useRef<HTMLInputElement>(null)
@@ -236,6 +338,16 @@ export default function AnimateView(props: AnimateParams) {
         vidFps: fps,
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
+        vidPreset: qualityPreset,
+
+        // Advanced parameters (when enabled)
+        ...(advancedMode && {
+          vidSteps: customSteps,
+          vidCfg: customCfg,
+          vidDenoise: customDenoise,
+          ...(seedLock && { vidSeed: customSeed }),
+          ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
+        }),
 
         // Provider settings
         provider: props.providerVideo === 'comfyui' ? 'ollama' : props.providerVideo,
@@ -269,11 +381,17 @@ export default function AnimateView(props: AnimateParams) {
         prompt: effectivePrompt,
         finalPrompt: data.media.final_prompt,
         sourceImageUrl: referenceUrl || undefined,
-        seed: data.media.seed,
+        seed: data.media.seed || (seedLock ? customSeed : undefined),
         seconds,
         fps,
         motion,
         model: data.media.model || props.modelVideo,
+        // Advanced parameters (if used)
+        ...(advancedMode && {
+          steps: customSteps,
+          cfg: customCfg,
+          denoise: customDenoise,
+        }),
       }
 
       // Prepend new item (newest first)
@@ -290,7 +408,7 @@ export default function AnimateView(props: AnimateParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, props, authKey])
+  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed])
 
   const handleDelete = useCallback((item: AnimateItem, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -316,6 +434,162 @@ export default function AnimateView(props: AnimateParams) {
 
   return (
     <div className="flex flex-col h-full w-full bg-black text-white overflow-hidden relative">
+      {/* Advanced Settings Panel (top-right) */}
+      {showAdvancedSettings && (
+        <div className="absolute top-20 right-6 z-30 bg-black/95 border border-white/10 rounded-2xl shadow-2xl w-80 backdrop-blur-xl overflow-hidden">
+          <div className="p-5 border-b border-white/10 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Settings2 size={16} />
+              PARAMETERS
+            </h3>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={resetAdvancedParams}
+                className="text-white/50 hover:text-purple-400 transition-colors flex items-center gap-1 text-xs"
+                title="Reset to recommended defaults"
+              >
+                <RefreshCw size={14} />
+                Reset
+              </button>
+              <button type="button" onClick={() => setShowAdvancedSettings(false)} className="text-white/50 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="p-5 space-y-6 max-h-[70vh] overflow-y-auto">
+            {/* Advanced Mode Toggle */}
+            <button
+              onClick={() => setAdvancedMode(!advancedMode)}
+              className={`w-full flex items-center justify-between p-3 rounded-xl border transition-colors ${
+                advancedMode
+                  ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                  : 'bg-white/5 border-white/10 text-white/60 hover:border-white/20'
+              }`}
+            >
+              <span className="flex items-center gap-2 font-medium text-sm">
+                <Sliders size={16} />
+                Advanced Controls
+              </span>
+              {advancedMode ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </button>
+
+            {advancedMode && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Steps */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Steps</span>
+                    <span className="text-white/60">{customSteps}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={50}
+                    value={customSteps}
+                    onChange={(e) => setCustomSteps(Number(e.target.value))}
+                    className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                  />
+                </div>
+
+                {/* CFG Scale */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">CFG Scale</span>
+                    <span className="text-white/60">{customCfg.toFixed(1)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={15}
+                    step={0.5}
+                    value={customCfg}
+                    onChange={(e) => setCustomCfg(Number(e.target.value))}
+                    className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                  />
+                </div>
+
+                {/* Creativity / Denoise Strength */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Creativity</span>
+                    <span className="text-white/60">{customDenoise.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] text-white/30 mb-1">
+                    <span>More Faithful</span>
+                    <span>More Creative</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={1.0}
+                    step={0.05}
+                    value={customDenoise}
+                    onChange={(e) => setCustomDenoise(Number(e.target.value))}
+                    className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                  />
+                </div>
+
+                {/* Custom Negative Prompt */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                    <span className="text-sm text-white/80">Custom Negative Prompt</span>
+                    <button
+                      onClick={() => setShowNegativePrompt(!showNegativePrompt)}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${showNegativePrompt ? 'bg-purple-500' : 'bg-white/20'}`}
+                    >
+                      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${showNegativePrompt ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
+                  </div>
+                  {showNegativePrompt && (
+                    <div className="space-y-2">
+                      <textarea
+                        value={customNegativePrompt}
+                        onChange={(e) => setCustomNegativePrompt(e.target.value)}
+                        placeholder={presetDefaults.negativePrompt || 'text, watermark, logo, low quality, blurry, flicker, jitter, deformed'}
+                        className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white focus:border-purple-500/50 focus:outline-none resize-none h-20"
+                      />
+                      <p className="text-[10px] text-white/40">
+                        Leave empty to use model default. Separate terms with commas.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Lock Seed */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-sm text-white/80">Lock Seed</span>
+                  <button
+                    onClick={() => {
+                      if (!seedLock) setCustomSeed(Math.floor(Math.random() * 2147483647))
+                      setSeedLock(!seedLock)
+                    }}
+                    className={`w-10 h-5 rounded-full transition-colors relative ${seedLock ? 'bg-purple-500' : 'bg-white/20'}`}
+                  >
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${seedLock ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                {seedLock && (
+                  <input
+                    type="number"
+                    value={customSeed}
+                    onChange={(e) => setCustomSeed(Number(e.target.value))}
+                    className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white font-mono focus:border-purple-500/50 focus:outline-none"
+                    placeholder="Seed value"
+                  />
+                )}
+              </div>
+            )}
+
+            <div className="p-4 rounded-xl bg-purple-900/10 border border-purple-500/20 text-xs text-purple-200/70 leading-relaxed">
+              <span className="font-bold text-purple-400 block mb-1">PRO TIP</span>
+              Enable Advanced Controls to fine-tune generation parameters. Use Lock Seed to regenerate with the same composition.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Settings Panel (slides in from bottom) */}
       {showSettingsPanel && (
         <div className="absolute bottom-[110%] left-1/2 -translate-x-1/2 z-40 bg-black/95 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl w-full max-w-lg mb-2">
@@ -331,6 +605,30 @@ export default function AnimateView(props: AnimateParams) {
             >
               <X size={16} />
             </button>
+          </div>
+
+          {/* Quality Preset */}
+          <div className="mb-4">
+            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
+              Quality Preset
+            </label>
+            <div className="grid grid-cols-4 gap-2">
+              {QUALITY_PRESETS.map((q) => (
+                <button
+                  key={q.id}
+                  onClick={() => setQualityPreset(q.id)}
+                  title={q.description}
+                  className={`py-2 px-2 rounded-lg text-sm font-medium transition-colors ${
+                    qualityPreset === q.id
+                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="text-xs font-bold">{q.label}</div>
+                  <div className="text-[9px] text-white/40 mt-0.5">{q.short}</div>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Duration */}
@@ -406,6 +704,20 @@ export default function AnimateView(props: AnimateParams) {
           </div>
         </div>
       )}
+
+      {/* Floating Advanced Settings Toggle Button */}
+      <button
+        className={`absolute top-6 right-6 z-20 p-3 rounded-full border shadow-lg transition-all ${
+          showAdvancedSettings
+            ? 'bg-purple-500 text-white border-purple-400'
+            : 'bg-black/80 hover:bg-black border-white/20 text-white/70 hover:text-white backdrop-blur-sm'
+        }`}
+        type="button"
+        onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+        title="Advanced Parameters"
+      >
+        <Sliders size={20} />
+      </button>
 
       {/* Grid Gallery */}
       <div className="flex-1 overflow-y-auto px-4 pb-48 pt-8 scrollbar-hide">
@@ -673,7 +985,7 @@ export default function AnimateView(props: AnimateParams) {
                 </>
               ) : null}
               <span>·</span>
-              <span>{seconds}s @ {fps}fps · {motion} motion</span>
+              <span>{qualityPreset} · {seconds}s @ {fps}fps · {motion} motion</span>
             </div>
           </div>
         </div>
@@ -795,6 +1107,42 @@ export default function AnimateView(props: AnimateParams) {
                     </div>
                   </div>
                 </div>
+
+                {/* Advanced Parameters (if used) */}
+                {(selectedVideo.steps || selectedVideo.cfg || selectedVideo.denoise) && (
+                  <div className="grid grid-cols-3 gap-4 pt-2 border-t border-white/5">
+                    {selectedVideo.steps && (
+                      <div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                          Steps
+                        </label>
+                        <div className="text-sm text-white/80 font-mono">
+                          {selectedVideo.steps}
+                        </div>
+                      </div>
+                    )}
+                    {selectedVideo.cfg && (
+                      <div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                          CFG
+                        </label>
+                        <div className="text-sm text-white/80 font-mono">
+                          {selectedVideo.cfg}
+                        </div>
+                      </div>
+                    )}
+                    {selectedVideo.denoise && (
+                      <div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
+                          Denoise
+                        </label>
+                        <div className="text-sm text-white/80 font-mono">
+                          {selectedVideo.denoise}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
