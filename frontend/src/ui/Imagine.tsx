@@ -18,9 +18,13 @@ type AspectRatio = {
 
 type ImagineItem = {
   id: string
-  url: string
+  url?: string  // Only present when status is "done"
   createdAt: number
   prompt: string
+  // Job status for persistent generation tracking
+  status: 'done' | 'processing' | 'failed'
+  progress?: number  // 0-100 during processing
+  error?: string  // Error message when failed
   // Generation parameters for reproducibility
   seed?: number
   width?: number
@@ -161,7 +165,23 @@ export default function ImagineView(props: ImagineParams) {
       const stored = localStorage.getItem('homepilot_imagine_items')
       if (stored) {
         const parsed = JSON.parse(stored)
-        return Array.isArray(parsed) ? parsed : []
+        if (Array.isArray(parsed)) {
+          // Migrate old items (without status) and handle stale processing items
+          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes max
+          const now = Date.now()
+          return parsed.map((item: any) => {
+            // Migrate: old items without status get 'done' if they have url
+            if (!item.status) {
+              return { ...item, status: item.url ? 'done' : 'failed' }
+            }
+            // Handle stale processing items (app was closed during generation)
+            if (item.status === 'processing' && (now - item.createdAt) > STALE_THRESHOLD) {
+              return { ...item, status: 'failed', error: 'Generation interrupted - please retry' }
+            }
+            // Keep processing items as-is (will show spinner)
+            return item
+          })
+        }
       }
     } catch (error) {
       console.error('Failed to load imagine items from localStorage:', error)
@@ -301,6 +321,45 @@ export default function ImagineView(props: ImagineParams) {
     setShowGamePanel(false)
     setShowAdvancedSettings(false)
 
+    // Create placeholder items IMMEDIATELY (persists across tab switches)
+    const placeholderIds: string[] = []
+    const now = Date.now()
+    for (let i = 0; i < numImages; i++) {
+      placeholderIds.push(`${now}-${Math.random().toString(16).slice(2)}-${i}`)
+    }
+
+    const placeholders: ImagineItem[] = placeholderIds.map(id => ({
+      id,
+      status: 'processing' as const,
+      progress: 0,
+      createdAt: now,
+      prompt: effectivePrompt,
+      width: props.imgWidth,
+      height: props.imgHeight,
+    }))
+
+    // Add placeholders to items (will be persisted to localStorage)
+    setItems((prev) => [...placeholders, ...prev])
+
+    // Only clear prompt if not in auto-generate mode
+    if (!autoGenerateRef.current) {
+      setPrompt('')
+    }
+
+    // Auto-scroll to show new placeholders
+    setTimeout(() => {
+      gridStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+
+    // Simulate progress while waiting for API
+    const progressInterval = setInterval(() => {
+      setItems(prev => prev.map(item =>
+        placeholderIds.includes(item.id) && item.status === 'processing'
+          ? { ...item, progress: Math.min(90, (item.progress || 0) + Math.random() * 8 + 2) }
+          : item
+      ))
+    }, 500)
+
     try {
       // IMPORTANT: Send aspect ratio to backend instead of hardcoded dimensions.
       // The backend's Dynamic Preset System will calculate correct dimensions
@@ -408,6 +467,8 @@ export default function ImagineView(props: ImagineParams) {
         || (gameMode && data?.media?.game?.variation_prompt)
         || t
 
+      clearInterval(progressInterval)
+
       // Extract generation parameters for reproducibility
       const seeds = data?.media?.seeds || (data?.media?.seed ? [data.media.seed] : [])
       const genWidth = data?.media?.width
@@ -416,35 +477,48 @@ export default function ImagineView(props: ImagineParams) {
       const genCfg = data?.media?.cfg
       const genModel = data?.media?.model
 
-      const newItems: ImagineItem[] = urls.map((u, idx) => ({
-        id: uid(),
-        url: u,
-        createdAt: now,
-        prompt: finalPrompt,
-        seed: seeds[idx] ?? seeds[0],  // Use corresponding seed or fall back to first
-        width: genWidth,
-        height: genHeight,
-        steps: genSteps,
-        cfg: genCfg,
-        model: genModel,
-      }))
+      // Update placeholders to completed items
+      setItems(prev => prev.map(item => {
+        const placeholderIndex = placeholderIds.indexOf(item.id)
+        if (placeholderIndex === -1) return item
 
-      // Prepend new images at the beginning (Grok-style: new images appear at top-left)
-      // Fill order: top-left → right → next row (row-major order)
-      // Keep only the first 100 items to prevent localStorage overflow
-      setItems((prev) => [...newItems, ...prev].slice(0, 100))
+        // Check if we have a URL for this placeholder
+        const imageUrl = urls[placeholderIndex]
+        if (imageUrl) {
+          return {
+            ...item,
+            status: 'done' as const,
+            progress: 100,
+            url: imageUrl,
+            prompt: finalPrompt,
+            seed: seeds[placeholderIndex] ?? seeds[0],
+            width: genWidth,
+            height: genHeight,
+            steps: genSteps,
+            cfg: genCfg,
+            model: genModel,
+          }
+        } else {
+          // No image for this placeholder - mark as failed
+          return {
+            ...item,
+            status: 'failed' as const,
+            error: 'No image returned',
+          }
+        }
+      }).slice(0, 100))  // Keep only first 100 items
 
-      // Auto-scroll to top to show new images
-      setTimeout(() => {
-        gridStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 100)
-
-      // Only clear prompt if not in auto-generate mode
-      if (!autoGenerateRef.current) {
-        setPrompt('')
-      }
     } catch (err: any) {
-      alert(`Generation failed: ${err.message || err}`)
+      clearInterval(progressInterval)
+      console.error('Generation failed:', err)
+
+      // Update placeholders to failed state
+      setItems(prev => prev.map(item =>
+        placeholderIds.includes(item.id)
+          ? { ...item, status: 'failed' as const, error: err.message || 'Generation failed' }
+          : item
+      ))
+
       // Stop auto-generation on error
       autoGenerateRef.current = false
       setIsAutoGenerating(false)
@@ -573,6 +647,7 @@ export default function ImagineView(props: ImagineParams) {
 
       const newItem: ImagineItem = {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        status: 'done',
         url: data.media.images[0],
         createdAt: Date.now(),
         prompt: data.media.final_prompt || lightboxPrompt,
@@ -625,6 +700,11 @@ export default function ImagineView(props: ImagineParams) {
     }
 
     try {
+      if (!item.url) {
+        alert('Cannot upscale: image URL not available')
+        return
+      }
+
       setUpscalingId(item.id)
 
       const result = await upscaleImage({
@@ -640,6 +720,7 @@ export default function ImagineView(props: ImagineParams) {
         // Add upscaled image to gallery (non-destructive - keeps original)
         const newItem: ImagineItem = {
           id: `upscale-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          status: 'done',
           url: upscaledUrl,
           createdAt: Date.now(),
           prompt: `[Upscaled 2x] ${item.prompt}`,
@@ -1029,79 +1110,112 @@ export default function ImagineView(props: ImagineParams) {
             </div>
           ) : null}
 
-          {/* Loading skeletons - shown at TOP (where new images will appear) */}
-          {isGenerating && Array.from({ length: numImages }).map((_, idx) => (
-            <div key={`skeleton-${idx}`} className="relative rounded-2xl overflow-hidden bg-white/5 border border-white/10 aspect-square animate-pulse">
-              <div className="absolute inset-0 bg-gradient-to-tr from-white/10 to-transparent"></div>
-              <div className="absolute bottom-4 left-4 text-sm font-mono text-white/70">
-                {idx === 0 ? 'Generating…' : `Image ${idx + 1}…`}
-              </div>
-            </div>
-          ))}
-
-          {/* Images - rendered in order (newest first at top-left, oldest at bottom-right) */}
+          {/* Images (including processing placeholders) - rendered in order (newest first at top-left) */}
           {items.map((img) => (
             <div
               key={img.id}
-              onClick={() => setSelectedImage(img)}
-              className="relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 hover:border-white/20 transition-colors cursor-pointer aspect-square"
+              onClick={() => img.status === 'done' && setSelectedImage(img)}
+              className={`relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 transition-colors aspect-square ${
+                img.status === 'done' ? 'hover:border-white/20 cursor-pointer' : ''
+              }`}
             >
-              <img
-                src={img.url}
-                alt={img.prompt}
-                className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                loading="lazy"
-              />
+              {/* Image content - show based on status */}
+              {img.status === 'done' && img.url ? (
+                <img
+                  src={img.url}
+                  alt={img.prompt}
+                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                  loading="lazy"
+                />
+              ) : (
+                // Processing or Failed - show gradient placeholder
+                <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-purple-900/30 to-black" />
+              )}
 
-              {/* Card overlay */}
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-                <div className="flex gap-2 justify-end transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+              {/* Processing overlay - "Generating..." with purple spinner */}
+              {img.status === 'processing' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
+                  <Loader2 size={32} className="text-purple-400 animate-spin mb-3" />
+                  <div className="text-white/90 text-sm font-medium">Generating...</div>
+                  {typeof img.progress === 'number' && (
+                    <div className="mt-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-white/90 text-xs">
+                      {Math.round(img.progress)}%
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Failed overlay */}
+              {img.status === 'failed' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+                  <X size={32} className="text-red-400 mb-2" />
+                  <div className="text-red-400 text-sm font-medium">Generation failed</div>
+                  <div className="text-white/50 text-xs mt-1 px-4 text-center line-clamp-2">
+                    {img.error || 'Unknown error'}
+                  </div>
                   <button
-                    className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
-                    type="button"
-                    title="Play"
+                    className="mt-3 px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-medium transition-colors"
                     onClick={(e) => {
                       e.stopPropagation()
+                      handleDelete(img, e)
                     }}
                   >
-                    <Play size={18} fill="currentColor" />
-                  </button>
-                  <button
-                    className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
-                    type="button"
-                    title="Copy URL"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      navigator.clipboard?.writeText(img.url).catch(() => {})
-                    }}
-                  >
-                    <MoreHorizontal size={18} />
-                  </button>
-                  <button
-                    className={`backdrop-blur-md p-2 rounded-full transition-colors ${
-                      upscalingId === img.id
-                        ? 'bg-purple-500/40 text-purple-300 animate-pulse'
-                        : 'bg-purple-500/20 hover:bg-purple-500/40 text-purple-300 hover:text-purple-200'
-                    }`}
-                    type="button"
-                    title="Upscale 2x"
-                    disabled={upscalingId !== null}
-                    onClick={(e) => handleUpscale(img, e)}
-                  >
-                    <Maximize2 size={18} />
-                  </button>
-                  <button
-                    className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors"
-                    type="button"
-                    title="Delete"
-                    onClick={(e) => handleDelete(img, e)}
-                  >
-                    <Trash2 size={18} />
+                    Remove
                   </button>
                 </div>
+              )}
 
-                <div className="mt-3 text-xs text-white/80 line-clamp-2">{img.prompt}</div>
-              </div>
+              {/* Card overlay (only for completed images) */}
+              {img.status === 'done' && (
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
+                  <div className="flex gap-2 justify-end transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+                    <button
+                      className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
+                      type="button"
+                      title="Play"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                      }}
+                    >
+                      <Play size={18} fill="currentColor" />
+                    </button>
+                    <button
+                      className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
+                      type="button"
+                      title="Copy URL"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (img.url) navigator.clipboard?.writeText(img.url).catch(() => {})
+                      }}
+                    >
+                      <MoreHorizontal size={18} />
+                    </button>
+                    <button
+                      className={`backdrop-blur-md p-2 rounded-full transition-colors ${
+                        upscalingId === img.id
+                          ? 'bg-purple-500/40 text-purple-300 animate-pulse'
+                          : 'bg-purple-500/20 hover:bg-purple-500/40 text-purple-300 hover:text-purple-200'
+                      }`}
+                      type="button"
+                      title="Upscale 2x"
+                      disabled={upscalingId !== null}
+                      onClick={(e) => handleUpscale(img, e)}
+                    >
+                      <Maximize2 size={18} />
+                    </button>
+                    <button
+                      className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors"
+                      type="button"
+                      title="Delete"
+                      onClick={(e) => handleDelete(img, e)}
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+
+                  <div className="mt-3 text-xs text-white/80 line-clamp-2">{img.prompt}</div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1378,12 +1492,18 @@ export default function ImagineView(props: ImagineParams) {
           <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
             {/* Hero Image Container - LARGER, fills more space */}
             <div className="flex-1 flex items-center justify-center p-2 relative group">
-              <img
-                src={selectedImage.url}
-                data-lightbox-media
-                className="max-h-[calc(100vh-140px)] max-w-full object-contain rounded-lg shadow-2xl"
-                alt="Selected"
-              />
+              {selectedImage.url ? (
+                <img
+                  src={selectedImage.url}
+                  data-lightbox-media
+                  className="max-h-[calc(100vh-140px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  alt="Selected"
+                />
+              ) : (
+                <div className="flex items-center justify-center h-64 w-full max-w-lg bg-white/5 rounded-lg">
+                  <Loader2 size={32} className="text-white/50 animate-spin" />
+                </div>
+              )}
 
               {/* Chips Overlay - Fade in on hover */}
               <div className="absolute bottom-6 left-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
@@ -1562,6 +1682,7 @@ export default function ImagineView(props: ImagineParams) {
                 <button
                   className="p-2.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors"
                   onClick={() => {
+                    if (!selectedImage.url) return
                     const a = document.createElement('a')
                     a.href = selectedImage.url
                     a.download = `imagine-${selectedImage.id}.png`
@@ -1569,12 +1690,14 @@ export default function ImagineView(props: ImagineParams) {
                   }}
                   type="button"
                   title="Download"
+                  disabled={!selectedImage.url}
                 >
                   <Download size={18} />
                 </button>
                 <button
                   className="p-2.5 text-white/60 hover:text-purple-400 hover:bg-purple-500/10 rounded-full transition-colors"
                   onClick={() => {
+                    if (!selectedImage.url) return
                     localStorage.setItem('homepilot_animate_source', selectedImage.url)
                     window.dispatchEvent(new CustomEvent('switch-to-animate', { detail: { imageUrl: selectedImage.url } }))
                     setSelectedImage(null)
@@ -1582,6 +1705,7 @@ export default function ImagineView(props: ImagineParams) {
                   }}
                   type="button"
                   title="Animate this image"
+                  disabled={!selectedImage.url}
                 >
                   <Film size={18} />
                 </button>
