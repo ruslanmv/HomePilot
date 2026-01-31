@@ -406,13 +406,17 @@ def _extract_media(history: Dict[str, Any], prompt_id: str) -> Tuple[List[str], 
                 continue
             fn = img.get("filename")
             if fn:
-                images.append(
-                    _view_url(
-                        filename=str(fn),
-                        subfolder=str(img.get("subfolder", "")),
-                        filetype=str(img.get("type", "output")),
-                    )
+                url = _view_url(
+                    filename=str(fn),
+                    subfolder=str(img.get("subfolder", "")),
+                    filetype=str(img.get("type", "output")),
                 )
+                # Check if this is an animated format (WEBP/GIF from SaveAnimatedWEBP)
+                fn_lower = str(fn).lower()
+                if fn_lower.endswith('.webp') or fn_lower.endswith('.gif'):
+                    videos.append(url)
+                else:
+                    images.append(url)
 
         for vid in (node_out.get("gifs") or []):
             if not isinstance(vid, dict):

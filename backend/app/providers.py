@@ -86,6 +86,50 @@ def get_comfy_models_path() -> Path:
     # Default to expected path even if it doesn't exist
     return models_path
 
+
+def get_comfyui_root() -> Path:
+    """Get the path to ComfyUI installation root (where custom_nodes lives)."""
+    script_dir = Path(__file__).parent
+    repo_root = script_dir.parent.parent
+
+    candidates = [
+        repo_root / "ComfyUI",           # Local development
+        Path("/ComfyUI"),                # Docker container
+        Path.home() / "ComfyUI",         # Home directory
+        Path("/mnt/c/workspace/homegrok/homepilot/ComfyUI"),  # WSL specific
+    ]
+    for p in candidates:
+        if p.exists() and (p / "custom_nodes").exists():
+            return p
+    return candidates[0]
+
+
+def get_comfy_object_info(base_url: str = None) -> dict:
+    """
+    Fetch ComfyUI's /object_info to check which nodes are available.
+    Returns dict of node_name -> node_info, or empty dict on failure.
+    """
+    import requests
+    url = (base_url or COMFY_BASE_URL).rstrip("/")
+    try:
+        r = requests.get(f"{url}/object_info", timeout=5)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return {}
+
+
+def check_comfy_nodes_available(node_names: List[str], base_url: str = None) -> bool:
+    """
+    Check if specific ComfyUI nodes are available via /object_info.
+    Returns True if at least one of the nodes exists (addon is loaded).
+    """
+    object_info = get_comfy_object_info(base_url)
+    if not object_info:
+        return False
+    # Check if any of the nodes exist
+    return any(name in object_info for name in node_names)
+
 def scan_installed_models(model_type: str = "image") -> List[str]:
     """
     Scan filesystem for actually installed ComfyUI models.
@@ -157,6 +201,35 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
             "GFPGANv1.4.pth": models_path / "gfpgan" / "GFPGANv1.4.pth",
             "codeformer.pth": models_path / "codeformer" / "codeformer.pth",
         }
+    elif model_type == "addons":
+        # For addons, check custom_nodes directory existence
+        # and/or ComfyUI's /object_info for loaded nodes
+        comfyui_root = get_comfyui_root()
+        custom_nodes_dir = comfyui_root / "custom_nodes"
+
+        # Addon checks: addon_id -> (folder_name, sample_node_names)
+        addon_checks = {
+            "ComfyUI-VideoHelperSuite": ("ComfyUI-VideoHelperSuite", ["VHS_VideoCombine"]),
+            "ComfyUI-LTXVideo": ("ComfyUI-LTXVideo", ["LTXVLoader"]),
+            "ComfyUI-GGUF": ("ComfyUI-GGUF", ["UnetLoaderGGUF"]),
+            "ComfyUI-CogVideoXWrapper": ("ComfyUI-CogVideoXWrapper", ["CogVideoXDiffusersLoader"]),
+            "ComfyUI-Impact-Pack": ("ComfyUI-Impact-Pack", ["SAMLoader"]),
+        }
+
+        for addon_id, (folder_name, sample_nodes) in addon_checks.items():
+            addon_path = custom_nodes_dir / folder_name
+            # Check if folder exists first (fast check)
+            if addon_path.exists() and addon_path.is_dir():
+                # Optionally verify nodes are loaded via /object_info
+                # This confirms the addon is actually working
+                if check_comfy_nodes_available(sample_nodes):
+                    installed.append(addon_id)
+                else:
+                    # Folder exists but nodes not loaded (maybe ComfyUI needs restart)
+                    # Still mark as installed but frontend can show "restart needed"
+                    installed.append(addon_id)
+
+        return installed
     else:
         # Unknown model_type, return empty
         checks = {}

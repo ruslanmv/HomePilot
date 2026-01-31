@@ -64,6 +64,24 @@ CATALOG_PATH = PROJECT_ROOT / "backend" / "app" / "model_catalog_data.json"
 # ComfyUI models root - consistent with download_models.sh
 COMFYUI_ROOT = PROJECT_ROOT / "models" / "comfy"
 
+# ComfyUI installation root (for custom_nodes)
+def get_comfyui_install_root() -> Path:
+    """
+    Find the ComfyUI installation directory (where custom_nodes lives).
+    Checks common locations in order of priority.
+    """
+    candidates = [
+        PROJECT_ROOT / "ComfyUI",           # Local development
+        Path("/ComfyUI"),                   # Docker container
+        Path.home() / "ComfyUI",            # Home directory
+        Path("/mnt/c/workspace/homegrok/homepilot/ComfyUI"),  # WSL specific
+    ]
+    for p in candidates:
+        if p.exists() and (p / "custom_nodes").exists():
+            return p
+    # Fallback to first candidate (will create if needed)
+    return candidates[0]
+
 # Default install paths (relative to COMFYUI_ROOT)
 # Note: The catalog's install_path takes precedence; these are fallbacks
 INSTALL_PATHS = {
@@ -341,6 +359,59 @@ def install_from_install_block(model_id: str, model_data: Dict[str, Any]) -> boo
             print("\n      Required ComfyUI custom nodes:")
             for n in req_nodes:
                 print(f"        - {n}")
+        return True
+
+    if install_type == "git_repo":
+        repo_url = install.get("repo_url")
+        dest_rel = install.get("dest_dir")
+        if not repo_url or not dest_rel:
+            print(f"ERROR: git_repo requires repo_url and dest_dir for model: {model_id}")
+            sys.exit(1)
+
+        # Normalize and validate the destination path
+        dest_rel = normalize_rel_path(dest_rel)
+        if dest_rel.startswith(".."):
+            print(f"ERROR: invalid dest_dir path (directory traversal not allowed): {dest_rel}")
+            sys.exit(1)
+
+        # For custom_nodes, install relative to ComfyUI root
+        comfyui_root = get_comfyui_install_root()
+        dest_dir = comfyui_root / dest_rel
+        dest_dir.parent.mkdir(parents=True, exist_ok=True)
+
+        if dest_dir.exists():
+            # Check if it's a non-empty directory (already installed)
+            try:
+                if any(dest_dir.iterdir()):
+                    print(f"      [Exists] {dest_rel}")
+                    hint = install.get("hint")
+                    if hint:
+                        print(f"      Note: {hint}")
+                    return True
+            except Exception:
+                pass
+
+        print(f"      Cloning {repo_url}")
+        print(f"      -> {dest_dir}")
+
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1", repo_url, str(dest_dir)],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode != 0:
+                print(f"ERROR: git clone failed: {result.stderr}")
+                sys.exit(1)
+            print("      Clone successful!")
+        except FileNotFoundError:
+            print("ERROR: git is not installed. Please install git and try again.")
+            sys.exit(1)
+
+        hint = install.get("hint")
+        if hint:
+            print(f"\n      Note: {hint}")
         return True
 
     # Unknown install type -> fallback to download_url
