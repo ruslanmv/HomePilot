@@ -210,6 +210,7 @@ export function CreatorStudioEditor({
   const [settingsSceneDuration, setSettingsSceneDuration] = useState(5);
   const [settingsLockIdentity, setSettingsLockIdentity] = useState(true);
   const [settingsContentRating, setSettingsContentRating] = useState<ContentRating>("sfw");
+  const [settingsEnableVideo, setSettingsEnableVideo] = useState(false); // Enable video generation capability
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
   // Generation parameters state (advanced customization)
@@ -556,6 +557,14 @@ export function CreatorStudioEditor({
     const llmTag = tags.find((t: string) => t.startsWith("llm:"));
     setSettingsLLMModel(llmTag ? llmTag.replace("llm:", "") : selectedLLMModel);
 
+    // Initialize video generation enabled state from tags or enableVideoGeneration prop
+    const hasVideoMode = tags.includes("mode:video") ||
+      tags.includes("projectType:video") ||
+      tags.includes("projectType:video_series") ||
+      project?.metadata?.generationMode === "video" ||
+      enableVideoGeneration === true;
+    setSettingsEnableVideo(hasVideoMode);
+
     // Initialize generation params from project tags
     const parsedGenParams = parseGenParamsFromTags(tags);
     // Also restore negative prompt from localStorage
@@ -584,7 +593,7 @@ export function CreatorStudioEditor({
     }
 
     setShowSettingsModal(true);
-  }, [project, projectId, parseTagsFromProject, parseGenParamsFromTags, selectedLLMModel, fetchApi]);
+  }, [project, projectId, parseTagsFromProject, parseGenParamsFromTags, selectedLLMModel, enableVideoGeneration, fetchApi]);
 
   // Toggle tone in settings
   const toggleSettingsTone = useCallback((tone: string) => {
@@ -599,6 +608,8 @@ export function CreatorStudioEditor({
   // Build tags from settings
   const buildTagsFromSettings = useCallback(() => {
     const tags: string[] = [];
+    // Video generation mode - critical for "Make Video" button visibility
+    tags.push(`mode:${settingsEnableVideo ? "video" : "slideshow"}`);
     if (settingsGoal) tags.push(`goal:${settingsGoal.toLowerCase()}`);
     if (settingsVisualStyle) tags.push(`visual:${settingsVisualStyle.toLowerCase().replace(/ /g, "_")}`);
     settingsTones.forEach((t) => tags.push(`tone:${t.toLowerCase().replace(/ /g, "_")}`));
@@ -607,7 +618,7 @@ export function CreatorStudioEditor({
     tags.push(`duration:${settingsSceneDuration}`);
     if (settingsLLMModel) tags.push(`llm:${settingsLLMModel}`);
     return tags;
-  }, [settingsGoal, settingsVisualStyle, settingsTones, settingsLockIdentity, settingsSceneCount, settingsSceneDuration, settingsLLMModel]);
+  }, [settingsEnableVideo, settingsGoal, settingsVisualStyle, settingsTones, settingsLockIdentity, settingsSceneCount, settingsSceneDuration, settingsLLMModel]);
 
   // Build tags including generation params
   const buildGenTags = useCallback((p: CreatorStudioGenerationParams) => {
@@ -2707,6 +2718,53 @@ export function CreatorStudioEditor({
                     <div className="text-sm font-medium">Slides</div>
                     <div className="text-xs text-white/40">16:9 Presentation</div>
                   </button>
+                </div>
+              </div>
+
+              {/* Video Generation Toggle */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <Film size={14} />
+                  Video Generation
+                </h3>
+                <div
+                  className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                    settingsEnableVideo
+                      ? "border-cyan-500 bg-cyan-500/10"
+                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                  }`}
+                  onClick={() => setSettingsEnableVideo(!settingsEnableVideo)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                        settingsEnableVideo ? "bg-cyan-500/30" : "bg-white/10"
+                      }`}>
+                        <Film size={18} className={settingsEnableVideo ? "text-cyan-400" : "text-white/40"} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium">Enable Video Generation</div>
+                        <div className="text-xs text-white/40">
+                          {settingsEnableVideo
+                            ? "Make Video button visible for each scene"
+                            : "Scenes will be static images only"
+                          }
+                        </div>
+                      </div>
+                    </div>
+                    <div className={`relative w-12 h-6 rounded-full transition-colors ${
+                      settingsEnableVideo ? "bg-cyan-500" : "bg-white/20"
+                    }`}>
+                      <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                        settingsEnableVideo ? "translate-x-7" : "translate-x-1"
+                      }`} />
+                    </div>
+                  </div>
+                  {settingsEnableVideo && settingsPlatform === "slides_16_9" && (
+                    <div className="mt-3 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-400">
+                      Tip: Slides with video will create animated clips instead of static images with Ken Burns effect.
+                    </div>
+                  )}
                 </div>
               </div>
 
