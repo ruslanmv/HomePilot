@@ -7,12 +7,17 @@ import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Tras
 
 type AnimateItem = {
   id: string
-  videoUrl: string
+  videoUrl?: string  // Only present when status is "done"
   posterUrl?: string
   createdAt: number
   prompt: string
   finalPrompt?: string
   sourceImageUrl?: string
+  // Job status for persistent generation tracking
+  status: 'done' | 'processing' | 'failed'
+  jobId?: string  // For tracking/resuming jobs
+  progress?: number  // 0-100 during processing
+  error?: string  // Error message when failed
   // Generation parameters for reproducibility
   seed?: number
   seconds?: number
@@ -155,7 +160,8 @@ function formatDuration(seconds: number): string {
 
 // Check if URL points to an animated image (WEBP/GIF) vs video (MP4/WebM)
 // Animated WEBP/GIF must use <img> tag, videos use <video> tag
-function isAnimatedImage(url: string): boolean {
+function isAnimatedImage(url: string | undefined): boolean {
+  if (!url) return false
   const lower = url.toLowerCase()
   // ComfyUI URLs look like: /view?filename=xxx.webp&subfolder=...
   return lower.includes('.webp') || lower.includes('.gif')
@@ -175,7 +181,22 @@ export default function AnimateView(props: AnimateParams) {
       const stored = localStorage.getItem('homepilot_animate_items')
       if (stored) {
         const parsed = JSON.parse(stored)
-        return Array.isArray(parsed) ? parsed : []
+        if (Array.isArray(parsed)) {
+          // Migrate old items (without status) and handle stale processing items
+          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes
+          const now = Date.now()
+          return parsed.map((item: any) => {
+            // Migrate: old items without status get 'done' if they have videoUrl
+            if (!item.status) {
+              return { ...item, status: item.videoUrl ? 'done' : 'failed' }
+            }
+            // Handle stale processing items (tab was closed during generation)
+            if (item.status === 'processing' && (now - item.createdAt) > STALE_THRESHOLD) {
+              return { ...item, status: 'failed', error: 'Generation interrupted - please retry' }
+            }
+            return item
+          })
+        }
       }
     } catch (error) {
       console.error('Failed to load animate items from localStorage:', error)
@@ -350,6 +371,41 @@ export default function AnimateView(props: AnimateParams) {
     setIsGenerating(true)
     setShowSettingsPanel(false)
 
+    // Create placeholder item IMMEDIATELY (persists across tab switches)
+    const placeholderId = uid()
+    const placeholder: AnimateItem = {
+      id: placeholderId,
+      status: 'processing',
+      progress: 0,
+      createdAt: Date.now(),
+      prompt: effectivePrompt,
+      sourceImageUrl: referenceUrl || undefined,
+      posterUrl: referenceUrl || undefined,  // Use reference as thumbnail while processing
+      seconds: seconds,
+      fps: fps,
+      motion: motion,
+      model: props.modelVideo,
+      preset: qualityPreset,
+    }
+
+    // Add placeholder to items (will be persisted to localStorage)
+    setItems((prev) => [placeholder, ...prev])
+    setPrompt('')
+
+    // Auto-scroll to show new placeholder
+    setTimeout(() => {
+      gridStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+
+    // Simulate progress while waiting for API
+    const progressInterval = setInterval(() => {
+      setItems(prev => prev.map(item =>
+        item.id === placeholderId && item.status === 'processing'
+          ? { ...item, progress: Math.min(90, (item.progress || 0) + Math.random() * 8 + 2) }
+          : item
+      ))
+    }, 500)
+
     try {
       // Build message for animate mode
       const animateMessage = referenceUrl
@@ -396,50 +452,50 @@ export default function AnimateView(props: AnimateParams) {
         authKey
       )
 
+      clearInterval(progressInterval)
+
       if (!data.media?.video_url) {
         throw new Error(data.message || data.text || 'No video URL returned')
       }
 
-      // Use actual values from backend response for reproducibility
-      // Backend now returns all generation parameters used
-      const newItem: AnimateItem = {
-        id: uid(),
-        videoUrl: data.media.video_url,
-        posterUrl: data.media.poster_url,
-        createdAt: Date.now(),
-        prompt: effectivePrompt,
-        finalPrompt: data.media.prompt || data.media.final_prompt,
-        // Source image: prefer auto-generated (text-to-video), then reference, then backend source
-        sourceImageUrl: data.media.auto_generated_image || referenceUrl || data.media.source_image || undefined,
-        // Use actual backend values for reproducibility (fallback to local values)
-        seed: data.media.seed ?? (seedLock ? customSeed : undefined),
-        seconds: data.media.duration ?? seconds,
-        frames: data.media.frames,
-        fps: data.media.fps ?? fps,
-        motion: data.media.motion ?? motion,
-        model: data.media.model ?? props.modelVideo,
-        preset: data.media.preset ?? qualityPreset,
-        // Advanced parameters from backend (actual values used)
-        steps: data.media.steps ?? (advancedMode ? customSteps : undefined),
-        cfg: data.media.cfg ?? (advancedMode ? customCfg : undefined),
-        denoise: data.media.denoise ?? (advancedMode ? customDenoise : undefined),
-      }
-
-      // Prepend new item (newest first)
-      setItems((prev) => [newItem, ...prev])
-      setPrompt('')
-
-      // Auto-scroll to show new video
-      setTimeout(() => {
-        gridStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 100)
+      // Update placeholder to completed item
+      setItems(prev => prev.map(item =>
+        item.id === placeholderId
+          ? {
+              ...item,
+              status: 'done' as const,
+              progress: 100,
+              videoUrl: data.media!.video_url,
+              posterUrl: data.media!.poster_url || item.posterUrl,
+              finalPrompt: data.media!.prompt || data.media!.final_prompt,
+              sourceImageUrl: data.media!.auto_generated_image || referenceUrl || data.media!.source_image || item.sourceImageUrl,
+              seed: data.media!.seed ?? (seedLock ? customSeed : undefined),
+              seconds: data.media!.duration ?? seconds,
+              frames: data.media!.frames,
+              fps: data.media!.fps ?? fps,
+              motion: data.media!.motion ?? motion,
+              model: data.media!.model ?? props.modelVideo,
+              preset: data.media!.preset ?? qualityPreset,
+              steps: data.media!.steps ?? (advancedMode ? customSteps : undefined),
+              cfg: data.media!.cfg ?? (advancedMode ? customCfg : undefined),
+              denoise: data.media!.denoise ?? (advancedMode ? customDenoise : undefined),
+            }
+          : item
+      ))
     } catch (err: any) {
+      clearInterval(progressInterval)
       console.error('Video generation failed:', err)
-      alert(`Generation failed: ${err.message || err}`)
+
+      // Update placeholder to failed state
+      setItems(prev => prev.map(item =>
+        item.id === placeholderId
+          ? { ...item, status: 'failed' as const, error: err.message || 'Generation failed' }
+          : item
+      ))
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed])
+  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
 
   const handleDelete = useCallback((item: AnimateItem, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -544,6 +600,7 @@ export default function AnimateView(props: AnimateParams) {
       // Only use auto_generated when we didn't have a source image (text-to-video flow)
       const newItem: AnimateItem = {
         id: uid(),
+        status: 'done',
         videoUrl: data.media.video_url,
         posterUrl: data.media.poster_url,
         createdAt: Date.now(),
@@ -927,80 +984,136 @@ export default function AnimateView(props: AnimateParams) {
           {items.map((item) => (
             <div
               key={item.id}
-              onClick={() => setSelectedVideo(item)}
-              className="relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 hover:border-purple-500/30 transition-colors cursor-pointer aspect-video"
+              onClick={() => item.status === 'done' && setSelectedVideo(item)}
+              className={`relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 transition-colors aspect-video ${
+                item.status === 'done' ? 'hover:border-purple-500/30 cursor-pointer' : ''
+              }`}
             >
-              {isAnimatedImage(item.videoUrl) ? (
-                <img
-                  src={item.videoUrl}
-                  alt="Generated animation"
-                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                />
+              {/* Thumbnail/Video content - show based on status */}
+              {item.status === 'done' && item.videoUrl ? (
+                // Completed video
+                isAnimatedImage(item.videoUrl) ? (
+                  <img
+                    src={item.videoUrl}
+                    alt="Generated animation"
+                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                  />
+                ) : (
+                  <video
+                    src={item.videoUrl}
+                    poster={item.posterUrl}
+                    muted
+                    loop
+                    playsInline
+                    preload="metadata"
+                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                    onMouseEnter={(e) => e.currentTarget.play()}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.pause()
+                      e.currentTarget.currentTime = 0
+                    }}
+                  />
+                )
               ) : (
-                <video
-                  src={item.videoUrl}
-                  poster={item.posterUrl}
-                  muted
-                  loop
-                  playsInline
-                  preload="metadata"
-                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                  onMouseEnter={(e) => e.currentTarget.play()}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.pause()
-                    e.currentTarget.currentTime = 0
-                  }}
-                />
+                // Processing or Failed - show thumbnail placeholder
+                <div className="absolute inset-0 w-full h-full">
+                  {(item.posterUrl || item.sourceImageUrl) ? (
+                    <img
+                      src={item.posterUrl || item.sourceImageUrl}
+                      alt="Generating..."
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-purple-900/30 to-black" />
+                  )}
+                </div>
               )}
 
-              {/* Play indicator */}
-              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="p-3 bg-black/50 rounded-full backdrop-blur-sm">
-                  <Play size={24} className="text-white" fill="white" />
+              {/* Processing overlay - "Generating video..." */}
+              {item.status === 'processing' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
+                  <Loader2 size={32} className="text-white animate-spin mb-3" />
+                  <div className="text-white/90 text-sm font-medium">Generating video...</div>
+                  {typeof item.progress === 'number' && (
+                    <div className="mt-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-white/90 text-xs">
+                      {Math.round(item.progress)}%
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
 
-              {/* Card overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-                <div className="flex gap-2 justify-end transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+              {/* Failed overlay */}
+              {item.status === 'failed' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+                  <X size={32} className="text-red-400 mb-2" />
+                  <div className="text-red-400 text-sm font-medium">Generation failed</div>
+                  <div className="text-white/50 text-xs mt-1 px-4 text-center line-clamp-2">
+                    {item.error || 'Unknown error'}
+                  </div>
                   <button
-                    className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
-                    type="button"
-                    title="Copy prompt"
+                    className="mt-3 px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-medium transition-colors"
                     onClick={(e) => {
                       e.stopPropagation()
-                      handleCopyPrompt(item.finalPrompt || item.prompt)
+                      handleDelete(item, e)
                     }}
                   >
-                    <Copy size={16} />
-                  </button>
-                  <button
-                    className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
-                    type="button"
-                    title="Download"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDownload(item.videoUrl)
-                    }}
-                  >
-                    <Download size={16} />
-                  </button>
-                  <button
-                    className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors"
-                    type="button"
-                    title="Delete"
-                    onClick={(e) => handleDelete(item, e)}
-                  >
-                    <Trash2 size={16} />
+                    Remove
                   </button>
                 </div>
+              )}
 
-                <div className="mt-3 text-xs text-white/80 line-clamp-2">{item.finalPrompt || item.prompt}</div>
-                <div className="flex items-center gap-2 mt-1 text-[10px] text-white/50">
-                  <Clock size={10} />
-                  {item.seconds}s @ {item.fps}fps
+              {/* Play indicator (only for completed videos) */}
+              {item.status === 'done' && (
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="p-3 bg-black/50 rounded-full backdrop-blur-sm">
+                    <Play size={24} className="text-white" fill="white" />
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Card overlay (only for completed videos) */}
+              {item.status === 'done' && (
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
+                  <div className="flex gap-2 justify-end transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+                    <button
+                      className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
+                      type="button"
+                      title="Copy prompt"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleCopyPrompt(item.finalPrompt || item.prompt)
+                      }}
+                    >
+                      <Copy size={16} />
+                    </button>
+                    <button
+                      className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
+                      type="button"
+                      title="Download"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (item.videoUrl) handleDownload(item.videoUrl)
+                      }}
+                    >
+                      <Download size={16} />
+                    </button>
+                    <button
+                      className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors"
+                      type="button"
+                      title="Delete"
+                      onClick={(e) => handleDelete(item, e)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+
+                  <div className="mt-3 text-xs text-white/80 line-clamp-2">{item.finalPrompt || item.prompt}</div>
+                  <div className="flex items-center gap-2 mt-1 text-[10px] text-white/50">
+                    <Clock size={10} />
+                    {item.seconds}s @ {item.fps}fps
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1211,23 +1324,30 @@ export default function AnimateView(props: AnimateParams) {
           <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
             {/* Hero Video Container - LARGER, fills more space */}
             <div className="flex-1 flex items-center justify-center p-2 relative group">
-              {isAnimatedImage(selectedVideo.videoUrl) ? (
-                <img
-                  src={selectedVideo.videoUrl}
-                  data-lightbox-media
-                  alt="Generated animation"
-                  className="max-h-[calc(100vh-120px)] max-w-full object-contain rounded-lg shadow-2xl"
-                />
+              {selectedVideo.videoUrl ? (
+                isAnimatedImage(selectedVideo.videoUrl) ? (
+                  <img
+                    src={selectedVideo.videoUrl}
+                    data-lightbox-media
+                    alt="Generated animation"
+                    className="max-h-[calc(100vh-120px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  />
+                ) : (
+                  <video
+                    src={selectedVideo.videoUrl}
+                    data-lightbox-media
+                    poster={selectedVideo.posterUrl}
+                    controls
+                    autoPlay
+                    loop
+                    className="max-h-[calc(100vh-120px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  />
+                )
               ) : (
-                <video
-                  src={selectedVideo.videoUrl}
-                  data-lightbox-media
-                  poster={selectedVideo.posterUrl}
-                  controls
-                  autoPlay
-                  loop
-                  className="max-h-[calc(100vh-120px)] max-w-full object-contain rounded-lg shadow-2xl"
-                />
+                // Fallback for items without videoUrl (shouldn't happen but safety)
+                <div className="flex items-center justify-center h-64 w-full max-w-lg bg-white/5 rounded-lg">
+                  <Loader2 size={32} className="text-white/50 animate-spin" />
+                </div>
               )}
 
               {/* Chips Overlay - Fade in on hover */}
@@ -1466,9 +1586,10 @@ export default function AnimateView(props: AnimateParams) {
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
                   className="p-2.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors"
-                  onClick={() => handleDownload(selectedVideo.videoUrl)}
+                  onClick={() => selectedVideo.videoUrl && handleDownload(selectedVideo.videoUrl)}
                   type="button"
                   title="Download"
+                  disabled={!selectedVideo.videoUrl}
                 >
                   <Download size={18} />
                 </button>
