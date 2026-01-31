@@ -48,8 +48,8 @@
     "class_type": "KSampler",
     "inputs": {
       "seed": "{{seed}}",
-      "steps": 20,
-      "cfg": 2.5,
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
       "sampler_name": "euler",
       "scheduler": "karras",
       "denoise": 1.0,
