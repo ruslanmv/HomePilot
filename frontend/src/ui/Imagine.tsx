@@ -1243,7 +1243,14 @@ export default function ImagineView(props: ImagineParams) {
             </button>
             <button
               className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
-              onClick={(e) => { e.stopPropagation(); window.open(selectedImage.url, '_blank'); }}
+              onClick={(e) => {
+                e.stopPropagation()
+                // Use native fullscreen API - find the image element and fullscreen it
+                const imgEl = document.querySelector('[data-lightbox-media]') as HTMLElement
+                if (imgEl?.requestFullscreen) {
+                  imgEl.requestFullscreen().catch(() => {})
+                }
+              }}
               type="button"
               title="View full size"
             >
@@ -1265,6 +1272,7 @@ export default function ImagineView(props: ImagineParams) {
             <div className="flex-1 flex items-center justify-center p-2 relative group">
               <img
                 src={selectedImage.url}
+                data-lightbox-media
                 className="max-h-[calc(100vh-80px)] max-w-full object-contain rounded-lg shadow-2xl"
                 alt="Selected"
               />

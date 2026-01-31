@@ -188,6 +188,7 @@ export default function AnimateView(props: AnimateParams) {
   // Selection state for Lightbox (Grok-style detail view)
   const [selectedVideo, setSelectedVideo] = useState<AnimateItem | null>(null)
   const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
+  const [showSourceImage, setShowSourceImage] = useState(false)  // Source image overlay
 
   // Video settings
   const [seconds, setSeconds] = useState(props.vidSeconds || 4)
@@ -1014,14 +1015,14 @@ export default function AnimateView(props: AnimateParams) {
       {selectedVideo && (
         <div
           className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
-          onClick={() => { setSelectedVideo(null); setShowDetails(false); }}
+          onClick={() => { setSelectedVideo(null); setShowDetails(false); setShowSourceImage(false); }}
         >
           {/* Floating Controls - Top Right */}
           <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
             {selectedVideo.sourceImageUrl && (
               <button
-                className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
-                onClick={(e) => { e.stopPropagation(); window.open(selectedVideo.sourceImageUrl, '_blank'); }}
+                className={`p-2.5 rounded-full transition-all ${showSourceImage ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'}`}
+                onClick={(e) => { e.stopPropagation(); setShowSourceImage(!showSourceImage); }}
                 type="button"
                 title="View source image"
               >
@@ -1038,7 +1039,14 @@ export default function AnimateView(props: AnimateParams) {
             </button>
             <button
               className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
-              onClick={(e) => { e.stopPropagation(); window.open(selectedVideo.videoUrl, '_blank'); }}
+              onClick={(e) => {
+                e.stopPropagation()
+                // Use native fullscreen API - find the media element and fullscreen it
+                const mediaEl = document.querySelector('[data-lightbox-media]') as HTMLElement
+                if (mediaEl?.requestFullscreen) {
+                  mediaEl.requestFullscreen().catch(() => {})
+                }
+              }}
               type="button"
               title="View full size"
             >
@@ -1046,7 +1054,7 @@ export default function AnimateView(props: AnimateParams) {
             </button>
             <button
               className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
-              onClick={() => { setSelectedVideo(null); setShowDetails(false); }}
+              onClick={() => { setSelectedVideo(null); setShowDetails(false); setShowSourceImage(false); }}
               type="button"
               title="Close"
             >
@@ -1061,12 +1069,14 @@ export default function AnimateView(props: AnimateParams) {
               {isAnimatedImage(selectedVideo.videoUrl) ? (
                 <img
                   src={selectedVideo.videoUrl}
+                  data-lightbox-media
                   alt="Generated animation"
                   className="max-h-[calc(100vh-60px)] max-w-full object-contain rounded-lg shadow-2xl"
                 />
               ) : (
                 <video
                   src={selectedVideo.videoUrl}
+                  data-lightbox-media
                   poster={selectedVideo.posterUrl}
                   controls
                   autoPlay
@@ -1128,6 +1138,7 @@ export default function AnimateView(props: AnimateParams) {
                         if (selectedVideo.sourceImageUrl) setReferenceUrl(selectedVideo.sourceImageUrl)
                         setSelectedVideo(null)
                         setShowDetails(false)
+                        setShowSourceImage(false)
                       }}
                       type="button"
                     >
@@ -1149,6 +1160,7 @@ export default function AnimateView(props: AnimateParams) {
                           setItems((prev) => prev.filter((x) => x.id !== selectedVideo.id))
                           setSelectedVideo(null)
                           setShowDetails(false)
+                          setShowSourceImage(false)
                         }
                       }}
                       type="button"
@@ -1160,6 +1172,34 @@ export default function AnimateView(props: AnimateParams) {
                 </div>
               </div>
             </div>
+
+            {/* Source Image Overlay - Shows when toggled */}
+            {showSourceImage && selectedVideo.sourceImageUrl && (
+              <div
+                className="absolute inset-0 z-40 flex items-center justify-center bg-black/90 animate-in fade-in duration-200"
+                onClick={(e) => { e.stopPropagation(); setShowSourceImage(false); }}
+              >
+                <div className="relative" onClick={(e) => e.stopPropagation()}>
+                  <img
+                    src={selectedVideo.sourceImageUrl}
+                    alt="Source image"
+                    data-lightbox-media
+                    className="max-h-[calc(100vh-80px)] max-w-[90vw] object-contain rounded-lg shadow-2xl"
+                  />
+                  <button
+                    className="absolute top-4 right-4 p-2.5 bg-black/60 text-white/80 hover:bg-black/80 hover:text-white rounded-full transition-all"
+                    onClick={() => setShowSourceImage(false)}
+                    type="button"
+                    title="Close"
+                  >
+                    <X size={18} />
+                  </button>
+                  <div className="absolute bottom-4 left-4 px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    Source Image
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Details Panel - Slide in from right */}
             {showDetails && (
