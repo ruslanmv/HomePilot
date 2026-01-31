@@ -1237,71 +1237,74 @@ export default function AnimateView(props: AnimateParams) {
             )}
           </div>
 
-          {/* Prompt Composer Bar - Clean design without card */}
+          {/* Grok-style Prompt Composer Bar */}
           <div className="bg-[#0a0a0a] border-t border-white/10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
             <div className="max-w-4xl mx-auto flex items-center gap-3">
 
-              {/* Editable Prompt Input */}
-              <input
-                type="text"
-                value={lightboxPrompt}
-                onChange={(e) => setLightboxPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
-                    setIsRegenerating(true)
-                    if (selectedVideo.sourceImageUrl) {
-                      setReferenceUrl(selectedVideo.sourceImageUrl)
+              {/* Prompt Card Container */}
+              <div className="flex-1 flex items-center gap-3 bg-[#1a1a1a] rounded-2xl px-4 py-2.5 border border-white/10">
+                {/* Editable Prompt Input */}
+                <input
+                  type="text"
+                  value={lightboxPrompt}
+                  onChange={(e) => setLightboxPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
+                      setIsRegenerating(true)
+                      if (selectedVideo.sourceImageUrl) {
+                        setReferenceUrl(selectedVideo.sourceImageUrl)
+                      }
+                      setPrompt(lightboxPrompt)
+                      setSelectedVideo(null)
+                      setShowDetails(false)
+                      setShowSourceImage(false)
+                      setTimeout(() => {
+                        handleGenerate()
+                        setIsRegenerating(false)
+                      }, 100)
                     }
-                    setPrompt(lightboxPrompt)
-                    setSelectedVideo(null)
-                    setShowDetails(false)
-                    setShowSourceImage(false)
-                    setTimeout(() => {
-                      handleGenerate()
-                      setIsRegenerating(false)
-                    }, 100)
-                  }
-                }}
-                placeholder="Edit prompt and regenerate..."
-                className="flex-1 bg-transparent text-white/80 text-sm placeholder-white/30 outline-none min-w-0"
-                disabled={isRegenerating}
-              />
+                  }}
+                  placeholder="Edit prompt and regenerate..."
+                  className="flex-1 bg-transparent text-white/90 text-sm placeholder-white/30 outline-none min-w-0"
+                  disabled={isRegenerating}
+                />
 
-              {/* Redo Button */}
-              <button
-                onClick={() => {
-                  if (lightboxPrompt.trim() && !isRegenerating) {
-                    setIsRegenerating(true)
-                    if (selectedVideo.sourceImageUrl) {
-                      setReferenceUrl(selectedVideo.sourceImageUrl)
+                {/* Redo Button (inside card) */}
+                <button
+                  onClick={() => {
+                    if (lightboxPrompt.trim() && !isRegenerating) {
+                      setIsRegenerating(true)
+                      if (selectedVideo.sourceImageUrl) {
+                        setReferenceUrl(selectedVideo.sourceImageUrl)
+                      }
+                      setPrompt(lightboxPrompt)
+                      setSelectedVideo(null)
+                      setShowDetails(false)
+                      setShowSourceImage(false)
+                      setTimeout(() => {
+                        handleGenerate()
+                        setIsRegenerating(false)
+                      }, 100)
                     }
-                    setPrompt(lightboxPrompt)
-                    setSelectedVideo(null)
-                    setShowDetails(false)
-                    setShowSourceImage(false)
-                    setTimeout(() => {
-                      handleGenerate()
-                      setIsRegenerating(false)
-                    }, 100)
-                  }
-                }}
-                disabled={!lightboxPrompt.trim() || isRegenerating}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all flex-shrink-0 ${
-                  lightboxPrompt.trim() && !isRegenerating
-                    ? 'bg-white/10 hover:bg-white/20 text-white'
-                    : 'bg-white/5 text-white/30 cursor-not-allowed'
-                }`}
-                type="button"
-                title="Regenerate"
-              >
-                {isRegenerating ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <>Redo <ArrowUp size={14} /></>
-                )}
-              </button>
+                  }}
+                  disabled={!lightboxPrompt.trim() || isRegenerating}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all flex-shrink-0 ${
+                    lightboxPrompt.trim() && !isRegenerating
+                      ? 'bg-white/10 hover:bg-white/20 text-white'
+                      : 'bg-white/5 text-white/30 cursor-not-allowed'
+                  }`}
+                  type="button"
+                  title="Regenerate"
+                >
+                  {isRegenerating ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <>Redo <ArrowUp size={14} /></>
+                  )}
+                </button>
+              </div>
 
-              {/* Action Icons */}
+              {/* Action Icons (outside card) */}
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
                   className="p-2.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors"
