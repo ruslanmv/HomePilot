@@ -1828,8 +1828,13 @@ export default function ImagineView(props: ImagineParams) {
                   className="p-2.5 text-white/60 hover:text-purple-400 hover:bg-purple-500/10 rounded-full transition-colors"
                   onClick={() => {
                     if (!selectedImage.url) return
-                    localStorage.setItem('homepilot_animate_source', selectedImage.url)
-                    window.dispatchEvent(new CustomEvent('switch-to-animate', { detail: { imageUrl: selectedImage.url } }))
+                    // Store handoff payload for Animate tab (Grok-style)
+                    localStorage.setItem('homepilot_animate_handoff', JSON.stringify({
+                      imageUrl: selectedImage.url,
+                      prompt: selectedImage.prompt || '',
+                      createdAt: Date.now(),
+                    }))
+                    window.dispatchEvent(new CustomEvent('switch-to-animate'))
                     setSelectedImage(null)
                     setShowDetails(false)
                   }}

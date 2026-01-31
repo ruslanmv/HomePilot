@@ -8,6 +8,19 @@ type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9";
 type ContentRating = "sfw" | "mature";
 type AvailableModel = { id: string; name: string };
 
+/**
+ * Mature Content Categories - determines the type of adult content
+ */
+type MatureCategory = "fan_service" | "romantic" | "sensual" | "explicit";
+
+/**
+ * Project Type determines the overall workflow and output format:
+ * - video: Full motion video with AI-generated clips (YouTube videos, documentaries)
+ * - slideshow: Image slideshow with Ken Burns effect + narration (quick generation)
+ * - video_series: Multiple video clips stitched together (episodic content)
+ */
+type ProjectType = "video" | "slideshow" | "video_series";
+
 interface CreatorStudioHostProps {
   backendUrl: string;
   apiKey?: string;
@@ -42,6 +55,7 @@ export function CreatorStudioHost({
     llmModel: "",
     imageModel: "",
     videoModel: "",
+    enableVideoGeneration: false,
   });
 
   // Bootstrap connection info for API calls
@@ -64,6 +78,8 @@ export function CreatorStudioHost({
         targetSceneCount={projectSettings.targetSceneCount}
         defaultLLMModel={projectSettings.llmModel}
         imageModel={projectSettings.imageModel}
+        videoModel={projectSettings.videoModel}
+        enableVideoGeneration={projectSettings.enableVideoGeneration}
       />
     );
   }
@@ -99,6 +115,7 @@ interface WizardProps {
     llmModel: string;
     imageModel: string;
     videoModel: string;
+    enableVideoGeneration: boolean;
   }) => void;
 }
 
@@ -110,8 +127,11 @@ function CreatorStudioWizard({
 }: WizardProps) {
   const authKey = (apiKey || "").trim();
 
-  // Wizard state - 5 steps: Details, Visuals, Checks, Review, Outline
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  // Wizard state - 6 steps: Project Type (0), Details (1), Visuals (2), Checks (3), Review (4), Outline (5)
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5>(0);
+
+  // Project type selection (Step 0)
+  const [projectType, setProjectType] = useState<ProjectType>("video");
 
   // Core fields
   const [title, setTitle] = useState("");
@@ -145,6 +165,13 @@ function CreatorStudioWizard({
   const [availableVideoModels, setAvailableVideoModels] = useState<AvailableModel[]>([]);
   const [selectedVideoModel, setSelectedVideoModel] = useState("");
   const [loadingVideoModels, setLoadingVideoModels] = useState(false);
+
+  // Video generation toggle - auto-enabled for video/video_series projects
+  const [enableVideoGeneration, setEnableVideoGeneration] = useState(true);
+
+  // Mature content settings (only visible when contentRating === "mature")
+  const [matureCategory, setMatureCategory] = useState<MatureCategory>("fan_service");
+  const [intensityLevel, setIntensityLevel] = useState(0.3); // 0-1 scale: 0=tasteful, 1=bold
 
   // Mature consent modal
   const [showMatureModal, setShowMatureModal] = useState(false);
@@ -266,6 +293,10 @@ function CreatorStudioWizard({
   // Build tags for backend
   const tagsForBackend = React.useMemo(() => {
     const t: string[] = [];
+    // Project type (determines generation workflow)
+    t.push(`projectType:${projectType}`);
+    // Also add mode:video or mode:slideshow for easy filtering and editor detection
+    t.push(`mode:${projectType === "slideshow" ? "slideshow" : "video"}`);
     if (goal) t.push(`goal:${goal.toLowerCase()}`);
     if (visualStyle) t.push(`visual:${visualStyle.toLowerCase().replaceAll(" ", "_")}`);
     if (tones.length) t.push(...tones.map((x) => `tone:${x.toLowerCase().replaceAll(" ", "_")}`));
@@ -276,14 +307,22 @@ function CreatorStudioWizard({
     // Include selected models
     if (selectedLLMModel) t.push(`llm:${selectedLLMModel}`);
     if (selectedImageModel) t.push(`imageModel:${selectedImageModel}`);
-    if (selectedVideoModel) t.push(`videoModel:${selectedVideoModel}`);
+    // Video generation settings
+    t.push(`videoGeneration:${enableVideoGeneration ? 'enabled' : 'disabled'}`);
+    if (enableVideoGeneration && selectedVideoModel) t.push(`videoModel:${selectedVideoModel}`);
+    // Mature content settings (only when mature mode is enabled)
+    if (contentRating === "mature") {
+      t.push(`mature:enabled`);
+      t.push(`matureCategory:${matureCategory}`);
+      t.push(`intensity:${intensityLevel.toFixed(2)}`);
+    }
     return Array.from(new Set(t));
-  }, [goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, selectedVideoModel]);
+  }, [projectType, goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, enableVideoGeneration, selectedVideoModel, contentRating, matureCategory, intensityLevel]);
 
   const canProceedStep1 = title.trim().length > 0;
   const canCreate = title.trim().length > 0 && !loading && generatedOutline;
 
-  function goTo(next: 1 | 2 | 3 | 4 | 5) {
+  function goTo(next: 0 | 1 | 2 | 3 | 4 | 5) {
     setError(null);
     setStep(next);
   }
@@ -293,6 +332,25 @@ function CreatorStudioWizard({
     // But step 5 (Outline) requires going through step 4 first
     if (target === 5) return step === 5 || (step === 4 && generatedOutline);
     return target < step || target === step + 1;
+  }
+
+  // Auto-configure based on project type
+  function handleProjectTypeSelect(type: ProjectType) {
+    setProjectType(type);
+    // Auto-set platform preset based on project type
+    if (type === "slideshow") {
+      setPlatformPreset("slides_16_9");
+      // Slideshows use images only (Ken Burns effect)
+      setEnableVideoGeneration(false);
+    } else if (type === "video_series") {
+      setPlatformPreset("youtube_16_9");
+      // Video series uses AI video generation
+      setEnableVideoGeneration(true);
+    } else {
+      // "video" - default to YouTube with video generation
+      setPlatformPreset("youtube_16_9");
+      setEnableVideoGeneration(true);
+    }
   }
 
   function toggleTone(t: string) {
@@ -438,6 +496,7 @@ function CreatorStudioWizard({
         llmModel: selectedLLMModel,
         imageModel: selectedImageModel,
         videoModel: selectedVideoModel,
+        enableVideoGeneration,
       });
     } catch (e: any) {
       setError(e.message || String(e));
@@ -531,15 +590,66 @@ function CreatorStudioWizard({
 
           {/* Horizontal Stepper */}
           <div className="flex justify-center py-5 border-b border-[#3f3f3f] bg-[#1f1f1f]">
-            <StepNav step={step} mine={1} label="Details" canNav={canNav(1)} onClick={() => canNav(1) && goTo(1)} totalSteps={5} />
-            <StepNav step={step} mine={2} label="Visuals" canNav={canNav(2)} onClick={() => canNav(2) && goTo(2)} totalSteps={5} />
-            <StepNav step={step} mine={3} label="Checks" canNav={canNav(3)} onClick={() => canNav(3) && goTo(3)} totalSteps={5} />
-            <StepNav step={step} mine={4} label="Review" canNav={canNav(4)} onClick={() => canNav(4) && goTo(4)} totalSteps={5} />
-            <StepNav step={step} mine={5} label="Outline" canNav={canNav(5)} onClick={() => canNav(5) && goTo(5)} totalSteps={5} />
+            <StepNav step={step} mine={0} label="Type" canNav={canNav(0)} onClick={() => canNav(0) && goTo(0)} totalSteps={6} />
+            <StepNav step={step} mine={1} label="Details" canNav={canNav(1)} onClick={() => canNav(1) && goTo(1)} totalSteps={6} />
+            <StepNav step={step} mine={2} label="Visuals" canNav={canNav(2)} onClick={() => canNav(2) && goTo(2)} totalSteps={6} />
+            <StepNav step={step} mine={3} label="Checks" canNav={canNav(3)} onClick={() => canNav(3) && goTo(3)} totalSteps={6} />
+            <StepNav step={step} mine={4} label="Review" canNav={canNav(4)} onClick={() => canNav(4) && goTo(4)} totalSteps={6} />
+            <StepNav step={step} mine={5} label="Outline" canNav={canNav(5)} onClick={() => canNav(5) && goTo(5)} totalSteps={6} />
           </div>
 
           {/* Content Area */}
           <div className="flex-1 overflow-y-auto px-12 py-8">
+            {/* STEP 0: Project Type */}
+            {step === 0 && (
+              <div>
+                <h1 className="text-2xl font-medium">Choose Your Project Type</h1>
+                <p className="mt-2 text-sm text-[#aaa]">Select the type of content you want to create. This determines how your scenes will be generated and played back.</p>
+
+                <div className="mt-8 grid grid-cols-1 gap-4">
+                  {/* Video Project */}
+                  <ProjectTypeCard
+                    icon="Film"
+                    title="Video Project"
+                    description="Full motion AI-generated video content. Perfect for YouTube videos, documentaries, and cinematic storytelling. Scenes are animated with AI video generation."
+                    features={["AI video generation for each scene", "Cinematic motion & transitions", "Best for narrative content"]}
+                    selected={projectType === "video"}
+                    onClick={() => handleProjectTypeSelect("video")}
+                  />
+
+                  {/* Slideshow */}
+                  <ProjectTypeCard
+                    icon="Images"
+                    title="Slideshow"
+                    description="Image slideshow with Ken Burns effect and narration. Quick to generate, ideal for presentations, educational content, and photo stories."
+                    features={["Fast generation (images only)", "Ken Burns pan & zoom effects", "Best for educational/presentations"]}
+                    selected={projectType === "slideshow"}
+                    onClick={() => handleProjectTypeSelect("slideshow")}
+                  />
+
+                  {/* Video Series */}
+                  <ProjectTypeCard
+                    icon="Layers"
+                    title="Video Series"
+                    description="Multiple video clips stitched together into episodes. Great for episodic content, tutorials, and long-form video series."
+                    features={["Multiple 4-second video clips", "Episode-based structure", "Best for serialized content"]}
+                    selected={projectType === "video_series"}
+                    onClick={() => handleProjectTypeSelect("video_series")}
+                  />
+                </div>
+
+                <div className="mt-6 p-4 bg-[#121212] border border-[#3f3f3f] rounded">
+                  <div className="text-sm font-medium text-[#3ea6ff]">All project types include:</div>
+                  <div className="mt-2 text-sm text-[#aaa] flex flex-wrap gap-x-6 gap-y-1">
+                    <span>AI Narration (TTS)</span>
+                    <span>TV Mode Playback</span>
+                    <span>Scene-by-Scene Editing</span>
+                    <span>Export to Video</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* STEP 1: Details */}
             {step === 1 && (
               <div>
@@ -776,34 +886,95 @@ function CreatorStudioWizard({
                   )}
                 </div>
 
-                {/* Video Model Selection */}
+                {/* Video Generation Toggle + Model Selection */}
                 <div className="mt-6">
-                  <label className="block text-xs font-medium text-[#aaa] mb-3">Video Generation Model</label>
-                  <p className="text-xs text-[#777] mb-3">Select the model for generating scene videos (optional)</p>
-                  <div className="relative">
-                    <select
-                      value={selectedVideoModel}
-                      onChange={(e) => setSelectedVideoModel(e.target.value)}
-                      className="w-full px-4 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-base outline-none focus:border-[#3ea6ff] appearance-none cursor-pointer"
-                      disabled={loadingVideoModels}
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-[#aaa]">Video Generation</label>
+                      <p className="text-xs text-[#777] mt-1">Generate AI video clips for each scene after images</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEnableVideoGeneration(!enableVideoGeneration)}
+                      className={[
+                        "relative w-12 h-6 rounded-full transition-colors",
+                        enableVideoGeneration ? "bg-[#3ea6ff]" : "bg-[#3f3f3f]"
+                      ].join(" ")}
                     >
-                      <option value="">None (images only)</option>
-                      {loadingVideoModels ? (
-                        <option value="" disabled>Loading models...</option>
-                      ) : (
-                        availableVideoModels.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#aaa] pointer-events-none" />
+                      <div
+                        className={[
+                          "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                          enableVideoGeneration ? "translate-x-7" : "translate-x-1"
+                        ].join(" ")}
+                      />
+                    </button>
                   </div>
-                  {availableVideoModels.length === 0 && !loadingVideoModels && (
-                    <p className="text-xs text-[#777] mt-2">
-                      No video models found. Video generation is optional.
-                    </p>
+
+                  {/* Show project type hint */}
+                  {projectType === "slideshow" && enableVideoGeneration && (
+                    <div className="mb-3 p-2 bg-[#f59e0b]/10 border border-[#f59e0b]/30 rounded text-xs text-[#f59e0b]">
+                      Note: Slideshow projects typically use images with Ken Burns effect. Video generation will create animated clips instead.
+                    </div>
+                  )}
+
+                  {enableVideoGeneration && (
+                    <>
+                      <div className="relative">
+                        <select
+                          value={selectedVideoModel}
+                          onChange={(e) => setSelectedVideoModel(e.target.value)}
+                          className="w-full px-4 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-base outline-none focus:border-[#3ea6ff] appearance-none cursor-pointer"
+                          disabled={loadingVideoModels}
+                        >
+                          {loadingVideoModels ? (
+                            <option value="">Loading models...</option>
+                          ) : availableVideoModels.length === 0 ? (
+                            <option value="">No models available</option>
+                          ) : (
+                            availableVideoModels.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.name}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#aaa] pointer-events-none" />
+                      </div>
+                      {availableVideoModels.length === 0 && !loadingVideoModels && (
+                        <p className="text-xs text-[#ff6b6b] mt-2">
+                          No video models found. Make sure ComfyUI has video models installed (e.g., Wan2.1, LTX-Video).
+                        </p>
+                      )}
+                      {selectedVideoModel && (
+                        <div className="mt-2 p-3 bg-[#121212] border border-[#3f3f3f] rounded text-xs text-[#aaa]">
+                          <div className="flex items-center gap-2 text-[#3ea6ff]">
+                            <span className="font-medium">Generation Flow:</span>
+                          </div>
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className="px-2 py-1 bg-[#282828] rounded">1. Create Scenes</span>
+                            <span className="text-[#666]">→</span>
+                            <span className="px-2 py-1 bg-[#282828] rounded">2. Generate Images</span>
+                            <span className="text-[#666]">→</span>
+                            <span className="px-2 py-1 bg-[#3ea6ff]/20 text-[#3ea6ff] rounded">3. Generate Videos</span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {!enableVideoGeneration && (
+                    <div className="p-3 bg-[#121212] border border-[#3f3f3f] rounded text-xs text-[#aaa]">
+                      <div className="flex items-center gap-2 text-[#888]">
+                        <span className="font-medium">Generation Flow (Images Only):</span>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="px-2 py-1 bg-[#282828] rounded">1. Create Scenes</span>
+                        <span className="text-[#666]">→</span>
+                        <span className="px-2 py-1 bg-[#282828] rounded">2. Generate Images</span>
+                        <span className="text-[#666]">→</span>
+                        <span className="px-2 py-1 bg-[#282828] rounded text-[#666]">Ken Burns Effect</span>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
@@ -839,9 +1010,84 @@ function CreatorStudioWizard({
                 </div>
 
                 {contentRating === "mature" && (
-                  <div className="mt-4 p-4 bg-[#8B5CF6]/10 border border-[#8B5CF6]/30 rounded text-sm">
-                    <span className="font-medium text-[#A78BFA]">Mature Mode Enabled</span>
-                    <span className="text-[#aaa] ml-2">- This project may generate explicit content.</span>
+                  <div className="mt-6 p-5 bg-gradient-to-br from-[#8B5CF6]/10 to-[#EC4899]/10 border border-[#8B5CF6]/30 rounded-lg">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-8 h-8 rounded-lg bg-[#8B5CF6]/20 flex items-center justify-center">
+                        <span className="text-lg">🔞</span>
+                      </div>
+                      <div>
+                        <div className="font-medium text-[#A78BFA]">Mature Mode Settings</div>
+                        <div className="text-xs text-[#aaa]">Configure adult content preferences for this project</div>
+                      </div>
+                    </div>
+
+                    {/* Content Category */}
+                    <div className="mb-5">
+                      <label className="block text-xs font-medium text-[#aaa] mb-3">Content Style</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <MatureCategoryCard
+                          icon="💋"
+                          title="Fan Service"
+                          desc="Suggestive poses, revealing outfits"
+                          selected={matureCategory === "fan_service"}
+                          onClick={() => setMatureCategory("fan_service")}
+                        />
+                        <MatureCategoryCard
+                          icon="💕"
+                          title="Romantic"
+                          desc="Intimate moments, passion"
+                          selected={matureCategory === "romantic"}
+                          onClick={() => setMatureCategory("romantic")}
+                        />
+                        <MatureCategoryCard
+                          icon="🔥"
+                          title="Sensual"
+                          desc="Artistic nudity, sensuality"
+                          selected={matureCategory === "sensual"}
+                          onClick={() => setMatureCategory("sensual")}
+                        />
+                        <MatureCategoryCard
+                          icon="⚡"
+                          title="Explicit"
+                          desc="Full adult content"
+                          selected={matureCategory === "explicit"}
+                          onClick={() => setMatureCategory("explicit")}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Intensity Level - Professional Slider */}
+                    <div className="mb-4 p-4 rounded-xl bg-[#EC4899]/5 border border-[#EC4899]/20">
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="text-xs text-[#EC4899] font-semibold">Intensity Strength</span>
+                        <span className="text-xs text-[#aaa] font-mono">{intensityLevel.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={intensityLevel}
+                        onChange={(e) => setIntensityLevel(parseFloat(e.target.value))}
+                        className="w-full h-2 bg-[#EC4899]/20 rounded-full appearance-none cursor-pointer accent-[#EC4899]"
+                      />
+                      <div className="flex justify-between text-[10px] text-[#666] mt-2">
+                        <span>Tasteful</span>
+                        <span>Bold</span>
+                      </div>
+                      <div className="mt-3 text-xs text-[#777]">
+                        {intensityLevel < 0.25 && "Suggestive themes, light teasing, clothed scenes"}
+                        {intensityLevel >= 0.25 && intensityLevel < 0.5 && "Partial nudity, intimate moments, sensual content"}
+                        {intensityLevel >= 0.5 && intensityLevel < 0.75 && "Full nudity, explicit scenes, adult themes"}
+                        {intensityLevel >= 0.75 && "Uncensored adult content, maximum intensity"}
+                      </div>
+                    </div>
+
+                    {/* Privacy Notice */}
+                    <div className="p-3 bg-black/20 rounded text-xs text-[#888] flex items-start gap-2">
+                      <span>🔒</span>
+                      <span>Content generated locally. Not uploaded to cloud services. You are responsible for compliance with local laws.</span>
+                    </div>
                   </div>
                 )}
 
@@ -858,6 +1104,7 @@ function CreatorStudioWizard({
                 <p className="mt-2 text-sm text-[#aaa]">Review your settings, then generate your story outline.</p>
 
                 <div className="mt-6 bg-[#121212] border border-[#3f3f3f] rounded p-5">
+                  <ReviewLine label="Project Type" value={projectTypeToLabel(projectType)} />
                   <ReviewLine label="Title" value={title.trim() || "Untitled Project"} />
                   <ReviewLine label="Format" value={platformPresetToLabel(platformPreset)} />
                   <ReviewLine label="Style" value={`${visualStyle} (${tones.length ? tones.join(", ") : "Default"})`} />
@@ -871,15 +1118,31 @@ function CreatorStudioWizard({
                     value={selectedImageModel ? `${selectedImageModel} (${getArchitectureLabel(detectArchitecture(selectedImageModel))})` : "Default"}
                   />
                   <ReviewLine
-                    label="Video Model"
-                    value={selectedVideoModel || "None (images only)"}
+                    label="Video Generation"
+                    value={enableVideoGeneration ? (selectedVideoModel || "Enabled (auto-select)") : "Disabled (images only)"}
+                    color={enableVideoGeneration ? "text-[#3ea6ff]" : "text-[#888]"}
                   />
                   <ReviewLine
-                    label="Safety"
+                    label="Content Rating"
                     value={contentRating === "sfw" ? "Safe (SFW)" : "Mature (18+)"}
                     color={contentRating === "sfw" ? "text-[#2ba640]" : "text-[#8B5CF6]"}
-                    last
+                    last={contentRating === "sfw"}
                   />
+                  {contentRating === "mature" && (
+                    <>
+                      <ReviewLine
+                        label="Content Style"
+                        value={matureCategoryToLabel(matureCategory)}
+                        color="text-[#EC4899]"
+                      />
+                      <ReviewLine
+                        label="Intensity"
+                        value={`${intensityLevel.toFixed(2)} (${intensityLevel < 0.25 ? 'Tasteful' : intensityLevel < 0.5 ? 'Moderate' : intensityLevel < 0.75 ? 'Bold' : 'Maximum'})`}
+                        color="text-[#EC4899]"
+                        last
+                      />
+                    </>
+                  )}
                 </div>
 
                 {error && (
@@ -1014,10 +1277,10 @@ function CreatorStudioWizard({
 
           {/* Footer */}
           <div className="px-6 py-4 border-t border-[#3f3f3f] flex justify-end gap-3">
-            {step > 1 && step !== 5 && (
+            {step > 0 && step !== 5 && (
               <button
                 className="px-6 py-2 text-sm font-medium text-[#aaa] hover:text-[#f1f1f1] uppercase"
-                onClick={() => goTo((step - 1) as 1 | 2 | 3 | 4 | 5)}
+                onClick={() => goTo((step - 1) as 0 | 1 | 2 | 3 | 4 | 5)}
                 disabled={loading || generatingOutline}
               >
                 Back
@@ -1036,7 +1299,7 @@ function CreatorStudioWizard({
               <button
                 className="px-6 py-2 text-sm font-semibold bg-[#3ea6ff] text-black rounded-sm hover:bg-[#6ebbff] disabled:opacity-50 disabled:cursor-not-allowed uppercase"
                 disabled={step === 1 && !canProceedStep1}
-                onClick={() => goTo((step + 1) as 1 | 2 | 3 | 4 | 5)}
+                onClick={() => goTo((step + 1) as 0 | 1 | 2 | 3 | 4 | 5)}
               >
                 Next
               </button>
@@ -1078,7 +1341,7 @@ function StepNav({
   label,
   canNav,
   onClick,
-  totalSteps = 4,
+  totalSteps = 6,
 }: {
   step: number;
   mine: number;
@@ -1089,18 +1352,20 @@ function StepNav({
 }) {
   const isActive = step === mine;
   const isDone = step > mine;
+  // For 6 steps (0-5), the last step is 5, so show connector for steps 0-4
+  const isLastStep = mine === totalSteps - 1;
 
   return (
     <button
       type="button"
       onClick={onClick}
       className={[
-        "flex flex-col items-center w-[120px] relative",
+        "flex flex-col items-center w-[100px] relative",
         canNav ? "cursor-pointer" : "cursor-default",
       ].join(" ")}
     >
       {/* Connector line */}
-      {mine < totalSteps && (
+      {!isLastStep && (
         <div
           className={[
             "absolute top-3 left-1/2 w-full h-0.5 z-0",
@@ -1120,7 +1385,7 @@ function StepNav({
               : "bg-[#3f3f3f] text-[#aaa]",
         ].join(" ")}
       >
-        {mine}
+        {mine + 1}
       </div>
 
       {/* Label */}
@@ -1131,6 +1396,89 @@ function StepNav({
         ].join(" ")}
       >
         {label}
+      </div>
+    </button>
+  );
+}
+
+/* Project Type Card for Step 0 */
+function ProjectTypeCard({
+  icon,
+  title,
+  description,
+  features,
+  selected,
+  onClick,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  features: string[];
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const iconMap: Record<string, string> = {
+    Film: "\uD83C\uDFAC",
+    Images: "\uD83D\uDDBC\uFE0F",
+    Layers: "\uD83C\uDFAC",
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "bg-[#1f1f1f] border rounded-lg p-5 text-left transition-all flex gap-5",
+        selected
+          ? "border-[#3ea6ff] bg-[rgba(62,166,255,0.08)] ring-1 ring-[#3ea6ff]"
+          : "border-[#3f3f3f] hover:bg-[#282828] hover:border-[#555]",
+      ].join(" ")}
+    >
+      {/* Icon */}
+      <div className={[
+        "w-14 h-14 rounded-lg flex items-center justify-center text-2xl flex-shrink-0",
+        selected ? "bg-[#3ea6ff]/20" : "bg-[#282828]"
+      ].join(" ")}>
+        {iconMap[icon] || icon}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-3">
+          <div className={[
+            "text-lg font-medium",
+            selected ? "text-[#3ea6ff]" : "text-[#f1f1f1]"
+          ].join(" ")}>
+            {title}
+          </div>
+          {selected && (
+            <div className="px-2 py-0.5 bg-[#3ea6ff] text-black text-xs font-medium rounded">
+              Selected
+            </div>
+          )}
+        </div>
+        <div className="text-sm text-[#aaa] mt-1 leading-relaxed">{description}</div>
+        <div className="flex flex-wrap gap-2 mt-3">
+          {features.map((f, i) => (
+            <span key={i} className="px-2 py-1 bg-[#282828] text-xs text-[#888] rounded">
+              {f}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Selection indicator */}
+      <div className="flex-shrink-0 flex items-center">
+        <div className={[
+          "w-5 h-5 rounded-full border-2 flex items-center justify-center",
+          selected ? "border-[#3ea6ff] bg-[#3ea6ff]" : "border-[#555]"
+        ].join(" ")}>
+          {selected && (
+            <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </div>
       </div>
     </button>
   );
@@ -1257,6 +1605,65 @@ function platformPresetToLabel(p: PlatformPreset) {
   if (p === "youtube_16_9") return "YouTube Video (16:9)";
   if (p === "shorts_9_16") return "YouTube Short (9:16)";
   return "Slides (16:9)";
+}
+
+function projectTypeToLabel(t: ProjectType) {
+  if (t === "video") return "Video Project";
+  if (t === "slideshow") return "Slideshow";
+  return "Video Series";
+}
+
+function matureCategoryToLabel(c: MatureCategory) {
+  if (c === "fan_service") return "Fan Service";
+  if (c === "romantic") return "Romantic";
+  if (c === "sensual") return "Sensual";
+  return "Explicit";
+}
+
+/* Mature Category Card for Step 3 */
+function MatureCategoryCard({
+  icon,
+  title,
+  desc,
+  selected,
+  onClick,
+}: {
+  icon: string;
+  title: string;
+  desc: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "p-3 rounded-lg text-left transition-all flex items-start gap-3",
+        selected
+          ? "bg-[#8B5CF6]/20 border border-[#8B5CF6]/50 ring-1 ring-[#8B5CF6]/30"
+          : "bg-[#1f1f1f] border border-[#3f3f3f] hover:bg-[#282828] hover:border-[#555]",
+      ].join(" ")}
+    >
+      <span className="text-xl">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className={[
+          "text-sm font-medium",
+          selected ? "text-[#A78BFA]" : "text-[#f1f1f1]"
+        ].join(" ")}>
+          {title}
+        </div>
+        <div className="text-xs text-[#777] mt-0.5">{desc}</div>
+      </div>
+      {selected && (
+        <div className="w-4 h-4 rounded-full bg-[#8B5CF6] flex items-center justify-center flex-shrink-0">
+          <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+      )}
+    </button>
+  );
 }
 
 export default CreatorStudioHost;
