@@ -331,38 +331,70 @@ export default function AnimateView(props: AnimateParams) {
     }
   }, [items])
 
-  // On mount, restart progress simulation for any items still in 'processing' status
-  // (handles edge case where user tabs back while generation is still in-flight)
+  // On mount, periodically check localStorage for items that completed while unmounted
+  // This handles the race condition where API completes after component remounts
   useEffect(() => {
     const processingItems = items.filter(item => item.status === 'processing')
     if (processingItems.length === 0) return
 
-    // Continue simulating progress for items that are still processing
     // Video generation can take up to 3 minutes, so use longer threshold
     const IN_FLIGHT_THRESHOLD = 3 * 60 * 1000  // 3 minutes
-    const progressInterval = setInterval(() => {
-      setItems(prev => {
-        const updated = prev.map(item => {
-          if (item.status !== 'processing') return item
-          // Check if this processing item is now too old (past in-flight threshold)
-          const age = Date.now() - item.createdAt
-          if (age > IN_FLIGHT_THRESHOLD) {
-            // Mark as failed since we can't track the original API call
+
+    // Check localStorage for updates and sync state
+    const syncFromLocalStorage = () => {
+      try {
+        const stored = localStorage.getItem('homepilot_animate_items')
+        if (!stored) return false
+
+        const storedItems: AnimateItem[] = JSON.parse(stored)
+        const storedMap = new Map(storedItems.map(item => [item.id, item]))
+
+        let hasUpdates = false
+        setItems(prev => {
+          const updated = prev.map(item => {
+            if (item.status !== 'processing') return item
+
+            // Check if this item was completed in localStorage (by another instance)
+            const storedItem = storedMap.get(item.id)
+            if (storedItem && storedItem.status === 'done' && storedItem.videoUrl) {
+              console.log('[Animate] Synced completed item from localStorage:', item.id)
+              hasUpdates = true
+              return storedItem
+            }
+
+            // Check if this processing item is now too old
+            const age = Date.now() - item.createdAt
+            if (age > IN_FLIGHT_THRESHOLD) {
+              hasUpdates = true
+              return {
+                ...item,
+                status: 'failed' as const,
+                error: 'Generation may have completed - check your gallery or retry'
+              }
+            }
+
+            // Continue progress simulation
             return {
               ...item,
-              status: 'failed' as const,
-              error: 'Generation may have completed - check your gallery or retry'
+              progress: Math.min(90, (item.progress || 0) + Math.random() * 3 + 1)
             }
-          }
-          // Continue progress simulation
-          return {
-            ...item,
-            progress: Math.min(90, (item.progress || 0) + Math.random() * 3 + 1)
-          }
+          })
+          return updated
         })
-        return updated
-      })
+        return hasUpdates
+      } catch (e) {
+        console.error('[Animate] Failed to sync from localStorage:', e)
+        return false
+      }
+    }
+
+    // Run sync check periodically
+    const progressInterval = setInterval(() => {
+      syncFromLocalStorage()
     }, 800)  // Slower interval for video (takes longer)
+
+    // Also run immediately on mount
+    syncFromLocalStorage()
 
     return () => clearInterval(progressInterval)
     // Only run on mount (empty deps) - items will be stale but that's intentional
