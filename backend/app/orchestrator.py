@@ -14,6 +14,7 @@ from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
 from .defaults import DEFAULT_NEGATIVE_PROMPT, enhance_negative_prompt
 from .model_config import get_model_settings, get_architecture, MODEL_ARCHITECTURES
+from . import video_presets
 
 # Import specialized handlers
 from .search import run_search
@@ -24,6 +25,61 @@ IMAGE_RE = re.compile(r"\b(imagine|generate|create|draw|make)\b.*\b(image|pictur
 EDIT_RE = re.compile(r"\b(edit|inpaint|replace|remove|change)\b", re.I)
 ANIM_RE = re.compile(r"\b(animate|make (a )?video|image\s*to\s*video)\b", re.I)
 URL_RE = re.compile(r"(https?://\S+)")
+
+
+def _clean_video_prompt(text: str) -> str:
+    """
+    Clean a video prompt by removing URLs and command words.
+
+    URLs in prompts (like "http://localhost:8000/files/...") confuse the text encoder
+    and degrade video quality. This function strips them out while preserving
+    the actual descriptive content.
+
+    Args:
+        text: Raw user input text
+
+    Returns:
+        Cleaned prompt suitable for video generation
+    """
+    # Remove URLs first (they can be long and contain confusing tokens)
+    cleaned = URL_RE.sub("", text)
+    # Remove common command words
+    cleaned = cleaned.replace("animate", "").strip()
+    # Collapse multiple spaces
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    # Return cleaned prompt or a sensible default
+    return cleaned or "smooth natural motion"
+
+
+def _clean_for_imagine(text: str) -> str:
+    """
+    Clean a prompt for image generation when auto-generating for Animate mode.
+
+    When user clicks Animate with only text (no image), we need to generate
+    a starter image first. This cleans the text by removing animate/video
+    command words to get just the descriptive content.
+
+    Args:
+        text: Raw user input text (may contain "animate", URLs, etc.)
+
+    Returns:
+        Cleaned prompt suitable for txt2img generation
+    """
+    if not text:
+        return "A high quality cinematic photo, detailed, sharp focus"
+
+    # Remove URLs
+    cleaned = URL_RE.sub(" ", text)
+    # Remove animate/video command words
+    cleaned = ANIM_RE.sub(" ", cleaned)
+    # Also remove simple "animate" that might not match the full regex
+    cleaned = re.sub(r"\banimate\b", " ", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bvideo\b", " ", cleaned, flags=re.I)
+    # Collapse multiple spaces
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    # Return cleaned prompt or a sensible default
+    return cleaned or "A high quality cinematic photo, detailed, sharp focus"
 
 
 def _map_ref_strength_to_denoise(ref_strength: Optional[float]) -> float:
@@ -261,6 +317,12 @@ async def orchestrate(
     vid_fps: Optional[int] = None,
     vid_motion: Optional[str] = None,
     vid_model: Optional[str] = None,
+    vid_steps: Optional[int] = None,
+    vid_cfg: Optional[float] = None,
+    vid_denoise: Optional[float] = None,
+    vid_seed: Optional[int] = None,
+    vid_preset: Optional[str] = None,  # Quality preset: 'low', 'medium', 'high', 'ultra'
+    vid_negative_prompt: Optional[str] = None,  # Custom negative prompt for video
     nsfw_mode: Optional[bool] = None,
     prompt_refinement: Optional[bool] = True,
     img_reference: Optional[str] = None,  # Reference image URL for img2img
@@ -289,17 +351,136 @@ async def orchestrate(
 
     # --- Animate ---
     if (m == "animate") or (image_url and ANIM_RE.search(text_in)):
+        # Store metadata about auto-generated image (if we create one)
+        auto_generated_image = None
+        auto_generated_meta = None
+
         if not image_url:
-            text = "To animate, upload an image first (or paste an image URL)."
-            add_message(cid, "assistant", text)
-            return {"conversation_id": cid, "text": text, "media": None}
+            # ================================================================
+            # AUTO-GENERATE STARTER IMAGE (Grok-like behavior)
+            # Instead of error, generate an image first using Imagine settings
+            # ================================================================
+            print(f"[ANIMATE] No image provided, auto-generating starter image...")
+            print(f"[ANIMATE] Using img_model={img_model}, img_preset={img_preset}")
+
+            try:
+                # 1. Clean prompt for image generation
+                img_prompt = _clean_for_imagine(text_in)
+                print(f"[ANIMATE] Cleaned prompt for image: '{img_prompt[:100]}...'")
+
+                # 2. Optional prompt refinement (same as Imagine mode)
+                if prompt_refinement:
+                    prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
+                    if prov == "ollama":
+                        refine_base_url = provider_base_url or OLLAMA_BASE_URL
+                        refine_model = OLLAMA_MODEL if OLLAMA_MODEL else "llama3:8b"
+                    elif prov == "openai_compat":
+                        refine_base_url = provider_base_url or LLM_BASE_URL
+                        refine_model = LLM_MODEL if LLM_MODEL else None
+                    else:
+                        refine_base_url = provider_base_url
+                        refine_model = None
+
+                    try:
+                        refined = await _refine_prompt(
+                            img_prompt,
+                            provider=prov,
+                            provider_base_url=refine_base_url,
+                            provider_model=refine_model,
+                        )
+                        print(f"[ANIMATE] Refined prompt: '{refined.get('prompt', '')[:100]}...'")
+                    except Exception as e:
+                        print(f"[ANIMATE] Prompt refinement failed: {e}, using original")
+                        refined = {
+                            "prompt": img_prompt,
+                            "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
+                            "aspect_ratio": "16:9",  # Better for video
+                            "style": "photorealistic",
+                        }
+                else:
+                    refined = {
+                        "prompt": img_prompt,
+                        "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
+                        "aspect_ratio": "16:9",  # Better for video
+                        "style": "photorealistic",
+                    }
+
+                # 3. Model + preset selection (same logic as Imagine)
+                model_filename = img_model or "dreamshaper_8.safetensors"
+                short_name_map = {
+                    "sdxl": "sd_xl_base_1.0.safetensors",
+                    "flux-schnell": "flux1-schnell.safetensors",
+                    "flux-dev": "flux1-dev.safetensors",
+                    "pony-xl": "ponyDiffusionV6XL.safetensors",
+                    "sd15-uncensored": "dreamshaper_8.safetensors",
+                }
+                if model_filename in short_name_map:
+                    model_filename = short_name_map[model_filename]
+
+                # Use 16:9 aspect ratio for better video compatibility
+                aspect_ratio = "16:9"
+                preset_to_use = img_preset or "med"
+                model_settings = get_model_settings(model_filename, aspect_ratio, preset=preset_to_use)
+                architecture = model_settings["architecture"]
+
+                print(f"[ANIMATE] Image model: {model_filename}, arch: {architecture}")
+                print(f"[ANIMATE] Dimensions: {model_settings['width']}x{model_settings['height']}")
+
+                # 4. Apply settings to refined dict
+                refined["width"] = model_settings["width"]
+                refined["height"] = model_settings["height"]
+                refined["steps"] = model_settings["steps"]
+                refined["cfg"] = model_settings["cfg"]
+                refined["seed"] = random.randint(1, 2147483647)
+                refined["aspect_ratio"] = aspect_ratio
+
+                # 5. Select workflow based on architecture
+                workflow_map = {
+                    "sd15": "txt2img-sd15-uncensored",
+                    "sdxl": "txt2img",
+                    "flux_schnell": "txt2img-flux-schnell",
+                    "flux_dev": "txt2img-flux-dev",
+                }
+                img_workflow_name = workflow_map.get(architecture, "txt2img")
+                if "pony" in model_filename.lower():
+                    img_workflow_name = "txt2img-pony-xl"
+                if architecture == "sd15":
+                    refined["ckpt_name"] = model_filename
+
+                print(f"[ANIMATE] Image workflow: {img_workflow_name}")
+
+                # 6. Generate ONE image
+                print(f"[ANIMATE] Generating starter image...")
+                img_res = run_workflow(img_workflow_name, refined)
+                generated_images = img_res.get("images", []) or []
+
+                if not generated_images:
+                    raise RuntimeError("Failed to generate starter image - no images returned")
+
+                image_url = generated_images[0]
+                auto_generated_image = image_url
+                auto_generated_meta = {
+                    "prompt": refined.get("prompt"),
+                    "seed": refined.get("seed"),
+                    "width": refined.get("width"),
+                    "height": refined.get("height"),
+                    "model": model_filename,
+                }
+                print(f"[ANIMATE] Starter image generated: {image_url}")
+
+            except Exception as e:
+                error_msg = f"Failed to generate starter image: {e}"
+                print(f"[ANIMATE] ERROR: {error_msg}")
+                add_message(cid, "assistant", error_msg)
+                return {"conversation_id": cid, "text": error_msg, "media": None}
 
         try:
             # Determine which video workflow to use based on selected model
-            video_workflow_name = "img2vid"
-            detected_model_type = None
+            video_workflow_name = "img2vid"  # Default to SVD (lightest, most compatible)
+            detected_model_type = "svd"  # Default to SVD
 
-            if vid_model:
+            # Normalize vid_model - handle None, "None", empty string
+            if vid_model and vid_model.lower() not in ("none", "null", ""):
                 # Map model filename or short name to workflow
                 # Support both full filenames and short names
                 vid_model_lower = vid_model.lower()
@@ -324,31 +505,55 @@ async def orchestrate(
                     detected_model_type = "cogvideo"
                     video_workflow_name = "img2vid-cogvideo"
                 else:
-                    # Legacy short name mapping
+                    # Legacy short name mapping - defaults to SVD
                     video_workflow_map = {
                         "svd": "img2vid",
                         "wan-2.2": "img2vid-wan",
                         "seedream": "img2vid-seedream",
                     }
                     video_workflow_name = video_workflow_map.get(vid_model, "img2vid")
+                    detected_model_type = "svd"  # Default to SVD for unknown models
+            else:
+                # No model specified - use SVD as the safest default
+                vid_model = None  # Normalize to Python None
+                detected_model_type = "svd"
+                video_workflow_name = "img2vid"
 
-            # Calculate frames from seconds (default to 8 fps for most models)
-            fps = 8
-            seconds = vid_seconds if vid_seconds is not None else 4
-            frames = seconds * fps
-
-            res = run_workflow(
-                video_workflow_name,
-                {
-                    "image_path": image_url,
-                    "prompt": text_in.replace("animate", "").strip() or "smooth natural motion",
-                    "motion": vid_motion if vid_motion is not None else "medium",
-                    "seconds": seconds,
-                    "frames": frames,
-                    "fps": fps,
-                    "seed": random.randint(0, 2**32 - 1),
-                },
+            # Use preset system to get workflow variables
+            # Preset provides base values, user overrides take precedence
+            # NOTE: Don't pass vid_fps when using presets - let the preset's model-specific
+            # fps be used. The frontend sends vid_fps=8 as default, which would override
+            # the correct model-specific fps (e.g., 24 for LTX).
+            # Pass detected_model_type to ensure correct model-specific settings are used
+            preset_vars = video_presets.apply_preset_to_workflow_vars(
+                preset_name=vid_preset,  # None defaults to 'medium'
+                model_name=detected_model_type,  # Use detected type, not raw vid_model
+                vid_seconds=vid_seconds,
+                vid_fps=None,  # Let preset determine fps based on model
+                vid_steps=vid_steps,
+                vid_cfg=vid_cfg,
+                vid_denoise=vid_denoise,
+                vid_seed=vid_seed,
+                vid_negative_prompt=vid_negative_prompt,
             )
+
+            # Build final workflow variables
+            workflow_vars = {
+                "image_path": image_url,
+                "prompt": _clean_video_prompt(text_in),
+                "negative_prompt": preset_vars.get("negative_prompt", ""),
+                "motion": vid_motion if vid_motion is not None else "medium",
+                # Use preset values (with user overrides already applied)
+                "seconds": preset_vars.get("seconds", vid_seconds or 4),
+                "frames": preset_vars.get("frames", 33),
+                "fps": preset_vars.get("fps", 8),
+                "seed": preset_vars.get("seed", random.randint(0, 2**32 - 1)),
+                "steps": preset_vars.get("steps", 30),
+                "cfg": preset_vars.get("cfg", 3.5),
+                "denoise": preset_vars.get("denoise", 0.85),
+            }
+
+            res = run_workflow(video_workflow_name, workflow_vars)
             video_url = (res.get("videos") or [None])[0]
             images = res.get("images") or []
 
@@ -363,8 +568,40 @@ async def orchestrate(
                         break
 
             if video_url:
-                text = "Here's your animated video!"
-                media = {"video_url": video_url}
+                # Build response text based on whether we auto-generated an image
+                if auto_generated_image:
+                    text = "Generated image and animated it!"
+                else:
+                    text = "Here's your animated video!"
+
+                # Include comprehensive video metadata for reproducibility
+                media = {
+                    "video_url": video_url,
+                    # Core generation parameters
+                    "seed": workflow_vars["seed"],
+                    "model": vid_model,
+                    "preset": vid_preset,
+                    # Timing
+                    "duration": workflow_vars.get("seconds", 4),
+                    "fps": workflow_vars.get("fps", 8),
+                    "frames": workflow_vars.get("frames", 33),
+                    # Quality settings
+                    "steps": workflow_vars.get("steps", 30),
+                    "cfg": workflow_vars.get("cfg", 3.5),
+                    "denoise": workflow_vars.get("denoise", 0.85),
+                    # Motion and prompt
+                    "motion": workflow_vars.get("motion", "medium"),
+                    "prompt": workflow_vars.get("prompt", ""),
+                    "negative_prompt": workflow_vars.get("negative_prompt", ""),
+                    # Source image
+                    "source_image": image_url,
+                }
+
+                # Include auto-generated image info if we created one (Grok-like UX)
+                if auto_generated_image:
+                    media["auto_generated_image"] = auto_generated_image
+                    media["auto_generated_meta"] = auto_generated_meta
+
                 add_message(cid, "assistant", text, media)
                 return {"conversation_id": cid, "text": text, "media": media}
             elif images:
@@ -859,6 +1096,12 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             vid_fps=payload.get("vidFps"),
             vid_motion=payload.get("vidMotion"),
             vid_model=payload.get("vidModel"),
+            vid_steps=payload.get("vidSteps"),
+            vid_cfg=payload.get("vidCfg"),
+            vid_denoise=payload.get("vidDenoise"),
+            vid_seed=payload.get("vidSeed"),
+            vid_preset=payload.get("vidPreset"),
+            vid_negative_prompt=payload.get("vidNegativePrompt"),
             nsfw_mode=payload.get("nsfwMode"),
             prompt_refinement=payload.get("promptRefinement", True),
             img_reference=payload.get("imgReference"),

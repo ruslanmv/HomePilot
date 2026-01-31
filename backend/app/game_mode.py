@@ -94,6 +94,7 @@ class GameOptions(BaseModel):
     Controls how diverse the variations are.
     """
     strength: float = Field(0.65, ge=0.0, le=1.0)  # 0 subtle -> 1 wild
+    spicy_strength: float = Field(0.0, ge=0.0, le=1.0)  # 0 off -> 1 bold (only when nsfwMode enabled)
     locks: GameLocks = Field(default_factory=GameLocks)
 
     # How aggressively to avoid repeats:
@@ -442,7 +443,12 @@ def _build_variation_user_prompt(
         return ", ".join(vals)
 
     # Strength guidance:
-    if options.strength < 0.34:
+    if options.strength == 0.0 and options.spicy_strength > 0:
+        # Special case: no variation but add spicy elements
+        strength_hint = "NO variation to scene/composition. ONLY add the spicy/adult elements specified below. Keep everything else exactly the same."
+    elif options.strength < 0.1:
+        strength_hint = "Minimal variation. Keep the prompt nearly identical. Only improve clarity/quality, do NOT change any details, subjects, or composition. Preserve the exact same scene."
+    elif options.strength < 0.34:
         strength_hint = "Subtle variation. Mostly keep composition/style; change 1-2 details."
     elif options.strength < 0.67:
         strength_hint = "Medium variation. Change character + 2-4 scene details; keep theme consistent."
@@ -464,6 +470,16 @@ def _build_variation_user_prompt(
         lock_notes.append("Keep time of day consistent.")
     if not lock_notes:
         lock_notes.append("No locks. Free to vary widely while staying on-theme.")
+
+    # Spicy guidance (only when spicy_strength > 0, meaning nsfwMode is enabled)
+    if options.spicy_strength > 0:
+        if options.spicy_strength < 0.34:
+            spicy_hint = "Add subtle allure: elegant poses, tasteful glamour, hint of sensuality."
+        elif options.spicy_strength < 0.67:
+            spicy_hint = "Add moderate sensuality: romantic mood, suggestive poses, fan service elements."
+        else:
+            spicy_hint = "Add bold adult themes: sensual, provocative, explicit romantic elements."
+        lock_notes.append(spicy_hint)
 
     world_bible = (options.world_bible or "").strip()
     world_bible_txt = f"\nWorld bible:\n{world_bible}\n" if world_bible else ""
@@ -596,6 +612,27 @@ async def next_variation(
         opts = GameOptions.model_validate(merged)
     except ValidationError:
         opts = GameOptions()
+
+    # Preservation Mode: when strength == 0.0 AND spicy_strength == 0.0, skip LLM entirely
+    # This allows users to use Game Mode's auto-generation while preserving their exact prompt
+    # BUT if spicy_strength > 0, we still need to run LLM to add adult themes
+    if opts.strength == 0.0 and opts.spicy_strength == 0.0:
+        print(f"[GAME MODE] Preservation Mode: strength=0.0, spicy=0.0, returning original prompt unchanged")
+
+        # Still update counter for tracking
+        counter = int(counter) + 1
+
+        # Save session and event (preserves history for session continuity)
+        _save_session(session_id, stored_base, opts.model_dump(), memory, counter)
+        _insert_event(session_id, counter, stored_base, {})
+
+        return VariationResult(
+            session_id=session_id,
+            counter=counter,
+            base_prompt=stored_base,
+            variation_prompt=stored_base,  # Return original prompt unchanged
+            tags={},
+        )
 
     # Call Ollama
     sys_msg = _build_variation_system_prompt()
