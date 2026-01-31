@@ -9,6 +9,16 @@ type ContentRating = "sfw" | "mature";
 type AvailableModel = { id: string; name: string };
 
 /**
+ * Mature Content Categories - determines the type of adult content
+ */
+type MatureCategory = "fan_service" | "romantic" | "sensual" | "explicit";
+
+/**
+ * Content Intensity Levels - determines how explicit the content is
+ */
+type IntensityLevel = "mild" | "moderate" | "intense" | "maximum";
+
+/**
  * Project Type determines the overall workflow and output format:
  * - video: Full motion video with AI-generated clips (YouTube videos, documentaries)
  * - slideshow: Image slideshow with Ken Burns effect + narration (quick generation)
@@ -164,6 +174,10 @@ function CreatorStudioWizard({
   // Video generation toggle - auto-enabled for video/video_series projects
   const [enableVideoGeneration, setEnableVideoGeneration] = useState(true);
 
+  // Mature content settings (only visible when contentRating === "mature")
+  const [matureCategory, setMatureCategory] = useState<MatureCategory>("fan_service");
+  const [intensityLevel, setIntensityLevel] = useState<IntensityLevel>("mild");
+
   // Mature consent modal
   const [showMatureModal, setShowMatureModal] = useState(false);
   const [matureConsentChecked, setMatureConsentChecked] = useState(false);
@@ -299,8 +313,14 @@ function CreatorStudioWizard({
     // Video generation settings
     t.push(`videoGeneration:${enableVideoGeneration ? 'enabled' : 'disabled'}`);
     if (enableVideoGeneration && selectedVideoModel) t.push(`videoModel:${selectedVideoModel}`);
+    // Mature content settings (only when mature mode is enabled)
+    if (contentRating === "mature") {
+      t.push(`mature:enabled`);
+      t.push(`matureCategory:${matureCategory}`);
+      t.push(`intensity:${intensityLevel}`);
+    }
     return Array.from(new Set(t));
-  }, [projectType, goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, enableVideoGeneration, selectedVideoModel]);
+  }, [projectType, goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, enableVideoGeneration, selectedVideoModel, contentRating, matureCategory, intensityLevel]);
 
   const canProceedStep1 = title.trim().length > 0;
   const canCreate = title.trim().length > 0 && !loading && generatedOutline;
@@ -993,9 +1013,93 @@ function CreatorStudioWizard({
                 </div>
 
                 {contentRating === "mature" && (
-                  <div className="mt-4 p-4 bg-[#8B5CF6]/10 border border-[#8B5CF6]/30 rounded text-sm">
-                    <span className="font-medium text-[#A78BFA]">Mature Mode Enabled</span>
-                    <span className="text-[#aaa] ml-2">- This project may generate explicit content.</span>
+                  <div className="mt-6 p-5 bg-gradient-to-br from-[#8B5CF6]/10 to-[#EC4899]/10 border border-[#8B5CF6]/30 rounded-lg">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-8 h-8 rounded-lg bg-[#8B5CF6]/20 flex items-center justify-center">
+                        <span className="text-lg">🔞</span>
+                      </div>
+                      <div>
+                        <div className="font-medium text-[#A78BFA]">Mature Mode Settings</div>
+                        <div className="text-xs text-[#aaa]">Configure adult content preferences for this project</div>
+                      </div>
+                    </div>
+
+                    {/* Content Category */}
+                    <div className="mb-5">
+                      <label className="block text-xs font-medium text-[#aaa] mb-3">Content Style</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <MatureCategoryCard
+                          icon="💋"
+                          title="Fan Service"
+                          desc="Suggestive poses, revealing outfits"
+                          selected={matureCategory === "fan_service"}
+                          onClick={() => setMatureCategory("fan_service")}
+                        />
+                        <MatureCategoryCard
+                          icon="💕"
+                          title="Romantic"
+                          desc="Intimate moments, passion"
+                          selected={matureCategory === "romantic"}
+                          onClick={() => setMatureCategory("romantic")}
+                        />
+                        <MatureCategoryCard
+                          icon="🔥"
+                          title="Sensual"
+                          desc="Artistic nudity, sensuality"
+                          selected={matureCategory === "sensual"}
+                          onClick={() => setMatureCategory("sensual")}
+                        />
+                        <MatureCategoryCard
+                          icon="⚡"
+                          title="Explicit"
+                          desc="Full adult content"
+                          selected={matureCategory === "explicit"}
+                          onClick={() => setMatureCategory("explicit")}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Intensity Level */}
+                    <div className="mb-4">
+                      <label className="block text-xs font-medium text-[#aaa] mb-3">
+                        Spicy Level: <span className="text-[#EC4899] font-semibold">{intensityToLabel(intensityLevel)}</span>
+                      </label>
+                      <div className="flex gap-2">
+                        {(["mild", "moderate", "intense", "maximum"] as IntensityLevel[]).map((level) => (
+                          <button
+                            key={level}
+                            type="button"
+                            onClick={() => setIntensityLevel(level)}
+                            className={[
+                              "flex-1 py-2 px-3 rounded text-xs font-medium transition-all",
+                              intensityLevel === level
+                                ? level === "mild" ? "bg-[#10B981] text-white"
+                                  : level === "moderate" ? "bg-[#F59E0B] text-black"
+                                  : level === "intense" ? "bg-[#EC4899] text-white"
+                                  : "bg-[#EF4444] text-white"
+                                : "bg-[#282828] text-[#aaa] hover:bg-[#3f3f3f]"
+                            ].join(" ")}
+                          >
+                            {level === "mild" && "🌶️"}
+                            {level === "moderate" && "🌶️🌶️"}
+                            {level === "intense" && "🌶️🌶️🌶️"}
+                            {level === "maximum" && "🌶️🌶️🌶️🌶️"}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-2 text-xs text-[#666]">
+                        {intensityLevel === "mild" && "Light teasing, suggestive themes, clothed scenes"}
+                        {intensityLevel === "moderate" && "Partial nudity, intimate moments, sensual content"}
+                        {intensityLevel === "intense" && "Full nudity, explicit scenes, adult themes"}
+                        {intensityLevel === "maximum" && "Uncensored adult content, no restrictions"}
+                      </div>
+                    </div>
+
+                    {/* Privacy Notice */}
+                    <div className="p-3 bg-black/20 rounded text-xs text-[#888] flex items-start gap-2">
+                      <span>🔒</span>
+                      <span>Content generated locally. Not uploaded to cloud services. You are responsible for compliance with local laws.</span>
+                    </div>
                   </div>
                 )}
 
@@ -1031,11 +1135,26 @@ function CreatorStudioWizard({
                     color={enableVideoGeneration ? "text-[#3ea6ff]" : "text-[#888]"}
                   />
                   <ReviewLine
-                    label="Safety"
+                    label="Content Rating"
                     value={contentRating === "sfw" ? "Safe (SFW)" : "Mature (18+)"}
                     color={contentRating === "sfw" ? "text-[#2ba640]" : "text-[#8B5CF6]"}
-                    last
+                    last={contentRating === "sfw"}
                   />
+                  {contentRating === "mature" && (
+                    <>
+                      <ReviewLine
+                        label="Content Style"
+                        value={matureCategoryToLabel(matureCategory)}
+                        color="text-[#EC4899]"
+                      />
+                      <ReviewLine
+                        label="Spicy Level"
+                        value={`${intensityToLabel(intensityLevel)} ${"🌶️".repeat(intensityLevel === "mild" ? 1 : intensityLevel === "moderate" ? 2 : intensityLevel === "intense" ? 3 : 4)}`}
+                        color="text-[#F59E0B]"
+                        last
+                      />
+                    </>
+                  )}
                 </div>
 
                 {error && (
@@ -1504,6 +1623,66 @@ function projectTypeToLabel(t: ProjectType) {
   if (t === "video") return "Video Project";
   if (t === "slideshow") return "Slideshow";
   return "Video Series";
+}
+
+function intensityToLabel(i: IntensityLevel) {
+  if (i === "mild") return "Mild";
+  if (i === "moderate") return "Moderate";
+  if (i === "intense") return "Intense";
+  return "Maximum";
+}
+
+function matureCategoryToLabel(c: MatureCategory) {
+  if (c === "fan_service") return "Fan Service";
+  if (c === "romantic") return "Romantic";
+  if (c === "sensual") return "Sensual";
+  return "Explicit";
+}
+
+/* Mature Category Card for Step 3 */
+function MatureCategoryCard({
+  icon,
+  title,
+  desc,
+  selected,
+  onClick,
+}: {
+  icon: string;
+  title: string;
+  desc: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "p-3 rounded-lg text-left transition-all flex items-start gap-3",
+        selected
+          ? "bg-[#8B5CF6]/20 border border-[#8B5CF6]/50 ring-1 ring-[#8B5CF6]/30"
+          : "bg-[#1f1f1f] border border-[#3f3f3f] hover:bg-[#282828] hover:border-[#555]",
+      ].join(" ")}
+    >
+      <span className="text-xl">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className={[
+          "text-sm font-medium",
+          selected ? "text-[#A78BFA]" : "text-[#f1f1f1]"
+        ].join(" ")}>
+          {title}
+        </div>
+        <div className="text-xs text-[#777] mt-0.5">{desc}</div>
+      </div>
+      {selected && (
+        <div className="w-4 h-4 rounded-full bg-[#8B5CF6] flex items-center justify-center flex-shrink-0">
+          <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+      )}
+    </button>
+  );
 }
 
 export default CreatorStudioHost;
