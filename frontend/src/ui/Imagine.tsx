@@ -177,6 +177,8 @@ export default function ImagineView(props: ImagineParams) {
   const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
   const [lightboxPrompt, setLightboxPrompt] = useState('')  // Editable prompt in lightbox
   const [isRegenerating, setIsRegenerating] = useState(false)  // Regenerating from lightbox
+  const [regenProgress, setRegenProgress] = useState<number | null>(null)  // Progress 0-100 during regen
+  const [regenAbortController, setRegenAbortController] = useState<AbortController | null>(null)  // For cancellation
 
   const [aspect, setAspect] = useState<string>('1:1')
   const [showAspectPanel, setShowAspectPanel] = useState(false)
@@ -514,6 +516,103 @@ export default function ImagineView(props: ImagineParams) {
       alert(`Failed to delete image: ${err.message || err}`)
     }
   }
+
+  // Grok-style in-place regeneration: keeps lightbox open, shows progress overlay
+  const handleRegenerateInPlace = useCallback(async () => {
+    if (!selectedImage || !lightboxPrompt.trim() || isRegenerating) return
+
+    const abortController = new AbortController()
+    setRegenAbortController(abortController)
+    setIsRegenerating(true)
+    setRegenProgress(0)
+
+    // Simulate progress while waiting for sync API
+    const progressInterval = setInterval(() => {
+      setRegenProgress(prev => {
+        if (prev === null) return 0
+        if (prev >= 90) return prev
+        return Math.min(90, prev + Math.random() * 10 + 3)
+      })
+    }, 400)
+
+    try {
+      const requestBody: any = {
+        message: lightboxPrompt,
+        mode: 'imagine',
+        numImages: 1,
+        imgWidth: selectedImage.width || 1024,
+        imgHeight: selectedImage.height || 1024,
+        ...(advancedMode && {
+          imgSteps: customSteps,
+          imgCfg: customCfg,
+          ...(seedLock && { imgSeed: customSeed }),
+        }),
+        provider: props.providerImages === 'comfyui' ? 'ollama' : props.providerImages,
+        provider_base_url: props.baseUrlImages || undefined,
+        provider_model: props.modelImages || undefined,
+        ollama_base_url: props.providerChat === 'ollama' ? props.baseUrlChat : undefined,
+        ollama_model: props.providerChat === 'ollama' ? props.modelChat : undefined,
+        nsfwMode: props.nsfwMode,
+        promptRefinement: props.promptRefinement ?? true,
+      }
+
+      const data = await postJson<ChatResponse>(
+        props.backendUrl,
+        '/chat',
+        requestBody,
+        authKey
+      )
+
+      if (abortController.signal.aborted) return
+
+      if (!data.media?.images?.[0]) {
+        throw new Error(data.message || data.text || 'No image returned')
+      }
+
+      setRegenProgress(100)
+
+      const newItem: ImagineItem = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        url: data.media.images[0],
+        createdAt: Date.now(),
+        prompt: data.media.final_prompt || lightboxPrompt,
+        seed: data.media.seed || data.media.seeds?.[0],
+        width: data.media.width || selectedImage.width,
+        height: data.media.height || selectedImage.height,
+        steps: data.media.steps || (advancedMode ? customSteps : undefined),
+        cfg: data.media.cfg || (advancedMode ? customCfg : undefined),
+        model: data.media.model || props.modelImages,
+      }
+
+      // Update selected image in-place (Grok behavior)
+      setSelectedImage(newItem)
+      setLightboxPrompt(newItem.prompt)
+
+      // Also prepend to items list
+      setItems(prev => [newItem, ...prev])
+
+      await new Promise(r => setTimeout(r, 300))
+    } catch (err: any) {
+      if (abortController.signal.aborted) return
+      console.error('Regeneration failed:', err)
+      alert(`Regeneration failed: ${err.message || err}`)
+    } finally {
+      clearInterval(progressInterval)
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [selectedImage, lightboxPrompt, isRegenerating, advancedMode, customSteps, customCfg, seedLock, customSeed, props, authKey])
+
+  // Cancel in-place regeneration
+  const handleCancelRegeneration = useCallback(() => {
+    if (regenAbortController) {
+      regenAbortController.abort()
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [regenAbortController])
 
   const handleUpscale = async (item: ImagineItem, e?: React.MouseEvent) => {
     if (e) {
@@ -1304,6 +1403,42 @@ export default function ImagineView(props: ImagineParams) {
                   </span>
                 )}
               </div>
+
+              {/* Grok-style Regeneration Overlay - Blur + Dots + Progress */}
+              {isRegenerating && (
+                <div className="absolute inset-0 z-30 flex items-center justify-center rounded-lg overflow-hidden">
+                  {/* Blur + Dim background */}
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+                  {/* Dotted pattern overlay */}
+                  <div
+                    className="absolute inset-0 opacity-40 pointer-events-none"
+                    style={{
+                      backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.4) 1px, transparent 1px)',
+                      backgroundSize: '24px 24px'
+                    }}
+                  />
+
+                  {/* Center controls */}
+                  <div className="relative z-10 flex flex-col items-center gap-4">
+                    {/* Progress indicator */}
+                    {typeof regenProgress === 'number' && (
+                      <div className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white font-medium text-lg shadow-xl">
+                        {Math.round(regenProgress)}%
+                      </div>
+                    )}
+
+                    {/* Cancel button */}
+                    <button
+                      className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white/90 hover:bg-black/80 hover:text-white transition-colors font-medium shadow-xl"
+                      onClick={(e) => { e.stopPropagation(); handleCancelRegeneration(); }}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Details Panel - Slide in from right */}
@@ -1379,6 +1514,16 @@ export default function ImagineView(props: ImagineParams) {
 
               {/* Prompt Card Container */}
               <div className="flex-1 flex items-center gap-3 bg-[#1a1a1a] rounded-2xl px-4 py-2.5 border border-white/10">
+                {/* Progress indicator in prompt bar during regeneration */}
+                {isRegenerating && typeof regenProgress === 'number' && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="px-2.5 py-1 rounded-full bg-white/10 text-white/80 text-xs font-medium">
+                      {Math.round(regenProgress)}%
+                    </div>
+                    <ChevronDown size={14} className="text-white/40" />
+                  </div>
+                )}
+
                 {/* Editable Prompt Input */}
                 <input
                   type="text"
@@ -1386,45 +1531,29 @@ export default function ImagineView(props: ImagineParams) {
                   onChange={(e) => setLightboxPrompt(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
-                      setIsRegenerating(true)
-                      handleGenerate(lightboxPrompt).finally(() => {
-                        setIsRegenerating(false)
-                        setSelectedImage(null)
-                        setShowDetails(false)
-                      })
+                      handleRegenerateInPlace()
                     }
                   }}
-                  placeholder="Edit prompt and regenerate..."
+                  placeholder={isRegenerating ? "Generating image..." : "Edit prompt and regenerate..."}
                   className="flex-1 bg-transparent text-white/90 text-sm placeholder-white/30 outline-none min-w-0"
                   disabled={isRegenerating}
                 />
 
-                {/* Redo Button (inside card) */}
+                {/* Redo Button (inside card) - Grok style */}
                 <button
-                  onClick={() => {
-                    if (lightboxPrompt.trim() && !isRegenerating) {
-                      setIsRegenerating(true)
-                      handleGenerate(lightboxPrompt).finally(() => {
-                        setIsRegenerating(false)
-                        setSelectedImage(null)
-                        setShowDetails(false)
-                      })
-                    }
-                  }}
-                  disabled={!lightboxPrompt.trim() || isRegenerating}
+                  onClick={isRegenerating ? handleCancelRegeneration : handleRegenerateInPlace}
+                  disabled={!lightboxPrompt.trim() && !isRegenerating}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all flex-shrink-0 ${
-                    lightboxPrompt.trim() && !isRegenerating
+                    isRegenerating
                       ? 'bg-white/10 hover:bg-white/20 text-white'
-                      : 'bg-white/5 text-white/30 cursor-not-allowed'
+                      : lightboxPrompt.trim()
+                        ? 'bg-white/10 hover:bg-white/20 text-white'
+                        : 'bg-white/5 text-white/30 cursor-not-allowed'
                   }`}
                   type="button"
-                  title="Regenerate"
+                  title={isRegenerating ? "Cancel" : "Redo"}
                 >
-                  {isRegenerating ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <>Redo <ArrowUp size={14} /></>
-                  )}
+                  Redo <ArrowUp size={14} />
                 </button>
               </div>
 

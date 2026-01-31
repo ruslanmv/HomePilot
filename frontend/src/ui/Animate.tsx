@@ -191,6 +191,8 @@ export default function AnimateView(props: AnimateParams) {
   const [showSourceImage, setShowSourceImage] = useState(false)  // Source image overlay
   const [lightboxPrompt, setLightboxPrompt] = useState('')  // Editable prompt in lightbox
   const [isRegenerating, setIsRegenerating] = useState(false)  // Regenerating from lightbox
+  const [regenProgress, setRegenProgress] = useState<number | null>(null)  // Progress 0-100 during regen
+  const [regenAbortController, setRegenAbortController] = useState<AbortController | null>(null)  // For cancellation
 
   // Video settings
   const [seconds, setSeconds] = useState(props.vidSeconds || 4)
@@ -460,6 +462,129 @@ export default function AnimateView(props: AnimateParams) {
       await navigator.clipboard.writeText(text)
     } catch {}
   }, [])
+
+  // Grok-style in-place regeneration: keeps lightbox open, shows progress overlay
+  const handleRegenerateInPlace = useCallback(async () => {
+    if (!selectedVideo || !lightboxPrompt.trim() || isRegenerating) return
+
+    const abortController = new AbortController()
+    setRegenAbortController(abortController)
+    setIsRegenerating(true)
+    setRegenProgress(0)
+
+    // Simulate progress while waiting for sync API (progress increases gradually)
+    const progressInterval = setInterval(() => {
+      setRegenProgress(prev => {
+        if (prev === null) return 0
+        // Slow down as we approach 90% (leave room for completion)
+        if (prev >= 90) return prev
+        return Math.min(90, prev + Math.random() * 8 + 2)
+      })
+    }, 500)
+
+    try {
+      // Build message for animate mode
+      const sourceImage = selectedVideo.sourceImageUrl
+      const animateMessage = sourceImage
+        ? `animate ${sourceImage} ${lightboxPrompt}`
+        : `animate ${lightboxPrompt}`
+
+      const requestBody: any = {
+        message: animateMessage,
+        mode: 'animate',
+        vidSeconds: seconds,
+        vidFps: fps,
+        vidMotion: motion,
+        vidModel: props.modelVideo || undefined,
+        vidPreset: qualityPreset,
+        ...(advancedMode && {
+          vidSteps: customSteps,
+          vidCfg: customCfg,
+          vidDenoise: customDenoise,
+          ...(seedLock && { vidSeed: customSeed }),
+          ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
+        }),
+        provider: props.providerVideo === 'comfyui' ? 'ollama' : props.providerVideo,
+        provider_base_url: props.baseUrlVideo || undefined,
+        provider_model: props.modelVideo || undefined,
+        ollama_base_url: props.providerChat === 'ollama' ? props.baseUrlChat : undefined,
+        ollama_model: props.providerChat === 'ollama' ? props.modelChat : undefined,
+        nsfwMode: props.nsfwMode,
+        promptRefinement: props.promptRefinement ?? true,
+      }
+
+      const data = await postJson<ChatResponse>(
+        props.backendUrl,
+        '/chat',
+        requestBody,
+        authKey
+      )
+
+      // Check if aborted
+      if (abortController.signal.aborted) {
+        return
+      }
+
+      if (!data.media?.video_url) {
+        throw new Error(data.message || data.text || 'No video URL returned')
+      }
+
+      // Progress complete
+      setRegenProgress(100)
+
+      // Create new item with updated video
+      const newItem: AnimateItem = {
+        id: uid(),
+        videoUrl: data.media.video_url,
+        posterUrl: data.media.poster_url,
+        createdAt: Date.now(),
+        prompt: lightboxPrompt,
+        finalPrompt: data.media.prompt || data.media.final_prompt,
+        sourceImageUrl: data.media.auto_generated_image || sourceImage || data.media.source_image || undefined,
+        seed: data.media.seed ?? (seedLock ? customSeed : undefined),
+        seconds: data.media.duration ?? seconds,
+        frames: data.media.frames,
+        fps: data.media.fps ?? fps,
+        motion: data.media.motion ?? motion,
+        model: data.media.model ?? props.modelVideo,
+        preset: data.media.preset ?? qualityPreset,
+        steps: data.media.steps ?? (advancedMode ? customSteps : undefined),
+        cfg: data.media.cfg ?? (advancedMode ? customCfg : undefined),
+        denoise: data.media.denoise ?? (advancedMode ? customDenoise : undefined),
+      }
+
+      // Update selected video in-place (Grok behavior)
+      setSelectedVideo(newItem)
+      setLightboxPrompt(newItem.finalPrompt || newItem.prompt)
+
+      // Also prepend to items list
+      setItems(prev => [newItem, ...prev])
+
+      // Brief delay to show 100% before clearing
+      await new Promise(r => setTimeout(r, 300))
+    } catch (err: any) {
+      if (abortController.signal.aborted) {
+        return // User cancelled
+      }
+      console.error('Regeneration failed:', err)
+      alert(`Regeneration failed: ${err.message || err}`)
+    } finally {
+      clearInterval(progressInterval)
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [selectedVideo, lightboxPrompt, isRegenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
+
+  // Cancel in-place regeneration
+  const handleCancelRegeneration = useCallback(() => {
+    if (regenAbortController) {
+      regenAbortController.abort()
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [regenAbortController])
 
   return (
     <div className="flex flex-col h-full w-full bg-black text-white overflow-hidden relative">
@@ -1117,6 +1242,42 @@ export default function AnimateView(props: AnimateParams) {
                   </span>
                 )}
               </div>
+
+              {/* Grok-style Regeneration Overlay - Blur + Dots + Progress */}
+              {isRegenerating && (
+                <div className="absolute inset-0 z-30 flex items-center justify-center rounded-lg overflow-hidden">
+                  {/* Blur + Dim background */}
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+                  {/* Dotted pattern overlay */}
+                  <div
+                    className="absolute inset-0 opacity-40 pointer-events-none"
+                    style={{
+                      backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.4) 1px, transparent 1px)',
+                      backgroundSize: '24px 24px'
+                    }}
+                  />
+
+                  {/* Center controls */}
+                  <div className="relative z-10 flex flex-col items-center gap-4">
+                    {/* Progress indicator */}
+                    {typeof regenProgress === 'number' && (
+                      <div className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white font-medium text-lg shadow-xl">
+                        {Math.round(regenProgress)}%
+                      </div>
+                    )}
+
+                    {/* Cancel button */}
+                    <button
+                      className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white/90 hover:bg-black/80 hover:text-white transition-colors font-medium shadow-xl"
+                      onClick={(e) => { e.stopPropagation(); handleCancelRegeneration(); }}
+                      type="button"
+                    >
+                      Cancel Video
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Source Image Overlay - Shows when toggled */}
@@ -1243,6 +1404,16 @@ export default function AnimateView(props: AnimateParams) {
 
               {/* Prompt Card Container */}
               <div className="flex-1 flex items-center gap-3 bg-[#1a1a1a] rounded-2xl px-4 py-2.5 border border-white/10">
+                {/* Progress indicator in prompt bar during regeneration */}
+                {isRegenerating && typeof regenProgress === 'number' && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="px-2.5 py-1 rounded-full bg-white/10 text-white/80 text-xs font-medium">
+                      {Math.round(regenProgress)}%
+                    </div>
+                    <ChevronDown size={14} className="text-white/40" />
+                  </div>
+                )}
+
                 {/* Editable Prompt Input */}
                 <input
                   type="text"
@@ -1250,56 +1421,32 @@ export default function AnimateView(props: AnimateParams) {
                   onChange={(e) => setLightboxPrompt(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
-                      setIsRegenerating(true)
-                      if (selectedVideo.sourceImageUrl) {
-                        setReferenceUrl(selectedVideo.sourceImageUrl)
-                      }
-                      setPrompt(lightboxPrompt)
-                      setSelectedVideo(null)
-                      setShowDetails(false)
-                      setShowSourceImage(false)
-                      setTimeout(() => {
-                        handleGenerate()
-                        setIsRegenerating(false)
-                      }, 100)
+                      handleRegenerateInPlace()
                     }
                   }}
-                  placeholder="Edit prompt and regenerate..."
+                  placeholder={isRegenerating ? "Generating video..." : "Edit prompt and regenerate..."}
                   className="flex-1 bg-transparent text-white/90 text-sm placeholder-white/30 outline-none min-w-0"
                   disabled={isRegenerating}
                 />
 
-                {/* Redo Button (inside card) */}
+                {/* Make Video Button (inside card) - Grok style */}
                 <button
-                  onClick={() => {
-                    if (lightboxPrompt.trim() && !isRegenerating) {
-                      setIsRegenerating(true)
-                      if (selectedVideo.sourceImageUrl) {
-                        setReferenceUrl(selectedVideo.sourceImageUrl)
-                      }
-                      setPrompt(lightboxPrompt)
-                      setSelectedVideo(null)
-                      setShowDetails(false)
-                      setShowSourceImage(false)
-                      setTimeout(() => {
-                        handleGenerate()
-                        setIsRegenerating(false)
-                      }, 100)
-                    }
-                  }}
-                  disabled={!lightboxPrompt.trim() || isRegenerating}
+                  onClick={isRegenerating ? handleCancelRegeneration : handleRegenerateInPlace}
+                  disabled={!lightboxPrompt.trim() && !isRegenerating}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all flex-shrink-0 ${
-                    lightboxPrompt.trim() && !isRegenerating
+                    isRegenerating
                       ? 'bg-white/10 hover:bg-white/20 text-white'
-                      : 'bg-white/5 text-white/30 cursor-not-allowed'
+                      : lightboxPrompt.trim()
+                        ? 'bg-white/10 hover:bg-white/20 text-white'
+                        : 'bg-white/5 text-white/30 cursor-not-allowed'
                   }`}
                   type="button"
-                  title="Regenerate"
+                  title={isRegenerating ? "Cancel" : "Make video"}
                 >
                   {isRegenerating ? (
-                    <Loader2 size={14} className="animate-spin" />
+                    <>Make video <ArrowUp size={14} /></>
                   ) : (
-                    <>Redo <ArrowUp size={14} /></>
+                    <>Make video <ArrowUp size={14} /></>
                   )}
                 </button>
               </div>
