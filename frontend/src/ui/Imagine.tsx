@@ -668,13 +668,16 @@ export default function ImagineView(props: ImagineParams) {
     }
 
     try {
-      // Delete from backend database
-      await deleteJson(
-        props.backendUrl,
-        '/media/image',
-        { image_url: item.url },
-        authKey
-      )
+      // Only delete from backend if item has a URL (completed items)
+      // Failed/processing items only exist locally
+      if (item.url) {
+        await deleteJson(
+          props.backendUrl,
+          '/media/image',
+          { image_url: item.url },
+          authKey
+        )
+      }
 
       // Remove from local state (and localStorage via useEffect)
       setItems((prev) => prev.filter((i) => i.id !== item.id))
