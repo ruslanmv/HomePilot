@@ -56,6 +56,8 @@ export function CreatorStudioHost({
     imageModel: "",
     videoModel: "",
     enableVideoGeneration: false,
+    imageWidth: undefined as number | undefined,
+    imageHeight: undefined as number | undefined,
   });
 
   // Bootstrap connection info for API calls
@@ -80,6 +82,8 @@ export function CreatorStudioHost({
         imageModel={projectSettings.imageModel}
         videoModel={projectSettings.videoModel}
         enableVideoGeneration={projectSettings.enableVideoGeneration}
+        imageWidth={projectSettings.imageWidth}
+        imageHeight={projectSettings.imageHeight}
       />
     );
   }
@@ -94,7 +98,12 @@ export function CreatorStudioHost({
         // Switch to editor mode with the new project
         setCurrentProjectId(projectId);
         setIsNewlyCreated(true);  // Flag for auto-generating first scene
-        setProjectSettings(settings);
+        // Ensure imageWidth/imageHeight are always present (may be undefined)
+        setProjectSettings({
+          ...settings,
+          imageWidth: settings.imageWidth,
+          imageHeight: settings.imageHeight,
+        });
         setMode("editor");
       }}
     />
@@ -116,6 +125,8 @@ interface WizardProps {
     imageModel: string;
     videoModel: string;
     enableVideoGeneration: boolean;
+    imageWidth?: number;
+    imageHeight?: number;
   }) => void;
 }
 
@@ -517,6 +528,8 @@ function CreatorStudioWizard({
         imageModel: selectedImageModel,
         videoModel: selectedVideoModel,
         enableVideoGeneration,
+        imageWidth: computedResolution.width,
+        imageHeight: computedResolution.height,
       });
     } catch (e: any) {
       setError(e.message || String(e));

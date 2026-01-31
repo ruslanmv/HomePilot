@@ -870,8 +870,8 @@ export function CreatorStudioEditor({
           ? [sceneNeg, genParams.customNegativePrompt.trim()].filter(Boolean).join(", ")
           : sceneNeg || undefined;
 
-        // Send aspect ratio to backend - Dynamic Preset System calculates correct
-        // dimensions based on model architecture (SD1.5 vs SDXL vs Flux)
+        // Send explicit width/height from wizard selection to backend
+        // This ensures the resolution selected in Step 2 is actually used
         const data = await postApi<{ media?: { images?: string[] } }>(
           '/chat',
           {
@@ -879,7 +879,10 @@ export function CreatorStudioEditor({
             mode: 'imagine',
             provider: llmProvider,
             imgModel: imageModel || undefined,
-            imgAspectRatio: '16:9',  // Story/video format
+            // Pass explicit resolution from wizard (if available)
+            // Backend will use these values directly instead of computing from aspect ratio
+            ...(imageWidth ? { imgWidth: imageWidth } : {}),
+            ...(imageHeight ? { imgHeight: imageHeight } : {}),
             imgSteps: effectiveSteps,
             imgCfg: effectiveCfg,
             negativePrompt: combinedNegativePrompt,
