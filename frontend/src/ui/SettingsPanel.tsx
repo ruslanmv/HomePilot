@@ -104,6 +104,10 @@ export default function SettingsPanel({
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [voicesInitialized, setVoicesInitialized] = useState(false);
 
+  // Video presets state (fetched from backend based on selected model)
+  const [videoPresets, setVideoPresets] = useState<Record<string, { width: number; height: number; fps: number; frames: number; steps: number; cfg: number; denoise: number }>>({});
+  const [videoPresetsLoading, setVideoPresetsLoading] = useState(false);
+
   async function fetchHealth() {
     setHealthErr(null);
     try {
@@ -152,6 +156,51 @@ export default function SettingsPanel({
     }
   }
 
+  // Detect video model type from model name
+  function detectVideoModelType(modelName: string | undefined): string {
+    if (!modelName) return "ltx"; // Default to LTX
+    const lower = modelName.toLowerCase();
+    if (lower.includes("ltx")) return "ltx";
+    if (lower.includes("svd")) return "svd";
+    if (lower.includes("wan")) return "wan";
+    if (lower.includes("hunyuan")) return "hunyuan";
+    if (lower.includes("mochi")) return "mochi";
+    if (lower.includes("cog")) return "cogvideo";
+    return "ltx"; // Default
+  }
+
+  // Fetch video presets from backend for a specific model
+  async function fetchVideoPresets(modelName: string | undefined) {
+    const modelType = detectVideoModelType(modelName);
+    setVideoPresetsLoading(true);
+    try {
+      const presetLevels = ["low", "medium", "high", "ultra"];
+      const fetchedPresets: Record<string, any> = {};
+
+      // Fetch all preset levels in parallel
+      await Promise.all(
+        presetLevels.map(async (preset) => {
+          const url = `${value.backendUrl}/video-presets?model=${encodeURIComponent(modelType)}&preset=${preset}`;
+          const res = await fetch(url);
+          const data = await res.json();
+          if (data.ok && data.values) {
+            fetchedPresets[preset === "medium" ? "med" : preset] = data.values;
+          }
+        })
+      );
+
+      // Only update if we got some presets
+      if (Object.keys(fetchedPresets).length > 0) {
+        setVideoPresets(fetchedPresets);
+        console.log(`[SettingsPanel] Loaded video presets for ${modelType}:`, fetchedPresets);
+      }
+    } catch (e: any) {
+      console.error("[SettingsPanel] Error fetching video presets:", e);
+    } finally {
+      setVideoPresetsLoading(false);
+    }
+  }
+
   function loadVoices() {
     if ('speechSynthesis' in window) {
       const voices = window.speechSynthesis.getVoices();
@@ -187,6 +236,9 @@ export default function SettingsPanel({
     fetchHealth();
     fetchProviders();
 
+    // Fetch video presets for the current video model
+    fetchVideoPresets(value.modelVideo);
+
     // Load voices for TTS
     loadVoices();
 
@@ -204,16 +256,26 @@ export default function SettingsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value.backendUrl]);
 
+  // Fetch video presets when video model changes
+  useEffect(() => {
+    if (value.modelVideo) {
+      fetchVideoPresets(value.modelVideo);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value.modelVideo]);
+
   const providerOptions = useMemo(() => Object.entries(providers), [providers]);
 
-  // Video presets matching backend/app/video_presets.json
-  // These are the default LTX settings optimized for RTX 4080 (12GB)
-  const VIDEO_PRESETS: Record<string, { width: number; height: number; fps: number; frames: number; steps: number; cfg: number; denoise: number }> = {
+  // Fallback presets (used when backend fetch fails or hasn't completed)
+  const FALLBACK_VIDEO_PRESETS: Record<string, { width: number; height: number; fps: number; frames: number; steps: number; cfg: number; denoise: number }> = {
     low:    { width: 512, height: 288, fps: 16, frames: 25, steps: 20, cfg: 3.5, denoise: 0.80 },
     med:    { width: 640, height: 360, fps: 16, frames: 33, steps: 24, cfg: 4.0, denoise: 0.80 },
     high:   { width: 704, height: 400, fps: 24, frames: 41, steps: 28, cfg: 4.0, denoise: 0.80 },
     ultra:  { width: 768, height: 432, fps: 24, frames: 49, steps: 32, cfg: 4.0, denoise: 0.80 },
   };
+
+  // Use fetched presets if available, otherwise fallback
+  const VIDEO_PRESETS = Object.keys(videoPresets).length > 0 ? videoPresets : FALLBACK_VIDEO_PRESETS;
 
   // Compute model-specific settings based on selected image model and preset
   const currentModelSettings = useMemo(() => {
@@ -612,7 +674,13 @@ export default function SettingsPanel({
           {/* Video settings preview */}
           {value.preset !== "custom" && (
             <div className="text-[10px] text-green-400/70 mt-1">
-              Video: {currentVideoSettings.width}×{currentVideoSettings.height}, {currentVideoSettings.frames}f @ {currentVideoSettings.fps}fps, {currentVideoSettings.steps} steps
+              {videoPresetsLoading ? (
+                <span className="text-white/40">Loading video presets...</span>
+              ) : (
+                <>
+                  Video ({detectVideoModelType(value.modelVideo).toUpperCase()}): {currentVideoSettings.width}×{currentVideoSettings.height}, {currentVideoSettings.frames}f @ {currentVideoSettings.fps}fps, {currentVideoSettings.steps} steps
+                </>
+              )}
             </div>
           )}
 
