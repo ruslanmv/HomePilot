@@ -483,10 +483,14 @@ export default function AnimateView(props: AnimateParams) {
     }, 500)
 
     try {
+      // Check if we have an existing source image to reuse
+      const existingSourceImage = selectedVideo.sourceImageUrl
+
       // Build message for animate mode
-      const sourceImage = selectedVideo.sourceImageUrl
-      const animateMessage = sourceImage
-        ? `animate ${sourceImage} ${lightboxPrompt}`
+      // If we have a source image, REUSE it (don't generate new) - Grok behavior
+      // If no source image, let backend generate one from the prompt
+      const animateMessage = existingSourceImage
+        ? `animate ${existingSourceImage} ${lightboxPrompt}`
         : `animate ${lightboxPrompt}`
 
       const requestBody: any = {
@@ -497,6 +501,9 @@ export default function AnimateView(props: AnimateParams) {
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
         vidPreset: qualityPreset,
+        // When we have an existing source image, tell backend to skip image generation
+        // The prompt should only affect the animation, not regenerate the source
+        ...(existingSourceImage && { skipImageGeneration: true }),
         ...(advancedMode && {
           vidSteps: customSteps,
           vidCfg: customCfg,
@@ -533,6 +540,8 @@ export default function AnimateView(props: AnimateParams) {
       setRegenProgress(100)
 
       // Create new item with updated video
+      // IMPORTANT: If we had an existing source image, KEEP IT (don't replace with auto_generated)
+      // Only use auto_generated when we didn't have a source image (text-to-video flow)
       const newItem: AnimateItem = {
         id: uid(),
         videoUrl: data.media.video_url,
@@ -540,7 +549,9 @@ export default function AnimateView(props: AnimateParams) {
         createdAt: Date.now(),
         prompt: lightboxPrompt,
         finalPrompt: data.media.prompt || data.media.final_prompt,
-        sourceImageUrl: data.media.auto_generated_image || sourceImage || data.media.source_image || undefined,
+        // Grok behavior: keep the original source image when regenerating
+        // Only use auto_generated_image when there was no source (text-to-video)
+        sourceImageUrl: existingSourceImage || data.media.auto_generated_image || data.media.source_image || undefined,
         seed: data.media.seed ?? (seedLock ? customSeed : undefined),
         seconds: data.media.duration ?? seconds,
         frames: data.media.frames,
