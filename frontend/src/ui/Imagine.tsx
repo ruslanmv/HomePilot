@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2 } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info } from 'lucide-react'
 import { upscaleImage } from './enhance/upscaleApi'
 
 // -----------------------------------------------------------------------------
@@ -174,6 +174,7 @@ export default function ImagineView(props: ImagineParams) {
 
   // Selection state for Lightbox (Grok-style detail view)
   const [selectedImage, setSelectedImage] = useState<ImagineItem | null>(null)
+  const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
 
   const [aspect, setAspect] = useState<string>('1:1')
   const [showAspectPanel, setShowAspectPanel] = useState(false)
@@ -1224,178 +1225,175 @@ export default function ImagineView(props: ImagineParams) {
         </div>
       </div>
 
-      {/* Grok-style Lightbox / Detail View */}
+      {/* Immersive Lightbox with Chips (Grok-style) */}
       {selectedImage && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4 backdrop-blur-md animate-in fade-in duration-200"
-          onClick={() => setSelectedImage(null)}
+          className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
+          onClick={() => { setSelectedImage(null); setShowDetails(false); }}
         >
-          {/* Close button outside content */}
-          <button
-            className="absolute top-4 right-4 p-2 text-white/50 hover:text-white bg-white/5 rounded-full z-50"
-            onClick={() => setSelectedImage(null)}
-            type="button"
-            aria-label="Close"
-          >
-            <X size={24} />
-          </button>
+          {/* Floating Controls - Top Right */}
+          <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+            <button
+              className={`p-2.5 rounded-full transition-all ${showDetails ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'}`}
+              onClick={(e) => { e.stopPropagation(); setShowDetails(!showDetails); }}
+              type="button"
+              title="Toggle details"
+            >
+              <Info size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={(e) => { e.stopPropagation(); window.open(selectedImage.url, '_blank'); }}
+              type="button"
+              title="View full size"
+            >
+              <Maximize2 size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={() => { setSelectedImage(null); setShowDetails(false); }}
+              type="button"
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
 
-          <div
-            className="max-w-6xl w-full max-h-[90vh] flex flex-col md:flex-row gap-0 bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Left: Image Container */}
-            <div className="flex-1 bg-black/50 flex items-center justify-center p-4 min-h-[400px] relative">
+          {/* Main Content Area */}
+          <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
+            {/* Hero Image Container */}
+            <div className="flex-1 flex items-center justify-center p-4 relative group">
               <img
                 src={selectedImage.url}
-                className="max-h-full max-w-full object-contain shadow-lg rounded-sm"
+                className="max-h-[calc(100vh-180px)] max-w-full object-contain rounded-lg shadow-2xl"
                 alt="Selected"
               />
+
+              {/* Chips Overlay - Fade in on hover */}
+              <div className="absolute bottom-8 left-8 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {selectedImage.model && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.model.split('.')[0].split('-')[0].toUpperCase()}
+                  </span>
+                )}
+                {selectedImage.width && selectedImage.height && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.width}×{selectedImage.height}
+                  </span>
+                )}
+                {selectedImage.steps && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.steps} steps
+                  </span>
+                )}
+              </div>
             </div>
 
-            {/* Right: Sidebar Details */}
-            <div className="w-full md:w-96 flex flex-col border-l border-white/10 bg-[#161616]">
-              {/* Sidebar Header */}
-              <div className="p-5 border-b border-white/10 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Wand2 size={14} className="text-white/60" />
-                  Generation Details
-                </h3>
-                <span className="text-[10px] text-white/40 font-mono tracking-wide">{selectedImage.id.slice(0, 8)}</span>
-              </div>
-
-              {/* Sidebar Content */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                <div>
-                  <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                    Prompt
-                  </label>
-                  <div className="text-sm text-white/90 leading-relaxed font-light whitespace-pre-wrap selection:bg-white/20">
-                    {selectedImage.prompt}
-                  </div>
+            {/* Details Panel - Slide in from right */}
+            {showDetails && (
+              <div className="w-80 bg-[#0a0a0a] border-l border-white/10 flex flex-col animate-in slide-in-from-right duration-200">
+                <div className="p-4 border-b border-white/10">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Wand2 size={14} className="text-white/60" />
+                    Generation Details
+                  </h3>
                 </div>
-
-                {/* Seed - displayed prominently for reproducibility */}
-                {selectedImage.seed && (
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Seed
-                    </label>
-                    <div className="text-lg text-white font-mono font-bold tracking-wide">
-                      {selectedImage.seed}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Seed */}
+                  {selectedImage.seed && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Seed</label>
+                      <div className="text-base text-white font-mono font-bold">{selectedImage.seed}</div>
                     </div>
-                  </div>
-                )}
-
-                {/* Resolution */}
-                {selectedImage.width && selectedImage.height && (
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Resolution
-                    </label>
-                    <div className="text-sm text-white/80 font-mono">
-                      {selectedImage.width} × {selectedImage.height}
+                  )}
+                  {/* Resolution */}
+                  {selectedImage.width && selectedImage.height && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Resolution</label>
+                      <div className="text-sm text-white/80 font-mono">{selectedImage.width} × {selectedImage.height}</div>
                     </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4 pt-2">
+                  )}
                   {/* Steps & CFG */}
-                  {selectedImage.steps && (
-                    <div>
-                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                        Steps
-                      </label>
-                      <div className="text-xs text-white/70 font-mono">
-                        {selectedImage.steps}
+                  <div className="grid grid-cols-2 gap-3">
+                    {selectedImage.steps && (
+                      <div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Steps</label>
+                        <div className="text-sm text-white/70 font-mono">{selectedImage.steps}</div>
                       </div>
+                    )}
+                    {selectedImage.cfg && (
+                      <div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">CFG</label>
+                        <div className="text-sm text-white/70 font-mono">{selectedImage.cfg}</div>
+                      </div>
+                    )}
+                  </div>
+                  {/* Date & Time */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Date</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedImage.createdAt).toLocaleDateString()}</div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Time</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedImage.createdAt).toLocaleTimeString()}</div>
+                    </div>
+                  </div>
+                  {/* Model */}
+                  {selectedImage.model && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Model</label>
+                      <div className="text-xs text-white/50 font-mono break-all">{selectedImage.model}</div>
                     </div>
                   )}
-                  {selectedImage.cfg && (
-                    <div>
-                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                        CFG Scale
-                      </label>
-                      <div className="text-xs text-white/70 font-mono">
-                        {selectedImage.cfg}
-                      </div>
-                    </div>
-                  )}
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Date
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedImage.createdAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Time
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedImage.createdAt).toLocaleTimeString()}
-                    </div>
-                  </div>
                 </div>
-
-                {/* Model name */}
-                {selectedImage.model && (
-                  <div className="pt-2">
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Model
-                    </label>
-                    <div className="text-xs text-white/60 font-mono truncate">
-                      {selectedImage.model}
-                    </div>
-                  </div>
-                )}
               </div>
+            )}
+          </div>
 
-              {/* Sidebar Footer / Actions */}
-              <div className="p-5 border-t border-white/10 bg-[#141414] flex flex-col gap-3">
-                <button
-                  className="w-full py-3 bg-white text-black font-bold rounded-lg hover:opacity-90 transition-opacity text-sm flex items-center justify-center gap-2"
-                  onClick={() => window.open(selectedImage.url, '_blank')}
-                  type="button"
-                >
-                  <Download size={16} />
-                  Download Original
-                </button>
+          {/* Bottom Bar - Caption & Actions */}
+          <div className="bg-[#0a0a0a] border-t border-white/10 p-4" onClick={(e) => e.stopPropagation()}>
+            {/* Caption-style Prompt */}
+            <div className="max-w-3xl mx-auto mb-4">
+              <p className="text-white/80 text-sm italic text-center leading-relaxed line-clamp-2">
+                "{selectedImage.prompt}"
+              </p>
+            </div>
 
-                <div className="flex gap-2">
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      setPrompt(selectedImage.prompt)
-                      setSelectedImage(null)
-                    }}
-                    type="button"
-                  >
-                    <RefreshCw size={16} />
-                    Reuse
-                  </button>
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      navigator.clipboard.writeText(selectedImage.prompt)
-                    }}
-                    type="button"
-                  >
-                    <Copy size={16} />
-                    Copy
-                  </button>
-                </div>
-
-                <button
-                  className="w-full py-3 bg-red-500/10 text-red-400 font-semibold rounded-lg hover:bg-red-500/20 transition-colors text-sm flex items-center justify-center gap-2 border border-red-500/20"
-                  onClick={() => handleDelete(selectedImage)}
-                  type="button"
-                >
-                  <Trash2 size={16} />
-                  Delete Image
-                </button>
-              </div>
+            {/* Action Buttons */}
+            <div className="flex items-center justify-center gap-3">
+              <button
+                className="px-5 py-2.5 bg-white text-black font-semibold rounded-full hover:opacity-90 transition-opacity text-sm flex items-center gap-2"
+                onClick={() => window.open(selectedImage.url, '_blank')}
+                type="button"
+              >
+                <Download size={16} />
+                Download
+              </button>
+              <button
+                className="px-5 py-2.5 bg-white/10 text-white/90 font-semibold rounded-full hover:bg-white/20 transition-colors text-sm flex items-center gap-2"
+                onClick={() => { setPrompt(selectedImage.prompt); setSelectedImage(null); setShowDetails(false); }}
+                type="button"
+              >
+                <RefreshCw size={16} />
+                Reuse
+              </button>
+              <button
+                className="px-5 py-2.5 bg-white/10 text-white/90 font-semibold rounded-full hover:bg-white/20 transition-colors text-sm flex items-center gap-2"
+                onClick={() => navigator.clipboard.writeText(selectedImage.prompt)}
+                type="button"
+              >
+                <Copy size={16} />
+                Copy
+              </button>
+              <button
+                className="px-5 py-2.5 bg-red-500/20 text-red-400 font-semibold rounded-full hover:bg-red-500/30 transition-colors text-sm flex items-center gap-2"
+                onClick={() => handleDelete(selectedImage)}
+                type="button"
+              >
+                <Trash2 size={16} />
+                Delete
+              </button>
             </div>
           </div>
         </div>

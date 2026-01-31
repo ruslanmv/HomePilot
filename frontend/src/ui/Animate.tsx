@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2 } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2, Info } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -175,6 +175,7 @@ export default function AnimateView(props: AnimateParams) {
 
   // Selection state for Lightbox (Grok-style detail view)
   const [selectedVideo, setSelectedVideo] = useState<AnimateItem | null>(null)
+  const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
 
   // Video settings
   const [seconds, setSeconds] = useState(props.vidSeconds || 4)
@@ -997,33 +998,59 @@ export default function AnimateView(props: AnimateParams) {
         </div>
       </div>
 
-      {/* Grok-style Lightbox / Detail View */}
+      {/* Immersive Lightbox with Chips (Grok-style) */}
       {selectedVideo && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4 backdrop-blur-md animate-in fade-in duration-200"
-          onClick={() => setSelectedVideo(null)}
+          className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
+          onClick={() => { setSelectedVideo(null); setShowDetails(false); }}
         >
-          {/* Close button */}
-          <button
-            className="absolute top-4 right-4 p-2 text-white/50 hover:text-white bg-white/5 rounded-full z-50"
-            onClick={() => setSelectedVideo(null)}
-            type="button"
-            aria-label="Close"
-          >
-            <X size={24} />
-          </button>
+          {/* Floating Controls - Top Right */}
+          <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+            {selectedVideo.sourceImageUrl && (
+              <button
+                className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+                onClick={(e) => { e.stopPropagation(); window.open(selectedVideo.sourceImageUrl, '_blank'); }}
+                type="button"
+                title="View source image"
+              >
+                <Image size={18} />
+              </button>
+            )}
+            <button
+              className={`p-2.5 rounded-full transition-all ${showDetails ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'}`}
+              onClick={(e) => { e.stopPropagation(); setShowDetails(!showDetails); }}
+              type="button"
+              title="Toggle details"
+            >
+              <Info size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={(e) => { e.stopPropagation(); window.open(selectedVideo.videoUrl, '_blank'); }}
+              type="button"
+              title="View full size"
+            >
+              <Maximize2 size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={() => { setSelectedVideo(null); setShowDetails(false); }}
+              type="button"
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
 
-          <div
-            className="max-w-6xl w-full max-h-[90vh] flex flex-col md:flex-row gap-0 bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Left: Video Container */}
-            <div className="flex-1 bg-black/50 flex items-center justify-center p-4 min-h-[400px] relative">
+          {/* Main Content Area */}
+          <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
+            {/* Hero Video Container */}
+            <div className="flex-1 flex items-center justify-center p-4 relative group">
               {isAnimatedImage(selectedVideo.videoUrl) ? (
                 <img
                   src={selectedVideo.videoUrl}
                   alt="Generated animation"
-                  className="max-h-full max-w-full object-contain shadow-lg rounded-lg"
+                  className="max-h-[calc(100vh-180px)] max-w-full object-contain rounded-lg shadow-2xl"
                 />
               ) : (
                 <video
@@ -1032,206 +1059,174 @@ export default function AnimateView(props: AnimateParams) {
                   controls
                   autoPlay
                   loop
-                  className="max-h-full max-w-full object-contain shadow-lg rounded-lg"
+                  className="max-h-[calc(100vh-180px)] max-w-full object-contain rounded-lg shadow-2xl"
                 />
               )}
+
+              {/* Chips Overlay - Fade in on hover */}
+              <div className="absolute bottom-8 left-8 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {selectedVideo.model && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedVideo.model.split('.')[0].split('-')[0].toUpperCase()}
+                  </span>
+                )}
+                {selectedVideo.seconds && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedVideo.seconds}s
+                  </span>
+                )}
+                {selectedVideo.fps && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedVideo.fps}fps
+                  </span>
+                )}
+                {selectedVideo.motion && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10 capitalize">
+                    {selectedVideo.motion}
+                  </span>
+                )}
+              </div>
             </div>
 
-            {/* Right: Sidebar Details */}
-            <div className="w-full md:w-96 flex flex-col border-l border-white/10 bg-[#161616]">
-              {/* Sidebar Header */}
-              <div className="p-5 border-b border-white/10 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Film size={14} className="text-purple-400" />
-                  Video Details
-                </h3>
-                <span className="text-[10px] text-white/40 font-mono tracking-wide">{selectedVideo.id.slice(0, 8)}</span>
-              </div>
-
-              {/* Sidebar Content */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                {/* Prompt */}
-                <div>
-                  <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                    Prompt
-                  </label>
-                  <div className="text-sm text-white/90 leading-relaxed font-light whitespace-pre-wrap selection:bg-white/20">
-                    {selectedVideo.finalPrompt || selectedVideo.prompt}
-                  </div>
+            {/* Details Panel - Slide in from right */}
+            {showDetails && (
+              <div className="w-80 bg-[#0a0a0a] border-l border-white/10 flex flex-col animate-in slide-in-from-right duration-200">
+                <div className="p-4 border-b border-white/10">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Film size={14} className="text-purple-400" />
+                    Video Details
+                  </h3>
                 </div>
-
-                {/* Source Image */}
-                {selectedVideo.sourceImageUrl && (
-                  <div>
-                    <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                      Source Image
-                    </label>
-                    <img
-                      src={selectedVideo.sourceImageUrl}
-                      alt="Source"
-                      className="w-full h-32 object-cover rounded-lg border border-white/10"
-                    />
-                  </div>
-                )}
-
-                {/* Seed */}
-                {selectedVideo.seed && (
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Seed
-                    </label>
-                    <div className="text-lg text-white font-mono font-bold tracking-wide">
-                      {selectedVideo.seed}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Source Image Thumbnail */}
+                  {selectedVideo.sourceImageUrl && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2 block">Source Image</label>
+                      <img src={selectedVideo.sourceImageUrl} alt="Source" className="w-full h-24 object-cover rounded-lg border border-white/10" />
+                    </div>
+                  )}
+                  {/* Seed */}
+                  {selectedVideo.seed && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Seed</label>
+                      <div className="text-base text-white font-mono font-bold">{selectedVideo.seed}</div>
+                    </div>
+                  )}
+                  {/* Duration, FPS, Motion */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Duration</label>
+                      <div className="text-sm text-white/70 font-mono">{selectedVideo.seconds || '-'}s</div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">FPS</label>
+                      <div className="text-sm text-white/70 font-mono">{selectedVideo.fps || '-'}</div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Motion</label>
+                      <div className="text-sm text-white/70 font-mono capitalize">{selectedVideo.motion || '-'}</div>
                     </div>
                   </div>
-                )}
-
-                {/* Video Parameters */}
-                <div className="grid grid-cols-3 gap-4 pt-2">
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Duration
-                    </label>
-                    <div className="text-sm text-white/80 font-mono">
-                      {selectedVideo.seconds || '-'}s
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      FPS
-                    </label>
-                    <div className="text-sm text-white/80 font-mono">
-                      {selectedVideo.fps || '-'}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Motion
-                    </label>
-                    <div className="text-sm text-white/80 font-mono capitalize">
-                      {selectedVideo.motion || '-'}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Advanced Parameters (if used) */}
-                {(selectedVideo.steps || selectedVideo.cfg || selectedVideo.denoise) && (
-                  <div className="grid grid-cols-3 gap-4 pt-2 border-t border-white/5">
-                    {selectedVideo.steps && (
-                      <div>
-                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                          Steps
-                        </label>
-                        <div className="text-sm text-white/80 font-mono">
-                          {selectedVideo.steps}
+                  {/* Steps, CFG, Denoise */}
+                  {(selectedVideo.steps || selectedVideo.cfg || selectedVideo.denoise) && (
+                    <div className="grid grid-cols-3 gap-3 pt-2 border-t border-white/5">
+                      {selectedVideo.steps && (
+                        <div>
+                          <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Steps</label>
+                          <div className="text-sm text-white/70 font-mono">{selectedVideo.steps}</div>
                         </div>
-                      </div>
-                    )}
-                    {selectedVideo.cfg && (
-                      <div>
-                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                          CFG
-                        </label>
-                        <div className="text-sm text-white/80 font-mono">
-                          {selectedVideo.cfg}
+                      )}
+                      {selectedVideo.cfg && (
+                        <div>
+                          <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">CFG</label>
+                          <div className="text-sm text-white/70 font-mono">{selectedVideo.cfg}</div>
                         </div>
-                      </div>
-                    )}
-                    {selectedVideo.denoise && (
-                      <div>
-                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                          Denoise
-                        </label>
-                        <div className="text-sm text-white/80 font-mono">
-                          {selectedVideo.denoise}
+                      )}
+                      {selectedVideo.denoise && (
+                        <div>
+                          <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Denoise</label>
+                          <div className="text-sm text-white/70 font-mono">{selectedVideo.denoise}</div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Date
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedVideo.createdAt).toLocaleDateString()}
+                      )}
+                    </div>
+                  )}
+                  {/* Date & Time */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Date</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedVideo.createdAt).toLocaleDateString()}</div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Time</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedVideo.createdAt).toLocaleTimeString()}</div>
                     </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Time
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedVideo.createdAt).toLocaleTimeString()}
+                  {/* Model */}
+                  {selectedVideo.model && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Model</label>
+                      <div className="text-xs text-white/50 font-mono break-all">{selectedVideo.model}</div>
                     </div>
-                  </div>
-                </div>
-
-                {/* Model */}
-                {selectedVideo.model && (
-                  <div className="pt-2">
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Model
-                    </label>
-                    <div className="text-xs text-white/60 font-mono truncate">
-                      {selectedVideo.model}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Sidebar Footer / Actions */}
-              <div className="p-5 border-t border-white/10 bg-[#141414] flex flex-col gap-3">
-                <button
-                  className="w-full py-3 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-bold rounded-lg hover:opacity-90 transition-opacity text-sm flex items-center justify-center gap-2"
-                  onClick={() => handleDownload(selectedVideo.videoUrl)}
-                  type="button"
-                >
-                  <Download size={16} />
-                  Download Video
-                </button>
-
-                <div className="flex gap-2">
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      setPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)
-                      if (selectedVideo.sourceImageUrl) {
-                        setReferenceUrl(selectedVideo.sourceImageUrl)
-                      }
-                      setSelectedVideo(null)
-                    }}
-                    type="button"
-                  >
-                    <RefreshCw size={16} />
-                    Reuse
-                  </button>
-
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => handleCopyPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)}
-                    type="button"
-                  >
-                    <Copy size={16} />
-                    Copy
-                  </button>
-
-                  <button
-                    className="py-3 px-4 bg-red-500/10 text-red-400 font-semibold rounded-lg hover:bg-red-500/20 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      if (confirm('Delete this video?')) {
-                        setItems((prev) => prev.filter((x) => x.id !== selectedVideo.id))
-                        setSelectedVideo(null)
-                      }
-                    }}
-                    type="button"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  )}
                 </div>
               </div>
+            )}
+          </div>
+
+          {/* Bottom Bar - Caption & Actions */}
+          <div className="bg-[#0a0a0a] border-t border-white/10 p-4" onClick={(e) => e.stopPropagation()}>
+            {/* Caption-style Prompt */}
+            <div className="max-w-3xl mx-auto mb-4">
+              <p className="text-white/80 text-sm italic text-center leading-relaxed line-clamp-2">
+                "{selectedVideo.finalPrompt || selectedVideo.prompt}"
+              </p>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-center gap-3">
+              <button
+                className="px-5 py-2.5 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-full hover:opacity-90 transition-opacity text-sm flex items-center gap-2"
+                onClick={() => handleDownload(selectedVideo.videoUrl)}
+                type="button"
+              >
+                <Download size={16} />
+                Download
+              </button>
+              <button
+                className="px-5 py-2.5 bg-white/10 text-white/90 font-semibold rounded-full hover:bg-white/20 transition-colors text-sm flex items-center gap-2"
+                onClick={() => {
+                  setPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)
+                  if (selectedVideo.sourceImageUrl) setReferenceUrl(selectedVideo.sourceImageUrl)
+                  setSelectedVideo(null)
+                  setShowDetails(false)
+                }}
+                type="button"
+              >
+                <RefreshCw size={16} />
+                Reuse
+              </button>
+              <button
+                className="px-5 py-2.5 bg-white/10 text-white/90 font-semibold rounded-full hover:bg-white/20 transition-colors text-sm flex items-center gap-2"
+                onClick={() => handleCopyPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)}
+                type="button"
+              >
+                <Copy size={16} />
+                Copy
+              </button>
+              <button
+                className="px-5 py-2.5 bg-red-500/20 text-red-400 font-semibold rounded-full hover:bg-red-500/30 transition-colors text-sm flex items-center gap-2"
+                onClick={() => {
+                  if (confirm('Delete this video?')) {
+                    setItems((prev) => prev.filter((x) => x.id !== selectedVideo.id))
+                    setSelectedVideo(null)
+                    setShowDetails(false)
+                  }
+                }}
+                type="button"
+              >
+                <Trash2 size={16} />
+                Delete
+              </button>
             </div>
           </div>
         </div>
