@@ -183,7 +183,7 @@ export default function AnimateView(props: AnimateParams) {
         const parsed = JSON.parse(stored)
         if (Array.isArray(parsed)) {
           // Migrate old items (without status) and handle stale processing items
-          const STALE_THRESHOLD = 2 * 60 * 60 * 1000  // 2 hours - video generation can take a while
+          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes max
           const now = Date.now()
           return parsed.map((item: any) => {
             // Migrate: old items without status get 'done' if they have videoUrl
