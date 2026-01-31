@@ -1304,73 +1304,6 @@ export default function ImagineView(props: ImagineParams) {
                   </span>
                 )}
               </div>
-
-              {/* Floating Action Bar - Bottom Right, appears on hover */}
-              <div className="absolute bottom-6 right-6 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                {/* Primary Action: Download */}
-                <button
-                  className="px-4 py-2 bg-white text-black font-semibold rounded-full hover:opacity-90 transition-opacity text-sm flex items-center gap-2 shadow-lg"
-                  onClick={() => window.open(selectedImage.url, '_blank')}
-                  type="button"
-                >
-                  <Download size={16} />
-                  Download
-                </button>
-                {/* Next-step Affordance: Animate This */}
-                <button
-                  className="px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-full hover:opacity-90 transition-opacity text-sm flex items-center gap-2 shadow-lg"
-                  onClick={() => {
-                    // Store image URL for Animate mode to use
-                    localStorage.setItem('homepilot_animate_source', selectedImage.url)
-                    // Switch to Animate mode (parent component handles this via URL or state)
-                    window.dispatchEvent(new CustomEvent('switch-to-animate', { detail: { imageUrl: selectedImage.url } }))
-                    setSelectedImage(null)
-                    setShowDetails(false)
-                  }}
-                  type="button"
-                  title="Animate this image"
-                >
-                  <Film size={16} />
-                  Animate
-                </button>
-                {/* More Options Dropdown */}
-                <div className="relative group/more">
-                  <button
-                    className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
-                    type="button"
-                    title="More options"
-                  >
-                    <MoreHorizontal size={18} />
-                  </button>
-                  {/* Dropdown Menu */}
-                  <div className="absolute bottom-full right-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden opacity-0 group-hover/more:opacity-100 pointer-events-none group-hover/more:pointer-events-auto transition-opacity duration-200 min-w-[160px]">
-                    <button
-                      className="w-full px-4 py-2.5 text-left text-sm text-white/80 hover:bg-white/10 flex items-center gap-3 transition-colors"
-                      onClick={() => { setPrompt(selectedImage.prompt); setSelectedImage(null); setShowDetails(false); }}
-                      type="button"
-                    >
-                      <RefreshCw size={14} />
-                      Reuse Prompt
-                    </button>
-                    <button
-                      className="w-full px-4 py-2.5 text-left text-sm text-white/80 hover:bg-white/10 flex items-center gap-3 transition-colors"
-                      onClick={() => navigator.clipboard.writeText(selectedImage.prompt)}
-                      type="button"
-                    >
-                      <Copy size={14} />
-                      Copy Prompt
-                    </button>
-                    <button
-                      className="w-full px-4 py-2.5 text-left text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-3 transition-colors"
-                      onClick={() => handleDelete(selectedImage)}
-                      type="button"
-                    >
-                      <Trash2 size={14} />
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </div>
             </div>
 
             {/* Details Panel - Slide in from right */}
@@ -1440,14 +1373,18 @@ export default function ImagineView(props: ImagineParams) {
             )}
           </div>
 
-          {/* Inline Prompt Composer Bar - Grok-style editable prompt */}
+          {/* Grok-style Prompt Composer Bar with Card Design */}
           <div className="bg-[#0a0a0a] border-t border-white/10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
-            <div className="max-w-3xl mx-auto">
-              <div className="relative flex items-center gap-3">
-                {/* Provenance Indicator */}
-                <div className="flex items-center gap-1.5 text-green-400/80" title="Generated with this prompt">
-                  <Check size={14} strokeWidth={3} />
-                </div>
+            <div className="max-w-4xl mx-auto flex items-center gap-3">
+
+              {/* Prompt Card Container */}
+              <div className="flex-1 flex items-center gap-3 bg-[#1a1a1a] rounded-2xl px-3 py-2.5 border border-white/10">
+                {/* Thumbnail */}
+                <img
+                  src={selectedImage.url}
+                  className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10"
+                  alt="Preview"
+                />
 
                 {/* Editable Prompt Input */}
                 <input
@@ -1465,11 +1402,11 @@ export default function ImagineView(props: ImagineParams) {
                     }
                   }}
                   placeholder="Edit prompt and regenerate..."
-                  className="flex-1 bg-transparent text-white/80 text-sm placeholder-white/30 outline-none border-none"
+                  className="flex-1 bg-transparent text-white/90 text-sm placeholder-white/30 outline-none min-w-0"
                   disabled={isRegenerating}
                 />
 
-                {/* Regenerate Button */}
+                {/* Redo Button (inside card, text style like Grok) */}
                 <button
                   onClick={() => {
                     if (lightboxPrompt.trim() && !isRegenerating) {
@@ -1482,21 +1419,60 @@ export default function ImagineView(props: ImagineParams) {
                     }
                   }}
                   disabled={!lightboxPrompt.trim() || isRegenerating}
-                  className={`p-2 rounded-full transition-all ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all flex-shrink-0 ${
                     lightboxPrompt.trim() && !isRegenerating
-                      ? 'bg-white text-black hover:opacity-90'
-                      : 'bg-white/10 text-white/30 cursor-not-allowed'
+                      ? 'bg-white/10 hover:bg-white/20 text-white'
+                      : 'bg-white/5 text-white/30 cursor-not-allowed'
                   }`}
                   type="button"
-                  title="Regenerate with this prompt"
+                  title="Regenerate"
                 >
                   {isRegenerating ? (
-                    <Loader2 size={16} className="animate-spin" />
+                    <Loader2 size={14} className="animate-spin" />
                   ) : (
-                    <ArrowUp size={16} />
+                    <>Redo <ArrowUp size={14} /></>
                   )}
                 </button>
               </div>
+
+              {/* Action Icons (outside card) */}
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  className="p-2.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                  onClick={() => {
+                    const a = document.createElement('a')
+                    a.href = selectedImage.url
+                    a.download = `imagine-${selectedImage.id}.png`
+                    a.click()
+                  }}
+                  type="button"
+                  title="Download"
+                >
+                  <Download size={18} />
+                </button>
+                <button
+                  className="p-2.5 text-white/60 hover:text-purple-400 hover:bg-purple-500/10 rounded-full transition-colors"
+                  onClick={() => {
+                    localStorage.setItem('homepilot_animate_source', selectedImage.url)
+                    window.dispatchEvent(new CustomEvent('switch-to-animate', { detail: { imageUrl: selectedImage.url } }))
+                    setSelectedImage(null)
+                    setShowDetails(false)
+                  }}
+                  type="button"
+                  title="Animate this image"
+                >
+                  <Film size={18} />
+                </button>
+                <button
+                  className="p-2.5 text-white/60 hover:text-red-400 hover:bg-red-500/10 rounded-full transition-colors"
+                  onClick={() => handleDelete(selectedImage)}
+                  type="button"
+                  title="Delete"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+
             </div>
           </div>
         </div>
