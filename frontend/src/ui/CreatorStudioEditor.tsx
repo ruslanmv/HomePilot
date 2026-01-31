@@ -29,6 +29,7 @@ import {
   Lock,
   Shield,
   Film,
+  MoreHorizontal,
 } from "lucide-react";
 import { useTVModeStore } from "./studio/stores/tvModeStore";
 import type { TVScene } from "./studio/stores/tvModeStore";
@@ -1590,7 +1591,9 @@ export function CreatorStudioEditor({
                       relative rounded-lg overflow-hidden transition-all duration-200
                       ${isActive
                         ? "ring-2 ring-cyan-400 ring-offset-2 ring-offset-black scale-105"
-                        : "opacity-60 hover:opacity-100 hover:scale-102"
+                        : hasVideo
+                          ? "ring-1 ring-cyan-500/50 opacity-80 hover:opacity-100 hover:scale-102"
+                          : "opacity-60 hover:opacity-100 hover:scale-102"
                       }
                     `}
                     type="button"
@@ -1608,11 +1611,9 @@ export function CreatorStudioEditor({
                       )}
                     </div>
 
-                    {/* Video badge - shown when scene has video */}
+                    {/* Subtle video indicator - small dot in corner */}
                     {hasVideo && (
-                      <div className="absolute top-0.5 right-0.5 p-0.5 bg-cyan-500/90 rounded" title="Has video">
-                        <Film size={8} className="text-white" />
-                      </div>
+                      <div className="absolute top-1 right-1 w-2 h-2 bg-cyan-400 rounded-full shadow-sm shadow-cyan-400/50" title="Has video" />
                     )}
 
                     {/* Status indicator */}
@@ -1722,28 +1723,38 @@ export function CreatorStudioEditor({
                     autoPlay
                   />
 
-                  {/* Video badge */}
-                  <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 bg-black/60 backdrop-blur-sm rounded-full">
-                    <Film size={12} className="text-cyan-400" />
-                    <span className="text-xs text-white/80">Video</span>
-                  </div>
-
-                  {/* Regenerate Video overlay on hover */}
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black/50 rounded-xl">
+                  {/* Top-right overlay controls - glass style */}
+                  <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {/* More options */}
                     <button
+                      type="button"
+                      className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-black/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="More options"
+                      onClick={() => {
+                        setEditingScene(currentScene);
+                        setEditNarration(currentScene.narration);
+                        setEditImagePrompt(currentScene.imagePrompt);
+                        setEditNegativePrompt(currentScene.negativePrompt || '');
+                        setShowSceneEditor(true);
+                      }}
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                    {/* Regenerate video */}
+                    <button
+                      type="button"
                       onClick={() => generateVideoForScene(currentScene.id, currentScene.imageUrl!, currentScene.imagePrompt)}
                       disabled={isGeneratingVideo}
-                      className="flex items-center gap-2 px-5 py-2.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white text-sm font-medium hover:bg-white/20 transition-all disabled:opacity-50"
-                      type="button"
+                      className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-black/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Regenerate video"
                     >
-                      <RefreshCw size={14} className={isGeneratingVideo ? 'animate-spin' : ''} />
-                      Regenerate Video
+                      <RefreshCw size={16} className={isGeneratingVideo ? 'animate-spin' : ''} />
                     </button>
                   </div>
 
                   {/* Generating video overlay */}
                   {isGeneratingVideo && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-xl">
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm rounded-xl">
                       <div className="flex flex-col items-center gap-3">
                         <Loader2 size={36} className="text-cyan-400 animate-spin" />
                         <span className="text-white/70 text-sm">Generating video...</span>
@@ -1760,37 +1771,53 @@ export function CreatorStudioEditor({
                     className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-xl shadow-2xl shadow-black/50 transition-all duration-500"
                   />
 
-                  {/* Action overlay on hover */}
-                  <div className="absolute inset-0 flex items-center justify-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black/50 rounded-xl">
-                    {/* Regenerate Image button */}
+                  {/* Top-right overlay controls - glass style */}
+                  <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {/* More options */}
                     <button
+                      type="button"
+                      className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-black/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Edit scene"
+                      onClick={() => {
+                        setEditingScene(currentScene);
+                        setEditNarration(currentScene.narration);
+                        setEditImagePrompt(currentScene.imagePrompt);
+                        setEditNegativePrompt(currentScene.negativePrompt || '');
+                        setShowSceneEditor(true);
+                      }}
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                    {/* Regenerate image */}
+                    <button
+                      type="button"
                       onClick={() => generateImageForScene(currentScene.id, currentScene.imagePrompt, true)}
                       disabled={isGeneratingImage || isGeneratingVideo}
-                      className="flex items-center gap-2 px-5 py-2.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white text-sm font-medium hover:bg-white/20 transition-all disabled:opacity-50"
-                      type="button"
+                      className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-black/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Regenerate image"
                     >
-                      <RefreshCw size={14} className={isGeneratingImage ? 'animate-spin' : ''} />
-                      Regenerate Image
+                      <RefreshCw size={16} className={isGeneratingImage ? 'animate-spin' : ''} />
                     </button>
+                  </div>
 
-                    {/* Make Video button - only show if video generation is enabled */}
-                    {enableVideoGeneration && (
+                  {/* Bottom-right Make Video CTA - only show if video generation is enabled */}
+                  {enableVideoGeneration && !isGeneratingImage && !isGeneratingVideo && (
+                    <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                       <button
-                        onClick={() => generateVideoForScene(currentScene.id, currentScene.imageUrl!, currentScene.imagePrompt)}
-                        disabled={isGeneratingImage || isGeneratingVideo}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-cyan-500/80 backdrop-blur-md border border-cyan-400/30 rounded-full text-white text-sm font-medium hover:bg-cyan-500 transition-all disabled:opacity-50"
                         type="button"
-                        title="Convert this image to a video clip"
+                        onClick={() => generateVideoForScene(currentScene.id, currentScene.imageUrl!, currentScene.imagePrompt)}
+                        className="flex items-center gap-2 px-4 py-2 bg-cyan-500/90 backdrop-blur-md border border-cyan-400/30 rounded-full text-white text-sm font-medium hover:bg-cyan-500 transition-all shadow-lg shadow-cyan-500/20"
+                        title="Convert to video"
                       >
-                        <Film size={14} className={isGeneratingVideo ? 'animate-pulse' : ''} />
+                        <Film size={14} />
                         Make Video
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {/* Generating image overlay */}
                   {isGeneratingImage && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-xl">
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm rounded-xl">
                       <div className="flex flex-col items-center gap-3">
                         <Loader2 size={36} className="text-cyan-400 animate-spin" />
                         <span className="text-white/70 text-sm">Generating image...</span>
@@ -1800,7 +1827,7 @@ export function CreatorStudioEditor({
 
                   {/* Generating video overlay */}
                   {isGeneratingVideo && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-xl">
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm rounded-xl">
                       <div className="flex flex-col items-center gap-3">
                         <Loader2 size={36} className="text-cyan-400 animate-spin" />
                         <span className="text-white/70 text-sm">Converting to video...</span>
