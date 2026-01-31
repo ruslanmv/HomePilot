@@ -185,6 +185,7 @@ export default function ImagineView(props: ImagineParams) {
   const [gameMode, setGameMode] = useState(false)
   const [gameSessionId, setGameSessionId] = useState<string | null>(null)
   const [gameStrength, setGameStrength] = useState(0.65)
+  const [spicyStrength, setSpicyStrength] = useState(0.3)  // Spicy strength (only when nsfwMode + gameMode)
   const [gameLocks, setGameLocks] = useState<GameLocks>({
     lock_world: true,
     lock_style: true,
@@ -351,6 +352,10 @@ export default function ImagineView(props: ImagineParams) {
         requestBody.gameSessionId = gameSessionId
         requestBody.gameStrength = gameStrength
         requestBody.gameLocks = gameLocks
+        // Only send spicyStrength if nsfwMode is also enabled
+        if (props.nsfwMode) {
+          requestBody.gameSpicyStrength = spicyStrength
+        }
       }
 
       const data = await postJson<ChatResponse>(
@@ -434,7 +439,7 @@ export default function ImagineView(props: ImagineParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength])
+  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, spicyStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength])
 
   // Auto-generation loop for Game Mode
   useEffect(() => {
@@ -677,6 +682,29 @@ export default function ImagineView(props: ImagineParams) {
               <span className="text-xs text-white/40">Wild</span>
             </div>
           </div>
+
+          {/* Spicy Strength - Only visible when nsfwMode is enabled */}
+          {props.nsfwMode && (
+            <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs text-red-300 font-semibold">🔥 Spicy Strength</span>
+                <span className="text-xs text-white/60">{spicyStrength.toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={spicyStrength}
+                onChange={(e) => setSpicyStrength(parseFloat(e.target.value))}
+                className="w-full h-2 bg-red-500/20 rounded-full appearance-none cursor-pointer accent-red-500"
+              />
+              <div className="flex justify-between text-[10px] text-white/30 mt-1">
+                <span>Tasteful</span>
+                <span>Bold</span>
+              </div>
+            </div>
+          )}
 
           {/* Lock Settings */}
           <div className="mb-4">
