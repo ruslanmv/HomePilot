@@ -50,6 +50,7 @@ export function CreatorStudioHost({
     llmModel: "",
     imageModel: "",
     videoModel: "",
+    enableVideoGeneration: false,
   });
 
   // Bootstrap connection info for API calls
@@ -72,6 +73,8 @@ export function CreatorStudioHost({
         targetSceneCount={projectSettings.targetSceneCount}
         defaultLLMModel={projectSettings.llmModel}
         imageModel={projectSettings.imageModel}
+        videoModel={projectSettings.videoModel}
+        enableVideoGeneration={projectSettings.enableVideoGeneration}
       />
     );
   }
@@ -107,6 +110,7 @@ interface WizardProps {
     llmModel: string;
     imageModel: string;
     videoModel: string;
+    enableVideoGeneration: boolean;
   }) => void;
 }
 
@@ -156,6 +160,9 @@ function CreatorStudioWizard({
   const [availableVideoModels, setAvailableVideoModels] = useState<AvailableModel[]>([]);
   const [selectedVideoModel, setSelectedVideoModel] = useState("");
   const [loadingVideoModels, setLoadingVideoModels] = useState(false);
+
+  // Video generation toggle - auto-enabled for video/video_series projects
+  const [enableVideoGeneration, setEnableVideoGeneration] = useState(true);
 
   // Mature consent modal
   const [showMatureModal, setShowMatureModal] = useState(false);
@@ -289,9 +296,11 @@ function CreatorStudioWizard({
     // Include selected models
     if (selectedLLMModel) t.push(`llm:${selectedLLMModel}`);
     if (selectedImageModel) t.push(`imageModel:${selectedImageModel}`);
-    if (selectedVideoModel) t.push(`videoModel:${selectedVideoModel}`);
+    // Video generation settings
+    t.push(`videoGeneration:${enableVideoGeneration ? 'enabled' : 'disabled'}`);
+    if (enableVideoGeneration && selectedVideoModel) t.push(`videoModel:${selectedVideoModel}`);
     return Array.from(new Set(t));
-  }, [projectType, goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, selectedVideoModel]);
+  }, [projectType, goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, enableVideoGeneration, selectedVideoModel]);
 
   const canProceedStep1 = title.trim().length > 0;
   const canCreate = title.trim().length > 0 && !loading && generatedOutline;
@@ -314,11 +323,16 @@ function CreatorStudioWizard({
     // Auto-set platform preset based on project type
     if (type === "slideshow") {
       setPlatformPreset("slides_16_9");
+      // Slideshows use images only (Ken Burns effect)
+      setEnableVideoGeneration(false);
     } else if (type === "video_series") {
       setPlatformPreset("youtube_16_9");
+      // Video series uses AI video generation
+      setEnableVideoGeneration(true);
     } else {
-      // "video" - default to YouTube
+      // "video" - default to YouTube with video generation
       setPlatformPreset("youtube_16_9");
+      setEnableVideoGeneration(true);
     }
   }
 
@@ -465,6 +479,7 @@ function CreatorStudioWizard({
         llmModel: selectedLLMModel,
         imageModel: selectedImageModel,
         videoModel: selectedVideoModel,
+        enableVideoGeneration,
       });
     } catch (e: any) {
       setError(e.message || String(e));
@@ -854,34 +869,95 @@ function CreatorStudioWizard({
                   )}
                 </div>
 
-                {/* Video Model Selection */}
+                {/* Video Generation Toggle + Model Selection */}
                 <div className="mt-6">
-                  <label className="block text-xs font-medium text-[#aaa] mb-3">Video Generation Model</label>
-                  <p className="text-xs text-[#777] mb-3">Select the model for generating scene videos (optional)</p>
-                  <div className="relative">
-                    <select
-                      value={selectedVideoModel}
-                      onChange={(e) => setSelectedVideoModel(e.target.value)}
-                      className="w-full px-4 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-base outline-none focus:border-[#3ea6ff] appearance-none cursor-pointer"
-                      disabled={loadingVideoModels}
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <label className="block text-xs font-medium text-[#aaa]">Video Generation</label>
+                      <p className="text-xs text-[#777] mt-1">Generate AI video clips for each scene after images</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEnableVideoGeneration(!enableVideoGeneration)}
+                      className={[
+                        "relative w-12 h-6 rounded-full transition-colors",
+                        enableVideoGeneration ? "bg-[#3ea6ff]" : "bg-[#3f3f3f]"
+                      ].join(" ")}
                     >
-                      <option value="">None (images only)</option>
-                      {loadingVideoModels ? (
-                        <option value="" disabled>Loading models...</option>
-                      ) : (
-                        availableVideoModels.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#aaa] pointer-events-none" />
+                      <div
+                        className={[
+                          "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                          enableVideoGeneration ? "translate-x-7" : "translate-x-1"
+                        ].join(" ")}
+                      />
+                    </button>
                   </div>
-                  {availableVideoModels.length === 0 && !loadingVideoModels && (
-                    <p className="text-xs text-[#777] mt-2">
-                      No video models found. Video generation is optional.
-                    </p>
+
+                  {/* Show project type hint */}
+                  {projectType === "slideshow" && enableVideoGeneration && (
+                    <div className="mb-3 p-2 bg-[#f59e0b]/10 border border-[#f59e0b]/30 rounded text-xs text-[#f59e0b]">
+                      Note: Slideshow projects typically use images with Ken Burns effect. Video generation will create animated clips instead.
+                    </div>
+                  )}
+
+                  {enableVideoGeneration && (
+                    <>
+                      <div className="relative">
+                        <select
+                          value={selectedVideoModel}
+                          onChange={(e) => setSelectedVideoModel(e.target.value)}
+                          className="w-full px-4 py-3 bg-[#121212] border border-[#3f3f3f] rounded text-base outline-none focus:border-[#3ea6ff] appearance-none cursor-pointer"
+                          disabled={loadingVideoModels}
+                        >
+                          {loadingVideoModels ? (
+                            <option value="">Loading models...</option>
+                          ) : availableVideoModels.length === 0 ? (
+                            <option value="">No models available</option>
+                          ) : (
+                            availableVideoModels.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.name}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#aaa] pointer-events-none" />
+                      </div>
+                      {availableVideoModels.length === 0 && !loadingVideoModels && (
+                        <p className="text-xs text-[#ff6b6b] mt-2">
+                          No video models found. Make sure ComfyUI has video models installed (e.g., Wan2.1, LTX-Video).
+                        </p>
+                      )}
+                      {selectedVideoModel && (
+                        <div className="mt-2 p-3 bg-[#121212] border border-[#3f3f3f] rounded text-xs text-[#aaa]">
+                          <div className="flex items-center gap-2 text-[#3ea6ff]">
+                            <span className="font-medium">Generation Flow:</span>
+                          </div>
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className="px-2 py-1 bg-[#282828] rounded">1. Create Scenes</span>
+                            <span className="text-[#666]">→</span>
+                            <span className="px-2 py-1 bg-[#282828] rounded">2. Generate Images</span>
+                            <span className="text-[#666]">→</span>
+                            <span className="px-2 py-1 bg-[#3ea6ff]/20 text-[#3ea6ff] rounded">3. Generate Videos</span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {!enableVideoGeneration && (
+                    <div className="p-3 bg-[#121212] border border-[#3f3f3f] rounded text-xs text-[#aaa]">
+                      <div className="flex items-center gap-2 text-[#888]">
+                        <span className="font-medium">Generation Flow (Images Only):</span>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="px-2 py-1 bg-[#282828] rounded">1. Create Scenes</span>
+                        <span className="text-[#666]">→</span>
+                        <span className="px-2 py-1 bg-[#282828] rounded">2. Generate Images</span>
+                        <span className="text-[#666]">→</span>
+                        <span className="px-2 py-1 bg-[#282828] rounded text-[#666]">Ken Burns Effect</span>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
@@ -950,8 +1026,9 @@ function CreatorStudioWizard({
                     value={selectedImageModel ? `${selectedImageModel} (${getArchitectureLabel(detectArchitecture(selectedImageModel))})` : "Default"}
                   />
                   <ReviewLine
-                    label="Video Model"
-                    value={selectedVideoModel || "None (images only)"}
+                    label="Video Generation"
+                    value={enableVideoGeneration ? (selectedVideoModel || "Enabled (auto-select)") : "Disabled (images only)"}
+                    color={enableVideoGeneration ? "text-[#3ea6ff]" : "text-[#888]"}
                   />
                   <ReviewLine
                     label="Safety"

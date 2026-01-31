@@ -28,6 +28,7 @@ import {
   Star,
   Lock,
   Shield,
+  Film,
 } from "lucide-react";
 import { useTVModeStore } from "./studio/stores/tvModeStore";
 import type { TVScene } from "./studio/stores/tvModeStore";
@@ -46,6 +47,7 @@ type Scene = {
   imagePrompt: string;
   negativePrompt: string;
   imageUrl: string | null;
+  videoUrl: string | null;
   audioUrl: string | null;
   status: SceneStatus;
   durationSec: number;
@@ -113,6 +115,10 @@ interface CreatorStudioEditorProps {
   imageHeight?: number;
   imageSteps?: number;
   imageCfg?: number;
+  /** Video model for AI video generation */
+  videoModel?: string;
+  /** Enable video generation after image generation */
+  enableVideoGeneration?: boolean;
 }
 
 /**
@@ -133,6 +139,8 @@ export function CreatorStudioEditor({
   imageHeight = 768,
   imageSteps,
   imageCfg,
+  videoModel,
+  enableVideoGeneration = false,
 }: CreatorStudioEditorProps) {
   const authKey = (apiKey || "").trim();
   const [hasAutoTriggered, setHasAutoTriggered] = useState(false);
@@ -179,7 +187,7 @@ export function CreatorStudioEditor({
 
   // Batch generation state (generates all scenes from outline)
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; phase: 'scene' | 'image' }>({ current: 0, total: 0, phase: 'scene' });
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; phase: 'scene' | 'image' | 'video' }>({ current: 0, total: 0, phase: 'scene' });
 
   // Project Settings Modal state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -802,7 +810,8 @@ export function CreatorStudioEditor({
 
       console.log(`[CreatorStudioEditor] Created ${generatedScenes.length} scenes, now generating images...`);
 
-      // Now generate images for all scenes
+      // Phase 2: Generate images for all scenes
+      const scenesWithImages: Array<{ scene: Scene; imageUrl: string }> = [];
       for (let i = 0; i < generatedScenes.length; i++) {
         const scene = generatedScenes[i];
         setBatchProgress({ current: i + 1, total: generatedScenes.length, phase: 'image' });
@@ -830,18 +839,80 @@ export function CreatorStudioEditor({
           if (imageUrl) {
             await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, {
               imageUrl,
-              status: 'ready',
+              status: enableVideoGeneration ? 'generating' : 'ready',
             });
 
             setScenes((prev) =>
               prev.map((s) =>
-                s.id === scene.id ? { ...s, imageUrl, status: 'ready' as SceneStatus } : s
+                s.id === scene.id ? { ...s, imageUrl, status: (enableVideoGeneration ? 'generating' : 'ready') as SceneStatus } : s
               )
             );
+
+            scenesWithImages.push({ scene, imageUrl });
           }
         } catch (imgErr: any) {
           console.error(`[CreatorStudioEditor] Failed to generate image for scene ${i + 1}:`, imgErr);
           // Continue with remaining images
+        }
+      }
+
+      // Phase 3: Generate videos from images (if enabled)
+      if (enableVideoGeneration && scenesWithImages.length > 0) {
+        console.log(`[CreatorStudioEditor] Phase 3: Generating ${scenesWithImages.length} videos...`);
+
+        for (let i = 0; i < scenesWithImages.length; i++) {
+          const { scene, imageUrl } = scenesWithImages[i];
+          setBatchProgress({ current: i + 1, total: scenesWithImages.length, phase: 'video' });
+          console.log(`[CreatorStudioEditor] Generating video ${i + 1}/${scenesWithImages.length}`);
+
+          try {
+            // Use the animate endpoint to generate video from image
+            const data = await postApi<{ media?: { videos?: string[] } }>(
+              '/chat',
+              {
+                message: scene.imagePrompt,
+                mode: 'animate',
+                provider: 'ollama',
+                referenceUrl: imageUrl,
+                videoModel: videoModel || undefined,
+              }
+            );
+
+            const videoUrl = data?.media?.videos?.[0];
+            if (videoUrl) {
+              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, {
+                videoUrl,
+                status: 'ready',
+              });
+
+              setScenes((prev) =>
+                prev.map((s) =>
+                  s.id === scene.id ? { ...s, videoUrl, status: 'ready' as SceneStatus } : s
+                )
+              );
+            } else {
+              // No video generated, mark scene as ready anyway (image only)
+              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, {
+                status: 'ready',
+              });
+              setScenes((prev) =>
+                prev.map((s) =>
+                  s.id === scene.id ? { ...s, status: 'ready' as SceneStatus } : s
+                )
+              );
+            }
+          } catch (vidErr: any) {
+            console.error(`[CreatorStudioEditor] Failed to generate video for scene ${i + 1}:`, vidErr);
+            // Mark scene as ready anyway (fallback to image only)
+            try {
+              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, { status: 'ready' });
+              setScenes((prev) =>
+                prev.map((s) =>
+                  s.id === scene.id ? { ...s, status: 'ready' as SceneStatus } : s
+                )
+              );
+            } catch {}
+          }
         }
       }
 
@@ -858,7 +929,7 @@ export function CreatorStudioEditor({
       setIsBatchGenerating(false);
       setBatchProgress({ current: 0, total: 0, phase: 'scene' });
     }
-  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, syncOutlineWithScenes]);
+  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, enableVideoGeneration, videoModel, syncOutlineWithScenes]);
 
   // Load project and scenes
   useEffect(() => {
@@ -1308,8 +1379,10 @@ export function CreatorStudioEditor({
                   <div className="absolute inset-0 flex items-center justify-center">
                     {batchProgress.phase === 'scene' ? (
                       <Sparkles size={28} className="text-[#3ea6ff]" />
-                    ) : (
+                    ) : batchProgress.phase === 'image' ? (
                       <ImageIcon size={28} className="text-[#3ea6ff]" />
+                    ) : (
+                      <Film size={28} className="text-[#3ea6ff]" />
                     )}
                   </div>
                 </div>
@@ -1317,14 +1390,17 @@ export function CreatorStudioEditor({
 
               {/* Title */}
               <h2 className="text-xl font-semibold text-white mb-2">
-                {batchProgress.phase === 'scene' ? 'Creating Scenes' : 'Generating Images'}
+                {batchProgress.phase === 'scene' ? 'Creating Scenes' :
+                 batchProgress.phase === 'image' ? 'Generating Images' : 'Generating Videos'}
               </h2>
 
               {/* Progress Text */}
               <p className="text-white/60 mb-6">
                 {batchProgress.phase === 'scene'
                   ? `Building scene ${batchProgress.current} of ${batchProgress.total}...`
-                  : `Generating image ${batchProgress.current} of ${batchProgress.total}...`
+                  : batchProgress.phase === 'image'
+                    ? `Generating image ${batchProgress.current} of ${batchProgress.total}...`
+                    : `Generating video ${batchProgress.current} of ${batchProgress.total}...`
                 }
               </p>
 
@@ -1341,13 +1417,21 @@ export function CreatorStudioEditor({
                   />
                 </div>
                 <div className="mt-2 text-xs text-white/40">
-                  {batchProgress.phase === 'scene' ? 'Phase 1/2: Creating scenes' : 'Phase 2/2: Generating images'}
+                  {batchProgress.phase === 'scene'
+                    ? (enableVideoGeneration ? 'Phase 1/3: Creating scenes' : 'Phase 1/2: Creating scenes')
+                    : batchProgress.phase === 'image'
+                      ? (enableVideoGeneration ? 'Phase 2/3: Generating images' : 'Phase 2/2: Generating images')
+                      : 'Phase 3/3: Generating videos'
+                  }
                 </div>
               </div>
 
               {/* Tip */}
               <p className="text-xs text-white/30 mt-4">
-                This may take a few minutes depending on your hardware
+                {batchProgress.phase === 'video'
+                  ? 'Video generation may take several minutes per scene'
+                  : 'This may take a few minutes depending on your hardware'
+                }
               </p>
             </div>
           </div>
