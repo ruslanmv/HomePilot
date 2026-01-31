@@ -26,6 +26,72 @@ EDIT_RE = re.compile(r"\b(edit|inpaint|replace|remove|change)\b", re.I)
 ANIM_RE = re.compile(r"\b(animate|make (a )?video|image\s*to\s*video)\b", re.I)
 URL_RE = re.compile(r"(https?://\S+)")
 
+# OOM error patterns (CUDA, MPS, etc.)
+OOM_PATTERNS = [
+    "cuda out of memory",
+    "out of memory",
+    "oom",
+    "cuda error",
+    "mps backend out of memory",
+    "allocation failed",
+    "not enough memory",
+]
+
+
+def _is_oom_error(error: Exception) -> bool:
+    """Detect if an exception is an out-of-memory error."""
+    error_str = str(error).lower()
+    return any(pattern in error_str for pattern in OOM_PATTERNS)
+
+
+def _reduce_video_settings(
+    workflow_vars: Dict[str, Any],
+    model_type: str,
+    attempt: int,
+) -> Dict[str, Any]:
+    """
+    Reduce video settings for OOM retry.
+
+    Reduction strategy (progressive):
+    - Attempt 1: Reduce frames by ~25%
+    - Attempt 2: Reduce resolution by ~20% + frames by ~35%
+    - Attempt 3: Minimum viable settings
+
+    Returns new workflow_vars dict with reduced settings.
+    """
+    reduced = workflow_vars.copy()
+    frames = reduced.get("frames", 49)
+    width = reduced.get("width", 768)
+    height = reduced.get("height", 512)
+
+    if attempt == 1:
+        # First retry: reduce frames by ~25%
+        new_frames = max(25, int(frames * 0.75))
+        # Enforce frame rules
+        new_frames = video_presets.enforce_frame_rule(model_type, new_frames)
+        reduced["frames"] = new_frames
+        print(f"[OOM_RETRY] Attempt {attempt}: Reduced frames {frames} -> {new_frames}")
+
+    elif attempt == 2:
+        # Second retry: reduce resolution + frames
+        new_width = max(512, int(width * 0.8) // 32 * 32)  # Round to 32
+        new_height = max(288, int(height * 0.8) // 32 * 32)
+        new_frames = max(25, int(frames * 0.65))
+        new_frames = video_presets.enforce_frame_rule(model_type, new_frames)
+        reduced["width"] = new_width
+        reduced["height"] = new_height
+        reduced["frames"] = new_frames
+        print(f"[OOM_RETRY] Attempt {attempt}: Reduced {width}x{height} -> {new_width}x{new_height}, frames {frames} -> {new_frames}")
+
+    else:
+        # Third retry: minimum viable settings
+        reduced["width"] = 512
+        reduced["height"] = 288
+        reduced["frames"] = video_presets.enforce_frame_rule(model_type, 25)
+        print(f"[OOM_RETRY] Attempt {attempt}: Using minimum settings 512x288, 25 frames")
+
+    return reduced
+
 
 def _clean_video_prompt(text: str) -> str:
     """
@@ -551,9 +617,37 @@ async def orchestrate(
                 "steps": preset_vars.get("steps", 30),
                 "cfg": preset_vars.get("cfg", 3.5),
                 "denoise": preset_vars.get("denoise", 0.85),
+                # Resolution (for OOM retry reduction)
+                "width": preset_vars.get("width", 768),
+                "height": preset_vars.get("height", 512),
             }
 
-            res = run_workflow(video_workflow_name, workflow_vars)
+            # Run workflow with OOM retry logic
+            max_retries = 3
+            last_error = None
+            current_vars = workflow_vars
+
+            for attempt in range(max_retries + 1):
+                try:
+                    if attempt > 0:
+                        print(f"[ANIMATE] OOM retry attempt {attempt}/{max_retries}")
+                        current_vars = _reduce_video_settings(
+                            workflow_vars, detected_model_type, attempt
+                        )
+
+                    res = run_workflow(video_workflow_name, current_vars)
+                    break  # Success, exit retry loop
+
+                except Exception as e:
+                    last_error = e
+                    if _is_oom_error(e) and attempt < max_retries:
+                        print(f"[ANIMATE] OOM detected: {e}")
+                        continue  # Try again with reduced settings
+                    else:
+                        raise  # Re-raise non-OOM errors or final attempt
+
+            # Update workflow_vars with actual settings used (for metadata)
+            workflow_vars = current_vars
             video_url = (res.get("videos") or [None])[0]
             images = res.get("images") or []
 

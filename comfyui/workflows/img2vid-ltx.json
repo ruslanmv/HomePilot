@@ -59,8 +59,8 @@
       "negative": ["5", 0],
       "vae": ["2", 2],
       "image": ["6", 0],
-      "width": 768,
-      "height": 512,
+      "width": "{{width}}",
+      "height": "{{height}}",
       "length": "{{frames}}",
       "batch_size": 1,
       "strength": "{{denoise}}"

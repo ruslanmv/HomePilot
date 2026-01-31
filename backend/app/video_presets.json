@@ -36,14 +36,14 @@
           "max_frames": 25
         },
         "ltx": {
-          "width": 768,
-          "height": 512,
-          "fps": 24,
-          "frames": 49,
-          "steps": 28,
+          "width": 512,
+          "height": 288,
+          "fps": 16,
+          "frames": 25,
+          "steps": 20,
           "cfg": 4.0,
           "denoise": 0.80,
-          "max_frames": 49
+          "max_frames": 25
         },
         "wan": {
           "width": 640,
@@ -87,14 +87,14 @@
           "max_frames": 25
         },
         "ltx": {
-          "width": 768,
-          "height": 512,
-          "fps": 24,
-          "frames": 97,
-          "steps": 32,
+          "width": 640,
+          "height": 360,
+          "fps": 16,
+          "frames": 33,
+          "steps": 24,
           "cfg": 4.0,
           "denoise": 0.80,
-          "max_frames": 97
+          "max_frames": 41
         },
         "wan": {
           "width": 832,
@@ -158,14 +158,14 @@
           "max_frames": 25
         },
         "ltx": {
-          "width": 768,
-          "height": 512,
+          "width": 704,
+          "height": 400,
           "fps": 24,
-          "frames": 97,
-          "steps": 40,
-          "cfg": 4.5,
+          "frames": 41,
+          "steps": 28,
+          "cfg": 4.0,
           "denoise": 0.80,
-          "max_frames": 97
+          "max_frames": 49
         },
         "wan": {
           "width": 832,
@@ -240,13 +240,13 @@
         },
         "ltx": {
           "width": 768,
-          "height": 512,
+          "height": 432,
           "fps": 24,
-          "frames": 145,
-          "steps": 50,
-          "cfg": 4.5,
+          "frames": 49,
+          "steps": 32,
+          "cfg": 4.0,
           "denoise": 0.80,
-          "max_frames": 145
+          "max_frames": 57
         },
         "wan": {
           "width": 832,
