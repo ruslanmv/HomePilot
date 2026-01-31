@@ -30,10 +30,15 @@ import {
   Shield,
   Film,
   MoreHorizontal,
+  Sliders,
 } from "lucide-react";
 import { useTVModeStore } from "./studio/stores/tvModeStore";
 import type { TVScene } from "./studio/stores/tvModeStore";
 import { TVModeContainer } from "./studio/components/TVMode/TVModeContainer";
+import CreatorStudioSettings, {
+  CREATOR_STUDIO_PARAM_DEFAULTS,
+  type CreatorStudioGenerationParams,
+} from "./CreatorStudioSettings";
 
 // Types
 type SceneStatus = "pending" | "generating" | "ready" | "error";
@@ -206,6 +211,9 @@ export function CreatorStudioEditor({
   const [settingsLockIdentity, setSettingsLockIdentity] = useState(true);
   const [settingsContentRating, setSettingsContentRating] = useState<ContentRating>("sfw");
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  // Generation parameters state (advanced customization)
+  const [genParams, setGenParams] = useState<CreatorStudioGenerationParams>(CREATOR_STUDIO_PARAM_DEFAULTS);
 
   // Project-level capability: can this project generate videos?
   // IMPORTANT: do NOT rely only on enableVideoGeneration (wizard-only, transient)
@@ -509,6 +517,23 @@ export function CreatorStudioEditor({
     return { goal, visualStyle, tones, lockIdentity, sceneCount, sceneDuration };
   }, []);
 
+  // Parse generation params from project tags
+  const parseGenParamsFromTags = useCallback((tags: string[] | undefined | null): CreatorStudioGenerationParams => {
+    const t = tags || [];
+    const next = { ...CREATOR_STUDIO_PARAM_DEFAULTS };
+
+    const get = (k: string) => t.find(x => x.startsWith(`gen:${k}=`))?.split("=")[1];
+
+    next.enabled = get("enabled") === "1";
+    next.steps = Number(get("steps") ?? next.steps);
+    next.cfgScale = Number(get("cfg") ?? next.cfgScale);
+    next.creativity = Number(get("creativity") ?? next.creativity);
+    next.lockSeed = get("seedlock") === "1";
+    next.seed = Number(get("seed") ?? next.seed);
+
+    return next;
+  }, []);
+
   // Open settings modal
   const openSettingsModal = useCallback(async () => {
     if (!project) return;
@@ -531,6 +556,20 @@ export function CreatorStudioEditor({
     const llmTag = tags.find((t: string) => t.startsWith("llm:"));
     setSettingsLLMModel(llmTag ? llmTag.replace("llm:", "") : selectedLLMModel);
 
+    // Initialize generation params from project tags
+    const parsedGenParams = parseGenParamsFromTags(tags);
+    // Also restore negative prompt from localStorage
+    try {
+      const key = `creatorstudio:genparams:${projectId}:neg`;
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const neg = JSON.parse(stored);
+        parsedGenParams.useCustomNegativePrompt = Boolean(neg?.use);
+        parsedGenParams.customNegativePrompt = String(neg?.text || "");
+      }
+    } catch {}
+    setGenParams(parsedGenParams);
+
     // Fetch available models to ensure the dropdown is populated
     try {
       const llmData = await fetchApi<{ models: { id: string; name?: string }[] }>(
@@ -545,7 +584,7 @@ export function CreatorStudioEditor({
     }
 
     setShowSettingsModal(true);
-  }, [project, parseTagsFromProject, selectedLLMModel, fetchApi]);
+  }, [project, projectId, parseTagsFromProject, parseGenParamsFromTags, selectedLLMModel, fetchApi]);
 
   // Toggle tone in settings
   const toggleSettingsTone = useCallback((tone: string) => {
@@ -570,13 +609,27 @@ export function CreatorStudioEditor({
     return tags;
   }, [settingsGoal, settingsVisualStyle, settingsTones, settingsLockIdentity, settingsSceneCount, settingsSceneDuration, settingsLLMModel]);
 
+  // Build tags including generation params
+  const buildGenTags = useCallback((p: CreatorStudioGenerationParams) => {
+    // Start with base settings tags, filter out any existing gen:* tags
+    const tags = buildTagsFromSettings().filter(t => !t.startsWith("gen:"));
+    // Add generation params
+    tags.push(`gen:enabled=${p.enabled ? "1" : "0"}`);
+    tags.push(`gen:steps=${p.steps}`);
+    tags.push(`gen:cfg=${p.cfgScale}`);
+    tags.push(`gen:creativity=${p.creativity}`);
+    tags.push(`gen:seedlock=${p.lockSeed ? "1" : "0"}`);
+    tags.push(`gen:seed=${p.seed}`);
+    return tags;
+  }, [buildTagsFromSettings]);
+
   // Save project settings
   const saveProjectSettings = useCallback(async () => {
     if (!project) return;
     setIsSavingSettings(true);
 
     try {
-      const tags = buildTagsFromSettings();
+      const tags = buildGenTags(genParams);
 
       await patchApi(`/studio/videos/${projectId}`, {
         title: settingsTitle.trim(),
@@ -585,6 +638,15 @@ export function CreatorStudioEditor({
         contentRating: settingsContentRating,
         tags,
       });
+
+      // Persist negative prompt locally (can be long, so not in tags)
+      try {
+        const key = `creatorstudio:genparams:${projectId}:neg`;
+        localStorage.setItem(key, JSON.stringify({
+          use: genParams.useCustomNegativePrompt,
+          text: genParams.customNegativePrompt,
+        }));
+      } catch {}
 
       // Update local project state
       setProject((prev) => prev ? {
@@ -608,7 +670,7 @@ export function CreatorStudioEditor({
     } finally {
       setIsSavingSettings(false);
     }
-  }, [project, projectId, settingsTitle, settingsLogline, settingsPlatform, settingsContentRating, settingsLLMModel, buildTagsFromSettings, patchApi]);
+  }, [project, projectId, settingsTitle, settingsLogline, settingsPlatform, settingsContentRating, settingsLLMModel, genParams, buildGenTags, patchApi]);
 
   // Delete scene
   const deleteScene = useCallback(async (sceneId: string) => {
@@ -786,6 +848,17 @@ export function CreatorStudioEditor({
       try {
         const llmProvider = imageProvider === 'comfyui' ? 'ollama' : imageProvider;
 
+        // Apply generation parameters if enabled
+        const effectiveSteps = genParams.enabled ? genParams.steps : imageSteps;
+        const effectiveCfg = genParams.enabled ? genParams.cfgScale : imageCfg;
+
+        // Get scene-level negative prompt if available
+        const scene = scenes.find(s => s.id === sceneId);
+        const sceneNeg = scene?.negativePrompt || "";
+        const combinedNegativePrompt = (genParams.enabled && genParams.useCustomNegativePrompt && genParams.customNegativePrompt.trim())
+          ? [sceneNeg, genParams.customNegativePrompt.trim()].filter(Boolean).join(", ")
+          : sceneNeg || undefined;
+
         // Send aspect ratio to backend - Dynamic Preset System calculates correct
         // dimensions based on model architecture (SD1.5 vs SDXL vs Flux)
         const data = await postApi<{ media?: { images?: string[] } }>(
@@ -796,8 +869,11 @@ export function CreatorStudioEditor({
             provider: llmProvider,
             imgModel: imageModel || undefined,
             imgAspectRatio: '16:9',  // Story/video format
-            imgSteps: imageSteps,
-            imgCfg: imageCfg,
+            imgSteps: effectiveSteps,
+            imgCfg: effectiveCfg,
+            negativePrompt: combinedNegativePrompt,
+            imgSeed: genParams.enabled && genParams.lockSeed ? genParams.seed : undefined,
+            creativity: genParams.enabled ? genParams.creativity : undefined,
             promptRefinement: false,
           }
         );
@@ -826,7 +902,7 @@ export function CreatorStudioEditor({
         setIsGeneratingImage(false);
       }
     },
-    [projectId, imageProvider, imageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage, toScenePatch]
+    [projectId, imageProvider, imageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage, toScenePatch, genParams, scenes]
   );
 
   // Generate video for a scene (converts image to video)
@@ -856,6 +932,11 @@ export function CreatorStudioEditor({
             mode: 'animate',
             provider: 'ollama',
             vidModel: videoModel || undefined,
+            // Apply generation parameters if enabled
+            vidSeed: genParams.enabled && genParams.lockSeed ? genParams.seed : undefined,
+            vidSteps: genParams.enabled ? genParams.steps : undefined,
+            vidCfg: genParams.enabled ? genParams.cfgScale : undefined,
+            creativity: genParams.enabled ? genParams.creativity : undefined,
           }
         );
 
@@ -890,7 +971,7 @@ export function CreatorStudioEditor({
         setIsGeneratingVideo(false);
       }
     },
-    [projectId, videoModel, postApi, patchApi, isGeneratingVideo, toScenePatch, proxyVideoUrl]
+    [projectId, videoModel, postApi, patchApi, isGeneratingVideo, toScenePatch, proxyVideoUrl, genParams]
   );
 
   // Remove video and fall back to image-only for a scene
@@ -2836,6 +2917,18 @@ export function CreatorStudioEditor({
                     <span className="text-white/50 ml-2">- This project may generate explicit content.</span>
                   </div>
                 )}
+              </div>
+
+              {/* Generation Parameters */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <Sliders size={14} />
+                  Generation Parameters
+                </h3>
+                <p className="text-xs text-white/40">
+                  Customize generation defaults for images & videos. These override model presets.
+                </p>
+                <CreatorStudioSettings value={genParams} onChange={setGenParams} />
               </div>
             </div>
 
