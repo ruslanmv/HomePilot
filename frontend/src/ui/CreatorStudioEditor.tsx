@@ -31,6 +31,7 @@ import {
   Film,
   MoreHorizontal,
   Sliders,
+  ChevronDown,
 } from "lucide-react";
 import { useTVModeStore } from "./studio/stores/tvModeStore";
 import type { TVScene } from "./studio/stores/tvModeStore";
@@ -181,6 +182,7 @@ export function CreatorStudioEditor({
   const [availableImageModels, setAvailableImageModels] = useState<AvailableModel[]>([]);
   const [selectedLLMModel, setSelectedLLMModel] = useState<string>(defaultLLMModel);
   const [selectedImageModel, setSelectedImageModel] = useState<string>(imageModel || "");
+  const [selectedVideoModel, setSelectedVideoModel] = useState<string>(videoModel || "");
   const [settingsLLMModel, setSettingsLLMModel] = useState<string>(defaultLLMModel);
   const [error, setError] = useState<string | null>(null);
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
@@ -212,6 +214,12 @@ export function CreatorStudioEditor({
   const [settingsContentRating, setSettingsContentRating] = useState<ContentRating>("sfw");
   const [settingsEnableVideo, setSettingsEnableVideo] = useState(false); // Enable video generation capability
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  // Model override state for Project Settings
+  const [settingsImageModel, setSettingsImageModel] = useState<string>("");
+  const [settingsVideoModel, setSettingsVideoModel] = useState<string>("");
+  const [availableVideoModels, setAvailableVideoModels] = useState<AvailableModel[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
 
   // Generation parameters state (advanced customization)
   const [genParams, setGenParams] = useState<CreatorStudioGenerationParams>(CREATOR_STUDIO_PARAM_DEFAULTS);
@@ -579,21 +587,43 @@ export function CreatorStudioEditor({
     } catch {}
     setGenParams(parsedGenParams);
 
-    // Fetch available models to ensure the dropdown is populated
+    // Initialize image/video model overrides from project tags or props
+    const imageModelTag = tags.find((t: string) => t.startsWith("imageModel:"));
+    setSettingsImageModel(imageModelTag?.replace("imageModel:", "") || imageModel || "");
+
+    const videoModelTag = tags.find((t: string) => t.startsWith("videoModel:"));
+    setSettingsVideoModel(videoModelTag?.replace("videoModel:", "") || videoModel || "");
+
+    // Fetch available models to ensure the dropdowns are populated
+    setLoadingModels(true);
     try {
-      const llmData = await fetchApi<{ models: { id: string; name?: string }[] }>(
-        '/models?provider=ollama'
-      );
+      // Fetch LLM, Image, and Video models in parallel
+      const [llmData, imgData, vidData] = await Promise.all([
+        fetchApi<{ models: { id: string; name?: string }[] }>('/models?provider=ollama'),
+        fetchApi<{ models: string[] }>('/models?provider=comfyui&model_type=image'),
+        fetchApi<{ models: string[] }>('/models?provider=comfyui&model_type=video'),
+      ]);
+
       if (llmData.models) {
         const models = llmData.models.map(m => ({ id: m.id, name: m.name || m.id }));
         setAvailableLLMModels(models);
       }
+      if (imgData.models) {
+        const models = imgData.models.map(m => ({ id: m, name: m }));
+        setAvailableImageModels(models);
+      }
+      if (vidData.models) {
+        const models = vidData.models.map(m => ({ id: m, name: m }));
+        setAvailableVideoModels(models);
+      }
     } catch (e) {
-      console.log('[CreatorStudioEditor] Failed to fetch LLM models for settings:', e);
+      console.log('[CreatorStudioEditor] Failed to fetch models for settings:', e);
+    } finally {
+      setLoadingModels(false);
     }
 
     setShowSettingsModal(true);
-  }, [project, projectId, parseTagsFromProject, parseGenParamsFromTags, selectedLLMModel, enableVideoGeneration, fetchApi]);
+  }, [project, projectId, parseTagsFromProject, parseGenParamsFromTags, selectedLLMModel, imageModel, videoModel, enableVideoGeneration, fetchApi]);
 
   // Toggle tone in settings
   const toggleSettingsTone = useCallback((tone: string) => {
@@ -617,8 +647,11 @@ export function CreatorStudioEditor({
     tags.push(`scenes:${settingsSceneCount}`);
     tags.push(`duration:${settingsSceneDuration}`);
     if (settingsLLMModel) tags.push(`llm:${settingsLLMModel}`);
+    // Model overrides - allows per-project model selection
+    if (settingsImageModel) tags.push(`imageModel:${settingsImageModel}`);
+    if (settingsVideoModel) tags.push(`videoModel:${settingsVideoModel}`);
     return tags;
-  }, [settingsEnableVideo, settingsGoal, settingsVisualStyle, settingsTones, settingsLockIdentity, settingsSceneCount, settingsSceneDuration, settingsLLMModel]);
+  }, [settingsEnableVideo, settingsGoal, settingsVisualStyle, settingsTones, settingsLockIdentity, settingsSceneCount, settingsSceneDuration, settingsLLMModel, settingsImageModel, settingsVideoModel]);
 
   // Build tags including generation params
   const buildGenTags = useCallback((p: CreatorStudioGenerationParams) => {
@@ -669,8 +702,10 @@ export function CreatorStudioEditor({
         tags,
       } : null);
 
-      // Update selected LLM model to match settings
+      // Update selected models to match settings
       setSelectedLLMModel(settingsLLMModel);
+      if (settingsImageModel) setSelectedImageModel(settingsImageModel);
+      if (settingsVideoModel) setSelectedVideoModel(settingsVideoModel);
 
       setLastSaved(new Date());
       setShowSettingsModal(false);
@@ -681,7 +716,7 @@ export function CreatorStudioEditor({
     } finally {
       setIsSavingSettings(false);
     }
-  }, [project, projectId, settingsTitle, settingsLogline, settingsPlatform, settingsContentRating, settingsLLMModel, genParams, buildGenTags, patchApi]);
+  }, [project, projectId, settingsTitle, settingsLogline, settingsPlatform, settingsContentRating, settingsLLMModel, settingsImageModel, settingsVideoModel, genParams, buildGenTags, patchApi]);
 
   // Delete scene
   const deleteScene = useCallback(async (sceneId: string) => {
@@ -878,7 +913,7 @@ export function CreatorStudioEditor({
             message: `imagine ${imagePrompt}`,
             mode: 'imagine',
             provider: llmProvider,
-            imgModel: imageModel || undefined,
+            imgModel: selectedImageModel || imageModel || undefined,
             // Pass explicit resolution from wizard (if available)
             // Backend will use these values directly instead of computing from aspect ratio
             ...(imageWidth ? { imgWidth: imageWidth } : {}),
@@ -916,7 +951,7 @@ export function CreatorStudioEditor({
         setIsGeneratingImage(false);
       }
     },
-    [projectId, imageProvider, imageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage, toScenePatch, genParams, scenes]
+    [projectId, imageProvider, imageModel, selectedImageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage, toScenePatch, genParams, scenes]
   );
 
   // Generate video for a scene (converts image to video)
@@ -945,7 +980,7 @@ export function CreatorStudioEditor({
             message: `${prompt || 'Animate this scene with subtle motion'} ${imageUrl}`,
             mode: 'animate',
             provider: 'ollama',
-            vidModel: videoModel || undefined,
+            vidModel: selectedVideoModel || videoModel || undefined,
             // Apply generation parameters if enabled
             vidSeed: genParams.enabled && genParams.lockSeed ? genParams.seed : undefined,
             vidSteps: genParams.enabled ? genParams.steps : undefined,
@@ -985,7 +1020,7 @@ export function CreatorStudioEditor({
         setIsGeneratingVideo(false);
       }
     },
-    [projectId, videoModel, postApi, patchApi, isGeneratingVideo, toScenePatch, proxyVideoUrl, genParams]
+    [projectId, videoModel, selectedVideoModel, postApi, patchApi, isGeneratingVideo, toScenePatch, proxyVideoUrl, genParams]
   );
 
   // Remove video and fall back to image-only for a scene
@@ -1089,7 +1124,7 @@ export function CreatorStudioEditor({
               message: `imagine ${scene.imagePrompt}`,
               mode: 'imagine',
               provider: llmProvider,
-              imgModel: imageModel || undefined,
+              imgModel: selectedImageModel || imageModel || undefined,
               imgAspectRatio: '16:9',
               imgSteps: imageSteps,
               imgCfg: imageCfg,
@@ -1136,7 +1171,7 @@ export function CreatorStudioEditor({
                 message: `${scene.imagePrompt} ${imageUrl}`,
                 mode: 'animate',
                 provider: 'ollama',
-                vidModel: videoModel || undefined,
+                vidModel: selectedVideoModel || videoModel || undefined,
               }
             );
 
@@ -1202,7 +1237,7 @@ export function CreatorStudioEditor({
       setIsBatchGenerating(false);
       setBatchProgress({ current: 0, total: 0, phase: 'scene' });
     }
-  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, projectWantsVideo, videoModel, syncOutlineWithScenes, toScenePatch, refreshScenes, proxyVideoUrl]);
+  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, selectedImageModel, imageSteps, imageCfg, projectWantsVideo, videoModel, selectedVideoModel, syncOutlineWithScenes, toScenePatch, refreshScenes, proxyVideoUrl]);
 
   // Load project and scenes
   useEffect(() => {
@@ -2724,6 +2759,37 @@ export function CreatorStudioEditor({
                 </div>
               </div>
 
+              {/* Image Generation Model */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <ImageIcon size={14} />
+                  Image Generation
+                </h3>
+                <div className="p-4 rounded-xl border border-white/10 bg-white/5">
+                  <label className="block text-xs font-medium text-white/50 mb-2">Image Model</label>
+                  <div className="relative">
+                    <select
+                      value={settingsImageModel}
+                      onChange={(e) => setSettingsImageModel(e.target.value)}
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/25 focus:outline-none transition-all appearance-none cursor-pointer"
+                      disabled={loadingModels}
+                    >
+                      {loadingModels ? (
+                        <option value="">Loading models...</option>
+                      ) : availableImageModels.length === 0 ? (
+                        <option value="">No models available</option>
+                      ) : (
+                        availableImageModels.map((m) => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))
+                      )}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
+                  </div>
+                  <p className="text-xs text-white/30 mt-2">Override the global image model for this project</p>
+                </div>
+              </div>
+
               {/* Video Generation Toggle */}
               <div className="space-y-3">
                 <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
@@ -2731,12 +2797,17 @@ export function CreatorStudioEditor({
                   Video Generation
                 </h3>
                 <div
-                  className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                  className={`p-4 rounded-xl border transition-all ${
                     settingsEnableVideo
                       ? "border-cyan-500 bg-cyan-500/10"
-                      : "border-white/10 bg-white/5 hover:bg-white/10"
+                      : "border-white/10 bg-white/5 hover:bg-white/10 cursor-pointer"
                   }`}
-                  onClick={() => setSettingsEnableVideo(!settingsEnableVideo)}
+                  onClick={(e) => {
+                    // Only toggle if clicking on the toggle area, not on child elements like select
+                    if ((e.target as HTMLElement).tagName !== 'SELECT') {
+                      if (!settingsEnableVideo) setSettingsEnableVideo(true);
+                    }
+                  }}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -2767,6 +2838,42 @@ export function CreatorStudioEditor({
                     <div className="mt-3 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-400">
                       Tip: Slides with video will create animated clips instead of static images with Ken Burns effect.
                     </div>
+                  )}
+                  {/* Video Model Selector - shown when video is enabled */}
+                  {settingsEnableVideo && (
+                    <div className="mt-4 pt-4 border-t border-white/10" onClick={(e) => e.stopPropagation()}>
+                      <label className="block text-xs font-medium text-white/50 mb-2">Video Model</label>
+                      <div className="relative">
+                        <select
+                          value={settingsVideoModel}
+                          onChange={(e) => setSettingsVideoModel(e.target.value)}
+                          className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/25 focus:outline-none transition-all appearance-none cursor-pointer"
+                          disabled={loadingModels}
+                        >
+                          {loadingModels ? (
+                            <option value="">Loading models...</option>
+                          ) : availableVideoModels.length === 0 ? (
+                            <option value="">No video models available</option>
+                          ) : (
+                            availableVideoModels.map((m) => (
+                              <option key={m.id} value={m.id}>{m.name}</option>
+                            ))
+                          )}
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
+                      </div>
+                      <p className="text-xs text-white/30 mt-2">Override the global video model for this project</p>
+                    </div>
+                  )}
+                  {/* Toggle OFF button when video is enabled */}
+                  {settingsEnableVideo && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setSettingsEnableVideo(false); }}
+                      className="mt-4 w-full px-4 py-2 text-xs text-white/50 hover:text-white/70 border border-white/10 rounded-lg hover:bg-white/5 transition-all"
+                    >
+                      Disable Video Generation
+                    </button>
                   )}
                 </div>
               </div>
