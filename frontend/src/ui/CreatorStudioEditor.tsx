@@ -187,6 +187,7 @@ export function CreatorStudioEditor({
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [hoveredSceneIdx, setHoveredSceneIdx] = useState<number | null>(null);
+  const [canPlayWebm, setCanPlayWebm] = useState<boolean>(true);
 
   // Batch generation state (generates all scenes from outline)
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
@@ -343,6 +344,18 @@ export function CreatorStudioEditor({
       console.warn('[CreatorStudioEditor] Failed to refresh scenes:', e);
     }
   }, [fetchApi, projectId, normalizeScenes]);
+
+  // Proxy video URL through backend for correct Content-Type headers
+  // This ensures WebM videos play correctly in browsers
+  const proxyVideoUrl = useCallback((rawUrl: string | null | undefined): string | null => {
+    if (!rawUrl) return null;
+    // Only proxy ComfyUI localhost URLs
+    if (rawUrl.startsWith('http://localhost:8188/') || rawUrl.startsWith('http://127.0.0.1:8188/')) {
+      return `${backendUrl.replace(/\/+$/, '')}/studio/media?url=${encodeURIComponent(rawUrl)}`;
+    }
+    // Already proxied or external URL - return as-is
+    return rawUrl;
+  }, [backendUrl]);
 
   // Sync outline with current scenes (keeps outline in sync with actual scene data)
   const syncOutlineWithScenes = useCallback(async () => {
@@ -832,22 +845,24 @@ export function CreatorStudioEditor({
         );
 
         // Backend returns media.video_url (NOT always media.videos[]).
-        const generatedVideoUrl =
+        const rawVideoUrl =
           data?.media?.video_url ||
           data?.media?.videos?.[0] ||
           null;
 
-        if (generatedVideoUrl) {
-          console.log('[CreatorStudioEditor] Video generated:', generatedVideoUrl);
+        if (rawVideoUrl) {
+          // Proxy the URL for correct Content-Type headers (WebM playback)
+          const proxiedVideoUrl = proxyVideoUrl(rawVideoUrl) || rawVideoUrl;
+          console.log('[CreatorStudioEditor] Video generated:', rawVideoUrl, '-> proxied:', proxiedVideoUrl);
 
           await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, toScenePatch({
-            videoUrl: generatedVideoUrl,
+            videoUrl: proxiedVideoUrl,
             status: 'ready',
           }));
 
           setScenes((prev) =>
             prev.map((s) =>
-              s.id === sceneId ? { ...s, videoUrl: generatedVideoUrl, status: 'ready' as SceneStatus } : s
+              s.id === sceneId ? { ...s, videoUrl: proxiedVideoUrl, status: 'ready' as SceneStatus } : s
             )
           );
           setLastSaved(new Date());
@@ -860,7 +875,7 @@ export function CreatorStudioEditor({
         setIsGeneratingVideo(false);
       }
     },
-    [projectId, videoModel, postApi, patchApi, isGeneratingVideo, toScenePatch]
+    [projectId, videoModel, postApi, patchApi, isGeneratingVideo, toScenePatch, proxyVideoUrl]
   );
 
   // Remove video and fall back to image-only for a scene
@@ -1016,20 +1031,23 @@ export function CreatorStudioEditor({
             );
 
             // Backend returns media.video_url (NOT always media.videos[])
-            const videoUrl =
+            const rawVideoUrl =
               data?.media?.video_url ||
               data?.media?.videos?.[0] ||
               null;
 
-            if (videoUrl) {
+            if (rawVideoUrl) {
+              // Proxy the URL for correct Content-Type headers (WebM playback)
+              const proxiedVideoUrl = proxyVideoUrl(rawVideoUrl) || rawVideoUrl;
+
               await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({
-                videoUrl,
+                videoUrl: proxiedVideoUrl,
                 status: 'ready',
               }));
 
               setScenes((prev) =>
                 prev.map((s) =>
-                  s.id === scene.id ? { ...s, videoUrl, status: 'ready' as SceneStatus } : s
+                  s.id === scene.id ? { ...s, videoUrl: proxiedVideoUrl, status: 'ready' as SceneStatus } : s
                 )
               );
             } else {
@@ -1074,7 +1092,7 @@ export function CreatorStudioEditor({
       setIsBatchGenerating(false);
       setBatchProgress({ current: 0, total: 0, phase: 'scene' });
     }
-  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, projectWantsVideo, videoModel, syncOutlineWithScenes, toScenePatch, refreshScenes]);
+  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, projectWantsVideo, videoModel, syncOutlineWithScenes, toScenePatch, refreshScenes, proxyVideoUrl]);
 
   // Load project and scenes
   useEffect(() => {
@@ -1111,6 +1129,22 @@ export function CreatorStudioEditor({
     fetchAvailableModels();
     loadStoryOutline();
   }, [fetchAvailableModels, loadStoryOutline]);
+
+  // Detect whether the browser can play WebM videos
+  useEffect(() => {
+    try {
+      const v = document.createElement("video");
+      const ok = Boolean(
+        v.canPlayType('video/webm; codecs="vp8, vorbis"') ||
+        v.canPlayType('video/webm; codecs="vp9"') ||
+        v.canPlayType("video/webm")
+      );
+      setCanPlayWebm(ok);
+      console.log('[CreatorStudioEditor] WebM playback support:', ok);
+    } catch {
+      setCanPlayWebm(false);
+    }
+  }, []);
 
   // Auto-generate outline when project is newly created
   useEffect(() => {
@@ -1802,14 +1836,40 @@ export function CreatorStudioEditor({
               {currentScene?.videoUrl ? (
                 /* Video Preview - when scene has video */
                 <div className="relative max-w-full max-h-full group">
-                  <video
-                    src={currentScene.videoUrl}
-                    className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-xl shadow-2xl shadow-black/50"
-                    controls
-                    loop
-                    muted
-                    autoPlay
-                  />
+                  {canPlayWebm ? (
+                    <video
+                      className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-xl shadow-2xl shadow-black/50"
+                      controls
+                      loop
+                      muted
+                      autoPlay
+                      playsInline
+                      preload="metadata"
+                      crossOrigin="anonymous"
+                    >
+                      <source src={currentScene.videoUrl} type="video/webm" />
+                      Your browser does not support WebM video playback.
+                    </video>
+                  ) : (
+                    <div className="max-w-xl w-full bg-black/40 border border-white/10 rounded-xl p-6 text-center">
+                      <div className="flex items-center justify-center gap-2 text-cyan-300 font-medium mb-2">
+                        <Film size={16} />
+                        Video generated (WebM)
+                      </div>
+                      <div className="text-white/60 text-sm mb-4">
+                        This browser cannot play WebM inline. Use Chrome/Edge/Firefox, or download the clip.
+                      </div>
+                      <a
+                        href={currentScene.videoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                      >
+                        <Download size={14} />
+                        Open / Download WebM
+                      </a>
+                    </div>
+                  )}
 
                   {/* Top-right overlay controls - glass style */}
                   <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
