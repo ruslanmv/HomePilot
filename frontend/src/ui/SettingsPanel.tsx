@@ -22,7 +22,7 @@ type ProviderInfo = {
 
 export type ProviderKey = string;
 
-export type HardwarePresetUI = "low" | "med" | "high" | "custom";
+export type HardwarePresetUI = "low" | "med" | "high" | "ultra" | "custom";
 
 export type SettingsModelV2 = {
   backendUrl: string;
@@ -67,6 +67,14 @@ export type SettingsModelV2 = {
   vidSeconds?: number;
   vidFps?: number;
   vidMotion?: string;
+  // Video preset settings (synced with hardware preset)
+  vidWidth?: number;
+  vidHeight?: number;
+  vidFrames?: number;
+  vidSteps?: number;
+  vidCfg?: number;
+  vidDenoise?: number;
+  vidPreset?: string;  // Backend preset name: 'low', 'medium', 'high', 'ultra'
 };
 
 export default function SettingsPanel({
@@ -198,10 +206,19 @@ export default function SettingsPanel({
 
   const providerOptions = useMemo(() => Object.entries(providers), [providers]);
 
+  // Video presets matching backend/app/video_presets.json
+  // These are the default LTX settings optimized for RTX 4080 (12GB)
+  const VIDEO_PRESETS: Record<string, { width: number; height: number; fps: number; frames: number; steps: number; cfg: number; denoise: number }> = {
+    low:    { width: 512, height: 288, fps: 16, frames: 25, steps: 20, cfg: 3.5, denoise: 0.80 },
+    med:    { width: 640, height: 360, fps: 16, frames: 33, steps: 24, cfg: 4.0, denoise: 0.80 },
+    high:   { width: 704, height: 400, fps: 24, frames: 41, steps: 28, cfg: 4.0, denoise: 0.80 },
+    ultra:  { width: 768, height: 432, fps: 24, frames: 49, steps: 32, cfg: 4.0, denoise: 0.80 },
+  };
+
   // Compute model-specific settings based on selected image model and preset
   const currentModelSettings = useMemo(() => {
     const model = value.modelImages || "dreamshaper_8.safetensors";
-    const preset = value.preset === "custom" ? "med" : value.preset;
+    const preset = value.preset === "custom" ? "high" : value.preset;
     return getModelSettings(model, "1:1", preset);
   }, [value.modelImages, value.preset]);
 
@@ -209,28 +226,59 @@ export default function SettingsPanel({
     return detectArchitecture(value.modelImages || "");
   }, [value.modelImages]);
 
+  // Get current video preset settings
+  const currentVideoSettings = useMemo(() => {
+    const presetKey = value.preset === "custom" ? "high" : (value.preset === "med" ? "med" : value.preset);
+    return VIDEO_PRESETS[presetKey] || VIDEO_PRESETS.med;
+  }, [value.preset]);
+
   // Auto-apply preset settings when preset or model changes (except in custom mode)
+  // Syncs both image AND video settings
   useEffect(() => {
     if (value.preset !== "custom") {
-      const settings = currentModelSettings;
-      // Only update if values differ to prevent infinite loops
-      if (
-        value.imgWidth !== settings.width ||
-        value.imgHeight !== settings.height ||
-        value.imgSteps !== settings.steps ||
-        value.imgCfg !== settings.cfg
-      ) {
+      const imgSettings = currentModelSettings;
+      const vidSettings = currentVideoSettings;
+      const backendPresetName = value.preset === "med" ? "medium" : value.preset;
+
+      // Check if any values need updating
+      const needsImageUpdate =
+        value.imgWidth !== imgSettings.width ||
+        value.imgHeight !== imgSettings.height ||
+        value.imgSteps !== imgSettings.steps ||
+        value.imgCfg !== imgSettings.cfg;
+
+      const needsVideoUpdate =
+        value.vidWidth !== vidSettings.width ||
+        value.vidHeight !== vidSettings.height ||
+        value.vidFps !== vidSettings.fps ||
+        value.vidFrames !== vidSettings.frames ||
+        value.vidSteps !== vidSettings.steps ||
+        value.vidCfg !== vidSettings.cfg ||
+        value.vidDenoise !== vidSettings.denoise ||
+        value.vidPreset !== backendPresetName;
+
+      if (needsImageUpdate || needsVideoUpdate) {
         onChangeDraft({
           ...value,
-          imgWidth: settings.width,
-          imgHeight: settings.height,
-          imgSteps: settings.steps,
-          imgCfg: settings.cfg,
+          // Image settings
+          imgWidth: imgSettings.width,
+          imgHeight: imgSettings.height,
+          imgSteps: imgSettings.steps,
+          imgCfg: imgSettings.cfg,
+          // Video settings
+          vidWidth: vidSettings.width,
+          vidHeight: vidSettings.height,
+          vidFps: vidSettings.fps,
+          vidFrames: vidSettings.frames,
+          vidSteps: vidSettings.steps,
+          vidCfg: vidSettings.cfg,
+          vidDenoise: vidSettings.denoise,
+          vidPreset: backendPresetName,
         });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value.preset, value.modelImages, currentModelSettings]);
+  }, [value.preset, value.modelImages, currentModelSettings, currentVideoSettings]);
 
   const ollamaSelected =
     value.providerChat === "ollama" ||
@@ -333,7 +381,7 @@ export default function SettingsPanel({
   }
 
   return (
-    <div className="absolute bottom-16 left-4 w-[420px] max-h-[80vh] overflow-y-auto bg-[#121212] border border-white/10 rounded-2xl p-4 shadow-2xl z-30 ring-1 ring-white/10">
+    <div className="fixed bottom-20 left-[296px] w-[420px] max-h-[75vh] overflow-y-auto bg-[#181818] border border-white/15 rounded-2xl p-4 shadow-2xl z-50">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-bold text-white">Enterprise Settings</h3>
         <button
@@ -533,11 +581,11 @@ export default function SettingsPanel({
           )}
         </div>
 
-        {/* Hardware */}
+        {/* Hardware Preset */}
         <div className="border-t border-white/5 pt-3">
           <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">Hardware Preset</div>
-          <div className="grid grid-cols-4 gap-2">
-            {(["low", "med", "high", "custom"] as HardwarePresetUI[]).map((p) => (
+          <div className="grid grid-cols-5 gap-1.5">
+            {(["low", "med", "high", "ultra", "custom"] as HardwarePresetUI[]).map((p) => (
               <button
                 key={p}
                 type="button"
@@ -547,16 +595,26 @@ export default function SettingsPanel({
                   value.preset === p ? "bg-blue-600 text-white" : "bg-white/5 text-white/60 hover:bg-white/10 hover:text-white/80",
                 ].join(" ")}
               >
-                {p === "low" ? "Low" : p === "med" ? "Med" : p === "high" ? "High" : "Custom"}
+                {p === "low" ? "Low" : p === "med" ? "Med" : p === "high" ? "High" : p === "ultra" ? "Ultra" : "Custom"}
               </button>
             ))}
           </div>
+
+          {/* Image settings preview */}
           <div className="text-[10px] text-white/35 mt-2">
             {value.preset === "low" && `✓ Low: ${getPresetDescription(value.modelImages || "", "low")}`}
             {value.preset === "med" && `✓ Med: ${getPresetDescription(value.modelImages || "", "med")}`}
             {value.preset === "high" && `✓ High: ${getPresetDescription(value.modelImages || "", "high")}`}
+            {value.preset === "ultra" && `✓ Ultra: ${getPresetDescription(value.modelImages || "", "ultra")}`}
             {value.preset === "custom" && "✓ Custom: Manual control (values below)"}
           </div>
+
+          {/* Video settings preview */}
+          {value.preset !== "custom" && (
+            <div className="text-[10px] text-green-400/70 mt-1">
+              Video: {currentVideoSettings.width}×{currentVideoSettings.height}, {currentVideoSettings.frames}f @ {currentVideoSettings.fps}fps, {currentVideoSettings.steps} steps
+            </div>
+          )}
 
           {/* Architecture indicator */}
           {value.modelImages && (
