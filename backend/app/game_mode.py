@@ -443,7 +443,10 @@ def _build_variation_user_prompt(
         return ", ".join(vals)
 
     # Strength guidance:
-    if options.strength < 0.1:
+    if options.strength == 0.0 and options.spicy_strength > 0:
+        # Special case: no variation but add spicy elements
+        strength_hint = "NO variation to scene/composition. ONLY add the spicy/adult elements specified below. Keep everything else exactly the same."
+    elif options.strength < 0.1:
         strength_hint = "Minimal variation. Keep the prompt nearly identical. Only improve clarity/quality, do NOT change any details, subjects, or composition. Preserve the exact same scene."
     elif options.strength < 0.34:
         strength_hint = "Subtle variation. Mostly keep composition/style; change 1-2 details."
@@ -610,10 +613,11 @@ async def next_variation(
     except ValidationError:
         opts = GameOptions()
 
-    # Preservation Mode: when strength == 0.0, skip LLM variation entirely
+    # Preservation Mode: when strength == 0.0 AND spicy_strength == 0.0, skip LLM entirely
     # This allows users to use Game Mode's auto-generation while preserving their exact prompt
-    if opts.strength == 0.0:
-        print(f"[GAME MODE] Preservation Mode: strength=0.0, returning original prompt unchanged")
+    # BUT if spicy_strength > 0, we still need to run LLM to add adult themes
+    if opts.strength == 0.0 and opts.spicy_strength == 0.0:
+        print(f"[GAME MODE] Preservation Mode: strength=0.0, spicy=0.0, returning original prompt unchanged")
 
         # Still update counter for tracking
         counter = int(counter) + 1
