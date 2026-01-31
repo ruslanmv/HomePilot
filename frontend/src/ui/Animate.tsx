@@ -406,6 +406,35 @@ export default function AnimateView(props: AnimateParams) {
     gridStartRef.current?.scrollIntoView({ block: 'start' })
   }, [])
 
+  // Load handoff from Imagine (Grok-style "Animate this image")
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('homepilot_animate_handoff')
+      if (!raw) return
+
+      const data = JSON.parse(raw)
+      const tooOld = Date.now() - (data.createdAt ?? 0) > 2 * 60 * 1000 // 2 min TTL
+
+      if (tooOld) {
+        localStorage.removeItem('homepilot_animate_handoff')
+        return
+      }
+
+      if (data.imageUrl) {
+        setReferenceUrl(data.imageUrl)
+        console.log('[Animate] Loaded source image from Imagine handoff:', data.imageUrl)
+      }
+      if (typeof data.prompt === 'string' && data.prompt.trim()) {
+        setPrompt(data.prompt)
+      }
+
+      // Clean up handoff after use
+      localStorage.removeItem('homepilot_animate_handoff')
+    } catch {
+      localStorage.removeItem('homepilot_animate_handoff')
+    }
+  }, [])
+
   // Initialize lightbox prompt when selecting a video
   useEffect(() => {
     if (selectedVideo) {

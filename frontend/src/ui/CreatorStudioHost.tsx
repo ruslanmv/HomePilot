@@ -8,6 +8,14 @@ type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9";
 type ContentRating = "sfw" | "mature";
 type AvailableModel = { id: string; name: string };
 
+/**
+ * Project Type determines the overall workflow and output format:
+ * - video: Full motion video with AI-generated clips (YouTube videos, documentaries)
+ * - slideshow: Image slideshow with Ken Burns effect + narration (quick generation)
+ * - video_series: Multiple video clips stitched together (episodic content)
+ */
+type ProjectType = "video" | "slideshow" | "video_series";
+
 interface CreatorStudioHostProps {
   backendUrl: string;
   apiKey?: string;
@@ -110,8 +118,11 @@ function CreatorStudioWizard({
 }: WizardProps) {
   const authKey = (apiKey || "").trim();
 
-  // Wizard state - 5 steps: Details, Visuals, Checks, Review, Outline
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  // Wizard state - 6 steps: Project Type (0), Details (1), Visuals (2), Checks (3), Review (4), Outline (5)
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4 | 5>(0);
+
+  // Project type selection (Step 0)
+  const [projectType, setProjectType] = useState<ProjectType>("video");
 
   // Core fields
   const [title, setTitle] = useState("");
@@ -266,6 +277,8 @@ function CreatorStudioWizard({
   // Build tags for backend
   const tagsForBackend = React.useMemo(() => {
     const t: string[] = [];
+    // Project type (determines generation workflow)
+    t.push(`projectType:${projectType}`);
     if (goal) t.push(`goal:${goal.toLowerCase()}`);
     if (visualStyle) t.push(`visual:${visualStyle.toLowerCase().replaceAll(" ", "_")}`);
     if (tones.length) t.push(...tones.map((x) => `tone:${x.toLowerCase().replaceAll(" ", "_")}`));
@@ -278,12 +291,12 @@ function CreatorStudioWizard({
     if (selectedImageModel) t.push(`imageModel:${selectedImageModel}`);
     if (selectedVideoModel) t.push(`videoModel:${selectedVideoModel}`);
     return Array.from(new Set(t));
-  }, [goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, selectedVideoModel]);
+  }, [projectType, goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, selectedVideoModel]);
 
   const canProceedStep1 = title.trim().length > 0;
   const canCreate = title.trim().length > 0 && !loading && generatedOutline;
 
-  function goTo(next: 1 | 2 | 3 | 4 | 5) {
+  function goTo(next: 0 | 1 | 2 | 3 | 4 | 5) {
     setError(null);
     setStep(next);
   }
@@ -293,6 +306,20 @@ function CreatorStudioWizard({
     // But step 5 (Outline) requires going through step 4 first
     if (target === 5) return step === 5 || (step === 4 && generatedOutline);
     return target < step || target === step + 1;
+  }
+
+  // Auto-configure based on project type
+  function handleProjectTypeSelect(type: ProjectType) {
+    setProjectType(type);
+    // Auto-set platform preset based on project type
+    if (type === "slideshow") {
+      setPlatformPreset("slides_16_9");
+    } else if (type === "video_series") {
+      setPlatformPreset("youtube_16_9");
+    } else {
+      // "video" - default to YouTube
+      setPlatformPreset("youtube_16_9");
+    }
   }
 
   function toggleTone(t: string) {
@@ -531,15 +558,66 @@ function CreatorStudioWizard({
 
           {/* Horizontal Stepper */}
           <div className="flex justify-center py-5 border-b border-[#3f3f3f] bg-[#1f1f1f]">
-            <StepNav step={step} mine={1} label="Details" canNav={canNav(1)} onClick={() => canNav(1) && goTo(1)} totalSteps={5} />
-            <StepNav step={step} mine={2} label="Visuals" canNav={canNav(2)} onClick={() => canNav(2) && goTo(2)} totalSteps={5} />
-            <StepNav step={step} mine={3} label="Checks" canNav={canNav(3)} onClick={() => canNav(3) && goTo(3)} totalSteps={5} />
-            <StepNav step={step} mine={4} label="Review" canNav={canNav(4)} onClick={() => canNav(4) && goTo(4)} totalSteps={5} />
-            <StepNav step={step} mine={5} label="Outline" canNav={canNav(5)} onClick={() => canNav(5) && goTo(5)} totalSteps={5} />
+            <StepNav step={step} mine={0} label="Type" canNav={canNav(0)} onClick={() => canNav(0) && goTo(0)} totalSteps={6} />
+            <StepNav step={step} mine={1} label="Details" canNav={canNav(1)} onClick={() => canNav(1) && goTo(1)} totalSteps={6} />
+            <StepNav step={step} mine={2} label="Visuals" canNav={canNav(2)} onClick={() => canNav(2) && goTo(2)} totalSteps={6} />
+            <StepNav step={step} mine={3} label="Checks" canNav={canNav(3)} onClick={() => canNav(3) && goTo(3)} totalSteps={6} />
+            <StepNav step={step} mine={4} label="Review" canNav={canNav(4)} onClick={() => canNav(4) && goTo(4)} totalSteps={6} />
+            <StepNav step={step} mine={5} label="Outline" canNav={canNav(5)} onClick={() => canNav(5) && goTo(5)} totalSteps={6} />
           </div>
 
           {/* Content Area */}
           <div className="flex-1 overflow-y-auto px-12 py-8">
+            {/* STEP 0: Project Type */}
+            {step === 0 && (
+              <div>
+                <h1 className="text-2xl font-medium">Choose Your Project Type</h1>
+                <p className="mt-2 text-sm text-[#aaa]">Select the type of content you want to create. This determines how your scenes will be generated and played back.</p>
+
+                <div className="mt-8 grid grid-cols-1 gap-4">
+                  {/* Video Project */}
+                  <ProjectTypeCard
+                    icon="Film"
+                    title="Video Project"
+                    description="Full motion AI-generated video content. Perfect for YouTube videos, documentaries, and cinematic storytelling. Scenes are animated with AI video generation."
+                    features={["AI video generation for each scene", "Cinematic motion & transitions", "Best for narrative content"]}
+                    selected={projectType === "video"}
+                    onClick={() => handleProjectTypeSelect("video")}
+                  />
+
+                  {/* Slideshow */}
+                  <ProjectTypeCard
+                    icon="Images"
+                    title="Slideshow"
+                    description="Image slideshow with Ken Burns effect and narration. Quick to generate, ideal for presentations, educational content, and photo stories."
+                    features={["Fast generation (images only)", "Ken Burns pan & zoom effects", "Best for educational/presentations"]}
+                    selected={projectType === "slideshow"}
+                    onClick={() => handleProjectTypeSelect("slideshow")}
+                  />
+
+                  {/* Video Series */}
+                  <ProjectTypeCard
+                    icon="Layers"
+                    title="Video Series"
+                    description="Multiple video clips stitched together into episodes. Great for episodic content, tutorials, and long-form video series."
+                    features={["Multiple 4-second video clips", "Episode-based structure", "Best for serialized content"]}
+                    selected={projectType === "video_series"}
+                    onClick={() => handleProjectTypeSelect("video_series")}
+                  />
+                </div>
+
+                <div className="mt-6 p-4 bg-[#121212] border border-[#3f3f3f] rounded">
+                  <div className="text-sm font-medium text-[#3ea6ff]">All project types include:</div>
+                  <div className="mt-2 text-sm text-[#aaa] flex flex-wrap gap-x-6 gap-y-1">
+                    <span>AI Narration (TTS)</span>
+                    <span>TV Mode Playback</span>
+                    <span>Scene-by-Scene Editing</span>
+                    <span>Export to Video</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* STEP 1: Details */}
             {step === 1 && (
               <div>
@@ -858,6 +936,7 @@ function CreatorStudioWizard({
                 <p className="mt-2 text-sm text-[#aaa]">Review your settings, then generate your story outline.</p>
 
                 <div className="mt-6 bg-[#121212] border border-[#3f3f3f] rounded p-5">
+                  <ReviewLine label="Project Type" value={projectTypeToLabel(projectType)} />
                   <ReviewLine label="Title" value={title.trim() || "Untitled Project"} />
                   <ReviewLine label="Format" value={platformPresetToLabel(platformPreset)} />
                   <ReviewLine label="Style" value={`${visualStyle} (${tones.length ? tones.join(", ") : "Default"})`} />
@@ -1014,10 +1093,10 @@ function CreatorStudioWizard({
 
           {/* Footer */}
           <div className="px-6 py-4 border-t border-[#3f3f3f] flex justify-end gap-3">
-            {step > 1 && step !== 5 && (
+            {step > 0 && step !== 5 && (
               <button
                 className="px-6 py-2 text-sm font-medium text-[#aaa] hover:text-[#f1f1f1] uppercase"
-                onClick={() => goTo((step - 1) as 1 | 2 | 3 | 4 | 5)}
+                onClick={() => goTo((step - 1) as 0 | 1 | 2 | 3 | 4 | 5)}
                 disabled={loading || generatingOutline}
               >
                 Back
@@ -1036,7 +1115,7 @@ function CreatorStudioWizard({
               <button
                 className="px-6 py-2 text-sm font-semibold bg-[#3ea6ff] text-black rounded-sm hover:bg-[#6ebbff] disabled:opacity-50 disabled:cursor-not-allowed uppercase"
                 disabled={step === 1 && !canProceedStep1}
-                onClick={() => goTo((step + 1) as 1 | 2 | 3 | 4 | 5)}
+                onClick={() => goTo((step + 1) as 0 | 1 | 2 | 3 | 4 | 5)}
               >
                 Next
               </button>
@@ -1078,7 +1157,7 @@ function StepNav({
   label,
   canNav,
   onClick,
-  totalSteps = 4,
+  totalSteps = 6,
 }: {
   step: number;
   mine: number;
@@ -1089,18 +1168,20 @@ function StepNav({
 }) {
   const isActive = step === mine;
   const isDone = step > mine;
+  // For 6 steps (0-5), the last step is 5, so show connector for steps 0-4
+  const isLastStep = mine === totalSteps - 1;
 
   return (
     <button
       type="button"
       onClick={onClick}
       className={[
-        "flex flex-col items-center w-[120px] relative",
+        "flex flex-col items-center w-[100px] relative",
         canNav ? "cursor-pointer" : "cursor-default",
       ].join(" ")}
     >
       {/* Connector line */}
-      {mine < totalSteps && (
+      {!isLastStep && (
         <div
           className={[
             "absolute top-3 left-1/2 w-full h-0.5 z-0",
@@ -1120,7 +1201,7 @@ function StepNav({
               : "bg-[#3f3f3f] text-[#aaa]",
         ].join(" ")}
       >
-        {mine}
+        {mine + 1}
       </div>
 
       {/* Label */}
@@ -1131,6 +1212,89 @@ function StepNav({
         ].join(" ")}
       >
         {label}
+      </div>
+    </button>
+  );
+}
+
+/* Project Type Card for Step 0 */
+function ProjectTypeCard({
+  icon,
+  title,
+  description,
+  features,
+  selected,
+  onClick,
+}: {
+  icon: string;
+  title: string;
+  description: string;
+  features: string[];
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const iconMap: Record<string, string> = {
+    Film: "\uD83C\uDFAC",
+    Images: "\uD83D\uDDBC\uFE0F",
+    Layers: "\uD83C\uDFAC",
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "bg-[#1f1f1f] border rounded-lg p-5 text-left transition-all flex gap-5",
+        selected
+          ? "border-[#3ea6ff] bg-[rgba(62,166,255,0.08)] ring-1 ring-[#3ea6ff]"
+          : "border-[#3f3f3f] hover:bg-[#282828] hover:border-[#555]",
+      ].join(" ")}
+    >
+      {/* Icon */}
+      <div className={[
+        "w-14 h-14 rounded-lg flex items-center justify-center text-2xl flex-shrink-0",
+        selected ? "bg-[#3ea6ff]/20" : "bg-[#282828]"
+      ].join(" ")}>
+        {iconMap[icon] || icon}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-3">
+          <div className={[
+            "text-lg font-medium",
+            selected ? "text-[#3ea6ff]" : "text-[#f1f1f1]"
+          ].join(" ")}>
+            {title}
+          </div>
+          {selected && (
+            <div className="px-2 py-0.5 bg-[#3ea6ff] text-black text-xs font-medium rounded">
+              Selected
+            </div>
+          )}
+        </div>
+        <div className="text-sm text-[#aaa] mt-1 leading-relaxed">{description}</div>
+        <div className="flex flex-wrap gap-2 mt-3">
+          {features.map((f, i) => (
+            <span key={i} className="px-2 py-1 bg-[#282828] text-xs text-[#888] rounded">
+              {f}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Selection indicator */}
+      <div className="flex-shrink-0 flex items-center">
+        <div className={[
+          "w-5 h-5 rounded-full border-2 flex items-center justify-center",
+          selected ? "border-[#3ea6ff] bg-[#3ea6ff]" : "border-[#555]"
+        ].join(" ")}>
+          {selected && (
+            <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </div>
       </div>
     </button>
   );
@@ -1257,6 +1421,12 @@ function platformPresetToLabel(p: PlatformPreset) {
   if (p === "youtube_16_9") return "YouTube Video (16:9)";
   if (p === "shorts_9_16") return "YouTube Short (9:16)";
   return "Slides (16:9)";
+}
+
+function projectTypeToLabel(t: ProjectType) {
+  if (t === "video") return "Video Project";
+  if (t === "slideshow") return "Slideshow";
+  return "Video Series";
 }
 
 export default CreatorStudioHost;
