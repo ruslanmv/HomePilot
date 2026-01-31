@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2 } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film, Check, ArrowUp, Loader2 } from 'lucide-react'
 import { upscaleImage } from './enhance/upscaleApi'
 
 // -----------------------------------------------------------------------------
@@ -18,9 +18,13 @@ type AspectRatio = {
 
 type ImagineItem = {
   id: string
-  url: string
+  url?: string  // Only present when status is "done"
   createdAt: number
   prompt: string
+  // Job status for persistent generation tracking
+  status: 'done' | 'processing' | 'failed'
+  progress?: number  // 0-100 during processing
+  error?: string  // Error message when failed
   // Generation parameters for reproducibility
   seed?: number
   width?: number
@@ -161,7 +165,42 @@ export default function ImagineView(props: ImagineParams) {
       const stored = localStorage.getItem('homepilot_imagine_items')
       if (stored) {
         const parsed = JSON.parse(stored)
-        return Array.isArray(parsed) ? parsed : []
+        if (Array.isArray(parsed)) {
+          // Thresholds for handling stale processing items:
+          // - IN_FLIGHT_THRESHOLD: If processing item is older than this, generation likely
+          //   completed but state update was lost due to tab switch (component unmount).
+          //   Image generation typically takes 3-5 seconds, so 15s is safe.
+          // - STALE_THRESHOLD: If processing item is older than this, app was closed during
+          //   generation - mark as definitively failed.
+          const IN_FLIGHT_THRESHOLD = 15 * 1000  // 15 seconds - likely completed but lost track
+          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes - definitively failed
+          const now = Date.now()
+          return parsed.map((item: any) => {
+            // Migrate: old items without status get 'done' if they have url
+            if (!item.status) {
+              return { ...item, status: item.url ? 'done' : 'failed' }
+            }
+            // Handle processing items based on age
+            if (item.status === 'processing') {
+              const age = now - item.createdAt
+              // Very old items (app was closed) - mark as failed
+              if (age > STALE_THRESHOLD) {
+                return { ...item, status: 'failed', error: 'Generation interrupted - please retry' }
+              }
+              // Medium-age items (tab was switched) - likely completed but we lost track
+              // Mark as failed since we can't verify the result without backend check
+              if (age > IN_FLIGHT_THRESHOLD) {
+                return {
+                  ...item,
+                  status: 'failed',
+                  error: 'Generation may have completed - check your gallery or retry'
+                }
+              }
+            }
+            // Keep recent processing items as-is (still in-flight)
+            return item
+          })
+        }
       }
     } catch (error) {
       console.error('Failed to load imagine items from localStorage:', error)
@@ -174,6 +213,11 @@ export default function ImagineView(props: ImagineParams) {
 
   // Selection state for Lightbox (Grok-style detail view)
   const [selectedImage, setSelectedImage] = useState<ImagineItem | null>(null)
+  const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
+  const [lightboxPrompt, setLightboxPrompt] = useState('')  // Editable prompt in lightbox
+  const [isRegenerating, setIsRegenerating] = useState(false)  // Regenerating from lightbox
+  const [regenProgress, setRegenProgress] = useState<number | null>(null)  // Progress 0-100 during regen
+  const [regenAbortController, setRegenAbortController] = useState<AbortController | null>(null)  // For cancellation
 
   const [aspect, setAspect] = useState<string>('1:1')
   const [showAspectPanel, setShowAspectPanel] = useState(false)
@@ -185,6 +229,7 @@ export default function ImagineView(props: ImagineParams) {
   const [gameMode, setGameMode] = useState(false)
   const [gameSessionId, setGameSessionId] = useState<string | null>(null)
   const [gameStrength, setGameStrength] = useState(0.65)
+  const [spicyStrength, setSpicyStrength] = useState(0.3)  // Spicy strength (only when nsfwMode + gameMode)
   const [gameLocks, setGameLocks] = useState<GameLocks>({
     lock_world: true,
     lock_style: true,
@@ -228,10 +273,84 @@ export default function ImagineView(props: ImagineParams) {
     }
   }, [items])
 
+  // On mount, periodically check localStorage for items that completed while unmounted
+  // This handles the race condition where API completes after component remounts
+  useEffect(() => {
+    const processingItems = items.filter(item => item.status === 'processing')
+    if (processingItems.length === 0) return
+
+    // Check localStorage for updates and sync state
+    const syncFromLocalStorage = () => {
+      try {
+        const stored = localStorage.getItem('homepilot_imagine_items')
+        if (!stored) return false
+
+        const storedItems: ImagineItem[] = JSON.parse(stored)
+        const storedMap = new Map(storedItems.map(item => [item.id, item]))
+
+        let hasUpdates = false
+        setItems(prev => {
+          const updated = prev.map(item => {
+            if (item.status !== 'processing') return item
+
+            // Check if this item was completed in localStorage (by another instance)
+            const storedItem = storedMap.get(item.id)
+            if (storedItem && storedItem.status === 'done' && storedItem.url) {
+              console.log('[Imagine] Synced completed item from localStorage:', item.id)
+              hasUpdates = true
+              return storedItem
+            }
+
+            // Check if this processing item is now too old
+            const age = Date.now() - item.createdAt
+            if (age > 15 * 1000) {
+              hasUpdates = true
+              return {
+                ...item,
+                status: 'failed' as const,
+                error: 'Generation may have completed - check your gallery or retry'
+              }
+            }
+
+            // Continue progress simulation
+            return {
+              ...item,
+              progress: Math.min(90, (item.progress || 0) + Math.random() * 5 + 1)
+            }
+          })
+          return updated
+        })
+        return hasUpdates
+      } catch (e) {
+        console.error('[Imagine] Failed to sync from localStorage:', e)
+        return false
+      }
+    }
+
+    // Run sync check periodically
+    const progressInterval = setInterval(() => {
+      syncFromLocalStorage()
+    }, 500)
+
+    // Also run immediately on mount
+    syncFromLocalStorage()
+
+    return () => clearInterval(progressInterval)
+    // Only run on mount (empty deps) - items will be stale but that's intentional
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Scroll to top when entering Imagine to avoid "empty space above" if previously scrolled
   useEffect(() => {
     gridStartRef.current?.scrollIntoView({ block: 'start' })
   }, [])
+
+  // Initialize lightbox prompt when selecting an image
+  useEffect(() => {
+    if (selectedImage) {
+      setLightboxPrompt(selectedImage.prompt)
+    }
+  }, [selectedImage])
 
   const aspectObj = useMemo(() => {
     return ASPECT_RATIOS.find((a) => a.label === aspect) || ASPECT_RATIOS[0]
@@ -287,6 +406,45 @@ export default function ImagineView(props: ImagineParams) {
     setShowAspectPanel(false)
     setShowGamePanel(false)
     setShowAdvancedSettings(false)
+
+    // Create placeholder items IMMEDIATELY (persists across tab switches)
+    const placeholderIds: string[] = []
+    const now = Date.now()
+    for (let i = 0; i < numImages; i++) {
+      placeholderIds.push(`${now}-${Math.random().toString(16).slice(2)}-${i}`)
+    }
+
+    const placeholders: ImagineItem[] = placeholderIds.map(id => ({
+      id,
+      status: 'processing' as const,
+      progress: 0,
+      createdAt: now,
+      prompt: effectivePrompt,
+      width: props.imgWidth,
+      height: props.imgHeight,
+    }))
+
+    // Add placeholders to items (will be persisted to localStorage)
+    setItems((prev) => [...placeholders, ...prev])
+
+    // Only clear prompt if not in auto-generate mode
+    if (!autoGenerateRef.current) {
+      setPrompt('')
+    }
+
+    // Auto-scroll to show new placeholders
+    setTimeout(() => {
+      gridStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+
+    // Simulate progress while waiting for API
+    const progressInterval = setInterval(() => {
+      setItems(prev => prev.map(item =>
+        placeholderIds.includes(item.id) && item.status === 'processing'
+          ? { ...item, progress: Math.min(90, (item.progress || 0) + Math.random() * 8 + 2) }
+          : item
+      ))
+    }, 500)
 
     try {
       // IMPORTANT: Send aspect ratio to backend instead of hardcoded dimensions.
@@ -351,6 +509,10 @@ export default function ImagineView(props: ImagineParams) {
         requestBody.gameSessionId = gameSessionId
         requestBody.gameStrength = gameStrength
         requestBody.gameLocks = gameLocks
+        // Only send spicyStrength if nsfwMode is also enabled
+        if (props.nsfwMode) {
+          requestBody.gameSpicyStrength = spicyStrength
+        }
       }
 
       const data = await postJson<ChatResponse>(
@@ -391,6 +553,8 @@ export default function ImagineView(props: ImagineParams) {
         || (gameMode && data?.media?.game?.variation_prompt)
         || t
 
+      clearInterval(progressInterval)
+
       // Extract generation parameters for reproducibility
       const seeds = data?.media?.seeds || (data?.media?.seed ? [data.media.seed] : [])
       const genWidth = data?.media?.width
@@ -399,42 +563,96 @@ export default function ImagineView(props: ImagineParams) {
       const genCfg = data?.media?.cfg
       const genModel = data?.media?.model
 
-      const newItems: ImagineItem[] = urls.map((u, idx) => ({
-        id: uid(),
-        url: u,
-        createdAt: now,
-        prompt: finalPrompt,
-        seed: seeds[idx] ?? seeds[0],  // Use corresponding seed or fall back to first
-        width: genWidth,
-        height: genHeight,
-        steps: genSteps,
-        cfg: genCfg,
-        model: genModel,
+      // Build completed items
+      const completedItemsMap = new Map<string, ImagineItem>()
+      placeholderIds.forEach((placeholderId, index) => {
+        const imageUrl = urls[index]
+        const placeholder = placeholders[index]
+        if (imageUrl) {
+          completedItemsMap.set(placeholderId, {
+            ...placeholder,
+            status: 'done' as const,
+            progress: 100,
+            url: imageUrl,
+            prompt: finalPrompt,
+            seed: seeds[index] ?? seeds[0],
+            width: genWidth,
+            height: genHeight,
+            steps: genSteps,
+            cfg: genCfg,
+            model: genModel,
+          })
+        } else {
+          completedItemsMap.set(placeholderId, {
+            ...placeholder,
+            status: 'failed' as const,
+            error: 'No image returned',
+          })
+        }
+      })
+
+      // CRITICAL: Directly persist to localStorage BEFORE setItems
+      // This ensures the result is saved even if component unmounts between
+      // API response and React's state update
+      try {
+        const stored = localStorage.getItem('homepilot_imagine_items')
+        const currentItems: ImagineItem[] = stored ? JSON.parse(stored) : []
+        const updatedItems = currentItems.map(item => {
+          const completed = completedItemsMap.get(item.id)
+          return completed || item
+        }).slice(0, 100)
+        localStorage.setItem('homepilot_imagine_items', JSON.stringify(updatedItems))
+        console.log('[Imagine] Persisted completed images to localStorage:', Array.from(completedItemsMap.keys()))
+      } catch (e) {
+        console.error('[Imagine] Failed to persist to localStorage:', e)
+      }
+
+      // Update React state (may not process if component unmounted, but localStorage is already updated)
+      setItems(prev => prev.map(item => {
+        const completed = completedItemsMap.get(item.id)
+        return completed || item
+      }).slice(0, 100))
+
+    } catch (err: any) {
+      clearInterval(progressInterval)
+      console.error('Generation failed:', err)
+
+      // Build failed items
+      const failedItemsMap = new Map<string, ImagineItem>()
+      placeholders.forEach(placeholder => {
+        failedItemsMap.set(placeholder.id, {
+          ...placeholder,
+          status: 'failed' as const,
+          error: err.message || 'Generation failed'
+        })
+      })
+
+      // CRITICAL: Directly persist failure to localStorage
+      try {
+        const stored = localStorage.getItem('homepilot_imagine_items')
+        const currentItems: ImagineItem[] = stored ? JSON.parse(stored) : []
+        const updatedItems = currentItems.map(item => {
+          const failed = failedItemsMap.get(item.id)
+          return failed || item
+        })
+        localStorage.setItem('homepilot_imagine_items', JSON.stringify(updatedItems))
+      } catch (e) {
+        console.error('Failed to persist to localStorage:', e)
+      }
+
+      // Update React state
+      setItems(prev => prev.map(item => {
+        const failed = failedItemsMap.get(item.id)
+        return failed || item
       }))
 
-      // Prepend new images at the beginning (Grok-style: new images appear at top-left)
-      // Fill order: top-left → right → next row (row-major order)
-      // Keep only the first 100 items to prevent localStorage overflow
-      setItems((prev) => [...newItems, ...prev].slice(0, 100))
-
-      // Auto-scroll to top to show new images
-      setTimeout(() => {
-        gridStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 100)
-
-      // Only clear prompt if not in auto-generate mode
-      if (!autoGenerateRef.current) {
-        setPrompt('')
-      }
-    } catch (err: any) {
-      alert(`Generation failed: ${err.message || err}`)
       // Stop auto-generation on error
       autoGenerateRef.current = false
       setIsAutoGenerating(false)
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength])
+  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, spicyStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength])
 
   // Auto-generation loop for Game Mode
   useEffect(() => {
@@ -480,13 +698,16 @@ export default function ImagineView(props: ImagineParams) {
     }
 
     try {
-      // Delete from backend database
-      await deleteJson(
-        props.backendUrl,
-        '/media/image',
-        { image_url: item.url },
-        authKey
-      )
+      // Only delete from backend if item has a URL (completed items)
+      // Failed/processing items only exist locally
+      if (item.url) {
+        await deleteJson(
+          props.backendUrl,
+          '/media/image',
+          { image_url: item.url },
+          authKey
+        )
+      }
 
       // Remove from local state (and localStorage via useEffect)
       setItems((prev) => prev.filter((i) => i.id !== item.id))
@@ -500,6 +721,104 @@ export default function ImagineView(props: ImagineParams) {
     }
   }
 
+  // Grok-style in-place regeneration: keeps lightbox open, shows progress overlay
+  const handleRegenerateInPlace = useCallback(async () => {
+    if (!selectedImage || !lightboxPrompt.trim() || isRegenerating) return
+
+    const abortController = new AbortController()
+    setRegenAbortController(abortController)
+    setIsRegenerating(true)
+    setRegenProgress(0)
+
+    // Simulate progress while waiting for sync API
+    const progressInterval = setInterval(() => {
+      setRegenProgress(prev => {
+        if (prev === null) return 0
+        if (prev >= 90) return prev
+        return Math.min(90, prev + Math.random() * 10 + 3)
+      })
+    }, 400)
+
+    try {
+      const requestBody: any = {
+        message: lightboxPrompt,
+        mode: 'imagine',
+        numImages: 1,
+        imgWidth: selectedImage.width || 1024,
+        imgHeight: selectedImage.height || 1024,
+        ...(advancedMode && {
+          imgSteps: customSteps,
+          imgCfg: customCfg,
+          ...(seedLock && { imgSeed: customSeed }),
+        }),
+        provider: props.providerImages === 'comfyui' ? 'ollama' : props.providerImages,
+        provider_base_url: props.baseUrlImages || undefined,
+        provider_model: props.modelImages || undefined,
+        ollama_base_url: props.providerChat === 'ollama' ? props.baseUrlChat : undefined,
+        ollama_model: props.providerChat === 'ollama' ? props.modelChat : undefined,
+        nsfwMode: props.nsfwMode,
+        promptRefinement: props.promptRefinement ?? true,
+      }
+
+      const data = await postJson<ChatResponse>(
+        props.backendUrl,
+        '/chat',
+        requestBody,
+        authKey
+      )
+
+      if (abortController.signal.aborted) return
+
+      if (!data.media?.images?.[0]) {
+        throw new Error(data.message || data.text || 'No image returned')
+      }
+
+      setRegenProgress(100)
+
+      const newItem: ImagineItem = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        status: 'done',
+        url: data.media.images[0],
+        createdAt: Date.now(),
+        prompt: data.media.final_prompt || lightboxPrompt,
+        seed: data.media.seed || data.media.seeds?.[0],
+        width: data.media.width || selectedImage.width,
+        height: data.media.height || selectedImage.height,
+        steps: data.media.steps || (advancedMode ? customSteps : undefined),
+        cfg: data.media.cfg || (advancedMode ? customCfg : undefined),
+        model: data.media.model || props.modelImages,
+      }
+
+      // Update selected image in-place (Grok behavior)
+      setSelectedImage(newItem)
+      setLightboxPrompt(newItem.prompt)
+
+      // Also prepend to items list
+      setItems(prev => [newItem, ...prev])
+
+      await new Promise(r => setTimeout(r, 300))
+    } catch (err: any) {
+      if (abortController.signal.aborted) return
+      console.error('Regeneration failed:', err)
+      alert(`Regeneration failed: ${err.message || err}`)
+    } finally {
+      clearInterval(progressInterval)
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [selectedImage, lightboxPrompt, isRegenerating, advancedMode, customSteps, customCfg, seedLock, customSeed, props, authKey])
+
+  // Cancel in-place regeneration
+  const handleCancelRegeneration = useCallback(() => {
+    if (regenAbortController) {
+      regenAbortController.abort()
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [regenAbortController])
+
   const handleUpscale = async (item: ImagineItem, e?: React.MouseEvent) => {
     if (e) {
       e.stopPropagation()
@@ -511,6 +830,11 @@ export default function ImagineView(props: ImagineParams) {
     }
 
     try {
+      if (!item.url) {
+        alert('Cannot upscale: image URL not available')
+        return
+      }
+
       setUpscalingId(item.id)
 
       const result = await upscaleImage({
@@ -526,6 +850,7 @@ export default function ImagineView(props: ImagineParams) {
         // Add upscaled image to gallery (non-destructive - keeps original)
         const newItem: ImagineItem = {
           id: `upscale-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          status: 'done',
           url: upscaledUrl,
           createdAt: Date.now(),
           prompt: `[Upscaled 2x] ${item.prompt}`,
@@ -677,6 +1002,29 @@ export default function ImagineView(props: ImagineParams) {
               <span className="text-xs text-white/40">Wild</span>
             </div>
           </div>
+
+          {/* Spicy Strength - Only visible when nsfwMode is enabled */}
+          {props.nsfwMode && (
+            <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs text-red-300 font-semibold">🔥 Spicy Strength</span>
+                <span className="text-xs text-white/60">{spicyStrength.toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={spicyStrength}
+                onChange={(e) => setSpicyStrength(parseFloat(e.target.value))}
+                className="w-full h-2 bg-red-500/20 rounded-full appearance-none cursor-pointer accent-red-500"
+              />
+              <div className="flex justify-between text-[10px] text-white/30 mt-1">
+                <span>Tasteful</span>
+                <span>Bold</span>
+              </div>
+            </div>
+          )}
 
           {/* Lock Settings */}
           <div className="mb-4">
@@ -892,79 +1240,112 @@ export default function ImagineView(props: ImagineParams) {
             </div>
           ) : null}
 
-          {/* Loading skeletons - shown at TOP (where new images will appear) */}
-          {isGenerating && Array.from({ length: numImages }).map((_, idx) => (
-            <div key={`skeleton-${idx}`} className="relative rounded-2xl overflow-hidden bg-white/5 border border-white/10 aspect-square animate-pulse">
-              <div className="absolute inset-0 bg-gradient-to-tr from-white/10 to-transparent"></div>
-              <div className="absolute bottom-4 left-4 text-sm font-mono text-white/70">
-                {idx === 0 ? 'Generating…' : `Image ${idx + 1}…`}
-              </div>
-            </div>
-          ))}
-
-          {/* Images - rendered in order (newest first at top-left, oldest at bottom-right) */}
+          {/* Images (including processing placeholders) - rendered in order (newest first at top-left) */}
           {items.map((img) => (
             <div
               key={img.id}
-              onClick={() => setSelectedImage(img)}
-              className="relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 hover:border-white/20 transition-colors cursor-pointer aspect-square"
+              onClick={() => img.status === 'done' && setSelectedImage(img)}
+              className={`relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 transition-colors aspect-square ${
+                img.status === 'done' ? 'hover:border-white/20 cursor-pointer' : ''
+              }`}
             >
-              <img
-                src={img.url}
-                alt={img.prompt}
-                className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                loading="lazy"
-              />
+              {/* Image content - show based on status */}
+              {img.status === 'done' && img.url ? (
+                <img
+                  src={img.url}
+                  alt={img.prompt}
+                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                  loading="lazy"
+                />
+              ) : (
+                // Processing or Failed - show gradient placeholder
+                <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-purple-900/30 to-black" />
+              )}
 
-              {/* Card overlay */}
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-                <div className="flex gap-2 justify-end transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+              {/* Processing overlay - "Generating..." with purple spinner */}
+              {img.status === 'processing' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
+                  <Loader2 size={32} className="text-purple-400 animate-spin mb-3" />
+                  <div className="text-white/90 text-sm font-medium">Generating...</div>
+                  {typeof img.progress === 'number' && (
+                    <div className="mt-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-white/90 text-xs">
+                      {Math.round(img.progress)}%
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Failed overlay */}
+              {img.status === 'failed' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+                  <X size={32} className="text-red-400 mb-2" />
+                  <div className="text-red-400 text-sm font-medium">Generation failed</div>
+                  <div className="text-white/50 text-xs mt-1 px-4 text-center line-clamp-2">
+                    {img.error || 'Unknown error'}
+                  </div>
                   <button
-                    className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
-                    type="button"
-                    title="Play"
+                    className="mt-3 px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-medium transition-colors"
                     onClick={(e) => {
                       e.stopPropagation()
+                      handleDelete(img, e)
                     }}
                   >
-                    <Play size={18} fill="currentColor" />
-                  </button>
-                  <button
-                    className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
-                    type="button"
-                    title="Copy URL"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      navigator.clipboard?.writeText(img.url).catch(() => {})
-                    }}
-                  >
-                    <MoreHorizontal size={18} />
-                  </button>
-                  <button
-                    className={`backdrop-blur-md p-2 rounded-full transition-colors ${
-                      upscalingId === img.id
-                        ? 'bg-purple-500/40 text-purple-300 animate-pulse'
-                        : 'bg-purple-500/20 hover:bg-purple-500/40 text-purple-300 hover:text-purple-200'
-                    }`}
-                    type="button"
-                    title="Upscale 2x"
-                    disabled={upscalingId !== null}
-                    onClick={(e) => handleUpscale(img, e)}
-                  >
-                    <Maximize2 size={18} />
-                  </button>
-                  <button
-                    className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors"
-                    type="button"
-                    title="Delete"
-                    onClick={(e) => handleDelete(img, e)}
-                  >
-                    <Trash2 size={18} />
+                    Remove
                   </button>
                 </div>
+              )}
 
-                <div className="mt-3 text-xs text-white/80 line-clamp-2">{img.prompt}</div>
-              </div>
+              {/* Card overlay (only for completed images) */}
+              {img.status === 'done' && (
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
+                  <div className="flex gap-2 justify-end transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+                    <button
+                      className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
+                      type="button"
+                      title="Play"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                      }}
+                    >
+                      <Play size={18} fill="currentColor" />
+                    </button>
+                    <button
+                      className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
+                      type="button"
+                      title="Copy URL"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (img.url) navigator.clipboard?.writeText(img.url).catch(() => {})
+                      }}
+                    >
+                      <MoreHorizontal size={18} />
+                    </button>
+                    <button
+                      className={`backdrop-blur-md p-2 rounded-full transition-colors ${
+                        upscalingId === img.id
+                          ? 'bg-purple-500/40 text-purple-300 animate-pulse'
+                          : 'bg-purple-500/20 hover:bg-purple-500/40 text-purple-300 hover:text-purple-200'
+                      }`}
+                      type="button"
+                      title="Upscale 2x"
+                      disabled={upscalingId !== null}
+                      onClick={(e) => handleUpscale(img, e)}
+                    >
+                      <Maximize2 size={18} />
+                    </button>
+                    <button
+                      className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors"
+                      type="button"
+                      title="Delete"
+                      onClick={(e) => handleDelete(img, e)}
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+
+                  <div className="mt-3 text-xs text-white/80 line-clamp-2">{img.prompt}</div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -1196,178 +1577,278 @@ export default function ImagineView(props: ImagineParams) {
         </div>
       </div>
 
-      {/* Grok-style Lightbox / Detail View */}
+      {/* Immersive Lightbox - Clean, Image-first Design */}
       {selectedImage && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4 backdrop-blur-md animate-in fade-in duration-200"
-          onClick={() => setSelectedImage(null)}
+          className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
+          onClick={() => { setSelectedImage(null); setShowDetails(false); }}
         >
-          {/* Close button outside content */}
-          <button
-            className="absolute top-4 right-4 p-2 text-white/50 hover:text-white bg-white/5 rounded-full z-50"
-            onClick={() => setSelectedImage(null)}
-            type="button"
-            aria-label="Close"
-          >
-            <X size={24} />
-          </button>
+          {/* Floating Controls - Top Right */}
+          <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+            <button
+              className={`p-2.5 rounded-full transition-all ${showDetails ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'}`}
+              onClick={(e) => { e.stopPropagation(); setShowDetails(!showDetails); }}
+              type="button"
+              title="Toggle details"
+            >
+              <Info size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={(e) => {
+                e.stopPropagation()
+                // Use native fullscreen API - find the image element and fullscreen it
+                const imgEl = document.querySelector('[data-lightbox-media]') as HTMLElement
+                if (imgEl?.requestFullscreen) {
+                  imgEl.requestFullscreen().catch(() => {})
+                }
+              }}
+              type="button"
+              title="View full size"
+            >
+              <Maximize2 size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={() => { setSelectedImage(null); setShowDetails(false); }}
+              type="button"
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
 
-          <div
-            className="max-w-6xl w-full max-h-[90vh] flex flex-col md:flex-row gap-0 bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Left: Image Container */}
-            <div className="flex-1 bg-black/50 flex items-center justify-center p-4 min-h-[400px] relative">
-              <img
-                src={selectedImage.url}
-                className="max-h-full max-w-full object-contain shadow-lg rounded-sm"
-                alt="Selected"
-              />
+          {/* Main Content Area */}
+          <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
+            {/* Hero Image Container - LARGER, fills more space */}
+            <div className="flex-1 flex items-center justify-center p-2 relative group">
+              {selectedImage.url ? (
+                <img
+                  src={selectedImage.url}
+                  data-lightbox-media
+                  className="max-h-[calc(100vh-140px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  alt="Selected"
+                />
+              ) : (
+                <div className="flex items-center justify-center h-64 w-full max-w-lg bg-white/5 rounded-lg">
+                  <Loader2 size={32} className="text-white/50 animate-spin" />
+                </div>
+              )}
+
+              {/* Chips Overlay - Fade in on hover */}
+              <div className="absolute bottom-6 left-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {selectedImage.model && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.model.split('.')[0].split('-')[0].toUpperCase()}
+                  </span>
+                )}
+                {selectedImage.width && selectedImage.height && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.width}×{selectedImage.height}
+                  </span>
+                )}
+                {selectedImage.steps && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.steps} steps
+                  </span>
+                )}
+              </div>
+
+              {/* Grok-style Regeneration Overlay - Blur + Dots + Progress */}
+              {isRegenerating && (
+                <div className="absolute inset-0 z-30 flex items-center justify-center rounded-lg overflow-hidden">
+                  {/* Blur + Dim background */}
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+                  {/* Dotted pattern overlay */}
+                  <div
+                    className="absolute inset-0 opacity-40 pointer-events-none"
+                    style={{
+                      backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.4) 1px, transparent 1px)',
+                      backgroundSize: '24px 24px'
+                    }}
+                  />
+
+                  {/* Center controls */}
+                  <div className="relative z-10 flex flex-col items-center gap-4">
+                    {/* Progress indicator */}
+                    {typeof regenProgress === 'number' && (
+                      <div className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white font-medium text-lg shadow-xl">
+                        {Math.round(regenProgress)}%
+                      </div>
+                    )}
+
+                    {/* Cancel button */}
+                    <button
+                      className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white/90 hover:bg-black/80 hover:text-white transition-colors font-medium shadow-xl"
+                      onClick={(e) => { e.stopPropagation(); handleCancelRegeneration(); }}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Right: Sidebar Details */}
-            <div className="w-full md:w-96 flex flex-col border-l border-white/10 bg-[#161616]">
-              {/* Sidebar Header */}
-              <div className="p-5 border-b border-white/10 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Wand2 size={14} className="text-white/60" />
-                  Generation Details
-                </h3>
-                <span className="text-[10px] text-white/40 font-mono tracking-wide">{selectedImage.id.slice(0, 8)}</span>
-              </div>
-
-              {/* Sidebar Content */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                <div>
-                  <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                    Prompt
-                  </label>
-                  <div className="text-sm text-white/90 leading-relaxed font-light whitespace-pre-wrap selection:bg-white/20">
-                    {selectedImage.prompt}
-                  </div>
+            {/* Details Panel - Slide in from right */}
+            {showDetails && (
+              <div className="w-80 bg-[#0a0a0a] border-l border-white/10 flex flex-col animate-in slide-in-from-right duration-200">
+                <div className="p-4 border-b border-white/10">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Wand2 size={14} className="text-white/60" />
+                    Generation Details
+                  </h3>
                 </div>
-
-                {/* Seed - displayed prominently for reproducibility */}
-                {selectedImage.seed && (
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Prompt - Only visible in details panel */}
                   <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Seed
-                    </label>
-                    <div className="text-lg text-white font-mono font-bold tracking-wide">
-                      {selectedImage.seed}
-                    </div>
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2 block">Prompt</label>
+                    <p className="text-sm text-white/70 leading-relaxed">{selectedImage.prompt}</p>
                   </div>
-                )}
-
-                {/* Resolution */}
-                {selectedImage.width && selectedImage.height && (
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Resolution
-                    </label>
-                    <div className="text-sm text-white/80 font-mono">
-                      {selectedImage.width} × {selectedImage.height}
+                  {/* Seed */}
+                  {selectedImage.seed && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Seed</label>
+                      <div className="text-base text-white font-mono font-bold">{selectedImage.seed}</div>
                     </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4 pt-2">
+                  )}
+                  {/* Resolution */}
+                  {selectedImage.width && selectedImage.height && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Resolution</label>
+                      <div className="text-sm text-white/80 font-mono">{selectedImage.width} × {selectedImage.height}</div>
+                    </div>
+                  )}
                   {/* Steps & CFG */}
-                  {selectedImage.steps && (
-                    <div>
-                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                        Steps
-                      </label>
-                      <div className="text-xs text-white/70 font-mono">
-                        {selectedImage.steps}
+                  <div className="grid grid-cols-2 gap-3">
+                    {selectedImage.steps && (
+                      <div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Steps</label>
+                        <div className="text-sm text-white/70 font-mono">{selectedImage.steps}</div>
                       </div>
-                    </div>
-                  )}
-                  {selectedImage.cfg && (
-                    <div>
-                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                        CFG Scale
-                      </label>
-                      <div className="text-xs text-white/70 font-mono">
-                        {selectedImage.cfg}
+                    )}
+                    {selectedImage.cfg && (
+                      <div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">CFG</label>
+                        <div className="text-sm text-white/70 font-mono">{selectedImage.cfg}</div>
                       </div>
+                    )}
+                  </div>
+                  {/* Date & Time */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Date</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedImage.createdAt).toLocaleDateString()}</div>
                     </div>
-                  )}
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Date
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedImage.createdAt).toLocaleDateString()}
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Time</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedImage.createdAt).toLocaleTimeString()}</div>
                     </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Time
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedImage.createdAt).toLocaleTimeString()}
+                  {/* Model */}
+                  {selectedImage.model && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Model</label>
+                      <div className="text-xs text-white/50 font-mono break-all">{selectedImage.model}</div>
                     </div>
-                  </div>
+                  )}
                 </div>
+              </div>
+            )}
+          </div>
 
-                {/* Model name */}
-                {selectedImage.model && (
-                  <div className="pt-2">
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Model
-                    </label>
-                    <div className="text-xs text-white/60 font-mono truncate">
-                      {selectedImage.model}
+          {/* Grok-style Prompt Composer Bar */}
+          <div className="bg-[#0a0a0a] border-t border-white/10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
+            <div className="max-w-4xl mx-auto flex items-center gap-3">
+
+              {/* Prompt Card Container */}
+              <div className="flex-1 flex items-center gap-3 bg-[#1a1a1a] rounded-2xl px-4 py-2.5 border border-white/10">
+                {/* Progress indicator in prompt bar during regeneration */}
+                {isRegenerating && typeof regenProgress === 'number' && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="px-2.5 py-1 rounded-full bg-white/10 text-white/80 text-xs font-medium">
+                      {Math.round(regenProgress)}%
                     </div>
+                    <ChevronDown size={14} className="text-white/40" />
                   </div>
                 )}
+
+                {/* Editable Prompt Input */}
+                <input
+                  type="text"
+                  value={lightboxPrompt}
+                  onChange={(e) => setLightboxPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
+                      handleRegenerateInPlace()
+                    }
+                  }}
+                  placeholder={isRegenerating ? "Generating image..." : "Edit prompt and regenerate..."}
+                  className="flex-1 bg-transparent text-white/90 text-sm placeholder-white/30 outline-none min-w-0"
+                  disabled={isRegenerating}
+                />
+
+                {/* Redo Button (inside card) - Grok style */}
+                <button
+                  onClick={isRegenerating ? handleCancelRegeneration : handleRegenerateInPlace}
+                  disabled={!lightboxPrompt.trim() && !isRegenerating}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all flex-shrink-0 ${
+                    isRegenerating
+                      ? 'bg-white/10 hover:bg-white/20 text-white'
+                      : lightboxPrompt.trim()
+                        ? 'bg-white/10 hover:bg-white/20 text-white'
+                        : 'bg-white/5 text-white/30 cursor-not-allowed'
+                  }`}
+                  type="button"
+                  title={isRegenerating ? "Cancel" : "Redo"}
+                >
+                  Redo <ArrowUp size={14} />
+                </button>
               </div>
 
-              {/* Sidebar Footer / Actions */}
-              <div className="p-5 border-t border-white/10 bg-[#141414] flex flex-col gap-3">
+              {/* Action Icons (outside card) */}
+              <div className="flex items-center gap-1 flex-shrink-0">
                 <button
-                  className="w-full py-3 bg-white text-black font-bold rounded-lg hover:opacity-90 transition-opacity text-sm flex items-center justify-center gap-2"
-                  onClick={() => window.open(selectedImage.url, '_blank')}
+                  className="p-2.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                  onClick={() => {
+                    if (!selectedImage.url) return
+                    const a = document.createElement('a')
+                    a.href = selectedImage.url
+                    a.download = `imagine-${selectedImage.id}.png`
+                    a.click()
+                  }}
                   type="button"
+                  title="Download"
+                  disabled={!selectedImage.url}
                 >
-                  <Download size={16} />
-                  Download Original
+                  <Download size={18} />
                 </button>
-
-                <div className="flex gap-2">
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      setPrompt(selectedImage.prompt)
-                      setSelectedImage(null)
-                    }}
-                    type="button"
-                  >
-                    <RefreshCw size={16} />
-                    Reuse
-                  </button>
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      navigator.clipboard.writeText(selectedImage.prompt)
-                    }}
-                    type="button"
-                  >
-                    <Copy size={16} />
-                    Copy
-                  </button>
-                </div>
-
                 <button
-                  className="w-full py-3 bg-red-500/10 text-red-400 font-semibold rounded-lg hover:bg-red-500/20 transition-colors text-sm flex items-center justify-center gap-2 border border-red-500/20"
+                  className="p-2.5 text-white/60 hover:text-purple-400 hover:bg-purple-500/10 rounded-full transition-colors"
+                  onClick={() => {
+                    if (!selectedImage.url) return
+                    localStorage.setItem('homepilot_animate_source', selectedImage.url)
+                    window.dispatchEvent(new CustomEvent('switch-to-animate', { detail: { imageUrl: selectedImage.url } }))
+                    setSelectedImage(null)
+                    setShowDetails(false)
+                  }}
+                  type="button"
+                  title="Animate this image"
+                  disabled={!selectedImage.url}
+                >
+                  <Film size={18} />
+                </button>
+                <button
+                  className="p-2.5 text-white/60 hover:text-red-400 hover:bg-red-500/10 rounded-full transition-colors"
                   onClick={() => handleDelete(selectedImage)}
                   type="button"
+                  title="Delete"
                 >
-                  <Trash2 size={16} />
-                  Delete Image
+                  <Trash2 size={18} />
                 </button>
               </div>
+
             </div>
           </div>
         </div>
