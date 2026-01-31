@@ -24,11 +24,17 @@ type ModelCatalogEntry = {
   // Civitai-specific fields
   civitai_url?: string
   civitai_version_id?: string
+  // Addon dependencies (for video models)
+  requires_addons?: string[]
+  recommends_addons?: string[]
+  // Addon-specific fields
+  provides_nodes?: string[]
   // Optional install metadata (backend-supported)
   install?: {
-    type: 'ollama_pull' | 'http_files' | 'hf_files' | 'hf_snapshot' | 'script'
+    type: 'ollama_pull' | 'http_files' | 'hf_files' | 'hf_snapshot' | 'script' | 'git_repo'
     hint?: string
     requires_custom_nodes?: string[]
+    repo_url?: string
     files?: Array<{
       url?: string
       repo_id?: string
@@ -360,7 +366,7 @@ export default function ModelsView(props: ModelsParams) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [providersError, setProvidersError] = useState<string | null>(null)
 
-  const [modelType, setModelType] = useState<'chat' | 'image' | 'video' | 'edit' | 'enhance'>('chat')
+  const [modelType, setModelType] = useState<'chat' | 'image' | 'video' | 'edit' | 'enhance' | 'addons'>('chat')
   const [provider, setProvider] = useState<string>(props.providerChat || 'ollama')
 
   const defaultBaseUrl = useMemo(() => {
@@ -368,6 +374,7 @@ export default function ModelsView(props: ModelsParams) {
     if (modelType === 'image') return props.baseUrlImages || ''
     if (modelType === 'edit') return props.baseUrlImages || ''
     if (modelType === 'enhance') return props.baseUrlImages || ''
+    if (modelType === 'addons') return props.baseUrlImages || ''
     return props.baseUrlVideo || ''
   }, [modelType, props.baseUrlChat, props.baseUrlImages, props.baseUrlVideo])
 
@@ -436,6 +443,10 @@ export default function ModelsView(props: ModelsParams) {
       setBaseUrl(props.baseUrlChat || '')
     } else if (modelType === 'image') {
       // Switch to comfyui for images
+      setProvider('comfyui')
+      setBaseUrl(props.baseUrlImages || '')
+    } else if (modelType === 'addons') {
+      // Switch to comfyui for addons (extensions)
       setProvider('comfyui')
       setBaseUrl(props.baseUrlImages || '')
     } else {
@@ -1116,7 +1127,7 @@ export default function ModelsView(props: ModelsParams) {
           <div>
             <label className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-2.5">Model Type</label>
             <div className="flex flex-col gap-1.5">
-              {(['chat', 'image', 'edit', 'video', 'enhance'] as const).map((t) => (
+              {(['chat', 'image', 'edit', 'video', 'enhance', 'addons'] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -1127,7 +1138,7 @@ export default function ModelsView(props: ModelsParams) {
                       : 'bg-transparent border-white/10 text-white/60 hover:bg-white/5 hover:border-white/20 hover:text-white/80'
                   }`}
                 >
-                  {t}
+                  {t === 'addons' ? '🧩 Add-ons' : t}
                 </button>
               ))}
             </div>

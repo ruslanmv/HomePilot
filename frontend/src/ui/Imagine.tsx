@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2 } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film, Check, ArrowUp, Loader2 } from 'lucide-react'
 import { upscaleImage } from './enhance/upscaleApi'
 
 // -----------------------------------------------------------------------------
@@ -174,6 +174,11 @@ export default function ImagineView(props: ImagineParams) {
 
   // Selection state for Lightbox (Grok-style detail view)
   const [selectedImage, setSelectedImage] = useState<ImagineItem | null>(null)
+  const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
+  const [lightboxPrompt, setLightboxPrompt] = useState('')  // Editable prompt in lightbox
+  const [isRegenerating, setIsRegenerating] = useState(false)  // Regenerating from lightbox
+  const [regenProgress, setRegenProgress] = useState<number | null>(null)  // Progress 0-100 during regen
+  const [regenAbortController, setRegenAbortController] = useState<AbortController | null>(null)  // For cancellation
 
   const [aspect, setAspect] = useState<string>('1:1')
   const [showAspectPanel, setShowAspectPanel] = useState(false)
@@ -185,6 +190,7 @@ export default function ImagineView(props: ImagineParams) {
   const [gameMode, setGameMode] = useState(false)
   const [gameSessionId, setGameSessionId] = useState<string | null>(null)
   const [gameStrength, setGameStrength] = useState(0.65)
+  const [spicyStrength, setSpicyStrength] = useState(0.3)  // Spicy strength (only when nsfwMode + gameMode)
   const [gameLocks, setGameLocks] = useState<GameLocks>({
     lock_world: true,
     lock_style: true,
@@ -232,6 +238,13 @@ export default function ImagineView(props: ImagineParams) {
   useEffect(() => {
     gridStartRef.current?.scrollIntoView({ block: 'start' })
   }, [])
+
+  // Initialize lightbox prompt when selecting an image
+  useEffect(() => {
+    if (selectedImage) {
+      setLightboxPrompt(selectedImage.prompt)
+    }
+  }, [selectedImage])
 
   const aspectObj = useMemo(() => {
     return ASPECT_RATIOS.find((a) => a.label === aspect) || ASPECT_RATIOS[0]
@@ -351,6 +364,10 @@ export default function ImagineView(props: ImagineParams) {
         requestBody.gameSessionId = gameSessionId
         requestBody.gameStrength = gameStrength
         requestBody.gameLocks = gameLocks
+        // Only send spicyStrength if nsfwMode is also enabled
+        if (props.nsfwMode) {
+          requestBody.gameSpicyStrength = spicyStrength
+        }
       }
 
       const data = await postJson<ChatResponse>(
@@ -434,7 +451,7 @@ export default function ImagineView(props: ImagineParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength])
+  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, spicyStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength])
 
   // Auto-generation loop for Game Mode
   useEffect(() => {
@@ -499,6 +516,103 @@ export default function ImagineView(props: ImagineParams) {
       alert(`Failed to delete image: ${err.message || err}`)
     }
   }
+
+  // Grok-style in-place regeneration: keeps lightbox open, shows progress overlay
+  const handleRegenerateInPlace = useCallback(async () => {
+    if (!selectedImage || !lightboxPrompt.trim() || isRegenerating) return
+
+    const abortController = new AbortController()
+    setRegenAbortController(abortController)
+    setIsRegenerating(true)
+    setRegenProgress(0)
+
+    // Simulate progress while waiting for sync API
+    const progressInterval = setInterval(() => {
+      setRegenProgress(prev => {
+        if (prev === null) return 0
+        if (prev >= 90) return prev
+        return Math.min(90, prev + Math.random() * 10 + 3)
+      })
+    }, 400)
+
+    try {
+      const requestBody: any = {
+        message: lightboxPrompt,
+        mode: 'imagine',
+        numImages: 1,
+        imgWidth: selectedImage.width || 1024,
+        imgHeight: selectedImage.height || 1024,
+        ...(advancedMode && {
+          imgSteps: customSteps,
+          imgCfg: customCfg,
+          ...(seedLock && { imgSeed: customSeed }),
+        }),
+        provider: props.providerImages === 'comfyui' ? 'ollama' : props.providerImages,
+        provider_base_url: props.baseUrlImages || undefined,
+        provider_model: props.modelImages || undefined,
+        ollama_base_url: props.providerChat === 'ollama' ? props.baseUrlChat : undefined,
+        ollama_model: props.providerChat === 'ollama' ? props.modelChat : undefined,
+        nsfwMode: props.nsfwMode,
+        promptRefinement: props.promptRefinement ?? true,
+      }
+
+      const data = await postJson<ChatResponse>(
+        props.backendUrl,
+        '/chat',
+        requestBody,
+        authKey
+      )
+
+      if (abortController.signal.aborted) return
+
+      if (!data.media?.images?.[0]) {
+        throw new Error(data.message || data.text || 'No image returned')
+      }
+
+      setRegenProgress(100)
+
+      const newItem: ImagineItem = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        url: data.media.images[0],
+        createdAt: Date.now(),
+        prompt: data.media.final_prompt || lightboxPrompt,
+        seed: data.media.seed || data.media.seeds?.[0],
+        width: data.media.width || selectedImage.width,
+        height: data.media.height || selectedImage.height,
+        steps: data.media.steps || (advancedMode ? customSteps : undefined),
+        cfg: data.media.cfg || (advancedMode ? customCfg : undefined),
+        model: data.media.model || props.modelImages,
+      }
+
+      // Update selected image in-place (Grok behavior)
+      setSelectedImage(newItem)
+      setLightboxPrompt(newItem.prompt)
+
+      // Also prepend to items list
+      setItems(prev => [newItem, ...prev])
+
+      await new Promise(r => setTimeout(r, 300))
+    } catch (err: any) {
+      if (abortController.signal.aborted) return
+      console.error('Regeneration failed:', err)
+      alert(`Regeneration failed: ${err.message || err}`)
+    } finally {
+      clearInterval(progressInterval)
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [selectedImage, lightboxPrompt, isRegenerating, advancedMode, customSteps, customCfg, seedLock, customSeed, props, authKey])
+
+  // Cancel in-place regeneration
+  const handleCancelRegeneration = useCallback(() => {
+    if (regenAbortController) {
+      regenAbortController.abort()
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [regenAbortController])
 
   const handleUpscale = async (item: ImagineItem, e?: React.MouseEvent) => {
     if (e) {
@@ -677,6 +791,29 @@ export default function ImagineView(props: ImagineParams) {
               <span className="text-xs text-white/40">Wild</span>
             </div>
           </div>
+
+          {/* Spicy Strength - Only visible when nsfwMode is enabled */}
+          {props.nsfwMode && (
+            <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs text-red-300 font-semibold">🔥 Spicy Strength</span>
+                <span className="text-xs text-white/60">{spicyStrength.toFixed(2)}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={spicyStrength}
+                onChange={(e) => setSpicyStrength(parseFloat(e.target.value))}
+                className="w-full h-2 bg-red-500/20 rounded-full appearance-none cursor-pointer accent-red-500"
+              />
+              <div className="flex justify-between text-[10px] text-white/30 mt-1">
+                <span>Tasteful</span>
+                <span>Bold</span>
+              </div>
+            </div>
+          )}
 
           {/* Lock Settings */}
           <div className="mb-4">
@@ -1196,178 +1333,268 @@ export default function ImagineView(props: ImagineParams) {
         </div>
       </div>
 
-      {/* Grok-style Lightbox / Detail View */}
+      {/* Immersive Lightbox - Clean, Image-first Design */}
       {selectedImage && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4 backdrop-blur-md animate-in fade-in duration-200"
-          onClick={() => setSelectedImage(null)}
+          className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
+          onClick={() => { setSelectedImage(null); setShowDetails(false); }}
         >
-          {/* Close button outside content */}
-          <button
-            className="absolute top-4 right-4 p-2 text-white/50 hover:text-white bg-white/5 rounded-full z-50"
-            onClick={() => setSelectedImage(null)}
-            type="button"
-            aria-label="Close"
-          >
-            <X size={24} />
-          </button>
+          {/* Floating Controls - Top Right */}
+          <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+            <button
+              className={`p-2.5 rounded-full transition-all ${showDetails ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'}`}
+              onClick={(e) => { e.stopPropagation(); setShowDetails(!showDetails); }}
+              type="button"
+              title="Toggle details"
+            >
+              <Info size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={(e) => {
+                e.stopPropagation()
+                // Use native fullscreen API - find the image element and fullscreen it
+                const imgEl = document.querySelector('[data-lightbox-media]') as HTMLElement
+                if (imgEl?.requestFullscreen) {
+                  imgEl.requestFullscreen().catch(() => {})
+                }
+              }}
+              type="button"
+              title="View full size"
+            >
+              <Maximize2 size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={() => { setSelectedImage(null); setShowDetails(false); }}
+              type="button"
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
 
-          <div
-            className="max-w-6xl w-full max-h-[90vh] flex flex-col md:flex-row gap-0 bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Left: Image Container */}
-            <div className="flex-1 bg-black/50 flex items-center justify-center p-4 min-h-[400px] relative">
+          {/* Main Content Area */}
+          <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
+            {/* Hero Image Container - LARGER, fills more space */}
+            <div className="flex-1 flex items-center justify-center p-2 relative group">
               <img
                 src={selectedImage.url}
-                className="max-h-full max-w-full object-contain shadow-lg rounded-sm"
+                data-lightbox-media
+                className="max-h-[calc(100vh-140px)] max-w-full object-contain rounded-lg shadow-2xl"
                 alt="Selected"
               />
+
+              {/* Chips Overlay - Fade in on hover */}
+              <div className="absolute bottom-6 left-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {selectedImage.model && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.model.split('.')[0].split('-')[0].toUpperCase()}
+                  </span>
+                )}
+                {selectedImage.width && selectedImage.height && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.width}×{selectedImage.height}
+                  </span>
+                )}
+                {selectedImage.steps && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.steps} steps
+                  </span>
+                )}
+              </div>
+
+              {/* Grok-style Regeneration Overlay - Blur + Dots + Progress */}
+              {isRegenerating && (
+                <div className="absolute inset-0 z-30 flex items-center justify-center rounded-lg overflow-hidden">
+                  {/* Blur + Dim background */}
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+                  {/* Dotted pattern overlay */}
+                  <div
+                    className="absolute inset-0 opacity-40 pointer-events-none"
+                    style={{
+                      backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.4) 1px, transparent 1px)',
+                      backgroundSize: '24px 24px'
+                    }}
+                  />
+
+                  {/* Center controls */}
+                  <div className="relative z-10 flex flex-col items-center gap-4">
+                    {/* Progress indicator */}
+                    {typeof regenProgress === 'number' && (
+                      <div className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white font-medium text-lg shadow-xl">
+                        {Math.round(regenProgress)}%
+                      </div>
+                    )}
+
+                    {/* Cancel button */}
+                    <button
+                      className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white/90 hover:bg-black/80 hover:text-white transition-colors font-medium shadow-xl"
+                      onClick={(e) => { e.stopPropagation(); handleCancelRegeneration(); }}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Right: Sidebar Details */}
-            <div className="w-full md:w-96 flex flex-col border-l border-white/10 bg-[#161616]">
-              {/* Sidebar Header */}
-              <div className="p-5 border-b border-white/10 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Wand2 size={14} className="text-white/60" />
-                  Generation Details
-                </h3>
-                <span className="text-[10px] text-white/40 font-mono tracking-wide">{selectedImage.id.slice(0, 8)}</span>
-              </div>
-
-              {/* Sidebar Content */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                <div>
-                  <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                    Prompt
-                  </label>
-                  <div className="text-sm text-white/90 leading-relaxed font-light whitespace-pre-wrap selection:bg-white/20">
-                    {selectedImage.prompt}
-                  </div>
+            {/* Details Panel - Slide in from right */}
+            {showDetails && (
+              <div className="w-80 bg-[#0a0a0a] border-l border-white/10 flex flex-col animate-in slide-in-from-right duration-200">
+                <div className="p-4 border-b border-white/10">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Wand2 size={14} className="text-white/60" />
+                    Generation Details
+                  </h3>
                 </div>
-
-                {/* Seed - displayed prominently for reproducibility */}
-                {selectedImage.seed && (
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Prompt - Only visible in details panel */}
                   <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Seed
-                    </label>
-                    <div className="text-lg text-white font-mono font-bold tracking-wide">
-                      {selectedImage.seed}
-                    </div>
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2 block">Prompt</label>
+                    <p className="text-sm text-white/70 leading-relaxed">{selectedImage.prompt}</p>
                   </div>
-                )}
-
-                {/* Resolution */}
-                {selectedImage.width && selectedImage.height && (
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Resolution
-                    </label>
-                    <div className="text-sm text-white/80 font-mono">
-                      {selectedImage.width} × {selectedImage.height}
+                  {/* Seed */}
+                  {selectedImage.seed && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Seed</label>
+                      <div className="text-base text-white font-mono font-bold">{selectedImage.seed}</div>
                     </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4 pt-2">
+                  )}
+                  {/* Resolution */}
+                  {selectedImage.width && selectedImage.height && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Resolution</label>
+                      <div className="text-sm text-white/80 font-mono">{selectedImage.width} × {selectedImage.height}</div>
+                    </div>
+                  )}
                   {/* Steps & CFG */}
-                  {selectedImage.steps && (
-                    <div>
-                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                        Steps
-                      </label>
-                      <div className="text-xs text-white/70 font-mono">
-                        {selectedImage.steps}
+                  <div className="grid grid-cols-2 gap-3">
+                    {selectedImage.steps && (
+                      <div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Steps</label>
+                        <div className="text-sm text-white/70 font-mono">{selectedImage.steps}</div>
                       </div>
-                    </div>
-                  )}
-                  {selectedImage.cfg && (
-                    <div>
-                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                        CFG Scale
-                      </label>
-                      <div className="text-xs text-white/70 font-mono">
-                        {selectedImage.cfg}
+                    )}
+                    {selectedImage.cfg && (
+                      <div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">CFG</label>
+                        <div className="text-sm text-white/70 font-mono">{selectedImage.cfg}</div>
                       </div>
+                    )}
+                  </div>
+                  {/* Date & Time */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Date</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedImage.createdAt).toLocaleDateString()}</div>
                     </div>
-                  )}
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Date
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedImage.createdAt).toLocaleDateString()}
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Time</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedImage.createdAt).toLocaleTimeString()}</div>
                     </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Time
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedImage.createdAt).toLocaleTimeString()}
+                  {/* Model */}
+                  {selectedImage.model && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Model</label>
+                      <div className="text-xs text-white/50 font-mono break-all">{selectedImage.model}</div>
                     </div>
-                  </div>
+                  )}
                 </div>
+              </div>
+            )}
+          </div>
 
-                {/* Model name */}
-                {selectedImage.model && (
-                  <div className="pt-2">
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Model
-                    </label>
-                    <div className="text-xs text-white/60 font-mono truncate">
-                      {selectedImage.model}
+          {/* Grok-style Prompt Composer Bar */}
+          <div className="bg-[#0a0a0a] border-t border-white/10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
+            <div className="max-w-4xl mx-auto flex items-center gap-3">
+
+              {/* Prompt Card Container */}
+              <div className="flex-1 flex items-center gap-3 bg-[#1a1a1a] rounded-2xl px-4 py-2.5 border border-white/10">
+                {/* Progress indicator in prompt bar during regeneration */}
+                {isRegenerating && typeof regenProgress === 'number' && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="px-2.5 py-1 rounded-full bg-white/10 text-white/80 text-xs font-medium">
+                      {Math.round(regenProgress)}%
                     </div>
+                    <ChevronDown size={14} className="text-white/40" />
                   </div>
                 )}
+
+                {/* Editable Prompt Input */}
+                <input
+                  type="text"
+                  value={lightboxPrompt}
+                  onChange={(e) => setLightboxPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
+                      handleRegenerateInPlace()
+                    }
+                  }}
+                  placeholder={isRegenerating ? "Generating image..." : "Edit prompt and regenerate..."}
+                  className="flex-1 bg-transparent text-white/90 text-sm placeholder-white/30 outline-none min-w-0"
+                  disabled={isRegenerating}
+                />
+
+                {/* Redo Button (inside card) - Grok style */}
+                <button
+                  onClick={isRegenerating ? handleCancelRegeneration : handleRegenerateInPlace}
+                  disabled={!lightboxPrompt.trim() && !isRegenerating}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all flex-shrink-0 ${
+                    isRegenerating
+                      ? 'bg-white/10 hover:bg-white/20 text-white'
+                      : lightboxPrompt.trim()
+                        ? 'bg-white/10 hover:bg-white/20 text-white'
+                        : 'bg-white/5 text-white/30 cursor-not-allowed'
+                  }`}
+                  type="button"
+                  title={isRegenerating ? "Cancel" : "Redo"}
+                >
+                  Redo <ArrowUp size={14} />
+                </button>
               </div>
 
-              {/* Sidebar Footer / Actions */}
-              <div className="p-5 border-t border-white/10 bg-[#141414] flex flex-col gap-3">
+              {/* Action Icons (outside card) */}
+              <div className="flex items-center gap-1 flex-shrink-0">
                 <button
-                  className="w-full py-3 bg-white text-black font-bold rounded-lg hover:opacity-90 transition-opacity text-sm flex items-center justify-center gap-2"
-                  onClick={() => window.open(selectedImage.url, '_blank')}
+                  className="p-2.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                  onClick={() => {
+                    const a = document.createElement('a')
+                    a.href = selectedImage.url
+                    a.download = `imagine-${selectedImage.id}.png`
+                    a.click()
+                  }}
                   type="button"
+                  title="Download"
                 >
-                  <Download size={16} />
-                  Download Original
+                  <Download size={18} />
                 </button>
-
-                <div className="flex gap-2">
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      setPrompt(selectedImage.prompt)
-                      setSelectedImage(null)
-                    }}
-                    type="button"
-                  >
-                    <RefreshCw size={16} />
-                    Reuse
-                  </button>
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      navigator.clipboard.writeText(selectedImage.prompt)
-                    }}
-                    type="button"
-                  >
-                    <Copy size={16} />
-                    Copy
-                  </button>
-                </div>
-
                 <button
-                  className="w-full py-3 bg-red-500/10 text-red-400 font-semibold rounded-lg hover:bg-red-500/20 transition-colors text-sm flex items-center justify-center gap-2 border border-red-500/20"
+                  className="p-2.5 text-white/60 hover:text-purple-400 hover:bg-purple-500/10 rounded-full transition-colors"
+                  onClick={() => {
+                    localStorage.setItem('homepilot_animate_source', selectedImage.url)
+                    window.dispatchEvent(new CustomEvent('switch-to-animate', { detail: { imageUrl: selectedImage.url } }))
+                    setSelectedImage(null)
+                    setShowDetails(false)
+                  }}
+                  type="button"
+                  title="Animate this image"
+                >
+                  <Film size={18} />
+                </button>
+                <button
+                  className="p-2.5 text-white/60 hover:text-red-400 hover:bg-red-500/10 rounded-full transition-colors"
                   onClick={() => handleDelete(selectedImage)}
                   type="button"
+                  title="Delete"
                 >
-                  <Trash2 size={16} />
-                  Delete Image
+                  <Trash2 size={18} />
                 </button>
               </div>
+
             </div>
           </div>
         </div>
