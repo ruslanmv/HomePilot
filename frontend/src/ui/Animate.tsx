@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, Maximize2, Clock, Zap, Sliders, Loader2 } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2, Info, MoreHorizontal, Check, ArrowUp } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -7,18 +7,29 @@ import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Tras
 
 type AnimateItem = {
   id: string
-  videoUrl: string
+  videoUrl?: string  // Only present when status is "done"
   posterUrl?: string
   createdAt: number
   prompt: string
   finalPrompt?: string
   sourceImageUrl?: string
+  // Job status for persistent generation tracking
+  status: 'done' | 'processing' | 'failed'
+  jobId?: string  // For tracking/resuming jobs
+  progress?: number  // 0-100 during processing
+  error?: string  // Error message when failed
   // Generation parameters for reproducibility
   seed?: number
   seconds?: number
+  frames?: number
   fps?: number
   motion?: string
   model?: string
+  preset?: string
+  // Advanced parameters
+  steps?: number
+  cfg?: number
+  denoise?: number
 }
 
 export type AnimateParams = {
@@ -48,8 +59,20 @@ type ChatResponse = {
     video_url?: string
     poster_url?: string
     final_prompt?: string
+    prompt?: string
     seed?: number
     model?: string
+    // Video generation metadata
+    duration?: number
+    fps?: number
+    frames?: number
+    steps?: number
+    cfg?: number
+    denoise?: number
+    motion?: string
+    preset?: string
+    source_image?: string
+    auto_generated_image?: string
   } | null
   message?: string
 }
@@ -76,6 +99,31 @@ const FPS_PRESETS = [
   { label: '16 fps', value: 16 },
   { label: '24 fps', value: 24 },
 ]
+
+// Quality presets
+const QUALITY_PRESETS = [
+  { id: 'low', label: 'Low', short: 'Fast', description: 'For 6-8GB VRAM. Fastest generation.' },
+  { id: 'medium', label: 'Medium', short: 'Balanced', description: 'For 10-12GB VRAM. Good quality/speed balance.' },
+  { id: 'high', label: 'High', short: 'Quality', description: 'For 16GB+ VRAM. Higher quality output.' },
+  { id: 'ultra', label: 'Ultra', short: 'Maximum', description: 'For 24GB+ VRAM. Best quality, longest clips.' },
+]
+
+// Fallback default values (used when API is unavailable)
+const FALLBACK_ADVANCED_PARAMS = {
+  steps: 30,
+  cfg: 3.5,
+  denoise: 0.85,
+}
+
+// Type for preset values from API
+type PresetValues = {
+  steps?: number
+  cfg?: number
+  denoise?: number
+  fps?: number
+  frames?: number
+  negativePrompt?: string
+}
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -112,7 +160,8 @@ function formatDuration(seconds: number): string {
 
 // Check if URL points to an animated image (WEBP/GIF) vs video (MP4/WebM)
 // Animated WEBP/GIF must use <img> tag, videos use <video> tag
-function isAnimatedImage(url: string): boolean {
+function isAnimatedImage(url: string | undefined): boolean {
+  if (!url) return false
   const lower = url.toLowerCase()
   // ComfyUI URLs look like: /view?filename=xxx.webp&subfolder=...
   return lower.includes('.webp') || lower.includes('.gif')
@@ -132,7 +181,42 @@ export default function AnimateView(props: AnimateParams) {
       const stored = localStorage.getItem('homepilot_animate_items')
       if (stored) {
         const parsed = JSON.parse(stored)
-        return Array.isArray(parsed) ? parsed : []
+        if (Array.isArray(parsed)) {
+          // Thresholds for handling stale processing items:
+          // - IN_FLIGHT_THRESHOLD: Video generation can take 30s-3min depending on settings.
+          //   If processing item is older than 3 min, generation likely completed but state
+          //   update was lost due to tab switch (component unmount).
+          // - STALE_THRESHOLD: If processing item is older than this, app was closed during
+          //   generation - mark as definitively failed.
+          const IN_FLIGHT_THRESHOLD = 3 * 60 * 1000  // 3 minutes - likely completed but lost track
+          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes - definitively failed
+          const now = Date.now()
+          return parsed.map((item: any) => {
+            // Migrate: old items without status get 'done' if they have videoUrl
+            if (!item.status) {
+              return { ...item, status: item.videoUrl ? 'done' : 'failed' }
+            }
+            // Handle processing items based on age
+            if (item.status === 'processing') {
+              const age = now - item.createdAt
+              // Very old items (app was closed) - mark as failed
+              if (age > STALE_THRESHOLD) {
+                return { ...item, status: 'failed', error: 'Generation interrupted - please retry' }
+              }
+              // Medium-age items (tab was switched) - likely completed but we lost track
+              // Mark as failed since we can't verify the result without backend check
+              if (age > IN_FLIGHT_THRESHOLD) {
+                return {
+                  ...item,
+                  status: 'failed',
+                  error: 'Generation may have completed - check your gallery or retry'
+                }
+              }
+            }
+            // Keep recent processing items as-is (still in-flight)
+            return item
+          })
+        }
       }
     } catch (error) {
       console.error('Failed to load animate items from localStorage:', error)
@@ -144,12 +228,91 @@ export default function AnimateView(props: AnimateParams) {
 
   // Selection state for Lightbox (Grok-style detail view)
   const [selectedVideo, setSelectedVideo] = useState<AnimateItem | null>(null)
+  const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
+  const [showSourceImage, setShowSourceImage] = useState(false)  // Source image overlay
+  const [lightboxPrompt, setLightboxPrompt] = useState('')  // Editable prompt in lightbox
+  const [isRegenerating, setIsRegenerating] = useState(false)  // Regenerating from lightbox
+  const [regenProgress, setRegenProgress] = useState<number | null>(null)  // Progress 0-100 during regen
+  const [regenAbortController, setRegenAbortController] = useState<AbortController | null>(null)  // For cancellation
 
   // Video settings
   const [seconds, setSeconds] = useState(props.vidSeconds || 4)
   const [fps, setFps] = useState(props.vidFps || 8)
   const [motion, setMotion] = useState(props.vidMotion || 'medium')
   const [showSettingsPanel, setShowSettingsPanel] = useState(false)
+  const [qualityPreset, setQualityPreset] = useState('medium')
+
+  // Advanced Controls state
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
+  const [advancedMode, setAdvancedMode] = useState(false)
+  const [customSteps, setCustomSteps] = useState(FALLBACK_ADVANCED_PARAMS.steps)
+  const [customCfg, setCustomCfg] = useState(FALLBACK_ADVANCED_PARAMS.cfg)
+  const [customDenoise, setCustomDenoise] = useState(FALLBACK_ADVANCED_PARAMS.denoise)
+  const [seedLock, setSeedLock] = useState(false)
+  const [customSeed, setCustomSeed] = useState(0)
+  const [customNegativePrompt, setCustomNegativePrompt] = useState('')
+  const [showNegativePrompt, setShowNegativePrompt] = useState(false)
+
+  // Preset defaults from API (model-specific)
+  const [presetDefaults, setPresetDefaults] = useState<PresetValues>(FALLBACK_ADVANCED_PARAMS)
+
+  // Detect model type from model filename
+  const detectedModelType = useMemo(() => {
+    const model = (props.modelVideo || '').toLowerCase()
+    if (model.includes('ltx')) return 'ltx'
+    if (model.includes('svd')) return 'svd'
+    if (model.includes('wan')) return 'wan'
+    if (model.includes('hunyuan')) return 'hunyuan'
+    if (model.includes('mochi')) return 'mochi'
+    if (model.includes('cogvideo')) return 'cogvideo'
+    return null // Unknown model, use base preset
+  }, [props.modelVideo])
+
+  // Fetch preset defaults when model or quality changes
+  useEffect(() => {
+    const fetchPresets = async () => {
+      try {
+        const base = props.backendUrl.replace(/\/+$/, '')
+        const params = new URLSearchParams()
+        if (detectedModelType) params.set('model', detectedModelType)
+        params.set('preset', qualityPreset)
+
+        const res = await fetch(`${base}/video-presets?${params}`, {
+          headers: authKey ? { 'x-api-key': authKey } : undefined,
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          if (data.ok && data.values) {
+            setPresetDefaults({
+              steps: data.values.steps ?? FALLBACK_ADVANCED_PARAMS.steps,
+              cfg: data.values.cfg ?? FALLBACK_ADVANCED_PARAMS.cfg,
+              denoise: data.values.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise,
+              fps: data.values.fps,
+              frames: data.values.frames,
+              negativePrompt: data.model_rules?.default_negative_prompt ?? '',
+            })
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch video presets:', err)
+        // Keep using fallback defaults
+      }
+    }
+
+    fetchPresets()
+  }, [props.backendUrl, authKey, detectedModelType, qualityPreset])
+
+  // Reset advanced parameters to preset defaults (model-specific)
+  const resetAdvancedParams = useCallback(() => {
+    setCustomSteps(presetDefaults.steps ?? FALLBACK_ADVANCED_PARAMS.steps)
+    setCustomCfg(presetDefaults.cfg ?? FALLBACK_ADVANCED_PARAMS.cfg)
+    setCustomDenoise(presetDefaults.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise)
+    setSeedLock(false)
+    setCustomSeed(0)
+    setCustomNegativePrompt('')
+    setShowNegativePrompt(false)
+  }, [presetDefaults])
 
   // Reference Image state (source image for animation)
   const referenceInputRef = useRef<HTMLInputElement>(null)
@@ -168,10 +331,87 @@ export default function AnimateView(props: AnimateParams) {
     }
   }, [items])
 
+  // On mount, periodically check localStorage for items that completed while unmounted
+  // This handles the race condition where API completes after component remounts
+  useEffect(() => {
+    const processingItems = items.filter(item => item.status === 'processing')
+    if (processingItems.length === 0) return
+
+    // Video generation can take up to 3 minutes, so use longer threshold
+    const IN_FLIGHT_THRESHOLD = 3 * 60 * 1000  // 3 minutes
+
+    // Check localStorage for updates and sync state
+    const syncFromLocalStorage = () => {
+      try {
+        const stored = localStorage.getItem('homepilot_animate_items')
+        if (!stored) return false
+
+        const storedItems: AnimateItem[] = JSON.parse(stored)
+        const storedMap = new Map(storedItems.map(item => [item.id, item]))
+
+        let hasUpdates = false
+        setItems(prev => {
+          const updated = prev.map(item => {
+            if (item.status !== 'processing') return item
+
+            // Check if this item was completed in localStorage (by another instance)
+            const storedItem = storedMap.get(item.id)
+            if (storedItem && storedItem.status === 'done' && storedItem.videoUrl) {
+              console.log('[Animate] Synced completed item from localStorage:', item.id)
+              hasUpdates = true
+              return storedItem
+            }
+
+            // Check if this processing item is now too old
+            const age = Date.now() - item.createdAt
+            if (age > IN_FLIGHT_THRESHOLD) {
+              hasUpdates = true
+              return {
+                ...item,
+                status: 'failed' as const,
+                error: 'Generation may have completed - check your gallery or retry'
+              }
+            }
+
+            // Continue progress simulation
+            return {
+              ...item,
+              progress: Math.min(90, (item.progress || 0) + Math.random() * 3 + 1)
+            }
+          })
+          return updated
+        })
+        return hasUpdates
+      } catch (e) {
+        console.error('[Animate] Failed to sync from localStorage:', e)
+        return false
+      }
+    }
+
+    // Run sync check periodically
+    const progressInterval = setInterval(() => {
+      syncFromLocalStorage()
+    }, 800)  // Slower interval for video (takes longer)
+
+    // Also run immediately on mount
+    syncFromLocalStorage()
+
+    return () => clearInterval(progressInterval)
+    // Only run on mount (empty deps) - items will be stale but that's intentional
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Scroll to top when entering Animate
   useEffect(() => {
     gridStartRef.current?.scrollIntoView({ block: 'start' })
   }, [])
+
+  // Initialize lightbox prompt when selecting a video
+  useEffect(() => {
+    if (selectedVideo) {
+      setLightboxPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)
+    }
+  }, [selectedVideo])
 
   // Upload reference image handler
   const handleUploadReference = useCallback(async (file: File) => {
@@ -221,6 +461,41 @@ export default function AnimateView(props: AnimateParams) {
     setIsGenerating(true)
     setShowSettingsPanel(false)
 
+    // Create placeholder item IMMEDIATELY (persists across tab switches)
+    const placeholderId = uid()
+    const placeholder: AnimateItem = {
+      id: placeholderId,
+      status: 'processing',
+      progress: 0,
+      createdAt: Date.now(),
+      prompt: effectivePrompt,
+      sourceImageUrl: referenceUrl || undefined,
+      posterUrl: referenceUrl || undefined,  // Use reference as thumbnail while processing
+      seconds: seconds,
+      fps: fps,
+      motion: motion,
+      model: props.modelVideo,
+      preset: qualityPreset,
+    }
+
+    // Add placeholder to items (will be persisted to localStorage)
+    setItems((prev) => [placeholder, ...prev])
+    setPrompt('')
+
+    // Auto-scroll to show new placeholder
+    setTimeout(() => {
+      gridStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
+
+    // Simulate progress while waiting for API
+    const progressInterval = setInterval(() => {
+      setItems(prev => prev.map(item =>
+        item.id === placeholderId && item.status === 'processing'
+          ? { ...item, progress: Math.min(90, (item.progress || 0) + Math.random() * 8 + 2) }
+          : item
+      ))
+    }, 500)
+
     try {
       // Build message for animate mode
       const animateMessage = referenceUrl
@@ -236,6 +511,16 @@ export default function AnimateView(props: AnimateParams) {
         vidFps: fps,
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
+        vidPreset: qualityPreset,
+
+        // Advanced parameters (when enabled)
+        ...(advancedMode && {
+          vidSteps: customSteps,
+          vidCfg: customCfg,
+          vidDenoise: customDenoise,
+          ...(seedLock && { vidSeed: customSeed }),
+          ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
+        }),
 
         // Provider settings
         provider: props.providerVideo === 'comfyui' ? 'ollama' : props.providerVideo,
@@ -257,40 +542,83 @@ export default function AnimateView(props: AnimateParams) {
         authKey
       )
 
+      clearInterval(progressInterval)
+
       if (!data.media?.video_url) {
         throw new Error(data.message || data.text || 'No video URL returned')
       }
 
-      const newItem: AnimateItem = {
-        id: uid(),
-        videoUrl: data.media.video_url,
-        posterUrl: data.media.poster_url,
-        createdAt: Date.now(),
-        prompt: effectivePrompt,
-        finalPrompt: data.media.final_prompt,
-        sourceImageUrl: referenceUrl || undefined,
-        seed: data.media.seed,
-        seconds,
-        fps,
-        motion,
-        model: data.media.model || props.modelVideo,
+      // Build the completed item
+      const completedItem: AnimateItem = {
+        ...placeholder,
+        status: 'done' as const,
+        progress: 100,
+        videoUrl: data.media!.video_url,
+        posterUrl: data.media!.poster_url || placeholder.posterUrl,
+        finalPrompt: data.media!.prompt || data.media!.final_prompt,
+        sourceImageUrl: data.media!.auto_generated_image || referenceUrl || data.media!.source_image || placeholder.sourceImageUrl,
+        seed: data.media!.seed ?? (seedLock ? customSeed : undefined),
+        seconds: data.media!.duration ?? seconds,
+        frames: data.media!.frames,
+        fps: data.media!.fps ?? fps,
+        motion: data.media!.motion ?? motion,
+        model: data.media!.model ?? props.modelVideo,
+        preset: data.media!.preset ?? qualityPreset,
+        steps: data.media!.steps ?? (advancedMode ? customSteps : undefined),
+        cfg: data.media!.cfg ?? (advancedMode ? customCfg : undefined),
+        denoise: data.media!.denoise ?? (advancedMode ? customDenoise : undefined),
       }
 
-      // Prepend new item (newest first)
-      setItems((prev) => [newItem, ...prev])
-      setPrompt('')
+      // CRITICAL: Directly persist to localStorage BEFORE setItems
+      // This ensures the result is saved even if component unmounts between
+      // API response and React's state update
+      try {
+        const stored = localStorage.getItem('homepilot_animate_items')
+        const currentItems: AnimateItem[] = stored ? JSON.parse(stored) : []
+        const updatedItems = currentItems.map(item =>
+          item.id === placeholderId ? completedItem : item
+        )
+        localStorage.setItem('homepilot_animate_items', JSON.stringify(updatedItems))
+        console.log('[Animate] Persisted completed video to localStorage:', placeholderId)
+      } catch (e) {
+        console.error('[Animate] Failed to persist to localStorage:', e)
+      }
 
-      // Auto-scroll to show new video
-      setTimeout(() => {
-        gridStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 100)
+      // Update React state (may not process if component unmounted, but localStorage is already updated)
+      setItems(prev => prev.map(item =>
+        item.id === placeholderId ? completedItem : item
+      ))
     } catch (err: any) {
+      clearInterval(progressInterval)
       console.error('Video generation failed:', err)
-      alert(`Generation failed: ${err.message || err}`)
+
+      // Build failed item
+      const failedItem: AnimateItem = {
+        ...placeholder,
+        status: 'failed' as const,
+        error: err.message || 'Generation failed'
+      }
+
+      // CRITICAL: Directly persist failure to localStorage
+      try {
+        const stored = localStorage.getItem('homepilot_animate_items')
+        const currentItems: AnimateItem[] = stored ? JSON.parse(stored) : []
+        const updatedItems = currentItems.map(item =>
+          item.id === placeholderId ? failedItem : item
+        )
+        localStorage.setItem('homepilot_animate_items', JSON.stringify(updatedItems))
+      } catch (e) {
+        console.error('Failed to persist to localStorage:', e)
+      }
+
+      // Update React state
+      setItems(prev => prev.map(item =>
+        item.id === placeholderId ? failedItem : item
+      ))
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, props, authKey])
+  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
 
   const handleDelete = useCallback((item: AnimateItem, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -314,8 +642,299 @@ export default function AnimateView(props: AnimateParams) {
     } catch {}
   }, [])
 
+  // Grok-style in-place regeneration: keeps lightbox open, shows progress overlay
+  const handleRegenerateInPlace = useCallback(async () => {
+    if (!selectedVideo || !lightboxPrompt.trim() || isRegenerating) return
+
+    const abortController = new AbortController()
+    setRegenAbortController(abortController)
+    setIsRegenerating(true)
+    setRegenProgress(0)
+
+    // Simulate progress while waiting for sync API (progress increases gradually)
+    const progressInterval = setInterval(() => {
+      setRegenProgress(prev => {
+        if (prev === null) return 0
+        // Slow down as we approach 90% (leave room for completion)
+        if (prev >= 90) return prev
+        return Math.min(90, prev + Math.random() * 8 + 2)
+      })
+    }, 500)
+
+    try {
+      // Check if we have an existing source image to reuse
+      const existingSourceImage = selectedVideo.sourceImageUrl
+
+      // Build message for animate mode
+      // If we have a source image, REUSE it (don't generate new) - Grok behavior
+      // If no source image, let backend generate one from the prompt
+      const animateMessage = existingSourceImage
+        ? `animate ${existingSourceImage} ${lightboxPrompt}`
+        : `animate ${lightboxPrompt}`
+
+      const requestBody: any = {
+        message: animateMessage,
+        mode: 'animate',
+        vidSeconds: seconds,
+        vidFps: fps,
+        vidMotion: motion,
+        vidModel: props.modelVideo || undefined,
+        vidPreset: qualityPreset,
+        // When we have an existing source image, tell backend to skip image generation
+        // The prompt should only affect the animation, not regenerate the source
+        ...(existingSourceImage && { skipImageGeneration: true }),
+        ...(advancedMode && {
+          vidSteps: customSteps,
+          vidCfg: customCfg,
+          vidDenoise: customDenoise,
+          ...(seedLock && { vidSeed: customSeed }),
+          ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
+        }),
+        provider: props.providerVideo === 'comfyui' ? 'ollama' : props.providerVideo,
+        provider_base_url: props.baseUrlVideo || undefined,
+        provider_model: props.modelVideo || undefined,
+        ollama_base_url: props.providerChat === 'ollama' ? props.baseUrlChat : undefined,
+        ollama_model: props.providerChat === 'ollama' ? props.modelChat : undefined,
+        nsfwMode: props.nsfwMode,
+        promptRefinement: props.promptRefinement ?? true,
+      }
+
+      const data = await postJson<ChatResponse>(
+        props.backendUrl,
+        '/chat',
+        requestBody,
+        authKey
+      )
+
+      // Check if aborted
+      if (abortController.signal.aborted) {
+        return
+      }
+
+      if (!data.media?.video_url) {
+        throw new Error(data.message || data.text || 'No video URL returned')
+      }
+
+      // Progress complete
+      setRegenProgress(100)
+
+      // Create new item with updated video
+      // IMPORTANT: If we had an existing source image, KEEP IT (don't replace with auto_generated)
+      // Only use auto_generated when we didn't have a source image (text-to-video flow)
+      const newItem: AnimateItem = {
+        id: uid(),
+        status: 'done',
+        videoUrl: data.media.video_url,
+        posterUrl: data.media.poster_url,
+        createdAt: Date.now(),
+        prompt: lightboxPrompt,
+        finalPrompt: data.media.prompt || data.media.final_prompt,
+        // Grok behavior: keep the original source image when regenerating
+        // Only use auto_generated_image when there was no source (text-to-video)
+        sourceImageUrl: existingSourceImage || data.media.auto_generated_image || data.media.source_image || undefined,
+        seed: data.media.seed ?? (seedLock ? customSeed : undefined),
+        seconds: data.media.duration ?? seconds,
+        frames: data.media.frames,
+        fps: data.media.fps ?? fps,
+        motion: data.media.motion ?? motion,
+        model: data.media.model ?? props.modelVideo,
+        preset: data.media.preset ?? qualityPreset,
+        steps: data.media.steps ?? (advancedMode ? customSteps : undefined),
+        cfg: data.media.cfg ?? (advancedMode ? customCfg : undefined),
+        denoise: data.media.denoise ?? (advancedMode ? customDenoise : undefined),
+      }
+
+      // Update selected video in-place (Grok behavior)
+      setSelectedVideo(newItem)
+      setLightboxPrompt(newItem.finalPrompt || newItem.prompt)
+
+      // Also prepend to items list
+      setItems(prev => [newItem, ...prev])
+
+      // Brief delay to show 100% before clearing
+      await new Promise(r => setTimeout(r, 300))
+    } catch (err: any) {
+      if (abortController.signal.aborted) {
+        return // User cancelled
+      }
+      console.error('Regeneration failed:', err)
+      alert(`Regeneration failed: ${err.message || err}`)
+    } finally {
+      clearInterval(progressInterval)
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [selectedVideo, lightboxPrompt, isRegenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
+
+  // Cancel in-place regeneration
+  const handleCancelRegeneration = useCallback(() => {
+    if (regenAbortController) {
+      regenAbortController.abort()
+      setIsRegenerating(false)
+      setRegenProgress(null)
+      setRegenAbortController(null)
+    }
+  }, [regenAbortController])
+
   return (
     <div className="flex flex-col h-full w-full bg-black text-white overflow-hidden relative">
+      {/* Advanced Settings Panel (top-right) */}
+      {showAdvancedSettings && (
+        <div className="absolute top-20 right-6 z-30 bg-black/95 border border-white/10 rounded-2xl shadow-2xl w-80 backdrop-blur-xl overflow-hidden">
+          <div className="p-5 border-b border-white/10 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Settings2 size={16} />
+              PARAMETERS
+            </h3>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={resetAdvancedParams}
+                className="text-white/50 hover:text-purple-400 transition-colors flex items-center gap-1 text-xs"
+                title="Reset to recommended defaults"
+              >
+                <RefreshCw size={14} />
+                Reset
+              </button>
+              <button type="button" onClick={() => setShowAdvancedSettings(false)} className="text-white/50 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="p-5 space-y-6 max-h-[70vh] overflow-y-auto">
+            {/* Advanced Mode Toggle */}
+            <button
+              onClick={() => setAdvancedMode(!advancedMode)}
+              className={`w-full flex items-center justify-between p-3 rounded-xl border transition-colors ${
+                advancedMode
+                  ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                  : 'bg-white/5 border-white/10 text-white/60 hover:border-white/20'
+              }`}
+            >
+              <span className="flex items-center gap-2 font-medium text-sm">
+                <Sliders size={16} />
+                Advanced Controls
+              </span>
+              {advancedMode ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </button>
+
+            {advancedMode && (
+              <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Steps */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Steps</span>
+                    <span className="text-white/60">{customSteps}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={10}
+                    max={50}
+                    value={customSteps}
+                    onChange={(e) => setCustomSteps(Number(e.target.value))}
+                    className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                  />
+                </div>
+
+                {/* CFG Scale */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">CFG Scale</span>
+                    <span className="text-white/60">{customCfg.toFixed(1)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={15}
+                    step={0.5}
+                    value={customCfg}
+                    onChange={(e) => setCustomCfg(Number(e.target.value))}
+                    className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                  />
+                </div>
+
+                {/* Creativity / Denoise Strength */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Creativity</span>
+                    <span className="text-white/60">{customDenoise.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] text-white/30 mb-1">
+                    <span>More Faithful</span>
+                    <span>More Creative</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.1}
+                    max={1.0}
+                    step={0.05}
+                    value={customDenoise}
+                    onChange={(e) => setCustomDenoise(Number(e.target.value))}
+                    className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"
+                  />
+                </div>
+
+                {/* Custom Negative Prompt */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                    <span className="text-sm text-white/80">Custom Negative Prompt</span>
+                    <button
+                      onClick={() => setShowNegativePrompt(!showNegativePrompt)}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${showNegativePrompt ? 'bg-purple-500' : 'bg-white/20'}`}
+                    >
+                      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${showNegativePrompt ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </button>
+                  </div>
+                  {showNegativePrompt && (
+                    <div className="space-y-2">
+                      <textarea
+                        value={customNegativePrompt}
+                        onChange={(e) => setCustomNegativePrompt(e.target.value)}
+                        placeholder={presetDefaults.negativePrompt || 'text, watermark, logo, low quality, blurry, flicker, jitter, deformed'}
+                        className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white focus:border-purple-500/50 focus:outline-none resize-none h-20"
+                      />
+                      <p className="text-[10px] text-white/40">
+                        Leave empty to use model default. Separate terms with commas.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Lock Seed */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-sm text-white/80">Lock Seed</span>
+                  <button
+                    onClick={() => {
+                      if (!seedLock) setCustomSeed(Math.floor(Math.random() * 2147483647))
+                      setSeedLock(!seedLock)
+                    }}
+                    className={`w-10 h-5 rounded-full transition-colors relative ${seedLock ? 'bg-purple-500' : 'bg-white/20'}`}
+                  >
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${seedLock ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                {seedLock && (
+                  <input
+                    type="number"
+                    value={customSeed}
+                    onChange={(e) => setCustomSeed(Number(e.target.value))}
+                    className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white font-mono focus:border-purple-500/50 focus:outline-none"
+                    placeholder="Seed value"
+                  />
+                )}
+              </div>
+            )}
+
+            <div className="p-4 rounded-xl bg-purple-900/10 border border-purple-500/20 text-xs text-purple-200/70 leading-relaxed">
+              <span className="font-bold text-purple-400 block mb-1">PRO TIP</span>
+              Enable Advanced Controls to fine-tune generation parameters. Use Lock Seed to regenerate with the same composition.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Settings Panel (slides in from bottom) */}
       {showSettingsPanel && (
         <div className="absolute bottom-[110%] left-1/2 -translate-x-1/2 z-40 bg-black/95 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl w-full max-w-lg mb-2">
@@ -331,6 +950,30 @@ export default function AnimateView(props: AnimateParams) {
             >
               <X size={16} />
             </button>
+          </div>
+
+          {/* Quality Preset */}
+          <div className="mb-4">
+            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
+              Quality Preset
+            </label>
+            <div className="grid grid-cols-4 gap-2">
+              {QUALITY_PRESETS.map((q) => (
+                <button
+                  key={q.id}
+                  onClick={() => setQualityPreset(q.id)}
+                  title={q.description}
+                  className={`py-2 px-2 rounded-lg text-sm font-medium transition-colors ${
+                    qualityPreset === q.id
+                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="text-xs font-bold">{q.label}</div>
+                  <div className="text-[9px] text-white/40 mt-0.5">{q.short}</div>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Duration */}
@@ -407,6 +1050,20 @@ export default function AnimateView(props: AnimateParams) {
         </div>
       )}
 
+      {/* Floating Advanced Settings Toggle Button */}
+      <button
+        className={`absolute top-6 right-6 z-20 p-3 rounded-full border shadow-lg transition-all ${
+          showAdvancedSettings
+            ? 'bg-purple-500 text-white border-purple-400'
+            : 'bg-black/80 hover:bg-black border-white/20 text-white/70 hover:text-white backdrop-blur-sm'
+        }`}
+        type="button"
+        onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+        title="Advanced Parameters"
+      >
+        <Sliders size={20} />
+      </button>
+
       {/* Grid Gallery */}
       <div className="flex-1 overflow-y-auto px-4 pb-48 pt-8 scrollbar-hide">
         <div className="max-w-[1600px] mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 content-start">
@@ -433,97 +1090,140 @@ export default function AnimateView(props: AnimateParams) {
             </div>
           ) : null}
 
-          {/* Loading skeleton */}
-          {isGenerating && (
-            <div className="relative rounded-2xl overflow-hidden bg-white/5 border border-white/10 aspect-video animate-pulse">
-              <div className="absolute inset-0 bg-gradient-to-tr from-purple-500/10 to-transparent"></div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 size={32} className="animate-spin text-purple-400" />
-                  <span className="text-sm font-mono text-white/70">Generating video...</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Video items */}
+          {/* Video items (including processing placeholders) */}
           {items.map((item) => (
             <div
               key={item.id}
-              onClick={() => setSelectedVideo(item)}
-              className="relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 hover:border-purple-500/30 transition-colors cursor-pointer aspect-video"
+              onClick={() => item.status === 'done' && setSelectedVideo(item)}
+              className={`relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 transition-colors aspect-video ${
+                item.status === 'done' ? 'hover:border-purple-500/30 cursor-pointer' : ''
+              }`}
             >
-              {isAnimatedImage(item.videoUrl) ? (
-                <img
-                  src={item.videoUrl}
-                  alt="Generated animation"
-                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                />
+              {/* Thumbnail/Video content - show based on status */}
+              {item.status === 'done' && item.videoUrl ? (
+                // Completed video
+                isAnimatedImage(item.videoUrl) ? (
+                  <img
+                    src={item.videoUrl}
+                    alt="Generated animation"
+                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                  />
+                ) : (
+                  <video
+                    src={item.videoUrl}
+                    poster={item.posterUrl}
+                    muted
+                    loop
+                    playsInline
+                    preload="metadata"
+                    className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                    onMouseEnter={(e) => e.currentTarget.play()}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.pause()
+                      e.currentTarget.currentTime = 0
+                    }}
+                  />
+                )
               ) : (
-                <video
-                  src={item.videoUrl}
-                  poster={item.posterUrl}
-                  muted
-                  loop
-                  playsInline
-                  preload="metadata"
-                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                  onMouseEnter={(e) => e.currentTarget.play()}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.pause()
-                    e.currentTarget.currentTime = 0
-                  }}
-                />
+                // Processing or Failed - show thumbnail placeholder
+                <div className="absolute inset-0 w-full h-full">
+                  {(item.posterUrl || item.sourceImageUrl) ? (
+                    <img
+                      src={item.posterUrl || item.sourceImageUrl}
+                      alt="Generating..."
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-purple-900/30 to-black" />
+                  )}
+                </div>
               )}
 
-              {/* Play indicator */}
-              <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="p-3 bg-black/50 rounded-full backdrop-blur-sm">
-                  <Play size={24} className="text-white" fill="white" />
+              {/* Processing overlay - "Generating video..." */}
+              {item.status === 'processing' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
+                  <Loader2 size={32} className="text-purple-400 animate-spin mb-3" />
+                  <div className="text-white/90 text-sm font-medium">Generating video...</div>
+                  {typeof item.progress === 'number' && (
+                    <div className="mt-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-white/90 text-xs">
+                      {Math.round(item.progress)}%
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
 
-              {/* Card overlay */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-                <div className="flex gap-2 justify-end transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+              {/* Failed overlay */}
+              {item.status === 'failed' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+                  <X size={32} className="text-red-400 mb-2" />
+                  <div className="text-red-400 text-sm font-medium">Generation failed</div>
+                  <div className="text-white/50 text-xs mt-1 px-4 text-center line-clamp-2">
+                    {item.error || 'Unknown error'}
+                  </div>
                   <button
-                    className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
-                    type="button"
-                    title="Copy prompt"
+                    className="mt-3 px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-medium transition-colors"
                     onClick={(e) => {
                       e.stopPropagation()
-                      handleCopyPrompt(item.finalPrompt || item.prompt)
+                      handleDelete(item, e)
                     }}
                   >
-                    <Copy size={16} />
-                  </button>
-                  <button
-                    className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
-                    type="button"
-                    title="Download"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleDownload(item.videoUrl)
-                    }}
-                  >
-                    <Download size={16} />
-                  </button>
-                  <button
-                    className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors"
-                    type="button"
-                    title="Delete"
-                    onClick={(e) => handleDelete(item, e)}
-                  >
-                    <Trash2 size={16} />
+                    Remove
                   </button>
                 </div>
+              )}
 
-                <div className="mt-3 text-xs text-white/80 line-clamp-2">{item.finalPrompt || item.prompt}</div>
-                <div className="flex items-center gap-2 mt-1 text-[10px] text-white/50">
-                  <Clock size={10} />
-                  {item.seconds}s @ {item.fps}fps
+              {/* Play indicator (only for completed videos) */}
+              {item.status === 'done' && (
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="p-3 bg-black/50 rounded-full backdrop-blur-sm">
+                    <Play size={24} className="text-white" fill="white" />
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Card overlay (only for completed videos) */}
+              {item.status === 'done' && (
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
+                  <div className="flex gap-2 justify-end transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+                    <button
+                      className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
+                      type="button"
+                      title="Copy prompt"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleCopyPrompt(item.finalPrompt || item.prompt)
+                      }}
+                    >
+                      <Copy size={16} />
+                    </button>
+                    <button
+                      className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors"
+                      type="button"
+                      title="Download"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (item.videoUrl) handleDownload(item.videoUrl)
+                      }}
+                    >
+                      <Download size={16} />
+                    </button>
+                    <button
+                      className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors"
+                      type="button"
+                      title="Delete"
+                      onClick={(e) => handleDelete(item, e)}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+
+                  <div className="mt-3 text-xs text-white/80 line-clamp-2">{item.finalPrompt || item.prompt}</div>
+                  <div className="flex items-center gap-2 mt-1 text-[10px] text-white/50">
+                    <Clock size={10} />
+                    {item.seconds}s @ {item.fps}fps
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -673,211 +1373,361 @@ export default function AnimateView(props: AnimateParams) {
                 </>
               ) : null}
               <span>·</span>
-              <span>{seconds}s @ {fps}fps · {motion} motion</span>
+              <span>{qualityPreset} · {seconds}s @ {fps}fps · {motion} motion</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Grok-style Lightbox / Detail View */}
+      {/* Immersive Lightbox - Clean, Video-first Design */}
       {selectedVideo && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4 backdrop-blur-md animate-in fade-in duration-200"
-          onClick={() => setSelectedVideo(null)}
+          className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
+          onClick={() => { setSelectedVideo(null); setShowDetails(false); setShowSourceImage(false); }}
         >
-          {/* Close button */}
-          <button
-            className="absolute top-4 right-4 p-2 text-white/50 hover:text-white bg-white/5 rounded-full z-50"
-            onClick={() => setSelectedVideo(null)}
-            type="button"
-            aria-label="Close"
-          >
-            <X size={24} />
-          </button>
+          {/* Floating Controls - Top Right */}
+          <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+            {selectedVideo.sourceImageUrl && (
+              <button
+                className={`p-2.5 rounded-full transition-all ${showSourceImage ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'}`}
+                onClick={(e) => { e.stopPropagation(); setShowSourceImage(!showSourceImage); }}
+                type="button"
+                title="View source image"
+              >
+                <Image size={18} />
+              </button>
+            )}
+            <button
+              className={`p-2.5 rounded-full transition-all ${showDetails ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'}`}
+              onClick={(e) => { e.stopPropagation(); setShowDetails(!showDetails); }}
+              type="button"
+              title="Toggle details"
+            >
+              <Info size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={(e) => {
+                e.stopPropagation()
+                // Use native fullscreen API - find the media element and fullscreen it
+                const mediaEl = document.querySelector('[data-lightbox-media]') as HTMLElement
+                if (mediaEl?.requestFullscreen) {
+                  mediaEl.requestFullscreen().catch(() => {})
+                }
+              }}
+              type="button"
+              title="View full size"
+            >
+              <Maximize2 size={18} />
+            </button>
+            <button
+              className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+              onClick={() => { setSelectedVideo(null); setShowDetails(false); setShowSourceImage(false); }}
+              type="button"
+              title="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
 
-          <div
-            className="max-w-6xl w-full max-h-[90vh] flex flex-col md:flex-row gap-0 bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/10"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Left: Video Container */}
-            <div className="flex-1 bg-black/50 flex items-center justify-center p-4 min-h-[400px] relative">
-              {isAnimatedImage(selectedVideo.videoUrl) ? (
-                <img
-                  src={selectedVideo.videoUrl}
-                  alt="Generated animation"
-                  className="max-h-full max-w-full object-contain shadow-lg rounded-lg"
-                />
+          {/* Main Content Area */}
+          <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
+            {/* Hero Video Container - LARGER, fills more space */}
+            <div className="flex-1 flex items-center justify-center p-2 relative group">
+              {selectedVideo.videoUrl ? (
+                isAnimatedImage(selectedVideo.videoUrl) ? (
+                  <img
+                    src={selectedVideo.videoUrl}
+                    data-lightbox-media
+                    alt="Generated animation"
+                    className="max-h-[calc(100vh-120px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  />
+                ) : (
+                  <video
+                    src={selectedVideo.videoUrl}
+                    data-lightbox-media
+                    poster={selectedVideo.posterUrl}
+                    controls
+                    autoPlay
+                    loop
+                    className="max-h-[calc(100vh-120px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  />
+                )
               ) : (
-                <video
-                  src={selectedVideo.videoUrl}
-                  poster={selectedVideo.posterUrl}
-                  controls
-                  autoPlay
-                  loop
-                  className="max-h-full max-w-full object-contain shadow-lg rounded-lg"
-                />
+                // Fallback for items without videoUrl (shouldn't happen but safety)
+                <div className="flex items-center justify-center h-64 w-full max-w-lg bg-white/5 rounded-lg">
+                  <Loader2 size={32} className="text-white/50 animate-spin" />
+                </div>
+              )}
+
+              {/* Chips Overlay - Fade in on hover */}
+              <div className="absolute bottom-6 left-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {selectedVideo.model && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedVideo.model.split('.')[0].split('-')[0].toUpperCase()}
+                  </span>
+                )}
+                {selectedVideo.seconds && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedVideo.seconds}s
+                  </span>
+                )}
+                {selectedVideo.fps && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedVideo.fps}fps
+                  </span>
+                )}
+                {selectedVideo.motion && (
+                  <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10 capitalize">
+                    {selectedVideo.motion}
+                  </span>
+                )}
+              </div>
+
+              {/* Grok-style Regeneration Overlay - Blur + Dots + Progress */}
+              {isRegenerating && (
+                <div className="absolute inset-0 z-30 flex items-center justify-center rounded-lg overflow-hidden">
+                  {/* Blur + Dim background */}
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+                  {/* Dotted pattern overlay */}
+                  <div
+                    className="absolute inset-0 opacity-40 pointer-events-none"
+                    style={{
+                      backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.4) 1px, transparent 1px)',
+                      backgroundSize: '24px 24px'
+                    }}
+                  />
+
+                  {/* Center controls */}
+                  <div className="relative z-10 flex flex-col items-center gap-4">
+                    {/* Progress indicator */}
+                    {typeof regenProgress === 'number' && (
+                      <div className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white font-medium text-lg shadow-xl">
+                        {Math.round(regenProgress)}%
+                      </div>
+                    )}
+
+                    {/* Cancel button */}
+                    <button
+                      className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white/90 hover:bg-black/80 hover:text-white transition-colors font-medium shadow-xl"
+                      onClick={(e) => { e.stopPropagation(); handleCancelRegeneration(); }}
+                      type="button"
+                    >
+                      Cancel Video
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* Right: Sidebar Details */}
-            <div className="w-full md:w-96 flex flex-col border-l border-white/10 bg-[#161616]">
-              {/* Sidebar Header */}
-              <div className="p-5 border-b border-white/10 flex items-center justify-between">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Film size={14} className="text-purple-400" />
-                  Video Details
-                </h3>
-                <span className="text-[10px] text-white/40 font-mono tracking-wide">{selectedVideo.id.slice(0, 8)}</span>
+            {/* Source Image Overlay - Shows when toggled */}
+            {showSourceImage && selectedVideo.sourceImageUrl && (
+              <div
+                className="absolute inset-0 z-40 flex items-center justify-center bg-black/90 animate-in fade-in duration-200"
+                onClick={(e) => { e.stopPropagation(); setShowSourceImage(false); }}
+              >
+                <div className="relative" onClick={(e) => e.stopPropagation()}>
+                  <img
+                    src={selectedVideo.sourceImageUrl}
+                    alt="Source image"
+                    data-lightbox-media
+                    className="max-h-[calc(100vh-80px)] max-w-[90vw] object-contain rounded-lg shadow-2xl"
+                  />
+                  <button
+                    className="absolute top-4 right-4 p-2.5 bg-black/60 text-white/80 hover:bg-black/80 hover:text-white rounded-full transition-all"
+                    onClick={() => setShowSourceImage(false)}
+                    type="button"
+                    title="Close"
+                  >
+                    <X size={18} />
+                  </button>
+                  <div className="absolute bottom-4 left-4 px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    Source Image
+                  </div>
+                </div>
               </div>
+            )}
 
-              {/* Sidebar Content */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                {/* Prompt */}
-                <div>
-                  <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                    Prompt
-                  </label>
-                  <div className="text-sm text-white/90 leading-relaxed font-light whitespace-pre-wrap selection:bg-white/20">
-                    {selectedVideo.finalPrompt || selectedVideo.prompt}
-                  </div>
+            {/* Details Panel - Slide in from right */}
+            {showDetails && (
+              <div className="w-80 bg-[#0a0a0a] border-l border-white/10 flex flex-col animate-in slide-in-from-right duration-200">
+                <div className="p-4 border-b border-white/10">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Film size={14} className="text-purple-400" />
+                    Video Details
+                  </h3>
                 </div>
-
-                {/* Source Image */}
-                {selectedVideo.sourceImageUrl && (
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Prompt - Only visible in details panel */}
                   <div>
-                    <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                      Source Image
-                    </label>
-                    <img
-                      src={selectedVideo.sourceImageUrl}
-                      alt="Source"
-                      className="w-full h-32 object-cover rounded-lg border border-white/10"
-                    />
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2 block">Prompt</label>
+                    <p className="text-sm text-white/70 leading-relaxed">{selectedVideo.finalPrompt || selectedVideo.prompt}</p>
                   </div>
-                )}
-
-                {/* Seed */}
-                {selectedVideo.seed && (
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Seed
-                    </label>
-                    <div className="text-lg text-white font-mono font-bold tracking-wide">
-                      {selectedVideo.seed}
+                  {/* Source Image Thumbnail */}
+                  {selectedVideo.sourceImageUrl && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2 block">Source Image</label>
+                      <img src={selectedVideo.sourceImageUrl} alt="Source" className="w-full h-24 object-cover rounded-lg border border-white/10" />
+                    </div>
+                  )}
+                  {/* Seed */}
+                  {selectedVideo.seed && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Seed</label>
+                      <div className="text-base text-white font-mono font-bold">{selectedVideo.seed}</div>
+                    </div>
+                  )}
+                  {/* Duration, FPS, Motion */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Duration</label>
+                      <div className="text-sm text-white/70 font-mono">{selectedVideo.seconds || '-'}s</div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">FPS</label>
+                      <div className="text-sm text-white/70 font-mono">{selectedVideo.fps || '-'}</div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Motion</label>
+                      <div className="text-sm text-white/70 font-mono capitalize">{selectedVideo.motion || '-'}</div>
                     </div>
                   </div>
-                )}
-
-                {/* Video Parameters */}
-                <div className="grid grid-cols-3 gap-4 pt-2">
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Duration
-                    </label>
-                    <div className="text-sm text-white/80 font-mono">
-                      {selectedVideo.seconds || '-'}s
+                  {/* Steps, CFG, Denoise */}
+                  {(selectedVideo.steps || selectedVideo.cfg || selectedVideo.denoise) && (
+                    <div className="grid grid-cols-3 gap-3 pt-2 border-t border-white/5">
+                      {selectedVideo.steps && (
+                        <div>
+                          <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Steps</label>
+                          <div className="text-sm text-white/70 font-mono">{selectedVideo.steps}</div>
+                        </div>
+                      )}
+                      {selectedVideo.cfg && (
+                        <div>
+                          <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">CFG</label>
+                          <div className="text-sm text-white/70 font-mono">{selectedVideo.cfg}</div>
+                        </div>
+                      )}
+                      {selectedVideo.denoise && (
+                        <div>
+                          <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Denoise</label>
+                          <div className="text-sm text-white/70 font-mono">{selectedVideo.denoise}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {/* Date & Time */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Date</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedVideo.createdAt).toLocaleDateString()}</div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Time</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedVideo.createdAt).toLocaleTimeString()}</div>
                     </div>
                   </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      FPS
-                    </label>
-                    <div className="text-sm text-white/80 font-mono">
-                      {selectedVideo.fps || '-'}
+                  {/* Model */}
+                  {selectedVideo.model && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Model</label>
+                      <div className="text-xs text-white/50 font-mono break-all">{selectedVideo.model}</div>
                     </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Motion
-                    </label>
-                    <div className="text-sm text-white/80 font-mono capitalize">
-                      {selectedVideo.motion || '-'}
-                    </div>
-                  </div>
+                  )}
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Date
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedVideo.createdAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Time
-                    </label>
-                    <div className="text-xs text-white/70 font-mono">
-                      {new Date(selectedVideo.createdAt).toLocaleTimeString()}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Model */}
-                {selectedVideo.model && (
-                  <div className="pt-2">
-                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">
-                      Model
-                    </label>
-                    <div className="text-xs text-white/60 font-mono truncate">
-                      {selectedVideo.model}
-                    </div>
-                  </div>
-                )}
               </div>
+            )}
+          </div>
 
-              {/* Sidebar Footer / Actions */}
-              <div className="p-5 border-t border-white/10 bg-[#141414] flex flex-col gap-3">
+          {/* Grok-style Prompt Composer Bar */}
+          <div className="bg-[#0a0a0a] border-t border-white/10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
+            <div className="max-w-4xl mx-auto flex items-center gap-3">
+
+              {/* Prompt Card Container */}
+              <div className="flex-1 flex items-center gap-3 bg-[#1a1a1a] rounded-2xl px-4 py-2.5 border border-white/10">
+                {/* Progress indicator in prompt bar during regeneration */}
+                {isRegenerating && typeof regenProgress === 'number' && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="px-2.5 py-1 rounded-full bg-white/10 text-white/80 text-xs font-medium">
+                      {Math.round(regenProgress)}%
+                    </div>
+                    <ChevronDown size={14} className="text-white/40" />
+                  </div>
+                )}
+
+                {/* Editable Prompt Input */}
+                <input
+                  type="text"
+                  value={lightboxPrompt}
+                  onChange={(e) => setLightboxPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
+                      handleRegenerateInPlace()
+                    }
+                  }}
+                  placeholder={isRegenerating ? "Generating video..." : "Edit prompt and regenerate..."}
+                  className="flex-1 bg-transparent text-white/90 text-sm placeholder-white/30 outline-none min-w-0"
+                  disabled={isRegenerating}
+                />
+
+                {/* Make Video Button (inside card) - Grok style */}
                 <button
-                  className="w-full py-3 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-bold rounded-lg hover:opacity-90 transition-opacity text-sm flex items-center justify-center gap-2"
-                  onClick={() => handleDownload(selectedVideo.videoUrl)}
+                  onClick={isRegenerating ? handleCancelRegeneration : handleRegenerateInPlace}
+                  disabled={!lightboxPrompt.trim() && !isRegenerating}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all flex-shrink-0 ${
+                    isRegenerating
+                      ? 'bg-white/10 hover:bg-white/20 text-white'
+                      : lightboxPrompt.trim()
+                        ? 'bg-white/10 hover:bg-white/20 text-white'
+                        : 'bg-white/5 text-white/30 cursor-not-allowed'
+                  }`}
                   type="button"
+                  title={isRegenerating ? "Cancel" : "Make video"}
                 >
-                  <Download size={16} />
-                  Download Video
+                  {isRegenerating ? (
+                    <>Make video <ArrowUp size={14} /></>
+                  ) : (
+                    <>Make video <ArrowUp size={14} /></>
+                  )}
                 </button>
-
-                <div className="flex gap-2">
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      setPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)
-                      if (selectedVideo.sourceImageUrl) {
-                        setReferenceUrl(selectedVideo.sourceImageUrl)
-                      }
-                      setSelectedVideo(null)
-                    }}
-                    type="button"
-                  >
-                    <RefreshCw size={16} />
-                    Reuse
-                  </button>
-
-                  <button
-                    className="flex-1 py-3 bg-white/5 text-white/80 font-semibold rounded-lg hover:bg-white/10 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => handleCopyPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)}
-                    type="button"
-                  >
-                    <Copy size={16} />
-                    Copy
-                  </button>
-
-                  <button
-                    className="py-3 px-4 bg-red-500/10 text-red-400 font-semibold rounded-lg hover:bg-red-500/20 transition-colors text-sm flex items-center justify-center gap-2"
-                    onClick={() => {
-                      if (confirm('Delete this video?')) {
-                        setItems((prev) => prev.filter((x) => x.id !== selectedVideo.id))
-                        setSelectedVideo(null)
-                      }
-                    }}
-                    type="button"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
               </div>
+
+              {/* Action Icons (outside card) */}
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  className="p-2.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                  onClick={() => selectedVideo.videoUrl && handleDownload(selectedVideo.videoUrl)}
+                  type="button"
+                  title="Download"
+                  disabled={!selectedVideo.videoUrl}
+                >
+                  <Download size={18} />
+                </button>
+                <button
+                  className="p-2.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors"
+                  onClick={() => handleCopyPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)}
+                  type="button"
+                  title="Copy prompt"
+                >
+                  <Copy size={18} />
+                </button>
+                <button
+                  className="p-2.5 text-white/60 hover:text-red-400 hover:bg-red-500/10 rounded-full transition-colors"
+                  onClick={() => {
+                    if (confirm('Delete this video?')) {
+                      setItems((prev) => prev.filter((x) => x.id !== selectedVideo.id))
+                      setSelectedVideo(null)
+                      setShowDetails(false)
+                      setShowSourceImage(false)
+                    }
+                  }}
+                  type="button"
+                  title="Delete"
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+
             </div>
           </div>
         </div>
