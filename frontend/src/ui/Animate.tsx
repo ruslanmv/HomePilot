@@ -967,20 +967,7 @@ export default function AnimateView(props: AnimateParams) {
             </div>
           ) : null}
 
-          {/* Loading skeleton */}
-          {isGenerating && (
-            <div className="relative rounded-2xl overflow-hidden bg-white/5 border border-white/10 aspect-video animate-pulse">
-              <div className="absolute inset-0 bg-gradient-to-tr from-purple-500/10 to-transparent"></div>
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 size={32} className="animate-spin text-purple-400" />
-                  <span className="text-sm font-mono text-white/70">Generating video...</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Video items */}
+          {/* Video items (including processing placeholders) */}
           {items.map((item) => (
             <div
               key={item.id}
