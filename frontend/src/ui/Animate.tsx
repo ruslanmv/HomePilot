@@ -182,20 +182,38 @@ export default function AnimateView(props: AnimateParams) {
       if (stored) {
         const parsed = JSON.parse(stored)
         if (Array.isArray(parsed)) {
-          // Migrate old items (without status) and handle stale processing items
-          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes max
+          // Thresholds for handling stale processing items:
+          // - IN_FLIGHT_THRESHOLD: Video generation can take 30s-3min depending on settings.
+          //   If processing item is older than 3 min, generation likely completed but state
+          //   update was lost due to tab switch (component unmount).
+          // - STALE_THRESHOLD: If processing item is older than this, app was closed during
+          //   generation - mark as definitively failed.
+          const IN_FLIGHT_THRESHOLD = 3 * 60 * 1000  // 3 minutes - likely completed but lost track
+          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes - definitively failed
           const now = Date.now()
           return parsed.map((item: any) => {
             // Migrate: old items without status get 'done' if they have videoUrl
             if (!item.status) {
               return { ...item, status: item.videoUrl ? 'done' : 'failed' }
             }
-            // Handle stale processing items (app was closed during generation)
-            // Only mark as failed if very old (2+ hours)
-            if (item.status === 'processing' && (now - item.createdAt) > STALE_THRESHOLD) {
-              return { ...item, status: 'failed', error: 'Generation interrupted - please retry' }
+            // Handle processing items based on age
+            if (item.status === 'processing') {
+              const age = now - item.createdAt
+              // Very old items (app was closed) - mark as failed
+              if (age > STALE_THRESHOLD) {
+                return { ...item, status: 'failed', error: 'Generation interrupted - please retry' }
+              }
+              // Medium-age items (tab was switched) - likely completed but we lost track
+              // Mark as failed since we can't verify the result without backend check
+              if (age > IN_FLIGHT_THRESHOLD) {
+                return {
+                  ...item,
+                  status: 'failed',
+                  error: 'Generation may have completed - check your gallery or retry'
+                }
+              }
             }
-            // Keep processing items as-is (will show spinner)
+            // Keep recent processing items as-is (still in-flight)
             return item
           })
         }
@@ -312,6 +330,44 @@ export default function AnimateView(props: AnimateParams) {
       console.error('Failed to save animate items to localStorage:', error)
     }
   }, [items])
+
+  // On mount, restart progress simulation for any items still in 'processing' status
+  // (handles edge case where user tabs back while generation is still in-flight)
+  useEffect(() => {
+    const processingItems = items.filter(item => item.status === 'processing')
+    if (processingItems.length === 0) return
+
+    // Continue simulating progress for items that are still processing
+    // Video generation can take up to 3 minutes, so use longer threshold
+    const IN_FLIGHT_THRESHOLD = 3 * 60 * 1000  // 3 minutes
+    const progressInterval = setInterval(() => {
+      setItems(prev => {
+        const updated = prev.map(item => {
+          if (item.status !== 'processing') return item
+          // Check if this processing item is now too old (past in-flight threshold)
+          const age = Date.now() - item.createdAt
+          if (age > IN_FLIGHT_THRESHOLD) {
+            // Mark as failed since we can't track the original API call
+            return {
+              ...item,
+              status: 'failed' as const,
+              error: 'Generation may have completed - check your gallery or retry'
+            }
+          }
+          // Continue progress simulation
+          return {
+            ...item,
+            progress: Math.min(90, (item.progress || 0) + Math.random() * 3 + 1)
+          }
+        })
+        return updated
+      })
+    }, 800)  // Slower interval for video (takes longer)
+
+    return () => clearInterval(progressInterval)
+    // Only run on mount (empty deps) - items will be stale but that's intentional
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Scroll to top when entering Animate
   useEffect(() => {
@@ -460,39 +516,72 @@ export default function AnimateView(props: AnimateParams) {
         throw new Error(data.message || data.text || 'No video URL returned')
       }
 
-      // Update placeholder to completed item
+      // Build the completed item
+      const completedItem: AnimateItem = {
+        ...placeholder,
+        status: 'done' as const,
+        progress: 100,
+        videoUrl: data.media!.video_url,
+        posterUrl: data.media!.poster_url || placeholder.posterUrl,
+        finalPrompt: data.media!.prompt || data.media!.final_prompt,
+        sourceImageUrl: data.media!.auto_generated_image || referenceUrl || data.media!.source_image || placeholder.sourceImageUrl,
+        seed: data.media!.seed ?? (seedLock ? customSeed : undefined),
+        seconds: data.media!.duration ?? seconds,
+        frames: data.media!.frames,
+        fps: data.media!.fps ?? fps,
+        motion: data.media!.motion ?? motion,
+        model: data.media!.model ?? props.modelVideo,
+        preset: data.media!.preset ?? qualityPreset,
+        steps: data.media!.steps ?? (advancedMode ? customSteps : undefined),
+        cfg: data.media!.cfg ?? (advancedMode ? customCfg : undefined),
+        denoise: data.media!.denoise ?? (advancedMode ? customDenoise : undefined),
+      }
+
+      // CRITICAL: Directly persist to localStorage BEFORE setItems
+      // This ensures the result is saved even if component unmounts between
+      // API response and React's state update
+      try {
+        const stored = localStorage.getItem('homepilot_animate_items')
+        const currentItems: AnimateItem[] = stored ? JSON.parse(stored) : []
+        const updatedItems = currentItems.map(item =>
+          item.id === placeholderId ? completedItem : item
+        )
+        localStorage.setItem('homepilot_animate_items', JSON.stringify(updatedItems))
+        console.log('[Animate] Persisted completed video to localStorage:', placeholderId)
+      } catch (e) {
+        console.error('[Animate] Failed to persist to localStorage:', e)
+      }
+
+      // Update React state (may not process if component unmounted, but localStorage is already updated)
       setItems(prev => prev.map(item =>
-        item.id === placeholderId
-          ? {
-              ...item,
-              status: 'done' as const,
-              progress: 100,
-              videoUrl: data.media!.video_url,
-              posterUrl: data.media!.poster_url || item.posterUrl,
-              finalPrompt: data.media!.prompt || data.media!.final_prompt,
-              sourceImageUrl: data.media!.auto_generated_image || referenceUrl || data.media!.source_image || item.sourceImageUrl,
-              seed: data.media!.seed ?? (seedLock ? customSeed : undefined),
-              seconds: data.media!.duration ?? seconds,
-              frames: data.media!.frames,
-              fps: data.media!.fps ?? fps,
-              motion: data.media!.motion ?? motion,
-              model: data.media!.model ?? props.modelVideo,
-              preset: data.media!.preset ?? qualityPreset,
-              steps: data.media!.steps ?? (advancedMode ? customSteps : undefined),
-              cfg: data.media!.cfg ?? (advancedMode ? customCfg : undefined),
-              denoise: data.media!.denoise ?? (advancedMode ? customDenoise : undefined),
-            }
-          : item
+        item.id === placeholderId ? completedItem : item
       ))
     } catch (err: any) {
       clearInterval(progressInterval)
       console.error('Video generation failed:', err)
 
-      // Update placeholder to failed state
+      // Build failed item
+      const failedItem: AnimateItem = {
+        ...placeholder,
+        status: 'failed' as const,
+        error: err.message || 'Generation failed'
+      }
+
+      // CRITICAL: Directly persist failure to localStorage
+      try {
+        const stored = localStorage.getItem('homepilot_animate_items')
+        const currentItems: AnimateItem[] = stored ? JSON.parse(stored) : []
+        const updatedItems = currentItems.map(item =>
+          item.id === placeholderId ? failedItem : item
+        )
+        localStorage.setItem('homepilot_animate_items', JSON.stringify(updatedItems))
+      } catch (e) {
+        console.error('Failed to persist to localStorage:', e)
+      }
+
+      // Update React state
       setItems(prev => prev.map(item =>
-        item.id === placeholderId
-          ? { ...item, status: 'failed' as const, error: err.message || 'Generation failed' }
-          : item
+        item.id === placeholderId ? failedItem : item
       ))
     } finally {
       setIsGenerating(false)

@@ -166,19 +166,38 @@ export default function ImagineView(props: ImagineParams) {
       if (stored) {
         const parsed = JSON.parse(stored)
         if (Array.isArray(parsed)) {
-          // Migrate old items (without status) and handle stale processing items
-          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes max
+          // Thresholds for handling stale processing items:
+          // - IN_FLIGHT_THRESHOLD: If processing item is older than this, generation likely
+          //   completed but state update was lost due to tab switch (component unmount).
+          //   Image generation typically takes 3-5 seconds, so 15s is safe.
+          // - STALE_THRESHOLD: If processing item is older than this, app was closed during
+          //   generation - mark as definitively failed.
+          const IN_FLIGHT_THRESHOLD = 15 * 1000  // 15 seconds - likely completed but lost track
+          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes - definitively failed
           const now = Date.now()
           return parsed.map((item: any) => {
             // Migrate: old items without status get 'done' if they have url
             if (!item.status) {
               return { ...item, status: item.url ? 'done' : 'failed' }
             }
-            // Handle stale processing items (app was closed during generation)
-            if (item.status === 'processing' && (now - item.createdAt) > STALE_THRESHOLD) {
-              return { ...item, status: 'failed', error: 'Generation interrupted - please retry' }
+            // Handle processing items based on age
+            if (item.status === 'processing') {
+              const age = now - item.createdAt
+              // Very old items (app was closed) - mark as failed
+              if (age > STALE_THRESHOLD) {
+                return { ...item, status: 'failed', error: 'Generation interrupted - please retry' }
+              }
+              // Medium-age items (tab was switched) - likely completed but we lost track
+              // Mark as failed since we can't verify the result without backend check
+              if (age > IN_FLIGHT_THRESHOLD) {
+                return {
+                  ...item,
+                  status: 'failed',
+                  error: 'Generation may have completed - check your gallery or retry'
+                }
+              }
             }
-            // Keep processing items as-is (will show spinner)
+            // Keep recent processing items as-is (still in-flight)
             return item
           })
         }
@@ -253,6 +272,43 @@ export default function ImagineView(props: ImagineParams) {
       console.error('Failed to save imagine items to localStorage:', error)
     }
   }, [items])
+
+  // On mount, restart progress simulation for any items still in 'processing' status
+  // (handles edge case where user tabs back while generation is still in-flight)
+  useEffect(() => {
+    const processingItems = items.filter(item => item.status === 'processing')
+    if (processingItems.length === 0) return
+
+    // Continue simulating progress for items that are still processing
+    // This gives visual feedback while waiting for actual completion
+    const progressInterval = setInterval(() => {
+      setItems(prev => {
+        const updated = prev.map(item => {
+          if (item.status !== 'processing') return item
+          // Check if this processing item is now too old (past in-flight threshold)
+          const age = Date.now() - item.createdAt
+          if (age > 15 * 1000) {
+            // Mark as failed since we can't track the original API call
+            return {
+              ...item,
+              status: 'failed' as const,
+              error: 'Generation may have completed - check your gallery or retry'
+            }
+          }
+          // Continue progress simulation
+          return {
+            ...item,
+            progress: Math.min(90, (item.progress || 0) + Math.random() * 5 + 1)
+          }
+        })
+        return updated
+      })
+    }, 500)
+
+    return () => clearInterval(progressInterval)
+    // Only run on mount (empty deps) - items will be stale but that's intentional
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Scroll to top when entering Imagine to avoid "empty space above" if previously scrolled
   useEffect(() => {
@@ -477,47 +533,88 @@ export default function ImagineView(props: ImagineParams) {
       const genCfg = data?.media?.cfg
       const genModel = data?.media?.model
 
-      // Update placeholders to completed items
-      setItems(prev => prev.map(item => {
-        const placeholderIndex = placeholderIds.indexOf(item.id)
-        if (placeholderIndex === -1) return item
-
-        // Check if we have a URL for this placeholder
-        const imageUrl = urls[placeholderIndex]
+      // Build completed items
+      const completedItemsMap = new Map<string, ImagineItem>()
+      placeholderIds.forEach((placeholderId, index) => {
+        const imageUrl = urls[index]
+        const placeholder = placeholders[index]
         if (imageUrl) {
-          return {
-            ...item,
+          completedItemsMap.set(placeholderId, {
+            ...placeholder,
             status: 'done' as const,
             progress: 100,
             url: imageUrl,
             prompt: finalPrompt,
-            seed: seeds[placeholderIndex] ?? seeds[0],
+            seed: seeds[index] ?? seeds[0],
             width: genWidth,
             height: genHeight,
             steps: genSteps,
             cfg: genCfg,
             model: genModel,
-          }
+          })
         } else {
-          // No image for this placeholder - mark as failed
-          return {
-            ...item,
+          completedItemsMap.set(placeholderId, {
+            ...placeholder,
             status: 'failed' as const,
             error: 'No image returned',
-          }
+          })
         }
-      }).slice(0, 100))  // Keep only first 100 items
+      })
+
+      // CRITICAL: Directly persist to localStorage BEFORE setItems
+      // This ensures the result is saved even if component unmounts between
+      // API response and React's state update
+      try {
+        const stored = localStorage.getItem('homepilot_imagine_items')
+        const currentItems: ImagineItem[] = stored ? JSON.parse(stored) : []
+        const updatedItems = currentItems.map(item => {
+          const completed = completedItemsMap.get(item.id)
+          return completed || item
+        }).slice(0, 100)
+        localStorage.setItem('homepilot_imagine_items', JSON.stringify(updatedItems))
+        console.log('[Imagine] Persisted completed images to localStorage:', Array.from(completedItemsMap.keys()))
+      } catch (e) {
+        console.error('[Imagine] Failed to persist to localStorage:', e)
+      }
+
+      // Update React state (may not process if component unmounted, but localStorage is already updated)
+      setItems(prev => prev.map(item => {
+        const completed = completedItemsMap.get(item.id)
+        return completed || item
+      }).slice(0, 100))
 
     } catch (err: any) {
       clearInterval(progressInterval)
       console.error('Generation failed:', err)
 
-      // Update placeholders to failed state
-      setItems(prev => prev.map(item =>
-        placeholderIds.includes(item.id)
-          ? { ...item, status: 'failed' as const, error: err.message || 'Generation failed' }
-          : item
-      ))
+      // Build failed items
+      const failedItemsMap = new Map<string, ImagineItem>()
+      placeholders.forEach(placeholder => {
+        failedItemsMap.set(placeholder.id, {
+          ...placeholder,
+          status: 'failed' as const,
+          error: err.message || 'Generation failed'
+        })
+      })
+
+      // CRITICAL: Directly persist failure to localStorage
+      try {
+        const stored = localStorage.getItem('homepilot_imagine_items')
+        const currentItems: ImagineItem[] = stored ? JSON.parse(stored) : []
+        const updatedItems = currentItems.map(item => {
+          const failed = failedItemsMap.get(item.id)
+          return failed || item
+        })
+        localStorage.setItem('homepilot_imagine_items', JSON.stringify(updatedItems))
+      } catch (e) {
+        console.error('Failed to persist to localStorage:', e)
+      }
+
+      // Update React state
+      setItems(prev => prev.map(item => {
+        const failed = failedItemsMap.get(item.id)
+        return failed || item
+      }))
 
       // Stop auto-generation on error
       autoGenerateRef.current = false
