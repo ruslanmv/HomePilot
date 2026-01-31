@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film, Check, ArrowUp, Loader2 } from 'lucide-react'
 import { upscaleImage } from './enhance/upscaleApi'
 
 // -----------------------------------------------------------------------------
@@ -175,6 +175,8 @@ export default function ImagineView(props: ImagineParams) {
   // Selection state for Lightbox (Grok-style detail view)
   const [selectedImage, setSelectedImage] = useState<ImagineItem | null>(null)
   const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
+  const [lightboxPrompt, setLightboxPrompt] = useState('')  // Editable prompt in lightbox
+  const [isRegenerating, setIsRegenerating] = useState(false)  // Regenerating from lightbox
 
   const [aspect, setAspect] = useState<string>('1:1')
   const [showAspectPanel, setShowAspectPanel] = useState(false)
@@ -234,6 +236,13 @@ export default function ImagineView(props: ImagineParams) {
   useEffect(() => {
     gridStartRef.current?.scrollIntoView({ block: 'start' })
   }, [])
+
+  // Initialize lightbox prompt when selecting an image
+  useEffect(() => {
+    if (selectedImage) {
+      setLightboxPrompt(selectedImage.prompt)
+    }
+  }, [selectedImage])
 
   const aspectObj = useMemo(() => {
     return ASPECT_RATIOS.find((a) => a.label === aspect) || ASPECT_RATIOS[0]
@@ -1273,7 +1282,7 @@ export default function ImagineView(props: ImagineParams) {
               <img
                 src={selectedImage.url}
                 data-lightbox-media
-                className="max-h-[calc(100vh-80px)] max-w-full object-contain rounded-lg shadow-2xl"
+                className="max-h-[calc(100vh-140px)] max-w-full object-contain rounded-lg shadow-2xl"
                 alt="Selected"
               />
 
@@ -1429,6 +1438,66 @@ export default function ImagineView(props: ImagineParams) {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Inline Prompt Composer Bar - Grok-style editable prompt */}
+          <div className="bg-[#0a0a0a] border-t border-white/10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
+            <div className="max-w-3xl mx-auto">
+              <div className="relative flex items-center gap-3">
+                {/* Provenance Indicator */}
+                <div className="flex items-center gap-1.5 text-green-400/80" title="Generated with this prompt">
+                  <Check size={14} strokeWidth={3} />
+                </div>
+
+                {/* Editable Prompt Input */}
+                <input
+                  type="text"
+                  value={lightboxPrompt}
+                  onChange={(e) => setLightboxPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
+                      setIsRegenerating(true)
+                      handleGenerate(lightboxPrompt).finally(() => {
+                        setIsRegenerating(false)
+                        setSelectedImage(null)
+                        setShowDetails(false)
+                      })
+                    }
+                  }}
+                  placeholder="Edit prompt and regenerate..."
+                  className="flex-1 bg-transparent text-white/80 text-sm placeholder-white/30 outline-none border-none"
+                  disabled={isRegenerating}
+                />
+
+                {/* Regenerate Button */}
+                <button
+                  onClick={() => {
+                    if (lightboxPrompt.trim() && !isRegenerating) {
+                      setIsRegenerating(true)
+                      handleGenerate(lightboxPrompt).finally(() => {
+                        setIsRegenerating(false)
+                        setSelectedImage(null)
+                        setShowDetails(false)
+                      })
+                    }
+                  }}
+                  disabled={!lightboxPrompt.trim() || isRegenerating}
+                  className={`p-2 rounded-full transition-all ${
+                    lightboxPrompt.trim() && !isRegenerating
+                      ? 'bg-white text-black hover:opacity-90'
+                      : 'bg-white/10 text-white/30 cursor-not-allowed'
+                  }`}
+                  type="button"
+                  title="Regenerate with this prompt"
+                >
+                  {isRegenerating ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <ArrowUp size={16} />
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

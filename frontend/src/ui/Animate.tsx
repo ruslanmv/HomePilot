@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2, Info, MoreHorizontal } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2, Info, MoreHorizontal, Check, ArrowUp } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -189,6 +189,8 @@ export default function AnimateView(props: AnimateParams) {
   const [selectedVideo, setSelectedVideo] = useState<AnimateItem | null>(null)
   const [showDetails, setShowDetails] = useState(false)  // Immersive mode: details hidden by default
   const [showSourceImage, setShowSourceImage] = useState(false)  // Source image overlay
+  const [lightboxPrompt, setLightboxPrompt] = useState('')  // Editable prompt in lightbox
+  const [isRegenerating, setIsRegenerating] = useState(false)  // Regenerating from lightbox
 
   // Video settings
   const [seconds, setSeconds] = useState(props.vidSeconds || 4)
@@ -290,6 +292,13 @@ export default function AnimateView(props: AnimateParams) {
   useEffect(() => {
     gridStartRef.current?.scrollIntoView({ block: 'start' })
   }, [])
+
+  // Initialize lightbox prompt when selecting a video
+  useEffect(() => {
+    if (selectedVideo) {
+      setLightboxPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)
+    }
+  }, [selectedVideo])
 
   // Upload reference image handler
   const handleUploadReference = useCallback(async (file: File) => {
@@ -1071,7 +1080,7 @@ export default function AnimateView(props: AnimateParams) {
                   src={selectedVideo.videoUrl}
                   data-lightbox-media
                   alt="Generated animation"
-                  className="max-h-[calc(100vh-60px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  className="max-h-[calc(100vh-120px)] max-w-full object-contain rounded-lg shadow-2xl"
                 />
               ) : (
                 <video
@@ -1081,7 +1090,7 @@ export default function AnimateView(props: AnimateParams) {
                   controls
                   autoPlay
                   loop
-                  className="max-h-[calc(100vh-60px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  className="max-h-[calc(100vh-120px)] max-w-full object-contain rounded-lg shadow-2xl"
                 />
               )}
 
@@ -1289,6 +1298,80 @@ export default function AnimateView(props: AnimateParams) {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Inline Prompt Composer Bar - Grok-style editable prompt */}
+          <div className="bg-[#0a0a0a] border-t border-white/10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
+            <div className="max-w-3xl mx-auto">
+              <div className="relative flex items-center gap-3">
+                {/* Provenance Indicator */}
+                <div className="flex items-center gap-1.5 text-green-400/80" title="Generated with this prompt">
+                  <Check size={14} strokeWidth={3} />
+                </div>
+
+                {/* Editable Prompt Input */}
+                <input
+                  type="text"
+                  value={lightboxPrompt}
+                  onChange={(e) => setLightboxPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
+                      setIsRegenerating(true)
+                      // Use same source image if available
+                      if (selectedVideo.sourceImageUrl) {
+                        setReferenceUrl(selectedVideo.sourceImageUrl)
+                      }
+                      setPrompt(lightboxPrompt)
+                      setSelectedVideo(null)
+                      setShowDetails(false)
+                      setShowSourceImage(false)
+                      // Trigger generation after state updates
+                      setTimeout(() => {
+                        handleGenerate()
+                        setIsRegenerating(false)
+                      }, 100)
+                    }
+                  }}
+                  placeholder="Edit prompt and regenerate..."
+                  className="flex-1 bg-transparent text-white/80 text-sm placeholder-white/30 outline-none border-none"
+                  disabled={isRegenerating}
+                />
+
+                {/* Regenerate Button */}
+                <button
+                  onClick={() => {
+                    if (lightboxPrompt.trim() && !isRegenerating) {
+                      setIsRegenerating(true)
+                      if (selectedVideo.sourceImageUrl) {
+                        setReferenceUrl(selectedVideo.sourceImageUrl)
+                      }
+                      setPrompt(lightboxPrompt)
+                      setSelectedVideo(null)
+                      setShowDetails(false)
+                      setShowSourceImage(false)
+                      setTimeout(() => {
+                        handleGenerate()
+                        setIsRegenerating(false)
+                      }, 100)
+                    }
+                  }}
+                  disabled={!lightboxPrompt.trim() || isRegenerating}
+                  className={`p-2 rounded-full transition-all ${
+                    lightboxPrompt.trim() && !isRegenerating
+                      ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:opacity-90'
+                      : 'bg-white/10 text-white/30 cursor-not-allowed'
+                  }`}
+                  type="button"
+                  title="Regenerate with this prompt"
+                >
+                  {isRegenerating ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <ArrowUp size={16} />
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
