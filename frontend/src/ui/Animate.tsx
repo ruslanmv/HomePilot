@@ -16,9 +16,11 @@ type AnimateItem = {
   // Generation parameters for reproducibility
   seed?: number
   seconds?: number
+  frames?: number
   fps?: number
   motion?: string
   model?: string
+  preset?: string
   // Advanced parameters
   steps?: number
   cfg?: number
@@ -373,25 +375,29 @@ export default function AnimateView(props: AnimateParams) {
         throw new Error(data.message || data.text || 'No video URL returned')
       }
 
+      // Use actual values from backend response for reproducibility
+      // Backend now returns all generation parameters used
       const newItem: AnimateItem = {
         id: uid(),
         videoUrl: data.media.video_url,
         posterUrl: data.media.poster_url,
         createdAt: Date.now(),
         prompt: effectivePrompt,
-        finalPrompt: data.media.final_prompt,
-        sourceImageUrl: referenceUrl || undefined,
-        seed: data.media.seed || (seedLock ? customSeed : undefined),
-        seconds,
-        fps,
-        motion,
-        model: data.media.model || props.modelVideo,
-        // Advanced parameters (if used)
-        ...(advancedMode && {
-          steps: customSteps,
-          cfg: customCfg,
-          denoise: customDenoise,
-        }),
+        finalPrompt: data.media.prompt || data.media.final_prompt,
+        // Source image: prefer auto-generated (text-to-video), then reference, then backend source
+        sourceImageUrl: data.media.auto_generated_image || referenceUrl || data.media.source_image || undefined,
+        // Use actual backend values for reproducibility (fallback to local values)
+        seed: data.media.seed ?? (seedLock ? customSeed : undefined),
+        seconds: data.media.duration ?? seconds,
+        frames: data.media.frames,
+        fps: data.media.fps ?? fps,
+        motion: data.media.motion ?? motion,
+        model: data.media.model ?? props.modelVideo,
+        preset: data.media.preset ?? qualityPreset,
+        // Advanced parameters from backend (actual values used)
+        steps: data.media.steps ?? (advancedMode ? customSteps : undefined),
+        cfg: data.media.cfg ?? (advancedMode ? customCfg : undefined),
+        denoise: data.media.denoise ?? (advancedMode ? customDenoise : undefined),
       }
 
       // Prepend new item (newest first)

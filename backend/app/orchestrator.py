@@ -574,10 +574,27 @@ async def orchestrate(
                 else:
                     text = "Here's your animated video!"
 
+                # Include comprehensive video metadata for reproducibility
                 media = {
                     "video_url": video_url,
+                    # Core generation parameters
                     "seed": workflow_vars["seed"],
                     "model": vid_model,
+                    "preset": vid_preset,
+                    # Timing
+                    "duration": workflow_vars.get("seconds", 4),
+                    "fps": workflow_vars.get("fps", 8),
+                    "frames": workflow_vars.get("frames", 33),
+                    # Quality settings
+                    "steps": workflow_vars.get("steps", 30),
+                    "cfg": workflow_vars.get("cfg", 3.5),
+                    "denoise": workflow_vars.get("denoise", 0.85),
+                    # Motion and prompt
+                    "motion": workflow_vars.get("motion", "medium"),
+                    "prompt": workflow_vars.get("prompt", ""),
+                    "negative_prompt": workflow_vars.get("negative_prompt", ""),
+                    # Source image
+                    "source_image": image_url,
                 }
 
                 # Include auto-generated image info if we created one (Grok-like UX)
