@@ -14,11 +14,6 @@ type AvailableModel = { id: string; name: string };
 type MatureCategory = "fan_service" | "romantic" | "sensual" | "explicit";
 
 /**
- * Content Intensity Levels - determines how explicit the content is
- */
-type IntensityLevel = "mild" | "moderate" | "intense" | "maximum";
-
-/**
  * Project Type determines the overall workflow and output format:
  * - video: Full motion video with AI-generated clips (YouTube videos, documentaries)
  * - slideshow: Image slideshow with Ken Burns effect + narration (quick generation)
@@ -176,7 +171,7 @@ function CreatorStudioWizard({
 
   // Mature content settings (only visible when contentRating === "mature")
   const [matureCategory, setMatureCategory] = useState<MatureCategory>("fan_service");
-  const [intensityLevel, setIntensityLevel] = useState<IntensityLevel>("mild");
+  const [intensityLevel, setIntensityLevel] = useState(0.3); // 0-1 scale: 0=tasteful, 1=bold
 
   // Mature consent modal
   const [showMatureModal, setShowMatureModal] = useState(false);
@@ -317,7 +312,7 @@ function CreatorStudioWizard({
     if (contentRating === "mature") {
       t.push(`mature:enabled`);
       t.push(`matureCategory:${matureCategory}`);
-      t.push(`intensity:${intensityLevel}`);
+      t.push(`intensity:${intensityLevel.toFixed(2)}`);
     }
     return Array.from(new Set(t));
   }, [projectType, goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, enableVideoGeneration, selectedVideoModel, contentRating, matureCategory, intensityLevel]);
@@ -1059,39 +1054,30 @@ function CreatorStudioWizard({
                       </div>
                     </div>
 
-                    {/* Intensity Level */}
-                    <div className="mb-4">
-                      <label className="block text-xs font-medium text-[#aaa] mb-3">
-                        Spicy Level: <span className="text-[#EC4899] font-semibold">{intensityToLabel(intensityLevel)}</span>
-                      </label>
-                      <div className="flex gap-2">
-                        {(["mild", "moderate", "intense", "maximum"] as IntensityLevel[]).map((level) => (
-                          <button
-                            key={level}
-                            type="button"
-                            onClick={() => setIntensityLevel(level)}
-                            className={[
-                              "flex-1 py-2 px-3 rounded text-xs font-medium transition-all",
-                              intensityLevel === level
-                                ? level === "mild" ? "bg-[#10B981] text-white"
-                                  : level === "moderate" ? "bg-[#F59E0B] text-black"
-                                  : level === "intense" ? "bg-[#EC4899] text-white"
-                                  : "bg-[#EF4444] text-white"
-                                : "bg-[#282828] text-[#aaa] hover:bg-[#3f3f3f]"
-                            ].join(" ")}
-                          >
-                            {level === "mild" && "🌶️"}
-                            {level === "moderate" && "🌶️🌶️"}
-                            {level === "intense" && "🌶️🌶️🌶️"}
-                            {level === "maximum" && "🌶️🌶️🌶️🌶️"}
-                          </button>
-                        ))}
+                    {/* Intensity Level - Professional Slider */}
+                    <div className="mb-4 p-4 rounded-xl bg-[#EC4899]/5 border border-[#EC4899]/20">
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="text-xs text-[#EC4899] font-semibold">Intensity Strength</span>
+                        <span className="text-xs text-[#aaa] font-mono">{intensityLevel.toFixed(2)}</span>
                       </div>
-                      <div className="mt-2 text-xs text-[#666]">
-                        {intensityLevel === "mild" && "Light teasing, suggestive themes, clothed scenes"}
-                        {intensityLevel === "moderate" && "Partial nudity, intimate moments, sensual content"}
-                        {intensityLevel === "intense" && "Full nudity, explicit scenes, adult themes"}
-                        {intensityLevel === "maximum" && "Uncensored adult content, no restrictions"}
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={intensityLevel}
+                        onChange={(e) => setIntensityLevel(parseFloat(e.target.value))}
+                        className="w-full h-2 bg-[#EC4899]/20 rounded-full appearance-none cursor-pointer accent-[#EC4899]"
+                      />
+                      <div className="flex justify-between text-[10px] text-[#666] mt-2">
+                        <span>Tasteful</span>
+                        <span>Bold</span>
+                      </div>
+                      <div className="mt-3 text-xs text-[#777]">
+                        {intensityLevel < 0.25 && "Suggestive themes, light teasing, clothed scenes"}
+                        {intensityLevel >= 0.25 && intensityLevel < 0.5 && "Partial nudity, intimate moments, sensual content"}
+                        {intensityLevel >= 0.5 && intensityLevel < 0.75 && "Full nudity, explicit scenes, adult themes"}
+                        {intensityLevel >= 0.75 && "Uncensored adult content, maximum intensity"}
                       </div>
                     </div>
 
@@ -1148,9 +1134,9 @@ function CreatorStudioWizard({
                         color="text-[#EC4899]"
                       />
                       <ReviewLine
-                        label="Spicy Level"
-                        value={`${intensityToLabel(intensityLevel)} ${"🌶️".repeat(intensityLevel === "mild" ? 1 : intensityLevel === "moderate" ? 2 : intensityLevel === "intense" ? 3 : 4)}`}
-                        color="text-[#F59E0B]"
+                        label="Intensity"
+                        value={`${intensityLevel.toFixed(2)} (${intensityLevel < 0.25 ? 'Tasteful' : intensityLevel < 0.5 ? 'Moderate' : intensityLevel < 0.75 ? 'Bold' : 'Maximum'})`}
+                        color="text-[#EC4899]"
                         last
                       />
                     </>
@@ -1623,13 +1609,6 @@ function projectTypeToLabel(t: ProjectType) {
   if (t === "video") return "Video Project";
   if (t === "slideshow") return "Slideshow";
   return "Video Series";
-}
-
-function intensityToLabel(i: IntensityLevel) {
-  if (i === "mild") return "Mild";
-  if (i === "moderate") return "Moderate";
-  if (i === "intense") return "Intense";
-  return "Maximum";
 }
 
 function matureCategoryToLabel(c: MatureCategory) {
