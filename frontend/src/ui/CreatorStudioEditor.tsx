@@ -68,6 +68,7 @@ type Project = {
   updatedAt: number;
   metadata?: {
     story_outline?: StoryOutline;
+    generationMode?: "video" | "slideshow";
   };
 };
 
@@ -204,6 +205,17 @@ export function CreatorStudioEditor({
   const [settingsLockIdentity, setSettingsLockIdentity] = useState(true);
   const [settingsContentRating, setSettingsContentRating] = useState<ContentRating>("sfw");
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  // Project-level capability: can this project generate videos?
+  // IMPORTANT: do NOT rely only on enableVideoGeneration (wizard-only, transient)
+  // This derives video capability from project metadata/tags for existing projects
+  const projectWantsVideo = Boolean(
+    project?.metadata?.generationMode === "video" ||
+    project?.tags?.includes("mode:video") ||
+    project?.tags?.includes("projectType:video") ||
+    project?.tags?.includes("projectType:video_series") ||
+    enableVideoGeneration === true // backward compatibility with wizard prop
+  );
 
   // API helpers
   const fetchApi = useCallback(
@@ -964,12 +976,12 @@ export function CreatorStudioEditor({
           if (imageUrl) {
             await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({
               imageUrl,
-              status: enableVideoGeneration ? 'generating' : 'ready',
+              status: projectWantsVideo ? 'generating' : 'ready',
             }));
 
             setScenes((prev) =>
               prev.map((s) =>
-                s.id === scene.id ? { ...s, imageUrl, status: (enableVideoGeneration ? 'generating' : 'ready') as SceneStatus } : s
+                s.id === scene.id ? { ...s, imageUrl, status: (projectWantsVideo ? 'generating' : 'ready') as SceneStatus } : s
               )
             );
 
@@ -982,7 +994,7 @@ export function CreatorStudioEditor({
       }
 
       // Phase 3: Generate videos from images (if enabled)
-      if (enableVideoGeneration && scenesWithImages.length > 0) {
+      if (projectWantsVideo && scenesWithImages.length > 0) {
         console.log(`[CreatorStudioEditor] Phase 3: Generating ${scenesWithImages.length} videos...`);
 
         for (let i = 0; i < scenesWithImages.length; i++) {
@@ -1062,7 +1074,7 @@ export function CreatorStudioEditor({
       setIsBatchGenerating(false);
       setBatchProgress({ current: 0, total: 0, phase: 'scene' });
     }
-  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, enableVideoGeneration, videoModel, syncOutlineWithScenes, toScenePatch, refreshScenes]);
+  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, projectWantsVideo, videoModel, syncOutlineWithScenes, toScenePatch, refreshScenes]);
 
   // Load project and scenes
   useEffect(() => {
@@ -1551,9 +1563,9 @@ export function CreatorStudioEditor({
                 </div>
                 <div className="mt-2 text-xs text-white/40">
                   {batchProgress.phase === 'scene'
-                    ? (enableVideoGeneration ? 'Phase 1/3: Creating scenes' : 'Phase 1/2: Creating scenes')
+                    ? (projectWantsVideo ? 'Phase 1/3: Creating scenes' : 'Phase 1/2: Creating scenes')
                     : batchProgress.phase === 'image'
-                      ? (enableVideoGeneration ? 'Phase 2/3: Generating images' : 'Phase 2/2: Generating images')
+                      ? (projectWantsVideo ? 'Phase 2/3: Generating images' : 'Phase 2/2: Generating images')
                       : 'Phase 3/3: Generating videos'
                   }
                 </div>
@@ -1886,8 +1898,8 @@ export function CreatorStudioEditor({
                     </button>
                   </div>
 
-                  {/* Bottom-right Make Video CTA - only show if video generation is enabled */}
-                  {enableVideoGeneration && !isGeneratingImage && !isGeneratingVideo && (
+                  {/* Bottom-right Make Video CTA - only show if project wants video and scene has no video yet */}
+                  {projectWantsVideo && !currentScene.videoUrl && !isGeneratingImage && !isGeneratingVideo && (
                     <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                       <button
                         type="button"
@@ -2197,7 +2209,7 @@ export function CreatorStudioEditor({
                 </button>
 
                 {/* Make Video / Regenerate Video button */}
-                {enableVideoGeneration && editingScene.imageUrl && (
+                {projectWantsVideo && editingScene.imageUrl && (
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => {

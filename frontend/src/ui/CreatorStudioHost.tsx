@@ -295,6 +295,8 @@ function CreatorStudioWizard({
     const t: string[] = [];
     // Project type (determines generation workflow)
     t.push(`projectType:${projectType}`);
+    // Also add mode:video or mode:slideshow for easy filtering and editor detection
+    t.push(`mode:${projectType === "slideshow" ? "slideshow" : "video"}`);
     if (goal) t.push(`goal:${goal.toLowerCase()}`);
     if (visualStyle) t.push(`visual:${visualStyle.toLowerCase().replaceAll(" ", "_")}`);
     if (tones.length) t.push(...tones.map((x) => `tone:${x.toLowerCase().replaceAll(" ", "_")}`));
