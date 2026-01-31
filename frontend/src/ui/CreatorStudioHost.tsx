@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { ArrowLeft, X, ChevronDown } from "lucide-react";
 import { useStudioStore } from "./studio/stores/studioStore";
 import { CreatorStudioEditor } from "./CreatorStudioEditor";
-import { detectArchitecture, getArchitectureLabel } from "./modelPresets";
+import { detectArchitecture, getArchitectureLabel, getModelSettings, type AspectRatio } from "./modelPresets";
 
 type PlatformPreset = "youtube_16_9" | "shorts_9_16" | "slides_16_9";
 type ContentRating = "sfw" | "mature";
@@ -318,6 +318,26 @@ function CreatorStudioWizard({
     }
     return Array.from(new Set(t));
   }, [projectType, goal, visualStyle, tones, lockIdentity, targetSceneCount, sceneDuration, selectedLLMModel, selectedImageModel, enableVideoGeneration, selectedVideoModel, contentRating, matureCategory, intensityLevel]);
+
+  // Helper: Convert platform preset to aspect ratio for resolution lookup
+  const platformToAspectRatio = React.useCallback((platform: PlatformPreset): AspectRatio => {
+    if (platform === "shorts_9_16") return "9:16";
+    return "16:9"; // youtube_16_9 and slides_16_9 both use 16:9
+  }, []);
+
+  // Computed resolution based on selected image model and platform preset
+  const computedResolution = React.useMemo(() => {
+    const aspectRatio = platformToAspectRatio(platformPreset);
+    const settings = getModelSettings(selectedImageModel || "", aspectRatio, "med");
+    return {
+      width: settings.width,
+      height: settings.height,
+      aspectRatio,
+      aspectLabel: aspectRatio === "16:9" ? "landscape" : aspectRatio === "9:16" ? "vertical" : aspectRatio,
+      archLabel: getArchitectureLabel(settings.architecture),
+      architecture: settings.architecture,
+    };
+  }, [platformPreset, selectedImageModel, platformToAspectRatio]);
 
   const canProceedStep1 = title.trim().length > 0;
   const canCreate = title.trim().length > 0 && !loading && generatedOutline;
@@ -867,15 +887,31 @@ function CreatorStudioWizard({
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[#aaa] pointer-events-none" />
                   </div>
-                  {/* Architecture indicator */}
+                  {/* Architecture & Resolution indicator */}
                   {selectedImageModel && (
-                    <div className="mt-2 text-xs text-[#3ea6ff] bg-[#3ea6ff]/10 border border-[#3ea6ff]/20 rounded px-3 py-1.5">
-                      <span className="font-medium">{getArchitectureLabel(detectArchitecture(selectedImageModel))}</span>
-                      {detectArchitecture(selectedImageModel) === "sd15" && (
-                        <span className="ml-2 text-[#f59e0b]">(Safe resolution: max 768px)</span>
-                      )}
-                      {detectArchitecture(selectedImageModel) === "flux_schnell" && (
-                        <span className="ml-2 text-[#a855f7]">(Turbo: 4 steps)</span>
+                    <div className="mt-3 p-4 bg-gradient-to-r from-[#3ea6ff]/10 to-[#8B5CF6]/10 border border-[#3ea6ff]/30 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-medium text-[#3ea6ff]">📐 Output Resolution</span>
+                        <span className="text-xs text-[#aaa] px-2 py-0.5 bg-[#282828] rounded">
+                          {computedResolution.archLabel}
+                          {computedResolution.architecture === "flux_schnell" && " (Turbo)"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <span className="text-xl font-mono font-bold text-white">
+                          {computedResolution.width} × {computedResolution.height}
+                        </span>
+                        <span className="text-xs text-[#aaa] px-2 py-1 bg-[#282828] rounded">
+                          {computedResolution.aspectLabel}
+                        </span>
+                      </div>
+                      <div className="mt-2 text-xs text-[#666]">
+                        Based on {computedResolution.archLabel} + {platformPresetToLabel(platformPreset)}
+                      </div>
+                      {computedResolution.architecture === "sd15" && (
+                        <div className="mt-2 text-xs text-[#f59e0b] bg-[#f59e0b]/10 border border-[#f59e0b]/20 rounded px-2 py-1">
+                          ⚠️ SD 1.5 uses lower resolution to prevent duplicate subjects
+                        </div>
                       )}
                     </div>
                   )}
@@ -1116,6 +1152,11 @@ function CreatorStudioWizard({
                   <ReviewLine
                     label="Image Model"
                     value={selectedImageModel ? `${selectedImageModel} (${getArchitectureLabel(detectArchitecture(selectedImageModel))})` : "Default"}
+                  />
+                  <ReviewLine
+                    label="Output Resolution"
+                    value={`${computedResolution.width} × ${computedResolution.height} (${computedResolution.aspectRatio})`}
+                    color="text-[#3ea6ff]"
                   />
                   <ReviewLine
                     label="Video Generation"
