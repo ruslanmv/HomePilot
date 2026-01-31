@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2, Info } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2, Info, MoreHorizontal } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -54,8 +54,20 @@ type ChatResponse = {
     video_url?: string
     poster_url?: string
     final_prompt?: string
+    prompt?: string
     seed?: number
     model?: string
+    // Video generation metadata
+    duration?: number
+    fps?: number
+    frames?: number
+    steps?: number
+    cfg?: number
+    denoise?: number
+    motion?: string
+    preset?: string
+    source_image?: string
+    auto_generated_image?: string
   } | null
   message?: string
 }
@@ -998,7 +1010,7 @@ export default function AnimateView(props: AnimateParams) {
         </div>
       </div>
 
-      {/* Immersive Lightbox with Chips (Grok-style) */}
+      {/* Immersive Lightbox - Clean, Video-first Design */}
       {selectedVideo && (
         <div
           className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
@@ -1044,13 +1056,13 @@ export default function AnimateView(props: AnimateParams) {
 
           {/* Main Content Area */}
           <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
-            {/* Hero Video Container */}
-            <div className="flex-1 flex items-center justify-center p-4 relative group">
+            {/* Hero Video Container - LARGER, fills more space */}
+            <div className="flex-1 flex items-center justify-center p-2 relative group">
               {isAnimatedImage(selectedVideo.videoUrl) ? (
                 <img
                   src={selectedVideo.videoUrl}
                   alt="Generated animation"
-                  className="max-h-[calc(100vh-180px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  className="max-h-[calc(100vh-60px)] max-w-full object-contain rounded-lg shadow-2xl"
                 />
               ) : (
                 <video
@@ -1059,12 +1071,12 @@ export default function AnimateView(props: AnimateParams) {
                   controls
                   autoPlay
                   loop
-                  className="max-h-[calc(100vh-180px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  className="max-h-[calc(100vh-60px)] max-w-full object-contain rounded-lg shadow-2xl"
                 />
               )}
 
               {/* Chips Overlay - Fade in on hover */}
-              <div className="absolute bottom-8 left-8 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+              <div className="absolute bottom-6 left-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                 {selectedVideo.model && (
                   <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
                     {selectedVideo.model.split('.')[0].split('-')[0].toUpperCase()}
@@ -1086,6 +1098,67 @@ export default function AnimateView(props: AnimateParams) {
                   </span>
                 )}
               </div>
+
+              {/* Floating Action Bar - Bottom Right, appears on hover */}
+              <div className="absolute bottom-6 right-6 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {/* Primary Action: Download */}
+                <button
+                  className="px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-full hover:opacity-90 transition-opacity text-sm flex items-center gap-2 shadow-lg"
+                  onClick={() => handleDownload(selectedVideo.videoUrl)}
+                  type="button"
+                >
+                  <Download size={16} />
+                  Download
+                </button>
+                {/* More Options Dropdown */}
+                <div className="relative group/more">
+                  <button
+                    className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+                    type="button"
+                    title="More options"
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
+                  {/* Dropdown Menu */}
+                  <div className="absolute bottom-full right-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden opacity-0 group-hover/more:opacity-100 pointer-events-none group-hover/more:pointer-events-auto transition-opacity duration-200 min-w-[160px]">
+                    <button
+                      className="w-full px-4 py-2.5 text-left text-sm text-white/80 hover:bg-white/10 flex items-center gap-3 transition-colors"
+                      onClick={() => {
+                        setPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)
+                        if (selectedVideo.sourceImageUrl) setReferenceUrl(selectedVideo.sourceImageUrl)
+                        setSelectedVideo(null)
+                        setShowDetails(false)
+                      }}
+                      type="button"
+                    >
+                      <RefreshCw size={14} />
+                      Reuse Settings
+                    </button>
+                    <button
+                      className="w-full px-4 py-2.5 text-left text-sm text-white/80 hover:bg-white/10 flex items-center gap-3 transition-colors"
+                      onClick={() => handleCopyPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)}
+                      type="button"
+                    >
+                      <Copy size={14} />
+                      Copy Prompt
+                    </button>
+                    <button
+                      className="w-full px-4 py-2.5 text-left text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-3 transition-colors"
+                      onClick={() => {
+                        if (confirm('Delete this video?')) {
+                          setItems((prev) => prev.filter((x) => x.id !== selectedVideo.id))
+                          setSelectedVideo(null)
+                          setShowDetails(false)
+                        }
+                      }}
+                      type="button"
+                    >
+                      <Trash2 size={14} />
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Details Panel - Slide in from right */}
@@ -1098,6 +1171,11 @@ export default function AnimateView(props: AnimateParams) {
                   </h3>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Prompt - Only visible in details panel */}
+                  <div>
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2 block">Prompt</label>
+                    <p className="text-sm text-white/70 leading-relaxed">{selectedVideo.finalPrompt || selectedVideo.prompt}</p>
+                  </div>
                   {/* Source Image Thumbnail */}
                   {selectedVideo.sourceImageUrl && (
                     <div>
@@ -1171,63 +1249,6 @@ export default function AnimateView(props: AnimateParams) {
                 </div>
               </div>
             )}
-          </div>
-
-          {/* Bottom Bar - Caption & Actions */}
-          <div className="bg-[#0a0a0a] border-t border-white/10 p-4" onClick={(e) => e.stopPropagation()}>
-            {/* Caption-style Prompt */}
-            <div className="max-w-3xl mx-auto mb-4">
-              <p className="text-white/80 text-sm italic text-center leading-relaxed line-clamp-2">
-                "{selectedVideo.finalPrompt || selectedVideo.prompt}"
-              </p>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center justify-center gap-3">
-              <button
-                className="px-5 py-2.5 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-full hover:opacity-90 transition-opacity text-sm flex items-center gap-2"
-                onClick={() => handleDownload(selectedVideo.videoUrl)}
-                type="button"
-              >
-                <Download size={16} />
-                Download
-              </button>
-              <button
-                className="px-5 py-2.5 bg-white/10 text-white/90 font-semibold rounded-full hover:bg-white/20 transition-colors text-sm flex items-center gap-2"
-                onClick={() => {
-                  setPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)
-                  if (selectedVideo.sourceImageUrl) setReferenceUrl(selectedVideo.sourceImageUrl)
-                  setSelectedVideo(null)
-                  setShowDetails(false)
-                }}
-                type="button"
-              >
-                <RefreshCw size={16} />
-                Reuse
-              </button>
-              <button
-                className="px-5 py-2.5 bg-white/10 text-white/90 font-semibold rounded-full hover:bg-white/20 transition-colors text-sm flex items-center gap-2"
-                onClick={() => handleCopyPrompt(selectedVideo.finalPrompt || selectedVideo.prompt)}
-                type="button"
-              >
-                <Copy size={16} />
-                Copy
-              </button>
-              <button
-                className="px-5 py-2.5 bg-red-500/20 text-red-400 font-semibold rounded-full hover:bg-red-500/30 transition-colors text-sm flex items-center gap-2"
-                onClick={() => {
-                  if (confirm('Delete this video?')) {
-                    setItems((prev) => prev.filter((x) => x.id !== selectedVideo.id))
-                    setSelectedVideo(null)
-                    setShowDetails(false)
-                  }
-                }}
-                type="button"
-              >
-                <Trash2 size={16} />
-                Delete
-              </button>
-            </div>
           </div>
         </div>
       )}

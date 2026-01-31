@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film } from 'lucide-react'
 import { upscaleImage } from './enhance/upscaleApi'
 
 // -----------------------------------------------------------------------------
@@ -1225,7 +1225,7 @@ export default function ImagineView(props: ImagineParams) {
         </div>
       </div>
 
-      {/* Immersive Lightbox with Chips (Grok-style) */}
+      {/* Immersive Lightbox - Clean, Image-first Design */}
       {selectedImage && (
         <div
           className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
@@ -1261,16 +1261,16 @@ export default function ImagineView(props: ImagineParams) {
 
           {/* Main Content Area */}
           <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
-            {/* Hero Image Container */}
-            <div className="flex-1 flex items-center justify-center p-4 relative group">
+            {/* Hero Image Container - LARGER, fills more space */}
+            <div className="flex-1 flex items-center justify-center p-2 relative group">
               <img
                 src={selectedImage.url}
-                className="max-h-[calc(100vh-180px)] max-w-full object-contain rounded-lg shadow-2xl"
+                className="max-h-[calc(100vh-80px)] max-w-full object-contain rounded-lg shadow-2xl"
                 alt="Selected"
               />
 
               {/* Chips Overlay - Fade in on hover */}
-              <div className="absolute bottom-8 left-8 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+              <div className="absolute bottom-6 left-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                 {selectedImage.model && (
                   <span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
                     {selectedImage.model.split('.')[0].split('-')[0].toUpperCase()}
@@ -1287,6 +1287,73 @@ export default function ImagineView(props: ImagineParams) {
                   </span>
                 )}
               </div>
+
+              {/* Floating Action Bar - Bottom Right, appears on hover */}
+              <div className="absolute bottom-6 right-6 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {/* Primary Action: Download */}
+                <button
+                  className="px-4 py-2 bg-white text-black font-semibold rounded-full hover:opacity-90 transition-opacity text-sm flex items-center gap-2 shadow-lg"
+                  onClick={() => window.open(selectedImage.url, '_blank')}
+                  type="button"
+                >
+                  <Download size={16} />
+                  Download
+                </button>
+                {/* Next-step Affordance: Animate This */}
+                <button
+                  className="px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white font-semibold rounded-full hover:opacity-90 transition-opacity text-sm flex items-center gap-2 shadow-lg"
+                  onClick={() => {
+                    // Store image URL for Animate mode to use
+                    localStorage.setItem('homepilot_animate_source', selectedImage.url)
+                    // Switch to Animate mode (parent component handles this via URL or state)
+                    window.dispatchEvent(new CustomEvent('switch-to-animate', { detail: { imageUrl: selectedImage.url } }))
+                    setSelectedImage(null)
+                    setShowDetails(false)
+                  }}
+                  type="button"
+                  title="Animate this image"
+                >
+                  <Film size={16} />
+                  Animate
+                </button>
+                {/* More Options Dropdown */}
+                <div className="relative group/more">
+                  <button
+                    className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
+                    type="button"
+                    title="More options"
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
+                  {/* Dropdown Menu */}
+                  <div className="absolute bottom-full right-0 mb-2 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden opacity-0 group-hover/more:opacity-100 pointer-events-none group-hover/more:pointer-events-auto transition-opacity duration-200 min-w-[160px]">
+                    <button
+                      className="w-full px-4 py-2.5 text-left text-sm text-white/80 hover:bg-white/10 flex items-center gap-3 transition-colors"
+                      onClick={() => { setPrompt(selectedImage.prompt); setSelectedImage(null); setShowDetails(false); }}
+                      type="button"
+                    >
+                      <RefreshCw size={14} />
+                      Reuse Prompt
+                    </button>
+                    <button
+                      className="w-full px-4 py-2.5 text-left text-sm text-white/80 hover:bg-white/10 flex items-center gap-3 transition-colors"
+                      onClick={() => navigator.clipboard.writeText(selectedImage.prompt)}
+                      type="button"
+                    >
+                      <Copy size={14} />
+                      Copy Prompt
+                    </button>
+                    <button
+                      className="w-full px-4 py-2.5 text-left text-sm text-red-400 hover:bg-red-500/10 flex items-center gap-3 transition-colors"
+                      onClick={() => handleDelete(selectedImage)}
+                      type="button"
+                    >
+                      <Trash2 size={14} />
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Details Panel - Slide in from right */}
@@ -1299,6 +1366,11 @@ export default function ImagineView(props: ImagineParams) {
                   </h3>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Prompt - Only visible in details panel */}
+                  <div>
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2 block">Prompt</label>
+                    <p className="text-sm text-white/70 leading-relaxed">{selectedImage.prompt}</p>
+                  </div>
                   {/* Seed */}
                   {selectedImage.seed && (
                     <div>
@@ -1349,52 +1421,6 @@ export default function ImagineView(props: ImagineParams) {
                 </div>
               </div>
             )}
-          </div>
-
-          {/* Bottom Bar - Caption & Actions */}
-          <div className="bg-[#0a0a0a] border-t border-white/10 p-4" onClick={(e) => e.stopPropagation()}>
-            {/* Caption-style Prompt */}
-            <div className="max-w-3xl mx-auto mb-4">
-              <p className="text-white/80 text-sm italic text-center leading-relaxed line-clamp-2">
-                "{selectedImage.prompt}"
-              </p>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex items-center justify-center gap-3">
-              <button
-                className="px-5 py-2.5 bg-white text-black font-semibold rounded-full hover:opacity-90 transition-opacity text-sm flex items-center gap-2"
-                onClick={() => window.open(selectedImage.url, '_blank')}
-                type="button"
-              >
-                <Download size={16} />
-                Download
-              </button>
-              <button
-                className="px-5 py-2.5 bg-white/10 text-white/90 font-semibold rounded-full hover:bg-white/20 transition-colors text-sm flex items-center gap-2"
-                onClick={() => { setPrompt(selectedImage.prompt); setSelectedImage(null); setShowDetails(false); }}
-                type="button"
-              >
-                <RefreshCw size={16} />
-                Reuse
-              </button>
-              <button
-                className="px-5 py-2.5 bg-white/10 text-white/90 font-semibold rounded-full hover:bg-white/20 transition-colors text-sm flex items-center gap-2"
-                onClick={() => navigator.clipboard.writeText(selectedImage.prompt)}
-                type="button"
-              >
-                <Copy size={16} />
-                Copy
-              </button>
-              <button
-                className="px-5 py-2.5 bg-red-500/20 text-red-400 font-semibold rounded-full hover:bg-red-500/30 transition-colors text-sm flex items-center gap-2"
-                onClick={() => handleDelete(selectedImage)}
-                type="button"
-              >
-                <Trash2 size={16} />
-                Delete
-              </button>
-            </div>
           </div>
         </div>
       )}
