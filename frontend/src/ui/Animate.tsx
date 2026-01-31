@@ -183,17 +183,19 @@ export default function AnimateView(props: AnimateParams) {
         const parsed = JSON.parse(stored)
         if (Array.isArray(parsed)) {
           // Migrate old items (without status) and handle stale processing items
-          const STALE_THRESHOLD = 10 * 60 * 1000  // 10 minutes
+          const STALE_THRESHOLD = 2 * 60 * 60 * 1000  // 2 hours - video generation can take a while
           const now = Date.now()
           return parsed.map((item: any) => {
             // Migrate: old items without status get 'done' if they have videoUrl
             if (!item.status) {
               return { ...item, status: item.videoUrl ? 'done' : 'failed' }
             }
-            // Handle stale processing items (tab was closed during generation)
+            // Handle stale processing items (app was closed during generation)
+            // Only mark as failed if very old (2+ hours)
             if (item.status === 'processing' && (now - item.createdAt) > STALE_THRESHOLD) {
               return { ...item, status: 'failed', error: 'Generation interrupted - please retry' }
             }
+            // Keep processing items as-is (will show spinner)
             return item
           })
         }
