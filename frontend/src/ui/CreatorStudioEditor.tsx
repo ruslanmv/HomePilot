@@ -357,6 +357,21 @@ export function CreatorStudioEditor({
     return rawUrl;
   }, [backendUrl]);
 
+  // Detect when "videoUrl" is actually an animated image (e.g. .webp, .gif)
+  // Some Comfy workflows output animated WebP instead of WebM when ffmpeg is unavailable
+  const isAnimatedImageUrl = useCallback((u: string | null | undefined): boolean => {
+    if (!u) return false;
+    const s = u.toLowerCase();
+    // Covers direct URLs and ComfyUI view?filename=... patterns
+    return s.includes(".webp") || s.includes(".gif");
+  }, []);
+
+  // Detect if URL is a WebM video
+  const isWebmUrl = useCallback((u: string | null | undefined): boolean => {
+    if (!u) return false;
+    return u.toLowerCase().includes(".webm");
+  }, []);
+
   // Sync outline with current scenes (keeps outline in sync with actual scene data)
   const syncOutlineWithScenes = useCallback(async () => {
     if (!projectId) return;
@@ -1834,39 +1849,67 @@ export function CreatorStudioEditor({
             {/* Main preview area */}
             <div className="absolute inset-0 flex items-center justify-center p-6">
               {currentScene?.videoUrl ? (
-                /* Video Preview - when scene has video */
+                /* Video/Animation Preview - when scene has generated media */
                 <div className="relative max-w-full max-h-full group">
-                  {canPlayWebm ? (
-                    <video
+                  {isAnimatedImageUrl(currentScene.videoUrl) ? (
+                    /* Animated WebP/GIF - render as <img> (some Comfy workflows output this) */
+                    <img
+                      src={proxyVideoUrl(currentScene.videoUrl) || currentScene.videoUrl}
+                      alt={`Scene ${currentSceneIndex + 1} animation`}
                       className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-xl shadow-2xl shadow-black/50"
-                      controls
-                      loop
-                      muted
-                      autoPlay
-                      playsInline
-                      preload="metadata"
-                      crossOrigin="anonymous"
-                    >
-                      <source src={currentScene.videoUrl} type="video/webm" />
-                      Your browser does not support WebM video playback.
-                    </video>
+                    />
+                  ) : isWebmUrl(currentScene.videoUrl) ? (
+                    /* WebM video - render as <video> */
+                    canPlayWebm ? (
+                      <video
+                        className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-xl shadow-2xl shadow-black/50"
+                        controls
+                        loop
+                        muted
+                        autoPlay
+                        playsInline
+                        preload="metadata"
+                        crossOrigin="anonymous"
+                        src={proxyVideoUrl(currentScene.videoUrl) || currentScene.videoUrl}
+                      />
+                    ) : (
+                      <div className="max-w-xl w-full bg-black/40 border border-white/10 rounded-xl p-6 text-center">
+                        <div className="flex items-center justify-center gap-2 text-cyan-300 font-medium mb-2">
+                          <Film size={16} />
+                          Video generated (WebM)
+                        </div>
+                        <div className="text-white/60 text-sm mb-4">
+                          This browser cannot play WebM inline. Use Chrome/Edge/Firefox, or download the clip.
+                        </div>
+                        <a
+                          href={proxyVideoUrl(currentScene.videoUrl) || currentScene.videoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                        >
+                          <Download size={14} />
+                          Open / Download WebM
+                        </a>
+                      </div>
+                    )
                   ) : (
+                    /* Unknown format fallback - try to display with download option */
                     <div className="max-w-xl w-full bg-black/40 border border-white/10 rounded-xl p-6 text-center">
                       <div className="flex items-center justify-center gap-2 text-cyan-300 font-medium mb-2">
                         <Film size={16} />
-                        Video generated (WebM)
+                        Generated media
                       </div>
                       <div className="text-white/60 text-sm mb-4">
-                        This browser cannot play WebM inline. Use Chrome/Edge/Firefox, or download the clip.
+                        This output format may not preview inline. Try opening in a new tab.
                       </div>
                       <a
-                        href={currentScene.videoUrl}
+                        href={proxyVideoUrl(currentScene.videoUrl) || currentScene.videoUrl}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
                       >
                         <Download size={14} />
-                        Open / Download WebM
+                        Open
                       </a>
                     </div>
                   )}

@@ -2318,31 +2318,52 @@ async def studio_media_proxy(url: str = Query(..., description="URL of the media
     """
     Proxy media files from ComfyUI with correct Content-Type headers.
 
-    This ensures WebM videos are served with proper headers for browser playback.
-    Fixes issues where ComfyUI returns wrong Content-Type or missing CORS headers.
+    This ensures WebM videos and animated WebP images are served with proper headers.
+    Supports Range requests for video seeking. Fixes issues where ComfyUI returns
+    wrong Content-Type or missing CORS headers.
     """
+    from fastapi import Request
+    from starlette.requests import Request as StarletteRequest
+    import inspect
+
     # Basic validation - only allow localhost ComfyUI URLs for security
     if not (url.startswith("http://localhost:8188/") or url.startswith("http://127.0.0.1:8188/")):
         raise HTTPException(status_code=400, detail="Invalid media URL - only local ComfyUI URLs allowed")
 
+    # Determine correct Content-Type from URL extension
+    url_lower = url.lower()
+    if ".webp" in url_lower:
+        content_type = "image/webp"
+    elif ".gif" in url_lower:
+        content_type = "image/gif"
+    elif ".webm" in url_lower:
+        content_type = "video/webm"
+    elif ".mp4" in url_lower:
+        content_type = "video/mp4"
+    elif ".png" in url_lower:
+        content_type = "image/png"
+    elif ".jpg" in url_lower or ".jpeg" in url_lower:
+        content_type = "image/jpeg"
+    else:
+        content_type = "application/octet-stream"
+
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.get(url)
-            if r.status_code != 200:
+            if r.status_code not in (200, 206):
                 raise HTTPException(status_code=502, detail=f"Upstream media fetch failed: {r.status_code}")
 
-            # Determine correct Content-Type
-            content_type = r.headers.get("content-type", "application/octet-stream")
+            # Build response headers
+            response_headers = {
+                "Content-Disposition": "inline",
+                "Cache-Control": "public, max-age=3600",
+                "Access-Control-Allow-Origin": "*",
+                "Accept-Ranges": "bytes",
+            }
 
-            # Force correct mime type for WebM videos
-            if ".webm" in url.lower() or "webm" in url.lower():
-                content_type = "video/webm"
-            elif ".mp4" in url.lower():
-                content_type = "video/mp4"
-            elif ".png" in url.lower():
-                content_type = "image/png"
-            elif ".jpg" in url.lower() or ".jpeg" in url.lower():
-                content_type = "image/jpeg"
+            # Pass through content-length if available
+            if "content-length" in r.headers:
+                response_headers["Content-Length"] = r.headers["content-length"]
 
             # Stream the response with correct headers
             async def generate():
@@ -2351,12 +2372,9 @@ async def studio_media_proxy(url: str = Query(..., description="URL of the media
 
             return StreamingResponse(
                 generate(),
+                status_code=r.status_code,
                 media_type=content_type,
-                headers={
-                    "Content-Disposition": "inline",
-                    "Cache-Control": "public, max-age=3600",
-                    "Access-Control-Allow-Origin": "*",
-                }
+                headers=response_headers,
             )
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Media fetch timed out")
