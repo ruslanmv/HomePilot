@@ -1,0 +1,49 @@
+diff --git a/comfy_extras/nodes_lt.py b/comfy_extras/nodes_lt.py
+index 2aec62f6..d35a21a5 100644
+--- a/comfy_extras/nodes_lt.py
++++ b/comfy_extras/nodes_lt.py
+@@ -64,6 +64,14 @@ class LTXVImgToVideo(io.ComfyNode):
+     def execute(cls, positive, negative, image, vae, width, height, length, batch_size, strength) -> io.NodeOutput:
+         pixels = comfy.utils.common_upscale(image.movedim(-1, 1), width, height, "bilinear", "center").movedim(1, -1)
+         encode_pixels = pixels[:, :, :, :3]
++        # Ensure VAE is on GPU before encoding (fixes CPU offload device mismatch)
++        try:
++            if hasattr(vae, 'patcher'):
++                comfy.model_management.load_model_gpu(vae.patcher)
++            elif hasattr(vae, 'first_stage_model'):
++                vae.first_stage_model.to(comfy.model_management.get_torch_device())
++        except Exception:
++            pass  # If we can't move it, try encoding anyway
+         t = vae.encode(encode_pixels)
+ 
+         latent = torch.zeros([batch_size, 128, ((length - 1) // 8) + 1, height // 32, width // 32], device=comfy.model_management.intermediate_device())
+@@ -118,6 +126,14 @@ class LTXVImgToVideoInplace(io.ComfyNode):
+         else:
+             pixels = image
+         encode_pixels = pixels[:, :, :, :3]
++        # Ensure VAE is on GPU before encoding (fixes CPU offload device mismatch)
++        try:
++            if hasattr(vae, 'patcher'):
++                comfy.model_management.load_model_gpu(vae.patcher)
++            elif hasattr(vae, 'first_stage_model'):
++                vae.first_stage_model.to(comfy.model_management.get_torch_device())
++        except Exception:
++            pass  # If we can't move it, try encoding anyway
+         t = vae.encode(encode_pixels)
+ 
+         samples[:, :, :t.shape[2]] = t
+@@ -206,6 +222,14 @@ class LTXVAddGuide(io.ComfyNode):
+         images = images[:(images.shape[0] - 1) // time_scale_factor * time_scale_factor + 1]
+         pixels = comfy.utils.common_upscale(images.movedim(-1, 1), latent_width * width_scale_factor, latent_height * height_scale_factor, "bilinear", crop="disabled").movedim(1, -1)
+         encode_pixels = pixels[:, :, :, :3]
++        # Ensure VAE is on GPU before encoding (fixes CPU offload device mismatch)
++        try:
++            if hasattr(vae, 'patcher'):
++                comfy.model_management.load_model_gpu(vae.patcher)
++            elif hasattr(vae, 'first_stage_model'):
++                vae.first_stage_model.to(comfy.model_management.get_torch_device())
++        except Exception:
++            pass  # If we can't move it, try encoding anyway
+         t = vae.encode(encode_pixels)
+         return encode_pixels, t
+ 
