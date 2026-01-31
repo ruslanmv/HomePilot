@@ -284,6 +284,54 @@ export function CreatorStudioEditor({
     [backendUrl, authKey]
   );
 
+  // ---------- API <-> UI normalization helpers ----------
+  // Backend may return snake_case (image_url/video_url). UI uses camelCase (imageUrl/videoUrl).
+  const normalizeScene = useCallback((raw: any): Scene => {
+    return {
+      id: raw.id,
+      videoId: raw.videoId ?? raw.video_id ?? "",
+      idx: raw.idx ?? raw.index ?? raw.scene_index ?? 0,
+      narration: raw.narration ?? "",
+      imagePrompt: raw.imagePrompt ?? raw.image_prompt ?? "",
+      negativePrompt: raw.negativePrompt ?? raw.negative_prompt ?? "",
+      imageUrl: raw.imageUrl ?? raw.image_url ?? null,
+      videoUrl: raw.videoUrl ?? raw.video_url ?? null,
+      audioUrl: raw.audioUrl ?? raw.audio_url ?? null,
+      status: raw.status ?? "pending",
+      durationSec: raw.durationSec ?? raw.duration_sec ?? 5,
+      createdAt: raw.createdAt ?? raw.created_at ?? 0,
+      updatedAt: raw.updatedAt ?? raw.updated_at ?? 0,
+    } as Scene;
+  }, []);
+
+  const normalizeScenes = useCallback((arr: any[]): Scene[] => {
+    if (!Array.isArray(arr)) return [];
+    return arr.map(normalizeScene).sort((a, b) => a.idx - b.idx);
+  }, [normalizeScene]);
+
+  // Convert UI patch (camelCase) to backend-friendly payload (include snake_case too)
+  const toScenePatch = useCallback((patch: any) => {
+    const out: any = { ...patch };
+    if ("imageUrl" in out) out.image_url = out.imageUrl;
+    if ("videoUrl" in out) out.video_url = out.videoUrl;
+    if ("audioUrl" in out) out.audio_url = out.audioUrl;
+    if ("imagePrompt" in out) out.image_prompt = out.imagePrompt;
+    if ("negativePrompt" in out) out.negative_prompt = out.negativePrompt;
+    if ("durationSec" in out) out.duration_sec = out.durationSec;
+    return out;
+  }, []);
+
+  // Authoritative refresh from backend (source of truth)
+  const refreshScenes = useCallback(async () => {
+    try {
+      const scenesRes = await fetchApi<{ scenes: any[] }>(`/studio/videos/${projectId}/scenes`);
+      setScenes(normalizeScenes((scenesRes as any).scenes));
+    } catch (e) {
+      // Non-critical - log but don't alert
+      console.warn('[CreatorStudioEditor] Failed to refresh scenes:', e);
+    }
+  }, [fetchApi, projectId, normalizeScenes]);
+
   // Sync outline with current scenes (keeps outline in sync with actual scene data)
   const syncOutlineWithScenes = useCallback(async () => {
     if (!projectId) return;
@@ -718,10 +766,10 @@ export function CreatorStudioEditor({
         if (imageUrl) {
           console.log('[CreatorStudioEditor] Image generated:', imageUrl);
 
-          await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, {
+          await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, toScenePatch({
             imageUrl,
             status: 'ready',
-          });
+          }));
 
           setScenes((prev) =>
             prev.map((s) =>
@@ -738,7 +786,7 @@ export function CreatorStudioEditor({
         setIsGeneratingImage(false);
       }
     },
-    [projectId, imageProvider, imageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage]
+    [projectId, imageProvider, imageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage, toScenePatch]
   );
 
   // Generate video for a scene (converts image to video)
@@ -758,25 +806,32 @@ export function CreatorStudioEditor({
       console.log('[CreatorStudioEditor] Generating video for scene:', sceneId);
 
       try {
-        const data = await postApi<{ media?: { videos?: string[] } }>(
+        // IMPORTANT:
+        // Backend animate mode detects the reference image via URL in the message (in this project version).
+        // Backend also expects vidModel (not videoModel).
+        const data = await postApi<{ media?: any }>(
           '/chat',
           {
-            message: prompt || 'Animate this scene with subtle motion',
+            message: `${prompt || 'Animate this scene with subtle motion'} ${imageUrl}`,
             mode: 'animate',
             provider: 'ollama',
-            referenceUrl: imageUrl,
-            videoModel: videoModel || undefined,
+            vidModel: videoModel || undefined,
           }
         );
 
-        const generatedVideoUrl = data?.media?.videos?.[0];
+        // Backend returns media.video_url (NOT always media.videos[]).
+        const generatedVideoUrl =
+          data?.media?.video_url ||
+          data?.media?.videos?.[0] ||
+          null;
+
         if (generatedVideoUrl) {
           console.log('[CreatorStudioEditor] Video generated:', generatedVideoUrl);
 
-          await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, {
+          await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, toScenePatch({
             videoUrl: generatedVideoUrl,
             status: 'ready',
-          });
+          }));
 
           setScenes((prev) =>
             prev.map((s) =>
@@ -793,8 +848,21 @@ export function CreatorStudioEditor({
         setIsGeneratingVideo(false);
       }
     },
-    [projectId, videoModel, postApi, patchApi, isGeneratingVideo]
+    [projectId, videoModel, postApi, patchApi, isGeneratingVideo, toScenePatch]
   );
+
+  // Remove video and fall back to image-only for a scene
+  const removeVideoForScene = useCallback(async (sceneId: string) => {
+    if (!window.confirm("Remove the video for this scene and keep the image?")) return;
+    try {
+      await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, toScenePatch({ videoUrl: null, status: 'ready' }));
+      setScenes(prev => prev.map(s => (s.id === sceneId ? { ...s, videoUrl: null, status: 'ready' as SceneStatus } : s)));
+      setLastSaved(new Date());
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Failed to remove video:', e);
+      alert(`Failed to remove video: ${e.message}`);
+    }
+  }, [projectId, patchApi, toScenePatch]);
 
   // Generate scene from outline
   const generateSceneFromOutline = useCallback(async (sceneIndex: number) => {
@@ -894,10 +962,10 @@ export function CreatorStudioEditor({
 
           const imageUrl = data?.media?.images?.[0];
           if (imageUrl) {
-            await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, {
+            await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({
               imageUrl,
               status: enableVideoGeneration ? 'generating' : 'ready',
-            });
+            }));
 
             setScenes((prev) =>
               prev.map((s) =>
@@ -924,23 +992,28 @@ export function CreatorStudioEditor({
 
           try {
             // Use the animate endpoint to generate video from image
-            const data = await postApi<{ media?: { videos?: string[] } }>(
+            // IMPORTANT: Include imageUrl in message and use vidModel (not videoModel)
+            const data = await postApi<{ media?: any }>(
               '/chat',
               {
-                message: scene.imagePrompt,
+                message: `${scene.imagePrompt} ${imageUrl}`,
                 mode: 'animate',
                 provider: 'ollama',
-                referenceUrl: imageUrl,
-                videoModel: videoModel || undefined,
+                vidModel: videoModel || undefined,
               }
             );
 
-            const videoUrl = data?.media?.videos?.[0];
+            // Backend returns media.video_url (NOT always media.videos[])
+            const videoUrl =
+              data?.media?.video_url ||
+              data?.media?.videos?.[0] ||
+              null;
+
             if (videoUrl) {
-              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, {
+              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({
                 videoUrl,
                 status: 'ready',
-              });
+              }));
 
               setScenes((prev) =>
                 prev.map((s) =>
@@ -949,9 +1022,9 @@ export function CreatorStudioEditor({
               );
             } else {
               // No video generated, mark scene as ready anyway (image only)
-              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, {
+              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({
                 status: 'ready',
-              });
+              }));
               setScenes((prev) =>
                 prev.map((s) =>
                   s.id === scene.id ? { ...s, status: 'ready' as SceneStatus } : s
@@ -962,7 +1035,7 @@ export function CreatorStudioEditor({
             console.error(`[CreatorStudioEditor] Failed to generate video for scene ${i + 1}:`, vidErr);
             // Mark scene as ready anyway (fallback to image only)
             try {
-              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, { status: 'ready' });
+              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({ status: 'ready' }));
               setScenes((prev) =>
                 prev.map((s) =>
                   s.id === scene.id ? { ...s, status: 'ready' as SceneStatus } : s
@@ -980,13 +1053,16 @@ export function CreatorStudioEditor({
       // Sync outline with actual scene data to keep them in sync
       await syncOutlineWithScenes();
 
+      // Final refresh so UI shows all persisted videoUrl values
+      await refreshScenes();
+
     } catch (e: any) {
       console.error('[CreatorStudioEditor] Batch generation failed:', e);
     } finally {
       setIsBatchGenerating(false);
       setBatchProgress({ current: 0, total: 0, phase: 'scene' });
     }
-  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, enableVideoGeneration, videoModel, syncOutlineWithScenes]);
+  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, enableVideoGeneration, videoModel, syncOutlineWithScenes, toScenePatch, refreshScenes]);
 
   // Load project and scenes
   useEffect(() => {
@@ -996,10 +1072,10 @@ export function CreatorStudioEditor({
       try {
         const [projectRes, scenesRes] = await Promise.all([
           fetchApi<{ video: Project }>(`/studio/videos/${projectId}`),
-          fetchApi<{ scenes: Scene[] }>(`/studio/videos/${projectId}/scenes`),
+          fetchApi<{ scenes: any[] }>(`/studio/videos/${projectId}/scenes`),
         ]);
         setProject(projectRes.video);
-        setScenes(scenesRes.scenes);
+        setScenes(normalizeScenes((scenesRes as any).scenes));
 
         // Extract LLM model from project tags if not already set
         const tags = (projectRes.video as any).tags || [];
@@ -1016,7 +1092,7 @@ export function CreatorStudioEditor({
       }
     }
     loadData();
-  }, [projectId, fetchApi, defaultLLMModel]);
+  }, [projectId, fetchApi, defaultLLMModel, normalizeScenes]);
 
   // Load available models and existing outline on mount
   useEffect(() => {
@@ -1750,6 +1826,16 @@ export function CreatorStudioEditor({
                     >
                       <RefreshCw size={16} className={isGeneratingVideo ? 'animate-spin' : ''} />
                     </button>
+                    {/* Remove video */}
+                    <button
+                      type="button"
+                      onClick={() => removeVideoForScene(currentScene.id)}
+                      disabled={isGeneratingVideo}
+                      className="w-9 h-9 rounded-full bg-red-500/30 backdrop-blur-md border border-red-500/30 flex items-center justify-center text-red-200 hover:text-white hover:bg-red-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Remove video (keep image)"
+                    >
+                      <X size={16} />
+                    </button>
                   </div>
 
                   {/* Generating video overlay */}
@@ -2112,22 +2198,39 @@ export function CreatorStudioEditor({
 
                 {/* Make Video / Regenerate Video button */}
                 {enableVideoGeneration && editingScene.imageUrl && (
-                  <button
-                    onClick={() => {
-                      generateVideoForScene(editingScene.id, editingScene.imageUrl!, editImagePrompt);
-                      setShowSceneEditor(false);
-                    }}
-                    disabled={isGeneratingImage || isGeneratingVideo}
-                    className={[
-                      "flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-all disabled:opacity-50",
-                      editingScene.videoUrl
-                        ? "bg-white/5 hover:bg-white/10 border border-white/10"
-                        : "bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 text-cyan-300"
-                    ].join(" ")}
-                  >
-                    <Film size={14} />
-                    {editingScene.videoUrl ? 'Regenerate Video' : 'Make Video'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        generateVideoForScene(editingScene.id, editingScene.imageUrl!, editImagePrompt);
+                        setShowSceneEditor(false);
+                      }}
+                      disabled={isGeneratingImage || isGeneratingVideo}
+                      className={[
+                        "flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-all disabled:opacity-50",
+                        editingScene.videoUrl
+                          ? "bg-white/5 hover:bg-white/10 border border-white/10"
+                          : "bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 text-cyan-300"
+                      ].join(" ")}
+                    >
+                      <Film size={14} />
+                      {editingScene.videoUrl ? 'Regenerate Video' : 'Make Video'}
+                    </button>
+
+                    {editingScene.videoUrl && (
+                      <button
+                        onClick={() => {
+                          removeVideoForScene(editingScene.id);
+                          setShowSceneEditor(false);
+                        }}
+                        disabled={isGeneratingImage || isGeneratingVideo}
+                        className="flex items-center gap-2 px-4 py-2 bg-red-500/15 hover:bg-red-500/25 border border-red-500/25 rounded-xl text-sm text-red-200 transition-all disabled:opacity-50"
+                        title="Remove video and keep image"
+                      >
+                        <X size={14} />
+                        Remove Video
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
