@@ -1019,7 +1019,7 @@ export default function AnimateView(props: AnimateParams) {
               {/* Processing overlay - "Generating video..." */}
               {item.status === 'processing' && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
-                  <Loader2 size={32} className="text-white animate-spin mb-3" />
+                  <Loader2 size={32} className="text-purple-400 animate-spin mb-3" />
                   <div className="text-white/90 text-sm font-medium">Generating video...</div>
                   {typeof item.progress === 'number' && (
                     <div className="mt-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-white/90 text-xs">
