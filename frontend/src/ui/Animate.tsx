@@ -321,7 +321,14 @@ export default function AnimateView(props: AnimateParams) {
         const base = props.backendUrl.replace(/\/+$/, '')
         const params = new URLSearchParams()
         if (detectedModelType) params.set('model', detectedModelType)
-        params.set('preset', qualityPreset)
+        // Map hardware presets to video quality presets
+        // Hardware: 4060 → low, 4080 → medium, a100 → high, custom → medium
+        const videoPreset = qualityPreset === 'custom' ? 'medium'
+          : qualityPreset === '4060' ? 'low'
+          : qualityPreset === '4080' ? 'medium'
+          : qualityPreset === 'a100' ? 'high'
+          : qualityPreset  // Already a valid video preset (low/medium/high/ultra)
+        params.set('preset', videoPreset)
 
         const res = await fetch(`${base}/video-presets?${params}`, {
           headers: authKey ? { 'x-api-key': authKey } : undefined,
@@ -694,6 +701,13 @@ export default function AnimateView(props: AnimateParams) {
         ? availableResolutions.find(r => r.id === customResolution)
         : null
 
+      // Map hardware presets to video quality presets
+      const videoPreset = qualityPreset === 'custom' ? 'medium'
+        : qualityPreset === '4060' ? 'low'
+        : qualityPreset === '4080' ? 'medium'
+        : qualityPreset === 'a100' ? 'high'
+        : qualityPreset
+
       const requestBody: any = {
         message: animateMessage,
         mode: 'animate',
@@ -703,7 +717,7 @@ export default function AnimateView(props: AnimateParams) {
         vidFps: fps,
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
-        vidPreset: qualityPreset,
+        vidPreset: videoPreset,
         vidAspectRatio: aspectRatio,
 
         // Advanced parameters (when enabled)
@@ -878,6 +892,13 @@ export default function AnimateView(props: AnimateParams) {
         ? availableResolutions.find(r => r.id === customResolution)
         : null
 
+      // Map hardware presets to video quality presets
+      const videoPreset = qualityPreset === 'custom' ? 'medium'
+        : qualityPreset === '4060' ? 'low'
+        : qualityPreset === '4080' ? 'medium'
+        : qualityPreset === 'a100' ? 'high'
+        : qualityPreset
+
       const requestBody: any = {
         message: animateMessage,
         mode: 'animate',
@@ -885,7 +906,7 @@ export default function AnimateView(props: AnimateParams) {
         vidFps: fps,
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
-        vidPreset: qualityPreset,
+        vidPreset: videoPreset,
         vidAspectRatio: aspectRatio,
         // When we have an existing source image, tell backend to skip image generation
         // The prompt should only affect the animation, not regenerate the source
