@@ -300,6 +300,11 @@ export default function AnimateView(props: AnimateParams) {
   const [customResolution, setCustomResolution] = useState<string>('auto')  // 'auto' | 'low' | 'medium' | 'high' | 'ultra'
   const [availableResolutions, setAvailableResolutions] = useState<ResolutionOption[]>([])
 
+  // Debug: Log when customResolution changes
+  useEffect(() => {
+    console.log(`[Animate] customResolution state changed to: ${customResolution}`)
+  }, [customResolution])
+
   // Preset defaults from API (model-specific)
   const [presetDefaults, setPresetDefaults] = useState<PresetValues>(FALLBACK_ADVANCED_PARAMS)
 
@@ -397,6 +402,7 @@ export default function AnimateView(props: AnimateParams) {
 
     async function buildResolutionOptions() {
       // Always reset to Auto when aspect ratio changes
+      console.log('[Animate] Resetting customResolution to auto (aspect ratio changed)')
       setCustomResolution('auto')
 
       if (!rawAspectRatioData.length) {
@@ -1199,7 +1205,10 @@ export default function AnimateView(props: AnimateParams) {
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
                     <button
-                      onClick={() => setCustomResolution('auto')}
+                      onClick={() => {
+                        console.log('[Animate] Resolution clicked: auto')
+                        setCustomResolution('auto')
+                      }}
                       className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
                         customResolution === 'auto'
                           ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
@@ -1211,7 +1220,10 @@ export default function AnimateView(props: AnimateParams) {
                     {availableResolutions.map((r) => (
                       <button
                         key={r.id}
-                        onClick={() => setCustomResolution(r.id)}
+                        onClick={() => {
+                          console.log(`[Animate] Resolution clicked: ${r.id} (${r.width}×${r.height})`)
+                          setCustomResolution(r.id)
+                        }}
                         title={`${r.width}×${r.height}`}
                         className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
                           customResolution === r.id
