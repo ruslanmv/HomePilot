@@ -77,6 +77,9 @@ type ChatResponse = {
     preset?: string
     source_image?: string
     auto_generated_image?: string
+    // Resolution for reproducibility
+    width?: number
+    height?: number
   } | null
   message?: string
 }
