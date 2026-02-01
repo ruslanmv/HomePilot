@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "defaults": {
     "sampler": "euler",
     "scheduler": "normal",
@@ -7,15 +7,27 @@
   },
 
   "aspect_ratios": {
+    "3:2": {
+      "ui_label": "Classic Photo (3:2)",
+      "compatible_models": ["ltx", "wan", "hunyuan"],
+      "dimensions": {
+        "low":    { "width": 576, "height": 384 },
+        "medium": { "width": 768, "height": 512 },
+        "high":   { "width": 768, "height": 512 },
+        "ultra":  { "width": 960, "height": 640 }
+      },
+      "notes": "LTX default. Proven stable at 768x512. Best balance of quality and VRAM."
+    },
     "16:9": {
       "ui_label": "Widescreen (16:9)",
       "compatible_models": ["svd", "ltx", "wan", "hunyuan", "mochi", "cogvideo"],
       "dimensions": {
         "low":    { "width": 640, "height": 352 },
         "medium": { "width": 832, "height": 480 },
-        "high":   { "width": 1024, "height": 576 },
-        "ultra":  { "width": 1280, "height": 720 }
-      }
+        "high":   { "width": 832, "height": 480 },
+        "ultra":  { "width": 1024, "height": 576 }
+      },
+      "notes": "For LTX, high uses 832x480 to maintain stability. Ultra requires 24GB+ VRAM."
     },
     "9:16": {
       "ui_label": "Vertical / Mobile (9:16)",
@@ -23,8 +35,8 @@
       "dimensions": {
         "low":    { "width": 352, "height": 640 },
         "medium": { "width": 480, "height": 832 },
-        "high":   { "width": 576, "height": 1024 },
-        "ultra":  { "width": 720, "height": 1280 }
+        "high":   { "width": 480, "height": 832 },
+        "ultra":  { "width": 576, "height": 1024 }
       },
       "notes": "Excluded SVD, Mochi, and CogVideo due to poor vertical training data."
     },
@@ -33,9 +45,9 @@
       "compatible_models": ["wan", "hunyuan", "ltx", "cogvideo"],
       "dimensions": {
         "low":    { "width": 512, "height": 512 },
-        "medium": { "width": 768, "height": 768 },
-        "high":   { "width": 1024, "height": 1024 },
-        "ultra":  { "width": 1024, "height": 1024 }
+        "medium": { "width": 640, "height": 640 },
+        "high":   { "width": 768, "height": 768 },
+        "ultra":  { "width": 896, "height": 896 }
       },
       "notes": "Excluded SVD and Mochi (landscape bias)."
     },
@@ -43,21 +55,32 @@
       "ui_label": "Classic TV (4:3)",
       "compatible_models": ["wan", "hunyuan", "ltx", "mochi", "cogvideo"],
       "dimensions": {
-        "low":    { "width": 640, "height": 480 },
-        "medium": { "width": 896, "height": 672 },
-        "high":   { "width": 1024, "height": 768 },
-        "ultra":  { "width": 1152, "height": 864 }
+        "low":    { "width": 576, "height": 448 },
+        "medium": { "width": 768, "height": 576 },
+        "high":   { "width": 768, "height": 576 },
+        "ultra":  { "width": 896, "height": 672 }
       }
     },
     "3:4": {
       "ui_label": "Portrait (3:4)",
       "compatible_models": ["wan", "hunyuan", "ltx"],
       "dimensions": {
-        "low":    { "width": 480, "height": 640 },
-        "medium": { "width": 672, "height": 896 },
-        "high":   { "width": 768, "height": 1024 },
-        "ultra":  { "width": 864, "height": 1152 }
+        "low":    { "width": 448, "height": 576 },
+        "medium": { "width": 576, "height": 768 },
+        "high":   { "width": 576, "height": 768 },
+        "ultra":  { "width": 672, "height": 896 }
       }
+    },
+    "21:9": {
+      "ui_label": "Cinematic Ultra-Wide (21:9)",
+      "compatible_models": ["ltx", "wan", "hunyuan", "mochi"],
+      "dimensions": {
+        "low":    { "width": 672, "height": 288 },
+        "medium": { "width": 896, "height": 384 },
+        "high":   { "width": 896, "height": 384 },
+        "ultra":  { "width": 1120, "height": 480 }
+      },
+      "notes": "Cinematic letterbox. Keep pixel count moderate for stability."
     }
   },
 
@@ -79,7 +102,7 @@
       },
       "model_overrides": {
         "svd": { "fps": 6, "steps": 16, "cfg": 2.2, "denoise": 1.0 },
-        "ltx": { "fps": 24, "steps": 20, "cfg": 4.0, "denoise": 0.8 },
+        "ltx": { "fps": 24, "frames": 25, "steps": 20, "cfg": 4.0, "denoise": 0.8 },
         "wan": { "fps": 16, "steps": 20, "cfg": 4.0, "denoise": 1.0, "notes": "Use Wan 1.3B only" }
       }
     },
@@ -101,7 +124,7 @@
       },
       "model_overrides": {
         "svd": { "fps": 8, "steps": 20, "cfg": 2.5, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 49, "steps": 20, "cfg": 4.0, "denoise": 0.8 },
+        "ltx": { "fps": 24, "frames": 65, "steps": 24, "cfg": 4.0, "denoise": 0.8 },
         "wan": { "fps": 16, "steps": 30, "cfg": 5.0, "denoise": 1.0 },
         "hunyuan": { "fps": 16, "steps": 25, "cfg": 6.0, "denoise": 1.0, "notes": "Requires GGUF/Quantization on 12GB" },
         "mochi": { "fps": 24, "frames": 37, "steps": 40, "cfg": 4.5, "denoise": 1.0, "notes": "Requires FP8/Offloading on 12GB" }
@@ -111,24 +134,24 @@
     "high": {
       "ui": {
         "label": "High (Quality)",
-        "short": "Highest quality",
-        "description": "For 16GB+ VRAM. HD resolutions and high step counts."
+        "short": "Proven stable quality",
+        "description": "For 16GB+ VRAM. Matches proven working LTX configuration."
       },
       "base": {
         "fps": 24,
         "seconds": 4,
         "frames": 97,
-        "steps": 40,
+        "steps": 32,
         "cfg": 4.0,
-        "denoise": 0.9,
+        "denoise": 0.8,
         "max_frames": 97
       },
       "model_overrides": {
-        "svd": { "fps": 8, "frames": 25, "steps": 25, "cfg": 2.5 },
-        "ltx": { "steps": 30, "cfg": 4.0, "denoise": 0.8 },
-        "wan": { "steps": 35, "cfg": 5.0, "denoise": 1.0 },
-        "hunyuan": { "steps": 30, "cfg": 6.0, "denoise": 1.0 },
-        "mochi": { "frames": 85, "steps": 50, "cfg": 4.5, "denoise": 1.0 },
+        "svd": { "fps": 8, "frames": 25, "steps": 25, "cfg": 2.5, "denoise": 1.0 },
+        "ltx": { "fps": 24, "frames": 97, "steps": 32, "cfg": 4.0, "denoise": 0.8 },
+        "wan": { "fps": 24, "frames": 97, "steps": 35, "cfg": 5.0, "denoise": 1.0 },
+        "hunyuan": { "fps": 24, "frames": 97, "steps": 30, "cfg": 6.0, "denoise": 1.0 },
+        "mochi": { "fps": 24, "frames": 85, "steps": 50, "cfg": 4.5, "denoise": 1.0 },
         "cogvideo": { "fps": 8, "frames": 49, "steps": 50, "cfg": 6.0, "denoise": 1.0 }
       }
     },
@@ -136,25 +159,25 @@
     "ultra": {
       "ui": {
         "label": "Ultra (Maximum)",
-        "short": "Best possible",
-        "description": "For 24GB+ VRAM. Maximum detail and length."
+        "short": "Best possible (24GB+)",
+        "description": "For 24GB+ VRAM. Higher resolution with FP16 T5 encoder."
       },
       "base": {
         "fps": 24,
-        "seconds": 6,
-        "frames": 129,
-        "steps": 50,
-        "cfg": 5.0,
-        "denoise": 0.95,
+        "seconds": 4,
+        "frames": 97,
+        "steps": 40,
+        "cfg": 4.0,
+        "denoise": 0.8,
         "max_frames": 129
       },
       "model_overrides": {
-        "svd": { "frames": 25, "steps": 30 },
-        "ltx": { "frames": 97, "steps": 35 },
-        "wan": { "frames": 129, "steps": 40, "cfg": 5.5 },
-        "hunyuan": { "frames": 129, "steps": 40, "cfg": 6.0 },
-        "mochi": { "frames": 163, "steps": 60, "cfg": 4.5 },
-        "cogvideo": { "frames": 49, "steps": 60, "cfg": 6.0 }
+        "svd": { "frames": 25, "steps": 30, "denoise": 1.0 },
+        "ltx": { "fps": 24, "frames": 97, "steps": 40, "cfg": 4.0, "denoise": 0.8 },
+        "wan": { "fps": 24, "frames": 129, "steps": 40, "cfg": 5.5, "denoise": 1.0 },
+        "hunyuan": { "fps": 24, "frames": 129, "steps": 40, "cfg": 6.0, "denoise": 1.0 },
+        "mochi": { "fps": 24, "frames": 163, "steps": 60, "cfg": 4.5, "denoise": 1.0 },
+        "cogvideo": { "fps": 8, "frames": 49, "steps": 60, "cfg": 6.0, "denoise": 1.0 }
       }
     }
   },
@@ -171,8 +194,9 @@
       "frame_rule": "8n+1",
       "valid_frames": [9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 113, 121, 129, 137, 145, 153],
       "min_frames": 25,
+      "default_aspect_ratio": "3:2",
       "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, warping, deformed, duplicate frames, choppy motion, morphing face, static image",
-      "notes": "Highly flexible ratio support. Best motion at 24fps."
+      "notes": "Best at 768x512 (3:2). Uses FP8 T5 for high preset, FP16 for ultra."
     },
     "mochi": {
       "frame_rule": "6n+1",
