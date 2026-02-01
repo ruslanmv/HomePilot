@@ -443,7 +443,7 @@ export default function SettingsPanel({
   }
 
   return (
-    <div className="fixed bottom-20 left-[296px] w-[420px] max-h-[75vh] overflow-y-auto bg-[#181818] border border-white/15 rounded-2xl p-4 shadow-2xl z-50">
+    <div className="absolute bottom-16 left-0 right-0 mx-2 max-h-[70vh] overflow-y-auto bg-[#181818] border border-white/15 rounded-2xl p-4 shadow-2xl z-50">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-bold text-white">Enterprise Settings</h3>
         <button
