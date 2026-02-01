@@ -108,6 +108,23 @@ const QUALITY_PRESETS = [
   { id: 'ultra', label: 'Ultra', short: 'Maximum', description: 'For 24GB+ VRAM. Best quality, longest clips.' },
 ]
 
+// Video aspect ratio presets with preview dimensions
+type VideoAspectRatio = {
+  id: string
+  label: string
+  previewW: number
+  previewH: number
+}
+
+// Default aspect ratios (used as fallback)
+const DEFAULT_ASPECT_RATIOS: VideoAspectRatio[] = [
+  { id: '16:9', label: 'Widescreen', previewW: 42, previewH: 24 },
+  { id: '9:16', label: 'Vertical', previewW: 24, previewH: 42 },
+  { id: '1:1', label: 'Square', previewW: 24, previewH: 24 },
+  { id: '4:3', label: 'Classic', previewW: 32, previewH: 24 },
+  { id: '3:4', label: 'Portrait', previewW: 24, previewH: 32 },
+]
+
 // Fallback default values (used when API is unavailable)
 const FALLBACK_ADVANCED_PARAMS = {
   steps: 30,
@@ -241,6 +258,8 @@ export default function AnimateView(props: AnimateParams) {
   const [motion, setMotion] = useState(props.vidMotion || 'medium')
   const [showSettingsPanel, setShowSettingsPanel] = useState(false)
   const [qualityPreset, setQualityPreset] = useState('medium')
+  const [aspectRatio, setAspectRatio] = useState('16:9')
+  const [compatibleAspectRatios, setCompatibleAspectRatios] = useState<VideoAspectRatio[]>(DEFAULT_ASPECT_RATIOS)
 
   // Advanced Controls state
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
@@ -293,15 +312,49 @@ export default function AnimateView(props: AnimateParams) {
               negativePrompt: data.model_rules?.default_negative_prompt ?? '',
             })
           }
+
+          // Also update compatible aspect ratios from API response
+          if (data.compatible_aspect_ratios && Array.isArray(data.compatible_aspect_ratios)) {
+            const mappedRatios: VideoAspectRatio[] = data.compatible_aspect_ratios.map((ar: any) => ({
+              id: ar.id,
+              label: ar.label?.replace(/\s*\([^)]*\)/g, '') || ar.id, // Strip parenthetical like "(16:9)"
+              previewW: getPreviewDimension(ar.id, 'width'),
+              previewH: getPreviewDimension(ar.id, 'height'),
+            }))
+            if (mappedRatios.length > 0) {
+              setCompatibleAspectRatios(mappedRatios)
+              // If current aspect ratio is not in the compatible list, switch to the first one
+              if (!mappedRatios.find((r) => r.id === aspectRatio)) {
+                setAspectRatio(mappedRatios[0].id)
+              }
+            }
+          }
         }
       } catch (err) {
         console.warn('Failed to fetch video presets:', err)
         // Keep using fallback defaults
+        setCompatibleAspectRatios(DEFAULT_ASPECT_RATIOS)
       }
     }
 
     fetchPresets()
+    // Note: aspectRatio intentionally omitted to avoid infinite loop
+    // (this effect may update aspectRatio if it's incompatible with new model)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.backendUrl, authKey, detectedModelType, qualityPreset])
+
+  // Helper to get preview dimensions for aspect ratio thumbnails
+  function getPreviewDimension(ratioId: string, dimension: 'width' | 'height'): number {
+    const previewSizes: Record<string, { w: number; h: number }> = {
+      '16:9': { w: 42, h: 24 },
+      '9:16': { w: 24, h: 42 },
+      '1:1': { w: 24, h: 24 },
+      '4:3': { w: 32, h: 24 },
+      '3:4': { w: 24, h: 32 },
+    }
+    const size = previewSizes[ratioId] || { w: 32, h: 24 }
+    return dimension === 'width' ? size.w : size.h
+  }
 
   // Reset advanced parameters to preset defaults (model-specific)
   const resetAdvancedParams = useCallback(() => {
@@ -541,6 +594,7 @@ export default function AnimateView(props: AnimateParams) {
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
         vidPreset: qualityPreset,
+        vidAspectRatio: aspectRatio,
 
         // Advanced parameters (when enabled)
         ...(advancedMode && {
@@ -647,7 +701,7 @@ export default function AnimateView(props: AnimateParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
+  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, aspectRatio, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
 
   const handleDelete = useCallback((item: AnimateItem, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -709,6 +763,7 @@ export default function AnimateView(props: AnimateParams) {
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
         vidPreset: qualityPreset,
+        vidAspectRatio: aspectRatio,
         // When we have an existing source image, tell backend to skip image generation
         // The prompt should only affect the animation, not regenerate the source
         ...(existingSourceImage && { skipImageGeneration: true }),
@@ -794,7 +849,7 @@ export default function AnimateView(props: AnimateParams) {
       setRegenProgress(null)
       setRegenAbortController(null)
     }
-  }, [selectedVideo, lightboxPrompt, isRegenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
+  }, [selectedVideo, lightboxPrompt, isRegenerating, seconds, fps, motion, qualityPreset, aspectRatio, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
 
   // Cancel in-place regeneration
   const handleCancelRegeneration = useCallback(() => {
@@ -979,6 +1034,40 @@ export default function AnimateView(props: AnimateParams) {
             >
               <X size={16} />
             </button>
+          </div>
+
+          {/* Aspect Ratio */}
+          <div className="mb-4">
+            <div className="flex justify-between items-center text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2">
+              <span>Aspect Ratio</span>
+              {detectedModelType && (
+                <span className="text-purple-400/60 normal-case font-normal">
+                  {compatibleAspectRatios.length} available for {detectedModelType.toUpperCase()}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {compatibleAspectRatios.map((r) => (
+                <button
+                  key={r.id}
+                  onClick={() => setAspectRatio(r.id)}
+                  className={`p-2 rounded-lg hover:bg-white/5 transition-colors group flex flex-col items-center gap-1 ${
+                    aspectRatio === r.id ? 'bg-white/5 ring-1 ring-purple-500/50' : ''
+                  }`}
+                  title={r.label}
+                >
+                  <div
+                    className={`border-2 ${
+                      aspectRatio === r.id ? 'border-purple-400' : 'border-white/30 group-hover:border-white/50'
+                    } rounded-[2px]`}
+                    style={{ width: r.previewW, height: r.previewH }}
+                  />
+                  <span className={`text-[10px] ${aspectRatio === r.id ? 'text-purple-300' : 'text-white/50'}`}>
+                    {r.id}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Quality Preset */}
@@ -1401,6 +1490,8 @@ export default function AnimateView(props: AnimateParams) {
                   <span className="text-white/55 font-semibold truncate max-w-[200px]">{props.modelVideo}</span>
                 </>
               ) : null}
+              <span>·</span>
+              <span className="text-white/55">{aspectRatio}</span>
               <span>·</span>
               <span>{qualityPreset} · {seconds}s @ {fps}fps · {motion} motion</span>
             </div>
