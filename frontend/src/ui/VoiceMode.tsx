@@ -39,6 +39,8 @@ export default function VoiceMode({
   });
 
   const vadRef = useRef<ReturnType<typeof createVAD> | null>(null);
+  const ttsSpeakingRef = useRef(false);  // Track TTS state to prevent VAD triggering during playback
+  const vadResumeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);  // Delay VAD resume after TTS
 
   // --- Logic Section ---
 
@@ -77,6 +79,51 @@ export default function VoiceMode({
     localStorage.setItem('homepilot_tts_enabled', String(ttsEnabled));
   }, [ttsEnabled]);
 
+  // Monitor TTS state to pause/resume VAD - prevents microphone from picking up speaker output
+  useEffect(() => {
+    if (!handsFree || !svc) return;
+
+    const TTS_END_DELAY_MS = 500;  // Wait 500ms after TTS ends before resuming VAD
+
+    const checkTTSState = () => {
+      const isTTSSpeaking = svc.isSpeaking || false;
+
+      if (isTTSSpeaking && !ttsSpeakingRef.current) {
+        // TTS just started - pause VAD
+        ttsSpeakingRef.current = true;
+        console.log("[Voice] TTS started - pausing VAD");
+        if (vadRef.current) vadRef.current.stop();
+        // Clear any pending resume timeout
+        if (vadResumeTimeoutRef.current) {
+          clearTimeout(vadResumeTimeoutRef.current);
+          vadResumeTimeoutRef.current = null;
+        }
+      } else if (!isTTSSpeaking && ttsSpeakingRef.current) {
+        // TTS just ended - schedule VAD resume after delay
+        ttsSpeakingRef.current = false;
+        console.log("[Voice] TTS ended - resuming VAD after delay");
+        vadResumeTimeoutRef.current = setTimeout(() => {
+          if (handsFree && vadRef.current && !listening) {
+            vadRef.current.start().catch(console.warn);
+            console.log("[Voice] VAD resumed after TTS");
+          }
+          vadResumeTimeoutRef.current = null;
+        }, TTS_END_DELAY_MS);
+      }
+    };
+
+    // Poll TTS state every 100ms
+    const interval = setInterval(checkTTSState, 100);
+
+    return () => {
+      clearInterval(interval);
+      if (vadResumeTimeoutRef.current) {
+        clearTimeout(vadResumeTimeoutRef.current);
+        vadResumeTimeoutRef.current = null;
+      }
+    };
+  }, [handsFree, svc, listening]);
+
   useEffect(() => {
     if (!svc) return;
 
@@ -105,6 +152,12 @@ export default function VoiceMode({
     if (!handsFree) return;
     vadRef.current = createVAD(
       () => {
+        // IMPORTANT: Don't trigger STT if TTS is currently speaking
+        // This prevents the microphone from picking up speaker output
+        if (ttsSpeakingRef.current || svc?.isSpeaking) {
+          console.log("[Voice] VAD detected speech but TTS is active - ignoring");
+          return;
+        }
         if (svc?.stopSpeaking) svc.stopSpeaking();
         svc?.startSTT?.({});
       },
@@ -115,6 +168,10 @@ export default function VoiceMode({
     return () => {
       vadRef.current?.stop?.();
       vadRef.current = null;
+      if (vadResumeTimeoutRef.current) {
+        clearTimeout(vadResumeTimeoutRef.current);
+        vadResumeTimeoutRef.current = null;
+      }
     };
   }, [handsFree, svc]);
 
