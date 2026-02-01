@@ -360,17 +360,115 @@ def _post_prompt(client: httpx.Client, prompt: Dict[str, Any]) -> str:
             body = e.response.text
         except Exception:
             pass
-        raise RuntimeError(
-            f"ComfyUI /prompt failed ({e.response.status_code}). "
-            f"Most common cause: workflow JSON is not API format. "
-            f"Response: {body[:400]}"
-        ) from e
+        # Parse error body to provide helpful suggestions
+        error_msg = _parse_comfy_error(body)
+        raise RuntimeError(error_msg) from e
 
     data = r.json()
+
+    # Check for validation errors in response (ComfyUI may return prompt_id but fail validation)
+    if "error" in data:
+        error_info = data.get("error", {})
+        error_type = error_info.get("type", "unknown")
+        error_message = error_info.get("message", "Unknown error")
+
+        # Check for node errors which indicate missing models
+        node_errors = data.get("node_errors", {})
+        if node_errors:
+            error_msg = _parse_node_errors(node_errors, error_message)
+            raise RuntimeError(error_msg)
+
+        raise RuntimeError(f"ComfyUI validation failed: {error_message}")
+
     prompt_id = data.get("prompt_id")
     if not prompt_id:
         raise RuntimeError(f"ComfyUI did not return prompt_id. Response: {data}")
     return str(prompt_id)
+
+
+def _parse_comfy_error(body: str) -> str:
+    """Parse ComfyUI error body and provide helpful suggestions."""
+    error_msg = f"ComfyUI /prompt failed. "
+
+    # Check for common missing model patterns
+    if "not in list" in body.lower() or "value not in list" in body.lower():
+        error_msg += "A required model file is missing. "
+
+        # Extract model name from error
+        if "t5xxl_fp8" in body.lower():
+            error_msg += (
+                "\n\n[MISSING MODEL] T5-XXL FP8 Text Encoder\n"
+                "This encoder is required for LTX-Video on 12-16GB VRAM.\n"
+                "Download from: Models > Add-ons > T5-XXL FP8 Text Encoder\n"
+                "Or run: make download-minimum"
+            )
+        elif "t5xxl_fp16" in body.lower():
+            error_msg += (
+                "\n\n[MISSING MODEL] T5-XXL FP16 Text Encoder\n"
+                "This encoder is required for LTX-Video on 24GB+ VRAM.\n"
+                "Download from: Models > Add-ons > T5-XXL FP16 Text Encoder"
+            )
+        elif "ltx-video" in body.lower() or "ltx_video" in body.lower():
+            error_msg += (
+                "\n\n[MISSING MODEL] LTX-Video Checkpoint\n"
+                "Download from: Models > Video > LTX-Video 2B\n"
+                "Or run: make download-minimum"
+            )
+        elif "clip" in body.lower():
+            error_msg += (
+                "\n\n[MISSING MODEL] CLIP/Text Encoder\n"
+                "Check Models > Add-ons for required encoders."
+            )
+        else:
+            error_msg += f"\nDetails: {body[:300]}"
+    else:
+        error_msg += f"Response: {body[:400]}"
+
+    return error_msg
+
+
+def _parse_node_errors(node_errors: dict, base_message: str) -> str:
+    """Parse node-specific errors and provide helpful suggestions."""
+    error_parts = [f"ComfyUI workflow validation failed: {base_message}\n"]
+
+    for node_id, errors in node_errors.items():
+        node_type = errors.get("class_type", "Unknown")
+        node_errs = errors.get("errors", [])
+
+        for err in node_errs:
+            err_type = err.get("type", "")
+            err_msg = err.get("message", "")
+            err_details = err.get("details", "")
+
+            if "value_not_in_list" in err_type.lower() or "not in list" in err_msg.lower():
+                # Missing model error
+                if "CLIPLoader" in node_type:
+                    if "t5xxl_fp8" in str(err_details).lower():
+                        error_parts.append(
+                            "\n[MISSING MODEL] T5-XXL FP8 Text Encoder (t5xxl_fp8_e4m3fn.safetensors)\n"
+                            "Required for: LTX-Video on 12-16GB VRAM GPUs\n"
+                            "Install via: Models > Add-ons > T5-XXL FP8 Text Encoder\n"
+                            "Or run: make download-minimum"
+                        )
+                    elif "t5xxl_fp16" in str(err_details).lower():
+                        error_parts.append(
+                            "\n[MISSING MODEL] T5-XXL FP16 Text Encoder (t5xxl_fp16.safetensors)\n"
+                            "Required for: LTX-Video on 24GB+ VRAM GPUs (Ultra preset)\n"
+                            "Install via: Models > Add-ons > T5-XXL FP16 Text Encoder"
+                        )
+                    else:
+                        error_parts.append(f"\n[MISSING MODEL] Text encoder: {err_details}")
+                elif "CheckpointLoader" in node_type:
+                    error_parts.append(
+                        f"\n[MISSING MODEL] Checkpoint not found: {err_details}\n"
+                        "Check Models section for required video/image models."
+                    )
+                else:
+                    error_parts.append(f"\n[ERROR] Node {node_type}: {err_msg}")
+            else:
+                error_parts.append(f"\n[ERROR] {node_type}: {err_msg}")
+
+    return "".join(error_parts)
 
 
 def _get_history(client: httpx.Client, prompt_id: str) -> Dict[str, Any]:

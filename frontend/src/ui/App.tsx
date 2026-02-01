@@ -1287,6 +1287,15 @@ export default function App() {
   useEffect(() => localStorage.setItem('homepilot_conversation', conversationId), [conversationId])
   useEffect(() => localStorage.setItem('homepilot_mode', mode), [mode])
 
+  // Listen for switch-to-animate events from Imagine (Grok-style handoff)
+  useEffect(() => {
+    const handleSwitchToAnimate = () => {
+      setMode('animate')
+    }
+    window.addEventListener('switch-to-animate', handleSwitchToAnimate)
+    return () => window.removeEventListener('switch-to-animate', handleSwitchToAnimate)
+  }, [])
+
   // Reset conversation when switching between incompatible mode groups
   // to prevent chat history from bleeding into edit/animate sessions
   const prevModeRef = useRef<Mode>(mode)
@@ -2182,6 +2191,7 @@ export default function App() {
             vidSeconds={settingsDraft.vidSeconds}
             vidFps={settingsDraft.vidFps}
             vidMotion={settingsDraft.vidMotion}
+            vidPreset={settingsDraft.preset}
             nsfwMode={settingsDraft.nsfwMode}
             promptRefinement={settingsDraft.promptRefinement}
           />
