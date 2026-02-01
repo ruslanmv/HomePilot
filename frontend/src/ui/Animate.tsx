@@ -151,6 +151,14 @@ type PresetValues = {
   defaultAspectRatio?: string
 }
 
+// Type for resolution options (from aspect ratio dimensions)
+type ResolutionOption = {
+  id: string  // 'auto' | 'low' | 'medium' | 'high' | 'ultra'
+  label: string
+  width: number
+  height: number
+}
+
 // -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
@@ -275,6 +283,7 @@ export default function AnimateView(props: AnimateParams) {
   }, [props.vidPreset])
   const [aspectRatio, setAspectRatio] = useState('16:9')
   const [compatibleAspectRatios, setCompatibleAspectRatios] = useState<VideoAspectRatio[]>(DEFAULT_ASPECT_RATIOS)
+  const [rawAspectRatioData, setRawAspectRatioData] = useState<any[]>([])  // Store raw API response for resolution lookup
 
   // Advanced Controls state
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
@@ -286,6 +295,9 @@ export default function AnimateView(props: AnimateParams) {
   const [customSeed, setCustomSeed] = useState(0)
   const [customNegativePrompt, setCustomNegativePrompt] = useState('')
   const [showNegativePrompt, setShowNegativePrompt] = useState(false)
+  // Resolution override (allows testing different resolutions in Advanced Mode)
+  const [customResolution, setCustomResolution] = useState<string>('auto')  // 'auto' | 'low' | 'medium' | 'high' | 'ultra'
+  const [availableResolutions, setAvailableResolutions] = useState<ResolutionOption[]>([])
 
   // Preset defaults from API (model-specific)
   const [presetDefaults, setPresetDefaults] = useState<PresetValues>(FALLBACK_ADVANCED_PARAMS)
@@ -331,6 +343,9 @@ export default function AnimateView(props: AnimateParams) {
 
           // Also update compatible aspect ratios from API response
           if (data.compatible_aspect_ratios && Array.isArray(data.compatible_aspect_ratios)) {
+            // Store raw data for resolution lookup
+            setRawAspectRatioData(data.compatible_aspect_ratios)
+
             const mappedRatios: VideoAspectRatio[] = data.compatible_aspect_ratios.map((ar: any) => ({
               id: ar.id,
               label: ar.label?.replace(/\s*\([^)]*\)/g, '') || ar.id, // Strip parenthetical like "(16:9)"
@@ -359,6 +374,32 @@ export default function AnimateView(props: AnimateParams) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.backendUrl, authKey, detectedModelType, qualityPreset])
 
+  // Update available resolutions when aspect ratio changes
+  useEffect(() => {
+    if (rawAspectRatioData.length === 0) return
+
+    const currentRatioData = rawAspectRatioData.find((ar: any) => ar.id === aspectRatio)
+    if (currentRatioData?.dimensions) {
+      const presetLabels: Record<string, string> = {
+        low: 'Low (8GB)',
+        medium: 'Medium (12GB)',
+        high: 'High (16GB)',
+        ultra: 'Ultra (24GB+)',
+      }
+      const resolutions: ResolutionOption[] = Object.entries(currentRatioData.dimensions)
+        .filter(([_, dims]: [string, any]) => dims?.width && dims?.height)
+        .map(([preset, dims]: [string, any]) => ({
+          id: preset,
+          label: `${dims.width}×${dims.height} ${presetLabels[preset] || preset}`,
+          width: dims.width,
+          height: dims.height,
+        }))
+      setAvailableResolutions(resolutions)
+      // Reset to auto when aspect ratio changes
+      setCustomResolution('auto')
+    }
+  }, [aspectRatio, rawAspectRatioData])
+
   // Helper to get preview dimensions for aspect ratio thumbnails
   function getPreviewDimension(ratioId: string, dimension: 'width' | 'height'): number {
     const previewSizes: Record<string, { w: number; h: number }> = {
@@ -381,6 +422,7 @@ export default function AnimateView(props: AnimateParams) {
     setCustomSeed(0)
     setCustomNegativePrompt('')
     setShowNegativePrompt(false)
+    setCustomResolution('auto')  // Reset resolution to use preset default
   }, [presetDefaults])
 
   // Reset Video Settings to model-specific defaults
@@ -646,6 +688,11 @@ export default function AnimateView(props: AnimateParams) {
         ? `animate ${referenceUrl} ${effectivePrompt}`
         : `animate ${effectivePrompt}`
 
+      // Get custom resolution dimensions if not auto
+      const customResDims = customResolution !== 'auto'
+        ? availableResolutions.find(r => r.id === customResolution)
+        : null
+
       const requestBody: any = {
         message: animateMessage,
         mode: 'animate',
@@ -665,6 +712,11 @@ export default function AnimateView(props: AnimateParams) {
           vidDenoise: customDenoise,
           ...(seedLock && { vidSeed: customSeed }),
           ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
+          // Custom resolution override (for testing different VRAM requirements)
+          ...(customResDims && {
+            imgWidth: customResDims.width,
+            imgHeight: customResDims.height,
+          }),
         }),
 
         // Provider settings
@@ -820,6 +872,11 @@ export default function AnimateView(props: AnimateParams) {
         ? `animate ${existingSourceImage} ${lightboxPrompt}`
         : `animate ${lightboxPrompt}`
 
+      // Get custom resolution dimensions if not auto
+      const customResDims = customResolution !== 'auto'
+        ? availableResolutions.find(r => r.id === customResolution)
+        : null
+
       const requestBody: any = {
         message: animateMessage,
         mode: 'animate',
@@ -838,6 +895,11 @@ export default function AnimateView(props: AnimateParams) {
           vidDenoise: customDenoise,
           ...(seedLock && { vidSeed: customSeed }),
           ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
+          // Custom resolution override
+          ...(customResDims && {
+            imgWidth: customResDims.width,
+            imgHeight: customResDims.height,
+          }),
         }),
         provider: props.providerVideo === 'comfyui' ? 'ollama' : props.providerVideo,
         provider_base_url: props.baseUrlVideo || undefined,
@@ -1012,6 +1074,43 @@ export default function AnimateView(props: AnimateParams) {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Resolution Override */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Resolution</span>
+                    <span className="text-white/40 text-[10px]">{aspectRatio}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      onClick={() => setCustomResolution('auto')}
+                      className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                        customResolution === 'auto'
+                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      Auto (Preset)
+                    </button>
+                    {availableResolutions.map((r) => (
+                      <button
+                        key={r.id}
+                        onClick={() => setCustomResolution(r.id)}
+                        title={`${r.width}×${r.height}`}
+                        className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                          customResolution === r.id
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                            : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-white/30 leading-relaxed">
+                    Override resolution to test what works best on your GPU. Lower = faster, less VRAM.
+                  </p>
                 </div>
 
                 {/* Steps */}
