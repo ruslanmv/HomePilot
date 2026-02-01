@@ -197,6 +197,72 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       { id: 'GFPGANv1.4.pth', label: 'GFPGAN v1.4 (Face Restore)', nsfw: false, description: 'Optional face restoration after heavy edits or upscaling.' },
       { id: 'u2net.onnx', label: 'U2Net (Background Remove)', recommended: true, nsfw: false, description: 'Background removal for Edit mode. Downloads to ~/.u2net or models/comfy/rembg.' },
     ],
+    addons: [
+      // Text Encoders (required for video models)
+      {
+        id: 't5xxl_fp8_e4m3fn.safetensors',
+        label: 'T5-XXL FP8 Text Encoder (5GB)',
+        recommended: true,
+        nsfw: false,
+        description: 'Required for LTX-Video on 12GB VRAM. FP8 version uses ~5GB vs ~10GB for FP16.',
+        install: {
+          type: 'hf_files',
+          files: [{
+            repo_id: 'comfyanonymous/flux_text_encoders',
+            filename: 't5xxl_fp8_e4m3fn.safetensors',
+            dest: 'models/clip/t5xxl_fp8_e4m3fn.safetensors'
+          }],
+          hint: 'Download to ComfyUI/models/clip folder'
+        }
+      },
+      {
+        id: 't5xxl_fp16.safetensors',
+        label: 'T5-XXL FP16 Text Encoder (10GB)',
+        nsfw: false,
+        description: 'Full precision T5 encoder. Requires 16GB+ VRAM. Use FP8 version for 12GB cards.',
+        install: {
+          type: 'hf_files',
+          files: [{
+            repo_id: 'comfyanonymous/flux_text_encoders',
+            filename: 't5xxl_fp16.safetensors',
+            dest: 'models/clip/t5xxl_fp16.safetensors'
+          }],
+          hint: 'Download to ComfyUI/models/clip folder'
+        }
+      },
+      // VAE Models
+      {
+        id: 'mochi_vae.safetensors',
+        label: 'Mochi VAE (400MB)',
+        nsfw: false,
+        description: 'Required VAE for Mochi video model.',
+        install: {
+          type: 'hf_files',
+          files: [{
+            repo_id: 'Comfy-Org/mochi_preview_repackaged',
+            filename: 'split_files/vae/mochi_vae.safetensors',
+            dest: 'models/vae/mochi_vae.safetensors'
+          }],
+          hint: 'Download to ComfyUI/models/vae folder'
+        }
+      },
+      // CLIP Models
+      {
+        id: 'clip_l.safetensors',
+        label: 'CLIP-L Text Encoder (250MB)',
+        nsfw: false,
+        description: 'CLIP-L text encoder for SDXL and video models.',
+        install: {
+          type: 'hf_files',
+          files: [{
+            repo_id: 'comfyanonymous/flux_text_encoders',
+            filename: 'clip_l.safetensors',
+            dest: 'models/clip/clip_l.safetensors'
+          }],
+          hint: 'Download to ComfyUI/models/clip folder'
+        }
+      },
+    ],
   },
   openai_compat: {
     chat: [
