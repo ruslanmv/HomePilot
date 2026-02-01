@@ -151,6 +151,7 @@ class ChatIn(BaseModel):
     textMaxTokens: Optional[int] = Field(None, description="Max tokens for text generation")
     imgWidth: Optional[int] = Field(None, description="Image width")
     imgHeight: Optional[int] = Field(None, description="Image height")
+    imgAspectRatio: Optional[str] = Field(None, description="Image aspect ratio (1:1, 4:3, 3:4, 16:9, 9:16)")
     imgSteps: Optional[int] = Field(None, description="Image generation steps")
     imgCfg: Optional[float] = Field(None, description="Image CFG scale")
     imgSeed: Optional[int] = Field(None, description="Image generation seed (0 = random)")
@@ -1910,6 +1911,7 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "textMaxTokens": inp.textMaxTokens,
         "imgWidth": inp.imgWidth,
         "imgHeight": inp.imgHeight,
+        "imgAspectRatio": inp.imgAspectRatio,
         "imgSteps": inp.imgSteps,
         "imgCfg": inp.imgCfg,
         "imgSeed": inp.imgSeed,
