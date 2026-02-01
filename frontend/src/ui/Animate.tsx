@@ -776,6 +776,16 @@ export default function AnimateView(props: AnimateParams) {
         : qualityPreset === 'a100' ? 'high'
         : qualityPreset
 
+      // Use custom resolution's preset if selected, otherwise use hardware preset
+      const effectiveVideoPreset = customResolution !== 'auto' ? customResolution : videoPreset
+
+      console.log('[Animate] Resolution selection:', {
+        customResolution,
+        videoPreset,
+        effectiveVideoPreset,
+        customResDims: customResDims ? `${customResDims.width}x${customResDims.height}` : 'auto',
+      })
+
       const requestBody: any = {
         message: animateMessage,
         mode: 'animate',
@@ -785,7 +795,7 @@ export default function AnimateView(props: AnimateParams) {
         vidFps: fps,
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
-        vidPreset: videoPreset,
+        vidPreset: effectiveVideoPreset,
         vidAspectRatio: aspectRatio,
 
         // Advanced parameters (when enabled)
@@ -795,11 +805,6 @@ export default function AnimateView(props: AnimateParams) {
           vidDenoise: customDenoise,
           ...(seedLock && { vidSeed: customSeed }),
           ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
-          // Custom resolution override (for testing different VRAM requirements)
-          ...(customResDims && {
-            imgWidth: customResDims.width,
-            imgHeight: customResDims.height,
-          }),
         }),
 
         // Provider settings
@@ -968,6 +973,16 @@ export default function AnimateView(props: AnimateParams) {
         : qualityPreset === 'a100' ? 'high'
         : qualityPreset
 
+      // Use custom resolution's preset if selected, otherwise use hardware preset
+      const effectiveVideoPreset = customResolution !== 'auto' ? customResolution : videoPreset
+
+      console.log('[Animate] Regenerate resolution selection:', {
+        customResolution,
+        videoPreset,
+        effectiveVideoPreset,
+        customResDims: customResDims ? `${customResDims.width}x${customResDims.height}` : 'auto',
+      })
+
       const requestBody: any = {
         message: animateMessage,
         mode: 'animate',
@@ -975,7 +990,7 @@ export default function AnimateView(props: AnimateParams) {
         vidFps: fps,
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
-        vidPreset: videoPreset,
+        vidPreset: effectiveVideoPreset,
         vidAspectRatio: aspectRatio,
         // When we have an existing source image, tell backend to skip image generation
         // The prompt should only affect the animation, not regenerate the source
@@ -986,11 +1001,6 @@ export default function AnimateView(props: AnimateParams) {
           vidDenoise: customDenoise,
           ...(seedLock && { vidSeed: customSeed }),
           ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
-          // Custom resolution override
-          ...(customResDims && {
-            imgWidth: customResDims.width,
-            imgHeight: customResDims.height,
-          }),
         }),
         provider: props.providerVideo === 'comfyui' ? 'ollama' : props.providerVideo,
         provider_base_url: props.baseUrlVideo || undefined,
