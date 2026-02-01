@@ -16,6 +16,15 @@ type AspectRatio = {
   genH: number
 }
 
+// Dynamic aspect ratio from API (model-compatible)
+type ImageAspectRatio = {
+  id: string
+  label: string
+  previewW: number
+  previewH: number
+  dimensions?: { width: number; height: number }
+}
+
 type ImagineItem = {
   id: string
   url?: string  // Only present when status is "done"
@@ -221,6 +230,8 @@ export default function ImagineView(props: ImagineParams) {
 
   const [aspect, setAspect] = useState<string>('1:1')
   const [showAspectPanel, setShowAspectPanel] = useState(false)
+  const [compatibleAspectRatios, setCompatibleAspectRatios] = useState<ImageAspectRatio[]>([])
+  const [defaultAspectRatio, setDefaultAspectRatio] = useState<string>('1:1')
 
   // Number of images to generate per request (1, 2, or 4 like Grok)
   const [numImages, setNumImages] = useState<1 | 2 | 4>(1)
@@ -352,9 +363,97 @@ export default function ImagineView(props: ImagineParams) {
     }
   }, [selectedImage])
 
+  // Helper function to get preview dimensions for aspect ratio
+  const getPreviewDimension = (ratioId: string, dim: 'width' | 'height'): number => {
+    const previewMap: Record<string, { width: number; height: number }> = {
+      '1:1': { width: 24, height: 24 },
+      '4:3': { width: 32, height: 24 },
+      '3:4': { width: 24, height: 32 },
+      '16:9': { width: 42, height: 24 },
+      '9:16': { width: 24, height: 42 },
+    }
+    return previewMap[ratioId]?.[dim] ?? 24
+  }
+
+  // Fetch compatible aspect ratios when model changes
+  useEffect(() => {
+    const fetchImagePresets = async () => {
+      try {
+        const base = props.backendUrl.replace(/\/+$/, '')
+        // Detect model architecture from model filename
+        const model = props.modelImages || ''
+        let arch = 'sdxl' // default
+        const lowerModel = model.toLowerCase()
+        if (lowerModel.includes('flux') && lowerModel.includes('schnell')) {
+          arch = 'flux_schnell'
+        } else if (lowerModel.includes('flux')) {
+          arch = 'flux_dev'
+        } else if (lowerModel.includes('sdxl') || lowerModel.includes('xl') || lowerModel.includes('pony')) {
+          arch = 'sdxl'
+        } else if (lowerModel.includes('sd15') || lowerModel.includes('dreamshaper') || lowerModel.includes('realistic')) {
+          arch = 'sd15'
+        }
+
+        const url = `${base}/image-presets?model=${arch}&preset=${props.imgPreset || 'med'}`
+        const res = await fetch(url, {
+          headers: authKey ? { 'x-api-key': authKey } : undefined,
+        })
+
+        if (res.ok) {
+          const data = await res.json()
+          if (data.compatible_aspect_ratios && Array.isArray(data.compatible_aspect_ratios)) {
+            const mappedRatios: ImageAspectRatio[] = data.compatible_aspect_ratios.map((ar: any) => ({
+              id: ar.id,
+              label: ar.label?.replace(/\s*\([^)]*\)/g, '') || ar.id,
+              previewW: getPreviewDimension(ar.id, 'width'),
+              previewH: getPreviewDimension(ar.id, 'height'),
+              dimensions: ar.dimensions,
+            }))
+            setCompatibleAspectRatios(mappedRatios)
+
+            // Set default aspect ratio from API
+            if (data.default_aspect_ratio) {
+              setDefaultAspectRatio(data.default_aspect_ratio)
+              // Only change current aspect if it's not in the compatible list
+              if (!mappedRatios.find(r => r.id === aspect)) {
+                setAspect(data.default_aspect_ratio)
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[Imagine] Failed to fetch image presets:', err)
+        // Fallback to default aspect ratios
+        const fallbackRatios: ImageAspectRatio[] = ASPECT_RATIOS.map(r => ({
+          id: r.label,
+          label: r.label,
+          previewW: r.previewW,
+          previewH: r.previewH,
+          dimensions: { width: r.genW, height: r.genH },
+        }))
+        setCompatibleAspectRatios(fallbackRatios)
+      }
+    }
+
+    fetchImagePresets()
+  }, [props.modelImages, props.imgPreset, props.backendUrl, authKey])
+
   const aspectObj = useMemo(() => {
+    // Prefer compatible ratios from API, fallback to static list
+    if (compatibleAspectRatios.length > 0) {
+      const found = compatibleAspectRatios.find((a) => a.id === aspect)
+      if (found) {
+        return {
+          label: found.id,
+          previewW: found.previewW,
+          previewH: found.previewH,
+          genW: found.dimensions?.width || 1024,
+          genH: found.dimensions?.height || 1024,
+        }
+      }
+    }
     return ASPECT_RATIOS.find((a) => a.label === aspect) || ASPECT_RATIOS[0]
-  }, [aspect])
+  }, [aspect, compatibleAspectRatios])
 
   // Upload reference image handler
   const handleUploadReference = useCallback(async (file: File) => {
@@ -1419,25 +1518,31 @@ export default function ImagineView(props: ImagineParams) {
                   </button>
                 </div>
                 <div className="flex gap-2">
-                  {ASPECT_RATIOS.map((r) => (
+                  {(compatibleAspectRatios.length > 0 ? compatibleAspectRatios : ASPECT_RATIOS.map(r => ({
+                    id: r.label,
+                    label: r.label,
+                    previewW: r.previewW,
+                    previewH: r.previewH,
+                    dimensions: { width: r.genW, height: r.genH },
+                  }))).map((r) => (
                     <button
-                      key={r.label}
+                      key={r.id}
                       onClick={() => {
-                        setAspect(r.label)
+                        setAspect(r.id)
                       }}
                       className={`p-2 rounded-lg hover:bg-white/5 transition-colors group flex flex-col items-center gap-1 ${
-                        aspect === r.label ? 'bg-white/5 ring-1 ring-white/20' : ''
+                        aspect === r.id ? 'bg-white/5 ring-1 ring-white/20' : ''
                       }`}
-                      title={r.label}
+                      title={`${r.id}${r.dimensions ? ` (${r.dimensions.width}x${r.dimensions.height})` : ''}`}
                       type="button"
                     >
                       <div
                         className={`border-2 ${
-                          aspect === r.label ? 'border-white/70' : 'border-white/30 group-hover:border-white/50'
+                          aspect === r.id ? 'border-white/70' : 'border-white/30 group-hover:border-white/50'
                         } rounded-[2px]`}
                         style={{ width: r.previewW, height: r.previewH }}
                       />
-                      <span className="text-[10px] text-white/50">{r.label}</span>
+                      <span className="text-[10px] text-white/50">{r.id}</span>
                     </button>
                   ))}
                 </div>

@@ -663,6 +663,116 @@ async def get_video_presets(
         )
 
 
+@app.get("/image-presets")
+async def get_image_presets(
+    model: Optional[str] = Query(None, description="Image model architecture: sd15, sdxl, flux_schnell, flux_dev"),
+    preset: Optional[str] = Query(None, description="Quality preset: low, med, high"),
+    aspect_ratio: Optional[str] = Query(None, description="Aspect ratio: 1:1, 4:3, 3:4, 16:9, 9:16"),
+) -> JSONResponse:
+    """
+    Get image generation preset values.
+
+    Returns model-specific settings for the selected quality preset.
+    If no model is specified, returns base preset values.
+    If no preset is specified, returns 'med' preset.
+
+    Example: GET /image-presets?model=sdxl&preset=med&aspect_ratio=16:9
+    Returns: { steps: 30, cfg: 5.5, width: 1216, height: 832, ... }
+    """
+    try:
+        presets_path = Path(__file__).parent / "image_presets.json"
+
+        if not presets_path.exists():
+            return JSONResponse(
+                status_code=404,
+                content=_safe_err("Image presets file not found", code="presets_not_found"),
+            )
+
+        with open(presets_path, "r", encoding="utf-8") as f:
+            presets_data = json.load(f)
+
+        # Default to med preset
+        preset_name = preset or "med"
+        if preset_name not in presets_data.get("presets", {}):
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err(
+                    f"Unknown preset: {preset_name}. Valid presets: low, med, high",
+                    code="invalid_preset",
+                ),
+            )
+
+        preset_config = presets_data["presets"][preset_name]
+        base_values = dict(preset_config.get("base_values", {}))
+
+        # If model specified, merge with model-specific overrides
+        model_lower = (model or "").lower()
+        if model_lower:
+            model_overrides = preset_config.get("model_overrides", {}).get(model_lower, {})
+            result_values = {**base_values, **model_overrides}
+        else:
+            result_values = base_values
+
+        # Get dimensions from aspect_ratios if specified
+        aspect_ratios_data = presets_data.get("aspect_ratios", {})
+        if aspect_ratio and aspect_ratio in aspect_ratios_data:
+            ratio_config = aspect_ratios_data[aspect_ratio]
+            dims = ratio_config.get("dimensions", {}).get(model_lower or "sdxl", {})
+            if dims:
+                result_values["width"] = dims.get("width", result_values.get("width"))
+                result_values["height"] = dims.get("height", result_values.get("height"))
+
+        # Get model rules if available
+        model_rules = {}
+        if model_lower:
+            model_rules = presets_data.get("model_rules", {}).get(model_lower, {})
+
+        # Get compatible aspect ratios for the model
+        compatible_ratios = []
+        for ratio_id, ratio_config in aspect_ratios_data.items():
+            compatible = ratio_config.get("compatible_models", [])
+            if not model_lower or model_lower in compatible:
+                dims = ratio_config.get("dimensions", {}).get(model_lower or "sdxl", {})
+                compatible_ratios.append({
+                    "id": ratio_id,
+                    "label": ratio_config.get("ui_label", ratio_id),
+                    "dimensions": dims,
+                })
+
+        # Determine default aspect ratio for the model
+        default_aspect_ratio = model_rules.get("default_aspect_ratio")
+        if not default_aspect_ratio and compatible_ratios:
+            default_aspect_ratio = compatible_ratios[0]["id"]
+        if not default_aspect_ratio:
+            default_aspect_ratio = "1:1"
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "preset": preset_name,
+                "model": model,
+                "aspect_ratio": aspect_ratio,
+                "values": result_values,
+                "model_rules": model_rules,
+                "ui": preset_config.get("ui", {}),
+                "compatible_aspect_ratios": compatible_ratios,
+                "default_aspect_ratio": default_aspect_ratio,
+            },
+        )
+
+    except json.JSONDecodeError as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Invalid JSON in image presets file: {str(e)}", code="presets_invalid_json"),
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Error loading image presets: {str(e)}", code="presets_error"),
+        )
+
+
 # -----------------------------------------------------------------------------
 # API Keys Management (Optional - for gated HuggingFace / Civitai models)
 # -----------------------------------------------------------------------------
