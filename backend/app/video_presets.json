@@ -94,14 +94,14 @@
         "fps": 16,
         "seconds": 4,
         "frames": 49,
-        "steps": 30,
+        "steps": 25,
         "cfg": 3.5,
         "denoise": 0.85,
         "max_frames": 65
       },
       "model_overrides": {
         "svd": { "fps": 8, "steps": 20, "cfg": 2.5, "denoise": 1.0 },
-        "ltx": { "fps": 24, "steps": 24, "cfg": 4.0, "denoise": 0.8 },
+        "ltx": { "fps": 24, "frames": 49, "steps": 20, "cfg": 4.0, "denoise": 0.8 },
         "wan": { "fps": 16, "steps": 30, "cfg": 5.0, "denoise": 1.0 },
         "hunyuan": { "fps": 16, "steps": 25, "cfg": 6.0, "denoise": 1.0, "notes": "Requires GGUF/Quantization on 12GB" },
         "mochi": { "fps": 24, "frames": 37, "steps": 40, "cfg": 4.5, "denoise": 1.0, "notes": "Requires FP8/Offloading on 12GB" }
@@ -164,37 +164,37 @@
       "frame_rule": "fixed",
       "fixed_frames": 25,
       "fixed_denoise": 1.0,
-      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter",
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, duplicate frames, choppy motion, static image",
       "notes": "SVD is strictly 16:9 / 1024x576. Other ratios will fail."
     },
     "ltx": {
       "frame_rule": "8n+1",
       "valid_frames": [9, 17, 25, 33, 41, 49, 57, 65, 73, 81, 89, 97, 105, 113, 121, 129, 137, 145, 153],
       "min_frames": 25,
-      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, warping, deformed",
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, warping, deformed, duplicate frames, choppy motion, morphing face, static image",
       "notes": "Highly flexible ratio support. Best motion at 24fps."
     },
     "mochi": {
       "frame_rule": "6n+1",
       "valid_frames": [37, 43, 49, 55, 61, 67, 73, 79, 85, 91, 97, 103, 109, 115, 121, 127, 133, 139, 145, 151, 157, 163],
       "min_frames": 37,
-      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, deformed",
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, deformed, duplicate frames, choppy motion, morphing face, static image",
       "notes": "Strictly Landscape (16:9, 4:3, 21:9). Vertical ratios will fail."
     },
     "wan": {
       "frame_rule": "any",
-      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, deformed",
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, deformed, duplicate frames, choppy motion, morphing face, static image",
       "notes": "Supports all aspect ratios including vertical."
     },
     "hunyuan": {
       "frame_rule": "any",
-      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, deformed",
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, deformed, duplicate frames, choppy motion, morphing face, static image",
       "notes": "Supports all aspect ratios including vertical."
     },
     "cogvideo": {
       "frame_rule": "any",
       "fixed_frames": 49,
-      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter",
+      "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, duplicate frames, choppy motion, static image",
       "notes": "Best at 16:9. Vertical is weak."
     }
   },
@@ -202,11 +202,12 @@
   "vram_auto_select": {
     "rules": [
       {"max_vram_gb": 8, "preset": "low"},
-      {"max_vram_gb": 12, "preset": "medium"},
+      {"max_vram_gb": 13, "preset": "medium"},
       {"max_vram_gb": 20, "preset": "high"},
       {"max_vram_gb": 999, "preset": "ultra"}
     ],
-    "fallback": "medium"
+    "fallback": "medium",
+    "notes": "13GB boundary ensures 12GB GPUs (RTX 4080 Laptop) reliably get medium preset"
   },
 
   "model_min_vram": {
@@ -214,7 +215,8 @@
     "ltx": 8,
     "wan": 10,
     "hunyuan": 12,
-    "mochi": 16,
-    "cogvideo": 16
+    "mochi": 18,
+    "cogvideo": 18,
+    "notes": "Mochi/CogVideo set to 18GB to discourage use on 12GB WDDM systems"
   }
 }
