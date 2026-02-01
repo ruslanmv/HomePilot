@@ -1,13 +1,17 @@
 {
   "_meta": {
     "title": "LTX-Video Image to Video",
-    "description": "Image-to-video using LTX-Video 2B with built-in ComfyUI nodes. Requires T5 text encoder in clip folder.",
+    "description": "Image-to-video using LTX-Video 2B with built-in ComfyUI nodes. Uses FP8 T5 encoder for 12GB VRAM compatibility.",
     "optimal_settings": {
       "resolution": "768x512",
       "cfg": "3.0-4.0",
-      "steps": "30-50",
+      "steps": "20-30",
       "fps": "24",
       "frames": "Must be 8n+1 (e.g., 25, 33, 41, 49, 57, 65, 73, 81, 89, 97)"
+    },
+    "vram_requirements": {
+      "minimum": "10GB (with FP8 T5)",
+      "recommended": "12GB+"
     }
   },
   "1": {
@@ -25,7 +29,7 @@
   "3": {
     "class_type": "CLIPLoader",
     "inputs": {
-      "clip_name": "t5xxl_fp16.safetensors",
+      "clip_name": "t5xxl_fp8_e4m3fn.safetensors",
       "type": "ltxv"
     }
   },
