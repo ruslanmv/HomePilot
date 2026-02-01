@@ -1037,155 +1037,6 @@ export default function AnimateView(props: AnimateParams) {
         </div>
       )}
 
-      {/* Settings Panel (slides in from bottom) */}
-      {showSettingsPanel && (
-        <div className="absolute bottom-[110%] left-1/2 -translate-x-1/2 z-40 bg-black/95 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl w-full max-w-lg mb-2">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Sliders size={16} className="text-purple-400" />
-              Video Settings
-            </h3>
-            <button
-              type="button"
-              className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
-              onClick={() => setShowSettingsPanel(false)}
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          {/* Aspect Ratio */}
-          <div className="mb-4">
-            <div className="flex justify-between items-center text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2">
-              <span>Aspect Ratio</span>
-              {detectedModelType && (
-                <span className="text-purple-400/60 normal-case font-normal">
-                  {compatibleAspectRatios.length} available for {detectedModelType.toUpperCase()}
-                </span>
-              )}
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              {compatibleAspectRatios.map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => setAspectRatio(r.id)}
-                  className={`p-2 rounded-lg hover:bg-white/5 transition-colors group flex flex-col items-center gap-1 ${
-                    aspectRatio === r.id ? 'bg-white/5 ring-1 ring-purple-500/50' : ''
-                  }`}
-                  title={r.label}
-                >
-                  <div
-                    className={`border-2 ${
-                      aspectRatio === r.id ? 'border-purple-400' : 'border-white/30 group-hover:border-white/50'
-                    } rounded-[2px]`}
-                    style={{ width: r.previewW, height: r.previewH }}
-                  />
-                  <span className={`text-[10px] ${aspectRatio === r.id ? 'text-purple-300' : 'text-white/50'}`}>
-                    {r.id}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Quality Preset */}
-          <div className="mb-4">
-            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-              Quality Preset
-            </label>
-            <div className="grid grid-cols-4 gap-2">
-              {QUALITY_PRESETS.map((q) => (
-                <button
-                  key={q.id}
-                  onClick={() => setQualityPreset(q.id)}
-                  title={q.description}
-                  className={`py-2 px-2 rounded-lg text-sm font-medium transition-colors ${
-                    qualityPreset === q.id
-                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  <div className="text-xs font-bold">{q.label}</div>
-                  <div className="text-[9px] text-white/40 mt-0.5">{q.short}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Duration */}
-          <div className="mb-4">
-            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-              Duration
-            </label>
-            <div className="flex gap-2">
-              {DURATION_PRESETS.map((d) => (
-                <button
-                  key={d.value}
-                  onClick={() => setSeconds(d.value)}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                    seconds === d.value
-                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* FPS */}
-          <div className="mb-4">
-            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-              Frame Rate
-            </label>
-            <div className="flex gap-2">
-              {FPS_PRESETS.map((f) => (
-                <button
-                  key={f.value}
-                  onClick={() => setFps(f.value)}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                    fps === f.value
-                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Motion Strength */}
-          <div className="mb-4">
-            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-              Motion Strength
-            </label>
-            <div className="flex gap-2">
-              {MOTION_PRESETS.map((m) => (
-                <button
-                  key={m.value}
-                  onClick={() => setMotion(m.value)}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                    motion === m.value
-                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  <div>{m.label}</div>
-                  <div className="text-[10px] text-white/40 mt-0.5">{m.description}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-purple-900/10 border border-purple-500/20 text-xs text-purple-200/70 leading-relaxed">
-            <span className="font-bold text-purple-400 block mb-1">PRO TIP</span>
-            Start with shorter durations and lower FPS for faster generation. Increase for smoother, longer videos.
-          </div>
-        </div>
-      )}
-
       {/* Floating Advanced Settings Toggle Button */}
       <button
         className={`absolute top-6 right-6 z-20 p-3 rounded-full border shadow-lg transition-all ${
@@ -1368,6 +1219,155 @@ export default function AnimateView(props: AnimateParams) {
       {/* Floating prompt bar */}
       <div className="absolute bottom-0 left-0 right-0 z-30 p-6 flex justify-center items-end bg-gradient-to-t from-black via-black/90 to-transparent h-48 pointer-events-none">
         <div className="w-full max-w-2xl relative pointer-events-auto">
+          {/* Settings Panel (slides in from bottom) */}
+          {showSettingsPanel && (
+            <div className="absolute bottom-[110%] left-0 right-0 z-40 bg-black/95 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl mb-2">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Sliders size={16} className="text-purple-400" />
+                  Video Settings
+                </h3>
+                <button
+                  type="button"
+                  className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                  onClick={() => setShowSettingsPanel(false)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Aspect Ratio */}
+              <div className="mb-4">
+                <div className="flex justify-between items-center text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2">
+                  <span>Aspect Ratio</span>
+                  {detectedModelType && (
+                    <span className="text-purple-400/60 normal-case font-normal">
+                      {compatibleAspectRatios.length} available for {detectedModelType.toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {compatibleAspectRatios.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => setAspectRatio(r.id)}
+                      className={`p-2 rounded-lg hover:bg-white/5 transition-colors group flex flex-col items-center gap-1 ${
+                        aspectRatio === r.id ? 'bg-white/5 ring-1 ring-purple-500/50' : ''
+                      }`}
+                      title={r.label}
+                    >
+                      <div
+                        className={`border-2 ${
+                          aspectRatio === r.id ? 'border-purple-400' : 'border-white/30 group-hover:border-white/50'
+                        } rounded-[2px]`}
+                        style={{ width: r.previewW, height: r.previewH }}
+                      />
+                      <span className={`text-[10px] ${aspectRatio === r.id ? 'text-purple-300' : 'text-white/50'}`}>
+                        {r.id}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quality Preset */}
+              <div className="mb-4">
+                <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
+                  Quality Preset
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {QUALITY_PRESETS.map((q) => (
+                    <button
+                      key={q.id}
+                      onClick={() => setQualityPreset(q.id)}
+                      title={q.description}
+                      className={`py-2 px-2 rounded-lg text-sm font-medium transition-colors ${
+                        qualityPreset === q.id
+                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="text-xs font-bold">{q.label}</div>
+                      <div className="text-[9px] text-white/40 mt-0.5">{q.short}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Duration */}
+              <div className="mb-4">
+                <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
+                  Duration
+                </label>
+                <div className="flex gap-2">
+                  {DURATION_PRESETS.map((d) => (
+                    <button
+                      key={d.value}
+                      onClick={() => setSeconds(d.value)}
+                      className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                        seconds === d.value
+                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* FPS */}
+              <div className="mb-4">
+                <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
+                  Frame Rate
+                </label>
+                <div className="flex gap-2">
+                  {FPS_PRESETS.map((f) => (
+                    <button
+                      key={f.value}
+                      onClick={() => setFps(f.value)}
+                      className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                        fps === f.value
+                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Motion Strength */}
+              <div className="mb-4">
+                <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
+                  Motion Strength
+                </label>
+                <div className="flex gap-2">
+                  {MOTION_PRESETS.map((m) => (
+                    <button
+                      key={m.value}
+                      onClick={() => setMotion(m.value)}
+                      className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                        motion === m.value
+                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      <div>{m.label}</div>
+                      <div className="text-[10px] text-white/40 mt-0.5">{m.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-purple-900/10 border border-purple-500/20 text-xs text-purple-200/70 leading-relaxed">
+                <span className="font-bold text-purple-400 block mb-1">PRO TIP</span>
+                Start with shorter durations and lower FPS for faster generation. Increase for smoother, longer videos.
+              </div>
+            </div>
+          )}
+
           {/* Reference Image Preview Panel */}
           {referenceUrl && (
             <div className="absolute bottom-[110%] left-0 right-0 bg-black/95 border border-white/10 rounded-2xl p-4 shadow-2xl mb-2 backdrop-blur-xl">
