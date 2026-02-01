@@ -214,6 +214,29 @@ Given a user's casual request, output a JSON object with these fields:
 
 Keep your response as a single JSON object, no markdown, no explanations."""
 
+# Video prompt refiner system message (optimized for motion/temporal descriptions)
+VIDEO_PROMPT_REFINER_SYSTEM = """You are an expert at refining prompts for AI video generation (LTX-Video, Stable Video Diffusion, WAN, Hunyuan).
+
+Given a user's casual request, output a JSON object optimized for video synthesis:
+- "prompt": (string) A detailed, motion-focused prompt. Include:
+  - Subject description (appearance, pose, clothing, expression)
+  - Motion type (gentle sway, walking, hair flowing, breathing, dancing)
+  - Camera movement (static shot, slow pan, dolly in/out, tracking shot)
+  - Environment dynamics (wind effects, water ripples, floating particles, light rays)
+  - Lighting/atmosphere (golden hour, soft ambient, dramatic shadows, neon glow)
+  - Style (cinematic, photorealistic, artistic, dreamlike, anime)
+
+- "negative_prompt": (string) Video artifacts to avoid (default: "static, frozen, glitch, flicker, jitter, morphing, warping, duplicate frames, low fps, choppy, blurry, watermark")
+
+- "motion_intensity": (string) One of: "subtle", "medium", "dynamic". Default "medium".
+
+IMPORTANT: Focus on ACHIEVABLE motion. Video AI works best with:
+- Subtle, natural movements (hair, fabric, breathing)
+- Slow camera movements (gentle pan, slow zoom)
+- Consistent subject (avoid transformation/morphing)
+
+Output a single JSON object, no markdown, no explanations."""
+
 
 def _norm_mode(mode: Optional[str]) -> str:
     return (mode or "").strip().lower()
@@ -357,6 +380,99 @@ async def _refine_prompt(
         import traceback
         print(f"[_refine_prompt] Traceback: {traceback.format_exc()}")
         print(f"[_refine_prompt] FALLBACK: Using original user prompt")
+        return fallback_result
+
+
+async def _refine_video_prompt(
+    user_prompt: str,
+    provider: ProviderName,
+    provider_base_url: Optional[str] = None,
+    provider_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Use LLM to refine user's prompt into a motion-focused video generation prompt.
+    Returns dict with: prompt, negative_prompt, motion_intensity
+
+    IMPORTANT: On any failure, returns the ORIGINAL user_prompt to preserve user intent.
+    """
+    print(f"[_refine_video_prompt] Calling LLM to refine video prompt...")
+    print(f"[_refine_video_prompt] Original user prompt: '{user_prompt[:100]}...'")
+    print(f"[_refine_video_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
+
+    # Default fallback - always preserves user's original prompt
+    # Video-specific negative prompt for temporal artifacts
+    fallback_result = {
+        "prompt": user_prompt,
+        "negative_prompt": "static, frozen, glitch, flicker, jitter, morphing, warping, duplicate frames, low fps, choppy, blurry, watermark, text, logo",
+        "motion_intensity": "medium",
+    }
+
+    messages = [
+        {"role": "system", "content": VIDEO_PROMPT_REFINER_SYSTEM},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    try:
+        print(f"[_refine_video_prompt] Sending to llm_chat...")
+        result = await llm_chat(
+            messages,
+            provider=provider,
+            temperature=0.7,
+            max_tokens=600,  # Slightly more for video descriptions
+            base_url=provider_base_url,
+            model=provider_model,
+        )
+        print(f"[_refine_video_prompt] LLM response received")
+
+        # Extract the response text
+        response_text = (
+            (result.get("choices") or [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        ).strip()
+
+        if not response_text:
+            print(f"[_refine_video_prompt] WARNING: Empty LLM response, using original prompt")
+            return fallback_result
+
+        print(f"[_refine_video_prompt] Raw LLM response: '{response_text[:300]}...'")
+
+        # Try to parse JSON robustly
+        print(f"[_refine_video_prompt] Parsing JSON...")
+        refined = _extract_json_from_text(response_text)
+
+        if refined and refined.get("prompt"):
+            refined_prompt = refined.get("prompt", "").strip()
+            if refined_prompt:
+                # Get video-specific negative prompt from LLM or use default
+                llm_negative = refined.get("negative_prompt", "")
+                # Enhance with video-specific artifacts if not already present
+                video_artifacts = "static, frozen, glitch, flicker, jitter, morphing, warping"
+                if llm_negative and video_artifacts not in llm_negative.lower():
+                    enhanced_negative = f"{llm_negative}, {video_artifacts}"
+                else:
+                    enhanced_negative = llm_negative or fallback_result["negative_prompt"]
+
+                result_dict = {
+                    "prompt": refined_prompt,
+                    "negative_prompt": enhanced_negative,
+                    "motion_intensity": refined.get("motion_intensity", "medium"),
+                }
+                print(f"[_refine_video_prompt] SUCCESS: Refined prompt: '{result_dict['prompt'][:100]}...'")
+                print(f"[_refine_video_prompt] Negative: '{enhanced_negative[:80]}...'")
+                print(f"[_refine_video_prompt] Motion intensity: {result_dict['motion_intensity']}")
+                return result_dict
+
+        # JSON parsing failed or prompt field empty
+        print(f"[_refine_video_prompt] WARNING: JSON parsing failed or empty prompt, using original")
+        return fallback_result
+
+    except Exception as e:
+        # If refinement fails, return original user prompt (never lose user's intent)
+        print(f"[_refine_video_prompt] ERROR: {type(e).__name__}: {e}")
+        import traceback
+        print(f"[_refine_video_prompt] Traceback: {traceback.format_exc()}")
+        print(f"[_refine_video_prompt] FALLBACK: Using original user prompt")
         return fallback_result
 
 
@@ -603,12 +719,62 @@ async def orchestrate(
                 vid_negative_prompt=vid_negative_prompt,
             )
 
+            # ================================================================
+            # VIDEO PROMPT REFINEMENT (like Imagine mode)
+            # ================================================================
+            # Clean the prompt first (remove URLs, command words)
+            video_prompt = _clean_video_prompt(text_in)
+            video_negative = preset_vars.get("negative_prompt", "")
+            video_motion_intensity = "medium"
+
+            # Optional video prompt refinement (enabled by default, can be disabled)
+            if prompt_refinement:
+                prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
+
+                # Determine LLM settings for refinement
+                if prov == "ollama":
+                    refine_base_url = provider_base_url or OLLAMA_BASE_URL
+                    refine_model = OLLAMA_MODEL if OLLAMA_MODEL else "llama3:8b"
+                elif prov == "openai_compat":
+                    refine_base_url = provider_base_url or LLM_BASE_URL
+                    refine_model = LLM_MODEL if LLM_MODEL else None
+                else:
+                    refine_base_url = provider_base_url
+                    refine_model = None
+
+                print(f"[ANIMATE] === Starting video prompt refinement ===")
+                print(f"[ANIMATE] Original prompt: '{video_prompt[:80]}...'")
+                print(f"[ANIMATE] Provider: {prov}, Model: {refine_model}")
+
+                try:
+                    video_refined = await _refine_video_prompt(
+                        video_prompt,
+                        provider=prov,
+                        provider_base_url=refine_base_url,
+                        provider_model=refine_model,
+                    )
+                    video_prompt = video_refined.get("prompt", video_prompt)
+                    # Merge refined negative with preset negative (refined takes precedence for video artifacts)
+                    refined_negative = video_refined.get("negative_prompt", "")
+                    if refined_negative:
+                        video_negative = refined_negative
+                    video_motion_intensity = video_refined.get("motion_intensity", "medium")
+
+                    print(f"[ANIMATE] Refined prompt: '{video_prompt[:80]}...'")
+                    print(f"[ANIMATE] Refined negative: '{video_negative[:60]}...'")
+                    print(f"[ANIMATE] Motion intensity: {video_motion_intensity}")
+                except Exception as e:
+                    print(f"[ANIMATE] Video prompt refinement failed: {e}, using original")
+                    # Keep original cleaned prompt
+            else:
+                print(f"[ANIMATE] Prompt refinement disabled, using original prompt")
+
             # Build final workflow variables
             workflow_vars = {
                 "image_path": image_url,
-                "prompt": _clean_video_prompt(text_in),
-                "negative_prompt": preset_vars.get("negative_prompt", ""),
-                "motion": vid_motion if vid_motion is not None else "medium",
+                "prompt": video_prompt,
+                "negative_prompt": video_negative,
+                "motion": vid_motion if vid_motion is not None else video_motion_intensity,
                 # Use preset values (with user overrides already applied)
                 "seconds": preset_vars.get("seconds", vid_seconds or 4),
                 "frames": preset_vars.get("frames", 33),
@@ -685,7 +851,8 @@ async def orchestrate(
                     "denoise": workflow_vars.get("denoise", 0.85),
                     # Motion and prompt
                     "motion": workflow_vars.get("motion", "medium"),
-                    "prompt": workflow_vars.get("prompt", ""),
+                    "prompt": text_in,  # Original user prompt
+                    "final_prompt": video_prompt,  # Refined prompt (or original if refinement disabled)
                     "negative_prompt": workflow_vars.get("negative_prompt", ""),
                     # Source image
                     "source_image": image_url,
