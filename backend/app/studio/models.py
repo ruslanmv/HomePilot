@@ -122,6 +122,7 @@ class StudioScene(BaseModel):
 
     # Generated assets
     imageUrl: Optional[str] = None
+    videoUrl: Optional[str] = None
     audioUrl: Optional[str] = None
 
     # Generation status
@@ -147,9 +148,17 @@ class StudioSceneUpdate(BaseModel):
     imagePrompt: Optional[str] = None
     negativePrompt: Optional[str] = None
     imageUrl: Optional[str] = None
+    videoUrl: Optional[str] = None
     audioUrl: Optional[str] = None
     status: Optional[SceneStatus] = None
     durationSec: Optional[float] = None
+    # Snake_case aliases for frontend compatibility
+    image_url: Optional[str] = None
+    video_url: Optional[str] = None
+    audio_url: Optional[str] = None
+    image_prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    duration_sec: Optional[float] = None
 
 
 # ============================================================================

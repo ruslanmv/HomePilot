@@ -15,6 +15,14 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
+### 🎬 Animate Studio Enhancements
+Professional video generation controls for image-to-video:
+- **Video Settings Panel** - Aspect Ratio, Quality Preset, and Motion controls
+- **Resolution Override** - Test different resolutions (Lowest 6GB to Ultra) in Advanced Controls
+- **Hardware Presets** - Optimized configurations for RTX 4060, 4080, A100, and custom setups
+- **Video Details** - Shows Resolution, Aspect Ratio, and Preset used for reproducibility
+- **LTX-Optimized Presets** - Tuned for LTX-Video-2B with optimal CFG (3.0-3.5) and 16:9 native support
+
 ### 🖼️ Edit Studio Enhancements
 One-click image editing tools integrated into the Edit page:
 - **Quick Enhance** - Enhance photo quality, restore artifacts, fix faces
@@ -63,7 +71,7 @@ This serves as the foundation for an "enterprise mind" capable of expanding into
 | **Chat (LLM)** | Multi-turn conversations with OpenAI-style routing. Includes a "Fun mode" for creative tone modification. Support for backend-hosted LLMs or Ollama. |
 | **Imagine** | Text-to-image generation powered by a workflow-driven pipeline (ComfyUI). |
 | **Edit** | Upload an image and describe changes to modify it naturally within the chat. |
-| **Animate** | Turn still images into short video clips using localized motion workflows. |
+| **Animate** | Turn still images into short video clips with configurable aspect ratio, quality presets, and motion controls. Supports multiple video models (LTX, Wan, SVD, Hunyuan, Mochi, CogVideo). |
 
 ### Studio Features
 
@@ -373,7 +381,9 @@ HomePilot is **workflow-driven**. Instead of hardcoded pipelines, it loads JSON 
 
 - `flux_schnell.json` - Fast FLUX image generation
 - `sdxl_base.json` - SDXL image generation
-- `animate.json` - Image-to-video animation
+- `animate.json` - Image-to-video animation (LTX-Video)
+- `wan_i2v.json` - Wan image-to-video
+- `svd_animate.json` - Stable Video Diffusion
 - `edit.json` - Image editing with inpainting
 
 ---
@@ -446,6 +456,8 @@ ProjectTemplate(
 - [x] Export functionality (PDF, PPTX, ZIP)
 - [x] Edit Studio: Quick Enhance, Upscale 2x/4x, Background Tools, Outpaint
 - [x] Capabilities API for runtime feature checks
+- [x] Animate Studio: Video Settings panel, Resolution Override, Hardware Presets
+- [x] Multi-model video support (LTX, Wan, SVD, Hunyuan, Mochi, CogVideo)
 
 ### In Progress
 - [ ] Voice narration with TTS
