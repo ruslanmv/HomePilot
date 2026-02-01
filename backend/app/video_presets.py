@@ -3,6 +3,7 @@ Video Generation Presets Module
 
 Provides quality presets for video generation with model-specific overrides.
 Supports GPU VRAM-based auto-selection of appropriate presets.
+Now includes aspect ratio support with model compatibility filtering.
 """
 
 import json
@@ -21,6 +22,13 @@ def _load_presets() -> Dict[str, Any]:
         with open(_PRESETS_FILE, "r") as f:
             _presets_cache = json.load(f)
     return _presets_cache
+
+
+def reload_presets() -> None:
+    """Force reload presets from file (useful for testing)."""
+    global _presets_cache
+    _presets_cache = None
+    _load_presets()
 
 
 def get_preset_names() -> List[str]:
@@ -42,6 +50,80 @@ def get_preset_info() -> List[Dict[str, Any]]:
             "description": ui.get("description", ""),
         })
     return result
+
+
+def get_aspect_ratios() -> Dict[str, Any]:
+    """Get all aspect ratios with their configurations."""
+    presets = _load_presets()
+    return presets.get("aspect_ratios", {})
+
+
+def get_aspect_ratios_for_model(model_type: Optional[str]) -> List[Dict[str, Any]]:
+    """
+    Get list of aspect ratios compatible with a specific model.
+
+    Args:
+        model_type: The model type ('ltx', 'svd', 'wan', etc.) or None for all
+
+    Returns:
+        List of aspect ratio configs with id, label, and dimensions
+    """
+    presets = _load_presets()
+    aspect_ratios = presets.get("aspect_ratios", {})
+    result = []
+
+    for ratio_id, config in aspect_ratios.items():
+        compatible = config.get("compatible_models", [])
+
+        # Include if no model specified or model is compatible
+        if model_type is None or model_type in compatible:
+            result.append({
+                "id": ratio_id,
+                "label": config.get("ui_label", ratio_id),
+                "compatible_models": compatible,
+                "dimensions": config.get("dimensions", {}),
+                "notes": config.get("notes", ""),
+            })
+
+    return result
+
+
+def get_dimensions_for_aspect_ratio(
+    aspect_ratio: str,
+    preset_name: str,
+    model_type: Optional[str] = None,
+) -> Dict[str, int]:
+    """
+    Get width/height dimensions for a specific aspect ratio and preset.
+
+    Args:
+        aspect_ratio: The aspect ratio ('16:9', '9:16', '1:1', '4:3', '3:4')
+        preset_name: Quality preset ('low', 'medium', 'high', 'ultra')
+        model_type: Optional model type for compatibility check
+
+    Returns:
+        Dict with 'width' and 'height' keys
+    """
+    presets = _load_presets()
+    aspect_ratios = presets.get("aspect_ratios", {})
+
+    # Default to 16:9 if not found
+    ratio_config = aspect_ratios.get(aspect_ratio, aspect_ratios.get("16:9", {}))
+
+    # Check model compatibility
+    if model_type:
+        compatible = ratio_config.get("compatible_models", [])
+        if compatible and model_type not in compatible:
+            # Model not compatible, fallback to 16:9
+            ratio_config = aspect_ratios.get("16:9", {})
+
+    dimensions = ratio_config.get("dimensions", {})
+    preset_dims = dimensions.get(preset_name, dimensions.get("medium", {}))
+
+    return {
+        "width": preset_dims.get("width", 832),
+        "height": preset_dims.get("height", 480),
+    }
 
 
 def detect_model_type(model_name: Optional[str]) -> Optional[str]:
@@ -220,6 +302,7 @@ def enforce_frame_rule(model_type: Optional[str], frames: int, strategy: str = "
 def get_workflow_vars(
     preset_name: str,
     model_type: Optional[str] = None,
+    aspect_ratio: Optional[str] = None,
     custom_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
@@ -228,6 +311,7 @@ def get_workflow_vars(
     Args:
         preset_name: Name of the preset ('low', 'medium', 'high', 'ultra')
         model_type: Optional model type for model-specific overrides
+        aspect_ratio: Optional aspect ratio ('16:9', '9:16', '1:1', '4:3', '3:4')
         custom_overrides: Optional dict of custom values to override preset
 
     Returns:
@@ -239,9 +323,16 @@ def get_workflow_vars(
     if not preset_data:
         # Fallback to medium if preset not found
         preset_data = presets.get("presets", {}).get("medium", {})
+        preset_name = "medium"
 
     # Start with base settings
     result = dict(preset_data.get("base", {}))
+
+    # Get dimensions from aspect_ratios if available
+    if aspect_ratio:
+        dims = get_dimensions_for_aspect_ratio(aspect_ratio, preset_name, model_type)
+        result["width"] = dims["width"]
+        result["height"] = dims["height"]
 
     # Apply model-specific overrides if available
     if model_type:
@@ -264,6 +355,7 @@ def get_workflow_vars(
 def apply_preset_to_workflow_vars(
     preset_name: Optional[str],
     model_name: Optional[str],
+    aspect_ratio: Optional[str] = None,
     vid_seconds: Optional[int] = None,
     vid_fps: Optional[int] = None,
     vid_steps: Optional[int] = None,
@@ -280,6 +372,7 @@ def apply_preset_to_workflow_vars(
     Args:
         preset_name: Preset to use ('low', 'medium', 'high', 'ultra', or None for medium)
         model_name: Full model filename to detect type from
+        aspect_ratio: Optional aspect ratio ('16:9', '9:16', '1:1', '4:3', '3:4')
         vid_*: Optional user overrides from Advanced Controls
         vid_negative_prompt: Optional user override for negative prompt
 
@@ -293,6 +386,10 @@ def apply_preset_to_workflow_vars(
     if not preset_name:
         preset_name = "medium"
 
+    # Default to 16:9 if no aspect ratio specified
+    if not aspect_ratio:
+        aspect_ratio = "16:9"
+
     # Build custom overrides from user inputs
     custom_overrides = {}
     if vid_steps is not None:
@@ -304,8 +401,8 @@ def apply_preset_to_workflow_vars(
     if vid_fps is not None:
         custom_overrides["fps"] = vid_fps
 
-    # Get preset values with overrides
-    result = get_workflow_vars(preset_name, model_type, custom_overrides)
+    # Get preset values with overrides (now includes aspect ratio dimensions)
+    result = get_workflow_vars(preset_name, model_type, aspect_ratio, custom_overrides)
 
     # Handle seconds -> frames conversion if seconds provided
     if vid_seconds is not None:
@@ -337,6 +434,7 @@ def get_presets_for_api() -> Dict[str, Any]:
     presets = _load_presets()
     return {
         "presets": get_preset_info(),
+        "aspect_ratios": get_aspect_ratios(),
         "model_rules": presets.get("model_rules", {}),
         "vram_auto_select": presets.get("vram_auto_select", {}),
         "model_min_vram": presets.get("model_min_vram", {}),

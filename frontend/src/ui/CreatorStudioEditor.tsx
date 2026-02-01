@@ -28,10 +28,18 @@ import {
   Star,
   Lock,
   Shield,
+  Film,
+  MoreHorizontal,
+  Sliders,
+  ChevronDown,
 } from "lucide-react";
 import { useTVModeStore } from "./studio/stores/tvModeStore";
 import type { TVScene } from "./studio/stores/tvModeStore";
 import { TVModeContainer } from "./studio/components/TVMode/TVModeContainer";
+import CreatorStudioSettings, {
+  CREATOR_STUDIO_PARAM_DEFAULTS,
+  type CreatorStudioGenerationParams,
+} from "./CreatorStudioSettings";
 
 // Types
 type SceneStatus = "pending" | "generating" | "ready" | "error";
@@ -46,6 +54,7 @@ type Scene = {
   imagePrompt: string;
   negativePrompt: string;
   imageUrl: string | null;
+  videoUrl: string | null;
   audioUrl: string | null;
   status: SceneStatus;
   durationSec: number;
@@ -65,6 +74,7 @@ type Project = {
   updatedAt: number;
   metadata?: {
     story_outline?: StoryOutline;
+    generationMode?: "video" | "slideshow";
   };
 };
 
@@ -113,6 +123,10 @@ interface CreatorStudioEditorProps {
   imageHeight?: number;
   imageSteps?: number;
   imageCfg?: number;
+  /** Video model for AI video generation */
+  videoModel?: string;
+  /** Enable video generation after image generation */
+  enableVideoGeneration?: boolean;
 }
 
 /**
@@ -133,6 +147,8 @@ export function CreatorStudioEditor({
   imageHeight = 768,
   imageSteps,
   imageCfg,
+  videoModel,
+  enableVideoGeneration = false,
 }: CreatorStudioEditorProps) {
   const authKey = (apiKey || "").trim();
   const [hasAutoTriggered, setHasAutoTriggered] = useState(false);
@@ -166,6 +182,7 @@ export function CreatorStudioEditor({
   const [availableImageModels, setAvailableImageModels] = useState<AvailableModel[]>([]);
   const [selectedLLMModel, setSelectedLLMModel] = useState<string>(defaultLLMModel);
   const [selectedImageModel, setSelectedImageModel] = useState<string>(imageModel || "");
+  const [selectedVideoModel, setSelectedVideoModel] = useState<string>(videoModel || "");
   const [settingsLLMModel, setSettingsLLMModel] = useState<string>(defaultLLMModel);
   const [error, setError] = useState<string | null>(null);
   const [currentSceneIndex, setCurrentSceneIndex] = useState(0);
@@ -175,11 +192,13 @@ export function CreatorStudioEditor({
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isGeneratingScene, setIsGeneratingScene] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [hoveredSceneIdx, setHoveredSceneIdx] = useState<number | null>(null);
+  const [canPlayWebm, setCanPlayWebm] = useState<boolean>(true);
 
   // Batch generation state (generates all scenes from outline)
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; phase: 'scene' | 'image' }>({ current: 0, total: 0, phase: 'scene' });
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; phase: 'scene' | 'image' | 'video' }>({ current: 0, total: 0, phase: 'scene' });
 
   // Project Settings Modal state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -193,7 +212,28 @@ export function CreatorStudioEditor({
   const [settingsSceneDuration, setSettingsSceneDuration] = useState(5);
   const [settingsLockIdentity, setSettingsLockIdentity] = useState(true);
   const [settingsContentRating, setSettingsContentRating] = useState<ContentRating>("sfw");
+  const [settingsEnableVideo, setSettingsEnableVideo] = useState(false); // Enable video generation capability
   const [isSavingSettings, setIsSavingSettings] = useState(false);
+
+  // Model override state for Project Settings
+  const [settingsImageModel, setSettingsImageModel] = useState<string>("");
+  const [settingsVideoModel, setSettingsVideoModel] = useState<string>("");
+  const [availableVideoModels, setAvailableVideoModels] = useState<AvailableModel[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  // Generation parameters state (advanced customization)
+  const [genParams, setGenParams] = useState<CreatorStudioGenerationParams>(CREATOR_STUDIO_PARAM_DEFAULTS);
+
+  // Project-level capability: can this project generate videos?
+  // IMPORTANT: do NOT rely only on enableVideoGeneration (wizard-only, transient)
+  // This derives video capability from project metadata/tags for existing projects
+  const projectWantsVideo = Boolean(
+    project?.metadata?.generationMode === "video" ||
+    project?.tags?.includes("mode:video") ||
+    project?.tags?.includes("projectType:video") ||
+    project?.tags?.includes("projectType:video_series") ||
+    enableVideoGeneration === true // backward compatibility with wizard prop
+  );
 
   // API helpers
   const fetchApi = useCallback(
@@ -273,6 +313,81 @@ export function CreatorStudioEditor({
     },
     [backendUrl, authKey]
   );
+
+  // ---------- API <-> UI normalization helpers ----------
+  // Backend may return snake_case (image_url/video_url). UI uses camelCase (imageUrl/videoUrl).
+  const normalizeScene = useCallback((raw: any): Scene => {
+    return {
+      id: raw.id,
+      videoId: raw.videoId ?? raw.video_id ?? "",
+      idx: raw.idx ?? raw.index ?? raw.scene_index ?? 0,
+      narration: raw.narration ?? "",
+      imagePrompt: raw.imagePrompt ?? raw.image_prompt ?? "",
+      negativePrompt: raw.negativePrompt ?? raw.negative_prompt ?? "",
+      imageUrl: raw.imageUrl ?? raw.image_url ?? null,
+      videoUrl: raw.videoUrl ?? raw.video_url ?? null,
+      audioUrl: raw.audioUrl ?? raw.audio_url ?? null,
+      status: raw.status ?? "pending",
+      durationSec: raw.durationSec ?? raw.duration_sec ?? 5,
+      createdAt: raw.createdAt ?? raw.created_at ?? 0,
+      updatedAt: raw.updatedAt ?? raw.updated_at ?? 0,
+    } as Scene;
+  }, []);
+
+  const normalizeScenes = useCallback((arr: any[]): Scene[] => {
+    if (!Array.isArray(arr)) return [];
+    return arr.map(normalizeScene).sort((a, b) => a.idx - b.idx);
+  }, [normalizeScene]);
+
+  // Convert UI patch (camelCase) to backend-friendly payload (include snake_case too)
+  const toScenePatch = useCallback((patch: any) => {
+    const out: any = { ...patch };
+    if ("imageUrl" in out) out.image_url = out.imageUrl;
+    if ("videoUrl" in out) out.video_url = out.videoUrl;
+    if ("audioUrl" in out) out.audio_url = out.audioUrl;
+    if ("imagePrompt" in out) out.image_prompt = out.imagePrompt;
+    if ("negativePrompt" in out) out.negative_prompt = out.negativePrompt;
+    if ("durationSec" in out) out.duration_sec = out.durationSec;
+    return out;
+  }, []);
+
+  // Authoritative refresh from backend (source of truth)
+  const refreshScenes = useCallback(async () => {
+    try {
+      const scenesRes = await fetchApi<{ scenes: any[] }>(`/studio/videos/${projectId}/scenes`);
+      setScenes(normalizeScenes((scenesRes as any).scenes));
+    } catch (e) {
+      // Non-critical - log but don't alert
+      console.warn('[CreatorStudioEditor] Failed to refresh scenes:', e);
+    }
+  }, [fetchApi, projectId, normalizeScenes]);
+
+  // Proxy video URL through backend for correct Content-Type headers
+  // This ensures WebM videos play correctly in browsers
+  const proxyVideoUrl = useCallback((rawUrl: string | null | undefined): string | null => {
+    if (!rawUrl) return null;
+    // Only proxy ComfyUI localhost URLs
+    if (rawUrl.startsWith('http://localhost:8188/') || rawUrl.startsWith('http://127.0.0.1:8188/')) {
+      return `${backendUrl.replace(/\/+$/, '')}/studio/media?url=${encodeURIComponent(rawUrl)}`;
+    }
+    // Already proxied or external URL - return as-is
+    return rawUrl;
+  }, [backendUrl]);
+
+  // Detect when "videoUrl" is actually an animated image (e.g. .webp, .gif)
+  // Some Comfy workflows output animated WebP instead of WebM when ffmpeg is unavailable
+  const isAnimatedImageUrl = useCallback((u: string | null | undefined): boolean => {
+    if (!u) return false;
+    const s = u.toLowerCase();
+    // Covers direct URLs and ComfyUI view?filename=... patterns
+    return s.includes(".webp") || s.includes(".gif");
+  }, []);
+
+  // Detect if URL is a WebM video
+  const isWebmUrl = useCallback((u: string | null | undefined): boolean => {
+    if (!u) return false;
+    return u.toLowerCase().includes(".webm");
+  }, []);
 
   // Sync outline with current scenes (keeps outline in sync with actual scene data)
   const syncOutlineWithScenes = useCallback(async () => {
@@ -411,6 +526,23 @@ export function CreatorStudioEditor({
     return { goal, visualStyle, tones, lockIdentity, sceneCount, sceneDuration };
   }, []);
 
+  // Parse generation params from project tags
+  const parseGenParamsFromTags = useCallback((tags: string[] | undefined | null): CreatorStudioGenerationParams => {
+    const t = tags || [];
+    const next = { ...CREATOR_STUDIO_PARAM_DEFAULTS };
+
+    const get = (k: string) => t.find(x => x.startsWith(`gen:${k}=`))?.split("=")[1];
+
+    next.enabled = get("enabled") === "1";
+    next.steps = Number(get("steps") ?? next.steps);
+    next.cfgScale = Number(get("cfg") ?? next.cfgScale);
+    next.creativity = Number(get("creativity") ?? next.creativity);
+    next.lockSeed = get("seedlock") === "1";
+    next.seed = Number(get("seed") ?? next.seed);
+
+    return next;
+  }, []);
+
   // Open settings modal
   const openSettingsModal = useCallback(async () => {
     if (!project) return;
@@ -433,21 +565,65 @@ export function CreatorStudioEditor({
     const llmTag = tags.find((t: string) => t.startsWith("llm:"));
     setSettingsLLMModel(llmTag ? llmTag.replace("llm:", "") : selectedLLMModel);
 
-    // Fetch available models to ensure the dropdown is populated
+    // Initialize video generation enabled state from tags or enableVideoGeneration prop
+    const hasVideoMode = tags.includes("mode:video") ||
+      tags.includes("projectType:video") ||
+      tags.includes("projectType:video_series") ||
+      project?.metadata?.generationMode === "video" ||
+      enableVideoGeneration === true;
+    setSettingsEnableVideo(hasVideoMode);
+
+    // Initialize generation params from project tags
+    const parsedGenParams = parseGenParamsFromTags(tags);
+    // Also restore negative prompt from localStorage
     try {
-      const llmData = await fetchApi<{ models: { id: string; name?: string }[] }>(
-        '/models?provider=ollama'
-      );
+      const key = `creatorstudio:genparams:${projectId}:neg`;
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const neg = JSON.parse(stored);
+        parsedGenParams.useCustomNegativePrompt = Boolean(neg?.use);
+        parsedGenParams.customNegativePrompt = String(neg?.text || "");
+      }
+    } catch {}
+    setGenParams(parsedGenParams);
+
+    // Initialize image/video model overrides from project tags or props
+    const imageModelTag = tags.find((t: string) => t.startsWith("imageModel:"));
+    setSettingsImageModel(imageModelTag?.replace("imageModel:", "") || imageModel || "");
+
+    const videoModelTag = tags.find((t: string) => t.startsWith("videoModel:"));
+    setSettingsVideoModel(videoModelTag?.replace("videoModel:", "") || videoModel || "");
+
+    // Fetch available models to ensure the dropdowns are populated
+    setLoadingModels(true);
+    try {
+      // Fetch LLM, Image, and Video models in parallel
+      const [llmData, imgData, vidData] = await Promise.all([
+        fetchApi<{ models: { id: string; name?: string }[] }>('/models?provider=ollama'),
+        fetchApi<{ models: string[] }>('/models?provider=comfyui&model_type=image'),
+        fetchApi<{ models: string[] }>('/models?provider=comfyui&model_type=video'),
+      ]);
+
       if (llmData.models) {
         const models = llmData.models.map(m => ({ id: m.id, name: m.name || m.id }));
         setAvailableLLMModels(models);
       }
+      if (imgData.models) {
+        const models = imgData.models.map(m => ({ id: m, name: m }));
+        setAvailableImageModels(models);
+      }
+      if (vidData.models) {
+        const models = vidData.models.map(m => ({ id: m, name: m }));
+        setAvailableVideoModels(models);
+      }
     } catch (e) {
-      console.log('[CreatorStudioEditor] Failed to fetch LLM models for settings:', e);
+      console.log('[CreatorStudioEditor] Failed to fetch models for settings:', e);
+    } finally {
+      setLoadingModels(false);
     }
 
     setShowSettingsModal(true);
-  }, [project, parseTagsFromProject, selectedLLMModel, fetchApi]);
+  }, [project, projectId, parseTagsFromProject, parseGenParamsFromTags, selectedLLMModel, imageModel, videoModel, enableVideoGeneration, fetchApi]);
 
   // Toggle tone in settings
   const toggleSettingsTone = useCallback((tone: string) => {
@@ -462,6 +638,8 @@ export function CreatorStudioEditor({
   // Build tags from settings
   const buildTagsFromSettings = useCallback(() => {
     const tags: string[] = [];
+    // Video generation mode - critical for "Make Video" button visibility
+    tags.push(`mode:${settingsEnableVideo ? "video" : "slideshow"}`);
     if (settingsGoal) tags.push(`goal:${settingsGoal.toLowerCase()}`);
     if (settingsVisualStyle) tags.push(`visual:${settingsVisualStyle.toLowerCase().replace(/ /g, "_")}`);
     settingsTones.forEach((t) => tags.push(`tone:${t.toLowerCase().replace(/ /g, "_")}`));
@@ -469,8 +647,25 @@ export function CreatorStudioEditor({
     tags.push(`scenes:${settingsSceneCount}`);
     tags.push(`duration:${settingsSceneDuration}`);
     if (settingsLLMModel) tags.push(`llm:${settingsLLMModel}`);
+    // Model overrides - allows per-project model selection
+    if (settingsImageModel) tags.push(`imageModel:${settingsImageModel}`);
+    if (settingsVideoModel) tags.push(`videoModel:${settingsVideoModel}`);
     return tags;
-  }, [settingsGoal, settingsVisualStyle, settingsTones, settingsLockIdentity, settingsSceneCount, settingsSceneDuration, settingsLLMModel]);
+  }, [settingsEnableVideo, settingsGoal, settingsVisualStyle, settingsTones, settingsLockIdentity, settingsSceneCount, settingsSceneDuration, settingsLLMModel, settingsImageModel, settingsVideoModel]);
+
+  // Build tags including generation params
+  const buildGenTags = useCallback((p: CreatorStudioGenerationParams) => {
+    // Start with base settings tags, filter out any existing gen:* tags
+    const tags = buildTagsFromSettings().filter(t => !t.startsWith("gen:"));
+    // Add generation params
+    tags.push(`gen:enabled=${p.enabled ? "1" : "0"}`);
+    tags.push(`gen:steps=${p.steps}`);
+    tags.push(`gen:cfg=${p.cfgScale}`);
+    tags.push(`gen:creativity=${p.creativity}`);
+    tags.push(`gen:seedlock=${p.lockSeed ? "1" : "0"}`);
+    tags.push(`gen:seed=${p.seed}`);
+    return tags;
+  }, [buildTagsFromSettings]);
 
   // Save project settings
   const saveProjectSettings = useCallback(async () => {
@@ -478,7 +673,7 @@ export function CreatorStudioEditor({
     setIsSavingSettings(true);
 
     try {
-      const tags = buildTagsFromSettings();
+      const tags = buildGenTags(genParams);
 
       await patchApi(`/studio/videos/${projectId}`, {
         title: settingsTitle.trim(),
@@ -487,6 +682,15 @@ export function CreatorStudioEditor({
         contentRating: settingsContentRating,
         tags,
       });
+
+      // Persist negative prompt locally (can be long, so not in tags)
+      try {
+        const key = `creatorstudio:genparams:${projectId}:neg`;
+        localStorage.setItem(key, JSON.stringify({
+          use: genParams.useCustomNegativePrompt,
+          text: genParams.customNegativePrompt,
+        }));
+      } catch {}
 
       // Update local project state
       setProject((prev) => prev ? {
@@ -498,8 +702,10 @@ export function CreatorStudioEditor({
         tags,
       } : null);
 
-      // Update selected LLM model to match settings
+      // Update selected models to match settings
       setSelectedLLMModel(settingsLLMModel);
+      if (settingsImageModel) setSelectedImageModel(settingsImageModel);
+      if (settingsVideoModel) setSelectedVideoModel(settingsVideoModel);
 
       setLastSaved(new Date());
       setShowSettingsModal(false);
@@ -510,7 +716,7 @@ export function CreatorStudioEditor({
     } finally {
       setIsSavingSettings(false);
     }
-  }, [project, projectId, settingsTitle, settingsLogline, settingsPlatform, settingsContentRating, settingsLLMModel, buildTagsFromSettings, patchApi]);
+  }, [project, projectId, settingsTitle, settingsLogline, settingsPlatform, settingsContentRating, settingsLLMModel, settingsImageModel, settingsVideoModel, genParams, buildGenTags, patchApi]);
 
   // Delete scene
   const deleteScene = useCallback(async (sceneId: string) => {
@@ -688,18 +894,35 @@ export function CreatorStudioEditor({
       try {
         const llmProvider = imageProvider === 'comfyui' ? 'ollama' : imageProvider;
 
-        // Send aspect ratio to backend - Dynamic Preset System calculates correct
-        // dimensions based on model architecture (SD1.5 vs SDXL vs Flux)
+        // Apply generation parameters if enabled
+        const effectiveSteps = genParams.enabled ? genParams.steps : imageSteps;
+        const effectiveCfg = genParams.enabled ? genParams.cfgScale : imageCfg;
+
+        // Get scene-level negative prompt if available
+        const scene = scenes.find(s => s.id === sceneId);
+        const sceneNeg = scene?.negativePrompt || "";
+        const combinedNegativePrompt = (genParams.enabled && genParams.useCustomNegativePrompt && genParams.customNegativePrompt.trim())
+          ? [sceneNeg, genParams.customNegativePrompt.trim()].filter(Boolean).join(", ")
+          : sceneNeg || undefined;
+
+        // Send explicit width/height from wizard selection to backend
+        // This ensures the resolution selected in Step 2 is actually used
         const data = await postApi<{ media?: { images?: string[] } }>(
           '/chat',
           {
             message: `imagine ${imagePrompt}`,
             mode: 'imagine',
             provider: llmProvider,
-            imgModel: imageModel || undefined,
-            imgAspectRatio: '16:9',  // Story/video format
-            imgSteps: imageSteps,
-            imgCfg: imageCfg,
+            imgModel: selectedImageModel || imageModel || undefined,
+            // Pass explicit resolution from wizard (if available)
+            // Backend will use these values directly instead of computing from aspect ratio
+            ...(imageWidth ? { imgWidth: imageWidth } : {}),
+            ...(imageHeight ? { imgHeight: imageHeight } : {}),
+            imgSteps: effectiveSteps,
+            imgCfg: effectiveCfg,
+            negativePrompt: combinedNegativePrompt,
+            imgSeed: genParams.enabled && genParams.lockSeed ? genParams.seed : undefined,
+            creativity: genParams.enabled ? genParams.creativity : undefined,
             promptRefinement: false,
           }
         );
@@ -708,10 +931,10 @@ export function CreatorStudioEditor({
         if (imageUrl) {
           console.log('[CreatorStudioEditor] Image generated:', imageUrl);
 
-          await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, {
+          await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, toScenePatch({
             imageUrl,
             status: 'ready',
-          });
+          }));
 
           setScenes((prev) =>
             prev.map((s) =>
@@ -728,8 +951,90 @@ export function CreatorStudioEditor({
         setIsGeneratingImage(false);
       }
     },
-    [projectId, imageProvider, imageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage]
+    [projectId, imageProvider, imageModel, selectedImageModel, imageWidth, imageHeight, imageSteps, imageCfg, postApi, patchApi, isGeneratingImage, toScenePatch, genParams, scenes]
   );
+
+  // Generate video for a scene (converts image to video)
+  const generateVideoForScene = useCallback(
+    async (sceneId: string, imageUrl: string, prompt: string) => {
+      if (isGeneratingVideo) {
+        console.log('[CreatorStudioEditor] Already generating video, skipping');
+        return;
+      }
+
+      if (!imageUrl) {
+        console.warn('[CreatorStudioEditor] No image URL to animate');
+        return;
+      }
+
+      setIsGeneratingVideo(true);
+      console.log('[CreatorStudioEditor] Generating video for scene:', sceneId);
+
+      try {
+        // IMPORTANT:
+        // Backend animate mode detects the reference image via URL in the message (in this project version).
+        // Backend also expects vidModel (not videoModel).
+        const data = await postApi<{ media?: any }>(
+          '/chat',
+          {
+            message: `${prompt || 'Animate this scene with subtle motion'} ${imageUrl}`,
+            mode: 'animate',
+            provider: 'ollama',
+            vidModel: selectedVideoModel || videoModel || undefined,
+            // Apply generation parameters if enabled
+            vidSeed: genParams.enabled && genParams.lockSeed ? genParams.seed : undefined,
+            vidSteps: genParams.enabled ? genParams.steps : undefined,
+            vidCfg: genParams.enabled ? genParams.cfgScale : undefined,
+            creativity: genParams.enabled ? genParams.creativity : undefined,
+          }
+        );
+
+        // Backend returns media.video_url (NOT always media.videos[]).
+        const rawVideoUrl =
+          data?.media?.video_url ||
+          data?.media?.videos?.[0] ||
+          null;
+
+        if (rawVideoUrl) {
+          // Proxy the URL for correct Content-Type headers (WebM playback)
+          const proxiedVideoUrl = proxyVideoUrl(rawVideoUrl) || rawVideoUrl;
+          console.log('[CreatorStudioEditor] Video generated:', rawVideoUrl, '-> proxied:', proxiedVideoUrl);
+
+          await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, toScenePatch({
+            videoUrl: proxiedVideoUrl,
+            status: 'ready',
+          }));
+
+          setScenes((prev) =>
+            prev.map((s) =>
+              s.id === sceneId ? { ...s, videoUrl: proxiedVideoUrl, status: 'ready' as SceneStatus } : s
+            )
+          );
+          setLastSaved(new Date());
+        } else {
+          console.warn('[CreatorStudioEditor] No video returned from backend');
+        }
+      } catch (e: any) {
+        console.error('[CreatorStudioEditor] Failed to generate video:', e);
+      } finally {
+        setIsGeneratingVideo(false);
+      }
+    },
+    [projectId, videoModel, selectedVideoModel, postApi, patchApi, isGeneratingVideo, toScenePatch, proxyVideoUrl, genParams]
+  );
+
+  // Remove video and fall back to image-only for a scene
+  const removeVideoForScene = useCallback(async (sceneId: string) => {
+    if (!window.confirm("Remove the video for this scene and keep the image?")) return;
+    try {
+      await patchApi(`/studio/videos/${projectId}/scenes/${sceneId}`, toScenePatch({ videoUrl: null, status: 'ready' }));
+      setScenes(prev => prev.map(s => (s.id === sceneId ? { ...s, videoUrl: null, status: 'ready' as SceneStatus } : s)));
+      setLastSaved(new Date());
+    } catch (e: any) {
+      console.error('[CreatorStudioEditor] Failed to remove video:', e);
+      alert(`Failed to remove video: ${e.message}`);
+    }
+  }, [projectId, patchApi, toScenePatch]);
 
   // Generate scene from outline
   const generateSceneFromOutline = useCallback(async (sceneIndex: number) => {
@@ -802,7 +1107,8 @@ export function CreatorStudioEditor({
 
       console.log(`[CreatorStudioEditor] Created ${generatedScenes.length} scenes, now generating images...`);
 
-      // Now generate images for all scenes
+      // Phase 2: Generate images for all scenes
+      const scenesWithImages: Array<{ scene: Scene; imageUrl: string }> = [];
       for (let i = 0; i < generatedScenes.length; i++) {
         const scene = generatedScenes[i];
         setBatchProgress({ current: i + 1, total: generatedScenes.length, phase: 'image' });
@@ -818,7 +1124,7 @@ export function CreatorStudioEditor({
               message: `imagine ${scene.imagePrompt}`,
               mode: 'imagine',
               provider: llmProvider,
-              imgModel: imageModel || undefined,
+              imgModel: selectedImageModel || imageModel || undefined,
               imgAspectRatio: '16:9',
               imgSteps: imageSteps,
               imgCfg: imageCfg,
@@ -828,20 +1134,90 @@ export function CreatorStudioEditor({
 
           const imageUrl = data?.media?.images?.[0];
           if (imageUrl) {
-            await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, {
+            await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({
               imageUrl,
-              status: 'ready',
-            });
+              status: projectWantsVideo ? 'generating' : 'ready',
+            }));
 
             setScenes((prev) =>
               prev.map((s) =>
-                s.id === scene.id ? { ...s, imageUrl, status: 'ready' as SceneStatus } : s
+                s.id === scene.id ? { ...s, imageUrl, status: (projectWantsVideo ? 'generating' : 'ready') as SceneStatus } : s
               )
             );
+
+            scenesWithImages.push({ scene, imageUrl });
           }
         } catch (imgErr: any) {
           console.error(`[CreatorStudioEditor] Failed to generate image for scene ${i + 1}:`, imgErr);
           // Continue with remaining images
+        }
+      }
+
+      // Phase 3: Generate videos from images (if enabled)
+      if (projectWantsVideo && scenesWithImages.length > 0) {
+        console.log(`[CreatorStudioEditor] Phase 3: Generating ${scenesWithImages.length} videos...`);
+
+        for (let i = 0; i < scenesWithImages.length; i++) {
+          const { scene, imageUrl } = scenesWithImages[i];
+          setBatchProgress({ current: i + 1, total: scenesWithImages.length, phase: 'video' });
+          console.log(`[CreatorStudioEditor] Generating video ${i + 1}/${scenesWithImages.length}`);
+
+          try {
+            // Use the animate endpoint to generate video from image
+            // IMPORTANT: Include imageUrl in message and use vidModel (not videoModel)
+            const data = await postApi<{ media?: any }>(
+              '/chat',
+              {
+                message: `${scene.imagePrompt} ${imageUrl}`,
+                mode: 'animate',
+                provider: 'ollama',
+                vidModel: selectedVideoModel || videoModel || undefined,
+              }
+            );
+
+            // Backend returns media.video_url (NOT always media.videos[])
+            const rawVideoUrl =
+              data?.media?.video_url ||
+              data?.media?.videos?.[0] ||
+              null;
+
+            if (rawVideoUrl) {
+              // Proxy the URL for correct Content-Type headers (WebM playback)
+              const proxiedVideoUrl = proxyVideoUrl(rawVideoUrl) || rawVideoUrl;
+
+              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({
+                videoUrl: proxiedVideoUrl,
+                status: 'ready',
+              }));
+
+              setScenes((prev) =>
+                prev.map((s) =>
+                  s.id === scene.id ? { ...s, videoUrl: proxiedVideoUrl, status: 'ready' as SceneStatus } : s
+                )
+              );
+            } else {
+              // No video generated, mark scene as ready anyway (image only)
+              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({
+                status: 'ready',
+              }));
+              setScenes((prev) =>
+                prev.map((s) =>
+                  s.id === scene.id ? { ...s, status: 'ready' as SceneStatus } : s
+                )
+              );
+            }
+          } catch (vidErr: any) {
+            console.error(`[CreatorStudioEditor] Failed to generate video for scene ${i + 1}:`, vidErr);
+            // Mark scene as ready anyway (fallback to image only)
+            try {
+              await patchApi(`/studio/videos/${projectId}/scenes/${scene.id}`, toScenePatch({ status: 'ready' }));
+              setScenes((prev) =>
+                prev.map((s) =>
+                  s.id === scene.id ? { ...s, status: 'ready' as SceneStatus } : s
+                )
+              );
+            } catch {}
+          }
         }
       }
 
@@ -852,13 +1228,16 @@ export function CreatorStudioEditor({
       // Sync outline with actual scene data to keep them in sync
       await syncOutlineWithScenes();
 
+      // Final refresh so UI shows all persisted videoUrl values
+      await refreshScenes();
+
     } catch (e: any) {
       console.error('[CreatorStudioEditor] Batch generation failed:', e);
     } finally {
       setIsBatchGenerating(false);
       setBatchProgress({ current: 0, total: 0, phase: 'scene' });
     }
-  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, imageSteps, imageCfg, syncOutlineWithScenes]);
+  }, [storyOutline, projectId, postApi, patchApi, imageProvider, imageModel, selectedImageModel, imageSteps, imageCfg, projectWantsVideo, videoModel, selectedVideoModel, syncOutlineWithScenes, toScenePatch, refreshScenes, proxyVideoUrl]);
 
   // Load project and scenes
   useEffect(() => {
@@ -868,10 +1247,10 @@ export function CreatorStudioEditor({
       try {
         const [projectRes, scenesRes] = await Promise.all([
           fetchApi<{ video: Project }>(`/studio/videos/${projectId}`),
-          fetchApi<{ scenes: Scene[] }>(`/studio/videos/${projectId}/scenes`),
+          fetchApi<{ scenes: any[] }>(`/studio/videos/${projectId}/scenes`),
         ]);
         setProject(projectRes.video);
-        setScenes(scenesRes.scenes);
+        setScenes(normalizeScenes((scenesRes as any).scenes));
 
         // Extract LLM model from project tags if not already set
         const tags = (projectRes.video as any).tags || [];
@@ -888,13 +1267,29 @@ export function CreatorStudioEditor({
       }
     }
     loadData();
-  }, [projectId, fetchApi, defaultLLMModel]);
+  }, [projectId, fetchApi, defaultLLMModel, normalizeScenes]);
 
   // Load available models and existing outline on mount
   useEffect(() => {
     fetchAvailableModels();
     loadStoryOutline();
   }, [fetchAvailableModels, loadStoryOutline]);
+
+  // Detect whether the browser can play WebM videos
+  useEffect(() => {
+    try {
+      const v = document.createElement("video");
+      const ok = Boolean(
+        v.canPlayType('video/webm; codecs="vp8, vorbis"') ||
+        v.canPlayType('video/webm; codecs="vp9"') ||
+        v.canPlayType("video/webm")
+      );
+      setCanPlayWebm(ok);
+      console.log('[CreatorStudioEditor] WebM playback support:', ok);
+    } catch {
+      setCanPlayWebm(false);
+    }
+  }, []);
 
   // Auto-generate outline when project is newly created
   useEffect(() => {
@@ -1308,8 +1703,10 @@ export function CreatorStudioEditor({
                   <div className="absolute inset-0 flex items-center justify-center">
                     {batchProgress.phase === 'scene' ? (
                       <Sparkles size={28} className="text-[#3ea6ff]" />
-                    ) : (
+                    ) : batchProgress.phase === 'image' ? (
                       <ImageIcon size={28} className="text-[#3ea6ff]" />
+                    ) : (
+                      <Film size={28} className="text-[#3ea6ff]" />
                     )}
                   </div>
                 </div>
@@ -1317,14 +1714,17 @@ export function CreatorStudioEditor({
 
               {/* Title */}
               <h2 className="text-xl font-semibold text-white mb-2">
-                {batchProgress.phase === 'scene' ? 'Creating Scenes' : 'Generating Images'}
+                {batchProgress.phase === 'scene' ? 'Creating Scenes' :
+                 batchProgress.phase === 'image' ? 'Generating Images' : 'Generating Videos'}
               </h2>
 
               {/* Progress Text */}
               <p className="text-white/60 mb-6">
                 {batchProgress.phase === 'scene'
                   ? `Building scene ${batchProgress.current} of ${batchProgress.total}...`
-                  : `Generating image ${batchProgress.current} of ${batchProgress.total}...`
+                  : batchProgress.phase === 'image'
+                    ? `Generating image ${batchProgress.current} of ${batchProgress.total}...`
+                    : `Generating video ${batchProgress.current} of ${batchProgress.total}...`
                 }
               </p>
 
@@ -1341,13 +1741,21 @@ export function CreatorStudioEditor({
                   />
                 </div>
                 <div className="mt-2 text-xs text-white/40">
-                  {batchProgress.phase === 'scene' ? 'Phase 1/2: Creating scenes' : 'Phase 2/2: Generating images'}
+                  {batchProgress.phase === 'scene'
+                    ? (projectWantsVideo ? 'Phase 1/3: Creating scenes' : 'Phase 1/2: Creating scenes')
+                    : batchProgress.phase === 'image'
+                      ? (projectWantsVideo ? 'Phase 2/3: Generating images' : 'Phase 2/2: Generating images')
+                      : 'Phase 3/3: Generating videos'
+                  }
                 </div>
               </div>
 
               {/* Tip */}
               <p className="text-xs text-white/30 mt-4">
-                This may take a few minutes depending on your hardware
+                {batchProgress.phase === 'video'
+                  ? 'Video generation may take several minutes per scene'
+                  : 'This may take a few minutes depending on your hardware'
+                }
               </p>
             </div>
           </div>
@@ -1433,6 +1841,7 @@ export function CreatorStudioEditor({
             {scenes.map((scene, idx) => {
               const isActive = idx === currentSceneIndex;
               const hasImage = Boolean(scene.imageUrl);
+              const hasVideo = Boolean(scene.videoUrl);
               const isHovered = hoveredSceneIdx === idx;
               const showDelete = isHovered && scenes.length > 1;
 
@@ -1449,11 +1858,13 @@ export function CreatorStudioEditor({
                       relative rounded-lg overflow-hidden transition-all duration-200
                       ${isActive
                         ? "ring-2 ring-cyan-400 ring-offset-2 ring-offset-black scale-105"
-                        : "opacity-60 hover:opacity-100 hover:scale-102"
+                        : hasVideo
+                          ? "ring-1 ring-cyan-500/50 opacity-80 hover:opacity-100 hover:scale-102"
+                          : "opacity-60 hover:opacity-100 hover:scale-102"
                       }
                     `}
                     type="button"
-                    title={`Scene ${idx + 1}`}
+                    title={`Scene ${idx + 1}${hasVideo ? ' (Video)' : ''}`}
                   >
                     <div className="w-20 h-12 flex items-center justify-center bg-white/5">
                       {hasImage ? (
@@ -1466,6 +1877,11 @@ export function CreatorStudioEditor({
                         <ImageIcon size={16} className="text-white/20" />
                       )}
                     </div>
+
+                    {/* Subtle video indicator - small dot in corner */}
+                    {hasVideo && (
+                      <div className="absolute top-1 right-1 w-2 h-2 bg-cyan-400 rounded-full shadow-sm shadow-cyan-400/50" title="Has video" />
+                    )}
 
                     {/* Status indicator */}
                     <div className="absolute bottom-1 right-1">
@@ -1562,7 +1978,123 @@ export function CreatorStudioEditor({
 
             {/* Main preview area */}
             <div className="absolute inset-0 flex items-center justify-center p-6">
-              {currentScene?.imageUrl ? (
+              {currentScene?.videoUrl ? (
+                /* Video/Animation Preview - when scene has generated media */
+                <div className="relative max-w-full max-h-full group">
+                  {isAnimatedImageUrl(currentScene.videoUrl) ? (
+                    /* Animated WebP/GIF - render as <img> (some Comfy workflows output this) */
+                    <img
+                      src={proxyVideoUrl(currentScene.videoUrl) || currentScene.videoUrl}
+                      alt={`Scene ${currentSceneIndex + 1} animation`}
+                      className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-xl shadow-2xl shadow-black/50"
+                    />
+                  ) : isWebmUrl(currentScene.videoUrl) ? (
+                    /* WebM video - render as <video> */
+                    canPlayWebm ? (
+                      <video
+                        className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-xl shadow-2xl shadow-black/50"
+                        controls
+                        loop
+                        muted
+                        autoPlay
+                        playsInline
+                        preload="metadata"
+                        crossOrigin="anonymous"
+                        src={proxyVideoUrl(currentScene.videoUrl) || currentScene.videoUrl}
+                      />
+                    ) : (
+                      <div className="max-w-xl w-full bg-black/40 border border-white/10 rounded-xl p-6 text-center">
+                        <div className="flex items-center justify-center gap-2 text-cyan-300 font-medium mb-2">
+                          <Film size={16} />
+                          Video generated (WebM)
+                        </div>
+                        <div className="text-white/60 text-sm mb-4">
+                          This browser cannot play WebM inline. Use Chrome/Edge/Firefox, or download the clip.
+                        </div>
+                        <a
+                          href={proxyVideoUrl(currentScene.videoUrl) || currentScene.videoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                        >
+                          <Download size={14} />
+                          Open / Download WebM
+                        </a>
+                      </div>
+                    )
+                  ) : (
+                    /* Unknown format fallback - try to display with download option */
+                    <div className="max-w-xl w-full bg-black/40 border border-white/10 rounded-xl p-6 text-center">
+                      <div className="flex items-center justify-center gap-2 text-cyan-300 font-medium mb-2">
+                        <Film size={16} />
+                        Generated media
+                      </div>
+                      <div className="text-white/60 text-sm mb-4">
+                        This output format may not preview inline. Try opening in a new tab.
+                      </div>
+                      <a
+                        href={proxyVideoUrl(currentScene.videoUrl) || currentScene.videoUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-sm"
+                      >
+                        <Download size={14} />
+                        Open
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Top-right overlay controls - glass style */}
+                  <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {/* More options */}
+                    <button
+                      type="button"
+                      className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-black/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="More options"
+                      onClick={() => {
+                        setEditingScene(currentScene);
+                        setEditNarration(currentScene.narration);
+                        setEditImagePrompt(currentScene.imagePrompt);
+                        setEditNegativePrompt(currentScene.negativePrompt || '');
+                        setShowSceneEditor(true);
+                      }}
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                    {/* Regenerate video */}
+                    <button
+                      type="button"
+                      onClick={() => generateVideoForScene(currentScene.id, currentScene.imageUrl!, currentScene.imagePrompt)}
+                      disabled={isGeneratingVideo}
+                      className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-black/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Regenerate video"
+                    >
+                      <RefreshCw size={16} className={isGeneratingVideo ? 'animate-spin' : ''} />
+                    </button>
+                    {/* Remove video */}
+                    <button
+                      type="button"
+                      onClick={() => removeVideoForScene(currentScene.id)}
+                      disabled={isGeneratingVideo}
+                      className="w-9 h-9 rounded-full bg-red-500/30 backdrop-blur-md border border-red-500/30 flex items-center justify-center text-red-200 hover:text-white hover:bg-red-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Remove video (keep image)"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  {/* Generating video overlay */}
+                  {isGeneratingVideo && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm rounded-xl">
+                      <div className="flex flex-col items-center gap-3">
+                        <Loader2 size={36} className="text-cyan-400 animate-spin" />
+                        <span className="text-white/70 text-sm">Generating video...</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : currentScene?.imageUrl ? (
+                /* Image Preview - when scene has image but no video */
                 <div className="relative max-w-full max-h-full group">
                   <img
                     src={currentScene.imageUrl}
@@ -1570,25 +2102,67 @@ export function CreatorStudioEditor({
                     className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-xl shadow-2xl shadow-black/50 transition-all duration-500"
                   />
 
-                  {/* Regenerate overlay on hover */}
-                  <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black/50 rounded-xl">
+                  {/* Top-right overlay controls - glass style */}
+                  <div className="absolute top-3 right-3 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    {/* More options */}
                     <button
-                      onClick={() => generateImageForScene(currentScene.id, currentScene.imagePrompt, true)}
-                      disabled={isGeneratingImage}
-                      className="flex items-center gap-2 px-5 py-2.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white text-sm font-medium hover:bg-white/20 transition-all disabled:opacity-50"
                       type="button"
+                      className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-black/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Edit scene"
+                      onClick={() => {
+                        setEditingScene(currentScene);
+                        setEditNarration(currentScene.narration);
+                        setEditImagePrompt(currentScene.imagePrompt);
+                        setEditNegativePrompt(currentScene.negativePrompt || '');
+                        setShowSceneEditor(true);
+                      }}
                     >
-                      <RefreshCw size={14} className={isGeneratingImage ? 'animate-spin' : ''} />
-                      Regenerate Image
+                      <MoreHorizontal size={16} />
+                    </button>
+                    {/* Regenerate image */}
+                    <button
+                      type="button"
+                      onClick={() => generateImageForScene(currentScene.id, currentScene.imagePrompt, true)}
+                      disabled={isGeneratingImage || isGeneratingVideo}
+                      className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-black/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Regenerate image"
+                    >
+                      <RefreshCw size={16} className={isGeneratingImage ? 'animate-spin' : ''} />
                     </button>
                   </div>
 
-                  {/* Generating overlay */}
+                  {/* Bottom-right Make Video CTA - only show if project wants video and scene has no video yet */}
+                  {projectWantsVideo && !currentScene.videoUrl && !isGeneratingImage && !isGeneratingVideo && (
+                    <div className="absolute bottom-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                      <button
+                        type="button"
+                        onClick={() => generateVideoForScene(currentScene.id, currentScene.imageUrl!, currentScene.imagePrompt)}
+                        className="flex items-center gap-2 px-4 py-2 bg-cyan-500/90 backdrop-blur-md border border-cyan-400/30 rounded-full text-white text-sm font-medium hover:bg-cyan-500 transition-all shadow-lg shadow-cyan-500/20"
+                        title="Convert to video"
+                      >
+                        <Film size={14} />
+                        Make Video
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Generating image overlay */}
                   {isGeneratingImage && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 rounded-xl">
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm rounded-xl">
                       <div className="flex flex-col items-center gap-3">
                         <Loader2 size={36} className="text-cyan-400 animate-spin" />
                         <span className="text-white/70 text-sm">Generating image...</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Generating video overlay */}
+                  {isGeneratingVideo && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-sm rounded-xl">
+                      <div className="flex flex-col items-center gap-3">
+                        <Loader2 size={36} className="text-cyan-400 animate-spin" />
+                        <span className="text-white/70 text-sm">Converting to video...</span>
+                        <span className="text-white/40 text-xs">This may take a few minutes</span>
                       </div>
                     </div>
                   )}
@@ -1853,17 +2427,57 @@ export function CreatorStudioEditor({
 
             {/* Modal Footer */}
             <div className="flex items-center justify-between p-5 border-t border-white/10">
-              <button
-                onClick={() => {
-                  generateImageForScene(editingScene.id, editImagePrompt, true);
-                  setShowSceneEditor(false);
-                }}
-                disabled={isGeneratingImage}
-                className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm transition-all"
-              >
-                <RefreshCw size={14} />
-                Regenerate Image
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Regenerate Image button */}
+                <button
+                  onClick={() => {
+                    generateImageForScene(editingScene.id, editImagePrompt, true);
+                    setShowSceneEditor(false);
+                  }}
+                  disabled={isGeneratingImage || isGeneratingVideo}
+                  className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm transition-all disabled:opacity-50"
+                >
+                  <RefreshCw size={14} />
+                  Regenerate Image
+                </button>
+
+                {/* Make Video / Regenerate Video button */}
+                {projectWantsVideo && editingScene.imageUrl && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        generateVideoForScene(editingScene.id, editingScene.imageUrl!, editImagePrompt);
+                        setShowSceneEditor(false);
+                      }}
+                      disabled={isGeneratingImage || isGeneratingVideo}
+                      className={[
+                        "flex items-center gap-2 px-4 py-2 rounded-xl text-sm transition-all disabled:opacity-50",
+                        editingScene.videoUrl
+                          ? "bg-white/5 hover:bg-white/10 border border-white/10"
+                          : "bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 text-cyan-300"
+                      ].join(" ")}
+                    >
+                      <Film size={14} />
+                      {editingScene.videoUrl ? 'Regenerate Video' : 'Make Video'}
+                    </button>
+
+                    {editingScene.videoUrl && (
+                      <button
+                        onClick={() => {
+                          removeVideoForScene(editingScene.id);
+                          setShowSceneEditor(false);
+                        }}
+                        disabled={isGeneratingImage || isGeneratingVideo}
+                        className="flex items-center gap-2 px-4 py-2 bg-red-500/15 hover:bg-red-500/25 border border-red-500/25 rounded-xl text-sm text-red-200 transition-all disabled:opacity-50"
+                        title="Remove video and keep image"
+                      >
+                        <X size={14} />
+                        Remove Video
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
 
               <div className="flex items-center gap-3">
                 <button
@@ -2145,6 +2759,125 @@ export function CreatorStudioEditor({
                 </div>
               </div>
 
+              {/* Image Generation Model */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <ImageIcon size={14} />
+                  Image Generation
+                </h3>
+                <div className="p-4 rounded-xl border border-white/10 bg-white/5">
+                  <label className="block text-xs font-medium text-white/50 mb-2">Image Model</label>
+                  <div className="relative">
+                    <select
+                      value={settingsImageModel}
+                      onChange={(e) => setSettingsImageModel(e.target.value)}
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/25 focus:outline-none transition-all appearance-none cursor-pointer"
+                      disabled={loadingModels}
+                    >
+                      {loadingModels ? (
+                        <option value="">Loading models...</option>
+                      ) : availableImageModels.length === 0 ? (
+                        <option value="">No models available</option>
+                      ) : (
+                        availableImageModels.map((m) => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))
+                      )}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
+                  </div>
+                  <p className="text-xs text-white/30 mt-2">Override the global image model for this project</p>
+                </div>
+              </div>
+
+              {/* Video Generation Toggle */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <Film size={14} />
+                  Video Generation
+                </h3>
+                <div
+                  className={`p-4 rounded-xl border transition-all ${
+                    settingsEnableVideo
+                      ? "border-cyan-500 bg-cyan-500/10"
+                      : "border-white/10 bg-white/5 hover:bg-white/10 cursor-pointer"
+                  }`}
+                  onClick={(e) => {
+                    // Only toggle if clicking on the toggle area, not on child elements like select
+                    if ((e.target as HTMLElement).tagName !== 'SELECT') {
+                      if (!settingsEnableVideo) setSettingsEnableVideo(true);
+                    }
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                        settingsEnableVideo ? "bg-cyan-500/30" : "bg-white/10"
+                      }`}>
+                        <Film size={18} className={settingsEnableVideo ? "text-cyan-400" : "text-white/40"} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium">Enable Video Generation</div>
+                        <div className="text-xs text-white/40">
+                          {settingsEnableVideo
+                            ? "Make Video button visible for each scene"
+                            : "Scenes will be static images only"
+                          }
+                        </div>
+                      </div>
+                    </div>
+                    <div className={`relative w-12 h-6 rounded-full transition-colors ${
+                      settingsEnableVideo ? "bg-cyan-500" : "bg-white/20"
+                    }`}>
+                      <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                        settingsEnableVideo ? "translate-x-7" : "translate-x-1"
+                      }`} />
+                    </div>
+                  </div>
+                  {settingsEnableVideo && settingsPlatform === "slides_16_9" && (
+                    <div className="mt-3 p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-400">
+                      Tip: Slides with video will create animated clips instead of static images with Ken Burns effect.
+                    </div>
+                  )}
+                  {/* Video Model Selector - shown when video is enabled */}
+                  {settingsEnableVideo && (
+                    <div className="mt-4 pt-4 border-t border-white/10" onClick={(e) => e.stopPropagation()}>
+                      <label className="block text-xs font-medium text-white/50 mb-2">Video Model</label>
+                      <div className="relative">
+                        <select
+                          value={settingsVideoModel}
+                          onChange={(e) => setSettingsVideoModel(e.target.value)}
+                          className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/25 focus:outline-none transition-all appearance-none cursor-pointer"
+                          disabled={loadingModels}
+                        >
+                          {loadingModels ? (
+                            <option value="">Loading models...</option>
+                          ) : availableVideoModels.length === 0 ? (
+                            <option value="">No video models available</option>
+                          ) : (
+                            availableVideoModels.map((m) => (
+                              <option key={m.id} value={m.id}>{m.name}</option>
+                            ))
+                          )}
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 pointer-events-none" />
+                      </div>
+                      <p className="text-xs text-white/30 mt-2">Override the global video model for this project</p>
+                    </div>
+                  )}
+                  {/* Toggle OFF button when video is enabled */}
+                  {settingsEnableVideo && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setSettingsEnableVideo(false); }}
+                      className="mt-4 w-full px-4 py-2 text-xs text-white/50 hover:text-white/70 border border-white/10 rounded-lg hover:bg-white/5 transition-all"
+                    >
+                      Disable Video Generation
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Intent */}
               <div className="space-y-3">
                 <h3 className="text-sm font-semibold text-cyan-400">Intent</h3>
@@ -2352,6 +3085,18 @@ export function CreatorStudioEditor({
                     <span className="text-white/50 ml-2">- This project may generate explicit content.</span>
                   </div>
                 )}
+              </div>
+
+              {/* Generation Parameters */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+                  <Sliders size={14} />
+                  Generation Parameters
+                </h3>
+                <p className="text-xs text-white/40">
+                  Customize generation defaults for images & videos. These override model presets.
+                </p>
+                <CreatorStudioSettings value={genParams} onChange={setGenParams} />
               </div>
             </div>
 
