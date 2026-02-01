@@ -196,7 +196,7 @@
       "min_frames": 25,
       "default_aspect_ratio": "3:2",
       "default_negative_prompt": "text, watermark, logo, low quality, blurry, flicker, jitter, warping, deformed, duplicate frames, choppy motion, morphing face, static image",
-      "notes": "Best at 768x512 (3:2). Uses FP8 T5 for high preset, FP16 for ultra."
+      "notes": "Best at 768x512 (3:2). Uses FP16 T5 for high/ultra (proven config), FP8 for low/medium."
     },
     "mochi": {
       "frame_rule": "6n+1",

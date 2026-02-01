@@ -770,13 +770,14 @@ async def orchestrate(
                 print(f"[ANIMATE] Prompt refinement disabled, using original prompt")
 
             # Select T5 encoder based on preset
-            # FP16: ~10GB VRAM, used for high/ultra (proven working configuration)
+            # FP16: ~10GB VRAM, used for high/ultra/None (proven working configuration)
             # FP8: ~5GB VRAM, used for low/medium (12GB VRAM compatibility)
-            if vid_preset in ("high", "ultra"):
+            # When preset is None, default to FP16 (the proven working config)
+            if vid_preset in ("high", "ultra") or vid_preset is None:
                 t5_encoder = "t5xxl_fp16.safetensors"
             else:
                 t5_encoder = "t5xxl_fp8_e4m3fn.safetensors"
-            print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset})")
+            print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset or 'default->high'})")
 
             # Build final workflow variables
             workflow_vars = {
