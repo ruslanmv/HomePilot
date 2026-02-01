@@ -889,6 +889,9 @@ async def orchestrate(
                     "steps": workflow_vars.get("steps", 30),
                     "cfg": workflow_vars.get("cfg", 3.5),
                     "denoise": workflow_vars.get("denoise", 0.85),
+                    # Resolution for reproducibility
+                    "width": workflow_vars.get("width"),
+                    "height": workflow_vars.get("height"),
                     # Motion and prompt
                     "motion": workflow_vars.get("motion", "medium"),
                     "prompt": original_cleaned_prompt,  # Cleaned user prompt (URLs removed)
