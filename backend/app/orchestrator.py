@@ -772,15 +772,40 @@ async def orchestrate(
             else:
                 print(f"[ANIMATE] Prompt refinement disabled, using original prompt")
 
-            # Select T5 encoder based on preset
+            # Select T5 encoder based on preset with fallback
             # FP16: ~10GB VRAM, used for high/ultra/None (proven working configuration)
             # FP8: ~5GB VRAM, used for low/medium (12GB VRAM compatibility)
-            # When preset is None, default to FP16 (the proven working config)
+            # Fallback: If preferred encoder not installed, use the other one
+            from .providers import get_comfy_models_path
+
+            clip_path = get_comfy_models_path() / "clip"
+            fp16_available = (clip_path / "t5xxl_fp16.safetensors").exists()
+            fp8_available = (clip_path / "t5xxl_fp8_e4m3fn.safetensors").exists()
+
+            # Determine preferred encoder based on preset
             if vid_preset in ("high", "ultra") or vid_preset is None:
-                t5_encoder = "t5xxl_fp16.safetensors"
+                preferred_encoder = "t5xxl_fp16.safetensors"
+                fallback_encoder = "t5xxl_fp8_e4m3fn.safetensors"
+                preferred_available = fp16_available
+                fallback_available = fp8_available
             else:
-                t5_encoder = "t5xxl_fp8_e4m3fn.safetensors"
-            print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset or 'default->high'})")
+                preferred_encoder = "t5xxl_fp8_e4m3fn.safetensors"
+                fallback_encoder = "t5xxl_fp16.safetensors"
+                preferred_available = fp8_available
+                fallback_available = fp16_available
+
+            # Select encoder with fallback logic
+            if preferred_available:
+                t5_encoder = preferred_encoder
+                print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset or 'default->high'})")
+            elif fallback_available:
+                t5_encoder = fallback_encoder
+                print(f"[ANIMATE] ⚠️ WARNING: Preferred encoder {preferred_encoder} not installed")
+                print(f"[ANIMATE] Using superior T5 encoder as fallback: {t5_encoder}")
+            else:
+                # Neither available - use preferred and let ComfyUI error with helpful message
+                t5_encoder = preferred_encoder
+                print(f"[ANIMATE] ⚠️ No T5 encoder found! Please install from Models > Add-ons")
 
             # Build final workflow variables
             workflow_vars = {
