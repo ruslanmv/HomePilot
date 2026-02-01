@@ -692,8 +692,12 @@ async def get_image_presets(
         with open(presets_path, "r", encoding="utf-8") as f:
             presets_data = json.load(f)
 
-        # Default to med preset
+        # Default to med preset, map video presets to image equivalents
         preset_name = preset or "med"
+        # Map video preset names to image preset names (ultra/high -> high, medium -> med)
+        preset_map = {"ultra": "high", "medium": "med", "high": "high", "med": "med", "low": "low"}
+        preset_name = preset_map.get(preset_name, preset_name)
+
         if preset_name not in presets_data.get("presets", {}):
             return JSONResponse(
                 status_code=400,
