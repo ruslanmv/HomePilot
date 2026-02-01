@@ -379,9 +379,26 @@ export default function AnimateView(props: AnimateParams) {
   // Only sync if user hasn't entered Advanced Mode yet (preserves custom values)
   useEffect(() => {
     if (!advancedMode) {
+      // Sync advanced params (steps, cfg, denoise)
       setCustomSteps(presetDefaults.steps ?? FALLBACK_ADVANCED_PARAMS.steps)
       setCustomCfg(presetDefaults.cfg ?? FALLBACK_ADVANCED_PARAMS.cfg)
       setCustomDenoise(presetDefaults.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise)
+
+      // Sync FPS from preset (model-specific optimal value)
+      if (presetDefaults.fps) {
+        setFps(presetDefaults.fps)
+      }
+
+      // Calculate and sync Duration from preset frames
+      if (presetDefaults.frames && presetDefaults.fps) {
+        const calculatedSeconds = Math.round(presetDefaults.frames / presetDefaults.fps)
+        // Clamp to valid duration options (2, 4, 6, 8)
+        const validDurations = [2, 4, 6, 8]
+        const closestDuration = validDurations.reduce((prev, curr) =>
+          Math.abs(curr - calculatedSeconds) < Math.abs(prev - calculatedSeconds) ? curr : prev
+        )
+        setSeconds(closestDuration)
+      }
     }
   }, [presetDefaults, advancedMode])
 
