@@ -381,6 +381,7 @@ export default function AnimateView(props: AnimateParams) {
     const currentRatioData = rawAspectRatioData.find((ar: any) => ar.id === aspectRatio)
     if (currentRatioData?.dimensions) {
       const presetLabels: Record<string, string> = {
+        test: 'Lowest (6GB)',
         low: 'Low (8GB)',
         medium: 'Medium (12GB)',
         high: 'High (16GB)',

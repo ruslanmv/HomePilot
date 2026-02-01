@@ -11,28 +11,31 @@
       "ui_label": "Classic Photo (3:2)",
       "compatible_models": ["ltx", "wan", "hunyuan"],
       "dimensions": {
+        "test":   { "width": 480, "height": 320 },
         "low":    { "width": 720, "height": 480 },
         "medium": { "width": 960, "height": 640 },
         "high":   { "width": 1056, "height": 704 },
         "ultra":  { "width": 1152, "height": 768 }
       },
-      "notes": "All dimensions divisible by 32 to avoid artifacts. Low=720x480 safe for 8GB VRAM."
+      "notes": "All dimensions divisible by 32. Test=480x320 for quick testing, Low=720x480 safe for 8GB."
     },
     "16:9": {
       "ui_label": "Widescreen (16:9)",
       "compatible_models": ["svd", "ltx", "wan", "hunyuan", "mochi", "cogvideo"],
       "dimensions": {
+        "test":   { "width": 512, "height": 288 },
         "low":    { "width": 768, "height": 432 },
         "medium": { "width": 1024, "height": 576 },
         "high":   { "width": 1280, "height": 720 },
         "ultra":  { "width": 1280, "height": 720 }
       },
-      "notes": "LTX native sweet spot. Low=768x432 safe for 8GB, Medium=1024x576 optimal, High/Ultra=720p HD."
+      "notes": "LTX native sweet spot. Test=512x288 minimal, Low=768x432 safe for 8GB, Medium=1024x576 optimal."
     },
     "9:16": {
       "ui_label": "Vertical / Mobile (9:16)",
       "compatible_models": ["wan", "hunyuan", "ltx"],
       "dimensions": {
+        "test":   { "width": 288, "height": 512 },
         "low":    { "width": 352, "height": 640 },
         "medium": { "width": 480, "height": 832 },
         "high":   { "width": 480, "height": 832 },
@@ -44,6 +47,7 @@
       "ui_label": "Square (1:1)",
       "compatible_models": ["wan", "hunyuan", "ltx", "cogvideo"],
       "dimensions": {
+        "test":   { "width": 384, "height": 384 },
         "low":    { "width": 512, "height": 512 },
         "medium": { "width": 640, "height": 640 },
         "high":   { "width": 768, "height": 768 },
@@ -55,6 +59,7 @@
       "ui_label": "Classic TV (4:3)",
       "compatible_models": ["wan", "hunyuan", "ltx", "mochi", "cogvideo"],
       "dimensions": {
+        "test":   { "width": 416, "height": 320 },
         "low":    { "width": 576, "height": 448 },
         "medium": { "width": 768, "height": 576 },
         "high":   { "width": 768, "height": 576 },
@@ -65,6 +70,7 @@
       "ui_label": "Portrait (3:4)",
       "compatible_models": ["wan", "hunyuan", "ltx"],
       "dimensions": {
+        "test":   { "width": 320, "height": 416 },
         "low":    { "width": 448, "height": 576 },
         "medium": { "width": 576, "height": 768 },
         "high":   { "width": 576, "height": 768 },
@@ -75,6 +81,7 @@
       "ui_label": "Cinematic Ultra-Wide (21:9)",
       "compatible_models": ["ltx", "wan", "hunyuan", "mochi"],
       "dimensions": {
+        "test":   { "width": 512, "height": 224 },
         "low":    { "width": 672, "height": 288 },
         "medium": { "width": 896, "height": 384 },
         "high":   { "width": 896, "height": 384 },
