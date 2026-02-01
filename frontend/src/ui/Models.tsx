@@ -204,7 +204,7 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
         label: 'T5-XXL FP8 Text Encoder (5GB)',
         recommended: true,
         nsfw: false,
-        description: 'Required for LTX-Video on 12GB VRAM. FP8 version uses ~5GB vs ~10GB for FP16.',
+        description: 'For 12-16GB VRAM (RTX 4080, 3080). Uses ~5GB vs ~10GB for FP16. Required for LTX-Video on limited VRAM.',
         install: {
           type: 'hf_files',
           files: [{
@@ -218,8 +218,9 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       {
         id: 't5xxl_fp16.safetensors',
         label: 'T5-XXL FP16 Text Encoder (10GB)',
+        recommended: true,
         nsfw: false,
-        description: 'Full precision T5 encoder. Requires 16GB+ VRAM. Use FP8 version for 12GB cards.',
+        description: 'For 24GB+ VRAM (RTX 4090, A5000). Full precision for best quality. Baseline ~20GB + sampling ~6-10GB peak.',
         install: {
           type: 'hf_files',
           files: [{
