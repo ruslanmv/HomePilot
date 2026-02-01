@@ -1100,6 +1100,7 @@ async def orchestrate(
 
             # Get aspect ratio: prefer explicit from frontend, then LLM refinement, then default
             # This allows the UI aspect ratio picker to override LLM suggestions
+            print(f"[IMAGE] img_aspect_ratio parameter: {img_aspect_ratio!r}")
             aspect_ratio = img_aspect_ratio or refined.get("aspect_ratio", "1:1")
             # IMPORTANT: Write back to refined so ComfyUI receives correct aspect_ratio
             refined["aspect_ratio"] = aspect_ratio
@@ -1377,6 +1378,10 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 model = payload.get("ollama_model")
             elif prov == "openai_compat":
                 model = payload.get("llm_model")
+        # Debug: Log aspect ratio received from frontend
+        _ar = payload.get("imgAspectRatio")
+        print(f"[CHAT ENDPOINT] imgAspectRatio from payload: {_ar!r} (type: {type(_ar).__name__})")
+
         return await orchestrate(
             user_text=payload.get("message", ""),
             conversation_id=payload.get("conversation_id"),
@@ -1389,7 +1394,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             text_max_tokens=payload.get("textMaxTokens"),
             img_width=payload.get("imgWidth"),
             img_height=payload.get("imgHeight"),
-            img_aspect_ratio=payload.get("imgAspectRatio"),  # NEW: Pass aspect ratio
+            img_aspect_ratio=_ar,  # Pass aspect ratio from frontend
             img_steps=payload.get("imgSteps"),
             img_cfg=payload.get("imgCfg"),
             img_seed=payload.get("imgSeed"),

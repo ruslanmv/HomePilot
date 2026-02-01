@@ -615,7 +615,7 @@ export default function ImagineView(props: ImagineParams) {
       }
 
       // Log the aspect ratio being sent for debugging
-      console.log('[Imagine] Generating with aspect ratio:', aspect)
+      console.log('[Imagine] Generating with aspect ratio:', aspect, '| Request body imgAspectRatio:', requestBody.imgAspectRatio)
 
       const data = await postJson<ChatResponse>(
         props.backendUrl,
