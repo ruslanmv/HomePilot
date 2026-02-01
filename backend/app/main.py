@@ -160,6 +160,12 @@ class ChatIn(BaseModel):
     vidFps: Optional[int] = Field(None, description="Video FPS")
     vidMotion: Optional[str] = Field(None, description="Video motion bucket")
     vidModel: Optional[str] = Field(None, description="Video model selection (svd, wan-2.2, seedream)")
+    vidPreset: Optional[str] = Field(None, description="Video quality preset (low, medium, high, ultra)")
+    vidAspectRatio: Optional[str] = Field(None, description="Video aspect ratio (16:9, 9:16, 1:1, 4:3, 3:4)")
+    vidSteps: Optional[int] = Field(None, description="Override steps for video generation")
+    vidCfg: Optional[float] = Field(None, description="Override CFG scale for video generation")
+    vidDenoise: Optional[float] = Field(None, description="Override denoise strength for video generation")
+    vidSeed: Optional[int] = Field(None, description="Override seed for video generation (0 = random)")
     vidNegativePrompt: Optional[str] = Field(None, description="Custom negative prompt for video generation")
     nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
     promptRefinement: Optional[bool] = Field(True, description="Enable AI prompt refinement for image generation (default: True)")
@@ -536,6 +542,7 @@ async def settings(request: Request) -> JSONResponse:
 async def get_video_presets(
     model: Optional[str] = Query(None, description="Video model type: svd, ltx, wan, hunyuan, mochi, cogvideo"),
     preset: Optional[str] = Query(None, description="Quality preset: low, medium, high, ultra"),
+    aspect_ratio: Optional[str] = Query(None, description="Aspect ratio: 16:9, 9:16, 1:1, 4:3, 3:4"),
 ) -> JSONResponse:
     """
     Get video generation preset values.
@@ -543,9 +550,10 @@ async def get_video_presets(
     Returns model-specific settings for the selected quality preset.
     If no model is specified, returns base preset values.
     If no preset is specified, returns 'medium' preset.
+    If aspect_ratio is specified, includes dimensions for that ratio.
 
-    Example: GET /video-presets?model=ltx&preset=medium
-    Returns: { steps: 32, cfg: 4.0, denoise: 0.55, fps: 24, frames: 97, ... }
+    Example: GET /video-presets?model=ltx&preset=medium&aspect_ratio=16:9
+    Returns: { steps: 24, cfg: 4.0, width: 832, height: 480, fps: 24, frames: 49, ... }
     """
     try:
         presets_path = Path(__file__).parent / "video_presets.json"
@@ -571,7 +579,7 @@ async def get_video_presets(
             )
 
         preset_config = presets_data["presets"][preset_name]
-        base_values = preset_config.get("base", {})
+        base_values = dict(preset_config.get("base", {}))
 
         # If model specified, merge with model-specific overrides
         if model:
@@ -582,11 +590,43 @@ async def get_video_presets(
         else:
             result_values = base_values
 
+        # Get dimensions from aspect_ratios if specified
+        aspect_ratios_data = presets_data.get("aspect_ratios", {})
+        if aspect_ratio and aspect_ratio in aspect_ratios_data:
+            ratio_config = aspect_ratios_data[aspect_ratio]
+            # Check model compatibility
+            compatible = ratio_config.get("compatible_models", [])
+            model_lower = (model or "").lower()
+            if not model_lower or model_lower in compatible:
+                dims = ratio_config.get("dimensions", {}).get(preset_name, {})
+                if dims:
+                    result_values["width"] = dims.get("width", result_values.get("width"))
+                    result_values["height"] = dims.get("height", result_values.get("height"))
+        elif aspect_ratio:
+            # Default to 16:9 if aspect ratio not found
+            ratio_config = aspect_ratios_data.get("16:9", {})
+            dims = ratio_config.get("dimensions", {}).get(preset_name, {})
+            if dims:
+                result_values["width"] = dims.get("width", result_values.get("width"))
+                result_values["height"] = dims.get("height", result_values.get("height"))
+
         # Get model rules if available
         model_rules = {}
         if model:
             model_lower = model.lower()
             model_rules = presets_data.get("model_rules", {}).get(model_lower, {})
+
+        # Get compatible aspect ratios for the model
+        compatible_ratios = []
+        model_lower = (model or "").lower()
+        for ratio_id, ratio_config in aspect_ratios_data.items():
+            compatible = ratio_config.get("compatible_models", [])
+            if not model_lower or model_lower in compatible:
+                compatible_ratios.append({
+                    "id": ratio_id,
+                    "label": ratio_config.get("ui_label", ratio_id),
+                    "dimensions": ratio_config.get("dimensions", {}).get(preset_name, {}),
+                })
 
         return JSONResponse(
             status_code=200,
@@ -594,9 +634,11 @@ async def get_video_presets(
                 "ok": True,
                 "preset": preset_name,
                 "model": model,
+                "aspect_ratio": aspect_ratio,
                 "values": result_values,
                 "model_rules": model_rules,
                 "ui": preset_config.get("ui", {}),
+                "compatible_aspect_ratios": compatible_ratios,
             },
         )
 
@@ -1758,6 +1800,12 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "vidFps": inp.vidFps,
         "vidMotion": inp.vidMotion,
         "vidModel": inp.vidModel,
+        "vidPreset": inp.vidPreset,
+        "vidAspectRatio": inp.vidAspectRatio,
+        "vidSteps": inp.vidSteps,
+        "vidCfg": inp.vidCfg,
+        "vidDenoise": inp.vidDenoise,
+        "vidSeed": inp.vidSeed,
         "vidNegativePrompt": inp.vidNegativePrompt,
         "nsfwMode": inp.nsfwMode,
         "promptRefinement": inp.promptRefinement,
