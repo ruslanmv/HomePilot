@@ -26,6 +26,7 @@ type AnimateItem = {
   motion?: string
   model?: string
   preset?: string
+  aspectRatio?: string
   // Resolution for reproducibility
   width?: number
   height?: number
@@ -670,6 +671,7 @@ export default function AnimateView(props: AnimateParams) {
       motion: motion,
       model: props.modelVideo,
       preset: qualityPreset,
+      aspectRatio: aspectRatio,
     }
 
     // Add placeholder to items (will be persisted to localStorage)
@@ -776,6 +778,7 @@ export default function AnimateView(props: AnimateParams) {
         motion: data.media!.motion ?? motion,
         model: data.media!.model ?? props.modelVideo,
         preset: data.media!.preset ?? qualityPreset,
+        aspectRatio: aspectRatio,
         // Resolution for reproducibility
         width: data.media!.width,
         height: data.media!.height,
@@ -972,6 +975,7 @@ export default function AnimateView(props: AnimateParams) {
         motion: data.media.motion ?? motion,
         model: data.media.model ?? props.modelVideo,
         preset: data.media.preset ?? qualityPreset,
+        aspectRatio: aspectRatio,
         // Resolution for reproducibility
         width: data.media.width,
         height: data.media.height,
@@ -1893,11 +1897,27 @@ export default function AnimateView(props: AnimateParams) {
                       <div className="text-base text-white font-mono font-bold">{selectedVideo.seed}</div>
                     </div>
                   )}
-                  {/* Resolution */}
-                  {(selectedVideo.width && selectedVideo.height) && (
-                    <div>
-                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Resolution</label>
-                      <div className="text-sm text-white/70 font-mono">{selectedVideo.width}×{selectedVideo.height}</div>
+                  {/* Resolution, Aspect Ratio, Preset */}
+                  {(selectedVideo.width || selectedVideo.aspectRatio || selectedVideo.preset) && (
+                    <div className="grid grid-cols-3 gap-3">
+                      {(selectedVideo.width && selectedVideo.height) && (
+                        <div>
+                          <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Resolution</label>
+                          <div className="text-sm text-white/70 font-mono">{selectedVideo.width}×{selectedVideo.height}</div>
+                        </div>
+                      )}
+                      {selectedVideo.aspectRatio && (
+                        <div>
+                          <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Aspect Ratio</label>
+                          <div className="text-sm text-white/70 font-mono">{selectedVideo.aspectRatio}</div>
+                        </div>
+                      )}
+                      {selectedVideo.preset && (
+                        <div>
+                          <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Preset</label>
+                          <div className="text-sm text-white/70 font-mono capitalize">{selectedVideo.preset}</div>
+                        </div>
+                      )}
                     </div>
                   )}
                   {/* Duration, FPS, Motion */}
