@@ -3,7 +3,7 @@ SHELL := /bin/bash
 # Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
-.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-recommended download-full download-edit download-enhance download-video download-verify download-health start start-backend start-frontend
+.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-minimum download-recommended download-full download-edit download-enhance download-video download-verify download-health start start-backend start-frontend
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -446,33 +446,47 @@ download-enhance: ## Download upscale/enhance models (4x-UltraSharp, RealESRGAN,
 	@echo ""
 	@du -sh models/comfy/upscale_models/* models/comfy/gfpgan/* 2>/dev/null || true
 
-download-video: ## Download video generation models (LTX-Video recommended, ~6GB)
+download-video: ## Download video generation models (LTX-Video + T5 encoder, ~11GB for RTX 4080 12GB)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
-	@echo "  Downloading Video Generation Models"
+	@echo "  Downloading Video Generation Models (RTX 4080 12GB Optimized)"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
-	@echo "Available video models:"
-	@echo "  • LTX-Video 2B v0.9.1 (RECOMMENDED) - 5.72 GB, fast, works on RTX 4080+"
-	@echo "  • SVD XT 1.1 (gated - requires HF token) - 9.56 GB"
-	@echo "  • HunyuanVideo GGUF Q4 (pack) - 9.5 GB total"
-	@echo "  • Wan 2.2 5B (pack) - 21.5 GB total"
-	@echo "  • Mochi FP8 (pack) - 28 GB total"
+	@echo "This will download:"
+	@echo "  • LTX-Video 2B v0.9.1 - 5.72 GB (video checkpoint)"
+	@echo "  • T5-XXL FP8 Encoder  - 4.89 GB (text encoder for 12GB VRAM)"
 	@echo ""
-	@echo "[1/1] Downloading LTX-Video 2B v0.9.1 (recommended)..."
+	@echo "Total: ~11 GB"
+	@echo ""
+	@mkdir -p models/comfy/checkpoints models/comfy/clip
+	@echo "[1/2] Downloading LTX-Video 2B v0.9.1..."
 	@python3 scripts/download.py --model ltx-video-2b-v0.9.1.safetensors || echo "  ⚠️  Failed - check output above"
+	@echo ""
+	@echo "[2/2] Downloading T5-XXL FP8 Text Encoder (required for LTX-Video on 12GB VRAM)..."
+	@if [ ! -f "models/comfy/clip/t5xxl_fp8_e4m3fn.safetensors" ]; then \
+		wget -c --progress=bar:force -O models/comfy/clip/t5xxl_fp8_e4m3fn.safetensors \
+			"https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors" 2>&1 || echo "  ⚠️  Failed - retry or download manually"; \
+	else \
+		echo "  ✓ T5-XXL FP8 already exists, skipping"; \
+	fi
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Video model download complete!"
 	@echo ""
-	@echo "  To download additional video models, use:"
-	@echo "    python3 scripts/download.py --model <model_id>"
+	@echo "  Installed models:"
+	@ls -lh models/comfy/checkpoints/ltx*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || true
+	@ls -lh models/comfy/clip/t5xxl*.safetensors 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || true
 	@echo ""
-	@echo "  Available models:"
-	@echo "    • svd_xt_1_1.safetensors (requires HF token + license acceptance)"
-	@echo "    • hunyuanvideo_t2v_720p_gguf_q4_k_m_pack"
-	@echo "    • wan2.2_5b_fp16_pack"
-	@echo "    • mochi_preview_fp8_pack"
+	@echo "  For 24GB+ VRAM (RTX 4090), also download T5-XXL FP16 for better quality:"
+	@echo "    wget -O models/comfy/clip/t5xxl_fp16.safetensors \\"
+	@echo "      https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors"
+	@echo ""
+	@echo "  Additional video models available:"
+	@echo "    python3 scripts/download.py --model svd_xt_1_1.safetensors"
+	@echo "    python3 scripts/download.py --model hunyuanvideo_t2v_720p_gguf_q4_k_m_pack"
+	@echo "    python3 scripts/download.py --model wan2.2_5b_fp16_pack"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+download-minimum: download-minimal  ## Alias for download-minimal (RTX 4080 12GB optimized)
 
 download-health: ## Check health of model download URLs
 	@echo "════════════════════════════════════════════════════════════════════════════════"
