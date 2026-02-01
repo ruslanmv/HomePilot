@@ -47,6 +47,7 @@ export type AnimateParams = {
   vidSeconds?: number
   vidFps?: number
   vidMotion?: string
+  vidPreset?: string  // Hardware/quality preset from global settings
   nsfwMode?: boolean
   promptRefinement?: boolean
 }
@@ -108,11 +109,29 @@ const QUALITY_PRESETS = [
   { id: 'ultra', label: 'Ultra', short: 'Maximum', description: 'For 24GB+ VRAM. Best quality, longest clips.' },
 ]
 
+// Video aspect ratio presets with preview dimensions
+type VideoAspectRatio = {
+  id: string
+  label: string
+  previewW: number
+  previewH: number
+}
+
+// Default aspect ratios (used as fallback)
+const DEFAULT_ASPECT_RATIOS: VideoAspectRatio[] = [
+  { id: '16:9', label: 'Widescreen', previewW: 42, previewH: 24 },
+  { id: '9:16', label: 'Vertical', previewW: 24, previewH: 42 },
+  { id: '1:1', label: 'Square', previewW: 24, previewH: 24 },
+  { id: '4:3', label: 'Classic', previewW: 32, previewH: 24 },
+  { id: '3:4', label: 'Portrait', previewW: 24, previewH: 32 },
+]
+
 // Fallback default values (used when API is unavailable)
+// Matches LTX "high" preset - proven working configuration
 const FALLBACK_ADVANCED_PARAMS = {
-  steps: 30,
-  cfg: 3.5,
-  denoise: 0.85,
+  steps: 32,
+  cfg: 4.0,
+  denoise: 0.8,
 }
 
 // Type for preset values from API
@@ -240,7 +259,15 @@ export default function AnimateView(props: AnimateParams) {
   const [fps, setFps] = useState(props.vidFps || 8)
   const [motion, setMotion] = useState(props.vidMotion || 'medium')
   const [showSettingsPanel, setShowSettingsPanel] = useState(false)
-  const [qualityPreset, setQualityPreset] = useState('medium')
+  const [qualityPreset, setQualityPreset] = useState(props.vidPreset || 'medium')
+  // Sync with global preset when it changes
+  useEffect(() => {
+    if (props.vidPreset) {
+      setQualityPreset(props.vidPreset)
+    }
+  }, [props.vidPreset])
+  const [aspectRatio, setAspectRatio] = useState('16:9')
+  const [compatibleAspectRatios, setCompatibleAspectRatios] = useState<VideoAspectRatio[]>(DEFAULT_ASPECT_RATIOS)
 
   // Advanced Controls state
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
@@ -293,15 +320,49 @@ export default function AnimateView(props: AnimateParams) {
               negativePrompt: data.model_rules?.default_negative_prompt ?? '',
             })
           }
+
+          // Also update compatible aspect ratios from API response
+          if (data.compatible_aspect_ratios && Array.isArray(data.compatible_aspect_ratios)) {
+            const mappedRatios: VideoAspectRatio[] = data.compatible_aspect_ratios.map((ar: any) => ({
+              id: ar.id,
+              label: ar.label?.replace(/\s*\([^)]*\)/g, '') || ar.id, // Strip parenthetical like "(16:9)"
+              previewW: getPreviewDimension(ar.id, 'width'),
+              previewH: getPreviewDimension(ar.id, 'height'),
+            }))
+            if (mappedRatios.length > 0) {
+              setCompatibleAspectRatios(mappedRatios)
+              // If current aspect ratio is not in the compatible list, switch to the first one
+              if (!mappedRatios.find((r) => r.id === aspectRatio)) {
+                setAspectRatio(mappedRatios[0].id)
+              }
+            }
+          }
         }
       } catch (err) {
         console.warn('Failed to fetch video presets:', err)
         // Keep using fallback defaults
+        setCompatibleAspectRatios(DEFAULT_ASPECT_RATIOS)
       }
     }
 
     fetchPresets()
+    // Note: aspectRatio intentionally omitted to avoid infinite loop
+    // (this effect may update aspectRatio if it's incompatible with new model)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.backendUrl, authKey, detectedModelType, qualityPreset])
+
+  // Helper to get preview dimensions for aspect ratio thumbnails
+  function getPreviewDimension(ratioId: string, dimension: 'width' | 'height'): number {
+    const previewSizes: Record<string, { w: number; h: number }> = {
+      '16:9': { w: 42, h: 24 },
+      '9:16': { w: 24, h: 42 },
+      '1:1': { w: 24, h: 24 },
+      '4:3': { w: 32, h: 24 },
+      '3:4': { w: 24, h: 32 },
+    }
+    const size = previewSizes[ratioId] || { w: 32, h: 24 }
+    return dimension === 'width' ? size.w : size.h
+  }
 
   // Reset advanced parameters to preset defaults (model-specific)
   const resetAdvancedParams = useCallback(() => {
@@ -313,6 +374,33 @@ export default function AnimateView(props: AnimateParams) {
     setCustomNegativePrompt('')
     setShowNegativePrompt(false)
   }, [presetDefaults])
+
+  // Sync slider values when preset defaults change (from API or quality/model change)
+  // Only sync if user hasn't entered Advanced Mode yet (preserves custom values)
+  useEffect(() => {
+    if (!advancedMode) {
+      // Sync advanced params (steps, cfg, denoise)
+      setCustomSteps(presetDefaults.steps ?? FALLBACK_ADVANCED_PARAMS.steps)
+      setCustomCfg(presetDefaults.cfg ?? FALLBACK_ADVANCED_PARAMS.cfg)
+      setCustomDenoise(presetDefaults.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise)
+
+      // Sync FPS from preset (model-specific optimal value)
+      if (presetDefaults.fps) {
+        setFps(presetDefaults.fps)
+      }
+
+      // Calculate and sync Duration from preset frames
+      if (presetDefaults.frames && presetDefaults.fps) {
+        const calculatedSeconds = Math.round(presetDefaults.frames / presetDefaults.fps)
+        // Clamp to valid duration options (2, 4, 6, 8)
+        const validDurations = [2, 4, 6, 8]
+        const closestDuration = validDurations.reduce((prev, curr) =>
+          Math.abs(curr - calculatedSeconds) < Math.abs(prev - calculatedSeconds) ? curr : prev
+        )
+        setSeconds(closestDuration)
+      }
+    }
+  }, [presetDefaults, advancedMode])
 
   // Reference Image state (source image for animation)
   const referenceInputRef = useRef<HTMLInputElement>(null)
@@ -404,6 +492,35 @@ export default function AnimateView(props: AnimateParams) {
   // Scroll to top when entering Animate
   useEffect(() => {
     gridStartRef.current?.scrollIntoView({ block: 'start' })
+  }, [])
+
+  // Load handoff from Imagine (Grok-style "Animate this image")
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('homepilot_animate_handoff')
+      if (!raw) return
+
+      const data = JSON.parse(raw)
+      const tooOld = Date.now() - (data.createdAt ?? 0) > 2 * 60 * 1000 // 2 min TTL
+
+      if (tooOld) {
+        localStorage.removeItem('homepilot_animate_handoff')
+        return
+      }
+
+      if (data.imageUrl) {
+        setReferenceUrl(data.imageUrl)
+        console.log('[Animate] Loaded source image from Imagine handoff:', data.imageUrl)
+      }
+      if (typeof data.prompt === 'string' && data.prompt.trim()) {
+        setPrompt(data.prompt)
+      }
+
+      // Clean up handoff after use
+      localStorage.removeItem('homepilot_animate_handoff')
+    } catch {
+      localStorage.removeItem('homepilot_animate_handoff')
+    }
   }, [])
 
   // Initialize lightbox prompt when selecting a video
@@ -512,6 +629,7 @@ export default function AnimateView(props: AnimateParams) {
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
         vidPreset: qualityPreset,
+        vidAspectRatio: aspectRatio,
 
         // Advanced parameters (when enabled)
         ...(advancedMode && {
@@ -618,7 +736,7 @@ export default function AnimateView(props: AnimateParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
+  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, aspectRatio, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
 
   const handleDelete = useCallback((item: AnimateItem, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -680,6 +798,7 @@ export default function AnimateView(props: AnimateParams) {
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
         vidPreset: qualityPreset,
+        vidAspectRatio: aspectRatio,
         // When we have an existing source image, tell backend to skip image generation
         // The prompt should only affect the animation, not regenerate the source
         ...(existingSourceImage && { skipImageGeneration: true }),
@@ -765,7 +884,7 @@ export default function AnimateView(props: AnimateParams) {
       setRegenProgress(null)
       setRegenAbortController(null)
     }
-  }, [selectedVideo, lightboxPrompt, isRegenerating, seconds, fps, motion, qualityPreset, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
+  }, [selectedVideo, lightboxPrompt, isRegenerating, seconds, fps, motion, qualityPreset, aspectRatio, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
 
   // Cancel in-place regeneration
   const handleCancelRegeneration = useCallback(() => {
@@ -822,6 +941,46 @@ export default function AnimateView(props: AnimateParams) {
 
             {advancedMode && (
               <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Duration */}
+                <div className="space-y-2">
+                  <span className="uppercase tracking-wider text-white/40 font-semibold text-xs">Duration</span>
+                  <div className="flex gap-2">
+                    {DURATION_PRESETS.map((d) => (
+                      <button
+                        key={d.value}
+                        onClick={() => setSeconds(d.value)}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                          seconds === d.value
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                            : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Frame Rate */}
+                <div className="space-y-2">
+                  <span className="uppercase tracking-wider text-white/40 font-semibold text-xs">Frame Rate</span>
+                  <div className="flex gap-2">
+                    {FPS_PRESETS.map((f) => (
+                      <button
+                        key={f.value}
+                        onClick={() => setFps(f.value)}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                          fps === f.value
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                            : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Steps */}
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs">
@@ -931,121 +1090,6 @@ export default function AnimateView(props: AnimateParams) {
               <span className="font-bold text-purple-400 block mb-1">PRO TIP</span>
               Enable Advanced Controls to fine-tune generation parameters. Use Lock Seed to regenerate with the same composition.
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Settings Panel (slides in from bottom) */}
-      {showSettingsPanel && (
-        <div className="absolute bottom-[110%] left-1/2 -translate-x-1/2 z-40 bg-black/95 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl w-full max-w-lg mb-2">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Sliders size={16} className="text-purple-400" />
-              Video Settings
-            </h3>
-            <button
-              type="button"
-              className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
-              onClick={() => setShowSettingsPanel(false)}
-            >
-              <X size={16} />
-            </button>
-          </div>
-
-          {/* Quality Preset */}
-          <div className="mb-4">
-            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-              Quality Preset
-            </label>
-            <div className="grid grid-cols-4 gap-2">
-              {QUALITY_PRESETS.map((q) => (
-                <button
-                  key={q.id}
-                  onClick={() => setQualityPreset(q.id)}
-                  title={q.description}
-                  className={`py-2 px-2 rounded-lg text-sm font-medium transition-colors ${
-                    qualityPreset === q.id
-                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  <div className="text-xs font-bold">{q.label}</div>
-                  <div className="text-[9px] text-white/40 mt-0.5">{q.short}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Duration */}
-          <div className="mb-4">
-            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-              Duration
-            </label>
-            <div className="flex gap-2">
-              {DURATION_PRESETS.map((d) => (
-                <button
-                  key={d.value}
-                  onClick={() => setSeconds(d.value)}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                    seconds === d.value
-                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* FPS */}
-          <div className="mb-4">
-            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-              Frame Rate
-            </label>
-            <div className="flex gap-2">
-              {FPS_PRESETS.map((f) => (
-                <button
-                  key={f.value}
-                  onClick={() => setFps(f.value)}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                    fps === f.value
-                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Motion Strength */}
-          <div className="mb-4">
-            <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-              Motion Strength
-            </label>
-            <div className="flex gap-2">
-              {MOTION_PRESETS.map((m) => (
-                <button
-                  key={m.value}
-                  onClick={() => setMotion(m.value)}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                    motion === m.value
-                      ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                      : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  <div>{m.label}</div>
-                  <div className="text-[10px] text-white/40 mt-0.5">{m.description}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="p-3 rounded-xl bg-purple-900/10 border border-purple-500/20 text-xs text-purple-200/70 leading-relaxed">
-            <span className="font-bold text-purple-400 block mb-1">PRO TIP</span>
-            Start with shorter durations and lower FPS for faster generation. Increase for smoother, longer videos.
           </div>
         </div>
       )}
@@ -1232,6 +1276,111 @@ export default function AnimateView(props: AnimateParams) {
       {/* Floating prompt bar */}
       <div className="absolute bottom-0 left-0 right-0 z-30 p-6 flex justify-center items-end bg-gradient-to-t from-black via-black/90 to-transparent h-48 pointer-events-none">
         <div className="w-full max-w-2xl relative pointer-events-auto">
+          {/* Settings Panel (slides in from bottom) */}
+          {showSettingsPanel && (
+            <div className="absolute bottom-[110%] left-0 right-0 z-40 bg-black/95 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl mb-2">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Sliders size={16} className="text-purple-400" />
+                  Video Settings
+                </h3>
+                <button
+                  type="button"
+                  className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                  onClick={() => setShowSettingsPanel(false)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Aspect Ratio */}
+              <div className="mb-4">
+                <div className="flex justify-between items-center text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2">
+                  <span>Aspect Ratio</span>
+                  {detectedModelType && (
+                    <span className="text-purple-400/60 normal-case font-normal">
+                      {compatibleAspectRatios.length} available for {detectedModelType.toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {compatibleAspectRatios.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => setAspectRatio(r.id)}
+                      className={`p-2 rounded-lg hover:bg-white/5 transition-colors group flex flex-col items-center gap-1 ${
+                        aspectRatio === r.id ? 'bg-white/5 ring-1 ring-purple-500/50' : ''
+                      }`}
+                      title={r.label}
+                    >
+                      <div
+                        className={`border-2 ${
+                          aspectRatio === r.id ? 'border-purple-400' : 'border-white/30 group-hover:border-white/50'
+                        } rounded-[2px]`}
+                        style={{ width: r.previewW, height: r.previewH }}
+                      />
+                      <span className={`text-[10px] ${aspectRatio === r.id ? 'text-purple-300' : 'text-white/50'}`}>
+                        {r.id}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quality Preset */}
+              <div className="mb-4">
+                <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
+                  Quality Preset
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {QUALITY_PRESETS.map((q) => (
+                    <button
+                      key={q.id}
+                      onClick={() => setQualityPreset(q.id)}
+                      title={q.description}
+                      className={`py-2 px-2 rounded-lg text-sm font-medium transition-colors ${
+                        qualityPreset === q.id
+                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="text-xs font-bold">{q.label}</div>
+                      <div className="text-[9px] text-white/40 mt-0.5">{q.short}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Motion Strength */}
+              <div className="mb-4">
+                <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
+                  Motion Strength
+                </label>
+                <div className="flex gap-2">
+                  {MOTION_PRESETS.map((m) => (
+                    <button
+                      key={m.value}
+                      onClick={() => setMotion(m.value)}
+                      className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                        motion === m.value
+                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      <div>{m.label}</div>
+                      <div className="text-[10px] text-white/40 mt-0.5">{m.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-purple-900/10 border border-purple-500/20 text-xs text-purple-200/70 leading-relaxed">
+                <span className="font-bold text-purple-400 block mb-1">PRO TIP</span>
+                Start with shorter durations and lower FPS for faster generation. Increase for smoother, longer videos.
+              </div>
+            </div>
+          )}
+
           {/* Reference Image Preview Panel */}
           {referenceUrl && (
             <div className="absolute bottom-[110%] left-0 right-0 bg-black/95 border border-white/10 rounded-2xl p-4 shadow-2xl mb-2 backdrop-blur-xl">
@@ -1372,6 +1521,8 @@ export default function AnimateView(props: AnimateParams) {
                   <span className="text-white/55 font-semibold truncate max-w-[200px]">{props.modelVideo}</span>
                 </>
               ) : null}
+              <span>·</span>
+              <span className="text-white/55">{aspectRatio}</span>
               <span>·</span>
               <span>{qualityPreset} · {seconds}s @ {fps}fps · {motion} motion</span>
             </div>
