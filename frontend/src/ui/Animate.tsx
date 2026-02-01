@@ -941,6 +941,46 @@ export default function AnimateView(props: AnimateParams) {
 
             {advancedMode && (
               <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Duration */}
+                <div className="space-y-2">
+                  <span className="uppercase tracking-wider text-white/40 font-semibold text-xs">Duration</span>
+                  <div className="flex gap-2">
+                    {DURATION_PRESETS.map((d) => (
+                      <button
+                        key={d.value}
+                        onClick={() => setSeconds(d.value)}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                          seconds === d.value
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                            : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Frame Rate */}
+                <div className="space-y-2">
+                  <span className="uppercase tracking-wider text-white/40 font-semibold text-xs">Frame Rate</span>
+                  <div className="flex gap-2">
+                    {FPS_PRESETS.map((f) => (
+                      <button
+                        key={f.value}
+                        onClick={() => setFps(f.value)}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                          fps === f.value
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                            : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Steps */}
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs">
@@ -1306,50 +1346,6 @@ export default function AnimateView(props: AnimateParams) {
                     >
                       <div className="text-xs font-bold">{q.label}</div>
                       <div className="text-[9px] text-white/40 mt-0.5">{q.short}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Duration */}
-              <div className="mb-4">
-                <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                  Duration
-                </label>
-                <div className="flex gap-2">
-                  {DURATION_PRESETS.map((d) => (
-                    <button
-                      key={d.value}
-                      onClick={() => setSeconds(d.value)}
-                      className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                        seconds === d.value
-                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                      }`}
-                    >
-                      {d.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* FPS */}
-              <div className="mb-4">
-                <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                  Frame Rate
-                </label>
-                <div className="flex gap-2">
-                  {FPS_PRESETS.map((f) => (
-                    <button
-                      key={f.value}
-                      onClick={() => setFps(f.value)}
-                      className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
-                        fps === f.value
-                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                      }`}
-                    >
-                      {f.label}
                     </button>
                   ))}
                 </div>
