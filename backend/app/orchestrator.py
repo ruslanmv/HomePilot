@@ -723,7 +723,8 @@ async def orchestrate(
             # VIDEO PROMPT REFINEMENT (like Imagine mode)
             # ================================================================
             # Clean the prompt first (remove URLs, command words)
-            video_prompt = _clean_video_prompt(text_in)
+            original_cleaned_prompt = _clean_video_prompt(text_in)
+            video_prompt = original_cleaned_prompt
             video_negative = preset_vars.get("negative_prompt", "")
             video_motion_intensity = "medium"
 
@@ -863,7 +864,7 @@ async def orchestrate(
                     "denoise": workflow_vars.get("denoise", 0.85),
                     # Motion and prompt
                     "motion": workflow_vars.get("motion", "medium"),
-                    "prompt": text_in,  # Original user prompt
+                    "prompt": original_cleaned_prompt,  # Cleaned user prompt (URLs removed)
                     "final_prompt": video_prompt,  # Refined prompt (or original if refinement disabled)
                     "negative_prompt": workflow_vars.get("negative_prompt", ""),
                     # Source image
