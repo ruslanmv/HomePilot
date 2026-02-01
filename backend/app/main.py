@@ -160,6 +160,12 @@ class ChatIn(BaseModel):
     vidFps: Optional[int] = Field(None, description="Video FPS")
     vidMotion: Optional[str] = Field(None, description="Video motion bucket")
     vidModel: Optional[str] = Field(None, description="Video model selection (svd, wan-2.2, seedream)")
+    vidPreset: Optional[str] = Field(None, description="Video quality preset (low, medium, high, ultra)")
+    vidAspectRatio: Optional[str] = Field(None, description="Video aspect ratio (16:9, 9:16, 1:1, 4:3, 3:4)")
+    vidSteps: Optional[int] = Field(None, description="Override steps for video generation")
+    vidCfg: Optional[float] = Field(None, description="Override CFG scale for video generation")
+    vidDenoise: Optional[float] = Field(None, description="Override denoise strength for video generation")
+    vidSeed: Optional[int] = Field(None, description="Override seed for video generation (0 = random)")
     vidNegativePrompt: Optional[str] = Field(None, description="Custom negative prompt for video generation")
     nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
     promptRefinement: Optional[bool] = Field(True, description="Enable AI prompt refinement for image generation (default: True)")
@@ -1794,6 +1800,12 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "vidFps": inp.vidFps,
         "vidMotion": inp.vidMotion,
         "vidModel": inp.vidModel,
+        "vidPreset": inp.vidPreset,
+        "vidAspectRatio": inp.vidAspectRatio,
+        "vidSteps": inp.vidSteps,
+        "vidCfg": inp.vidCfg,
+        "vidDenoise": inp.vidDenoise,
+        "vidSeed": inp.vidSeed,
         "vidNegativePrompt": inp.vidNegativePrompt,
         "nsfwMode": inp.nsfwMode,
         "promptRefinement": inp.promptRefinement,

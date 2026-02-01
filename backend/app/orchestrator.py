@@ -504,6 +504,7 @@ async def orchestrate(
     vid_denoise: Optional[float] = None,
     vid_seed: Optional[int] = None,
     vid_preset: Optional[str] = None,  # Quality preset: 'low', 'medium', 'high', 'ultra'
+    vid_aspect_ratio: Optional[str] = None,  # Aspect ratio: '16:9', '9:16', '1:1', '4:3', '3:4'
     vid_negative_prompt: Optional[str] = None,  # Custom negative prompt for video
     nsfw_mode: Optional[bool] = None,
     prompt_refinement: Optional[bool] = True,
@@ -710,6 +711,7 @@ async def orchestrate(
             preset_vars = video_presets.apply_preset_to_workflow_vars(
                 preset_name=vid_preset,  # None defaults to 'medium'
                 model_name=detected_model_type,  # Use detected type, not raw vid_model
+                aspect_ratio=vid_aspect_ratio,  # Pass aspect ratio for correct dimensions
                 vid_seconds=vid_seconds,
                 vid_fps=None,  # Let preset determine fps based on model
                 vid_steps=vid_steps,
@@ -1375,6 +1377,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             vid_denoise=payload.get("vidDenoise"),
             vid_seed=payload.get("vidSeed"),
             vid_preset=payload.get("vidPreset"),
+            vid_aspect_ratio=payload.get("vidAspectRatio"),
             vid_negative_prompt=payload.get("vidNegativePrompt"),
             nsfw_mode=payload.get("nsfwMode"),
             prompt_refinement=payload.get("promptRefinement", True),
