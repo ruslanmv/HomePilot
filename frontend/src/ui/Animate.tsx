@@ -769,7 +769,7 @@ export default function AnimateView(props: AnimateParams) {
         progress: 100,
         videoUrl: data.media!.video_url,
         posterUrl: data.media!.poster_url || placeholder.posterUrl,
-        finalPrompt: data.media!.prompt || data.media!.final_prompt,
+        finalPrompt: data.media!.final_prompt || data.media!.prompt,
         sourceImageUrl: data.media!.auto_generated_image || referenceUrl || data.media!.source_image || placeholder.sourceImageUrl,
         seed: data.media!.seed ?? (seedLock ? customSeed : undefined),
         seconds: data.media!.duration ?? seconds,
@@ -964,7 +964,7 @@ export default function AnimateView(props: AnimateParams) {
         posterUrl: data.media.poster_url,
         createdAt: Date.now(),
         prompt: lightboxPrompt,
-        finalPrompt: data.media.prompt || data.media.final_prompt,
+        finalPrompt: data.media.final_prompt || data.media.prompt,
         // Grok behavior: keep the original source image when regenerating
         // Only use auto_generated_image when there was no source (text-to-video)
         sourceImageUrl: existingSourceImage || data.media.auto_generated_image || data.media.source_image || undefined,
