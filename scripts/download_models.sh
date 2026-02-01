@@ -128,13 +128,17 @@ show_preset_info() {
 
     case "$PRESET" in
         minimal)
-            echo "📦 MINIMAL PRESET - Fast setup with essential models"
+            echo "📦 MINIMAL PRESET - RTX 4080 12GB Optimized"
+            echo "   Image Models:"
             echo "   • FLUX Schnell (4GB) - Fast image generation"
-            echo "   • Shared CLIP & VAE encoders (3GB)"
+            echo "   • T5-XXL FP8 Encoder (5GB) - Optimized for 12GB VRAM"
+            echo "   • CLIP-L + FLUX VAE (500MB) - Required encoders"
+            echo "   Video Models:"
+            echo "   • LTX-Video 2B (6GB) - Fast video generation"
             echo "   Upscale (Essential):"
             echo "   • 4x-UltraSharp (80MB) - Required for upscaling"
-            echo "   • Total: ~7GB"
-            echo "   • VRAM Required: 12-16GB"
+            echo "   • Total: ~16GB download"
+            echo "   • VRAM Required: 12-16GB (optimized for RTX 4080)"
             ;;
         recommended)
             echo "📦 RECOMMENDED PRESET - Balanced quality and performance"
@@ -194,11 +198,11 @@ show_preset_info() {
 download_shared_encoders() {
     log_info "=== Downloading Shared Encoders (CLIP & VAE) ==="
 
-    # T5-XXL Text Encoder (fp16)
+    # T5-XXL Text Encoder (fp16) - For 24GB+ VRAM
     download_file \
         "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors" \
         "${COMFY_MODELS_DIR}/clip/t5xxl_fp16.safetensors" \
-        "T5-XXL Text Encoder (fp16)"
+        "T5-XXL Text Encoder (fp16, 10GB, for 24GB+ VRAM)"
 
     # CLIP-L Text Encoder
     download_file \
@@ -211,6 +215,36 @@ download_shared_encoders() {
         "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors" \
         "${COMFY_MODELS_DIR}/vae/ae.safetensors" \
         "FLUX VAE Encoder"
+
+    echo ""
+}
+
+# Download T5-XXL FP8 encoder (for 12-16GB VRAM systems like RTX 4080)
+download_t5_fp8_encoder() {
+    log_info "=== Downloading T5-XXL FP8 Encoder (12-16GB VRAM) ==="
+
+    download_file \
+        "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors" \
+        "${COMFY_MODELS_DIR}/clip/t5xxl_fp8_e4m3fn.safetensors" \
+        "T5-XXL Text Encoder (FP8, 5GB, for RTX 4080/3080)"
+
+    # CLIP-L Text Encoder (also needed)
+    download_file \
+        "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors" \
+        "${COMFY_MODELS_DIR}/clip/clip_l.safetensors" \
+        "CLIP-L Text Encoder"
+
+    echo ""
+}
+
+# Download LTX-Video model (best for 12GB VRAM)
+download_ltx_video() {
+    log_info "=== Downloading LTX-Video 2B (Recommended for RTX 4080) ==="
+
+    download_file \
+        "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-2b-v0.9.1.safetensors" \
+        "${COMFY_MODELS_DIR}/checkpoints/ltx-video-2b-v0.9.1.safetensors" \
+        "LTX-Video 2B v0.9.1 (6GB, fast video generation)"
 
     echo ""
 }
@@ -512,9 +546,16 @@ main() {
     # Download based on preset
     case "$PRESET" in
         minimal)
-            download_shared_encoders
-            download_flux_schnell
-            download_upscale_essential  # Required for upscaling to work
+            # Optimized for RTX 4080 12GB - uses FP8 encoder instead of FP16
+            download_t5_fp8_encoder      # FP8 T5 (5GB) instead of FP16 (10GB)
+            download_flux_schnell        # Image generation
+            download_ltx_video           # Video generation (works great on 12GB)
+            download_upscale_essential   # Required for upscaling to work
+            # Download FLUX VAE (needed for image generation)
+            download_file \
+                "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors" \
+                "${COMFY_MODELS_DIR}/vae/ae.safetensors" \
+                "FLUX VAE Encoder"
             ;;
         recommended)
             download_shared_encoders
