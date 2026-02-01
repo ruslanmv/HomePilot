@@ -614,6 +614,9 @@ export default function ImagineView(props: ImagineParams) {
         }
       }
 
+      // Log the aspect ratio being sent for debugging
+      console.log('[Imagine] Generating with aspect ratio:', aspect)
+
       const data = await postJson<ChatResponse>(
         props.backendUrl,
         '/chat',
@@ -1528,6 +1531,7 @@ export default function ImagineView(props: ImagineParams) {
                     <button
                       key={r.id}
                       onClick={() => {
+                        console.log('[Imagine] Aspect ratio selected:', r.id, r.dimensions ? `(${r.dimensions.width}x${r.dimensions.height})` : '')
                         setAspect(r.id)
                       }}
                       className={`p-2 rounded-lg hover:bg-white/5 transition-colors group flex flex-col items-center gap-1 ${
