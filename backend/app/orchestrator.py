@@ -769,6 +769,12 @@ async def orchestrate(
             else:
                 print(f"[ANIMATE] Prompt refinement disabled, using original prompt")
 
+            # Select T5 encoder based on preset (ultra uses FP16 for 24GB+ VRAM, others use FP8)
+            # FP8: ~5GB VRAM, works on 12-16GB cards
+            # FP16: ~10GB VRAM, better quality but requires 24GB+
+            t5_encoder = "t5xxl_fp16.safetensors" if vid_preset == "ultra" else "t5xxl_fp8_e4m3fn.safetensors"
+            print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset})")
+
             # Build final workflow variables
             workflow_vars = {
                 "image_path": image_url,
@@ -786,6 +792,8 @@ async def orchestrate(
                 # Resolution (for OOM retry reduction)
                 "width": preset_vars.get("width", 768),
                 "height": preset_vars.get("height", 512),
+                # T5 text encoder selection (FP8 for <=16GB, FP16 for 24GB+)
+                "t5_encoder": t5_encoder,
             }
 
             # Run workflow with OOM retry logic
