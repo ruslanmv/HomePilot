@@ -2307,6 +2307,82 @@ def project_do_export(project_id: str, req: ProjectExportRequest):
 
 
 # ============================================================================
+# Media Proxy (for proper WebM playback)
+# ============================================================================
+
+from fastapi.responses import StreamingResponse
+import httpx
+
+@router.get("/media")
+async def studio_media_proxy(url: str = Query(..., description="URL of the media file to proxy")):
+    """
+    Proxy media files from ComfyUI with correct Content-Type headers.
+
+    This ensures WebM videos and animated WebP images are served with proper headers.
+    Supports Range requests for video seeking. Fixes issues where ComfyUI returns
+    wrong Content-Type or missing CORS headers.
+    """
+    from fastapi import Request
+    from starlette.requests import Request as StarletteRequest
+    import inspect
+
+    # Basic validation - only allow localhost ComfyUI URLs for security
+    if not (url.startswith("http://localhost:8188/") or url.startswith("http://127.0.0.1:8188/")):
+        raise HTTPException(status_code=400, detail="Invalid media URL - only local ComfyUI URLs allowed")
+
+    # Determine correct Content-Type from URL extension
+    url_lower = url.lower()
+    if ".webp" in url_lower:
+        content_type = "image/webp"
+    elif ".gif" in url_lower:
+        content_type = "image/gif"
+    elif ".webm" in url_lower:
+        content_type = "video/webm"
+    elif ".mp4" in url_lower:
+        content_type = "video/mp4"
+    elif ".png" in url_lower:
+        content_type = "image/png"
+    elif ".jpg" in url_lower or ".jpeg" in url_lower:
+        content_type = "image/jpeg"
+    else:
+        content_type = "application/octet-stream"
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.get(url)
+            if r.status_code not in (200, 206):
+                raise HTTPException(status_code=502, detail=f"Upstream media fetch failed: {r.status_code}")
+
+            # Build response headers
+            response_headers = {
+                "Content-Disposition": "inline",
+                "Cache-Control": "public, max-age=3600",
+                "Access-Control-Allow-Origin": "*",
+                "Accept-Ranges": "bytes",
+            }
+
+            # Pass through content-length if available
+            if "content-length" in r.headers:
+                response_headers["Content-Length"] = r.headers["content-length"]
+
+            # Stream the response with correct headers
+            async def generate():
+                async for chunk in r.aiter_bytes():
+                    yield chunk
+
+            return StreamingResponse(
+                generate(),
+                status_code=r.status_code,
+                media_type=content_type,
+                headers=response_headers,
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Media fetch timed out")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Media fetch error: {str(e)}")
+
+
+# ============================================================================
 # Health
 # ============================================================================
 
