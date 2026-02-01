@@ -389,7 +389,6 @@ export default function AnimateView(props: AnimateParams) {
     let cancelled = false
 
     const presetLabels: Record<string, string> = {
-      test: 'Lowest (6GB)',
       low: 'Low (8GB)',
       medium: 'Medium (12GB)',
       high: 'High (16GB)',
@@ -429,7 +428,7 @@ export default function AnimateView(props: AnimateParams) {
         const base = props.backendUrl.replace(/\/+$/, '')
         const modelParam = detectedModelType ? `&model=${encodeURIComponent(detectedModelType)}` : ''
         const arParam = `&aspect_ratio=${encodeURIComponent(aspectRatio)}`
-        const presetsToProbe: Array<'test' | 'low' | 'medium' | 'high' | 'ultra'> = ['test', 'low', 'medium', 'high', 'ultra']
+        const presetsToProbe: Array<'low' | 'medium' | 'high' | 'ultra'> = ['low', 'medium', 'high', 'ultra']
 
         const results = await Promise.all(
           presetsToProbe.map(async (p) => {
