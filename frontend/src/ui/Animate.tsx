@@ -126,10 +126,11 @@ const DEFAULT_ASPECT_RATIOS: VideoAspectRatio[] = [
 ]
 
 // Fallback default values (used when API is unavailable)
+// Matches LTX "high" preset - proven working configuration
 const FALLBACK_ADVANCED_PARAMS = {
-  steps: 30,
-  cfg: 3.5,
-  denoise: 0.85,
+  steps: 32,
+  cfg: 4.0,
+  denoise: 0.8,
 }
 
 // Type for preset values from API
@@ -366,6 +367,16 @@ export default function AnimateView(props: AnimateParams) {
     setCustomNegativePrompt('')
     setShowNegativePrompt(false)
   }, [presetDefaults])
+
+  // Sync slider values when preset defaults change (from API or quality/model change)
+  // Only sync if user hasn't entered Advanced Mode yet (preserves custom values)
+  useEffect(() => {
+    if (!advancedMode) {
+      setCustomSteps(presetDefaults.steps ?? FALLBACK_ADVANCED_PARAMS.steps)
+      setCustomCfg(presetDefaults.cfg ?? FALLBACK_ADVANCED_PARAMS.cfg)
+      setCustomDenoise(presetDefaults.denoise ?? FALLBACK_ADVANCED_PARAMS.denoise)
+    }
+  }, [presetDefaults, advancedMode])
 
   // Reference Image state (source image for animation)
   const referenceInputRef = useRef<HTMLInputElement>(null)
