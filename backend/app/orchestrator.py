@@ -26,6 +26,72 @@ EDIT_RE = re.compile(r"\b(edit|inpaint|replace|remove|change)\b", re.I)
 ANIM_RE = re.compile(r"\b(animate|make (a )?video|image\s*to\s*video)\b", re.I)
 URL_RE = re.compile(r"(https?://\S+)")
 
+# OOM error patterns (CUDA, MPS, etc.)
+OOM_PATTERNS = [
+    "cuda out of memory",
+    "out of memory",
+    "oom",
+    "cuda error",
+    "mps backend out of memory",
+    "allocation failed",
+    "not enough memory",
+]
+
+
+def _is_oom_error(error: Exception) -> bool:
+    """Detect if an exception is an out-of-memory error."""
+    error_str = str(error).lower()
+    return any(pattern in error_str for pattern in OOM_PATTERNS)
+
+
+def _reduce_video_settings(
+    workflow_vars: Dict[str, Any],
+    model_type: str,
+    attempt: int,
+) -> Dict[str, Any]:
+    """
+    Reduce video settings for OOM retry.
+
+    Reduction strategy (progressive):
+    - Attempt 1: Reduce frames by ~25%
+    - Attempt 2: Reduce resolution by ~20% + frames by ~35%
+    - Attempt 3: Minimum viable settings
+
+    Returns new workflow_vars dict with reduced settings.
+    """
+    reduced = workflow_vars.copy()
+    frames = reduced.get("frames", 49)
+    width = reduced.get("width", 768)
+    height = reduced.get("height", 512)
+
+    if attempt == 1:
+        # First retry: reduce frames by ~25%
+        new_frames = max(25, int(frames * 0.75))
+        # Enforce frame rules
+        new_frames = video_presets.enforce_frame_rule(model_type, new_frames)
+        reduced["frames"] = new_frames
+        print(f"[OOM_RETRY] Attempt {attempt}: Reduced frames {frames} -> {new_frames}")
+
+    elif attempt == 2:
+        # Second retry: reduce resolution + frames
+        new_width = max(512, int(width * 0.8) // 32 * 32)  # Round to 32
+        new_height = max(288, int(height * 0.8) // 32 * 32)
+        new_frames = max(25, int(frames * 0.65))
+        new_frames = video_presets.enforce_frame_rule(model_type, new_frames)
+        reduced["width"] = new_width
+        reduced["height"] = new_height
+        reduced["frames"] = new_frames
+        print(f"[OOM_RETRY] Attempt {attempt}: Reduced {width}x{height} -> {new_width}x{new_height}, frames {frames} -> {new_frames}")
+
+    else:
+        # Third retry: minimum viable settings
+        reduced["width"] = 512
+        reduced["height"] = 288
+        reduced["frames"] = video_presets.enforce_frame_rule(model_type, 25)
+        print(f"[OOM_RETRY] Attempt {attempt}: Using minimum settings 512x288, 25 frames")
+
+    return reduced
+
 
 def _clean_video_prompt(text: str) -> str:
     """
@@ -147,6 +213,29 @@ Given a user's casual request, output a JSON object with these fields:
 - "style": (string) One of: "photorealistic", "illustration", "cinematic", "artistic", "anime". Default to "photorealistic".
 
 Keep your response as a single JSON object, no markdown, no explanations."""
+
+# Video prompt refiner system message (optimized for motion/temporal descriptions)
+VIDEO_PROMPT_REFINER_SYSTEM = """You are an expert at refining prompts for AI video generation (LTX-Video, Stable Video Diffusion, WAN, Hunyuan).
+
+Given a user's casual request, output a JSON object optimized for video synthesis:
+- "prompt": (string) A detailed, motion-focused prompt. Include:
+  - Subject description (appearance, pose, clothing, expression)
+  - Motion type (gentle sway, walking, hair flowing, breathing, dancing)
+  - Camera movement (static shot, slow pan, dolly in/out, tracking shot)
+  - Environment dynamics (wind effects, water ripples, floating particles, light rays)
+  - Lighting/atmosphere (golden hour, soft ambient, dramatic shadows, neon glow)
+  - Style (cinematic, photorealistic, artistic, dreamlike, anime)
+
+- "negative_prompt": (string) Video artifacts to avoid (default: "static, frozen, glitch, flicker, jitter, morphing, warping, duplicate frames, low fps, choppy, blurry, watermark")
+
+- "motion_intensity": (string) One of: "subtle", "medium", "dynamic". Default "medium".
+
+IMPORTANT: Focus on ACHIEVABLE motion. Video AI works best with:
+- Subtle, natural movements (hair, fabric, breathing)
+- Slow camera movements (gentle pan, slow zoom)
+- Consistent subject (avoid transformation/morphing)
+
+Output a single JSON object, no markdown, no explanations."""
 
 
 def _norm_mode(mode: Optional[str]) -> str:
@@ -294,6 +383,99 @@ async def _refine_prompt(
         return fallback_result
 
 
+async def _refine_video_prompt(
+    user_prompt: str,
+    provider: ProviderName,
+    provider_base_url: Optional[str] = None,
+    provider_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Use LLM to refine user's prompt into a motion-focused video generation prompt.
+    Returns dict with: prompt, negative_prompt, motion_intensity
+
+    IMPORTANT: On any failure, returns the ORIGINAL user_prompt to preserve user intent.
+    """
+    print(f"[_refine_video_prompt] Calling LLM to refine video prompt...")
+    print(f"[_refine_video_prompt] Original user prompt: '{user_prompt[:100]}...'")
+    print(f"[_refine_video_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
+
+    # Default fallback - always preserves user's original prompt
+    # Video-specific negative prompt for temporal artifacts
+    fallback_result = {
+        "prompt": user_prompt,
+        "negative_prompt": "static, frozen, glitch, flicker, jitter, morphing, warping, duplicate frames, low fps, choppy, blurry, watermark, text, logo",
+        "motion_intensity": "medium",
+    }
+
+    messages = [
+        {"role": "system", "content": VIDEO_PROMPT_REFINER_SYSTEM},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    try:
+        print(f"[_refine_video_prompt] Sending to llm_chat...")
+        result = await llm_chat(
+            messages,
+            provider=provider,
+            temperature=0.7,
+            max_tokens=600,  # Slightly more for video descriptions
+            base_url=provider_base_url,
+            model=provider_model,
+        )
+        print(f"[_refine_video_prompt] LLM response received")
+
+        # Extract the response text
+        response_text = (
+            (result.get("choices") or [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        ).strip()
+
+        if not response_text:
+            print(f"[_refine_video_prompt] WARNING: Empty LLM response, using original prompt")
+            return fallback_result
+
+        print(f"[_refine_video_prompt] Raw LLM response: '{response_text[:300]}...'")
+
+        # Try to parse JSON robustly
+        print(f"[_refine_video_prompt] Parsing JSON...")
+        refined = _extract_json_from_text(response_text)
+
+        if refined and refined.get("prompt"):
+            refined_prompt = refined.get("prompt", "").strip()
+            if refined_prompt:
+                # Get video-specific negative prompt from LLM or use default
+                llm_negative = refined.get("negative_prompt", "")
+                # Enhance with video-specific artifacts if not already present
+                video_artifacts = "static, frozen, glitch, flicker, jitter, morphing, warping"
+                if llm_negative and video_artifacts not in llm_negative.lower():
+                    enhanced_negative = f"{llm_negative}, {video_artifacts}"
+                else:
+                    enhanced_negative = llm_negative or fallback_result["negative_prompt"]
+
+                result_dict = {
+                    "prompt": refined_prompt,
+                    "negative_prompt": enhanced_negative,
+                    "motion_intensity": refined.get("motion_intensity", "medium"),
+                }
+                print(f"[_refine_video_prompt] SUCCESS: Refined prompt: '{result_dict['prompt'][:100]}...'")
+                print(f"[_refine_video_prompt] Negative: '{enhanced_negative[:80]}...'")
+                print(f"[_refine_video_prompt] Motion intensity: {result_dict['motion_intensity']}")
+                return result_dict
+
+        # JSON parsing failed or prompt field empty
+        print(f"[_refine_video_prompt] WARNING: JSON parsing failed or empty prompt, using original")
+        return fallback_result
+
+    except Exception as e:
+        # If refinement fails, return original user prompt (never lose user's intent)
+        print(f"[_refine_video_prompt] ERROR: {type(e).__name__}: {e}")
+        import traceback
+        print(f"[_refine_video_prompt] Traceback: {traceback.format_exc()}")
+        print(f"[_refine_video_prompt] FALLBACK: Using original user prompt")
+        return fallback_result
+
+
 async def orchestrate(
     user_text: str,
     conversation_id: Optional[str] = None,
@@ -322,6 +504,7 @@ async def orchestrate(
     vid_denoise: Optional[float] = None,
     vid_seed: Optional[int] = None,
     vid_preset: Optional[str] = None,  # Quality preset: 'low', 'medium', 'high', 'ultra'
+    vid_aspect_ratio: Optional[str] = None,  # Aspect ratio: '16:9', '9:16', '1:1', '4:3', '3:4'
     vid_negative_prompt: Optional[str] = None,  # Custom negative prompt for video
     nsfw_mode: Optional[bool] = None,
     prompt_refinement: Optional[bool] = True,
@@ -528,6 +711,7 @@ async def orchestrate(
             preset_vars = video_presets.apply_preset_to_workflow_vars(
                 preset_name=vid_preset,  # None defaults to 'medium'
                 model_name=detected_model_type,  # Use detected type, not raw vid_model
+                aspect_ratio=vid_aspect_ratio,  # Pass aspect ratio for correct dimensions
                 vid_seconds=vid_seconds,
                 vid_fps=None,  # Let preset determine fps based on model
                 vid_steps=vid_steps,
@@ -537,12 +721,98 @@ async def orchestrate(
                 vid_negative_prompt=vid_negative_prompt,
             )
 
+            # ================================================================
+            # VIDEO PROMPT REFINEMENT (like Imagine mode)
+            # ================================================================
+            # Clean the prompt first (remove URLs, command words)
+            original_cleaned_prompt = _clean_video_prompt(text_in)
+            video_prompt = original_cleaned_prompt
+            video_negative = preset_vars.get("negative_prompt", "")
+            video_motion_intensity = "medium"
+
+            # Optional video prompt refinement (enabled by default, can be disabled)
+            if prompt_refinement:
+                prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
+
+                # Determine LLM settings for refinement
+                if prov == "ollama":
+                    refine_base_url = provider_base_url or OLLAMA_BASE_URL
+                    refine_model = OLLAMA_MODEL if OLLAMA_MODEL else "llama3:8b"
+                elif prov == "openai_compat":
+                    refine_base_url = provider_base_url or LLM_BASE_URL
+                    refine_model = LLM_MODEL if LLM_MODEL else None
+                else:
+                    refine_base_url = provider_base_url
+                    refine_model = None
+
+                print(f"[ANIMATE] === Starting video prompt refinement ===")
+                print(f"[ANIMATE] Original prompt: '{video_prompt[:80]}...'")
+                print(f"[ANIMATE] Provider: {prov}, Model: {refine_model}")
+
+                try:
+                    video_refined = await _refine_video_prompt(
+                        video_prompt,
+                        provider=prov,
+                        provider_base_url=refine_base_url,
+                        provider_model=refine_model,
+                    )
+                    video_prompt = video_refined.get("prompt", video_prompt)
+                    # Merge refined negative with preset negative (refined takes precedence for video artifacts)
+                    refined_negative = video_refined.get("negative_prompt", "")
+                    if refined_negative:
+                        video_negative = refined_negative
+                    video_motion_intensity = video_refined.get("motion_intensity", "medium")
+
+                    print(f"[ANIMATE] Refined prompt: '{video_prompt[:80]}...'")
+                    print(f"[ANIMATE] Refined negative: '{video_negative[:60]}...'")
+                    print(f"[ANIMATE] Motion intensity: {video_motion_intensity}")
+                except Exception as e:
+                    print(f"[ANIMATE] Video prompt refinement failed: {e}, using original")
+                    # Keep original cleaned prompt
+            else:
+                print(f"[ANIMATE] Prompt refinement disabled, using original prompt")
+
+            # Select T5 encoder based on preset with fallback
+            # FP16: ~10GB VRAM, used for high/ultra/None (proven working configuration)
+            # FP8: ~5GB VRAM, used for low/medium (12GB VRAM compatibility)
+            # Fallback: If preferred encoder not installed, use the other one
+            from .providers import get_comfy_models_path
+
+            clip_path = get_comfy_models_path() / "clip"
+            fp16_available = (clip_path / "t5xxl_fp16.safetensors").exists()
+            fp8_available = (clip_path / "t5xxl_fp8_e4m3fn.safetensors").exists()
+
+            # Determine preferred encoder based on preset
+            if vid_preset in ("high", "ultra") or vid_preset is None:
+                preferred_encoder = "t5xxl_fp16.safetensors"
+                fallback_encoder = "t5xxl_fp8_e4m3fn.safetensors"
+                preferred_available = fp16_available
+                fallback_available = fp8_available
+            else:
+                preferred_encoder = "t5xxl_fp8_e4m3fn.safetensors"
+                fallback_encoder = "t5xxl_fp16.safetensors"
+                preferred_available = fp8_available
+                fallback_available = fp16_available
+
+            # Select encoder with fallback logic
+            if preferred_available:
+                t5_encoder = preferred_encoder
+                print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset or 'default->high'})")
+            elif fallback_available:
+                t5_encoder = fallback_encoder
+                print(f"[ANIMATE] ⚠️ WARNING: Preferred encoder {preferred_encoder} not installed")
+                print(f"[ANIMATE] Using superior T5 encoder as fallback: {t5_encoder}")
+            else:
+                # Neither available - use preferred and let ComfyUI error with helpful message
+                t5_encoder = preferred_encoder
+                print(f"[ANIMATE] ⚠️ No T5 encoder found! Please install from Models > Add-ons")
+
             # Build final workflow variables
             workflow_vars = {
                 "image_path": image_url,
-                "prompt": _clean_video_prompt(text_in),
-                "negative_prompt": preset_vars.get("negative_prompt", ""),
-                "motion": vid_motion if vid_motion is not None else "medium",
+                "prompt": video_prompt,
+                "negative_prompt": video_negative,
+                "motion": vid_motion if vid_motion is not None else video_motion_intensity,
                 # Use preset values (with user overrides already applied)
                 "seconds": preset_vars.get("seconds", vid_seconds or 4),
                 "frames": preset_vars.get("frames", 33),
@@ -551,9 +821,39 @@ async def orchestrate(
                 "steps": preset_vars.get("steps", 30),
                 "cfg": preset_vars.get("cfg", 3.5),
                 "denoise": preset_vars.get("denoise", 0.85),
+                # Resolution (for OOM retry reduction)
+                "width": preset_vars.get("width", 768),
+                "height": preset_vars.get("height", 512),
+                # T5 text encoder selection (FP8 for <=16GB, FP16 for 24GB+)
+                "t5_encoder": t5_encoder,
             }
 
-            res = run_workflow(video_workflow_name, workflow_vars)
+            # Run workflow with OOM retry logic
+            max_retries = 3
+            last_error = None
+            current_vars = workflow_vars
+
+            for attempt in range(max_retries + 1):
+                try:
+                    if attempt > 0:
+                        print(f"[ANIMATE] OOM retry attempt {attempt}/{max_retries}")
+                        current_vars = _reduce_video_settings(
+                            workflow_vars, detected_model_type, attempt
+                        )
+
+                    res = run_workflow(video_workflow_name, current_vars)
+                    break  # Success, exit retry loop
+
+                except Exception as e:
+                    last_error = e
+                    if _is_oom_error(e) and attempt < max_retries:
+                        print(f"[ANIMATE] OOM detected: {e}")
+                        continue  # Try again with reduced settings
+                    else:
+                        raise  # Re-raise non-OOM errors or final attempt
+
+            # Update workflow_vars with actual settings used (for metadata)
+            workflow_vars = current_vars
             video_url = (res.get("videos") or [None])[0]
             images = res.get("images") or []
 
@@ -589,9 +889,13 @@ async def orchestrate(
                     "steps": workflow_vars.get("steps", 30),
                     "cfg": workflow_vars.get("cfg", 3.5),
                     "denoise": workflow_vars.get("denoise", 0.85),
+                    # Resolution for reproducibility
+                    "width": workflow_vars.get("width"),
+                    "height": workflow_vars.get("height"),
                     # Motion and prompt
                     "motion": workflow_vars.get("motion", "medium"),
-                    "prompt": workflow_vars.get("prompt", ""),
+                    "prompt": original_cleaned_prompt,  # Cleaned user prompt (URLs removed)
+                    "final_prompt": video_prompt,  # Refined prompt (or original if refinement disabled)
                     "negative_prompt": workflow_vars.get("negative_prompt", ""),
                     # Source image
                     "source_image": image_url,
@@ -796,6 +1100,7 @@ async def orchestrate(
 
             # Get aspect ratio: prefer explicit from frontend, then LLM refinement, then default
             # This allows the UI aspect ratio picker to override LLM suggestions
+            print(f"[IMAGE] img_aspect_ratio parameter: {img_aspect_ratio!r}")
             aspect_ratio = img_aspect_ratio or refined.get("aspect_ratio", "1:1")
             # IMPORTANT: Write back to refined so ComfyUI receives correct aspect_ratio
             refined["aspect_ratio"] = aspect_ratio
@@ -1073,6 +1378,10 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 model = payload.get("ollama_model")
             elif prov == "openai_compat":
                 model = payload.get("llm_model")
+        # Debug: Log aspect ratio received from frontend
+        _ar = payload.get("imgAspectRatio")
+        print(f"[CHAT ENDPOINT] imgAspectRatio from payload: {_ar!r} (type: {type(_ar).__name__})")
+
         return await orchestrate(
             user_text=payload.get("message", ""),
             conversation_id=payload.get("conversation_id"),
@@ -1085,7 +1394,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             text_max_tokens=payload.get("textMaxTokens"),
             img_width=payload.get("imgWidth"),
             img_height=payload.get("imgHeight"),
-            img_aspect_ratio=payload.get("imgAspectRatio"),  # NEW: Pass aspect ratio
+            img_aspect_ratio=_ar,  # Pass aspect ratio from frontend
             img_steps=payload.get("imgSteps"),
             img_cfg=payload.get("imgCfg"),
             img_seed=payload.get("imgSeed"),
@@ -1101,6 +1410,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             vid_denoise=payload.get("vidDenoise"),
             vid_seed=payload.get("vidSeed"),
             vid_preset=payload.get("vidPreset"),
+            vid_aspect_ratio=payload.get("vidAspectRatio"),
             vid_negative_prompt=payload.get("vidNegativePrompt"),
             nsfw_mode=payload.get("nsfwMode"),
             prompt_refinement=payload.get("promptRefinement", True),
