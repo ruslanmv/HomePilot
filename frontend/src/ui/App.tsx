@@ -2191,6 +2191,7 @@ export default function App() {
             vidSeconds={settingsDraft.vidSeconds}
             vidFps={settingsDraft.vidFps}
             vidMotion={settingsDraft.vidMotion}
+            vidPreset={settingsDraft.preset}
             nsfwMode={settingsDraft.nsfwMode}
             promptRefinement={settingsDraft.promptRefinement}
           />

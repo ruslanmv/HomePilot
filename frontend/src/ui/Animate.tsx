@@ -47,6 +47,7 @@ export type AnimateParams = {
   vidSeconds?: number
   vidFps?: number
   vidMotion?: string
+  vidPreset?: string  // Hardware/quality preset from global settings
   nsfwMode?: boolean
   promptRefinement?: boolean
 }
@@ -258,7 +259,13 @@ export default function AnimateView(props: AnimateParams) {
   const [fps, setFps] = useState(props.vidFps || 8)
   const [motion, setMotion] = useState(props.vidMotion || 'medium')
   const [showSettingsPanel, setShowSettingsPanel] = useState(false)
-  const [qualityPreset, setQualityPreset] = useState('medium')
+  const [qualityPreset, setQualityPreset] = useState(props.vidPreset || 'medium')
+  // Sync with global preset when it changes
+  useEffect(() => {
+    if (props.vidPreset) {
+      setQualityPreset(props.vidPreset)
+    }
+  }, [props.vidPreset])
   const [aspectRatio, setAspectRatio] = useState('16:9')
   const [compatibleAspectRatios, setCompatibleAspectRatios] = useState<VideoAspectRatio[]>(DEFAULT_ASPECT_RATIOS)
 
