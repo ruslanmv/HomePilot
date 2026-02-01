@@ -383,31 +383,98 @@ export default function AnimateView(props: AnimateParams) {
   }, [props.backendUrl, authKey, detectedModelType, qualityPreset])
 
   // Update available resolutions when aspect ratio changes
+  // Goal: show only resolutions that are actually supported by the current model + aspect ratio.
+  // This is additive: if anything fails, we fall back to "Auto (Preset)".
   useEffect(() => {
-    if (rawAspectRatioData.length === 0) return
+    let cancelled = false
 
-    const currentRatioData = rawAspectRatioData.find((ar: any) => ar.id === aspectRatio)
-    if (currentRatioData?.dimensions) {
-      const presetLabels: Record<string, string> = {
-        test: 'Lowest (6GB)',
-        low: 'Low (8GB)',
-        medium: 'Medium (12GB)',
-        high: 'High (16GB)',
-        ultra: 'Ultra (24GB+)',
-      }
-      const resolutions: ResolutionOption[] = Object.entries(currentRatioData.dimensions)
-        .filter(([_, dims]: [string, any]) => dims?.width && dims?.height)
-        .map(([preset, dims]: [string, any]) => ({
-          id: preset,
-          label: `${dims.width}×${dims.height} ${presetLabels[preset] || preset}`,
-          width: dims.width,
-          height: dims.height,
-        }))
-      setAvailableResolutions(resolutions)
-      // Reset to auto when aspect ratio changes
-      setCustomResolution('auto')
+    const presetLabels: Record<string, string> = {
+      test: 'Lowest (6GB)',
+      low: 'Low (8GB)',
+      medium: 'Medium (12GB)',
+      high: 'High (16GB)',
+      ultra: 'Ultra (24GB+)',
     }
-  }, [aspectRatio, rawAspectRatioData])
+
+    async function buildResolutionOptions() {
+      // Always reset to Auto when aspect ratio changes
+      setCustomResolution('auto')
+
+      if (!rawAspectRatioData.length) {
+        setAvailableResolutions([])
+        return
+      }
+
+      // 1) Best-case: backend provides a map like { low:{w,h}, medium:{w,h}, ... }
+      const currentRatioData = rawAspectRatioData.find((ar: any) => ar.id === aspectRatio)
+      const dimsMaybeMap = currentRatioData?.dimensions
+      const looksLikeMap = dimsMaybeMap && typeof dimsMaybeMap === 'object' && !('width' in dimsMaybeMap)
+
+      if (looksLikeMap) {
+        const resolutions: ResolutionOption[] = Object.entries(dimsMaybeMap)
+          .filter(([_, dims]: [string, any]) => dims?.width && dims?.height)
+          .map(([preset, dims]: [string, any]) => ({
+            id: preset,
+            label: `${dims.width}×${dims.height} ${presetLabels[preset] || preset}`,
+            width: dims.width,
+            height: dims.height,
+          }))
+        if (!cancelled) setAvailableResolutions(resolutions)
+        return
+      }
+
+      // 2) Current backend behavior: dimensions is {width,height} for the selected preset only.
+      // Probe /video-presets for each preset and collect width/height.
+      try {
+        const base = props.backendUrl.replace(/\/+$/, '')
+        const modelParam = detectedModelType ? `&model=${encodeURIComponent(detectedModelType)}` : ''
+        const arParam = `&aspect_ratio=${encodeURIComponent(aspectRatio)}`
+        const presetsToProbe: Array<'test' | 'low' | 'medium' | 'high' | 'ultra'> = ['test', 'low', 'medium', 'high', 'ultra']
+
+        const results = await Promise.all(
+          presetsToProbe.map(async (p) => {
+            const url = `${base}/video-presets?preset=${p}${modelParam}${arParam}`
+            const res = await fetch(url, { headers: authKey ? { 'x-api-key': authKey } : undefined })
+            if (!res.ok) return null
+            const data = await res.json().catch(() => null)
+            const w = data?.values?.width
+            const h = data?.values?.height
+            if (!w || !h) return null
+            return { preset: p, width: w, height: h }
+          })
+        )
+
+        // De-dupe by WxH (some presets intentionally share same size)
+        const seen = new Set<string>()
+        const resolutions: ResolutionOption[] = []
+        for (const r of results) {
+          if (!r) continue
+          const key = `${r.width}x${r.height}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          resolutions.push({
+            id: r.preset,
+            label: `${r.width}×${r.height} ${presetLabels[r.preset] || r.preset}`,
+            width: r.width,
+            height: r.height,
+          })
+        }
+
+        // Sort by resolution (smallest to largest)
+        resolutions.sort((a, b) => (a.width * a.height) - (b.width * b.height))
+
+        if (!cancelled) setAvailableResolutions(resolutions)
+      } catch (e) {
+        console.warn('[Animate] Failed to build available resolutions:', e)
+        if (!cancelled) setAvailableResolutions([])
+      }
+    }
+
+    buildResolutionOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [aspectRatio, rawAspectRatioData, props.backendUrl, authKey, detectedModelType])
 
   // Helper to get preview dimensions for aspect ratio thumbnails
   function getPreviewDimension(ratioId: string, dimension: 'width' | 'height'): number {
