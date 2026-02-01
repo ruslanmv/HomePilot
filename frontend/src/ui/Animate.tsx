@@ -912,7 +912,20 @@ export default function AnimateView(props: AnimateParams) {
   const handleDelete = useCallback((item: AnimateItem, e: React.MouseEvent) => {
     e.stopPropagation()
     if (!confirm('Delete this video from gallery?')) return
-    setItems((prev) => prev.filter((x) => x.id !== item.id))
+
+    // Update state and explicitly persist to localStorage
+    setItems((prev) => {
+      const updated = prev.filter((x) => x.id !== item.id)
+      // Explicitly persist deletion to localStorage immediately
+      try {
+        localStorage.setItem('homepilot_animate_items', JSON.stringify(updated))
+        console.log('[Animate] Deleted item and persisted to localStorage:', item.id)
+      } catch (error) {
+        console.error('[Animate] Failed to persist deletion:', error)
+      }
+      return updated
+    })
+
     if (selectedVideo?.id === item.id) setSelectedVideo(null)
   }, [selectedVideo])
 
