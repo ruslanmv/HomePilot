@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0",
+  "notes": "Image generation presets. All aspect ratios work with all models, but dimensions differ by architecture.",
+
+  "aspect_ratios": {
+    "1:1": {
+      "ui_label": "Square (1:1)",
+      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "dimensions": {
+        "sd15":        { "width": 512,  "height": 512 },
+        "sdxl":        { "width": 1024, "height": 1024 },
+        "flux_schnell": { "width": 1024, "height": 1024 },
+        "flux_dev":    { "width": 1024, "height": 1024 }
+      }
+    },
+    "4:3": {
+      "ui_label": "Landscape (4:3)",
+      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "dimensions": {
+        "sd15":        { "width": 680,  "height": 512 },
+        "sdxl":        { "width": 1152, "height": 896 },
+        "flux_schnell": { "width": 1152, "height": 896 },
+        "flux_dev":    { "width": 1152, "height": 896 }
+      }
+    },
+    "3:4": {
+      "ui_label": "Portrait (3:4)",
+      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "dimensions": {
+        "sd15":        { "width": 512,  "height": 680 },
+        "sdxl":        { "width": 896,  "height": 1152 },
+        "flux_schnell": { "width": 896,  "height": 1152 },
+        "flux_dev":    { "width": 896,  "height": 1152 }
+      }
+    },
+    "16:9": {
+      "ui_label": "Widescreen (16:9)",
+      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "dimensions": {
+        "sd15":        { "width": 768,  "height": 432 },
+        "sdxl":        { "width": 1216, "height": 832 },
+        "flux_schnell": { "width": 1216, "height": 832 },
+        "flux_dev":    { "width": 1216, "height": 832 }
+      }
+    },
+    "9:16": {
+      "ui_label": "Vertical / Mobile (9:16)",
+      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "dimensions": {
+        "sd15":        { "width": 432,  "height": 768 },
+        "sdxl":        { "width": 832,  "height": 1216 },
+        "flux_schnell": { "width": 832,  "height": 1216 },
+        "flux_dev":    { "width": 832,  "height": 1216 }
+      }
+    }
+  },
+
+  "presets": {
+    "low": {
+      "ui": {
+        "label": "Low (Fast)",
+        "description": "Faster generation with fewer steps"
+      },
+      "base_values": {
+        "steps": 20,
+        "cfg": 7.0
+      },
+      "model_overrides": {
+        "sd15":        { "steps": 20, "cfg": 7.0 },
+        "sdxl":        { "steps": 25, "cfg": 5.0 },
+        "flux_schnell": { "steps": 4,  "cfg": 1.0 },
+        "flux_dev":    { "steps": 20, "cfg": 3.5 }
+      }
+    },
+    "med": {
+      "ui": {
+        "label": "Medium (Balanced)",
+        "description": "Good balance of quality and speed"
+      },
+      "base_values": {
+        "steps": 25,
+        "cfg": 7.0
+      },
+      "model_overrides": {
+        "sd15":        { "steps": 25, "cfg": 7.0 },
+        "sdxl":        { "steps": 30, "cfg": 5.5 },
+        "flux_schnell": { "steps": 4,  "cfg": 1.0 },
+        "flux_dev":    { "steps": 25, "cfg": 3.5 }
+      }
+    },
+    "high": {
+      "ui": {
+        "label": "High (Quality)",
+        "description": "Maximum quality with more steps"
+      },
+      "base_values": {
+        "steps": 35,
+        "cfg": 8.0
+      },
+      "model_overrides": {
+        "sd15":        { "steps": 35, "cfg": 8.0 },
+        "sdxl":        { "steps": 45, "cfg": 6.0 },
+        "flux_schnell": { "steps": 6,  "cfg": 1.0 },
+        "flux_dev":    { "steps": 40, "cfg": 4.0 }
+      }
+    }
+  },
+
+  "model_rules": {
+    "sd15": {
+      "default_aspect_ratio": "1:1",
+      "architecture": "sd15",
+      "notes": "SD 1.5 models work best at 512px base resolution to avoid duplication artifacts"
+    },
+    "sdxl": {
+      "default_aspect_ratio": "1:1",
+      "architecture": "sdxl",
+      "notes": "SDXL models native at 1024px base resolution"
+    },
+    "flux_schnell": {
+      "default_aspect_ratio": "1:1",
+      "architecture": "flux_schnell",
+      "notes": "Flux Schnell - fast 4-step turbo model"
+    },
+    "flux_dev": {
+      "default_aspect_ratio": "1:1",
+      "architecture": "flux_dev",
+      "notes": "Flux Dev - high quality model"
+    }
+  }
+}
