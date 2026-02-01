@@ -145,6 +145,7 @@ type PresetValues = {
   fps?: number
   frames?: number
   negativePrompt?: string
+  defaultAspectRatio?: string
 }
 
 // -----------------------------------------------------------------------------
@@ -321,6 +322,7 @@ export default function AnimateView(props: AnimateParams) {
               fps: data.values.fps,
               frames: data.values.frames,
               negativePrompt: data.model_rules?.default_negative_prompt ?? '',
+              defaultAspectRatio: data.default_aspect_ratio,
             })
           }
 
@@ -377,6 +379,25 @@ export default function AnimateView(props: AnimateParams) {
     setCustomNegativePrompt('')
     setShowNegativePrompt(false)
   }, [presetDefaults])
+
+  // Reset Video Settings to model-specific defaults
+  // Resets: Aspect Ratio (model default), Quality Preset (global), Motion (medium)
+  const resetVideoSettings = useCallback(() => {
+    // Reset aspect ratio to model's recommended default
+    const defaultRatio = presetDefaults.defaultAspectRatio
+    if (defaultRatio && compatibleAspectRatios.find(r => r.id === defaultRatio)) {
+      setAspectRatio(defaultRatio)
+    } else if (compatibleAspectRatios.length > 0) {
+      // Fallback to first compatible ratio
+      setAspectRatio(compatibleAspectRatios[0].id)
+    }
+
+    // Reset quality preset to global setting
+    setQualityPreset(props.vidPreset || 'medium')
+
+    // Reset motion strength to balanced default
+    setMotion('medium')
+  }, [presetDefaults.defaultAspectRatio, compatibleAspectRatios, props.vidPreset])
 
   // Sync slider values when preset defaults change (from API or quality/model change)
   // Only sync if user hasn't entered Advanced Mode yet (preserves custom values)
@@ -1293,13 +1314,23 @@ export default function AnimateView(props: AnimateParams) {
                   <Sliders size={16} className="text-purple-400" />
                   Video Settings
                 </h3>
-                <button
-                  type="button"
-                  className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
-                  onClick={() => setShowSettingsPanel(false)}
-                >
-                  <X size={16} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-purple-400 transition-colors"
+                    onClick={resetVideoSettings}
+                    title="Reset to model defaults"
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="p-1.5 rounded-lg hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+                    onClick={() => setShowSettingsPanel(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
 
               {/* Aspect Ratio */}

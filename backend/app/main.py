@@ -628,6 +628,14 @@ async def get_video_presets(
                     "dimensions": ratio_config.get("dimensions", {}).get(preset_name, {}),
                 })
 
+        # Determine default aspect ratio for the model
+        # Priority: model_rules.default_aspect_ratio > first compatible ratio > "16:9"
+        default_aspect_ratio = model_rules.get("default_aspect_ratio")
+        if not default_aspect_ratio and compatible_ratios:
+            default_aspect_ratio = compatible_ratios[0]["id"]
+        if not default_aspect_ratio:
+            default_aspect_ratio = "16:9"
+
         return JSONResponse(
             status_code=200,
             content={
@@ -639,6 +647,7 @@ async def get_video_presets(
                 "model_rules": model_rules,
                 "ui": preset_config.get("ui", {}),
                 "compatible_aspect_ratios": compatible_ratios,
+                "default_aspect_ratio": default_aspect_ratio,
             },
         )
 
