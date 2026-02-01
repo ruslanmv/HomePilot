@@ -26,6 +26,9 @@ type AnimateItem = {
   motion?: string
   model?: string
   preset?: string
+  // Resolution for reproducibility
+  width?: number
+  height?: number
   // Advanced parameters
   steps?: number
   cfg?: number
@@ -682,6 +685,9 @@ export default function AnimateView(props: AnimateParams) {
         motion: data.media!.motion ?? motion,
         model: data.media!.model ?? props.modelVideo,
         preset: data.media!.preset ?? qualityPreset,
+        // Resolution for reproducibility
+        width: data.media!.width,
+        height: data.media!.height,
         steps: data.media!.steps ?? (advancedMode ? customSteps : undefined),
         cfg: data.media!.cfg ?? (advancedMode ? customCfg : undefined),
         denoise: data.media!.denoise ?? (advancedMode ? customDenoise : undefined),
@@ -858,6 +864,9 @@ export default function AnimateView(props: AnimateParams) {
         motion: data.media.motion ?? motion,
         model: data.media.model ?? props.modelVideo,
         preset: data.media.preset ?? qualityPreset,
+        // Resolution for reproducibility
+        width: data.media.width,
+        height: data.media.height,
         steps: data.media.steps ?? (advancedMode ? customSteps : undefined),
         cfg: data.media.cfg ?? (advancedMode ? customCfg : undefined),
         denoise: data.media.denoise ?? (advancedMode ? customDenoise : undefined),
@@ -1727,6 +1736,13 @@ export default function AnimateView(props: AnimateParams) {
                     <div>
                       <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Seed</label>
                       <div className="text-base text-white font-mono font-bold">{selectedVideo.seed}</div>
+                    </div>
+                  )}
+                  {/* Resolution */}
+                  {(selectedVideo.width && selectedVideo.height) && (
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Resolution</label>
+                      <div className="text-sm text-white/70 font-mono">{selectedVideo.width}×{selectedVideo.height}</div>
                     </div>
                   )}
                   {/* Duration, FPS, Motion */}
