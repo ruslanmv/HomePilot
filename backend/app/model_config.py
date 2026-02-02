@@ -87,12 +87,13 @@ SD15_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
 }
 
 # SDXL / Flux: High Resolution Native (Base 1024)
+# CORRECTED: Aspect ratios now match their labels AND align with video presets
 SDXL_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
-    "1:1":  {"width": 1024, "height": 1024},
-    "4:3":  {"width": 1152, "height": 896},
-    "3:4":  {"width": 896,  "height": 1152},
-    "16:9": {"width": 1216, "height": 832},
-    "9:16": {"width": 832,  "height": 1216},
+    "1:1":  {"width": 1024, "height": 1024},  # Perfect square
+    "4:3":  {"width": 1024, "height": 768},   # Correct 4:3 ratio (1.333)
+    "3:4":  {"width": 768,  "height": 1024},  # Correct 3:4 ratio
+    "16:9": {"width": 1024, "height": 576},   # Correct 16:9 ratio (1.777) - matches video medium!
+    "9:16": {"width": 576,  "height": 1024},  # Correct 9:16 ratio - matches video ultra!
 }
 
 # =============================================================================
