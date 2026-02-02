@@ -1,12 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useState } from "react";
 import { Mic, MicOff, Settings, Volume2, VolumeX, Zap, Radio, X } from "lucide-react";
-import { createVAD } from "./voice/vad";
-
-declare global {
-  interface Window {
-    SpeechService?: any;
-  }
-}
+import { useVoiceController, VoiceState } from "./voice/useVoiceController";
 
 // Grok-like colors and styles
 const THEME = {
@@ -20,105 +14,26 @@ const THEME = {
   active: "bg-white text-black",
 };
 
+// State-based status messages
+const STATE_MESSAGES: Record<VoiceState, string> = {
+  OFF: "Tap mic to start",
+  IDLE: "Listening for speech...",
+  LISTENING: "Listening...",
+  THINKING: "Processing...",
+  SPEAKING: "Speaking...",
+};
+
 export default function VoiceMode({
   onSendText,
 }: {
   onSendText: (text: string) => void;
 }) {
-  const svc = useMemo(() => window.SpeechService, []);
-  const [handsFree, setHandsFree] = useState(false);
-  const [interim, setInterim] = useState("");
-  const [listening, setListening] = useState(false);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [selectedVoice, setSelectedVoice] = useState<string>(() => {
-    return localStorage.getItem('homepilot_voice_uri') || '';
-  });
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
-  const [ttsEnabled, setTtsEnabled] = useState<boolean>(() => {
-    return localStorage.getItem('homepilot_tts_enabled') !== 'false';
-  });
 
-  const vadRef = useRef<ReturnType<typeof createVAD> | null>(null);
+  const voice = useVoiceController(onSendText);
 
-  // --- Logic Section ---
-
-  useEffect(() => {
-    if (!svc) return;
-
-    const loadVoices = () => {
-      const availableVoices = svc.getVoices();
-      setVoices(availableVoices);
-
-      if (!selectedVoice && availableVoices.length > 0) {
-        // Auto-select a natural voice
-        const defaultVoice = availableVoices.find((v: SpeechSynthesisVoice) =>
-          v.name.toLowerCase().includes('google') && v.lang.startsWith('en')
-        ) || availableVoices.find((v: SpeechSynthesisVoice) => v.default) || availableVoices[0];
-
-        // Use voiceURI for consistency with speech service
-        setSelectedVoice(defaultVoice.voiceURI);
-        localStorage.setItem('homepilot_voice_uri', defaultVoice.voiceURI);
-      }
-    };
-
-    loadVoices();
-    if (window.speechSynthesis.onvoiceschanged !== undefined) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
-  }, [svc, selectedVoice]);
-
-  useEffect(() => {
-    if (!svc || !selectedVoice) return;
-    // Set the preferred voice URI in the speech service
-    svc.setPreferredVoiceURI?.(selectedVoice);
-  }, [svc, selectedVoice]);
-
-  useEffect(() => {
-    localStorage.setItem('homepilot_tts_enabled', String(ttsEnabled));
-  }, [ttsEnabled]);
-
-  useEffect(() => {
-    if (!svc) return;
-
-    svc.setRecognitionCallbacks({
-      onStart: () => {
-        setListening(true);
-        if (handsFree && vadRef.current) vadRef.current.stop();
-      },
-      onEnd: () => {
-        setListening(false);
-        if (handsFree && vadRef.current) vadRef.current.start().catch(console.warn);
-      },
-      onInterim: (t: string) => setInterim(t),
-      onResult: (finalText: string) => {
-        setInterim("");
-        if (finalText?.trim()) onSendText(finalText.trim());
-      },
-      onError: (msg: string) => {
-        setListening(false);
-        console.warn("STT error:", msg);
-      },
-    });
-  }, [svc, onSendText, handsFree]);
-
-  useEffect(() => {
-    if (!handsFree) return;
-    vadRef.current = createVAD(
-      () => {
-        if (svc?.stopSpeaking) svc.stopSpeaking();
-        svc?.startSTT?.({});
-      },
-      () => svc?.stopSTT?.(),
-      { threshold: 0.035, minSpeechMs: 250, silenceMs: 900 }
-    );
-    vadRef.current.start().catch((e) => console.warn("VAD start failed", e));
-    return () => {
-      vadRef.current?.stop?.();
-      vadRef.current = null;
-    };
-  }, [handsFree, svc]);
-
-  if (!svc) {
+  // Check if speech service is available
+  if (!window.SpeechService) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className={`${THEME.surface} border ${THEME.border} rounded-3xl p-8 text-center max-w-md`}>
@@ -132,7 +47,8 @@ export default function VoiceMode({
     );
   }
 
-  // --- UI Section (Grok Style) ---
+  const isListening = voice.state === 'LISTENING';
+  const isActive = voice.state !== 'OFF';
 
   return (
     <div className="flex-1 flex items-center justify-center px-4 py-8">
@@ -147,6 +63,17 @@ export default function VoiceMode({
               </svg>
             </div>
             <span className={`text-sm font-semibold tracking-tight ${THEME.accent}`}>HomePilot Voice</span>
+
+            {/* State indicator */}
+            <div className={`px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider ${
+              voice.state === 'OFF' ? 'bg-gray-800 text-gray-400' :
+              voice.state === 'LISTENING' ? 'bg-green-900/50 text-green-400' :
+              voice.state === 'SPEAKING' ? 'bg-blue-900/50 text-blue-400' :
+              voice.state === 'THINKING' ? 'bg-yellow-900/50 text-yellow-400' :
+              'bg-gray-700 text-gray-300'
+            }`}>
+              {voice.state}
+            </div>
           </div>
 
           <div className="flex gap-2">
@@ -164,28 +91,57 @@ export default function VoiceMode({
 
           {/* Pulsing Orb */}
           <div className="relative mb-6">
-            <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${listening ? 'scale-110 bg-white shadow-[0_0_40px_rgba(255,255,255,0.3)]' : 'bg-[#222] scale-100'}`}>
-              {listening ? (
+            <div className={`w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${
+              isListening
+                ? 'scale-110 bg-white shadow-[0_0_40px_rgba(255,255,255,0.3)]'
+                : voice.state === 'SPEAKING'
+                  ? 'scale-105 bg-blue-500 shadow-[0_0_30px_rgba(59,130,246,0.3)]'
+                  : voice.state === 'THINKING'
+                    ? 'scale-100 bg-yellow-500 shadow-[0_0_20px_rgba(234,179,8,0.3)]'
+                    : 'bg-[#222] scale-100'
+            }`}>
+              {isListening ? (
                 <div className="space-y-1 flex gap-1 h-8 items-center">
                   <div className="w-1.5 bg-black animate-[bounce_1s_infinite] h-4"></div>
                   <div className="w-1.5 bg-black animate-[bounce_1.2s_infinite] h-6"></div>
                   <div className="w-1.5 bg-black animate-[bounce_0.8s_infinite] h-5"></div>
                   <div className="w-1.5 bg-black animate-[bounce_1.1s_infinite] h-4"></div>
                 </div>
+              ) : voice.state === 'SPEAKING' ? (
+                <Volume2 className="text-white" size={28} />
+              ) : voice.state === 'THINKING' ? (
+                <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
               ) : (
                 <MicOff className="text-white/30" size={28} />
               )}
             </div>
-            {listening && (
+            {isListening && (
               <div className="absolute inset-0 rounded-full border border-white/20 animate-ping"></div>
             )}
           </div>
 
+          {/* Audio Level Visualization (hands-free mode) */}
+          {voice.isHandsFree && voice.state !== 'OFF' && (
+            <div className="w-full max-w-xs mb-4">
+              <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-green-500 to-green-300 transition-all duration-100"
+                  style={{ width: `${Math.min(voice.audioLevel * 500, 100)}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[9px] text-gray-500 mt-1">
+                <span>Noise: {voice.noiseFloor.toFixed(3)}</span>
+                <span>Level: {voice.audioLevel.toFixed(3)}</span>
+                <span>Threshold: {voice.threshold.toFixed(3)}</span>
+              </div>
+            </div>
+          )}
+
           {/* Text Output */}
           <div className="text-center min-h-[3rem] max-w-lg px-4">
-            {interim ? (
+            {voice.interimText ? (
               <div className="space-y-2">
-                <span className={`text-lg font-medium ${THEME.accent} animate-pulse`}>{interim}</span>
+                <span className={`text-lg font-medium ${THEME.accent} animate-pulse`}>{voice.interimText}</span>
                 <div className="flex justify-center gap-1">
                   <div className="w-1.5 h-1.5 bg-white/60 rounded-full animate-bounce"></div>
                   <div className="w-1.5 h-1.5 bg-white/60 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
@@ -194,7 +150,7 @@ export default function VoiceMode({
               </div>
             ) : (
               <span className={`text-sm ${THEME.textDim}`}>
-                {listening ? "Listening..." : handsFree ? "Waiting for speech..." : "Tap mic to start"}
+                {STATE_MESSAGES[voice.state]}
               </span>
             )}
           </div>
@@ -206,21 +162,18 @@ export default function VoiceMode({
             <label className={`text-xs font-semibold uppercase tracking-wider ${THEME.textDim} mb-3 block`}>Voice Persona</label>
             <select
               className={`w-full bg-[#1a1a1a] border ${THEME.border} rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-colors appearance-none cursor-pointer`}
-              value={selectedVoice}
-              onChange={(e) => {
-                setSelectedVoice(e.target.value);
-                localStorage.setItem('homepilot_voice_uri', e.target.value);
-              }}
+              value={voice.selectedVoice}
+              onChange={(e) => voice.setSelectedVoice(e.target.value)}
             >
-              {voices.length === 0 && <option value="">Loading voices...</option>}
-              {voices.map((voice) => (
-                <option key={voice.voiceURI} value={voice.voiceURI}>
-                  {voice.name} ({voice.lang})
+              {voice.voices.length === 0 && <option value="">Loading voices...</option>}
+              {voice.voices.map((v) => (
+                <option key={v.voiceURI} value={v.voiceURI}>
+                  {v.name} ({v.lang})
                 </option>
               ))}
             </select>
             <div className={`mt-2 text-[10px] ${THEME.textDim}`}>
-              Choose from {voices.length} available voices
+              Choose from {voice.voices.length} available voices
             </div>
           </div>
         )}
@@ -230,46 +183,53 @@ export default function VoiceMode({
 
           {/* TTS Toggle */}
           <button
-            onClick={() => setTtsEnabled(!ttsEnabled)}
+            onClick={() => voice.setTtsEnabled(!voice.isTtsEnabled)}
             className={`flex flex-col items-center justify-center gap-1 py-3 rounded-xl border border-transparent transition-all ${
-              ttsEnabled ? "bg-white/10 text-white" : "hover:bg-white/5 text-[#666]"
+              voice.isTtsEnabled ? "bg-white/10 text-white" : "hover:bg-white/5 text-[#666]"
             }`}
           >
-            {ttsEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
-            <span className="text-[10px] font-medium uppercase tracking-wide">TTS {ttsEnabled ? 'On' : 'Off'}</span>
+            {voice.isTtsEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
+            <span className="text-[10px] font-medium uppercase tracking-wide">TTS {voice.isTtsEnabled ? 'On' : 'Off'}</span>
           </button>
 
           {/* Main Mic Trigger */}
           <button
             onClick={() => {
-              if (listening) {
-                svc.stopSTT();
+              if (isListening) {
+                voice.stopManualListening();
+              } else if (voice.state === 'SPEAKING') {
+                voice.stopSpeaking();
               } else {
-                svc.stopSpeaking?.();
-                svc.startSTT?.({});
+                voice.startManualListening();
               }
             }}
             className={`flex flex-col items-center justify-center gap-1 py-3 rounded-xl transition-all shadow-lg ${
-              listening
+              isListening
                 ? "bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20"
-                : "bg-white text-black hover:bg-gray-200"
+                : voice.state === 'SPEAKING'
+                  ? "bg-blue-500/10 text-blue-500 border border-blue-500/20 hover:bg-blue-500/20"
+                  : "bg-white text-black hover:bg-gray-200"
             }`}
           >
-            <Mic size={24} strokeWidth={2.5} />
+            {voice.state === 'SPEAKING' ? (
+              <VolumeX size={24} strokeWidth={2.5} />
+            ) : (
+              <Mic size={24} strokeWidth={2.5} />
+            )}
           </button>
 
           {/* Hands Free Toggle */}
           <button
-            onClick={() => setHandsFree((v) => !v)}
+            onClick={() => voice.setHandsFree(!voice.isHandsFree)}
             className={`flex flex-col items-center justify-center gap-1 py-3 rounded-xl border transition-all ${
-              handsFree
+              voice.isHandsFree
                 ? "bg-white text-black border-white"
                 : "border-white/10 text-[#666] hover:text-white hover:bg-white/5"
             }`}
           >
-            {handsFree ? <Zap size={20} fill="currentColor" /> : <Radio size={20} />}
+            {voice.isHandsFree ? <Zap size={20} fill="currentColor" /> : <Radio size={20} />}
             <span className="text-[10px] font-medium uppercase tracking-wide">
-              {handsFree ? 'Auto' : 'Manual'}
+              {voice.isHandsFree ? 'Auto' : 'Manual'}
             </span>
           </button>
 

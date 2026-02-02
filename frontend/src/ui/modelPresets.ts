@@ -9,7 +9,7 @@
  */
 
 export type Architecture = "sd15" | "sdxl" | "flux_schnell" | "flux_dev";
-export type PresetName = "low" | "med" | "high";
+export type PresetName = "low" | "med" | "high" | "ultra";
 export type AspectRatio = "1:1" | "4:3" | "3:4" | "16:9" | "9:16";
 
 export interface Dimensions {
@@ -90,30 +90,34 @@ export const SDXL_RESOLUTIONS: Record<AspectRatio, Dimensions> = {
 export const PRESETS: Record<Architecture, Record<PresetName, StepCfg>> = {
   // Standard SD 1.5 (DreamShaper, Realistic Vision, etc.)
   sd15: {
-    low:  { steps: 20, cfg: 7.0 },
-    med:  { steps: 25, cfg: 7.0 },
-    high: { steps: 35, cfg: 8.0 },
+    low:   { steps: 20, cfg: 7.0 },
+    med:   { steps: 25, cfg: 7.0 },
+    high:  { steps: 35, cfg: 8.0 },
+    ultra: { steps: 50, cfg: 8.5 },
   },
 
   // Standard SDXL (Base, Pony)
   sdxl: {
-    low:  { steps: 25, cfg: 5.0 },
-    med:  { steps: 30, cfg: 5.5 },
-    high: { steps: 45, cfg: 6.0 },
+    low:   { steps: 25, cfg: 5.0 },
+    med:   { steps: 30, cfg: 5.5 },
+    high:  { steps: 45, cfg: 6.0 },
+    ultra: { steps: 60, cfg: 6.5 },
   },
 
   // Flux SCHNELL (Must be fast; optimized for very low step counts)
   flux_schnell: {
-    low:  { steps: 4, cfg: 1.0 },
-    med:  { steps: 4, cfg: 1.0 },
-    high: { steps: 6, cfg: 1.0 },
+    low:   { steps: 4, cfg: 1.0 },
+    med:   { steps: 4, cfg: 1.0 },
+    high:  { steps: 6, cfg: 1.0 },
+    ultra: { steps: 8, cfg: 1.0 },
   },
 
   // Flux DEV (High quality; likes lower CFG)
   flux_dev: {
-    low:  { steps: 20, cfg: 3.5 },
-    med:  { steps: 25, cfg: 3.5 },
-    high: { steps: 40, cfg: 4.0 },
+    low:   { steps: 20, cfg: 3.5 },
+    med:   { steps: 25, cfg: 3.5 },
+    high:  { steps: 40, cfg: 4.0 },
+    ultra: { steps: 50, cfg: 4.0 },
   },
 };
 
@@ -175,7 +179,7 @@ export function normalizeAspectRatio(aspectRatio: string): AspectRatio {
  * Normalize preset to valid value.
  */
 export function normalizePreset(preset: string): PresetName {
-  const valid: PresetName[] = ["low", "med", "high"];
+  const valid: PresetName[] = ["low", "med", "high", "ultra"];
   return valid.includes(preset as PresetName) ? (preset as PresetName) : DEFAULT_PRESET;
 }
 
