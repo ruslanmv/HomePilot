@@ -476,6 +476,55 @@ async def _refine_video_prompt(
         return fallback_result
 
 
+def _pick_image_dims_for_video(
+    model_filename: str,
+    aspect_ratio: str,
+    target_w: int,
+    target_h: int,
+    preset: str = "med"
+) -> tuple:
+    """
+    Pick the best starter image dimensions for video generation.
+
+    Syncs image dimensions with video target while respecting image model safe maximums.
+    This ensures the starter image has the same aspect ratio and similar resolution
+    to the target video, improving quality by avoiding resize/crop artifacts.
+
+    Args:
+        model_filename: Image model filename (e.g., "dreamshaper_8.safetensors")
+        aspect_ratio: Target aspect ratio ('1:1', '16:9', etc.)
+        target_w: Target video width
+        target_h: Target video height
+        preset: Image preset for getting safe max dimensions
+
+    Returns:
+        Tuple of (width, height) that are safe for the image model and close to video target
+    """
+    # Get safe max dimensions for the image model at this aspect ratio
+    try:
+        model_settings = get_model_settings(model_filename, aspect_ratio, preset=preset)
+        max_w = model_settings["width"]
+        max_h = model_settings["height"]
+    except Exception:
+        # Fallback to conservative defaults
+        max_w, max_h = 512, 512
+
+    # Helper to ensure multiples of 64 (Comfy/SD friendly)
+    def m64(x: int) -> int:
+        return max(256, (x // 64) * 64)
+
+    # Scale down to fit within safe max while maintaining aspect ratio
+    scale = min(max_w / target_w, max_h / target_h, 1.0)
+    w = m64(int(target_w * scale))
+    h = m64(int(target_h * scale))
+
+    # Extra safety: never exceed max
+    w = min(w, max_w)
+    h = min(h, max_h)
+
+    return w, h
+
+
 async def orchestrate(
     user_text: str,
     conversation_id: Optional[str] = None,
@@ -577,14 +626,14 @@ async def orchestrate(
                         refined = {
                             "prompt": img_prompt,
                             "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
-                            "aspect_ratio": "16:9",  # Better for video
+                            "aspect_ratio": vid_aspect_ratio or "16:9",  # Use video's aspect ratio
                             "style": "photorealistic",
                         }
                 else:
                     refined = {
                         "prompt": img_prompt,
                         "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
-                        "aspect_ratio": "16:9",  # Better for video
+                        "aspect_ratio": vid_aspect_ratio or "16:9",  # Use video's aspect ratio
                         "style": "photorealistic",
                     }
 
@@ -600,18 +649,46 @@ async def orchestrate(
                 if model_filename in short_name_map:
                     model_filename = short_name_map[model_filename]
 
-                # Use 16:9 aspect ratio for better video compatibility
-                aspect_ratio = "16:9"
+                # Use the video's requested aspect ratio for the starter image
+                # This ensures the image and video have matching proportions
+                aspect_ratio = vid_aspect_ratio or "16:9"
                 preset_to_use = img_preset or "med"
                 model_settings = get_model_settings(model_filename, aspect_ratio, preset=preset_to_use)
                 architecture = model_settings["architecture"]
 
+                # Determine target video dimensions to sync starter image
+                detected_video_type = video_presets.detect_model_type(vid_model) or "svd"
+                video_preset_name = vid_preset or "medium"
+
+                try:
+                    target_dims = video_presets.get_dimensions_for_aspect_ratio(
+                        aspect_ratio=aspect_ratio,
+                        preset_name=video_preset_name,
+                        model_type=detected_video_type,
+                    )
+                    target_w = target_dims["width"]
+                    target_h = target_dims["height"]
+                except Exception as e:
+                    print(f"[ANIMATE] Could not get video dims, using image model defaults: {e}")
+                    target_w = model_settings["width"]
+                    target_h = model_settings["height"]
+
+                # Pick best image dimensions that match video target (respecting image model limits)
+                img_w, img_h = _pick_image_dims_for_video(
+                    model_filename=model_filename,
+                    aspect_ratio=aspect_ratio,
+                    target_w=target_w,
+                    target_h=target_h,
+                    preset=preset_to_use,
+                )
+
                 print(f"[ANIMATE] Image model: {model_filename}, arch: {architecture}")
-                print(f"[ANIMATE] Dimensions: {model_settings['width']}x{model_settings['height']}")
+                print(f"[ANIMATE] Video target dims: {target_w}x{target_h} @ {aspect_ratio}")
+                print(f"[ANIMATE] Starter image dims: {img_w}x{img_h} (safe max {model_settings['width']}x{model_settings['height']})")
 
                 # 4. Apply settings to refined dict
-                refined["width"] = model_settings["width"]
-                refined["height"] = model_settings["height"]
+                refined["width"] = img_w
+                refined["height"] = img_h
                 refined["steps"] = model_settings["steps"]
                 refined["cfg"] = model_settings["cfg"]
                 refined["seed"] = random.randint(1, 2147483647)
