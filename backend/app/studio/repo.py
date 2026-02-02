@@ -93,6 +93,7 @@ def init_studio_db() -> None:
             image_prompt TEXT DEFAULT '',
             negative_prompt TEXT DEFAULT '',
             image_url TEXT,
+            video_url TEXT,
             audio_url TEXT,
             status TEXT DEFAULT 'pending',
             duration_sec REAL DEFAULT 5.0,
@@ -102,6 +103,13 @@ def init_studio_db() -> None:
         )
     """)
     cur.execute("CREATE INDEX IF NOT EXISTS idx_studio_scenes_video ON studio_scenes(video_id)")
+
+    # Lightweight migration: add video_url column if missing (existing installations)
+    cur.execute("PRAGMA table_info(studio_scenes);")
+    cols = [r[1] for r in cur.fetchall()]
+    if "video_url" not in cols:
+        cur.execute("ALTER TABLE studio_scenes ADD COLUMN video_url TEXT;")
+        con.commit()
 
     # Studio Projects table (professional projects)
     cur.execute("""
@@ -499,6 +507,7 @@ def _row_to_scene(row) -> StudioScene:
         imagePrompt=row["image_prompt"] or "",
         negativePrompt=row["negative_prompt"] or "",
         imageUrl=row["image_url"],
+        videoUrl=row["video_url"] if "video_url" in row.keys() else None,
         audioUrl=row["audio_url"],
         status=row["status"],
         durationSec=row["duration_sec"],
@@ -532,22 +541,42 @@ def update_scene(scene_id: str, updates: StudioSceneUpdate) -> Optional[StudioSc
     if not update_data:
         return scene
 
+    # CamelCase field map
     field_map = {
         "narration": "narration",
         "imagePrompt": "image_prompt",
         "negativePrompt": "negative_prompt",
         "imageUrl": "image_url",
+        "videoUrl": "video_url",
         "audioUrl": "audio_url",
         "status": "status",
         "durationSec": "duration_sec",
     }
 
+    # Snake_case field map (for frontend compatibility)
+    snake_map = {
+        "image_url": "image_url",
+        "video_url": "video_url",
+        "audio_url": "audio_url",
+        "image_prompt": "image_prompt",
+        "negative_prompt": "negative_prompt",
+        "duration_sec": "duration_sec",
+    }
+
     con = _db()
     cur = con.cursor()
 
+    # Process camelCase keys
     for key, value in update_data.items():
-        if key in field_map and value is not None:
+        if key in field_map:
+            # IMPORTANT: Allow null/None updates so UI can "Remove Video" by setting videoUrl = null
             col = field_map[key]
+            cur.execute(f"UPDATE studio_scenes SET {col} = ? WHERE id = ?", (value, scene_id))
+
+    # Process snake_case keys
+    for key, value in update_data.items():
+        if key in snake_map:
+            col = snake_map[key]
             cur.execute(f"UPDATE studio_scenes SET {col} = ? WHERE id = ?", (value, scene_id))
 
     cur.execute("UPDATE studio_scenes SET updated_at = ? WHERE id = ?", (_now(), scene_id))
