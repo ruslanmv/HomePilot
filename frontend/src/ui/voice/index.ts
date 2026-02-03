@@ -6,6 +6,7 @@
  * - Unified state machine controller
  * - Browser AEC/NS/AGC support
  * - True barge-in capability
+ * - Grok-style UI components
  */
 
 // VAD exports
@@ -24,3 +25,32 @@ export {
   type VoiceControllerConfig,
   type VoiceController,
 } from './useVoiceController';
+
+// Voice persona exports
+export {
+  VOICES,
+  type VoiceDef,
+  type VoiceId,
+  getDefaultVoice,
+  getVoiceById,
+  findBrowserVoice,
+  LS_VOICE_ID,
+} from './voices';
+
+// Personality exports
+export {
+  PERSONALITIES,
+  type PersonalityDef,
+  type PersonalityId,
+  getDefaultPersonality,
+  getPersonalityById,
+  LS_PERSONALITY_ID,
+} from './personalities';
+
+// UI component exports
+export { default as Starfield } from './Starfield';
+export { default as SpeedSlider } from './SpeedSlider';
+export { default as VoiceGrid } from './VoiceGrid';
+export { default as PersonalityList } from './PersonalityList';
+export { default as VoiceSettingsPanel } from './VoiceSettingsPanel';
+export { default as SettingsModal } from './SettingsModal';

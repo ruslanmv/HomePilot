@@ -19,7 +19,8 @@ import {
   Tv2,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
-import VoiceMode from './VoiceMode'
+import VoiceMode from './VoiceModeGrok'
+// Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
 import AnimateView from './Animate'
@@ -1677,23 +1678,43 @@ export default function App() {
           )
         )
 
+        // Dispatch assistant message to VoiceModeGrok for typewriter animation
+        if (mode === 'voice' && typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('hp:assistant_message', {
+              detail: { id: tmpId, text: data.text ?? '…' },
+            })
+          )
+        }
+
         if (data.conversation_id && data.conversation_id !== conversationId) {
           setConversationId(data.conversation_id)
         }
       } catch (err: any) {
+        const errorText = `Error: ${
+          typeof err?.message === 'string' ? err.message : 'backend unreachable.'
+        }`
+
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
               ? {
                   ...m,
                   pending: false,
-                  text: `Error: ${
-                    typeof err?.message === 'string' ? err.message : 'backend unreachable.'
-                  }`,
+                  text: errorText,
                 }
               : m
           )
         )
+
+        // Dispatch error message to VoiceModeGrok for typewriter animation
+        if (mode === 'voice' && typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('hp:assistant_message', {
+              detail: { id: tmpId, text: errorText },
+            })
+          )
+        }
       }
     },
     [
