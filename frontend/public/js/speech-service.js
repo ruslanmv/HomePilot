@@ -12,6 +12,7 @@ class SpeechService {
         this.isRecognizing = false;
         this.micPermissionGranted = false;
         this.micStream = null;
+        this.lastProcessedFinalIndex = -1; // Track last processed final result to prevent duplicates
         this.recognitionCallbacks = {
             onResult: null,
             onInterim: null,
@@ -122,17 +123,22 @@ class SpeechService {
 
             this.recognition.onstart = () => {
                 this.isRecognizing = true;
+                this.lastProcessedFinalIndex = -1; // Reset tracking for new recognition session
                 if (this.recognitionCallbacks.onStart) this.recognitionCallbacks.onStart();
             };
 
             this.recognition.onresult = (event) => {
                 let interimTranscript = '';
-                let finalTranscript = '';
+                let newFinalTranscript = '';
 
                 for (let i = event.resultIndex; i < event.results.length; i++) {
                     const transcript = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
-                        finalTranscript += transcript + ' ';
+                        // Only process this final result if we haven't seen it before
+                        if (i > this.lastProcessedFinalIndex) {
+                            newFinalTranscript += transcript + ' ';
+                            this.lastProcessedFinalIndex = i;
+                        }
                     } else {
                         interimTranscript += transcript;
                     }
@@ -142,8 +148,9 @@ class SpeechService {
                     this.recognitionCallbacks.onInterim(interimTranscript.trim());
                 }
 
-                if (finalTranscript && this.recognitionCallbacks.onResult) {
-                    this.recognitionCallbacks.onResult(finalTranscript.trim());
+                // Only call onResult if there are NEW final results
+                if (newFinalTranscript && this.recognitionCallbacks.onResult) {
+                    this.recognitionCallbacks.onResult(newFinalTranscript.trim());
                 }
             };
 
@@ -156,6 +163,7 @@ class SpeechService {
 
             this.recognition.onend = () => {
                 this.isRecognizing = false;
+                this.lastProcessedFinalIndex = -1; // Reset for next session
                 if (this.recognitionCallbacks.onEnd) this.recognitionCallbacks.onEnd();
             };
         }
