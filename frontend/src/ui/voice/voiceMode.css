@@ -1,0 +1,428 @@
+/**
+ * HomePilot Voice Mode - Grok-style CSS
+ *
+ * Design tokens and styles for the modern Voice UI.
+ */
+
+:root {
+  /* HomePilot Grok Theme - Core Colors */
+  --hp-bg: #000000;
+  --hp-surface: rgba(20, 24, 36, 0.65);
+  --hp-surface-solid: #121212;
+  --hp-surface-hover: #1a1a1a;
+  --hp-surface-active: #2a2a2a;
+
+  /* Borders */
+  --hp-border: rgba(255, 255, 255, 0.10);
+  --hp-border-hover: rgba(255, 255, 255, 0.16);
+  --hp-border-active: rgba(255, 255, 255, 0.20);
+
+  /* ===== Grok "void" text palette (sampled from Grok UI) ===== */
+  --grok-fg-primary: #E9E8E7;     /* main content text - near white */
+  --grok-fg-secondary: #8C8C8C;   /* placeholders, helper copy */
+  --grok-fg-tertiary: rgba(233, 232, 231, 0.58);
+  --grok-fg-quaternary: rgba(233, 232, 231, 0.42);
+
+  /* Map Grok -> HomePilot tokens */
+  --hp-text: var(--grok-fg-primary);
+  --hp-text-dim: var(--grok-fg-secondary);
+  --hp-text-muted: var(--grok-fg-tertiary);
+  --hp-text-faint: var(--grok-fg-quaternary);
+
+  /* Subtle "void print" glow for text */
+  --hp-text-glow: 0 0 12px rgba(233, 232, 231, 0.06);
+
+  /* Accent/Glow colors */
+  --hp-glow-blue: #97C4FF;
+  --hp-glow-orange: #FF6308;
+  --hp-glow-silver: #BDC9E6;
+
+  /* Radius */
+  --hp-radius-sm: 8px;
+  --hp-radius-md: 12px;
+  --hp-radius-lg: 16px;
+  --hp-radius-xl: 20px;
+  --hp-radius-2xl: 24px;
+  --hp-radius-pill: 9999px;
+
+  /* Shadows */
+  --hp-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  --hp-shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.9);
+}
+
+/* Main container */
+.hp-voice-root {
+  height: 100%;
+  min-height: 100vh;
+  background: var(--hp-bg);
+  color: var(--hp-text);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Starfield background */
+.hp-stars {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image:
+    radial-gradient(1px 1px at 20px 30px, #ffffff, rgba(0,0,0,0)),
+    radial-gradient(1px 1px at 40px 70px, #ffffff, rgba(0,0,0,0)),
+    radial-gradient(1px 1px at 50px 160px, #ffffff, rgba(0,0,0,0)),
+    radial-gradient(1.5px 1.5px at 90px 40px, #ffffff, rgba(0,0,0,0)),
+    radial-gradient(1px 1px at 130px 80px, #ffffff, rgba(0,0,0,0)),
+    radial-gradient(1.5px 1.5px at 160px 120px, #ffffff, rgba(0,0,0,0)),
+    radial-gradient(1px 1px at 200px 50px, #ffffff, rgba(0,0,0,0)),
+    radial-gradient(1px 1px at 250px 180px, #ffffff, rgba(0,0,0,0)),
+    radial-gradient(1.5px 1.5px at 300px 100px, #ffffff, rgba(0,0,0,0));
+  background-size: 350px 350px;
+  opacity: 0.15;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Custom scrollbar */
+.hp-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.hp-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hp-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+}
+
+.hp-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Voice bar glow effect - opacity controlled by React for dynamic states */
+.hp-glow-wrap {
+  filter: blur(28px);
+  opacity: 1;  /* Let React control opacity via glowOpacity */
+  pointer-events: none;
+}
+
+/* Breathing animation for SPEAKING state - crystal reflection effect */
+@keyframes hpGlowBreath {
+  0%, 100% { transform: translateY(0); filter: blur(28px); }
+  50%      { transform: translateY(-2px); filter: blur(30px); }
+}
+
+.hp-glow-breath {
+  animation: hpGlowBreath 2.2s ease-in-out infinite;
+}
+
+.hp-glow-wrap .g1 {
+  background: var(--hp-glow-blue);
+  opacity: 0.55;
+}
+
+.hp-glow-wrap .g2 {
+  background: var(--hp-glow-orange);
+  opacity: 0.30;
+}
+
+.hp-glow-wrap .g3 {
+  background: var(--hp-glow-silver);
+  opacity: 0.55;
+}
+
+/* Speed slider styling */
+.hp-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  background: transparent;
+  height: 36px;
+  cursor: pointer;
+}
+
+.hp-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 24px;
+  width: 24px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  margin-top: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.hp-slider::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 36px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--hp-radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.hp-slider:focus {
+  outline: none;
+}
+
+.hp-slider::-moz-range-thumb {
+  height: 24px;
+  width: 24px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.hp-slider::-moz-range-track {
+  width: 100%;
+  height: 36px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--hp-radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Waveform animation */
+@keyframes hp-waveform {
+  0%, 100% {
+    height: 8px;
+  }
+  50% {
+    height: 24px;
+  }
+}
+
+.hp-waveform-bar {
+  animation: hp-waveform 1s ease-in-out infinite;
+}
+
+/* Pulse animation */
+@keyframes hp-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.hp-pulse {
+  animation: hp-pulse 2s ease-in-out infinite;
+}
+
+/* Typewriter cursor blink animation */
+@keyframes hp-cursor-blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+.hp-cursor {
+  animation: hp-cursor-blink 0.8s step-end infinite;
+}
+
+/* Fade in animation */
+@keyframes hp-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hp-fade-in {
+  animation: hp-fade-in 0.3s ease-out forwards;
+}
+
+/* Slide up animation */
+@keyframes hp-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hp-slide-up {
+  animation: hp-slide-up 0.3s ease-out forwards;
+}
+
+/* Button styles */
+.hp-btn {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: var(--hp-radius-pill);
+  border: 1px solid var(--hp-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--hp-text);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.hp-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--hp-border-hover);
+}
+
+.hp-btn.hp-btn-primary {
+  background: rgba(151, 196, 255, 0.10);
+  border-color: rgba(151, 196, 255, 0.22);
+}
+
+.hp-btn.hp-btn-primary:hover {
+  background: rgba(151, 196, 255, 0.15);
+  border-color: rgba(151, 196, 255, 0.30);
+}
+
+.hp-btn.hp-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.hp-btn.hp-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Card styles */
+.hp-card {
+  background: var(--hp-surface-solid);
+  border: 1px solid var(--hp-border);
+  border-radius: var(--hp-radius-lg);
+  backdrop-filter: blur(20px);
+}
+
+.hp-card:hover {
+  border-color: var(--hp-border-hover);
+}
+
+.hp-card.hp-card-selected {
+  background: var(--hp-surface-active);
+  border-color: var(--hp-border-active);
+}
+
+/* Panel styles */
+.hp-panel {
+  background: rgba(18, 18, 18, 0.95);
+  border: 1px solid var(--hp-border);
+  border-radius: var(--hp-radius-2xl);
+  backdrop-filter: blur(20px);
+  box-shadow: var(--hp-shadow-lg);
+}
+
+/* Input styles */
+.hp-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--hp-text);
+  font-size: 15px;
+  padding: 12px;
+}
+
+.hp-input::placeholder {
+  color: var(--hp-text-muted);
+}
+
+/* Voice bar */
+.hp-voicebar {
+  max-width: 800px;
+  margin: 0 auto;
+  border-radius: var(--hp-radius-2xl);
+  background: rgba(22, 22, 22, 0.90);
+  border: 1px solid var(--hp-border);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(20px);
+  overflow: visible;
+  position: relative;
+}
+
+/* Message bubbles */
+.hp-message-user {
+  background: rgba(255, 255, 255, 0.11);
+  border: 1px solid rgba(255, 255, 255, 0.08);  /* Grok-style subtle border */
+  border-radius: var(--hp-radius-lg);
+  padding: 14px 20px;
+  max-width: 80%;
+  margin-left: auto;
+}
+
+.hp-message-assistant {
+  color: var(--hp-text);  /* Grok-style: bright primary text */
+  line-height: 1.6;
+  text-shadow: var(--hp-text-glow);  /* Subtle void print effect */
+}
+
+/* ============================================================
+   Mini Studio Meter - Professional audio level visualizer
+   Fits inside the mic button pill, 5 animated bars
+   Features: attack/release smoothing, intensity colors, micro jitter
+   ============================================================ */
+.hp-mini-studio {
+  width: 18px;
+  height: 14px;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  opacity: 0.95;
+}
+
+.hp-mini-studio-bar {
+  width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  transform-origin: bottom;
+  background: var(--hp-meter-color, rgba(255, 255, 255, 0.70));
+  transition: transform 70ms linear, filter 180ms ease, opacity 180ms ease;
+}
+
+/* Idle state: subtle "dots" feel - calm when not speaking */
+.hp-mini-studio--idle {
+  opacity: 0.55;
+}
+
+.hp-mini-studio--idle .hp-mini-studio-bar {
+  background: rgba(255, 255, 255, 0.28);
+  filter: none;
+}
+
+/* Hot/Active state: richer, glowy bars when speaking */
+.hp-mini-studio--hot .hp-mini-studio-bar {
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.18));
+}
+
+/* AI Speaking state: calmer white glow with slight pulse */
+.hp-mini-studio--ai .hp-mini-studio-bar {
+  filter: drop-shadow(0 0 8px rgba(233, 232, 231, 0.22));
+}
+
+/* Subtle pulse animation for AI speaking state */
+@keyframes hp-studio-pulse {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 1; }
+}
+
+.hp-mini-studio--ai {
+  animation: hp-studio-pulse 1.5s ease-in-out infinite;
+}

@@ -19,7 +19,8 @@ import {
   Tv2,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
-import VoiceMode from './VoiceMode'
+import VoiceMode from './VoiceModeGrok'
+// Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
 import AnimateView from './Animate'
@@ -1171,17 +1172,25 @@ type OllamaChatResponse = {
 }
 
 export default function App() {
-  // Core State
-  const [messages, setMessages] = useState<Msg[]>([])
+  // Core State - Separate sessions for Chat and Voice (ephemeral voice like Alexa/Grok)
+  const [chatMessages, setChatMessages] = useState<Msg[]>([])
+  const [voiceMessages, setVoiceMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
-  const [conversationId, setConversationId] = useState<string>(() => {
+  const [chatConversationId, setChatConversationId] = useState<string>(() => {
     return localStorage.getItem('homepilot_conversation') || uuid()
   })
+  const [voiceConversationId, setVoiceConversationId] = useState<string>(() => uuid())
   const [lightbox, setLightbox] = useState<string | null>(null)
 
   const [mode, setMode] = useState<Mode>(() => {
     return (localStorage.getItem('homepilot_mode') as Mode) || 'chat'
   })
+
+  // Route messages and conversation ID based on mode (Voice is ephemeral like Alexa/Grok)
+  const messages = mode === 'voice' ? voiceMessages : chatMessages
+  const setMessages = mode === 'voice' ? setVoiceMessages : setChatMessages
+  const conversationId = mode === 'voice' ? voiceConversationId : chatConversationId
+  const setConversationId = mode === 'voice' ? setVoiceConversationId : setChatConversationId
 
   // Studio variant: "play" for Play Studio (StudioView), "creator" for Creator Studio
   const [studioVariant, setStudioVariant] = useState<"play" | "creator">("play")
@@ -1283,9 +1292,17 @@ export default function App() {
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Persist
-  useEffect(() => localStorage.setItem('homepilot_conversation', conversationId), [conversationId])
+  // Persist chat conversation (not voice - voice is ephemeral)
+  useEffect(() => localStorage.setItem('homepilot_conversation', chatConversationId), [chatConversationId])
   useEffect(() => localStorage.setItem('homepilot_mode', mode), [mode])
+
+  // Clear voice session when exiting Voice mode (ephemeral like Alexa/Grok)
+  useEffect(() => {
+    if (mode !== 'voice') {
+      setVoiceMessages([])
+      setVoiceConversationId(uuid())
+    }
+  }, [mode])
 
   // Listen for switch-to-animate events from Imagine (Grok-style handoff)
   useEffect(() => {
@@ -1677,23 +1694,43 @@ export default function App() {
           )
         )
 
+        // Dispatch assistant message to VoiceModeGrok for typewriter animation
+        if (mode === 'voice' && typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('hp:assistant_message', {
+              detail: { id: tmpId, text: data.text ?? '…' },
+            })
+          )
+        }
+
         if (data.conversation_id && data.conversation_id !== conversationId) {
           setConversationId(data.conversation_id)
         }
       } catch (err: any) {
+        const errorText = `Error: ${
+          typeof err?.message === 'string' ? err.message : 'backend unreachable.'
+        }`
+
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
               ? {
                   ...m,
                   pending: false,
-                  text: `Error: ${
-                    typeof err?.message === 'string' ? err.message : 'backend unreachable.'
-                  }`,
+                  text: errorText,
                 }
               : m
           )
         )
+
+        // Dispatch error message to VoiceModeGrok for typewriter animation
+        if (mode === 'voice' && typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('hp:assistant_message', {
+              detail: { id: tmpId, text: errorText },
+            })
+          )
+        }
       }
     },
     [
