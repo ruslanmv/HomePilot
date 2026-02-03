@@ -97,6 +97,12 @@ type Conversation = {
 function Typewriter({ text, speed = 10 }: { text: string; speed?: number }) {
   const [displayedText, setDisplayedText] = useState('')
   const indexRef = useRef(0)
+  const speedRef = useRef(speed)
+
+  // Update speed without restarting typing
+  useEffect(() => {
+    speedRef.current = speed
+  }, [speed])
 
   // Reset when text changes (e.g. if we switch messages or streaming updates)
   useEffect(() => {
@@ -108,10 +114,11 @@ function Typewriter({ text, speed = 10 }: { text: string; speed?: number }) {
        setDisplayedText('')
        indexRef.current = 0
     } else if (text === displayedText) {
-       return 
+       return
     }
   }, [text, displayedText])
 
+  // Restart typing ONLY when text changes (speed removed from deps)
   useEffect(() => {
     const timer = setInterval(() => {
       if (indexRef.current < text.length) {
@@ -120,10 +127,10 @@ function Typewriter({ text, speed = 10 }: { text: string; speed?: number }) {
       } else {
         clearInterval(timer)
       }
-    }, speed)
+    }, speedRef.current)
 
     return () => clearInterval(timer)
-  }, [text, speed])
+  }, [text]) // speed removed - uses speedRef instead
 
   return <span>{displayedText}</span>
 }
