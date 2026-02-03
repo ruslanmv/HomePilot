@@ -172,7 +172,9 @@ export default function VoiceMode({
 
   return (
     <div className="flex-1 flex items-center justify-center px-4 py-8">
-      <div className={`w-full max-w-2xl mx-auto rounded-3xl border ${THEME.border} ${THEME.surface} overflow-hidden shadow-2xl transition-all duration-300`}>
+      {/* Anchor wrapper for Grok-like floating personality popover */}
+      <div className="relative">
+        <div className={`w-full max-w-2xl rounded-3xl border ${THEME.border} ${THEME.surface} overflow-hidden shadow-2xl transition-all duration-300`} style={{ minWidth: '640px' }}>
         {/* Header */}
         <div className={`flex items-center justify-between px-6 py-4 border-b ${THEME.border}`}>
           <div className="flex items-center gap-3">
@@ -276,27 +278,6 @@ export default function VoiceMode({
           </div>
         </div>
 
-        {/* Settings Expandable */}
-        {showVoiceSettings && (
-          <div className={`px-6 py-4 border-t ${THEME.border} bg-[#111] animate-in slide-in-from-top-2`}>
-            <label className={`text-xs font-semibold uppercase tracking-wider ${THEME.textDim} mb-3 block`}>Voice Persona</label>
-            <select
-              className={`w-full bg-[#1a1a1a] border ${THEME.border} rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-colors appearance-none cursor-pointer`}
-              value={voice.selectedVoice}
-              onChange={(e) => voice.setSelectedVoice(e.target.value)}
-            >
-              {voice.voices.length === 0 && <option value="">Loading voices...</option>}
-              {voice.voices.map((v) => (
-                <option key={v.voiceURI} value={v.voiceURI}>
-                  {v.name} ({v.lang})
-                </option>
-              ))}
-            </select>
-            <div className={`mt-2 text-[10px] ${THEME.textDim}`}>
-              Choose from {voice.voices.length} available voices
-            </div>
-          </div>
-        )}
 
         {/* Control Footer */}
         <div className={`p-4 border-t ${THEME.border} grid grid-cols-3 gap-3 bg-[#0f0f0f]`}>
@@ -362,6 +343,57 @@ export default function VoiceMode({
           </button>
 
         </div>
+      </div>
+
+        {/* Floating Personality Popover - Grok-style side panel */}
+        {showVoiceSettings && (
+          <div
+            className="absolute top-0 left-full ml-4 rounded-2xl border border-white/10 bg-[#161616]/95 backdrop-blur-xl shadow-2xl overflow-hidden animate-in slide-in-from-left-2 z-50"
+            style={{
+              width: '280px',
+              height: '100%',
+              maxHeight: '100%',
+            }}
+          >
+            <div className="h-full flex flex-col">
+              {/* Header */}
+              <div className="px-4 py-3 border-b border-white/10 bg-[#111]">
+                <div className="text-xs font-semibold uppercase tracking-wider text-white/50">Voice Persona</div>
+              </div>
+
+              {/* Voice List - scrollable */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+                {voice.voices.length === 0 ? (
+                  <div className="text-xs text-white/40 text-center py-4">Loading voices...</div>
+                ) : (
+                  voice.voices.map((v) => (
+                    <button
+                      key={v.voiceURI}
+                      onClick={() => voice.setSelectedVoice(v.voiceURI)}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all ${
+                        voice.selectedVoice === v.voiceURI
+                          ? 'bg-white text-black font-semibold'
+                          : 'text-white/80 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="font-medium truncate">{v.name}</div>
+                      <div className={`text-[10px] ${voice.selectedVoice === v.voiceURI ? 'text-black/60' : 'text-white/40'}`}>
+                        {v.lang}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-4 py-2.5 border-t border-white/10 bg-[#111]">
+                <div className="text-[10px] text-white/40">
+                  {voice.voices.length} voices available
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
