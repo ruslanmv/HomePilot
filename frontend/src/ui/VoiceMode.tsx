@@ -1,53 +1,120 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Mic, MicOff, Settings, Volume2, VolumeX, Zap, Radio, X } from "lucide-react";
 import { useVoiceController, VoiceState } from "./voice/useVoiceController";
 
 /**
- * Mini audio level meter - Grok-style tiny equalizer bars
- * Shows 5 vertical bars that respond to audio level
+ * Smoothed audio level hook with attack/release dynamics
+ * Fast attack for responsiveness, slower release for natural decay
  */
-function MiniLevelMeter({
-  level,
-  active,
-  speaking,
+function useSmoothedLevel(level: number) {
+  const [smooth, setSmooth] = useState(0);
+  const lastRef = useRef(0);
+  const frameRef = useRef<number>();
+
+  useEffect(() => {
+    const update = () => {
+      const attack = 0.55;
+      const release = 0.12;
+      const target = Math.max(0, Math.min(1, level));
+
+      const prev = lastRef.current;
+      const next = target > prev
+        ? prev + (target - prev) * attack
+        : prev + (target - prev) * release;
+
+      lastRef.current = next;
+      setSmooth(next);
+      frameRef.current = requestAnimationFrame(update);
+    };
+
+    frameRef.current = requestAnimationFrame(update);
+    return () => {
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    };
+  }, [level]);
+
+  return smooth;
+}
+
+/**
+ * Intensity-based color mapping for professional audio meter look
+ * Low = cool white/gray, Medium = icy blue, High = purple, Peak = warm orange
+ */
+function intensityColor(level01: number): string {
+  if (level01 < 0.35) return 'rgba(255,255,255,0.65)';
+  if (level01 < 0.70) return 'rgba(151,196,255,0.85)';  // icy blue
+  if (level01 < 0.90) return 'rgba(190,120,255,0.90)';  // purple
+  return 'rgba(255,170,100,0.95)';                       // warm/hot
+}
+
+/**
+ * Professional mini studio meter - enterprise-quality audio visualization
+ * Features: attack/release smoothing, intensity-based colors, micro jitter for liveliness
+ */
+function MiniStudioMeter({
+  audioLevel,
+  isUserActive,
+  isAiSpeaking,
 }: {
-  level: number;      // voice.audioLevel (0..~0.2)
-  active: boolean;    // listening or idle state
-  speaking: boolean;  // AI is speaking
+  audioLevel: number;     // voice.audioLevel (0..~0.2)
+  isUserActive: boolean;  // LISTENING/IDLE in hands-free
+  isAiSpeaking: boolean;  // SPEAKING state
 }) {
-  // Normalize audioLevel to a 0..1 range (tune multiplier as needed)
-  const norm = Math.max(0, Math.min(1, level * 6));
+  // Normalize audioLevel to 0..1 range (multiplier tuned for sensitivity)
+  const norm = Math.max(0, Math.min(1, audioLevel * 8));
+  const level = useSmoothedLevel(norm);
 
-  // Create 5 bars with staggered thresholds for natural equalizer look
-  const bars = useMemo(() => {
-    const thresholds = [0.15, 0.30, 0.50, 0.70, 0.90];
-    return thresholds.map((t) => {
-      const v = Math.max(0, Math.min(1, (norm - (t - 0.15)) / 0.25));
-      return v;
-    });
-  }, [norm]);
+  // Idle mode: subtle static bars
+  const idle = !isUserActive || level < 0.04;
 
-  // Determine color based on state
-  const barColor = speaking
-    ? 'bg-blue-400'
-    : active
-      ? 'bg-white'
-      : 'bg-white/30';
+  // Micro jitter only when active for "alive" feel
+  const jitterRef = useRef(0);
+  useEffect(() => {
+    if (!idle) {
+      const interval = setInterval(() => {
+        jitterRef.current = Math.random() * 0.06 - 0.03;
+      }, 50);
+      return () => clearInterval(interval);
+    }
+  }, [idle]);
+
+  // 5 bars with different sensitivity thresholds
+  const barThresholds = [0.10, 0.22, 0.38, 0.55, 0.72];
+  const bars = barThresholds.map((t) => {
+    const v = (level - (t - 0.12)) / 0.25;
+    const clamped = Math.max(0, Math.min(1, v));
+    return idle ? 0.18 : Math.max(0.12, clamped + (idle ? 0 : jitterRef.current));
+  });
+
+  // Color by intensity, shift to neutral white when AI speaking
+  const baseColor = intensityColor(level);
+  const barColor = isAiSpeaking ? 'rgba(233,232,231,0.85)' : baseColor;
+
+  // Glow effect based on state
+  const glowStyle = idle
+    ? {}
+    : isAiSpeaking
+      ? { filter: 'drop-shadow(0 0 6px rgba(233,232,231,0.25))' }
+      : { filter: `drop-shadow(0 0 ${4 + level * 8}px ${barColor})` };
 
   return (
     <div
-      className={`flex items-end gap-[2px] h-3.5 transition-opacity duration-200 ${
-        active || speaking ? 'opacity-100' : 'opacity-50'
+      className={`flex items-end gap-[2px] h-4 transition-opacity duration-200 ${
+        idle ? 'opacity-55' : 'opacity-100'
       }`}
+      style={glowStyle}
       aria-hidden="true"
     >
       {bars.map((b, i) => (
         <span
           key={i}
-          className={`w-[3px] rounded-full ${barColor} transition-all duration-75`}
+          className="rounded-full transition-transform duration-[70ms]"
           style={{
-            height: `${Math.max(25, b * 100)}%`,
-            opacity: active || speaking ? 0.7 + b * 0.3 : 0.4,
+            width: '2.5px',
+            height: '100%',
+            background: idle ? 'rgba(255,255,255,0.28)' : barColor,
+            transform: `scaleY(${b})`,
+            transformOrigin: 'bottom',
           }}
         />
       ))}
@@ -264,11 +331,11 @@ export default function VoiceMode({
                   : "bg-[#1a1a1a] text-white/60 border border-white/10 hover:bg-[#252525] hover:text-white"
             }`}
           >
-            {/* Mini Level Meter */}
-            <MiniLevelMeter
-              level={voice.audioLevel}
-              active={isListening || voice.state === 'IDLE'}
-              speaking={voice.state === 'SPEAKING'}
+            {/* Mini Studio Meter */}
+            <MiniStudioMeter
+              audioLevel={voice.audioLevel}
+              isUserActive={isListening || voice.state === 'IDLE'}
+              isAiSpeaking={voice.state === 'SPEAKING'}
             />
 
             {/* Mic Icon */}
