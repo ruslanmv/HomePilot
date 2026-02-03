@@ -1,6 +1,59 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { Mic, MicOff, Settings, Volume2, VolumeX, Zap, Radio, X } from "lucide-react";
 import { useVoiceController, VoiceState } from "./voice/useVoiceController";
+
+/**
+ * Mini audio level meter - Grok-style tiny equalizer bars
+ * Shows 5 vertical bars that respond to audio level
+ */
+function MiniLevelMeter({
+  level,
+  active,
+  speaking,
+}: {
+  level: number;      // voice.audioLevel (0..~0.2)
+  active: boolean;    // listening or idle state
+  speaking: boolean;  // AI is speaking
+}) {
+  // Normalize audioLevel to a 0..1 range (tune multiplier as needed)
+  const norm = Math.max(0, Math.min(1, level * 6));
+
+  // Create 5 bars with staggered thresholds for natural equalizer look
+  const bars = useMemo(() => {
+    const thresholds = [0.15, 0.30, 0.50, 0.70, 0.90];
+    return thresholds.map((t) => {
+      const v = Math.max(0, Math.min(1, (norm - (t - 0.15)) / 0.25));
+      return v;
+    });
+  }, [norm]);
+
+  // Determine color based on state
+  const barColor = speaking
+    ? 'bg-blue-400'
+    : active
+      ? 'bg-white'
+      : 'bg-white/30';
+
+  return (
+    <div
+      className={`flex items-end gap-[2px] h-3.5 transition-opacity duration-200 ${
+        active || speaking ? 'opacity-100' : 'opacity-50'
+      }`}
+      aria-hidden="true"
+    >
+      {bars.map((b, i) => (
+        <span
+          key={i}
+          className={`w-[3px] rounded-full ${barColor} transition-all duration-75`}
+          style={{
+            height: `${Math.max(25, b * 100)}%`,
+            opacity: active || speaking ? 0.7 + b * 0.3 : 0.4,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
 
 // Grok-like colors and styles
 const THEME = {
@@ -192,7 +245,7 @@ export default function VoiceMode({
             <span className="text-[10px] font-medium uppercase tracking-wide">TTS {voice.isTtsEnabled ? 'On' : 'Off'}</span>
           </button>
 
-          {/* Main Mic Trigger */}
+          {/* Main Mic Trigger with Mini Level Meter */}
           <button
             onClick={() => {
               if (isListening) {
@@ -203,18 +256,26 @@ export default function VoiceMode({
                 voice.startManualListening();
               }
             }}
-            className={`flex flex-col items-center justify-center gap-1 py-3 rounded-xl transition-all shadow-lg ${
+            className={`flex items-center justify-center gap-3 py-3 px-5 rounded-full transition-all shadow-lg ${
               isListening
-                ? "bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20"
+                ? "bg-[#1a1a1a] text-white border border-white/20 hover:bg-[#252525]"
                 : voice.state === 'SPEAKING'
-                  ? "bg-blue-500/10 text-blue-500 border border-blue-500/20 hover:bg-blue-500/20"
-                  : "bg-white text-black hover:bg-gray-200"
+                  ? "bg-[#1a1a1a] text-blue-400 border border-blue-500/30 hover:bg-[#252525]"
+                  : "bg-[#1a1a1a] text-white/60 border border-white/10 hover:bg-[#252525] hover:text-white"
             }`}
           >
+            {/* Mini Level Meter */}
+            <MiniLevelMeter
+              level={voice.audioLevel}
+              active={isListening || voice.state === 'IDLE'}
+              speaking={voice.state === 'SPEAKING'}
+            />
+
+            {/* Mic Icon */}
             {voice.state === 'SPEAKING' ? (
-              <VolumeX size={24} strokeWidth={2.5} />
+              <VolumeX size={20} strokeWidth={2} />
             ) : (
-              <Mic size={24} strokeWidth={2.5} />
+              <Mic size={20} strokeWidth={2} className={isListening ? 'text-white' : ''} />
             )}
           </button>
 

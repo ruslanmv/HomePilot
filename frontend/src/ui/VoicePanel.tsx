@@ -1,10 +1,60 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useVoiceController, VoiceState } from "./voice/useVoiceController";
 
 declare global {
   interface Window {
     SpeechService?: any;
   }
+}
+
+/**
+ * Mini audio level meter - Grok-style tiny equalizer bars
+ * Shows 5 vertical bars that respond to audio level
+ */
+function MiniLevelMeter({
+  level,
+  active,
+  speaking,
+}: {
+  level: number;
+  active: boolean;
+  speaking: boolean;
+}) {
+  const norm = Math.max(0, Math.min(1, level * 6));
+
+  const bars = useMemo(() => {
+    const thresholds = [0.15, 0.30, 0.50, 0.70, 0.90];
+    return thresholds.map((t) => {
+      const v = Math.max(0, Math.min(1, (norm - (t - 0.15)) / 0.25));
+      return v;
+    });
+  }, [norm]);
+
+  const barColor = speaking
+    ? 'bg-blue-400'
+    : active
+      ? 'bg-white'
+      : 'bg-white/30';
+
+  return (
+    <div
+      className={`flex items-end gap-[2px] h-3 transition-opacity duration-200 ${
+        active || speaking ? 'opacity-100' : 'opacity-50'
+      }`}
+      aria-hidden="true"
+    >
+      {bars.map((b, i) => (
+        <span
+          key={i}
+          className={`w-[2px] rounded-full ${barColor} transition-all duration-75`}
+          style={{
+            height: `${Math.max(25, b * 100)}%`,
+            opacity: active || speaking ? 0.7 + b * 0.3 : 0.4,
+          }}
+        />
+      ))}
+    </div>
+  );
 }
 
 // State-based status messages for compact display
@@ -116,12 +166,12 @@ export default function VoicePanel({
 
       <div className="flex items-center gap-2">
         <button
-          className={`flex-1 px-4 py-3 rounded-2xl font-bold transition-all ${
+          className={`flex-1 flex items-center justify-center gap-3 px-4 py-3 rounded-2xl font-bold transition-all ${
             isListening
-              ? "bg-red-600 hover:bg-red-700"
+              ? "bg-[#1a1a1a] border border-white/20 hover:bg-[#252525]"
               : voice.state === 'SPEAKING'
-                ? "bg-blue-600 hover:bg-blue-700"
-                : "bg-blue-600 hover:bg-blue-700"
+                ? "bg-[#1a1a1a] border border-blue-500/30 hover:bg-[#252525]"
+                : "bg-[#1a1a1a] border border-white/10 hover:bg-[#252525]"
           } text-white`}
           onClick={() => {
             if (isListening) {
@@ -133,7 +183,13 @@ export default function VoicePanel({
             }
           }}
         >
-          {isListening ? "Stop" : voice.state === 'SPEAKING' ? "Stop TTS" : "Talk"}
+          {/* Mini Level Meter */}
+          <MiniLevelMeter
+            level={voice.audioLevel}
+            active={isListening || voice.state === 'IDLE'}
+            speaking={voice.state === 'SPEAKING'}
+          />
+          <span>{isListening ? "Stop" : voice.state === 'SPEAKING' ? "Stop TTS" : "Talk"}</span>
         </button>
 
         <button
