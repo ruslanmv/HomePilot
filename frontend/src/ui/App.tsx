@@ -98,39 +98,61 @@ function Typewriter({ text, speed = 10 }: { text: string; speed?: number }) {
   const [displayedText, setDisplayedText] = useState('')
   const indexRef = useRef(0)
   const speedRef = useRef(speed)
+  const lastTextRef = useRef('') // Track the last text content to detect actual changes
+  const displayedRef = useRef('') // Mirror of displayedText for non-stale access in effect
+
+  // Keep displayedRef in sync with displayedText
+  useEffect(() => {
+    displayedRef.current = displayedText
+  }, [displayedText])
 
   // Update speed without restarting typing
   useEffect(() => {
     speedRef.current = speed
   }, [speed])
 
-  // Reset when text changes (e.g. if we switch messages or streaming updates)
+  // Main typing effect - only restarts when text CONTENT actually changes
   useEffect(() => {
-    // If text is already fully displayed, don't reset (prevents flickering on re-renders)
-    if (text.startsWith(displayedText) && displayedText.length > 0 && text.length > displayedText.length) {
-       // Continue typing from current position
-    } else if (text !== displayedText && !text.startsWith(displayedText)) {
-       // New text content entirely
-       setDisplayedText('')
-       indexRef.current = 0
-    } else if (text === displayedText) {
-       return
-    }
-  }, [text, displayedText])
+    // Check if the text content actually changed
+    const textChanged = lastTextRef.current !== text
 
-  // Restart typing ONLY when text changes (speed removed from deps)
-  useEffect(() => {
+    if (!textChanged) {
+      // Text content is the same - check if we need to resume or skip
+      if (indexRef.current >= text.length) {
+        // Already fully typed - do nothing
+        return
+      }
+      // Otherwise, continue typing from where we left off
+    } else {
+      // Text content changed
+      lastTextRef.current = text
+
+      // If new text is a continuation of current display, continue typing
+      const currentDisplay = displayedRef.current
+      if (text.startsWith(currentDisplay) && currentDisplay.length > 0) {
+        // Continue from current position
+        indexRef.current = currentDisplay.length
+      } else {
+        // Completely new text - reset
+        setDisplayedText('')
+        displayedRef.current = ''
+        indexRef.current = 0
+      }
+    }
+
     const timer = setInterval(() => {
       if (indexRef.current < text.length) {
-        setDisplayedText((prev) => text.slice(0, indexRef.current + 1))
         indexRef.current++
+        const newText = text.slice(0, indexRef.current)
+        setDisplayedText(newText)
+        displayedRef.current = newText
       } else {
         clearInterval(timer)
       }
     }, speedRef.current)
 
     return () => clearInterval(timer)
-  }, [text]) // speed removed - uses speedRef instead
+  }, [text])
 
   return <span>{displayedText}</span>
 }
