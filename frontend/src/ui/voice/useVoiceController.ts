@@ -39,6 +39,11 @@ export interface VoiceController {
   noiseFloor: number;
   threshold: number;
 
+  // STT Support & Diagnostics
+  sttSupported: boolean;
+  lastError: string | null;
+  clearError: () => void;
+
   // Actions
   setHandsFree: (enabled: boolean) => void;
   setTtsEnabled: (enabled: boolean) => void;
@@ -77,6 +82,12 @@ export function useVoiceController(
   const cfg = { ...DEFAULT_CONFIG, ...config };
   const svc = window.SpeechService;
 
+  // Detect STT support (Web Speech API)
+  const sttSupported =
+    typeof window !== 'undefined' &&
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (!!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition);
+
   // Core state
   const [state, setState] = useState<VoiceState>('OFF');
   const [isHandsFree, setIsHandsFree] = useState(false);
@@ -84,6 +95,9 @@ export function useVoiceController(
     return localStorage.getItem('homepilot_tts_enabled') !== 'false';
   });
   const [interimText, setInterimText] = useState('');
+
+  // STT error tracking for diagnostics
+  const [lastError, setLastError] = useState<string | null>(null);
 
   // Audio levels for visualization
   const [audioLevel, setAudioLevel] = useState(0);
@@ -149,9 +163,9 @@ export function useVoiceController(
     localStorage.setItem('homepilot_voice_uri', voiceURI);
   }, []);
 
-  // TTS state monitoring (event-driven)
+  // TTS state monitoring (event-driven) - runs in ALL modes for glow effect
   useEffect(() => {
-    if (!svc || !isHandsFree) return;
+    if (!svc) return;
 
     let lastTTSState = false;
 
@@ -162,7 +176,7 @@ export function useVoiceController(
         lastTTSState = isSpeaking;
 
         if (isSpeaking) {
-          // TTS started
+          // TTS started - set SPEAKING state for glow effect
           console.log('[VoiceController] TTS started - state: SPEAKING');
           setState('SPEAKING');
 
@@ -172,12 +186,15 @@ export function useVoiceController(
             ttsEndTimeoutRef.current = null;
           }
         } else {
-          // TTS ended - wait before transitioning to IDLE
-          console.log('[VoiceController] TTS ended - waiting before IDLE');
+          // TTS ended - wait before transitioning
+          console.log('[VoiceController] TTS ended - waiting before state transition');
           ttsEndTimeoutRef.current = setTimeout(() => {
-            if (stateRef.current === 'SPEAKING' && isHandsFree) {
-              setState('IDLE');
-              console.log('[VoiceController] Transitioned to IDLE after TTS');
+            if (stateRef.current === 'SPEAKING') {
+              // In hands-free mode, go to IDLE to continue listening
+              // In manual mode, go to OFF
+              const nextState = isHandsFree ? 'IDLE' : 'OFF';
+              setState(nextState);
+              console.log(`[VoiceController] Transitioned to ${nextState} after TTS`);
             }
             ttsEndTimeoutRef.current = null;
           }, cfg.ttsEndDelay);
@@ -204,6 +221,7 @@ export function useVoiceController(
     svc.setRecognitionCallbacks({
       onStart: () => {
         console.log('[VoiceController] STT started - state: LISTENING');
+        setLastError(null); // Clear any previous error
         setState('LISTENING');
       },
       onEnd: () => {
@@ -233,6 +251,7 @@ export function useVoiceController(
       },
       onError: (msg: string) => {
         console.warn('[VoiceController] STT error:', msg);
+        setLastError(msg || 'stt_error');
         if (isHandsFree) {
           setState('IDLE');
         } else {
@@ -256,6 +275,13 @@ export function useVoiceController(
       return;
     }
 
+    // Check STT support before starting VAD
+    if (!sttSupported) {
+      setLastError('stt_not_supported');
+      setState('OFF');
+      return;
+    }
+
     // Create VAD instance
     vadRef.current = createVAD(
       // onSpeechStart
@@ -271,7 +297,13 @@ export function useVoiceController(
 
         // Only start STT if we're in IDLE or SPEAKING (barge-in)
         if (currentState === 'IDLE' || currentState === 'SPEAKING') {
-          svc.startSTT?.({});
+          try {
+            svc.startSTT?.({});
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'stt_start_failed';
+            setLastError(msg);
+            setState('OFF');
+          }
         }
       },
       // onSpeechEnd
@@ -281,7 +313,12 @@ export function useVoiceController(
 
         // Only stop STT if we're actively listening
         if (currentState === 'LISTENING') {
-          svc.stopSTT?.();
+          try {
+            svc.stopSTT?.();
+          } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : 'stt_stop_failed';
+            setLastError(msg);
+          }
         }
       },
       cfg.vadConfig
@@ -291,10 +328,12 @@ export function useVoiceController(
     vadRef.current.start()
       .then(() => {
         console.log('[VoiceController] VAD started, transitioning to IDLE');
+        setLastError(null);
         setState('IDLE');
       })
       .catch((err) => {
         console.error('[VoiceController] VAD start failed:', err);
+        setLastError(err?.message || 'vad_start_failed');
         setState('OFF');
       });
 
@@ -304,7 +343,7 @@ export function useVoiceController(
         vadRef.current = null;
       }
     };
-  }, [isHandsFree, svc, cfg.vadConfig, cfg.bargeInEnabled]);
+  }, [isHandsFree, svc, sttSupported, cfg.vadConfig, cfg.bargeInEnabled]);
 
   // Update audio levels for visualization
   useEffect(() => {
@@ -322,24 +361,47 @@ export function useVoiceController(
     return () => clearInterval(interval);
   }, [isHandsFree]);
 
+  // Clear error helper
+  const clearError = useCallback(() => {
+    setLastError(null);
+  }, []);
+
   // Manual listening controls
   const startManualListening = useCallback(() => {
     if (!svc) return;
+
+    // Check STT support first
+    if (!sttSupported) {
+      setLastError('stt_not_supported');
+      setState('OFF');
+      return;
+    }
+
     svc.stopSpeaking?.();
-    svc.startSTT?.({});
-  }, [svc]);
+    try {
+      svc.startSTT?.({});
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'stt_start_failed';
+      setLastError(msg);
+      setState('OFF');
+    }
+  }, [svc, sttSupported]);
 
   const stopManualListening = useCallback(() => {
     if (!svc) return;
-    svc.stopSTT?.();
+    try {
+      svc.stopSTT?.();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'stt_stop_failed';
+      setLastError(msg);
+    }
   }, [svc]);
 
   const stopSpeaking = useCallback(() => {
     if (!svc) return;
     svc.stopSpeaking?.();
-    if (isHandsFree) {
-      setState('IDLE');
-    }
+    // Transition to appropriate state based on mode
+    setState(isHandsFree ? 'IDLE' : 'OFF');
   }, [svc, isHandsFree]);
 
   const setHandsFree = useCallback((enabled: boolean) => {
@@ -362,6 +424,11 @@ export function useVoiceController(
     audioLevel,
     noiseFloor,
     threshold,
+
+    // STT Support & Diagnostics
+    sttSupported,
+    lastError,
+    clearError,
 
     // Actions
     setHandsFree,
