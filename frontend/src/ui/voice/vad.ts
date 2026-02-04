@@ -244,6 +244,16 @@ export function createVAD(
         }
       });
 
+      // Guard: If stop() was called during async getUserMedia, abort gracefully
+      // This handles React StrictMode double-mount race condition
+      if (!ctx || ctx.state === 'closed') {
+        console.log('[VAD] Context closed during startup, aborting');
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
+        }
+        return;
+      }
+
       src = ctx.createMediaStreamSource(stream);
       src.connect(analyser);
 

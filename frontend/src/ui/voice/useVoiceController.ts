@@ -90,7 +90,11 @@ export function useVoiceController(
 
   // Core state
   const [state, setState] = useState<VoiceState>('OFF');
-  const [isHandsFree, setIsHandsFree] = useState(false);
+  const [isHandsFree, setIsHandsFree] = useState(() => {
+    // Default to hands-free ON if no preference saved
+    const saved = localStorage.getItem('homepilot_voice_handsfree');
+    return saved === null || saved === 'true';
+  });
   const [isTtsEnabled, setIsTtsEnabled] = useState(() => {
     return localStorage.getItem('homepilot_tts_enabled') !== 'false';
   });
@@ -114,11 +118,40 @@ export function useVoiceController(
   const vadRef = useRef<VADInstance | null>(null);
   const stateRef = useRef<VoiceState>(state);
   const ttsEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const thinkingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingResultRef = useRef<boolean>(false); // Track if we sent a result to API
+  const lastSttEndRef = useRef<number>(0); // Track last STT end time for cooldown
 
   // Keep stateRef in sync
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  // THINKING state timeout - recover from stuck state if TTS doesn't start
+  useEffect(() => {
+    if (state === 'THINKING' && isHandsFree) {
+      // Set a 30-second timeout to recover from stuck THINKING state
+      thinkingTimeoutRef.current = setTimeout(() => {
+        if (stateRef.current === 'THINKING') {
+          console.warn('[VoiceController] THINKING timeout - returning to IDLE');
+          setState('IDLE');
+        }
+      }, 30000);
+    } else {
+      // Clear timeout when leaving THINKING state
+      if (thinkingTimeoutRef.current) {
+        clearTimeout(thinkingTimeoutRef.current);
+        thinkingTimeoutRef.current = null;
+      }
+    }
+
+    return () => {
+      if (thinkingTimeoutRef.current) {
+        clearTimeout(thinkingTimeoutRef.current);
+        thinkingTimeoutRef.current = null;
+      }
+    };
+  }, [state, isHandsFree]);
 
   // Persist TTS enabled state
   useEffect(() => {
@@ -164,6 +197,8 @@ export function useVoiceController(
   }, []);
 
   // TTS state monitoring (event-driven) - runs in ALL modes for glow effect
+  // CRITICAL: Pauses VAD during TTS to prevent speaker audio from triggering
+  //           false barge-in (mic picks up speaker output → VAD fires → TTS killed)
   useEffect(() => {
     if (!svc) return;
 
@@ -180,15 +215,27 @@ export function useVoiceController(
           console.log('[VoiceController] TTS started - state: SPEAKING');
           setState('SPEAKING');
 
+          // Pause VAD to prevent speaker audio from triggering false barge-in
+          if (vadRef.current?.isRunning() && !vadRef.current.isPaused()) {
+            vadRef.current.pause();
+            console.log('[VoiceController] VAD paused during TTS');
+          }
+
           // Clear any pending resume timeout
           if (ttsEndTimeoutRef.current) {
             clearTimeout(ttsEndTimeoutRef.current);
             ttsEndTimeoutRef.current = null;
           }
         } else {
-          // TTS ended - wait before transitioning
+          // TTS ended - wait before transitioning and resuming VAD
           console.log('[VoiceController] TTS ended - waiting before state transition');
           ttsEndTimeoutRef.current = setTimeout(() => {
+            // Resume VAD now that TTS audio has stopped
+            if (vadRef.current?.isRunning() && vadRef.current.isPaused()) {
+              vadRef.current.resume();
+              console.log('[VoiceController] VAD resumed after TTS');
+            }
+
             if (stateRef.current === 'SPEAKING') {
               // In hands-free mode, go to IDLE to continue listening
               // In manual mode, go to OFF
@@ -222,18 +269,26 @@ export function useVoiceController(
       onStart: () => {
         console.log('[VoiceController] STT started - state: LISTENING');
         setLastError(null); // Clear any previous error
+        pendingResultRef.current = false; // Reset pending result flag
         setState('LISTENING');
       },
       onEnd: () => {
-        console.log('[VoiceController] STT ended');
-        // Transition to THINKING if we had speech, otherwise back to IDLE
+        console.log('[VoiceController] STT ended, hadResult:', pendingResultRef.current);
+        // Record end time for cooldown tracking
+        lastSttEndRef.current = Date.now();
+        // Only go to THINKING if we actually sent text to the API
         if (stateRef.current === 'LISTENING') {
           if (isHandsFree) {
-            setState('THINKING');
+            // If we sent a result, go to THINKING to wait for response
+            // Otherwise, go back to IDLE - no speech was recognized
+            const nextState = pendingResultRef.current ? 'THINKING' : 'IDLE';
+            console.log(`[VoiceController] STT ended -> ${nextState}`);
+            setState(nextState);
           } else {
             setState('OFF');
           }
         }
+        pendingResultRef.current = false;
       },
       onInterim: (text: string) => {
         setInterimText(text);
@@ -242,6 +297,7 @@ export function useVoiceController(
         setInterimText('');
         if (finalText?.trim()) {
           console.log('[VoiceController] STT result:', finalText.trim());
+          pendingResultRef.current = true; // Mark that we're sending a result
           onSendText(finalText.trim());
           // After sending, wait for response (THINKING state)
           if (isHandsFree) {
@@ -252,6 +308,7 @@ export function useVoiceController(
       onError: (msg: string) => {
         console.warn('[VoiceController] STT error:', msg);
         setLastError(msg || 'stt_error');
+        pendingResultRef.current = false;
         if (isHandsFree) {
           setState('IDLE');
         } else {
@@ -295,6 +352,27 @@ export function useVoiceController(
           svc.stopSpeaking?.();
         }
 
+        // Cooldown check: don't start STT too quickly after previous session
+        const timeSinceLastEnd = Date.now() - lastSttEndRef.current;
+        const cooldownMs = 300; // 300ms cooldown between STT sessions
+        if (timeSinceLastEnd < cooldownMs) {
+          console.log('[VoiceController] STT cooldown active, waiting...');
+          // Schedule a delayed start after cooldown
+          setTimeout(() => {
+            if (stateRef.current === 'IDLE') {
+              console.log('[VoiceController] Starting STT after cooldown');
+              try {
+                svc.startSTT?.({});
+              } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : 'stt_start_failed';
+                setLastError(msg);
+                setState('OFF');
+              }
+            }
+          }, cooldownMs - timeSinceLastEnd);
+          return;
+        }
+
         // Only start STT if we're in IDLE or SPEAKING (barge-in)
         if (currentState === 'IDLE' || currentState === 'SPEAKING') {
           try {
@@ -312,13 +390,20 @@ export function useVoiceController(
         console.log('[VoiceController] VAD speech end, current state:', currentState);
 
         // Only stop STT if we're actively listening
+        // Add 400ms delay to give STT time to finalize any pending recognition
         if (currentState === 'LISTENING') {
-          try {
-            svc.stopSTT?.();
-          } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : 'stt_stop_failed';
-            setLastError(msg);
-          }
+          setTimeout(() => {
+            // Double-check we're still in LISTENING state (might have changed)
+            if (stateRef.current === 'LISTENING') {
+              try {
+                console.log('[VoiceController] Stopping STT after delay');
+                svc.stopSTT?.();
+              } catch (e: unknown) {
+                const msg = e instanceof Error ? e.message : 'stt_stop_failed';
+                setLastError(msg);
+              }
+            }
+          }, 400);
         }
       },
       cfg.vadConfig
@@ -400,12 +485,17 @@ export function useVoiceController(
   const stopSpeaking = useCallback(() => {
     if (!svc) return;
     svc.stopSpeaking?.();
+    // Resume VAD if it was paused during TTS
+    if (vadRef.current?.isRunning() && vadRef.current.isPaused()) {
+      vadRef.current.resume();
+    }
     // Transition to appropriate state based on mode
     setState(isHandsFree ? 'IDLE' : 'OFF');
   }, [svc, isHandsFree]);
 
   const setHandsFree = useCallback((enabled: boolean) => {
     setIsHandsFree(enabled);
+    localStorage.setItem('homepilot_voice_handsfree', String(enabled));
     if (!enabled) {
       setState('OFF');
     }
