@@ -643,7 +643,7 @@ async def orchestrate(
                     "sdxl": "sd_xl_base_1.0.safetensors",
                     "flux-schnell": "flux1-schnell.safetensors",
                     "flux-dev": "flux1-dev.safetensors",
-                    "pony-xl": "ponyDiffusionV6XL.safetensors",
+                    "pony-xl": "ponyDiffusionV6XL_v6.safetensors",
                     "sd15-uncensored": "dreamshaper_8.safetensors",
                 }
                 if model_filename in short_name_map:
@@ -1169,7 +1169,7 @@ async def orchestrate(
                 "sdxl": "sd_xl_base_1.0.safetensors",
                 "flux-schnell": "flux1-schnell.safetensors",
                 "flux-dev": "flux1-dev.safetensors",
-                "pony-xl": "ponyDiffusionV6XL.safetensors",
+                "pony-xl": "ponyDiffusionV6XL_v6.safetensors",
                 "sd15-uncensored": "dreamshaper_8.safetensors",
             }
             if model_filename in short_name_map:

@@ -37,7 +37,7 @@ def check_model_files() -> Dict[str, bool]:
         "SDXL Base": models_path / "checkpoints" / "sd_xl_base_1.0.safetensors",
         "FLUX Schnell": models_path / "unet" / "flux1-schnell.safetensors",
         "FLUX Dev": models_path / "unet" / "flux1-dev.safetensors",
-        "Pony XL": models_path / "checkpoints" / "ponyDiffusionV6XL.safetensors",
+        "Pony XL": models_path / "checkpoints" / "ponyDiffusionV6XL_v6.safetensors",
         "SD 1.5 (Dreamshaper)": models_path / "checkpoints" / "dreamshaper_8.safetensors",
         "SVD XT": models_path / "checkpoints" / "svd_xt.safetensors",
         "T5-XXL (CLIP)": models_path / "clip" / "t5xxl_fp16.safetensors",

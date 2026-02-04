@@ -46,7 +46,7 @@ wget -P models/unet/ https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve
 
 ### txt2img-pony-xl.json (Pony Diffusion XL - NSFW Optimized)
 **Required Models:**
-- `checkpoints/ponyDiffusionV6XL_v6StartWithThisOne.safetensors`
+- `checkpoints/ponyDiffusionV6XL_v6.safetensors`
 
 **Download:**
 ```bash

@@ -150,7 +150,7 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
             "sd15.safetensors": models_path / "checkpoints" / "v1-5-pruned-emaonly.safetensors",
             "realisticVisionV51.safetensors": models_path / "checkpoints" / "realisticVisionV51.safetensors",
             # NSFW models (shown when Spice Mode enabled)
-            "ponyDiffusionV6XL.safetensors": models_path / "checkpoints" / "ponyDiffusionV6XL.safetensors",
+            "ponyDiffusionV6XL_v6.safetensors": models_path / "checkpoints" / "ponyDiffusionV6XL_v6.safetensors",
             "dreamshaper_8.safetensors": models_path / "checkpoints" / "dreamshaper_8.safetensors",
             "deliberate_v3.safetensors": models_path / "checkpoints" / "deliberate_v3.safetensors",
             "epicrealism_pureEvolution.safetensors": models_path / "checkpoints" / "epicrealism_pureEvolution.safetensors",
