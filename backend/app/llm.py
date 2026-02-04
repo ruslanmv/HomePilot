@@ -11,6 +11,29 @@ import httpx
 import re
 
 
+# Patterns that identify thinking/reasoning models (DeepSeek R1, QwQ, Qwen3, etc.)
+# These models emit <think>...</think> tags and need extra tokens for voice mode.
+THINKING_MODEL_PATTERNS = ["deepseek-r1", "deepseek-reasoner", "qwq", "qwen3"]
+
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def is_thinking_model(model_name: str) -> bool:
+    """Detect if a model is a thinking/reasoning model that emits <think> tags."""
+    if not model_name:
+        return False
+    lower = model_name.lower()
+    return any(p in lower for p in THINKING_MODEL_PATTERNS)
+
+
+def strip_think_tags(text: str) -> str:
+    """Strip <think>...</think> reasoning blocks from model output."""
+    if not text or "<think>" not in text.lower():
+        return text
+    cleaned = _THINK_RE.sub("", text).strip()
+    return cleaned if cleaned else text  # keep original if everything was inside think tags
+
+
 def _extract_first_json_object(text: str) -> str:
     """
     Extract the first balanced JSON object from text.
@@ -344,47 +367,60 @@ async def chat_ollama(
 
     content = str(content or "")
 
-    # DeepSeek R1 fallback: If content is empty, try to extract from message.thinking
-    # BUT validate that it's not placeholder JSON (schema echoed back)
+    # Strip <think>...</think> tags that may leak into content (DeepSeek R1, QwQ, etc.)
+    content = strip_think_tags(content)
+
+    # Thinking model fallback: if content is empty, try to recover from message.thinking
     if not content.strip() and isinstance(msg, dict):
         thinking = str(msg.get("thinking") or "").strip()
         if thinking:
             print(f"[OLLAMA] Content empty, checking thinking field ({len(thinking)} chars)...")
             print(f"[OLLAMA] Thinking (first 500 chars): {thinking[:500]}")
 
-            # Try to extract JSON from thinking field
+            # Strategy 1: Try to extract JSON from thinking (for structured endpoints)
             candidate = _extract_first_json_object(thinking)
             if candidate:
                 print(f"[OLLAMA] Found JSON candidate ({len(candidate)} chars)")
                 is_placeholder = _is_placeholder_json(candidate)
-                print(f"[OLLAMA] Is placeholder JSON: {is_placeholder}")
-
                 if not is_placeholder:
                     try:
-                        json.loads(candidate)  # Validate it's parseable
+                        json.loads(candidate)
                         content = candidate
-                        print(f"[OLLAMA] SUCCESS: Extracted valid JSON from message.thinking field")
+                        print(f"[OLLAMA] SUCCESS: Extracted JSON from thinking field")
                     except Exception as e:
                         print(f"[OLLAMA] JSON parse failed: {e}")
-                else:
-                    # Even if it looks like placeholder, if it's long and has real content, use it
-                    # This handles cases where schema patterns appear but there's real content too
-                    if len(candidate) > 200:
-                        try:
-                            parsed = json.loads(candidate)
-                            # Check if it has meaningful content (not just schema keys)
-                            values = str(parsed.values())
-                            if len(values) > 100 and "string" not in values.lower()[:50]:
-                                content = candidate
-                                print(f"[OLLAMA] Using thinking JSON despite placeholder pattern (has real content)")
-                        except Exception:
-                            pass
-            else:
-                print(f"[OLLAMA] No JSON object found in thinking field")
+                elif len(candidate) > 200:
+                    try:
+                        parsed = json.loads(candidate)
+                        values = str(parsed.values())
+                        if len(values) > 100 and "string" not in values.lower()[:50]:
+                            content = candidate
+                            print(f"[OLLAMA] Using thinking JSON despite placeholder pattern")
+                    except Exception:
+                        pass
 
-    # Debug logging when content is still empty (helps diagnose model-specific issues)
+            # Strategy 2: Plain text fallback (for voice/chat — thinking ran out of tokens)
+            # The model put its reasoning in thinking but never produced content.
+            # Extract the last meaningful lines as the response.
+            if not content.strip():
+                # Strip any <think> tags that may be in the thinking text itself
+                clean_thinking = strip_think_tags(thinking)
+                lines = [ln.strip() for ln in clean_thinking.split("\n") if ln.strip()]
+                if lines:
+                    # Use the last 1-2 non-empty lines (most likely the final answer)
+                    tail = " ".join(lines[-2:])
+                    # Only use if it looks like a response (not reasoning meta-text)
+                    if len(tail) > 5 and not tail.startswith(("Let me", "I need to", "The user", "So I")):
+                        content = tail
+                        print(f"[OLLAMA] Recovered plain text from thinking tail: '{content[:100]}'")
+                    else:
+                        # Last resort: use the very last line regardless
+                        content = lines[-1]
+                        print(f"[OLLAMA] Last-resort recovery from thinking: '{content[:100]}'")
+
+    # Debug logging when content is still empty
     if not content.strip():
-        print(f"[OLLAMA] WARNING: empty extracted content. provider_raw keys: {list(data.keys())}")
+        print(f"[OLLAMA] WARNING: empty content. provider_raw keys: {list(data.keys())}")
         if isinstance(msg, dict):
             print(f"[OLLAMA] message keys: {list(msg.keys())}")
 

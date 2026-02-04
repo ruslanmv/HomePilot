@@ -888,28 +888,6 @@ function QueryBar({
         </div>
       </div>
 
-      {centered ? (
-        <div className="w-full flex justify-center mt-3 px-2 animate-in fade-in-0 zoom-in-95 transition-transform duration-150 ease-out hover:scale-[1.01] active:scale-[0.99]">
-          <div className="relative group flex w-fit sm:w-auto items-center rounded-2xl border border-white/10 bg-[#101010] px-4 py-3 shadow-sm gap-6">
-            <div className="flex flex-row gap-3 items-center">
-              <div className="flex size-10 items-center justify-center rounded-full border border-white/10 bg-black">
-                <span className="text-2xl leading-none">𝕏</span>
-              </div>
-              <div className="flex flex-col gap-1 text-start">
-                <p className="text-sm font-medium text-white">Connect your 𝕏 account</p>
-                <p className="text-xs text-white/50">Unlock early features and personalized content.</p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              className="inline-flex items-center justify-center h-8 px-3 rounded-full border border-white/15 text-white hover:bg-white/5 transition-colors text-sm font-medium shrink-0"
-            >
-              Connect
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -1668,17 +1646,11 @@ export default function App() {
             personalityPrompt = caps.systemPrompt
           }
         }
-        // Wrap with voice-mode constraints for natural spoken output
-        voiceSystemPrompt = `${personalityPrompt || 'You are a helpful voice assistant.'}
+        // Voice wrapper: format rules FIRST (preamble = highest authority for small models),
+        // then personality prompt SECOND (colors the delivery without overriding format)
+        voiceSystemPrompt = `You are in a live voice call. Reply in 1-2 short sentences only. Talk like a real person. Never mention being an AI. Stay in character.
 
-VOICE MODE RULES (absolute, override everything above if conflict):
-- This is a real-time spoken conversation. Reply in 1-2 short sentences.
-- Talk like a real person. No lists, no markdown, no bullet points.
-- NEVER use asterisks or stage directions like *smiles* *winks* *leans in*. Just speak naturally.
-- NEVER say "I'm an AI", "I'm designed to", "As an AI". Stay in character always.
-- NEVER recite poetry or give speeches. Just have a conversation.
-- Respond directly to what the user said. Don't deflect or change the subject.
-- Match their energy. Short question = short answer. Playful = playful. Serious = serious.`
+${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.'}`
       }
 
       try {
@@ -1699,7 +1671,8 @@ VOICE MODE RULES (absolute, override everything above if conflict):
             provider_model: settingsDraft.modelChat,
             // Custom generation parameters (from settingsDraft)
             textTemperature: settingsDraft.textTemperature,
-            textMaxTokens: settingsDraft.textMaxTokens,
+            // Voice mode: let backend enforce its own token cap for short spoken replies
+            textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
             imgWidth: settingsDraft.imgWidth,
             imgHeight: settingsDraft.imgHeight,
             imgSteps: settingsDraft.imgSteps,

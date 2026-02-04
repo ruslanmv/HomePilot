@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Dict, Optional, Literal
 
 from .comfy import run_workflow
-from .llm import chat as llm_chat
+from .llm import chat as llm_chat, is_thinking_model, strip_think_tags
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
@@ -1305,16 +1305,37 @@ async def orchestrate(
 
     prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
 
-    # Voice mode: cap tokens for natural conversational responses (1-2 sentences)
-    # Text mode: allow longer responses (up to 900 tokens)
-    default_max_tokens = 150 if is_voice_mode else 900
+    # Voice mode: hard cap tokens for natural conversational responses (1-2 sentences)
+    # IMPORTANT: Voice mode ALWAYS uses its own cap regardless of frontend textMaxTokens.
+    # The frontend sends textMaxTokens from general settings (default 2048) which would
+    # produce paragraph-length responses instead of short spoken sentences.
+    #
+    # Thinking models (DeepSeek R1, QwQ) need ~3x more tokens because they emit
+    # <think>...</think> reasoning first, consuming tokens before the actual reply.
+    # 80 tokens → all spent on thinking → empty response.
+    # 300 tokens → ~200 thinking + ~100 reply → works.
+    VOICE_MAX_TOKENS = 80
+    VOICE_MAX_TOKENS_THINKING = 300
+    default_max_tokens = 900
+    effective_max_tokens: int
+    if is_voice_mode:
+        model_name = provider_model or ""
+        if is_thinking_model(model_name):
+            effective_max_tokens = VOICE_MAX_TOKENS_THINKING
+            print(f"[VOICE] Thinking model detected ({model_name}), using {VOICE_MAX_TOKENS_THINKING} tokens")
+        else:
+            effective_max_tokens = VOICE_MAX_TOKENS
+    elif text_max_tokens is not None:
+        effective_max_tokens = text_max_tokens
+    else:
+        effective_max_tokens = default_max_tokens
 
     try:
         out = await llm_chat(
             messages,
             provider=prov,
             temperature=text_temperature if text_temperature is not None else (0.9 if fun_mode else 0.7),
-            max_tokens=text_max_tokens if text_max_tokens is not None else default_max_tokens,
+            max_tokens=effective_max_tokens,
             base_url=provider_base_url,
             model=provider_model,
         )
@@ -1324,13 +1345,14 @@ async def orchestrate(
         add_message(cid, "assistant", err)
         return {"conversation_id": cid, "text": err, "media": None}
 
-    # Robust parsing
+    # Robust parsing — strip any leaked <think> tags from thinking models
     text = (
         (out.get("choices") or [{}])[0]
         .get("message", {})
         .get("content", "")
         or "…"
     )
+    text = strip_think_tags(text)
 
     add_message(cid, "assistant", text)
     return {"conversation_id": cid, "text": text, "media": None}

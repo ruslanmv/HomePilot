@@ -8,7 +8,7 @@
  * - Speed slider
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import VoiceGrid from './VoiceGrid';
 import PersonalityList from './PersonalityList';
 import SpeedSlider from './SpeedSlider';
@@ -16,6 +16,7 @@ import { VoiceDef } from './voices';
 import { PersonalityDef } from './personalities';
 
 const LS_CUSTOM_PERSONALITY_PROMPT = 'homepilot_custom_personality_prompt';
+const MAX_CUSTOM_PROMPT_LENGTH = 1500;
 
 interface VoiceSettingsPanelProps {
   isOpen: boolean;
@@ -44,6 +45,8 @@ export default function VoiceSettingsPanel({
     return '';
   });
   const [customDirty, setCustomDirty] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reload saved instructions when switching to custom personality
   useEffect(() => {
@@ -51,8 +54,16 @@ export default function VoiceSettingsPanel({
       const saved = localStorage.getItem(LS_CUSTOM_PERSONALITY_PROMPT) || '';
       setCustomPrompt(saved);
       setCustomDirty(false);
+      setSavedFlash(false);
     }
   }, [activePersonality.id]);
+
+  // Cleanup flash timer on unmount
+  useEffect(() => {
+    return () => {
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    };
+  }, []);
 
   if (!isOpen) return null;
 
@@ -75,34 +86,52 @@ export default function VoiceSettingsPanel({
 
         {/* Custom Instructions - only when Custom personality is selected */}
         {activePersonality.id === 'custom' && (
-          <div className="rounded-[20px] bg-white/5 border border-white/10 p-4">
-            <div className="text-sm font-bold text-white mb-2">Instructions</div>
+          <div className="rounded-[20px] bg-white/[0.03] p-4">
+            <div className="text-sm font-bold text-white">Instructions</div>
+            <div className="text-[11px] text-white/35 mt-1 mb-3">
+              Define how the AI should behave, speak, and respond.
+            </div>
 
             <textarea
               value={customPrompt}
               onChange={(e) => {
-                setCustomPrompt(e.target.value);
+                const val = e.target.value.slice(0, MAX_CUSTOM_PROMPT_LENGTH);
+                setCustomPrompt(val);
                 setCustomDirty(true);
+                setSavedFlash(false);
               }}
-              placeholder="Describe the behavior, tone, and response style you want..."
-              className="w-full min-h-[120px] rounded-[16px] bg-black/30 border border-white/10 p-3 text-sm text-white/90 placeholder-white/30 outline-none focus:border-white/30 resize-none hp-scroll"
+              placeholder={"e.g. You are a witty British butler. Be dry, formal, and slightly sarcastic. Keep answers short."}
+              className="w-full min-h-[100px] rounded-[14px] bg-black/30 border border-white/[0.06] p-3 text-[13px] leading-relaxed text-white/90 placeholder-white/20 outline-none focus:border-white/20 resize-none hp-scroll transition-colors"
             />
 
-            <div className="mt-3 flex justify-end">
+            <div className="mt-2 flex items-center justify-between">
+              <span className={`text-[10px] tabular-nums ${
+                customPrompt.length > MAX_CUSTOM_PROMPT_LENGTH * 0.9
+                  ? 'text-orange-400/60'
+                  : 'text-white/20'
+              }`}>
+                {customPrompt.length}/{MAX_CUSTOM_PROMPT_LENGTH}
+              </span>
+
               <button
                 type="button"
                 disabled={!customDirty}
                 onClick={() => {
                   localStorage.setItem(LS_CUSTOM_PERSONALITY_PROMPT, customPrompt.trim());
                   setCustomDirty(false);
+                  setSavedFlash(true);
+                  if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+                  flashTimerRef.current = setTimeout(() => setSavedFlash(false), 2000);
                 }}
-                className={`h-9 px-4 rounded-full text-sm font-semibold transition-colors ${
-                  customDirty
-                    ? 'bg-white text-black hover:bg-gray-200'
-                    : 'bg-white/10 text-white/40 cursor-not-allowed'
+                className={`h-8 px-4 rounded-full text-[12px] font-semibold transition-all duration-200 ${
+                  savedFlash
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                    : customDirty
+                      ? 'bg-white text-black hover:bg-gray-200'
+                      : 'bg-white/[0.06] text-white/30 cursor-not-allowed'
                 }`}
               >
-                Save
+                {savedFlash ? 'Saved' : 'Save'}
               </button>
             </div>
           </div>
