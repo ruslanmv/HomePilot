@@ -510,6 +510,7 @@ async def orchestrate(
     prompt_refinement: Optional[bool] = True,
     img_reference: Optional[str] = None,  # Reference image URL for img2img
     img_ref_strength: Optional[float] = None,  # Reference strength 0..1 (0=similar, 1=creative)
+    voice_system_prompt: Optional[str] = None,  # Custom system prompt for voice personalities
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -1290,7 +1291,13 @@ async def orchestrate(
 
     # --- Normal chat ---
     history = get_recent(cid, limit=24)
-    system = BASE_SYSTEM + ("\n" + FUN_SYSTEM if fun_mode else "")
+
+    # Use voice personality system prompt if provided, otherwise default
+    is_voice_mode = voice_system_prompt is not None
+    if voice_system_prompt:
+        system = voice_system_prompt
+    else:
+        system = BASE_SYSTEM + ("\n" + FUN_SYSTEM if fun_mode else "")
 
     messages = [{"role": "system", "content": system}]
     for role, content in history:
@@ -1298,12 +1305,16 @@ async def orchestrate(
 
     prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
 
+    # Voice mode: cap tokens for natural conversational responses (1-2 sentences)
+    # Text mode: allow longer responses (up to 900 tokens)
+    default_max_tokens = 150 if is_voice_mode else 900
+
     try:
         out = await llm_chat(
             messages,
             provider=prov,
             temperature=text_temperature if text_temperature is not None else (0.9 if fun_mode else 0.7),
-            max_tokens=text_max_tokens if text_max_tokens is not None else 900,
+            max_tokens=text_max_tokens if text_max_tokens is not None else default_max_tokens,
             base_url=provider_base_url,
             model=provider_model,
         )
@@ -1416,4 +1427,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             prompt_refinement=payload.get("promptRefinement", True),
             img_reference=payload.get("imgReference"),
             img_ref_strength=payload.get("imgRefStrength"),
+            voice_system_prompt=payload.get("voiceSystemPrompt"),
         )

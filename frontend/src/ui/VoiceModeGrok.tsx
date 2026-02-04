@@ -444,9 +444,17 @@ export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProp
   }, [isMuted, voice.setTtsEnabled]);
 
   // Close settings panel on outside click
+  // Ignores clicks inside portaled dropdowns (PersonalityList) so selections can complete
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      const target = e.target as HTMLElement;
+
+      // Ignore clicks inside portaled voice dropdowns (PersonalityList overlay/panel)
+      if (target?.closest?.('[data-hp-voice-portal="true"]')) {
+        return;
+      }
+
+      if (menuRef.current && !menuRef.current.contains(target)) {
         setShowVoiceSettings(false);
       }
     };

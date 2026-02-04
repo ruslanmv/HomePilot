@@ -29,6 +29,7 @@ import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
+import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -1652,6 +1653,34 @@ export default function App() {
       // Get current project ID from localStorage if user selected one
       const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
 
+      // Get voice personality system prompt for voice mode
+      // Wraps with brevity instruction for natural spoken conversation
+      let voiceSystemPrompt: string | undefined = undefined
+      if (mode === 'voice') {
+        const personalityId = localStorage.getItem('homepilot_personality_id')
+        let personalityPrompt = ''
+        if (personalityId === 'custom') {
+          // Custom personality: use user-defined instructions from localStorage
+          personalityPrompt = localStorage.getItem('homepilot_custom_personality_prompt') || ''
+        } else if (personalityId) {
+          const caps = PERSONALITY_CAPS[personalityId as PersonalityId]
+          if (caps) {
+            personalityPrompt = caps.systemPrompt
+          }
+        }
+        // Wrap with voice-mode constraints for natural spoken output
+        voiceSystemPrompt = `${personalityPrompt || 'You are a helpful voice assistant.'}
+
+VOICE MODE RULES (absolute, override everything above if conflict):
+- This is a real-time spoken conversation. Reply in 1-2 short sentences.
+- Talk like a real person. No lists, no markdown, no bullet points.
+- NEVER use asterisks or stage directions like *smiles* *winks* *leans in*. Just speak naturally.
+- NEVER say "I'm an AI", "I'm designed to", "As an AI". Stay in character always.
+- NEVER recite poetry or give speeches. Just have a conversation.
+- Respond directly to what the user said. Don't deflect or change the subject.
+- Match their energy. Short question = short answer. Playful = playful. Serious = serious.`
+      }
+
       try {
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
@@ -1682,6 +1711,8 @@ export default function App() {
             vidMotion: settingsDraft.vidMotion,
             vidModel: settingsDraft.modelVideo,
             nsfwMode: settingsDraft.nsfwMode,
+            // Voice mode personality system prompt
+            voiceSystemPrompt,
           },
           authHeaders
         )
