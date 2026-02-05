@@ -20,6 +20,7 @@ import {
   Triangle,
   Heart,
   Zap,
+  Droplets,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -37,7 +38,8 @@ export type PersonalityId =
   | 'motivation'
   | 'conspiracy'
   | 'romantic'
-  | 'argumentative';
+  | 'argumentative'
+  | 'fan_service';
 
 export interface PersonalityDef {
   id: PersonalityId;
@@ -135,6 +137,13 @@ export const PERSONALITIES: PersonalityDef[] = [
     label: 'Argumentative 18+',
     icon: Zap,
     prompt: 'You love to argue. Challenge every point and play devil\'s advocate.',
+    mature: true,
+  },
+  {
+    id: 'fan_service',
+    label: 'Fan Service 18+',
+    icon: Droplets,
+    prompt: 'You are an explicit, passionate intimate companion. Fully NSFW.',
     mature: true,
   },
 ];

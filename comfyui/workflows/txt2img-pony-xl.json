@@ -3,8 +3,8 @@
     "class_type": "KSampler",
     "inputs": {
       "seed": "{{seed}}",
-      "steps": 25,
-      "cfg": 7.0,
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
       "sampler_name": "euler_ancestral",
       "scheduler": "normal",
       "denoise": 1.0,
@@ -17,7 +17,7 @@
   "4": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
+      "ckpt_name": "{{ckpt_name}}"
     }
   },
   "5": {

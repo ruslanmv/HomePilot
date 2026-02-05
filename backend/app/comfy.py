@@ -558,6 +558,18 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     workflow = _load_workflow(name)
     prompt_graph = _deep_replace(workflow, processed_vars)
 
+    # ── Unresolved variable detection ────────────────────────────
+    # Scan for any remaining {{var}} placeholders that weren't substituted.
+    # These would be sent as literal strings to ComfyUI and cause validation
+    # failures (e.g. "{{ckpt_name}}" is not a valid checkpoint filename).
+    _unresolved_re = re.compile(r"\{\{(\w+)\}\}")
+    _graph_str = json.dumps(prompt_graph)
+    _unresolved = set(_unresolved_re.findall(_graph_str))
+    if _unresolved:
+        print(f"[COMFY] WARNING: Unresolved template variables in workflow '{name}': {_unresolved}")
+        print(f"[COMFY] These variables were not provided and will be sent as literal '{{{{...}}}}' strings.")
+        print(f"[COMFY] Available variables were: {list(processed_vars.keys())}")
+
     # Log checkpoint being used (if present in workflow)
     for node_id, node in prompt_graph.items():
         if isinstance(node, dict) and node.get("class_type") == "CheckpointLoaderSimple":

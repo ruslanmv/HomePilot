@@ -5,52 +5,91 @@
   "aspect_ratios": {
     "1:1": {
       "ui_label": "Square (1:1)",
-      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "compatible_models": ["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred", "flux_schnell", "flux_dev"],
       "dimensions": {
-        "sd15":        { "width": 512,  "height": 512 },
-        "sdxl":        { "width": 1024, "height": 1024 },
-        "flux_schnell": { "width": 1024, "height": 1024 },
-        "flux_dev":    { "width": 1024, "height": 1024 }
+        "sd15":            { "width": 512,  "height": 512 },
+        "sdxl":            { "width": 1024, "height": 1024 },
+        "pony_xl":         { "width": 1024, "height": 1024 },
+        "noobai_xl":       { "width": 1024, "height": 1024 },
+        "noobai_xl_vpred": { "width": 1024, "height": 1024 },
+        "flux_schnell":    { "width": 1024, "height": 1024 },
+        "flux_dev":        { "width": 1024, "height": 1024 }
       }
     },
     "4:3": {
       "ui_label": "Landscape (4:3)",
-      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "compatible_models": ["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred", "flux_schnell", "flux_dev"],
       "dimensions": {
-        "sd15":        { "width": 680,  "height": 512 },
-        "sdxl":        { "width": 1152, "height": 896 },
-        "flux_schnell": { "width": 1152, "height": 896 },
-        "flux_dev":    { "width": 1152, "height": 896 }
+        "sd15":            { "width": 680,  "height": 512 },
+        "sdxl":            { "width": 1152, "height": 896 },
+        "pony_xl":         { "width": 1024, "height": 768 },
+        "noobai_xl":       { "width": 1024, "height": 768 },
+        "noobai_xl_vpred": { "width": 1024, "height": 768 },
+        "flux_schnell":    { "width": 1152, "height": 896 },
+        "flux_dev":        { "width": 1152, "height": 896 }
       }
     },
     "3:4": {
       "ui_label": "Portrait (3:4)",
-      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "compatible_models": ["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred", "flux_schnell", "flux_dev"],
       "dimensions": {
-        "sd15":        { "width": 512,  "height": 680 },
-        "sdxl":        { "width": 896,  "height": 1152 },
-        "flux_schnell": { "width": 896,  "height": 1152 },
-        "flux_dev":    { "width": 896,  "height": 1152 }
+        "sd15":            { "width": 512,  "height": 680 },
+        "sdxl":            { "width": 896,  "height": 1152 },
+        "pony_xl":         { "width": 768,  "height": 1024 },
+        "noobai_xl":       { "width": 768,  "height": 1024 },
+        "noobai_xl_vpred": { "width": 768,  "height": 1024 },
+        "flux_schnell":    { "width": 896,  "height": 1152 },
+        "flux_dev":        { "width": 896,  "height": 1152 }
+      }
+    },
+    "2:3": {
+      "ui_label": "Tall Portrait (2:3) — Best for Anime",
+      "compatible_models": ["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred", "flux_schnell", "flux_dev"],
+      "dimensions": {
+        "sd15":            { "width": 512,  "height": 768 },
+        "sdxl":            { "width": 832,  "height": 1216 },
+        "pony_xl":         { "width": 832,  "height": 1216 },
+        "noobai_xl":       { "width": 832,  "height": 1216 },
+        "noobai_xl_vpred": { "width": 832,  "height": 1216 },
+        "flux_schnell":    { "width": 832,  "height": 1216 },
+        "flux_dev":        { "width": 832,  "height": 1216 }
       }
     },
     "16:9": {
       "ui_label": "Widescreen (16:9)",
-      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "compatible_models": ["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred", "flux_schnell", "flux_dev"],
       "dimensions": {
-        "sd15":        { "width": 768,  "height": 432 },
-        "sdxl":        { "width": 1216, "height": 832 },
-        "flux_schnell": { "width": 1216, "height": 832 },
-        "flux_dev":    { "width": 1216, "height": 832 }
+        "sd15":            { "width": 768,  "height": 432 },
+        "sdxl":            { "width": 1216, "height": 832 },
+        "pony_xl":         { "width": 1344, "height": 768 },
+        "noobai_xl":       { "width": 1344, "height": 768 },
+        "noobai_xl_vpred": { "width": 1344, "height": 768 },
+        "flux_schnell":    { "width": 1216, "height": 832 },
+        "flux_dev":        { "width": 1216, "height": 832 }
       }
     },
     "9:16": {
       "ui_label": "Vertical / Mobile (9:16)",
-      "compatible_models": ["sd15", "sdxl", "flux_schnell", "flux_dev"],
+      "compatible_models": ["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred", "flux_schnell", "flux_dev"],
       "dimensions": {
-        "sd15":        { "width": 432,  "height": 768 },
-        "sdxl":        { "width": 832,  "height": 1216 },
-        "flux_schnell": { "width": 832,  "height": 1216 },
-        "flux_dev":    { "width": 832,  "height": 1216 }
+        "sd15":            { "width": 432,  "height": 768 },
+        "sdxl":            { "width": 832,  "height": 1216 },
+        "pony_xl":         { "width": 768,  "height": 1344 },
+        "noobai_xl":       { "width": 768,  "height": 1344 },
+        "noobai_xl_vpred": { "width": 768,  "height": 1344 },
+        "flux_schnell":    { "width": 832,  "height": 1216 },
+        "flux_dev":        { "width": 832,  "height": 1216 }
+      }
+    },
+    "1:2": {
+      "ui_label": "Full Body (1:2)",
+      "compatible_models": ["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred"],
+      "dimensions": {
+        "sd15":            { "width": 512,  "height": 1024 },
+        "sdxl":            { "width": 640,  "height": 1536 },
+        "pony_xl":         { "width": 640,  "height": 1536 },
+        "noobai_xl":       { "width": 640,  "height": 1536 },
+        "noobai_xl_vpred": { "width": 640,  "height": 1536 }
       }
     }
   },
@@ -66,10 +105,13 @@
         "cfg": 7.0
       },
       "model_overrides": {
-        "sd15":        { "steps": 20, "cfg": 7.0 },
-        "sdxl":        { "steps": 25, "cfg": 5.0 },
-        "flux_schnell": { "steps": 4,  "cfg": 1.0 },
-        "flux_dev":    { "steps": 20, "cfg": 3.5 }
+        "sd15":            { "steps": 20, "cfg": 7.0 },
+        "sdxl":            { "steps": 25, "cfg": 5.0 },
+        "pony_xl":         { "steps": 15, "cfg": 5.0 },
+        "noobai_xl":       { "steps": 15, "cfg": 4.0 },
+        "noobai_xl_vpred": { "steps": 15, "cfg": 4.0 },
+        "flux_schnell":    { "steps": 4,  "cfg": 1.0 },
+        "flux_dev":        { "steps": 20, "cfg": 3.5 }
       }
     },
     "med": {
@@ -82,10 +124,13 @@
         "cfg": 7.0
       },
       "model_overrides": {
-        "sd15":        { "steps": 25, "cfg": 7.0 },
-        "sdxl":        { "steps": 30, "cfg": 5.5 },
-        "flux_schnell": { "steps": 4,  "cfg": 1.0 },
-        "flux_dev":    { "steps": 25, "cfg": 3.5 }
+        "sd15":            { "steps": 25, "cfg": 7.0 },
+        "sdxl":            { "steps": 30, "cfg": 5.5 },
+        "pony_xl":         { "steps": 25, "cfg": 5.5 },
+        "noobai_xl":       { "steps": 25, "cfg": 5.0 },
+        "noobai_xl_vpred": { "steps": 25, "cfg": 5.0 },
+        "flux_schnell":    { "steps": 4,  "cfg": 1.0 },
+        "flux_dev":        { "steps": 25, "cfg": 3.5 }
       }
     },
     "high": {
@@ -98,10 +143,13 @@
         "cfg": 8.0
       },
       "model_overrides": {
-        "sd15":        { "steps": 35, "cfg": 8.0 },
-        "sdxl":        { "steps": 45, "cfg": 6.0 },
-        "flux_schnell": { "steps": 6,  "cfg": 1.0 },
-        "flux_dev":    { "steps": 40, "cfg": 4.0 }
+        "sd15":            { "steps": 35, "cfg": 8.0 },
+        "sdxl":            { "steps": 45, "cfg": 6.0 },
+        "pony_xl":         { "steps": 30, "cfg": 6.0 },
+        "noobai_xl":       { "steps": 30, "cfg": 5.0 },
+        "noobai_xl_vpred": { "steps": 28, "cfg": 5.0 },
+        "flux_schnell":    { "steps": 6,  "cfg": 1.0 },
+        "flux_dev":        { "steps": 40, "cfg": 4.0 }
       }
     }
   },
@@ -116,6 +164,28 @@
       "default_aspect_ratio": "1:1",
       "architecture": "sdxl",
       "notes": "SDXL models native at 1024px base resolution"
+    },
+    "pony_xl": {
+      "default_aspect_ratio": "2:3",
+      "architecture": "pony_xl",
+      "clip_skip": 2,
+      "scheduler": "karras",
+      "notes": "Pony Diffusion V6 XL — SDXL finetune. MUST use clip_skip=2. Uses score_9/score_8_up quality system. Trained on Danbooru/e621 booru tags."
+    },
+    "noobai_xl": {
+      "default_aspect_ratio": "2:3",
+      "architecture": "noobai_xl",
+      "clip_skip": 2,
+      "scheduler": "karras",
+      "notes": "NoobAI-XL EPS-prediction. Standard SDXL workflow. Uses 'very awa' aesthetic tag + Danbooru tags. Best character/artist knowledge."
+    },
+    "noobai_xl_vpred": {
+      "default_aspect_ratio": "2:3",
+      "architecture": "noobai_xl_vpred",
+      "clip_skip": 2,
+      "scheduler": "normal",
+      "prediction_type": "v_prediction",
+      "notes": "NoobAI-XL V-Prediction. Requires v-pred scheduler support (ComfyUI/Forge/reForge). Better color but NOT compatible with standard A1111."
     },
     "flux_schnell": {
       "default_aspect_ratio": "1:1",

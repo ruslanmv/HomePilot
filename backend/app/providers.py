@@ -142,26 +142,63 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
     # Model checks: catalog_id -> file path
     # The catalog_id matches model_catalog_data.json "id" field
     if model_type == "image":
-        checks = {
-            # Standard SFW models
-            "sd_xl_base_1.0.safetensors": models_path / "checkpoints" / "sd_xl_base_1.0.safetensors",
-            "flux1-schnell.safetensors": models_path / "unet" / "flux1-schnell.safetensors",
-            "flux1-dev.safetensors": models_path / "unet" / "flux1-dev.safetensors",
-            "sd15.safetensors": models_path / "checkpoints" / "v1-5-pruned-emaonly.safetensors",
-            "realisticVisionV51.safetensors": models_path / "checkpoints" / "realisticVisionV51.safetensors",
-            # NSFW models (shown when Spice Mode enabled)
-            "ponyDiffusionV6XL.safetensors": models_path / "checkpoints" / "ponyDiffusionV6XL.safetensors",
-            "dreamshaper_8.safetensors": models_path / "checkpoints" / "dreamshaper_8.safetensors",
-            "deliberate_v3.safetensors": models_path / "checkpoints" / "deliberate_v3.safetensors",
-            "epicrealism_pureEvolution.safetensors": models_path / "checkpoints" / "epicrealism_pureEvolution.safetensors",
-            "cyberrealistic_v42.safetensors": models_path / "checkpoints" / "cyberrealistic_v42.safetensors",
-            "absolutereality_v181.safetensors": models_path / "checkpoints" / "absolutereality_v181.safetensors",
-            "aZovyaRPGArtist_v5.safetensors": models_path / "checkpoints" / "aZovyaRPGArtist_v5.safetensors",
-            "unstableDiffusion.safetensors": models_path / "checkpoints" / "unstableDiffusion.safetensors",
-            "majicmixRealistic_v7.safetensors": models_path / "checkpoints" / "majicmixRealistic_v7.safetensors",
-            "bbmix_v4.safetensors": models_path / "checkpoints" / "bbmix_v4.safetensors",
-            "realisian_v50.safetensors": models_path / "checkpoints" / "realisian_v50.safetensors",
+        # ── Dynamic filesystem scan ──────────────────────────────
+        # Scan checkpoint and unet directories for ALL model files.
+        # Most catalog IDs equal the filename on disk, so filenames
+        # found here are returned directly as catalog ID matches.
+        # This ensures newly downloaded models appear immediately
+        # without needing to update a hardcoded list.
+        scan_dirs = [
+            models_path / "checkpoints",
+            models_path / "unet",
+        ]
+        extensions = {".safetensors", ".ckpt"}
+
+        disk_files: set = set()
+        for scan_dir in scan_dirs:
+            if scan_dir.exists():
+                try:
+                    for f in scan_dir.iterdir():
+                        if f.is_file() and f.suffix in extensions and f.stat().st_size > 0:
+                            disk_files.add(f.name)
+                except OSError:
+                    pass
+
+        installed = list(disk_files)
+
+        # ── Exclude models that belong to other types ────────────
+        # Video, edit, enhance, and addons checkpoints may share the
+        # same directories (e.g. checkpoints/).  Use the catalog as
+        # the authoritative source to identify non-image model IDs
+        # and exclude them so the Image tab stays clean.
+        try:
+            import json as _json
+            _catalog_path = Path(__file__).parent / "model_catalog_data.json"
+            with open(_catalog_path, "r", encoding="utf-8") as _f:
+                _catalog = _json.load(_f)
+            _comfyui = _catalog.get("providers", {}).get("comfyui", {})
+            _other_type_ids: set = set()
+            for _t in ("video", "edit", "enhance", "addons"):
+                for _entry in _comfyui.get(_t, []):
+                    _eid = _entry.get("id", "")
+                    if _eid:
+                        _other_type_ids.add(_eid)
+            if _other_type_ids:
+                installed = [m for m in installed if m not in _other_type_ids]
+        except Exception:
+            pass  # If catalog can't be loaded, return unfiltered list
+
+        # ── Alias mappings ───────────────────────────────────────
+        # For catalog entries where catalog ID != physical filename
+        # (e.g. "sd15.safetensors" is stored as "v1-5-pruned-emaonly.safetensors")
+        CATALOG_ALIASES: Dict[str, str] = {
+            "sd15.safetensors": "v1-5-pruned-emaonly.safetensors",
         }
+        for catalog_id, disk_name in CATALOG_ALIASES.items():
+            if disk_name in disk_files and catalog_id not in installed:
+                installed.append(catalog_id)
+
+        return installed
     elif model_type == "video":
         checks = {
             # SVD models

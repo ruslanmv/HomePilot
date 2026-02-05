@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Dict, Optional, Literal
 
 from .comfy import run_workflow
-from .llm import chat as llm_chat
+from .llm import chat as llm_chat, is_thinking_model, strip_think_tags
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
@@ -293,6 +293,83 @@ def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+# =============================================================================
+# PROMPT REFINEMENT MODEL SELECTION
+# =============================================================================
+# Industry-standard pattern: prompt refinement uses the user's global chat model
+# when compatible, with automatic fallback for thinking/reasoning models.
+# Pure thinking models (DeepSeek R1, QwQ, base Qwen3) are unsuitable because they:
+#   - Emit <think>...</think> tags that can corrupt image prompts
+#   - Use large token budgets (slow for a pre-processing step)
+#   - Produce verbose reasoning instead of concise descriptive text
+#
+# However, abliterated/fine-tuned variants (e.g. qwen3-abliterated, JOSIEFIED)
+# are ALLOWED because:
+#   - Users choose them specifically for uncensored prompt refinement
+#   - strip_think_tags() in _refine_prompt() handles any residual <think> output
+#   - Falling back to censored llama3:8b defeats the purpose of choosing them
+
+DEFAULT_REFINE_MODEL = "llama3:8b"
+
+# Fine-tuned model indicators that should NOT trigger thinking-model fallback
+_FINETUNED_INDICATORS = ("abliterated", "josiefied", "dolphin", "hermes", "samantha")
+
+
+def _select_refine_model(
+    user_chat_model: Optional[str],
+    provider: str,
+) -> Optional[str]:
+    """
+    Select the best LLM model for prompt refinement.
+
+    Priority chain:
+      1. User's global chat model (if compatible)
+      2. OLLAMA_MODEL env var (if compatible)
+      3. DEFAULT_REFINE_MODEL fallback ("llama3:8b")
+
+    Pure thinking/reasoning models are redirected to the fallback because
+    their <think> tags and verbose CoT output corrupt image prompts.
+    However, abliterated/fine-tuned variants are respected since the user
+    chose them for uncensored refinement and strip_think_tags() handles
+    any residual thinking output.
+
+    Args:
+        user_chat_model: The user's selected chat model from frontend settings.
+        provider: The LLM provider name ("ollama", "openai_compat", etc.)
+
+    Returns:
+        Model name string (for Ollama), or None (for other providers to use defaults).
+    """
+    if provider == "ollama":
+        # Resolve: user selection → env var → safe default
+        model = user_chat_model or OLLAMA_MODEL or DEFAULT_REFINE_MODEL
+
+        if is_thinking_model(model):
+            lower = model.lower()
+            # Abliterated/fine-tuned variants are OK — user chose them
+            # for uncensored use, and strip_think_tags() is our safety net
+            if not any(ind in lower for ind in _FINETUNED_INDICATORS):
+                print(
+                    f"[PROMPT_REFINE] Model '{model}' is a thinking/reasoning model — "
+                    f"unsuitable for prompt refinement, falling back to '{DEFAULT_REFINE_MODEL}'"
+                )
+                return DEFAULT_REFINE_MODEL
+            else:
+                print(
+                    f"[PROMPT_REFINE] Model '{model}' is a fine-tuned/abliterated variant — "
+                    f"allowing for prompt refinement (strip_think_tags active as safety net)"
+                )
+
+        return model
+
+    elif provider == "openai_compat":
+        # For OpenAI-compat (vLLM/TGI), use their model or env default
+        return user_chat_model or LLM_MODEL or None
+
+    # Other providers (openai, claude, watsonx) — let the provider use its default
+    return user_chat_model or None
+
+
 async def _refine_prompt(
     user_prompt: str,
     provider: ProviderName,
@@ -347,6 +424,10 @@ async def _refine_prompt(
             return fallback_result
 
         print(f"[_refine_prompt] Raw LLM response: '{response_text[:300]}...'")
+
+        # Safety: strip <think>...</think> tags from reasoning models before parsing
+        # This handles cases where a thinking model is manually forced for refinement
+        response_text = strip_think_tags(response_text)
 
         # Try to parse JSON robustly
         print(f"[_refine_prompt] Parsing JSON...")
@@ -437,6 +518,9 @@ async def _refine_video_prompt(
 
         print(f"[_refine_video_prompt] Raw LLM response: '{response_text[:300]}...'")
 
+        # Safety: strip <think>...</think> tags from reasoning models before parsing
+        response_text = strip_think_tags(response_text)
+
         # Try to parse JSON robustly
         print(f"[_refine_video_prompt] Parsing JSON...")
         refined = _extract_json_from_text(response_text)
@@ -511,6 +595,7 @@ async def orchestrate(
     img_reference: Optional[str] = None,  # Reference image URL for img2img
     img_ref_strength: Optional[float] = None,  # Reference strength 0..1 (0=similar, 1=creative)
     voice_system_prompt: Optional[str] = None,  # Custom system prompt for voice personalities
+    chat_model: Optional[str] = None,  # User's global chat model (for prompt refinement)
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -557,13 +642,11 @@ async def orchestrate(
                     prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
                     if prov == "ollama":
                         refine_base_url = provider_base_url or OLLAMA_BASE_URL
-                        refine_model = OLLAMA_MODEL if OLLAMA_MODEL else "llama3:8b"
                     elif prov == "openai_compat":
                         refine_base_url = provider_base_url or LLM_BASE_URL
-                        refine_model = LLM_MODEL if LLM_MODEL else None
                     else:
                         refine_base_url = provider_base_url
-                        refine_model = None
+                    refine_model = _select_refine_model(chat_model, prov)
 
                     try:
                         refined = await _refine_prompt(
@@ -628,7 +711,12 @@ async def orchestrate(
                 img_workflow_name = workflow_map.get(architecture, "txt2img")
                 if "pony" in model_filename.lower():
                     img_workflow_name = "txt2img-pony-xl"
-                if architecture == "sd15":
+                    # Normalize legacy Pony checkpoint filenames
+                    _PONY_LEGACY_ALIASES = {
+                        "ponydiffusionv6xl_v6startwiththisone.safetensors": "ponyDiffusionV6XL_v6.safetensors",
+                    }
+                    refined["ckpt_name"] = _PONY_LEGACY_ALIASES.get(model_filename.lower(), model_filename)
+                if architecture in ("sd15", "sdxl"):
                     refined["ckpt_name"] = model_filename
 
                 print(f"[ANIMATE] Image workflow: {img_workflow_name}")
@@ -738,13 +826,11 @@ async def orchestrate(
                 # Determine LLM settings for refinement
                 if prov == "ollama":
                     refine_base_url = provider_base_url or OLLAMA_BASE_URL
-                    refine_model = OLLAMA_MODEL if OLLAMA_MODEL else "llama3:8b"
                 elif prov == "openai_compat":
                     refine_base_url = provider_base_url or LLM_BASE_URL
-                    refine_model = LLM_MODEL if LLM_MODEL else None
                 else:
                     refine_base_url = provider_base_url
-                    refine_model = None
+                refine_model = _select_refine_model(chat_model, prov)
 
                 print(f"[ANIMATE] === Starting video prompt refinement ===")
                 print(f"[ANIMATE] Original prompt: '{video_prompt[:80]}...'")
@@ -1023,27 +1109,23 @@ async def orchestrate(
                 # which is NOT an LLM. We must use the proper chat model for refinement.
                 prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
 
-                # Determine the correct LLM model for refinement based on provider
-                # DO NOT use provider_model as it may be an image model!
+                # Determine LLM base URL for refinement
                 if prov == "ollama":
                     refine_base_url = provider_base_url or OLLAMA_BASE_URL
-                    # Use OLLAMA_MODEL if set, otherwise fallback to llama3:8b
-                    # Note: Avoid auto-pick which might select deepseek-r1 (has thinking output)
-                    refine_model = OLLAMA_MODEL if OLLAMA_MODEL else "llama3:8b"
                 elif prov == "openai_compat":
                     refine_base_url = provider_base_url or LLM_BASE_URL
-                    refine_model = LLM_MODEL if LLM_MODEL else None
                 else:
-                    # For other providers (openai, claude), use provider_base_url but NOT provider_model
-                    # as provider_model may be the image model
                     refine_base_url = provider_base_url
-                    refine_model = None  # Let the provider use its default
+
+                # Select the best compatible model for prompt refinement
+                # Uses user's chat model when safe, auto-falls back for thinking models
+                refine_model = _select_refine_model(chat_model, prov)
 
                 print(f"[PROMPT_REFINE] === Starting prompt refinement ===")
                 print(f"[PROMPT_REFINE] User prompt: '{text_in[:100]}...'")
                 print(f"[PROMPT_REFINE] Provider: {prov}")
                 print(f"[PROMPT_REFINE] Base URL: {refine_base_url}")
-                print(f"[PROMPT_REFINE] Model: {refine_model}")
+                print(f"[PROMPT_REFINE] Model: {refine_model} (chat_model={chat_model})")
                 print(f"[PROMPT_REFINE] (Note: img_model '{img_model}' is NOT used for refinement)")
 
                 try:
@@ -1174,9 +1256,19 @@ async def orchestrate(
             if "pony" in model_filename.lower():
                 workflow_name = "txt2img-pony-xl"
 
-            # Set checkpoint override for SD1.5 models (workflow uses {{ckpt_name}} template)
+                # Pony workflow uses {{ckpt_name}} template; normalize legacy filenames
+                # so deployments with older checkpoint naming stay compatible.
+                _PONY_LEGACY_ALIASES = {
+                    "ponydiffusionv6xl_v6startwiththisone.safetensors": "ponyDiffusionV6XL_v6.safetensors",
+                }
+                normalized_ckpt = _PONY_LEGACY_ALIASES.get(model_filename.lower(), model_filename)
+                refined["ckpt_name"] = normalized_ckpt
+
+            # Set checkpoint for all templated workflows ({{ckpt_name}})
+            # SDXL, SD1.5, and Pony workflows all use the {{ckpt_name}} template.
+            # Flux workflows hardcode their model paths (UNETLoader, not CheckpointLoaderSimple).
             checkpoint_override = None
-            if architecture == "sd15":
+            if architecture in ("sd15", "sdxl"):
                 checkpoint_override = model_filename
                 refined["ckpt_name"] = checkpoint_override
 
@@ -1305,16 +1397,37 @@ async def orchestrate(
 
     prov: ProviderName = provider or DEFAULT_PROVIDER  # type: ignore
 
-    # Voice mode: cap tokens for natural conversational responses (1-2 sentences)
-    # Text mode: allow longer responses (up to 900 tokens)
-    default_max_tokens = 150 if is_voice_mode else 900
+    # Voice mode: hard cap tokens for natural conversational responses (1-2 sentences)
+    # IMPORTANT: Voice mode ALWAYS uses its own cap regardless of frontend textMaxTokens.
+    # The frontend sends textMaxTokens from general settings (default 2048) which would
+    # produce paragraph-length responses instead of short spoken sentences.
+    #
+    # Thinking models (DeepSeek R1, QwQ) need ~3x more tokens because they emit
+    # <think>...</think> reasoning first, consuming tokens before the actual reply.
+    # 80 tokens → all spent on thinking → empty response.
+    # 300 tokens → ~200 thinking + ~100 reply → works.
+    VOICE_MAX_TOKENS = 80
+    VOICE_MAX_TOKENS_THINKING = 300
+    default_max_tokens = 900
+    effective_max_tokens: int
+    if is_voice_mode:
+        model_name = provider_model or ""
+        if is_thinking_model(model_name):
+            effective_max_tokens = VOICE_MAX_TOKENS_THINKING
+            print(f"[VOICE] Thinking model detected ({model_name}), using {VOICE_MAX_TOKENS_THINKING} tokens")
+        else:
+            effective_max_tokens = VOICE_MAX_TOKENS
+    elif text_max_tokens is not None:
+        effective_max_tokens = text_max_tokens
+    else:
+        effective_max_tokens = default_max_tokens
 
     try:
         out = await llm_chat(
             messages,
             provider=prov,
             temperature=text_temperature if text_temperature is not None else (0.9 if fun_mode else 0.7),
-            max_tokens=text_max_tokens if text_max_tokens is not None else default_max_tokens,
+            max_tokens=effective_max_tokens,
             base_url=provider_base_url,
             model=provider_model,
         )
@@ -1324,13 +1437,14 @@ async def orchestrate(
         add_message(cid, "assistant", err)
         return {"conversation_id": cid, "text": err, "media": None}
 
-    # Robust parsing
+    # Robust parsing — strip any leaked <think> tags from thinking models
     text = (
         (out.get("choices") or [{}])[0]
         .get("message", {})
         .get("content", "")
         or "…"
     )
+    text = strip_think_tags(text)
 
     add_message(cid, "assistant", text)
     return {"conversation_id": cid, "text": text, "media": None}
@@ -1393,6 +1507,11 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
         _ar = payload.get("imgAspectRatio")
         print(f"[CHAT ENDPOINT] imgAspectRatio from payload: {_ar!r} (type: {type(_ar).__name__})")
 
+        # Extract the user's chat model for prompt refinement
+        # This is separate from provider_model (which may be an image model)
+        # Priority: ollama_model (from frontend) → llm_model (from frontend)
+        _chat_model = payload.get("ollama_model") or payload.get("llm_model")
+
         return await orchestrate(
             user_text=payload.get("message", ""),
             conversation_id=payload.get("conversation_id"),
@@ -1428,4 +1547,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             img_reference=payload.get("imgReference"),
             img_ref_strength=payload.get("imgRefStrength"),
             voice_system_prompt=payload.get("voiceSystemPrompt"),
+            chat_model=_chat_model,
         )
