@@ -18,6 +18,9 @@ import {
   Trash2,
   Tv2,
   Plus,
+  Copy,
+  RotateCw,
+  PenLine,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import VoiceMode from './VoiceModeGrok'
@@ -28,6 +31,7 @@ import AnimateView from './Animate'
 import ModelsView from './Models'
 import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
+import { MessageMarkdown } from './components/MessageMarkdown'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
 import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
@@ -52,6 +56,10 @@ export type Msg = {
   text: string
   pending?: boolean
   animate?: boolean
+  // when true, show recovery UI and allow retry
+  error?: boolean
+  // info needed for retry; kept minimal and non-destructive
+  retry?: { requestText: string; mode: Mode; projectId?: string }
   media?: {
     images?: string[]
     video_url?: string
@@ -670,10 +678,125 @@ function HistoryPanel({
   )
 }
 
+function SidebarRecents({
+  conversations,
+  activeConversationId,
+  onLoadConversation,
+  onViewAll,
+}: {
+  conversations: Conversation[]
+  activeConversationId: string
+  onLoadConversation: (id: string) => void
+  onViewAll: () => void
+}) {
+  const buckets = useMemo(() => {
+    const now = new Date()
+    const startOfDay = (d: Date) => {
+      const x = new Date(d); x.setHours(0, 0, 0, 0); return x
+    }
+    const daysBetween = (a: Date, b: Date) =>
+      Math.floor((startOfDay(a).getTime() - startOfDay(b).getTime()) / 86_400_000)
+
+    const sorted = [...conversations].sort(
+      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    )
+
+    const today: Conversation[] = []
+    const yesterday: Conversation[] = []
+    const last7: Conversation[] = []
+    const older: Conversation[] = []
+
+    for (const c of sorted) {
+      const diff = daysBetween(now, new Date(c.updated_at))
+      if (diff === 0) today.push(c)
+      else if (diff === 1) yesterday.push(c)
+      else if (diff <= 7) last7.push(c)
+      else older.push(c)
+    }
+
+    return { today, yesterday, last7, older }
+  }, [conversations])
+
+  const renderRow = (c: Conversation) => {
+    const isActive = c.conversation_id === activeConversationId
+    const label = (c.last_content || 'Conversation…').trim()
+    const short = label.slice(0, 36)
+    return (
+      <button
+        key={c.conversation_id}
+        type="button"
+        className={[
+          'w-full text-left px-3 py-2 text-[13px] rounded-xl truncate transition-colors',
+          isActive
+            ? 'bg-white/10 text-white'
+            : 'text-white/60 hover:bg-white/5 hover:text-white',
+        ].join(' ')}
+        onClick={() => onLoadConversation(c.conversation_id)}
+        title={label}
+      >
+        {short}{label.length > 36 ? '…' : ''}
+      </button>
+    )
+  }
+
+  const hasBuckets =
+    buckets.today.length > 0 ||
+    buckets.yesterday.length > 0 ||
+    buckets.last7.length > 0 ||
+    buckets.older.length > 0
+
+  if (!hasBuckets) return null
+
+  return (
+    <div className="mt-2 space-y-3">
+      {buckets.today.length > 0 ? (
+        <div className="space-y-0.5">
+          <div className="px-3 text-[11px] uppercase tracking-wider text-white/30 font-semibold mb-1">Today</div>
+          {buckets.today.slice(0, 6).map(renderRow)}
+        </div>
+      ) : null}
+
+      {buckets.yesterday.length > 0 ? (
+        <div className="space-y-0.5">
+          <div className="px-3 text-[11px] uppercase tracking-wider text-white/30 font-semibold mb-1">Yesterday</div>
+          {buckets.yesterday.slice(0, 6).map(renderRow)}
+        </div>
+      ) : null}
+
+      {buckets.last7.length > 0 ? (
+        <div className="space-y-0.5">
+          <div className="px-3 text-[11px] uppercase tracking-wider text-white/30 font-semibold mb-1">Last 7 days</div>
+          {buckets.last7.slice(0, 8).map(renderRow)}
+        </div>
+      ) : null}
+
+      {buckets.older.length > 0 ? (
+        <div className="space-y-0.5">
+          <div className="px-3 text-[11px] uppercase tracking-wider text-white/30 font-semibold mb-1">Older</div>
+          {buckets.older.slice(0, 6).map(renderRow)}
+        </div>
+      ) : null}
+
+      <div className="px-3 pt-1">
+        <button
+          type="button"
+          className="text-[12px] text-white/40 hover:text-white transition-colors"
+          onClick={onViewAll}
+        >
+          View all history →
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Sidebar({
   mode,
   setMode,
   messages,
+  conversations,
+  activeConversationId,
+  onLoadConversation,
   onNewConversation,
   onScrollToBottom,
   showSettings,
@@ -687,6 +810,9 @@ function Sidebar({
   mode: Mode
   setMode: (m: Mode) => void
   messages: Msg[]
+  conversations: Conversation[]
+  activeConversationId: string
+  onLoadConversation: (convId: string) => void
   onNewConversation: () => void
   onScrollToBottom: () => void
   showSettings: boolean
@@ -745,10 +871,8 @@ function Sidebar({
         </div>
       </div>
 
-      {/* History list */}
+      {/* Recents list (time-bucketed from conversations) */}
       <div className="flex-1 overflow-y-auto min-h-0 px-1.5 pt-1">
-        <div className="text-xs font-semibold text-white/30 mb-2 px-3">Today</div>
-
         <button
           type="button"
           className="w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
@@ -757,17 +881,12 @@ function Sidebar({
           New conversation
         </button>
 
-        {messages.length > 0 ? (
-          <button
-            type="button"
-            className="w-full text-left px-3 py-2 text-[13px] text-white/60 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
-            onClick={onScrollToBottom}
-            title={messages[0]?.text}
-          >
-            {messages[0]?.text?.slice(0, 34) || 'Conversation…'}
-            {messages[0]?.text && messages[0].text.length > 34 ? '…' : ''}
-          </button>
-        ) : null}
+        <SidebarRecents
+          conversations={conversations}
+          activeConversationId={activeConversationId}
+          onLoadConversation={onLoadConversation}
+          onViewAll={() => setShowHistory(true)}
+        />
       </div>
 
       {/* User footer */}
@@ -957,12 +1076,40 @@ function EmptyState({
   )
 }
 
+function AssistantSkeleton({ label }: { label?: string }) {
+  return (
+    <div className="space-y-3">
+      {label ? <div className="text-xs text-white/55">{label}</div> : null}
+      <div className="space-y-2 animate-pulse">
+        <div className="h-3 w-[88%] rounded-full bg-white/10" />
+        <div className="h-3 w-[74%] rounded-full bg-white/10" />
+        <div className="h-3 w-[66%] rounded-full bg-white/10" />
+      </div>
+    </div>
+  )
+}
+
+function useCopyMessage(timeoutMs = 900) {
+  const [copied, setCopied] = useState(false)
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), timeoutMs)
+    } catch {
+      // noop
+    }
+  }
+  return { copied, copy }
+}
+
 function ChatState({
   messages,
   setLightbox,
   endRef,
   mode,
   onNewConversation,
+  onRetryMessage,
   input,
   setInput,
   fileInputRef,
@@ -975,6 +1122,7 @@ function ChatState({
   endRef: React.RefObject<HTMLDivElement>
   mode: Mode
   onNewConversation: () => void
+  onRetryMessage: (id: string) => void
   input: string
   setInput: (s: string) => void
   fileInputRef: React.RefObject<HTMLInputElement>
@@ -982,24 +1130,24 @@ function ChatState({
   onSend: () => void
   onUpload: (file: File) => void
 }) {
+  const { copied, copy } = useCopyMessage()
+
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
-      {/* Sticky in-chat header so "New Chat" is always visible */}
-      <div className="sticky top-0 z-30 bg-black/85 backdrop-blur-md px-4 pt-4 pb-3 border-b border-white/5">
-        <div className="flex items-center justify-end">
-          <button
-            type="button"
-            onClick={onNewConversation}
-            className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/15 text-white/80 hover:text-white text-xs font-medium px-3 py-1.5 rounded-full border border-white/10 hover:border-white/20 transition-all"
-            title="New Chat"
-          >
-            <Plus size={14} />
-            <span>New Chat</span>
-          </button>
-        </div>
+      {/* Top-right fixed New Chat icon (Grok style) */}
+      <div className="fixed top-4 right-4 z-50">
+        <button
+          type="button"
+          onClick={onNewConversation}
+          className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+          title="New Chat"
+          aria-label="New Chat"
+        >
+          <PenLine size={16} />
+        </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-8 space-y-8">
+      <div className="flex-1 overflow-y-auto px-4 pt-14 pb-8 space-y-8">
         {messages.map((m) => (
           <div
             key={m.id}
@@ -1011,49 +1159,82 @@ function ChatState({
               </div>
             ) : null}
 
-            <div
-              className={[
-                'max-w-[85%] space-y-3',
-                m.role === 'user'
-                  ? 'bg-[#1A1A1A] text-white px-5 py-3.5 rounded-[20px] rounded-tr-sm'
-                  : '',
-              ].join(' ')}
-            >
-              <div className="text-[16px] leading-relaxed whitespace-pre-wrap text-[#EEE] font-normal tracking-wide">
-                {m.role === 'assistant' && !m.pending && m.animate ? (
-                  <Typewriter
-                    text={m.text}
-                    onDone={() => {
-                      window.dispatchEvent(new CustomEvent('hp:messageAnimated', { detail: { id: m.id } }))
-                    }}
-                  />
-                ) : (
-                  m.text
-                )}
-              </div>
-
-              {m.media?.images?.length ? (
-                <div className="flex gap-2 overflow-x-auto pt-1">
-                  {m.media.images.map((src: string, i: number) => (
-                    <img
-                      key={i}
-                      src={src}
-                      onClick={() => setLightbox(src)}
-                      className="h-56 w-56 object-cover rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
-                      alt={`generated ${i}`}
-                    />
-                  ))}
+            {/* User: bubble | Assistant: bare text on background (Grok style) */}
+            {m.role === 'user' ? (
+              <div className="max-w-[85%] bg-white/10 border border-white/10 rounded-3xl px-5 py-4">
+                <div className="text-[16px] leading-relaxed whitespace-pre-wrap text-[#EEE] font-normal tracking-wide">
+                  {m.text}
                 </div>
-              ) : null}
+              </div>
+            ) : (
+              <div className="max-w-[85%]">
+                <div className="text-[16px] leading-relaxed text-[#EEE] font-normal tracking-wide">
+                  {m.pending ? (
+                    <AssistantSkeleton label={m.text?.trim() ? m.text : undefined} />
+                  ) : (
+                    <div className="animate-fadeIn">
+                      <MessageMarkdown text={m.text} />
+                    </div>
+                  )}
+                </div>
 
-              {m.media?.video_url ? (
-                <video
-                  controls
-                  src={m.media.video_url}
-                  className="w-full rounded-xl border border-white/10 mt-2"
-                />
-              ) : null}
-            </div>
+                {/* Grok-style icon action row */}
+                {!m.pending ? (
+                  <div className="mt-2 flex items-center gap-1 text-white/40">
+                    <button
+                      type="button"
+                      onClick={() => copy(m.text || '')}
+                      className="p-1.5 rounded-full hover:bg-white/10 hover:text-white transition-colors"
+                      title={copied ? 'Copied!' : 'Copy'}
+                    >
+                      <Copy size={16} />
+                    </button>
+
+                    {m.error && m.retry ? (
+                      <button
+                        type="button"
+                        onClick={() => onRetryMessage(m.id)}
+                        className="p-1.5 rounded-full hover:bg-white/10 hover:text-white transition-colors"
+                        title="Retry"
+                      >
+                        <RotateCw size={16} />
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* Error card */}
+                {m.error && m.retry && !m.pending ? (
+                  <div className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3">
+                    <div className="text-sm text-red-200/90">
+                      Something went wrong. You can retry the request.
+                    </div>
+                  </div>
+                ) : null}
+
+                {m.media?.images?.length ? (
+                  <div className="flex gap-2 overflow-x-auto pt-2">
+                    {m.media.images.map((src: string, i: number) => (
+                      <img
+                        key={i}
+                        src={src}
+                        onClick={() => setLightbox(src)}
+                        className="h-56 w-56 object-cover rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                        alt={`generated ${i}`}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+
+                {m.media?.video_url ? (
+                  <video
+                    controls
+                    src={m.media.video_url}
+                    className="w-full rounded-xl border border-white/10 mt-2"
+                  />
+                ) : null}
+              </div>
+            )}
           </div>
         ))}
         <div ref={endRef} className="h-6" />
@@ -1661,7 +1842,12 @@ export default function App() {
     loadProjectInfo()
   }, [mode, settings.backendUrl, authHeaders])
 
-  // Fetch conversations when history panel is opened
+  // Fetch conversations on mount so sidebar recents are always populated
+  useEffect(() => {
+    fetchConversations()
+  }, [fetchConversations])
+
+  // Also refresh when history panel is opened
   useEffect(() => {
     if (showHistory) {
       fetchConversations()
@@ -1684,7 +1870,7 @@ export default function App() {
 
       const user: Msg = { id: uuid(), role: 'user', text: trimmed }
       const tmpId = uuid()
-      const pending: Msg = { id: tmpId, role: 'assistant', text: 'Thinking…', pending: true }
+      const pending: Msg = { id: tmpId, role: 'assistant', text: '', pending: true }
 
       setMessages((prev) => [...prev, user, pending])
 
@@ -1770,6 +1956,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         if (data.conversation_id && data.conversation_id !== conversationId) {
           setConversationId(data.conversation_id)
         }
+
+        // Refresh sidebar recents so the new/updated conversation appears immediately
+        fetchConversations()
       } catch (err: any) {
         const errorText = `Error: ${
           typeof err?.message === 'string' ? err.message : 'backend unreachable.'
@@ -1781,6 +1970,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               ? {
                   ...m,
                   pending: false,
+                  error: true,
+                  retry: {
+                    requestText,
+                    mode,
+                    projectId: currentProjectId,
+                  },
                   text: errorText,
                 }
               : m
@@ -1800,12 +1995,75 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     [
       authHeaders,
       conversationId,
+      fetchConversations,
       messages,
       mode,
       settings.backendUrl,
       settings.funMode,
       settingsDraft,
     ]
+  )
+
+  const retryFailedMessage = useCallback(
+    async (failedId: string) => {
+      const failed = messages.find((m) => m.id === failedId)
+      if (!failed || !failed.retry) return
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === failedId ? { ...m, pending: true, error: false, text: '' } : m
+        )
+      )
+
+      const { requestText, mode: retryMode, projectId } = failed.retry
+
+      try {
+        const data = await postJson<any>(
+          settings.backendUrl,
+          '/chat',
+          {
+            message: requestText,
+            conversation_id: conversationId,
+            project_id: projectId,
+            fun_mode: settings.funMode,
+            mode: retryMode,
+            provider: settingsDraft.providerChat,
+            provider_base_url: settingsDraft.baseUrlChat || undefined,
+            provider_model: settingsDraft.modelChat,
+            textTemperature: settingsDraft.textTemperature,
+            textMaxTokens: retryMode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+            imgWidth: settingsDraft.imgWidth,
+            imgHeight: settingsDraft.imgHeight,
+            imgSteps: settingsDraft.imgSteps,
+            imgCfg: settingsDraft.imgCfg,
+            imgSeed: settingsDraft.imgSeed,
+            imgModel: settingsDraft.modelImages,
+            vidSeconds: settingsDraft.vidSeconds,
+            vidFps: settingsDraft.vidFps,
+            vidMotion: settingsDraft.vidMotion,
+            vidModel: settingsDraft.modelVideo,
+            nsfwMode: settingsDraft.nsfwMode,
+          },
+          authHeaders
+        )
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === failedId
+              ? { ...m, pending: false, error: false, text: data.text ?? '…', media: data.media ?? null }
+              : m
+          )
+        )
+      } catch (err: any) {
+        const errorText = `Error: ${typeof err?.message === 'string' ? err.message : 'backend unreachable.'}`
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === failedId ? { ...m, pending: false, error: true, text: errorText } : m
+          )
+        )
+      }
+    },
+    [authHeaders, conversationId, messages, settings.backendUrl, settings.funMode, settingsDraft]
   )
 
   // TTS for assistant responses (speak-once pattern) - ONLY IN VOICE MODE
@@ -2080,6 +2338,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         mode={mode}
         setMode={setMode}
         messages={messages}
+        conversations={conversations}
+        activeConversationId={conversationId}
+        onLoadConversation={loadConversation}
         onNewConversation={onNewConversation}
         onScrollToBottom={onScrollToBottom}
         showSettings={showSettings}
@@ -2316,6 +2577,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               endRef={endRef}
               mode={mode}
               onNewConversation={onNewConversation}
+              onRetryMessage={retryFailedMessage}
               input={input}
               setInput={setInput}
               fileInputRef={fileInputRef}
@@ -2341,6 +2603,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             endRef={endRef}
             mode={mode}
             onNewConversation={onNewConversation}
+            onRetryMessage={retryFailedMessage}
             input={input}
             setInput={setInput}
             fileInputRef={fileInputRef}
