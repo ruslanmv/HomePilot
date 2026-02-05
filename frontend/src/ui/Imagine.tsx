@@ -549,8 +549,9 @@ export default function ImagineView(props: ImagineParams) {
       // IMPORTANT: Send aspect ratio to backend instead of hardcoded dimensions.
       // The backend's Dynamic Preset System will calculate correct dimensions
       // based on the model architecture (SD1.5 vs SDXL vs Flux).
-      // Only send explicit width/height if user set them in settings.
-      const hasExplicitDimensions = props.imgWidth && props.imgWidth > 0 && props.imgHeight && props.imgHeight > 0
+      // NEVER send explicit width/height when using aspect ratio picker - let backend decide.
+      // The aspect ratio picker is now the primary way to control dimensions.
+      const hasExplicitDimensions = false  // Disabled: let backend calculate from aspect ratio
 
       // Map 'comfyui' provider to 'ollama' for prompt refinement
       // ComfyUI is used automatically for actual image generation

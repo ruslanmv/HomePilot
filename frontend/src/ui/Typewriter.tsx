@@ -1,18 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 
 export default function Typewriter({ text, speed = 14 }: { text: string, speed?: number }) {
-const [out, setOut] = useState('')
+  const [out, setOut] = useState('')
+  const indexRef = useRef(0)
+  const speedRef = useRef(speed)
 
-useEffect(() => {
-setOut('')
-let i = 0
-const t = setInterval(() => {
-i++
-setOut(text.slice(0, i))
-if (i >= text.length) clearInterval(t)
-}, speed)
-return () => clearInterval(t)
-}, [text, speed])
+  // Update speed without restarting typing
+  useEffect(() => {
+    speedRef.current = speed
+  }, [speed])
 
-return <span>{out}</span>
+  // Restart typing ONLY when text changes (speed removed from deps)
+  useEffect(() => {
+    setOut('')
+    indexRef.current = 0
+    const t = setInterval(() => {
+      indexRef.current++
+      setOut(text.slice(0, indexRef.current))
+      if (indexRef.current >= text.length) clearInterval(t)
+    }, speedRef.current)
+    return () => clearInterval(t)
+  }, [text]) // speed removed - uses speedRef instead
+
+  return <span>{out}</span>
 }

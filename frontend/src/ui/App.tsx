@@ -17,10 +17,10 @@ import {
   PlugZap,
   Trash2,
   Tv2,
+  Plus,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
-import VoiceMode from './VoiceModeGrok'
-// Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
+import VoiceMode from './VoiceMode'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
 import AnimateView from './Animate'
@@ -29,7 +29,6 @@ import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
-import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -99,33 +98,62 @@ type Conversation = {
 function Typewriter({ text, speed = 10 }: { text: string; speed?: number }) {
   const [displayedText, setDisplayedText] = useState('')
   const indexRef = useRef(0)
+  const speedRef = useRef(speed)
+  const lastTextRef = useRef('') // Track the last text content to detect actual changes
+  const displayedRef = useRef('') // Mirror of displayedText for non-stale access in effect
 
-  // Reset when text changes (e.g. if we switch messages or streaming updates)
+  // Keep displayedRef in sync with displayedText
   useEffect(() => {
-    // If text is already fully displayed, don't reset (prevents flickering on re-renders)
-    if (text.startsWith(displayedText) && displayedText.length > 0 && text.length > displayedText.length) {
-       // Continue typing from current position
-    } else if (text !== displayedText && !text.startsWith(displayedText)) {
-       // New text content entirely
-       setDisplayedText('')
-       indexRef.current = 0
-    } else if (text === displayedText) {
-       return 
+    displayedRef.current = displayedText
+  }, [displayedText])
+
+  // Update speed without restarting typing
+  useEffect(() => {
+    speedRef.current = speed
+  }, [speed])
+
+  // Main typing effect - only restarts when text CONTENT actually changes
+  useEffect(() => {
+    // Check if the text content actually changed
+    const textChanged = lastTextRef.current !== text
+
+    if (!textChanged) {
+      // Text content is the same - check if we need to resume or skip
+      if (indexRef.current >= text.length) {
+        // Already fully typed - do nothing
+        return
+      }
+      // Otherwise, continue typing from where we left off
+    } else {
+      // Text content changed
+      lastTextRef.current = text
+
+      // If new text is a continuation of current display, continue typing
+      const currentDisplay = displayedRef.current
+      if (text.startsWith(currentDisplay) && currentDisplay.length > 0) {
+        // Continue from current position
+        indexRef.current = currentDisplay.length
+      } else {
+        // Completely new text - reset
+        setDisplayedText('')
+        displayedRef.current = ''
+        indexRef.current = 0
+      }
     }
-  }, [text, displayedText])
 
-  useEffect(() => {
     const timer = setInterval(() => {
       if (indexRef.current < text.length) {
-        setDisplayedText((prev) => text.slice(0, indexRef.current + 1))
         indexRef.current++
+        const newText = text.slice(0, indexRef.current)
+        setDisplayedText(newText)
+        displayedRef.current = newText
       } else {
         clearInterval(timer)
       }
-    }, speed)
+    }, speedRef.current)
 
     return () => clearInterval(timer)
-  }, [text, speed])
+  }, [text])
 
   return <span>{displayedText}</span>
 }
@@ -667,6 +695,10 @@ function Sidebar({
   onSaveSettings,
   showHistory,
   setShowHistory,
+  conversations,
+  onLoadConversation,
+  onDeleteConversation,
+  currentConversationId,
 }: {
   mode: Mode
   setMode: (m: Mode) => void
@@ -680,6 +712,10 @@ function Sidebar({
   onSaveSettings: () => void
   showHistory: boolean
   setShowHistory: React.Dispatch<React.SetStateAction<boolean>>
+  conversations: Conversation[]
+  onLoadConversation: (convId: string) => void
+  onDeleteConversation: (convId: string) => void
+  currentConversationId: string
 }) {
   return (
     <aside className="w-[280px] flex-shrink-0 flex flex-col h-full bg-black border-r border-white/5 py-4 px-3 gap-3 relative">
@@ -735,13 +771,43 @@ function Sidebar({
 
         <button
           type="button"
-          className="w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
+          className="w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors flex items-center gap-2"
           onClick={onNewConversation}
         >
+          <Plus size={14} className="flex-shrink-0" />
           New conversation
         </button>
 
-        {messages.length > 0 ? (
+        {conversations.map((conv) => (
+          <div key={conv.conversation_id} className="relative group">
+            <button
+              type="button"
+              className={[
+                'w-full text-left px-3 py-2 text-[13px] rounded-xl truncate transition-colors pr-8',
+                conv.conversation_id === currentConversationId
+                  ? 'bg-white/10 text-white'
+                  : 'text-white/60 hover:bg-white/5 hover:text-white',
+              ].join(' ')}
+              onClick={() => onLoadConversation(conv.conversation_id)}
+              title={conv.last_content}
+            >
+              {conv.last_content?.slice(0, 34) || 'Conversation…'}
+              {conv.last_content && conv.last_content.length > 34 ? '…' : ''}
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeleteConversation(conv.conversation_id)
+              }}
+              className="absolute top-1.5 right-1.5 p-1 rounded-lg text-white/20 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+              title="Delete conversation"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+
+        {conversations.length === 0 && messages.length > 0 ? (
           <button
             type="button"
             className="w-full text-left px-3 py-2 text-[13px] text-white/60 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
@@ -1173,25 +1239,17 @@ type OllamaChatResponse = {
 }
 
 export default function App() {
-  // Core State - Separate sessions for Chat and Voice (ephemeral voice like Alexa/Grok)
-  const [chatMessages, setChatMessages] = useState<Msg[]>([])
-  const [voiceMessages, setVoiceMessages] = useState<Msg[]>([])
+  // Core State
+  const [messages, setMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
-  const [chatConversationId, setChatConversationId] = useState<string>(() => {
+  const [conversationId, setConversationId] = useState<string>(() => {
     return localStorage.getItem('homepilot_conversation') || uuid()
   })
-  const [voiceConversationId, setVoiceConversationId] = useState<string>(() => uuid())
   const [lightbox, setLightbox] = useState<string | null>(null)
 
   const [mode, setMode] = useState<Mode>(() => {
     return (localStorage.getItem('homepilot_mode') as Mode) || 'chat'
   })
-
-  // Route messages and conversation ID based on mode (Voice is ephemeral like Alexa/Grok)
-  const messages = mode === 'voice' ? voiceMessages : chatMessages
-  const setMessages = mode === 'voice' ? setVoiceMessages : setChatMessages
-  const conversationId = mode === 'voice' ? voiceConversationId : chatConversationId
-  const setConversationId = mode === 'voice' ? setVoiceConversationId : setChatConversationId
 
   // Studio variant: "play" for Play Studio (StudioView), "creator" for Creator Studio
   const [studioVariant, setStudioVariant] = useState<"play" | "creator">("play")
@@ -1293,17 +1351,9 @@ export default function App() {
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Persist chat conversation (not voice - voice is ephemeral)
-  useEffect(() => localStorage.setItem('homepilot_conversation', chatConversationId), [chatConversationId])
+  // Persist
+  useEffect(() => localStorage.setItem('homepilot_conversation', conversationId), [conversationId])
   useEffect(() => localStorage.setItem('homepilot_mode', mode), [mode])
-
-  // Clear voice session when exiting Voice mode (ephemeral like Alexa/Grok)
-  useEffect(() => {
-    if (mode !== 'voice') {
-      setVoiceMessages([])
-      setVoiceConversationId(uuid())
-    }
-  }, [mode])
 
   // Listen for switch-to-animate events from Imagine (Grok-style handoff)
   useEffect(() => {
@@ -1585,17 +1635,20 @@ export default function App() {
         // Remove from local conversations list
         setConversations((prev) => prev.filter((c) => c.conversation_id !== convId))
 
-        // If we're currently viewing this conversation, clear the messages
+        // If we're currently viewing this conversation, start a fresh one
         if (conversationId === convId) {
           setMessages([])
-          setConversationId('')
+          setConversationId(uuid())
         }
+
+        // Refresh the conversation list
+        fetchConversations()
       }
     } catch (err) {
       console.error('Failed to delete conversation:', err)
       alert(`Failed to delete conversation: ${err}`)
     }
-  }, [settings.backendUrl, authHeaders, conversationId])
+  }, [settings.backendUrl, authHeaders, conversationId, fetchConversations])
 
   // Load project info on mount if project mode is active
   useEffect(() => {
@@ -1623,7 +1676,11 @@ export default function App() {
     loadProjectInfo()
   }, [mode, settings.backendUrl, authHeaders])
 
-  // Fetch conversations when history panel is opened
+  // Fetch conversations on mount and when history panel is opened
+  useEffect(() => {
+    fetchConversations()
+  }, [fetchConversations])
+
   useEffect(() => {
     if (showHistory) {
       fetchConversations()
@@ -1652,34 +1709,6 @@ export default function App() {
 
       // Get current project ID from localStorage if user selected one
       const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
-
-      // Get voice personality system prompt for voice mode
-      // Wraps with brevity instruction for natural spoken conversation
-      let voiceSystemPrompt: string | undefined = undefined
-      if (mode === 'voice') {
-        const personalityId = localStorage.getItem('homepilot_personality_id')
-        let personalityPrompt = ''
-        if (personalityId === 'custom') {
-          // Custom personality: use user-defined instructions from localStorage
-          personalityPrompt = localStorage.getItem('homepilot_custom_personality_prompt') || ''
-        } else if (personalityId) {
-          const caps = PERSONALITY_CAPS[personalityId as PersonalityId]
-          if (caps) {
-            personalityPrompt = caps.systemPrompt
-          }
-        }
-        // Wrap with voice-mode constraints for natural spoken output
-        voiceSystemPrompt = `${personalityPrompt || 'You are a helpful voice assistant.'}
-
-VOICE MODE RULES (absolute, override everything above if conflict):
-- This is a real-time spoken conversation. Reply in 1-2 short sentences.
-- Talk like a real person. No lists, no markdown, no bullet points.
-- NEVER use asterisks or stage directions like *smiles* *winks* *leans in*. Just speak naturally.
-- NEVER say "I'm an AI", "I'm designed to", "As an AI". Stay in character always.
-- NEVER recite poetry or give speeches. Just have a conversation.
-- Respond directly to what the user said. Don't deflect or change the subject.
-- Match their energy. Short question = short answer. Playful = playful. Serious = serious.`
-      }
 
       try {
         // Always call backend - it will route to the correct provider
@@ -1711,8 +1740,6 @@ VOICE MODE RULES (absolute, override everything above if conflict):
             vidMotion: settingsDraft.vidMotion,
             vidModel: settingsDraft.modelVideo,
             nsfwMode: settingsDraft.nsfwMode,
-            // Voice mode personality system prompt
-            voiceSystemPrompt,
           },
           authHeaders
         )
@@ -1725,43 +1752,26 @@ VOICE MODE RULES (absolute, override everything above if conflict):
           )
         )
 
-        // Dispatch assistant message to VoiceModeGrok for typewriter animation
-        if (mode === 'voice' && typeof window !== 'undefined') {
-          window.dispatchEvent(
-            new CustomEvent('hp:assistant_message', {
-              detail: { id: tmpId, text: data.text ?? '…' },
-            })
-          )
-        }
-
         if (data.conversation_id && data.conversation_id !== conversationId) {
           setConversationId(data.conversation_id)
         }
-      } catch (err: any) {
-        const errorText = `Error: ${
-          typeof err?.message === 'string' ? err.message : 'backend unreachable.'
-        }`
 
+        // Refresh conversation list so sidebar stays up to date
+        fetchConversations()
+      } catch (err: any) {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
               ? {
                   ...m,
                   pending: false,
-                  text: errorText,
+                  text: `Error: ${
+                    typeof err?.message === 'string' ? err.message : 'backend unreachable.'
+                  }`,
                 }
               : m
           )
         )
-
-        // Dispatch error message to VoiceModeGrok for typewriter animation
-        if (mode === 'voice' && typeof window !== 'undefined') {
-          window.dispatchEvent(
-            new CustomEvent('hp:assistant_message', {
-              detail: { id: tmpId, text: errorText },
-            })
-          )
-        }
       }
     },
     [
@@ -1772,6 +1782,7 @@ VOICE MODE RULES (absolute, override everything above if conflict):
       settings.backendUrl,
       settings.funMode,
       settingsDraft,
+      fetchConversations,
     ]
   )
 
@@ -2056,6 +2067,10 @@ VOICE MODE RULES (absolute, override everything above if conflict):
         onSaveSettings={onSaveSettings}
         showHistory={showHistory}
         setShowHistory={setShowHistory}
+        conversations={conversations}
+        onLoadConversation={loadConversation}
+        onDeleteConversation={deleteConversation}
+        currentConversationId={conversationId}
       />
 
       <main className="flex-1 flex flex-col relative min-w-0">
@@ -2071,9 +2086,19 @@ VOICE MODE RULES (absolute, override everything above if conflict):
           />
         )}
 
-        {/* Top-right Project Indicator - Only shown in chat mode when a project is active */}
+        {/* Top-right header - New Chat button + Project Indicator */}
         {mode === 'chat' && (
         <header className="absolute top-0 right-0 p-5 z-20 flex items-center gap-4">
+          {/* New Chat Button */}
+          <button
+            type="button"
+            onClick={onNewConversation}
+            className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/15 text-white/80 hover:text-white text-xs font-medium px-3 py-1.5 rounded-full border border-white/10 hover:border-white/20 transition-all"
+            title="New Chat"
+          >
+            <Plus size={14} />
+            <span>New Chat</span>
+          </button>
           {/* Project Indicator */}
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')

@@ -37,7 +37,7 @@ export interface ModelSettings {
 export const MODEL_ARCHITECTURES: Record<string, Architecture> = {
   // --- SDXL Models (Native 1024x1024) ---
   "sd_xl_base_1.0.safetensors": "sdxl",
-  "ponyDiffusionV6XL.safetensors": "sdxl",
+  "ponyDiffusionV6XL_v6.safetensors": "sdxl",
 
   // --- Flux Models (Native 1024+, Special Steps / CFG behavior) ---
   "flux1-schnell.safetensors": "flux_schnell",

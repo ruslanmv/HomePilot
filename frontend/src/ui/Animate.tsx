@@ -300,6 +300,11 @@ export default function AnimateView(props: AnimateParams) {
   const [customResolution, setCustomResolution] = useState<string>('auto')  // 'auto' | 'low' | 'medium' | 'high' | 'ultra'
   const [availableResolutions, setAvailableResolutions] = useState<ResolutionOption[]>([])
 
+  // Debug: Log when customResolution changes
+  useEffect(() => {
+    console.log(`[Animate] customResolution state changed to: ${customResolution}`)
+  }, [customResolution])
+
   // Preset defaults from API (model-specific)
   const [presetDefaults, setPresetDefaults] = useState<PresetValues>(FALLBACK_ADVANCED_PARAMS)
 
@@ -383,31 +388,98 @@ export default function AnimateView(props: AnimateParams) {
   }, [props.backendUrl, authKey, detectedModelType, qualityPreset])
 
   // Update available resolutions when aspect ratio changes
+  // Goal: show only resolutions that are actually supported by the current model + aspect ratio.
+  // This is additive: if anything fails, we fall back to "Auto (Preset)".
   useEffect(() => {
-    if (rawAspectRatioData.length === 0) return
+    let cancelled = false
 
-    const currentRatioData = rawAspectRatioData.find((ar: any) => ar.id === aspectRatio)
-    if (currentRatioData?.dimensions) {
-      const presetLabels: Record<string, string> = {
-        test: 'Lowest (6GB)',
-        low: 'Low (8GB)',
-        medium: 'Medium (12GB)',
-        high: 'High (16GB)',
-        ultra: 'Ultra (24GB+)',
-      }
-      const resolutions: ResolutionOption[] = Object.entries(currentRatioData.dimensions)
-        .filter(([_, dims]: [string, any]) => dims?.width && dims?.height)
-        .map(([preset, dims]: [string, any]) => ({
-          id: preset,
-          label: `${dims.width}×${dims.height} ${presetLabels[preset] || preset}`,
-          width: dims.width,
-          height: dims.height,
-        }))
-      setAvailableResolutions(resolutions)
-      // Reset to auto when aspect ratio changes
-      setCustomResolution('auto')
+    const presetLabels: Record<string, string> = {
+      low: 'Low (8GB)',
+      medium: 'Medium (12GB)',
+      high: 'High (16GB)',
+      ultra: 'Ultra (24GB+)',
     }
-  }, [aspectRatio, rawAspectRatioData])
+
+    async function buildResolutionOptions() {
+      // Always reset to Auto when aspect ratio changes
+      console.log('[Animate] Resetting customResolution to auto (aspect ratio changed)')
+      setCustomResolution('auto')
+
+      if (!rawAspectRatioData.length) {
+        setAvailableResolutions([])
+        return
+      }
+
+      // 1) Best-case: backend provides a map like { low:{w,h}, medium:{w,h}, ... }
+      const currentRatioData = rawAspectRatioData.find((ar: any) => ar.id === aspectRatio)
+      const dimsMaybeMap = currentRatioData?.dimensions
+      const looksLikeMap = dimsMaybeMap && typeof dimsMaybeMap === 'object' && !('width' in dimsMaybeMap)
+
+      if (looksLikeMap) {
+        const resolutions: ResolutionOption[] = Object.entries(dimsMaybeMap)
+          .filter(([_, dims]: [string, any]) => dims?.width && dims?.height)
+          .map(([preset, dims]: [string, any]) => ({
+            id: preset,
+            label: `${dims.width}×${dims.height} ${presetLabels[preset] || preset}`,
+            width: dims.width,
+            height: dims.height,
+          }))
+        if (!cancelled) setAvailableResolutions(resolutions)
+        return
+      }
+
+      // 2) Current backend behavior: dimensions is {width,height} for the selected preset only.
+      // Probe /video-presets for each preset and collect width/height.
+      try {
+        const base = props.backendUrl.replace(/\/+$/, '')
+        const modelParam = detectedModelType ? `&model=${encodeURIComponent(detectedModelType)}` : ''
+        const arParam = `&aspect_ratio=${encodeURIComponent(aspectRatio)}`
+        const presetsToProbe: Array<'low' | 'medium' | 'high' | 'ultra'> = ['low', 'medium', 'high', 'ultra']
+
+        const results = await Promise.all(
+          presetsToProbe.map(async (p) => {
+            const url = `${base}/video-presets?preset=${p}${modelParam}${arParam}`
+            const res = await fetch(url, { headers: authKey ? { 'x-api-key': authKey } : undefined })
+            if (!res.ok) return null
+            const data = await res.json().catch(() => null)
+            const w = data?.values?.width
+            const h = data?.values?.height
+            if (!w || !h) return null
+            return { preset: p, width: w, height: h }
+          })
+        )
+
+        // De-dupe by WxH (some presets intentionally share same size)
+        const seen = new Set<string>()
+        const resolutions: ResolutionOption[] = []
+        for (const r of results) {
+          if (!r) continue
+          const key = `${r.width}x${r.height}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          resolutions.push({
+            id: r.preset,
+            label: `${r.width}×${r.height} ${presetLabels[r.preset] || r.preset}`,
+            width: r.width,
+            height: r.height,
+          })
+        }
+
+        // Sort by resolution (smallest to largest)
+        resolutions.sort((a, b) => (a.width * a.height) - (b.width * b.height))
+
+        if (!cancelled) setAvailableResolutions(resolutions)
+      } catch (e) {
+        console.warn('[Animate] Failed to build available resolutions:', e)
+        if (!cancelled) setAvailableResolutions([])
+      }
+    }
+
+    buildResolutionOptions()
+    return () => {
+      cancelled = true
+    }
+  }, [aspectRatio, rawAspectRatioData, props.backendUrl, authKey, detectedModelType])
 
   // Helper to get preview dimensions for aspect ratio thumbnails
   function getPreviewDimension(ratioId: string, dimension: 'width' | 'height'): number {
@@ -710,6 +782,16 @@ export default function AnimateView(props: AnimateParams) {
         : qualityPreset === 'a100' ? 'high'
         : qualityPreset
 
+      // Use custom resolution's preset if selected, otherwise use hardware preset
+      const effectiveVideoPreset = customResolution !== 'auto' ? customResolution : videoPreset
+
+      console.log('[Animate] Resolution selection:', {
+        customResolution,
+        videoPreset,
+        effectiveVideoPreset,
+        customResDims: customResDims ? `${customResDims.width}x${customResDims.height}` : 'auto',
+      })
+
       const requestBody: any = {
         message: animateMessage,
         mode: 'animate',
@@ -719,7 +801,7 @@ export default function AnimateView(props: AnimateParams) {
         vidFps: fps,
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
-        vidPreset: videoPreset,
+        vidPreset: effectiveVideoPreset,
         vidAspectRatio: aspectRatio,
 
         // Advanced parameters (when enabled)
@@ -729,11 +811,6 @@ export default function AnimateView(props: AnimateParams) {
           vidDenoise: customDenoise,
           ...(seedLock && { vidSeed: customSeed }),
           ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
-          // Custom resolution override (for testing different VRAM requirements)
-          ...(customResDims && {
-            imgWidth: customResDims.width,
-            imgHeight: customResDims.height,
-          }),
         }),
 
         // Provider settings
@@ -841,7 +918,20 @@ export default function AnimateView(props: AnimateParams) {
   const handleDelete = useCallback((item: AnimateItem, e: React.MouseEvent) => {
     e.stopPropagation()
     if (!confirm('Delete this video from gallery?')) return
-    setItems((prev) => prev.filter((x) => x.id !== item.id))
+
+    // Update state and explicitly persist to localStorage
+    setItems((prev) => {
+      const updated = prev.filter((x) => x.id !== item.id)
+      // Explicitly persist deletion to localStorage immediately
+      try {
+        localStorage.setItem('homepilot_animate_items', JSON.stringify(updated))
+        console.log('[Animate] Deleted item and persisted to localStorage:', item.id)
+      } catch (error) {
+        console.error('[Animate] Failed to persist deletion:', error)
+      }
+      return updated
+    })
+
     if (selectedVideo?.id === item.id) setSelectedVideo(null)
   }, [selectedVideo])
 
@@ -902,6 +992,16 @@ export default function AnimateView(props: AnimateParams) {
         : qualityPreset === 'a100' ? 'high'
         : qualityPreset
 
+      // Use custom resolution's preset if selected, otherwise use hardware preset
+      const effectiveVideoPreset = customResolution !== 'auto' ? customResolution : videoPreset
+
+      console.log('[Animate] Regenerate resolution selection:', {
+        customResolution,
+        videoPreset,
+        effectiveVideoPreset,
+        customResDims: customResDims ? `${customResDims.width}x${customResDims.height}` : 'auto',
+      })
+
       const requestBody: any = {
         message: animateMessage,
         mode: 'animate',
@@ -909,7 +1009,7 @@ export default function AnimateView(props: AnimateParams) {
         vidFps: fps,
         vidMotion: motion,
         vidModel: props.modelVideo || undefined,
-        vidPreset: videoPreset,
+        vidPreset: effectiveVideoPreset,
         vidAspectRatio: aspectRatio,
         // When we have an existing source image, tell backend to skip image generation
         // The prompt should only affect the animation, not regenerate the source
@@ -920,11 +1020,6 @@ export default function AnimateView(props: AnimateParams) {
           vidDenoise: customDenoise,
           ...(seedLock && { vidSeed: customSeed }),
           ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
-          // Custom resolution override
-          ...(customResDims && {
-            imgWidth: customResDims.width,
-            imgHeight: customResDims.height,
-          }),
         }),
         provider: props.providerVideo === 'comfyui' ? 'ollama' : props.providerVideo,
         provider_base_url: props.baseUrlVideo || undefined,
@@ -1110,7 +1205,10 @@ export default function AnimateView(props: AnimateParams) {
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
                     <button
-                      onClick={() => setCustomResolution('auto')}
+                      onClick={() => {
+                        console.log('[Animate] Resolution clicked: auto')
+                        setCustomResolution('auto')
+                      }}
                       className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
                         customResolution === 'auto'
                           ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
@@ -1122,7 +1220,10 @@ export default function AnimateView(props: AnimateParams) {
                     {availableResolutions.map((r) => (
                       <button
                         key={r.id}
-                        onClick={() => setCustomResolution(r.id)}
+                        onClick={() => {
+                          console.log(`[Animate] Resolution clicked: ${r.id} (${r.width}×${r.height})`)
+                          setCustomResolution(r.id)
+                        }}
                         title={`${r.width}×${r.height}`}
                         className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
                           customResolution === r.id

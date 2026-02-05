@@ -130,11 +130,73 @@ def check_comfy_nodes_available(node_names: List[str], base_url: str = None) -> 
     # Check if any of the nodes exist
     return any(name in object_info for name in node_names)
 
+# ---------------------------------------------------------------------------
+# Video model filename patterns – used to distinguish video from image models
+# when dynamically discovering checkpoints on disk.
+# ---------------------------------------------------------------------------
+VIDEO_MODEL_PATTERNS = (
+    "svd",          # Stable Video Diffusion (svd.safetensors, svd_xt.safetensors, svd_xt_1_1.safetensors)
+    "ltx-video",    # LTX-Video
+    "ltx_video",    # LTX-Video (underscore variant)
+    "hunyuanvideo", # HunyuanVideo
+    "wan2",         # Wanxian 2.x
+    "mochi",        # Mochi preview
+    "cogvideo",     # CogVideoX
+    "animatediff",  # AnimateDiff
+    "videocrafter", # VideoCrafter
+    "modelscope",   # ModelScope text-to-video
+    "zeroscope",    # Zeroscope video
+    "hotshot",      # Hotshot-XL video
+)
+
+# Inpainting / edit model patterns – should not appear in image or video lists
+EDIT_MODEL_PATTERNS = (
+    "inpainting",
+    "inpaint",
+)
+
+
+def _is_video_model(filename: str) -> bool:
+    """Return True if *filename* looks like a video generation model."""
+    lower = filename.lower()
+    return any(pat in lower for pat in VIDEO_MODEL_PATTERNS)
+
+
+def _is_edit_model(filename: str) -> bool:
+    """Return True if *filename* looks like an inpainting / edit model."""
+    lower = filename.lower()
+    return any(pat in lower for pat in EDIT_MODEL_PATTERNS)
+
+
+def _discover_checkpoint_files(models_path: Path) -> List[str]:
+    """
+    Dynamically scan the checkpoints directory for model files that are not
+    in the hardcoded known-model lists.  Returns a list of filenames.
+    """
+    checkpoints_dir = models_path / "checkpoints"
+    if not checkpoints_dir.exists():
+        return []
+
+    discovered: List[str] = []
+    for ext in ("*.safetensors", "*.ckpt", "*.pth"):
+        for f in checkpoints_dir.glob(ext):
+            try:
+                if f.is_file() and f.stat().st_size > 0:
+                    discovered.append(f.name)
+            except OSError:
+                continue
+    return discovered
+
+
 def scan_installed_models(model_type: str = "image") -> List[str]:
     """
     Scan filesystem for actually installed ComfyUI models.
     Returns list of catalog IDs (filenames) that are installed.
     This matches the IDs used in model_catalog_data.json for proper UI display.
+
+    For "image" and "video" types, also dynamically discovers checkpoint files
+    on disk and classifies them using VIDEO_MODEL_PATTERNS so that video models
+    never leak into the image list and vice-versa.
     """
     models_path = get_comfy_models_path()
     installed = []
@@ -150,7 +212,7 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
             "sd15.safetensors": models_path / "checkpoints" / "v1-5-pruned-emaonly.safetensors",
             "realisticVisionV51.safetensors": models_path / "checkpoints" / "realisticVisionV51.safetensors",
             # NSFW models (shown when Spice Mode enabled)
-            "ponyDiffusionV6XL.safetensors": models_path / "checkpoints" / "ponyDiffusionV6XL.safetensors",
+            "ponyDiffusionV6XL_v6.safetensors": models_path / "checkpoints" / "ponyDiffusionV6XL_v6.safetensors",
             "dreamshaper_8.safetensors": models_path / "checkpoints" / "dreamshaper_8.safetensors",
             "deliberate_v3.safetensors": models_path / "checkpoints" / "deliberate_v3.safetensors",
             "epicrealism_pureEvolution.safetensors": models_path / "checkpoints" / "epicrealism_pureEvolution.safetensors",
@@ -161,6 +223,7 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
             "majicmixRealistic_v7.safetensors": models_path / "checkpoints" / "majicmixRealistic_v7.safetensors",
             "bbmix_v4.safetensors": models_path / "checkpoints" / "bbmix_v4.safetensors",
             "realisian_v50.safetensors": models_path / "checkpoints" / "realisian_v50.safetensors",
+            "abyssOrangeMix3_aom3a1b.safetensors": models_path / "checkpoints" / "abyssOrangeMix3_aom3a1b.safetensors",
         }
     elif model_type == "video":
         checks = {
@@ -234,10 +297,33 @@ def scan_installed_models(model_type: str = "image") -> List[str]:
         # Unknown model_type, return empty
         checks = {}
 
-    # Check which models are actually installed
+    # Check which models are actually installed (from the known list)
     for catalog_id, model_path in checks.items():
         if model_path.exists() and model_path.stat().st_size > 0:
             installed.append(catalog_id)
+
+    # -----------------------------------------------------------------------
+    # Dynamic discovery: also scan the checkpoints directory for model files
+    # that are NOT in our hardcoded lists.  Classify them as image or video
+    # based on filename patterns so that video models never appear in the
+    # image dropdown and vice-versa.
+    # -----------------------------------------------------------------------
+    if model_type in ("image", "video"):
+        # Collect all catalog IDs we already know about (across ALL types)
+        # so we don't duplicate them.
+        all_known_ids = set(checks.keys())
+
+        for filename in _discover_checkpoint_files(models_path):
+            if filename in all_known_ids:
+                continue  # already handled by the hardcoded list
+
+            is_video = _is_video_model(filename)
+            is_edit = _is_edit_model(filename)
+
+            if model_type == "image" and not is_video and not is_edit:
+                installed.append(filename)
+            elif model_type == "video" and is_video and not is_edit:
+                installed.append(filename)
 
     return installed
 

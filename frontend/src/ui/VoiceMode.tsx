@@ -1,6 +1,126 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Mic, MicOff, Settings, Volume2, VolumeX, Zap, Radio, X } from "lucide-react";
 import { useVoiceController, VoiceState } from "./voice/useVoiceController";
+
+/**
+ * Smoothed audio level hook with attack/release dynamics
+ * Fast attack for responsiveness, slower release for natural decay
+ */
+function useSmoothedLevel(level: number) {
+  const [smooth, setSmooth] = useState(0);
+  const lastRef = useRef(0);
+  const frameRef = useRef<number>();
+
+  useEffect(() => {
+    const update = () => {
+      const attack = 0.55;
+      const release = 0.12;
+      const target = Math.max(0, Math.min(1, level));
+
+      const prev = lastRef.current;
+      const next = target > prev
+        ? prev + (target - prev) * attack
+        : prev + (target - prev) * release;
+
+      lastRef.current = next;
+      setSmooth(next);
+      frameRef.current = requestAnimationFrame(update);
+    };
+
+    frameRef.current = requestAnimationFrame(update);
+    return () => {
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    };
+  }, [level]);
+
+  return smooth;
+}
+
+/**
+ * Intensity-based color mapping for professional audio meter look
+ * Low = cool white/gray, Medium = icy blue, High = purple, Peak = warm orange
+ */
+function intensityColor(level01: number): string {
+  if (level01 < 0.35) return 'rgba(255,255,255,0.65)';
+  if (level01 < 0.70) return 'rgba(151,196,255,0.85)';  // icy blue
+  if (level01 < 0.90) return 'rgba(190,120,255,0.90)';  // purple
+  return 'rgba(255,170,100,0.95)';                       // warm/hot
+}
+
+/**
+ * Professional mini studio meter - enterprise-quality audio visualization
+ * Features: attack/release smoothing, intensity-based colors, micro jitter for liveliness
+ */
+function MiniStudioMeter({
+  audioLevel,
+  isUserActive,
+  isAiSpeaking,
+}: {
+  audioLevel: number;     // voice.audioLevel (0..~0.2)
+  isUserActive: boolean;  // LISTENING/IDLE in hands-free
+  isAiSpeaking: boolean;  // SPEAKING state
+}) {
+  // Normalize audioLevel to 0..1 range (multiplier tuned for sensitivity)
+  const norm = Math.max(0, Math.min(1, audioLevel * 8));
+  const level = useSmoothedLevel(norm);
+
+  // Idle mode: subtle static bars
+  const idle = !isUserActive || level < 0.04;
+
+  // Micro jitter only when active for "alive" feel
+  const jitterRef = useRef(0);
+  useEffect(() => {
+    if (!idle) {
+      const interval = setInterval(() => {
+        jitterRef.current = Math.random() * 0.06 - 0.03;
+      }, 50);
+      return () => clearInterval(interval);
+    }
+  }, [idle]);
+
+  // 5 bars with different sensitivity thresholds
+  const barThresholds = [0.10, 0.22, 0.38, 0.55, 0.72];
+  const bars = barThresholds.map((t) => {
+    const v = (level - (t - 0.12)) / 0.25;
+    const clamped = Math.max(0, Math.min(1, v));
+    return idle ? 0.18 : Math.max(0.12, clamped + (idle ? 0 : jitterRef.current));
+  });
+
+  // Color by intensity, shift to neutral white when AI speaking
+  const baseColor = intensityColor(level);
+  const barColor = isAiSpeaking ? 'rgba(233,232,231,0.85)' : baseColor;
+
+  // Glow effect based on state
+  const glowStyle = idle
+    ? {}
+    : isAiSpeaking
+      ? { filter: 'drop-shadow(0 0 6px rgba(233,232,231,0.25))' }
+      : { filter: `drop-shadow(0 0 ${4 + level * 8}px ${barColor})` };
+
+  return (
+    <div
+      className={`flex items-end gap-[2px] h-4 transition-opacity duration-200 ${
+        idle ? 'opacity-55' : 'opacity-100'
+      }`}
+      style={glowStyle}
+      aria-hidden="true"
+    >
+      {bars.map((b, i) => (
+        <span
+          key={i}
+          className="rounded-full transition-transform duration-[70ms]"
+          style={{
+            width: '2.5px',
+            height: '100%',
+            background: idle ? 'rgba(255,255,255,0.28)' : barColor,
+            transform: `scaleY(${b})`,
+            transformOrigin: 'bottom',
+          }}
+        />
+      ))}
+    </div>
+  );
+}
 
 // Grok-like colors and styles
 const THEME = {
@@ -32,6 +152,19 @@ export default function VoiceMode({
 
   const voice = useVoiceController(onSendText);
 
+  // Auto-enable hands-free mode when Voice mode opens so it starts listening immediately
+  const autoStartRef = useRef(false);
+  useEffect(() => {
+    if (!autoStartRef.current && window.SpeechService && !voice.isHandsFree) {
+      autoStartRef.current = true;
+      // Small delay to let audio context initialize
+      const timer = setTimeout(() => {
+        voice.setHandsFree(true);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [voice.isHandsFree, voice.setHandsFree]);
+
   // Check if speech service is available
   if (!window.SpeechService) {
     return (
@@ -52,7 +185,9 @@ export default function VoiceMode({
 
   return (
     <div className="flex-1 flex items-center justify-center px-4 py-8">
-      <div className={`w-full max-w-2xl mx-auto rounded-3xl border ${THEME.border} ${THEME.surface} overflow-hidden shadow-2xl transition-all duration-300`}>
+      {/* Anchor wrapper for Grok-like floating personality popover */}
+      <div className="relative">
+        <div className={`w-full max-w-2xl rounded-3xl border ${THEME.border} ${THEME.surface} overflow-hidden shadow-2xl transition-all duration-300`} style={{ minWidth: '640px' }}>
         {/* Header */}
         <div className={`flex items-center justify-between px-6 py-4 border-b ${THEME.border}`}>
           <div className="flex items-center gap-3">
@@ -156,27 +291,6 @@ export default function VoiceMode({
           </div>
         </div>
 
-        {/* Settings Expandable */}
-        {showVoiceSettings && (
-          <div className={`px-6 py-4 border-t ${THEME.border} bg-[#111] animate-in slide-in-from-top-2`}>
-            <label className={`text-xs font-semibold uppercase tracking-wider ${THEME.textDim} mb-3 block`}>Voice Persona</label>
-            <select
-              className={`w-full bg-[#1a1a1a] border ${THEME.border} rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-white/30 transition-colors appearance-none cursor-pointer`}
-              value={voice.selectedVoice}
-              onChange={(e) => voice.setSelectedVoice(e.target.value)}
-            >
-              {voice.voices.length === 0 && <option value="">Loading voices...</option>}
-              {voice.voices.map((v) => (
-                <option key={v.voiceURI} value={v.voiceURI}>
-                  {v.name} ({v.lang})
-                </option>
-              ))}
-            </select>
-            <div className={`mt-2 text-[10px] ${THEME.textDim}`}>
-              Choose from {voice.voices.length} available voices
-            </div>
-          </div>
-        )}
 
         {/* Control Footer */}
         <div className={`p-4 border-t ${THEME.border} grid grid-cols-3 gap-3 bg-[#0f0f0f]`}>
@@ -192,7 +306,7 @@ export default function VoiceMode({
             <span className="text-[10px] font-medium uppercase tracking-wide">TTS {voice.isTtsEnabled ? 'On' : 'Off'}</span>
           </button>
 
-          {/* Main Mic Trigger */}
+          {/* Main Mic Trigger with Mini Level Meter */}
           <button
             onClick={() => {
               if (isListening) {
@@ -203,18 +317,26 @@ export default function VoiceMode({
                 voice.startManualListening();
               }
             }}
-            className={`flex flex-col items-center justify-center gap-1 py-3 rounded-xl transition-all shadow-lg ${
+            className={`flex items-center justify-center gap-3 py-3 px-5 rounded-full transition-all shadow-lg ${
               isListening
-                ? "bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20"
+                ? "bg-[#1a1a1a] text-white border border-white/20 hover:bg-[#252525]"
                 : voice.state === 'SPEAKING'
-                  ? "bg-blue-500/10 text-blue-500 border border-blue-500/20 hover:bg-blue-500/20"
-                  : "bg-white text-black hover:bg-gray-200"
+                  ? "bg-[#1a1a1a] text-blue-400 border border-blue-500/30 hover:bg-[#252525]"
+                  : "bg-[#1a1a1a] text-white/60 border border-white/10 hover:bg-[#252525] hover:text-white"
             }`}
           >
+            {/* Mini Studio Meter */}
+            <MiniStudioMeter
+              audioLevel={voice.audioLevel}
+              isUserActive={isListening || voice.state === 'IDLE'}
+              isAiSpeaking={voice.state === 'SPEAKING'}
+            />
+
+            {/* Mic Icon */}
             {voice.state === 'SPEAKING' ? (
-              <VolumeX size={24} strokeWidth={2.5} />
+              <VolumeX size={20} strokeWidth={2} />
             ) : (
-              <Mic size={24} strokeWidth={2.5} />
+              <Mic size={20} strokeWidth={2} className={isListening ? 'text-white' : ''} />
             )}
           </button>
 
@@ -234,6 +356,57 @@ export default function VoiceMode({
           </button>
 
         </div>
+      </div>
+
+        {/* Floating Personality Popover - Grok-style side panel */}
+        {showVoiceSettings && (
+          <div
+            className="absolute top-0 left-full ml-4 rounded-2xl border border-white/10 bg-[#161616]/95 backdrop-blur-xl shadow-2xl overflow-hidden animate-in slide-in-from-left-2 z-50"
+            style={{
+              width: '280px',
+              height: '100%',
+              maxHeight: '100%',
+            }}
+          >
+            <div className="h-full flex flex-col">
+              {/* Header */}
+              <div className="px-4 py-3 border-b border-white/10 bg-[#111]">
+                <div className="text-xs font-semibold uppercase tracking-wider text-white/50">Voice Persona</div>
+              </div>
+
+              {/* Voice List - scrollable */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+                {voice.voices.length === 0 ? (
+                  <div className="text-xs text-white/40 text-center py-4">Loading voices...</div>
+                ) : (
+                  voice.voices.map((v) => (
+                    <button
+                      key={v.voiceURI}
+                      onClick={() => voice.setSelectedVoice(v.voiceURI)}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all ${
+                        voice.selectedVoice === v.voiceURI
+                          ? 'bg-white text-black font-semibold'
+                          : 'text-white/80 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="font-medium truncate">{v.name}</div>
+                      <div className={`text-[10px] ${voice.selectedVoice === v.voiceURI ? 'text-black/60' : 'text-white/40'}`}>
+                        {v.lang}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-4 py-2.5 border-t border-white/10 bg-[#111]">
+                <div className="text-[10px] text-white/40">
+                  {voice.voices.length} voices available
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

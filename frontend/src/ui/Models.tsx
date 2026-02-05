@@ -160,7 +160,7 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       { id: 'sd15.safetensors', label: 'Stable Diffusion 1.5 (4GB)', nsfw: false },
       { id: 'realisticVisionV51.safetensors', label: 'Realistic Vision v5.1 (2GB)', nsfw: false },
       // NSFW models (shown when Spice Mode enabled)
-      { id: 'ponyDiffusionV6XL.safetensors', label: 'Pony Diffusion v6 XL (7GB)', nsfw: true },
+      { id: 'ponyDiffusionV6XL_v6.safetensors', label: 'Pony Diffusion v6 XL (7GB)', nsfw: true },
       { id: 'dreamshaper_8.safetensors', label: 'DreamShaper 8 (2GB)', nsfw: true, recommended_nsfw: true },
       { id: 'deliberate_v3.safetensors', label: 'Deliberate v3 (2GB)', nsfw: true },
       { id: 'epicrealism_pureEvolution.safetensors', label: 'epiCRealism Pure Evolution (2GB)', nsfw: true, recommended_nsfw: true },

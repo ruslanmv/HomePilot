@@ -17,3 +17,38 @@ font-feature-settings: "liga" 1, "calt" 1;
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 10px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+/* Grok-style floating personality popover animations */
+@keyframes slideInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-in {
+  animation: slideInFromLeft 0.2s ease-out forwards;
+}
+
+.slide-in-from-left-2 {
+  animation: slideInFromLeft 0.2s ease-out forwards;
+}
+
+/* Responsive: Stack personality panel below on smaller screens */
+@media (max-width: 1024px) {
+  .absolute.left-full {
+    position: absolute;
+    left: 50% !important;
+    top: calc(100% + 12px) !important;
+    transform: translateX(-50%);
+    margin-left: 0 !important;
+    width: 90% !important;
+    max-width: 320px !important;
+    height: auto !important;
+    max-height: 50vh !important;
+  }
+}
