@@ -57,7 +57,7 @@
       "positive": ["4", 0],
       "negative": ["5", 0],
       "latent_image": ["7", 0],
-      "seed": 0,
+      "seed": "{{seed}}",
       "steps": 25,
       "cfg": 7.0,
       "sampler_name": "euler_ancestral",
