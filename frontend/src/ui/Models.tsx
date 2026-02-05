@@ -140,15 +140,66 @@ type CivitaiSearchResponse = {
 const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
   ollama: {
     chat: [
+      // Standard Chat
       { id: 'llama3:8b', label: 'Llama 3 8B', recommended: true },
       { id: 'llama3:70b', label: 'Llama 3 70B' },
-      { id: 'llama3.1:8b', label: 'Llama 3.1 8B' },
+      { id: 'llama3.1', label: 'Llama 3.1 (8B)', recommended: true },
       { id: 'llama3.1:70b', label: 'Llama 3.1 70B' },
+      { id: 'llama3.2', label: 'Llama 3.2 (3B)', recommended: true },
       { id: 'mistral:7b', label: 'Mistral 7B' },
+      { id: 'mistral-nemo', label: 'Mistral Nemo (12B)', recommended: true },
       { id: 'mixtral:8x7b', label: 'Mixtral 8x7B' },
-      { id: 'qwen2.5:7b', label: 'Qwen 2.5 7B' },
+      { id: 'qwen2.5', label: 'Qwen 2.5 (7B)', recommended: true },
+      { id: 'gemma2', label: 'Gemma 2 (9B)' },
       { id: 'phi3:3.8b', label: 'Phi-3 3.8B' },
-      { id: 'gemma2:9b', label: 'Gemma 2 9B' },
+      { id: 'phi4', label: 'Phi-4 (14B)' },
+      { id: 'deepseek-r1:latest', label: 'DeepSeek R1 (7B)' },
+      // Uncensored & Roleplay (hidden when Spice Mode off)
+      { id: 'dolphin3', label: 'Dolphin 3.0 (8B)', nsfw: true, recommended_nsfw: true },
+      { id: 'dolphin-llama3', label: 'Dolphin Llama 3 (8B)', nsfw: true },
+      { id: 'dolphin-mistral', label: 'Dolphin Mistral (7B)', nsfw: true, recommended_nsfw: true },
+      { id: 'dolphin-mixtral:8x7b', label: 'Dolphin Mixtral (8x7B MoE)', nsfw: true },
+      { id: 'hermes3', label: 'Hermes 3 (8B)', nsfw: true, recommended_nsfw: true },
+      { id: 'solar', label: 'Solar (10.7B)', nsfw: true },
+      { id: 'wizardlm2', label: 'WizardLM2 (7B)', nsfw: true },
+      // Legacy Uncensored
+      { id: 'llama2-uncensored', label: 'Llama 2 Uncensored (7B)', nsfw: true },
+      { id: 'wizardlm-uncensored', label: 'WizardLM Uncensored (13B)', nsfw: true },
+      { id: 'wizard-vicuna-uncensored', label: 'Wizard Vicuna Uncensored (7B)', nsfw: true },
+      // Abliterated - Mannix
+      { id: 'mannix/llama3.1-8b-abliterated', label: 'Llama 3.1 Abliterated (8B)', nsfw: true },
+      { id: 'mannix/dolphin-2.9-llama3-8b', label: 'Dolphin 2.9 Llama 3 (8B)', nsfw: true },
+      // Abliterated - Huihui.ai
+      { id: 'huihui_ai/qwen3-abliterated', label: 'Qwen3 Abliterated', nsfw: true, recommended_nsfw: true },
+      { id: 'huihui_ai/qwen3-abliterated:8b', label: 'Qwen3 Abliterated (8B)', nsfw: true, recommended_nsfw: true },
+      { id: 'huihui_ai/qwen3-abliterated:4b', label: 'Qwen3 Abliterated (4B)', nsfw: true, recommended_nsfw: true },
+      { id: 'huihui_ai/qwen3-coder-abliterated', label: 'Qwen3 Coder Abliterated', nsfw: true },
+      { id: 'huihui_ai/qwen3-next-abliterated', label: 'Qwen3-Next Abliterated', nsfw: true },
+      { id: 'huihui_ai/dolphin3-abliterated', label: 'Dolphin 3 Abliterated (8B)', nsfw: true, recommended_nsfw: true },
+      { id: 'huihui_ai/huihui-moe-abliterated', label: 'Huihui MoE Abliterated', nsfw: true },
+      { id: 'huihui_ai/gpt-oss-abliterated', label: 'GPT-OSS Abliterated', nsfw: true },
+      // Abliterated - JOSIEFIED
+      { id: 'goekdenizguelmez/JOSIEFIED-Qwen3', label: 'JOSIEFIED Qwen3', nsfw: true, recommended_nsfw: true },
+      { id: 'goekdenizguelmez/JOSIEFIED-Qwen3:8b', label: 'JOSIEFIED Qwen3 (8B)', nsfw: true, recommended_nsfw: true },
+      { id: 'goekdenizguelmez/JOSIEFIED-Qwen2.5', label: 'JOSIEFIED Qwen2.5', nsfw: true },
+      { id: 'goekdenizguelmez/JOSIEFIED-Qwen2.5:7b', label: 'JOSIEFIED Qwen2.5 (7B)', nsfw: true, recommended_nsfw: true },
+      { id: 'goekdenizguelmez/JOSIEFIED-Qwen2.5:14b', label: 'JOSIEFIED Qwen2.5 (14B)', nsfw: true },
+      { id: 'goekdenizguelmez/JOSIEFIED-Qwen2.5:3b', label: 'JOSIEFIED Qwen2.5 (3B)', nsfw: true, recommended_nsfw: true },
+      // Vision
+      { id: 'huihui_ai/qwen3-vl-abliterated:8b-instruct', label: 'Qwen3 Vision Abliterated (8B)', nsfw: true },
+      // Niche Uncensored
+      { id: 'yarn-mistral', label: 'Yarn Mistral (7B)', nsfw: true },
+      { id: 'openhermes', label: 'OpenHermes (7B)', nsfw: true },
+      { id: 'neural-chat', label: 'Neural Chat (7B)', nsfw: true },
+      // Additional Abliterated
+      { id: 'huihui_ai/llama3.2-abliterate:3b', label: 'Llama 3.2 Abliterated (3B)', nsfw: true },
+      { id: 'huihui_ai/gemma3-abliterated', label: 'Gemma 3 Abliterated', nsfw: true },
+      { id: 'huihui_ai/deepseek-r1-abliterated:8b', label: 'DeepSeek R1 Abliterated (8B)', nsfw: true },
+      { id: 'huihui_ai/deepseek-r1-abliterated:14b', label: 'DeepSeek R1 Abliterated (14B)', nsfw: true },
+      { id: 'huihui_ai/deepseek-r1-abliterated:1.5b', label: 'DeepSeek R1 Abliterated (1.5B)', nsfw: true },
+      { id: 'dolphincoder', label: 'Dolphin Coder (7B)', nsfw: true },
+      { id: 'goekdenizguelmez/JOSIEFIED-Llama', label: 'JOSIEFIED Llama', nsfw: true, recommended_nsfw: true },
+      { id: 'samantha-mistral', label: 'Samantha Mistral (7B)', nsfw: true, recommended_nsfw: true },
     ],
   },
   comfyui: {
@@ -675,8 +726,25 @@ export default function ModelsView(props: ModelsParams) {
     }
 
     // Then show installed but not in supported catalog
+    // Use the catalog as source of truth to prevent type mixing:
+    // e.g. video checkpoints (svd_xt_1_1, ltx-video) must NOT appear
+    // in the Image tab just because they share the checkpoints/ directory.
+    const otherTypeIds = new Set<string>()
+    if (provider === 'comfyui' && catalog?.providers?.comfyui) {
+      const comfyui = catalog.providers.comfyui as Record<string, ModelCatalogEntry[]>
+      for (const [t, entries] of Object.entries(comfyui)) {
+        if (t !== modelType && Array.isArray(entries)) {
+          for (const entry of entries) {
+            if (entry.id) otherTypeIds.add(entry.id)
+          }
+        }
+      }
+    }
+
     for (const m of installed) {
       if (!supportedMap.has(m)) {
+        // Skip models that belong to another type's catalog
+        if (otherTypeIds.has(m)) continue
         rows.push({
           id: m,
           label: m,
