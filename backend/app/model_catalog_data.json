@@ -120,7 +120,7 @@
           "install_path": "unet/"
         },
         {
-          "id": "ponyDiffusionV6XL.safetensors",
+          "id": "ponyDiffusionV6XL_v6.safetensors",
           "label": "Pony Diffusion v6 XL",
           "nsfw": true,
           "description": "SDXL-based model fine-tuned for anime/illustration. Uncensored, supports NSFW content.",

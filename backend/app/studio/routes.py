@@ -926,7 +926,7 @@ def nsfw_image_info():
             "abyssOrangeMix3_aom3a1b.safetensors",
             "counterfeit_v30.safetensors",
             "anything_v5PrtRE.safetensors",
-            "ponyDiffusionV6XL.safetensors",
+            "ponyDiffusionV6XL_v6.safetensors",
             "dreamshaper_8.safetensors",
         ],
         "how_to_enable": "Set environment variable: STUDIO_ALLOW_MATURE=1",

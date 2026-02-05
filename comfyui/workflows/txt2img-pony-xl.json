@@ -17,7 +17,7 @@
   "4": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "ponyDiffusionV6XL_v6StartWithThisOne.safetensors"
+      "ckpt_name": "ponyDiffusionV6XL_v6.safetensors"
     }
   },
   "5": {

@@ -184,10 +184,6 @@ class ChatIn(BaseModel):
     # ----------------------------
     imgReference: Optional[str] = Field(None, description="Reference image URL for img2img generation")
     imgRefStrength: Optional[float] = Field(0.35, description="Reference strength 0..1 (0=very similar, 1=more creative)")
-    # ----------------------------
-    # Voice Mode Personality
-    # ----------------------------
-    voiceSystemPrompt: Optional[str] = Field(None, description="Custom system prompt for voice mode personalities")
 
 
 class ChatOut(BaseModel):
@@ -696,8 +692,12 @@ async def get_image_presets(
         with open(presets_path, "r", encoding="utf-8") as f:
             presets_data = json.load(f)
 
-        # Default to med preset
+        # Default to med preset, map video presets to image equivalents
         preset_name = preset or "med"
+        # Map video preset names to image preset names (ultra/high -> high, medium -> med)
+        preset_map = {"ultra": "high", "medium": "med", "high": "high", "med": "med", "low": "low"}
+        preset_name = preset_map.get(preset_name, preset_name)
+
         if preset_name not in presets_data.get("presets", {}):
             return JSONResponse(
                 status_code=400,
@@ -1937,8 +1937,6 @@ async def chat(inp: ChatIn) -> JSONResponse:
         # Reference image for img2img similar generation
         "imgReference": inp.imgReference,
         "imgRefStrength": inp.imgRefStrength,
-        # Voice mode personality
-        "voiceSystemPrompt": inp.voiceSystemPrompt,
     }
 
     # ----------------------------

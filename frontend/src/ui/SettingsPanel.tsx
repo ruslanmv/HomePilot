@@ -156,6 +156,23 @@ export default function SettingsPanel({
     }
   }
 
+  // Patterns that identify video generation models (must match backend VIDEO_MODEL_PATTERNS)
+  const VIDEO_MODEL_PATTERNS = [
+    "svd", "ltx-video", "ltx_video", "hunyuanvideo", "wan2",
+    "mochi", "cogvideo", "animatediff", "videocrafter", "modelscope",
+    "zeroscope", "hotshot",
+  ];
+  const EDIT_MODEL_PATTERNS = ["inpainting", "inpaint"];
+
+  function isVideoModel(name: string): boolean {
+    const lower = name.toLowerCase();
+    return VIDEO_MODEL_PATTERNS.some((p) => lower.includes(p));
+  }
+  function isEditModel(name: string): boolean {
+    const lower = name.toLowerCase();
+    return EDIT_MODEL_PATTERNS.some((p) => lower.includes(p));
+  }
+
   // Detect video model type from model name
   function detectVideoModelType(modelName: string | undefined): string {
     if (!modelName) return "ltx"; // Default to LTX
@@ -405,9 +422,17 @@ export default function SettingsPanel({
   ) {
     // Use compound key for provider + type (to separate image vs video models)
     const stateKey = modelType ? `${providerKey}_${modelType}` : providerKey;
-    const list = models[stateKey] || [];
+    const rawList = models[stateKey] || [];
     const loading = !!modelsLoading[stateKey];
     const err = modelsErr[stateKey];
+
+    // Safety filter: even if the backend returns a mixed list, ensure video
+    // models never appear in the image dropdown and vice-versa.
+    const list = modelType === 'image'
+      ? rawList.filter((m) => !isVideoModel(m) && !isEditModel(m))
+      : modelType === 'video'
+        ? rawList.filter((m) => !isEditModel(m))
+        : rawList;
 
     return (
       <div className="border-t border-white/5 pt-3">

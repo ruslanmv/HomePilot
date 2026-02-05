@@ -52,7 +52,7 @@ Backend now correctly maps files to workflow IDs:
 | `sdxl` | `models/comfy/checkpoints/sd_xl_base_1.0.safetensors` | ~7 GB |
 | `flux-schnell` | `models/comfy/unet/flux1-schnell.safetensors` | ~24 GB |
 | `flux-dev` | `models/comfy/unet/flux1-dev.safetensors` | ~24 GB |
-| `pony-xl` | `models/comfy/checkpoints/ponyDiffusionV6XL.safetensors` | ~7 GB |
+| `pony-xl` | `models/comfy/checkpoints/ponyDiffusionV6XL_v6.safetensors` | ~7 GB |
 | `sd15-uncensored` | `models/comfy/checkpoints/dreamshaper_8.safetensors` | ~2 GB |
 | `svd` | `models/comfy/checkpoints/svd_xt.safetensors` | ~10 GB |
 
