@@ -21,7 +21,6 @@ import {
   VolumeX,
   SlidersHorizontal,
   ChevronDown,
-  Share,
   PenLine,
   Zap,
   Radio,
@@ -605,21 +604,13 @@ export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProp
         >
           <Settings size={18} />
         </button>
-        {messages.length > 0 && (
-          <>
-            <button className="h-9 px-4 flex items-center gap-2 rounded-full bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition-colors text-sm font-medium">
-              <Share size={14} />
-              Share
-            </button>
-            <button
-              onClick={clearConversation}
-              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 transition-colors"
-              title="New Chat"
-            >
-              <PenLine size={16} />
-            </button>
-          </>
-        )}
+        <button
+          onClick={clearConversation}
+          className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+          title="New Chat"
+        >
+          <PenLine size={16} />
+        </button>
       </header>
 
       {/* Center Content Area */}

@@ -3,7 +3,7 @@
   "description": "HomePilot Model Catalog - Curated models for all providers",
   "version": "1.0.0",
   "last_updated": "2026-01-28",
-  "_comment": "🧪 EXPERIMENTAL: Add Civitai models using scripts/download.py --add-civitai --version-id <ID> --type <image|video>",
+  "_comment": "\ud83e\uddea EXPERIMENTAL: Add Civitai models using scripts/download.py --add-civitai --version-id <ID> --type <image|video>",
   "_experimental_example": {
     "civitai_model_template": {
       "id": "model_file_name.safetensors",
@@ -36,18 +36,27 @@
           "context_window": 8192
         },
         {
-          "id": "llama3.1:8b",
-          "label": "Llama 3.1 8B",
-          "description": "Updated 8B model with improved performance.",
+          "id": "llama3.1",
+          "label": "Llama 3.1 (8B)",
+          "recommended": true,
+          "description": "Fast general-purpose chat model. Standard smart assistant baseline.",
           "size_gb": 4.7,
-          "context_window": 128000
+          "context_window": 131072
         },
         {
           "id": "llama3.1:70b",
           "label": "Llama 3.1 70B",
           "description": "Latest 70B model with 128K context window.",
           "size_gb": 40,
-          "context_window": 128000
+          "context_window": 131072
+        },
+        {
+          "id": "llama3.2",
+          "label": "Llama 3.2 (3B)",
+          "recommended": true,
+          "description": "Very fast, lightweight model for low-latency voice.",
+          "size_gb": 2.0,
+          "context_window": 131072
         },
         {
           "id": "mistral:7b",
@@ -57,6 +66,14 @@
           "context_window": 8192
         },
         {
+          "id": "mistral-nemo",
+          "label": "Mistral Nemo (12B)",
+          "recommended": true,
+          "description": "Balanced quality; good instruction following. Best 'Smart' model for 12GB.",
+          "size_gb": 7.0,
+          "context_window": 131072
+        },
+        {
           "id": "mixtral:8x7b",
           "label": "Mixtral 8x7B",
           "description": "Mixture of Experts model with excellent performance.",
@@ -64,11 +81,19 @@
           "context_window": 32768
         },
         {
-          "id": "qwen2.5:7b",
-          "label": "Qwen 2.5 7B",
-          "description": "Alibaba's Qwen 2.5 model with strong multilingual support.",
-          "size_gb": 4.7,
-          "context_window": 32768
+          "id": "qwen2.5",
+          "label": "Qwen 2.5 (7B)",
+          "recommended": true,
+          "description": "Fast and capable general model with strong multilingual support.",
+          "size_gb": 4.0,
+          "context_window": 131072
+        },
+        {
+          "id": "gemma2",
+          "label": "Gemma 2 (9B)",
+          "description": "Strong for writing, creative prose and tone.",
+          "size_gb": 5.5,
+          "context_window": 8192
         },
         {
           "id": "phi3:3.8b",
@@ -78,11 +103,397 @@
           "context_window": 4096
         },
         {
-          "id": "gemma2:9b",
-          "label": "Gemma 2 9B",
-          "description": "Google's Gemma 2 model with excellent efficiency.",
-          "size_gb": 5.4,
-          "context_window": 8192
+          "id": "phi4",
+          "label": "Phi-4 (14B)",
+          "description": "Logic-heavy model from Microsoft; may be slower in voice.",
+          "size_gb": 8.0,
+          "context_window": 16384
+        },
+        {
+          "id": "deepseek-r1:latest",
+          "label": "DeepSeek R1 (7B)",
+          "description": "Thinking model with chain-of-thought reasoning. Needs 300 tokens for voice.",
+          "size_gb": 4.7,
+          "context_window": 131072
+        },
+        {
+          "id": "dolphin3",
+          "label": "Dolphin 3.0 (8B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Latest Dolphin on Llama 3.1. Uncensored, coding, math, function calling.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true
+        },
+        {
+          "id": "dolphin-llama3",
+          "label": "Dolphin Llama 3 (8B)",
+          "nsfw": true,
+          "description": "Dolphin 2.9 based on Llama 3. Uncensored chat & coding.",
+          "size_gb": 4.7,
+          "context_window": 8192,
+          "uncensored": true
+        },
+        {
+          "id": "dolphin-mistral",
+          "label": "Dolphin Mistral (7B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Fast uncensored Dolphin on Mistral 2.8. Reliable for voice.",
+          "size_gb": 4.1,
+          "context_window": 32768,
+          "uncensored": true
+        },
+        {
+          "id": "dolphin-mixtral:8x7b",
+          "label": "Dolphin Mixtral (8x7B MoE)",
+          "nsfw": true,
+          "description": "Powerful MoE for coding. Needs ~26GB RAM but fits 12GB VRAM.",
+          "size_gb": 26.0,
+          "context_window": 32768,
+          "uncensored": true
+        },
+        {
+          "id": "hermes3",
+          "label": "Hermes 3 (8B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Best for roleplay & creative writing. Coherent long-form outputs.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true
+        },
+        {
+          "id": "solar",
+          "label": "Solar (10.7B)",
+          "nsfw": true,
+          "description": "Good mid-sized uncensored chat model. Test latency for voice.",
+          "size_gb": 6.5,
+          "context_window": 4096,
+          "uncensored": true
+        },
+        {
+          "id": "wizardlm2",
+          "label": "WizardLM2 (7B)",
+          "nsfw": true,
+          "description": "Solid uncensored chat model. Validate voice pacing.",
+          "size_gb": 4.0,
+          "context_window": 8192,
+          "uncensored": true
+        },
+        {
+          "id": "llama2-uncensored",
+          "label": "Llama 2 Uncensored (7B)",
+          "nsfw": true,
+          "description": "Original uncensored Llama 2. Lightweight & fast.",
+          "size_gb": 3.8,
+          "context_window": 4096,
+          "uncensored": true
+        },
+        {
+          "id": "wizardlm-uncensored",
+          "label": "WizardLM Uncensored (13B)",
+          "nsfw": true,
+          "description": "Eric Hartford's WizardLM uncensored. Good for chat.",
+          "size_gb": 7.4,
+          "context_window": 4096,
+          "uncensored": true
+        },
+        {
+          "id": "wizard-vicuna-uncensored",
+          "label": "Wizard Vicuna Uncensored (7B)",
+          "nsfw": true,
+          "description": "Hartford classic. Great for natural conversations.",
+          "size_gb": 3.8,
+          "context_window": 4096,
+          "uncensored": true
+        },
+        {
+          "id": "mannix/llama3.1-8b-abliterated",
+          "label": "Llama 3.1 Abliterated (8B)",
+          "nsfw": true,
+          "description": "Llama 3.1 with safety brakes removed via abliteration.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "mannix/dolphin-2.9-llama3-8b",
+          "label": "Dolphin 2.9 Llama 3 (8B)",
+          "nsfw": true,
+          "description": "Dolphin 2.9 on Llama 3 by Mannix.",
+          "size_gb": 4.7,
+          "context_window": 8192,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/qwen3-abliterated",
+          "label": "Qwen3 Abliterated",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Qwen3 abliterated. Highly recommended for uncensored use.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/qwen3-abliterated:8b",
+          "label": "Qwen3 Abliterated (8B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "8B version. Best balance of speed and quality.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/qwen3-abliterated:4b",
+          "label": "Qwen3 Abliterated (4B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "4B version. Super fast for voice applications.",
+          "size_gb": 2.5,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/qwen3-coder-abliterated",
+          "label": "Qwen3 Coder Abliterated",
+          "nsfw": true,
+          "description": "Best uncensored coder. Abliterated Qwen3 for code.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/qwen3-next-abliterated",
+          "label": "Qwen3-Next Abliterated",
+          "nsfw": true,
+          "description": "Latest Qwen3-Next with abliteration.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/dolphin3-abliterated",
+          "label": "Dolphin 3 Abliterated (8B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Dolphin 3.0 + abliteration = Maximum compliance.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/huihui-moe-abliterated",
+          "label": "Huihui MoE Abliterated",
+          "nsfw": true,
+          "description": "MoE architecture for efficient inference. Abliterated.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/gpt-oss-abliterated",
+          "label": "GPT-OSS Abliterated",
+          "nsfw": true,
+          "description": "OpenAI's GPT-OSS abliterated (experimental).",
+          "size_gb": 12.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "goekdenizguelmez/JOSIEFIED-Qwen3",
+          "label": "JOSIEFIED Qwen3",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "BEST OVERALL. 10/10 UGI Adherence. Abliterated + fine-tuned.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "goekdenizguelmez/JOSIEFIED-Qwen3:8b",
+          "label": "JOSIEFIED Qwen3 (8B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "#1 Pick. Best coherence + uncensored for 12GB VRAM.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "goekdenizguelmez/JOSIEFIED-Qwen2.5",
+          "label": "JOSIEFIED Qwen2.5",
+          "nsfw": true,
+          "description": "Qwen2.5 JOSIEFIED. Abliterated + fine-tuned for coherence.",
+          "size_gb": 4.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "goekdenizguelmez/JOSIEFIED-Qwen2.5:7b",
+          "label": "JOSIEFIED Qwen2.5 (7B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Fast 7B uncensored. Great for voice latency.",
+          "size_gb": 4.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "goekdenizguelmez/JOSIEFIED-Qwen2.5:14b",
+          "label": "JOSIEFIED Qwen2.5 (14B)",
+          "nsfw": true,
+          "description": "Best quality 14B. Fits 12GB with Q4 quantization.",
+          "size_gb": 8.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "goekdenizguelmez/JOSIEFIED-Qwen2.5:3b",
+          "label": "JOSIEFIED Qwen2.5 (3B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Ultra fast 3B. Minimal VRAM, great for voice.",
+          "size_gb": 1.8,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/qwen3-vl-abliterated:8b-instruct",
+          "label": "Qwen3 Vision Abliterated (8B)",
+          "nsfw": true,
+          "description": "Vision-Language abliterated. Analyzes any image without restrictions.",
+          "size_gb": 5.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true,
+          "vision": true
+        },
+        {
+          "id": "yarn-mistral",
+          "label": "Yarn Mistral (7B)",
+          "nsfw": true,
+          "description": "Extended context uncensored Mistral variant.",
+          "size_gb": 4.1,
+          "context_window": 131072,
+          "uncensored": true
+        },
+        {
+          "id": "openhermes",
+          "label": "OpenHermes (7B)",
+          "nsfw": true,
+          "description": "Uncensored Hermes variant. Good general chat.",
+          "size_gb": 4.1,
+          "context_window": 8192,
+          "uncensored": true
+        },
+        {
+          "id": "neural-chat",
+          "label": "Neural Chat (7B)",
+          "nsfw": true,
+          "description": "Intel's uncensored chat model. Good conversational flow.",
+          "size_gb": 4.1,
+          "context_window": 8192,
+          "uncensored": true
+        },
+        {
+          "id": "huihui_ai/llama3.2-abliterate:3b",
+          "label": "Llama 3.2 Abliterated (3B)",
+          "nsfw": true,
+          "description": "Fast 3B Llama abliterated. Ultra-lightweight for voice.",
+          "size_gb": 2.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/gemma3-abliterated",
+          "label": "Gemma 3 Abliterated",
+          "nsfw": true,
+          "description": "Google Gemma 3 with abliteration. Good writing quality.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/deepseek-r1-abliterated:8b",
+          "label": "DeepSeek R1 Abliterated (8B)",
+          "nsfw": true,
+          "description": "DeepSeek R1 thinking + uncensored. Chain-of-thought without filters.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/deepseek-r1-abliterated:14b",
+          "label": "DeepSeek R1 Abliterated (14B)",
+          "nsfw": true,
+          "description": "Larger DeepSeek R1 abliterated. Better reasoning, needs more VRAM.",
+          "size_gb": 8.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "huihui_ai/deepseek-r1-abliterated:1.5b",
+          "label": "DeepSeek R1 Abliterated (1.5B)",
+          "nsfw": true,
+          "description": "Tiny fast DeepSeek R1 abliterated. Minimal VRAM.",
+          "size_gb": 1.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "dolphincoder",
+          "label": "Dolphin Coder (7B)",
+          "nsfw": true,
+          "description": "Uncensored coding model based on CodeLlama. No content filters on code.",
+          "size_gb": 4.7,
+          "context_window": 16384,
+          "uncensored": true
+        },
+        {
+          "id": "goekdenizguelmez/JOSIEFIED-Llama",
+          "label": "JOSIEFIED Llama",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "JOSIEFIED Llama series. Abliterated + fine-tuned for coherence.",
+          "size_gb": 4.7,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true
+        },
+        {
+          "id": "samantha-mistral",
+          "label": "Samantha Mistral (7B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Uncensored companion model. Warm, conversational personality.",
+          "size_gb": 4.1,
+          "context_window": 8192,
+          "uncensored": true
         }
       ]
     },
@@ -257,12 +668,13 @@
           "nsfw": true,
           "recommended_nsfw": true,
           "anime": true,
-          "description": "Premier SD 1.5 anime model. Excellent for fan service, ecchi, and mature anime content. Rich colors, detailed illustrations.",
+          "description": "Japanese aesthetic anime model. Painterly style with realistic textures. Beautiful linework. SD 1.5 based, ~4GB VRAM.",
           "size_gb": 2.13,
-          "resolution": "512x512",
+          "resolution": "512x768",
+          "download_url": "https://huggingface.co/WarriorMama777/OrangeMixs/resolve/main/Models/AbyssOrangeMix3/AOM3A1B_orangemixs.safetensors",
+          "download_url_fallback": "https://civitai.com/api/download/models/17233",
           "civitai_model_id": "9942",
-          "civitai_version_id": "101055",
-          "download_url": "https://civitai.com/api/download/models/101055",
+          "civitai_version_id": "17233",
           "install_path": "checkpoints/"
         },
         {
@@ -283,13 +695,108 @@
           "label": "Anything V5 (Prt-RE)",
           "nsfw": true,
           "anime": true,
-          "description": "Versatile anime model for all styles. Supports NSFW content with excellent anatomy and composition.",
-          "size_gb": 4.27,
-          "resolution": "512x512",
+          "description": "Classic anime model with vivid colors. Prt-RE is the recommended trimmed+repaired version. Great LoRA compatibility.",
+          "size_gb": 2.0,
+          "resolution": "512x768",
+          "download_url": "https://civitai.com/api/download/models/90854",
+          "download_url_fallback": "https://huggingface.co/stablediffusion-cn/Anything-V5.0/resolve/main/AnythingV5Ink_v5PrtRE.safetensors",
           "civitai_model_id": "9409",
-          "civitai_version_id": "100078",
-          "download_url": "https://civitai.com/api/download/models/100078",
+          "civitai_version_id": "90854",
           "install_path": "checkpoints/"
+        },
+        {
+          "id": "ponyDiffusionV6XL_v6.safetensors",
+          "label": "Pony Diffusion V6 XL",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "anime": true,
+          "description": "Best overall anime NSFW model. SDXL finetune trained on 2.6M Danbooru/e621 images. Massive LoRA ecosystem. Use score_9, score_8_up quality tags. Clip Skip 2 required.",
+          "size_gb": 6.46,
+          "resolution": "1024x1024",
+          "architecture": "pony_xl",
+          "download_url": "https://huggingface.co/Magamanny/Pony-Diffusion-V6-XL/resolve/main/ponyDiffusionV6XL_v6StartWithThisOne.safetensors",
+          "download_url_fallback": "https://civitai.com/api/download/models/290640",
+          "civitai_model_id": "257749",
+          "civitai_version_id": "290640",
+          "install_path": "checkpoints/",
+          "vram_required_gb": 8,
+          "clip_skip": 2,
+          "prompt_guide": {
+            "quality_tags": "score_9, score_8_up, score_7_up",
+            "style_tags": "source_anime, source_cartoon, source_pony",
+            "rating_tags": "rating_explicit, rating_questionable, rating_safe",
+            "negative_recommendation": "score_6, score_5, score_4, worst quality, low quality, text, watermark, signature",
+            "tip": "Uses Danbooru/e621 booru tags. Character knowledge from booru tagging system."
+          }
+        },
+        {
+          "id": "noobaiXL_epsPred11.safetensors",
+          "label": "NoobAI-XL (EPS v1.1)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "anime": true,
+          "description": "Newest & best prompt adherence. 13M+ Danbooru/e621 images. Knows thousands of anime characters/artists by name. Use 'very awa, masterpiece, best quality' tags. EPS-prediction version (standard, easy to use).",
+          "size_gb": 7.0,
+          "resolution": "1024x1024",
+          "architecture": "noobai_xl",
+          "download_url": "https://huggingface.co/Laxhar/noobai-XL-1.1/resolve/main/NoobAI-XL-v1.1.safetensors",
+          "download_url_fallback": "https://civitai.com/api/download/models/1022833",
+          "civitai_model_id": "833294",
+          "civitai_version_id": "1022833",
+          "install_path": "checkpoints/",
+          "vram_required_gb": 8,
+          "clip_skip": 2,
+          "prompt_guide": {
+            "quality_tags": "very awa, masterpiece, best quality, amazing quality",
+            "character_tags": "Use Danbooru character names directly, e.g. 'hatsune miku', 'rem (re:zero)'",
+            "negative_recommendation": "worst quality, bad quality, low quality, normal quality, text, signature, jpeg artifacts, bad anatomy, watermark",
+            "tip": "Best character knowledge of any model. Can reproduce 10,000+ anime characters without LoRA. Use Danbooru tags."
+          }
+        },
+        {
+          "id": "noobaiXL_vPred10.safetensors",
+          "label": "NoobAI-XL (V-Pred v1.0)",
+          "nsfw": true,
+          "anime": true,
+          "description": "V-Prediction variant of NoobAI-XL. Better color accuracy and quality than EPS version but requires v-pred compatible UI (ComfyUI, Forge, reForge). NOT compatible with standard A1111.",
+          "size_gb": 7.11,
+          "resolution": "1024x1024",
+          "architecture": "noobai_xl_vpred",
+          "download_url": "https://huggingface.co/Laxhar/noobai-XL-1.0/resolve/main/NoobAI-XL-Vpred-v1.0.safetensors",
+          "download_url_fallback": "https://civitai.com/api/download/models/1093948",
+          "civitai_model_id": "833294",
+          "civitai_version_id": "1093948",
+          "install_path": "checkpoints/",
+          "vram_required_gb": 8,
+          "clip_skip": 2,
+          "prompt_guide": {
+            "quality_tags": "very awa, masterpiece, best quality, amazing quality",
+            "negative_recommendation": "worst quality, bad quality, low quality, normal quality, text, signature, jpeg artifacts, bad anatomy, watermark",
+            "tip": "Same prompting as EPS version. Requires v-pred scheduler config. Better color vibrancy."
+          }
+        },
+        {
+          "id": "meinamix_meinaV12Final.safetensors",
+          "label": "MeinaMix V12 (Final)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "anime": true,
+          "description": "Best SD1.5 anime model. Stunning results with minimal prompting. Ultra-fast on any GPU. Final version. Balanced between realistic textures and anime style.",
+          "size_gb": 2.0,
+          "resolution": "512x768",
+          "architecture": "sd15",
+          "download_url": "https://civitai.com/api/download/models/948574",
+          "download_url_fallback": "https://huggingface.co/andro-flock/MeinaMix-V12_-Final/resolve/main/meinamix_v12Final.safetensors",
+          "civitai_model_id": "7240",
+          "civitai_version_id": "948574",
+          "install_path": "checkpoints/",
+          "vram_required_gb": 4,
+          "clip_skip": 2,
+          "prompt_guide": {
+            "quality_tags": "masterpiece, best quality",
+            "negative_recommendation": "(worst quality, low quality), (zombie, interlocked fingers)",
+            "tip": "Great art with minimal prompting. Hires.fix dramatically improves face/eye quality. V12 is more creative with lighter negatives."
+          }
         }
       ],
       "video": [
@@ -305,7 +812,9 @@
           "download_url": "https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt-1-1/resolve/main/svd_xt_1_1.safetensors",
           "install_path": "checkpoints/",
           "requires_addons": [],
-          "recommends_addons": ["ComfyUI-VideoHelperSuite"]
+          "recommends_addons": [
+            "ComfyUI-VideoHelperSuite"
+          ]
         },
         {
           "id": "svd_xt.safetensors",
@@ -339,11 +848,17 @@
           "resolution": "varies",
           "frames": 80,
           "install_path": "checkpoints/",
-          "requires_addons": ["ComfyUI-LTXVideo"],
-          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
+          "requires_addons": [
+            "ComfyUI-LTXVideo"
+          ],
+          "recommends_addons": [
+            "ComfyUI-VideoHelperSuite"
+          ],
           "install": {
             "type": "hf_files",
-            "requires_custom_nodes": ["ComfyUI-LTXVideo"],
+            "requires_custom_nodes": [
+              "ComfyUI-LTXVideo"
+            ],
             "hint": "After install: use LTX workflows/nodes in ComfyUI to load the checkpoint.",
             "files": [
               {
@@ -369,11 +884,17 @@
           "resolution": "720p",
           "frames": 80,
           "install_path": "checkpoints/",
-          "requires_addons": ["ComfyUI-GGUF"],
-          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
+          "requires_addons": [
+            "ComfyUI-GGUF"
+          ],
+          "recommends_addons": [
+            "ComfyUI-VideoHelperSuite"
+          ],
           "install": {
             "type": "hf_files",
-            "requires_custom_nodes": ["ComfyUI-GGUF"],
+            "requires_custom_nodes": [
+              "ComfyUI-GGUF"
+            ],
             "hint": "After install: install ComfyUI-GGUF via ComfyUI Manager, restart ComfyUI, then load HunyuanVideo GGUF workflows.",
             "files": [
               {
@@ -410,7 +931,9 @@
           "frames": 80,
           "install_path": "checkpoints/",
           "requires_addons": [],
-          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
+          "recommends_addons": [
+            "ComfyUI-VideoHelperSuite"
+          ],
           "install": {
             "type": "hf_files",
             "hint": "After install: use ComfyUI Wan2.2 workflows (Load Diffusion Model = wan2.2_ti2v_5B_fp16).",
@@ -444,7 +967,9 @@
           "frames": 80,
           "install_path": "checkpoints/",
           "requires_addons": [],
-          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
+          "recommends_addons": [
+            "ComfyUI-VideoHelperSuite"
+          ],
           "install": {
             "type": "hf_files",
             "hint": "After install: update ComfyUI and use Mochi workflows. May require lowering settings on 16GB cards.",
@@ -477,13 +1002,19 @@
           "resolution": "varies",
           "frames": 80,
           "install_path": "checkpoints/",
-          "requires_addons": ["ComfyUI-CogVideoXWrapper"],
-          "recommends_addons": ["ComfyUI-VideoHelperSuite"],
+          "requires_addons": [
+            "ComfyUI-CogVideoXWrapper"
+          ],
+          "recommends_addons": [
+            "ComfyUI-VideoHelperSuite"
+          ],
           "install": {
             "type": "hf_snapshot",
             "repo_id": "THUDM/CogVideoX1.5-5B-I2V",
             "dest_dir": "diffusers/CogVideoX1.5-5B-I2V",
-            "requires_custom_nodes": ["ComfyUI-CogVideoXWrapper"],
+            "requires_custom_nodes": [
+              "ComfyUI-CogVideoXWrapper"
+            ],
             "hint": "After install: configure your CogVideoX ComfyUI wrapper to point to this diffusers folder."
           }
         }
@@ -607,7 +1138,11 @@
             "dest_dir": "custom_nodes/ComfyUI-VideoHelperSuite",
             "hint": "Restart ComfyUI after install. Requires ffmpeg in PATH for video encoding."
           },
-          "provides_nodes": ["VHS_VideoCombine", "VHS_LoadVideo", "VHS_SplitVideo"]
+          "provides_nodes": [
+            "VHS_VideoCombine",
+            "VHS_LoadVideo",
+            "VHS_SplitVideo"
+          ]
         },
         {
           "id": "ComfyUI-LTXVideo",
@@ -620,7 +1155,11 @@
             "dest_dir": "custom_nodes/ComfyUI-LTXVideo",
             "hint": "Restart ComfyUI after install."
           },
-          "provides_nodes": ["LTXVLoader", "LTXVSampler", "LTXVConditioning"]
+          "provides_nodes": [
+            "LTXVLoader",
+            "LTXVSampler",
+            "LTXVConditioning"
+          ]
         },
         {
           "id": "ComfyUI-GGUF",
@@ -633,7 +1172,10 @@
             "dest_dir": "custom_nodes/ComfyUI-GGUF",
             "hint": "Restart ComfyUI after install."
           },
-          "provides_nodes": ["UnetLoaderGGUF", "DualCLIPLoaderGGUF"]
+          "provides_nodes": [
+            "UnetLoaderGGUF",
+            "DualCLIPLoaderGGUF"
+          ]
         },
         {
           "id": "ComfyUI-CogVideoXWrapper",
@@ -646,7 +1188,11 @@
             "dest_dir": "custom_nodes/ComfyUI-CogVideoXWrapper",
             "hint": "Restart ComfyUI after install."
           },
-          "provides_nodes": ["CogVideoXDiffusersLoader", "CogVideoXSampler", "CogVideoXDecode"]
+          "provides_nodes": [
+            "CogVideoXDiffusersLoader",
+            "CogVideoXSampler",
+            "CogVideoXDecode"
+          ]
         },
         {
           "id": "ComfyUI-Impact-Pack",
@@ -659,7 +1205,11 @@
             "dest_dir": "custom_nodes/ComfyUI-Impact-Pack",
             "hint": "Restart ComfyUI after install. Some features require additional model downloads."
           },
-          "provides_nodes": ["SAMLoader", "FaceDetailer", "BboxDetectorSEGS"]
+          "provides_nodes": [
+            "SAMLoader",
+            "FaceDetailer",
+            "BboxDetectorSEGS"
+          ]
         }
       ]
     },
@@ -966,6 +1516,91 @@
         "Tasteful presentation of intimacy",
         "All characters must be visibly adult (18+)",
         "Suggestive but not explicit content"
+      ]
+    },
+    "anime_portrait_sfw": {
+      "id": "anime_portrait_sfw",
+      "label": "Anime Portrait (SFW)",
+      "description": "Safe-for-work anime portrait preset. Optimized for character art with clean composition.",
+      "content_rating": "safe",
+      "requires_mature_mode": false,
+      "recommended_models": [
+        "meinamix_meinaV12Final.safetensors",
+        "noobaiXL_epsPred11.safetensors",
+        "ponyDiffusionV6XL_v6.safetensors"
+      ],
+      "sampler_settings": {
+        "default_aspect_ratio": "2:3",
+        "clip_skip": 2
+      },
+      "prompt_injection": {
+        "positive_prefix": "masterpiece, best quality, highly detailed, beautiful",
+        "positive_suffix": "beautiful eyes, detailed face, soft lighting",
+        "negative": "(worst quality, low quality:1.4), bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, jpeg artifacts, signature, watermark"
+      }
+    },
+    "anime_fan_service_xl": {
+      "id": "anime_fan_service_xl",
+      "label": "Anime Fan Service (XL Models)",
+      "description": "Mature anime fan service preset optimized for Pony XL and NoobAI-XL models with model-specific prompt tags.",
+      "content_rating": "questionable",
+      "requires_mature_mode": true,
+      "recommended_models": [
+        "ponyDiffusionV6XL_v6.safetensors",
+        "noobaiXL_epsPred11.safetensors",
+        "meinamix_meinaV12Final.safetensors"
+      ],
+      "sampler_settings": {
+        "default_aspect_ratio": "2:3",
+        "clip_skip": 2
+      },
+      "prompt_injection": {
+        "positive_prefix_pony": "score_9, score_8_up, score_7_up, source_anime",
+        "positive_prefix_noobai": "very awa, masterpiece, best quality, amazing quality",
+        "positive_prefix_sd15": "masterpiece, best quality, ultra-detailed",
+        "positive_suffix": "beautiful detailed eyes, dynamic pose, detailed background",
+        "negative_pony": "score_6, score_5, score_4, worst quality, low quality, text, watermark, signature, bad anatomy",
+        "negative_noobai": "worst quality, bad quality, low quality, normal quality, text, signature, jpeg artifacts, bad anatomy, watermark",
+        "negative_sd15": "(worst quality, low quality:1.4), monochrome, zombie, interlocked fingers, bad anatomy"
+      },
+      "safety_guidelines": [
+        "All depicted characters must appear 18+",
+        "No real person likenesses",
+        "User is responsible for generated content"
+      ]
+    },
+    "anime_nsfw_explicit": {
+      "id": "anime_nsfw_explicit",
+      "label": "Anime NSFW Explicit",
+      "description": "Explicit anime content preset with model-specific quality tags and safety guidelines.",
+      "content_rating": "explicit",
+      "requires_mature_mode": true,
+      "recommended_models": [
+        "ponyDiffusionV6XL_v6.safetensors",
+        "noobaiXL_epsPred11.safetensors",
+        "abyssOrangeMix3_aom3a1b.safetensors",
+        "meinamix_meinaV12Final.safetensors"
+      ],
+      "sampler_settings": {
+        "default_aspect_ratio": "2:3",
+        "clip_skip": 2,
+        "temperature_note": "Higher CFG (6-8 for SD1.5, 5-6 for SDXL) for more precise anatomy"
+      },
+      "prompt_injection": {
+        "positive_prefix_pony": "score_9, score_8_up, score_7_up, source_anime, rating_explicit",
+        "positive_prefix_noobai": "very awa, masterpiece, best quality, amazing quality, rating:explicit",
+        "positive_prefix_sd15": "masterpiece, best quality, ultra-detailed, nsfw",
+        "positive_suffix": "detailed body, beautiful detailed eyes, dynamic composition",
+        "negative_pony": "score_6, score_5, score_4, worst quality, low quality, text, watermark, censored, mosaic censoring",
+        "negative_noobai": "worst quality, bad quality, low quality, normal quality, text, signature, jpeg artifacts, bad anatomy, censored",
+        "negative_sd15": "(worst quality, low quality:1.4), monochrome, zombie, interlocked fingers, bad anatomy, censored, mosaic censoring"
+      },
+      "safety_guidelines": [
+        "All depicted characters must appear 18+",
+        "No real person likenesses",
+        "No minors or minor-adjacent depictions under any circumstances",
+        "User is solely responsible for generated content",
+        "Respect local laws and platform ToS"
       ]
     }
   }

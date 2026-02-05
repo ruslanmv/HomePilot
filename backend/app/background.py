@@ -496,12 +496,14 @@ async def process_background(req: BackgroundRequest):
             # Use the first available checkpoint (workflow will fail if none exist)
             checkpoint = checkpoints[0]  # Default to inpainting model
 
+            import random
             result = run_workflow("change_background_premask", {
                 "image_path": masked_url,
                 "original_image_path": original_url,
                 "prompt": req.prompt,
                 "negative_prompt": req.negative_prompt or "blurry, low quality, distorted",
                 "checkpoint": checkpoint,
+                "seed": random.randint(1, 2147483647),
                 "filename_prefix": "homepilot_newbg"
             })
 

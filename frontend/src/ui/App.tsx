@@ -17,6 +17,7 @@ import {
   PlugZap,
   Trash2,
   Tv2,
+  Plus,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import VoiceMode from './VoiceModeGrok'
@@ -50,6 +51,7 @@ export type Msg = {
   role: 'user' | 'assistant'
   text: string
   pending?: boolean
+  animate?: boolean
   media?: {
     images?: string[]
     video_url?: string
@@ -96,9 +98,18 @@ type Conversation = {
 // Components (consolidated)
 // -----------------------------------------------------------------------------
 
-function Typewriter({ text, speed = 10 }: { text: string; speed?: number }) {
+function Typewriter({
+  text,
+  speed = 10,
+  onDone,
+}: {
+  text: string
+  speed?: number
+  onDone?: () => void
+}) {
   const [displayedText, setDisplayedText] = useState('')
   const indexRef = useRef(0)
+  const doneRef = useRef(false)
 
   // Reset when text changes (e.g. if we switch messages or streaming updates)
   useEffect(() => {
@@ -109,8 +120,9 @@ function Typewriter({ text, speed = 10 }: { text: string; speed?: number }) {
        // New text content entirely
        setDisplayedText('')
        indexRef.current = 0
+       doneRef.current = false
     } else if (text === displayedText) {
-       return 
+       return
     }
   }, [text, displayedText])
 
@@ -121,6 +133,10 @@ function Typewriter({ text, speed = 10 }: { text: string; speed?: number }) {
         indexRef.current++
       } else {
         clearInterval(timer)
+        if (!doneRef.current) {
+          doneRef.current = true
+          onDone?.()
+        }
       }
     }, speed)
 
@@ -888,28 +904,6 @@ function QueryBar({
         </div>
       </div>
 
-      {centered ? (
-        <div className="w-full flex justify-center mt-3 px-2 animate-in fade-in-0 zoom-in-95 transition-transform duration-150 ease-out hover:scale-[1.01] active:scale-[0.99]">
-          <div className="relative group flex w-fit sm:w-auto items-center rounded-2xl border border-white/10 bg-[#101010] px-4 py-3 shadow-sm gap-6">
-            <div className="flex flex-row gap-3 items-center">
-              <div className="flex size-10 items-center justify-center rounded-full border border-white/10 bg-black">
-                <span className="text-2xl leading-none">𝕏</span>
-              </div>
-              <div className="flex flex-col gap-1 text-start">
-                <p className="text-sm font-medium text-white">Connect your 𝕏 account</p>
-                <p className="text-xs text-white/50">Unlock early features and personalized content.</p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              className="inline-flex items-center justify-center h-8 px-3 rounded-full border border-white/15 text-white hover:bg-white/5 transition-colors text-sm font-medium shrink-0"
-            >
-              Connect
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -968,6 +962,7 @@ function ChatState({
   setLightbox,
   endRef,
   mode,
+  onNewConversation,
   input,
   setInput,
   fileInputRef,
@@ -979,6 +974,7 @@ function ChatState({
   setLightbox: (url: string) => void
   endRef: React.RefObject<HTMLDivElement>
   mode: Mode
+  onNewConversation: () => void
   input: string
   setInput: (s: string) => void
   fileInputRef: React.RefObject<HTMLInputElement>
@@ -988,6 +984,21 @@ function ChatState({
 }) {
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
+      {/* Sticky in-chat header so "New Chat" is always visible */}
+      <div className="sticky top-0 z-30 bg-black/85 backdrop-blur-md px-4 pt-4 pb-3 border-b border-white/5">
+        <div className="flex items-center justify-end">
+          <button
+            type="button"
+            onClick={onNewConversation}
+            className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/15 text-white/80 hover:text-white text-xs font-medium px-3 py-1.5 rounded-full border border-white/10 hover:border-white/20 transition-all"
+            title="New Chat"
+          >
+            <Plus size={14} />
+            <span>New Chat</span>
+          </button>
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto px-4 py-8 space-y-8">
         {messages.map((m) => (
           <div
@@ -1009,7 +1020,16 @@ function ChatState({
               ].join(' ')}
             >
               <div className="text-[16px] leading-relaxed whitespace-pre-wrap text-[#EEE] font-normal tracking-wide">
-                {m.role === 'assistant' && !m.pending ? <Typewriter text={m.text} /> : m.text}
+                {m.role === 'assistant' && !m.pending && m.animate ? (
+                  <Typewriter
+                    text={m.text}
+                    onDone={() => {
+                      window.dispatchEvent(new CustomEvent('hp:messageAnimated', { detail: { id: m.id } }))
+                    }}
+                  />
+                ) : (
+                  m.text
+                )}
               </div>
 
               {m.media?.images?.length ? (
@@ -1419,6 +1439,17 @@ export default function App() {
     setMessages([])
   }, [])
 
+  // Listen to "message finished animating" events from Typewriter
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent)?.detail?.id
+      if (!id) return
+      setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, animate: false } : m)))
+    }
+    window.addEventListener('hp:messageAnimated', handler)
+    return () => window.removeEventListener('hp:messageAnimated', handler)
+  }, [])
+
   const onSaveSettings = useCallback(() => {
     // Save new settings to localStorage
     localStorage.setItem('homepilot_backend_url', settingsDraft.backendUrl)
@@ -1545,16 +1576,23 @@ export default function App() {
         authHeaders
       )
       if (data.ok && data.messages) {
+        // Always switch to chat mode when loading a conversation.
+        // Without this, if user is in Voice/Imagine/Models/etc, messages
+        // load into state but the UI keeps rendering the current mode screen.
+        setMode('chat')
+        setShowSettings(false)
+        setShowHistory(false)
+
         setConversationId(convId)
         setMessages(
           data.messages.map((m, idx) => ({
             id: `loaded-${idx}`,
             role: m.role as 'user' | 'assistant',
             text: m.content,
+            animate: false,
             media: m.media || undefined,
           }))
         )
-        setShowHistory(false)
       }
     } catch (err) {
       console.error('Failed to load conversation:', err)
@@ -1668,17 +1706,11 @@ export default function App() {
             personalityPrompt = caps.systemPrompt
           }
         }
-        // Wrap with voice-mode constraints for natural spoken output
-        voiceSystemPrompt = `${personalityPrompt || 'You are a helpful voice assistant.'}
+        // Voice wrapper: format rules FIRST (preamble = highest authority for small models),
+        // then personality prompt SECOND (colors the delivery without overriding format)
+        voiceSystemPrompt = `You are in a live voice call. Reply in 1-2 short sentences only. Talk like a real person. Never mention being an AI. Stay in character.
 
-VOICE MODE RULES (absolute, override everything above if conflict):
-- This is a real-time spoken conversation. Reply in 1-2 short sentences.
-- Talk like a real person. No lists, no markdown, no bullet points.
-- NEVER use asterisks or stage directions like *smiles* *winks* *leans in*. Just speak naturally.
-- NEVER say "I'm an AI", "I'm designed to", "As an AI". Stay in character always.
-- NEVER recite poetry or give speeches. Just have a conversation.
-- Respond directly to what the user said. Don't deflect or change the subject.
-- Match their energy. Short question = short answer. Playful = playful. Serious = serious.`
+${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.'}`
       }
 
       try {
@@ -1699,7 +1731,8 @@ VOICE MODE RULES (absolute, override everything above if conflict):
             provider_model: settingsDraft.modelChat,
             // Custom generation parameters (from settingsDraft)
             textTemperature: settingsDraft.textTemperature,
-            textMaxTokens: settingsDraft.textMaxTokens,
+            // Voice mode: let backend enforce its own token cap for short spoken replies
+            textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
             imgWidth: settingsDraft.imgWidth,
             imgHeight: settingsDraft.imgHeight,
             imgSteps: settingsDraft.imgSteps,
@@ -1720,7 +1753,7 @@ VOICE MODE RULES (absolute, override everything above if conflict):
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
-              ? { ...m, pending: false, text: data.text ?? '…', media: data.media ?? null }
+              ? { ...m, pending: false, animate: true, text: data.text ?? '…', media: data.media ?? null }
               : m
           )
         )
@@ -1862,7 +1895,7 @@ VOICE MODE RULES (absolute, override everything above if conflict):
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
-              ? { ...m, pending: false, text: data.text ?? 'Done.', media: data.media ?? null }
+              ? { ...m, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null }
               : m
           )
         )
@@ -1947,7 +1980,7 @@ VOICE MODE RULES (absolute, override everything above if conflict):
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === tmpId
-              ? { ...msg, pending: false, text: data.text ?? 'Done.', media: data.media ?? null }
+              ? { ...msg, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null }
               : msg
           )
         )
@@ -2020,7 +2053,7 @@ VOICE MODE RULES (absolute, override everything above if conflict):
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === tmpId
-              ? { ...msg, pending: false, text: data.text ?? 'Done.', media: data.media ?? null }
+              ? { ...msg, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null }
               : msg
           )
         )
@@ -2152,6 +2185,7 @@ VOICE MODE RULES (absolute, override everything above if conflict):
                     role: 'assistant',
                     text: `# ${project.name}\n\n${project.description || 'Welcome to your project!'}\n\n**Instructions**: ${project.instructions || 'No specific instructions set.'}${documentInfo}\n\nHow can I help you today?`,
                     pending: false,
+                    animate: true,
                   }
 
                   setMessages([welcomeMsg])
@@ -2281,6 +2315,7 @@ VOICE MODE RULES (absolute, override everything above if conflict):
               setLightbox={setLightbox}
               endRef={endRef}
               mode={mode}
+              onNewConversation={onNewConversation}
               input={input}
               setInput={setInput}
               fileInputRef={fileInputRef}
@@ -2305,6 +2340,7 @@ VOICE MODE RULES (absolute, override everything above if conflict):
             setLightbox={setLightbox}
             endRef={endRef}
             mode={mode}
+            onNewConversation={onNewConversation}
             input={input}
             setInput={setInput}
             fileInputRef={fileInputRef}

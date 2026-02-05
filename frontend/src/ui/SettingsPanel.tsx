@@ -633,7 +633,7 @@ export default function SettingsPanel({
           </div>
           {value.promptRefinement && (
             <div className="mt-2 text-[10px] text-green-400/80 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2">
-              <span className="font-semibold">✨ Enabled:</span> Your prompts will be enhanced for better results. Falls back to direct mode if Ollama is unavailable.
+              <span className="font-semibold">Enabled:</span> Your prompts will be enhanced using your Chat Model. Thinking models (DeepSeek R1, QwQ) auto-fallback to llama3:8b for stability. Falls back to direct mode if Ollama is unavailable.
             </div>
           )}
           {!value.promptRefinement && (

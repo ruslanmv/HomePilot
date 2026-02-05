@@ -94,6 +94,18 @@ INSTALL_PATHS = {
 CIVITAI_API_BASE = "https://civitai.com/api/v1"
 CIVITAI_DOWNLOAD_BASE = "https://civitai.com/api/download/models"
 
+# Known filename mismatches: source filename from HuggingFace/Civitai -> catalog ID on disk.
+# When the download source uses a different filename than our catalog ID,
+# this map lets the download script detect and handle the rename automatically.
+RENAME_MAP: Dict[str, str] = {
+    "ponyDiffusionV6XL_v6StartWithThisOne.safetensors": "ponyDiffusionV6XL_v6.safetensors",
+    "AOM3A1B_orangemixs.safetensors": "abyssOrangeMix3_aom3a1b.safetensors",
+    "meinamix_v12Final.safetensors": "meinamix_meinaV12Final.safetensors",
+    "NoobAI-XL-v1.1.safetensors": "noobaiXL_epsPred11.safetensors",
+    "NoobAI-XL-Vpred-v1.0.safetensors": "noobaiXL_vPred10.safetensors",
+    "AnythingV5Ink_v5PrtRE.safetensors": "anything_v5PrtRE.safetensors",
+}
+
 DEFAULT_HEADERS = {
     "User-Agent": "HomePilot-Downloader/1.0",
 }
@@ -700,12 +712,34 @@ def download_catalog_model(model_id: str, output_dir: Optional[str] = None) -> i
     print(f"      ✓ Download prepared")
     print()
 
-    # Step 3: Download
+    # Step 3: Download (with fallback URL support)
     print(f"[3/3] ⬇️  Downloading model...")
     print(f"      Starting download... (this may take several minutes for large models)")
     print()
 
-    success, message = download_file(download_url, dest_path)
+    # Use Civitai headers if primary URL is from Civitai
+    primary_headers = None
+    if "civitai.com" in download_url:
+        primary_headers = get_civitai_headers()
+
+    success, message = download_file(download_url, dest_path, custom_headers=primary_headers)
+
+    # If primary URL failed, try fallback URL
+    if not success:
+        fallback_url = model_data.get("download_url_fallback")
+        if fallback_url:
+            print(f"\n      ⚠️  Primary URL failed: {message}")
+            print(f"      Trying fallback URL...")
+            fallback_display = fallback_url[:60] + "..." if len(fallback_url) > 60 else fallback_url
+            print(f"      Fallback: {fallback_display}")
+            print()
+
+            # Use Civitai headers if fallback URL is from Civitai
+            fallback_headers = None
+            if "civitai.com" in fallback_url:
+                fallback_headers = get_civitai_headers()
+
+            success, message = download_file(fallback_url, dest_path, custom_headers=fallback_headers)
 
     print()
     print(f"{'='*80}")

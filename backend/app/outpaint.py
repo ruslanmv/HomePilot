@@ -216,6 +216,7 @@ async def outpaint_image(req: OutpaintRequest):
     full_prompt = f"{base_prompt}, high quality, detailed"
 
     # Run the outpaint workflow
+    import random
     try:
         result = run_workflow("outpaint", {
             "image_path": req.image_url,
@@ -227,6 +228,7 @@ async def outpaint_image(req: OutpaintRequest):
             "extend_bottom": bottom,
             "width": new_w,
             "height": new_h,
+            "seed": random.randint(1, 2147483647),
             "filename_prefix": "homepilot_outpaint"
         })
 
