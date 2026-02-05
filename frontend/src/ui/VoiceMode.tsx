@@ -152,6 +152,19 @@ export default function VoiceMode({
 
   const voice = useVoiceController(onSendText);
 
+  // Auto-enable hands-free mode when Voice mode opens so it starts listening immediately
+  const autoStartRef = useRef(false);
+  useEffect(() => {
+    if (!autoStartRef.current && window.SpeechService && !voice.isHandsFree) {
+      autoStartRef.current = true;
+      // Small delay to let audio context initialize
+      const timer = setTimeout(() => {
+        voice.setHandsFree(true);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [voice.isHandsFree, voice.setHandsFree]);
+
   // Check if speech service is available
   if (!window.SpeechService) {
     return (

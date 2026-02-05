@@ -17,6 +17,7 @@ import {
   PlugZap,
   Trash2,
   Tv2,
+  Plus,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import VoiceMode from './VoiceMode'
@@ -694,6 +695,10 @@ function Sidebar({
   onSaveSettings,
   showHistory,
   setShowHistory,
+  conversations,
+  onLoadConversation,
+  onDeleteConversation,
+  currentConversationId,
 }: {
   mode: Mode
   setMode: (m: Mode) => void
@@ -707,6 +712,10 @@ function Sidebar({
   onSaveSettings: () => void
   showHistory: boolean
   setShowHistory: React.Dispatch<React.SetStateAction<boolean>>
+  conversations: Conversation[]
+  onLoadConversation: (convId: string) => void
+  onDeleteConversation: (convId: string) => void
+  currentConversationId: string
 }) {
   return (
     <aside className="w-[280px] flex-shrink-0 flex flex-col h-full bg-black border-r border-white/5 py-4 px-3 gap-3 relative">
@@ -762,13 +771,43 @@ function Sidebar({
 
         <button
           type="button"
-          className="w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
+          className="w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors flex items-center gap-2"
           onClick={onNewConversation}
         >
+          <Plus size={14} className="flex-shrink-0" />
           New conversation
         </button>
 
-        {messages.length > 0 ? (
+        {conversations.map((conv) => (
+          <div key={conv.conversation_id} className="relative group">
+            <button
+              type="button"
+              className={[
+                'w-full text-left px-3 py-2 text-[13px] rounded-xl truncate transition-colors pr-8',
+                conv.conversation_id === currentConversationId
+                  ? 'bg-white/10 text-white'
+                  : 'text-white/60 hover:bg-white/5 hover:text-white',
+              ].join(' ')}
+              onClick={() => onLoadConversation(conv.conversation_id)}
+              title={conv.last_content}
+            >
+              {conv.last_content?.slice(0, 34) || 'Conversation…'}
+              {conv.last_content && conv.last_content.length > 34 ? '…' : ''}
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeleteConversation(conv.conversation_id)
+              }}
+              className="absolute top-1.5 right-1.5 p-1 rounded-lg text-white/20 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+              title="Delete conversation"
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+
+        {conversations.length === 0 && messages.length > 0 ? (
           <button
             type="button"
             className="w-full text-left px-3 py-2 text-[13px] text-white/60 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
@@ -1596,17 +1635,20 @@ export default function App() {
         // Remove from local conversations list
         setConversations((prev) => prev.filter((c) => c.conversation_id !== convId))
 
-        // If we're currently viewing this conversation, clear the messages
+        // If we're currently viewing this conversation, start a fresh one
         if (conversationId === convId) {
           setMessages([])
-          setConversationId('')
+          setConversationId(uuid())
         }
+
+        // Refresh the conversation list
+        fetchConversations()
       }
     } catch (err) {
       console.error('Failed to delete conversation:', err)
       alert(`Failed to delete conversation: ${err}`)
     }
-  }, [settings.backendUrl, authHeaders, conversationId])
+  }, [settings.backendUrl, authHeaders, conversationId, fetchConversations])
 
   // Load project info on mount if project mode is active
   useEffect(() => {
@@ -1634,7 +1676,11 @@ export default function App() {
     loadProjectInfo()
   }, [mode, settings.backendUrl, authHeaders])
 
-  // Fetch conversations when history panel is opened
+  // Fetch conversations on mount and when history panel is opened
+  useEffect(() => {
+    fetchConversations()
+  }, [fetchConversations])
+
   useEffect(() => {
     if (showHistory) {
       fetchConversations()
@@ -1709,6 +1755,9 @@ export default function App() {
         if (data.conversation_id && data.conversation_id !== conversationId) {
           setConversationId(data.conversation_id)
         }
+
+        // Refresh conversation list so sidebar stays up to date
+        fetchConversations()
       } catch (err: any) {
         setMessages((prev) =>
           prev.map((m) =>
@@ -1733,6 +1782,7 @@ export default function App() {
       settings.backendUrl,
       settings.funMode,
       settingsDraft,
+      fetchConversations,
     ]
   )
 
@@ -2017,6 +2067,10 @@ export default function App() {
         onSaveSettings={onSaveSettings}
         showHistory={showHistory}
         setShowHistory={setShowHistory}
+        conversations={conversations}
+        onLoadConversation={loadConversation}
+        onDeleteConversation={deleteConversation}
+        currentConversationId={conversationId}
       />
 
       <main className="flex-1 flex flex-col relative min-w-0">
@@ -2032,9 +2086,19 @@ export default function App() {
           />
         )}
 
-        {/* Top-right Project Indicator - Only shown in chat mode when a project is active */}
+        {/* Top-right header - New Chat button + Project Indicator */}
         {mode === 'chat' && (
         <header className="absolute top-0 right-0 p-5 z-20 flex items-center gap-4">
+          {/* New Chat Button */}
+          <button
+            type="button"
+            onClick={onNewConversation}
+            className="inline-flex items-center gap-1.5 bg-white/10 hover:bg-white/15 text-white/80 hover:text-white text-xs font-medium px-3 py-1.5 rounded-full border border-white/10 hover:border-white/20 transition-all"
+            title="New Chat"
+          >
+            <Plus size={14} />
+            <span>New Chat</span>
+          </button>
           {/* Project Indicator */}
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')
