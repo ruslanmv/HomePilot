@@ -25,6 +25,11 @@ import {
   Zap,
   Radio,
   AlertCircle,
+  X,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Download,
 } from 'lucide-react';
 
 // Import voice module components
@@ -248,6 +253,7 @@ function useTypewriterText(
  * - Bullet lines (starting with "•")
  * - Blank line spacing
  * - Cursor only at end of currently typing line
+ * - Click-to-expand lightbox for generated images
  */
 function RenderTypedMessage({
   fullText,
@@ -255,12 +261,14 @@ function RenderTypedMessage({
   onProgress,
   animate,
   media,
+  onImageClick,
 }: {
   fullText: string;
   typingSpeed: number;
   onProgress?: () => void;
   animate: boolean;
   media?: Message['media'];
+  onImageClick?: (src: string) => void;
 }) {
   const { displayed, isTyping } = useTypewriterText(fullText, typingSpeed, onProgress, animate);
   const lines = displayed.split('\n');
@@ -304,16 +312,17 @@ function RenderTypedMessage({
         );
       })}
 
-      {/* Render generated images (same style as Chat mode) */}
+      {/* Render generated images - larger display with click-to-expand */}
       {media?.images?.length ? (
-        <div className="mt-3 flex gap-2 overflow-x-auto">
+        <div className="mt-3 flex gap-3 overflow-x-auto">
           {media.images.map((src, i) => (
             <img
               key={i}
               src={src}
               alt={`Generated ${i + 1}`}
-              className="h-48 w-48 object-cover rounded-xl border border-white/10 bg-black/20"
+              className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
               loading="lazy"
+              onClick={() => onImageClick?.(src)}
             />
           ))}
         </div>
@@ -334,6 +343,103 @@ function RenderTypedMessage({
   );
 }
 
+/**
+ * VoiceLightbox Component - Full-screen image viewer for voice mode
+ *
+ * Displays generated images at full resolution with zoom controls and download.
+ * Click backdrop or X to close.
+ */
+function VoiceLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  const [zoom, setZoom] = useState(100);
+
+  const handleDownload = async () => {
+    try {
+      const response = await fetch(src);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `homepilot-${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Download failed:', error);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/95 backdrop-blur-sm flex flex-col"
+      onClick={onClose}
+    >
+      {/* Top Controls */}
+      <div className="absolute top-0 left-0 right-0 flex items-center justify-between p-4 bg-gradient-to-b from-black/80 to-transparent z-10">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={(e) => { e.stopPropagation(); handleDownload(); }}
+            className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-white"
+            title="Download"
+          >
+            <Download size={18} />
+          </button>
+          <div className="w-px h-6 bg-white/20" />
+          <button
+            onClick={(e) => { e.stopPropagation(); setZoom((z) => Math.max(z - 25, 25)); }}
+            className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-white"
+            title="Zoom out"
+            disabled={zoom <= 25}
+          >
+            <ZoomOut size={18} />
+          </button>
+          <span className="text-sm font-medium px-2 min-w-[4rem] text-center text-white">
+            {zoom}%
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); setZoom((z) => Math.min(z + 25, 300)); }}
+            className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-white"
+            title="Zoom in"
+            disabled={zoom >= 300}
+          >
+            <ZoomIn size={18} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setZoom(100); }}
+            className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-white"
+            title="Reset zoom"
+          >
+            <Maximize2 size={18} />
+          </button>
+        </div>
+        <button
+          onClick={onClose}
+          className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-white"
+          aria-label="Close"
+        >
+          <X size={24} />
+        </button>
+      </div>
+
+      {/* Image */}
+      <div className="flex-1 flex items-center justify-center p-16 overflow-auto">
+        <img
+          src={src}
+          onClick={(e) => e.stopPropagation()}
+          className="rounded-lg shadow-2xl border border-white/10 transition-transform"
+          style={{
+            transform: `scale(${zoom / 100})`,
+            maxWidth: '90vw',
+            maxHeight: '80vh',
+            objectFit: 'contain',
+          }}
+          alt="Generated image preview"
+        />
+      </div>
+    </div>
+  );
+}
+
 interface VoiceModeGrokProps {
   onSendText: (text: string) => void;
   onClose?: () => void;
@@ -343,6 +449,9 @@ export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProp
   // Messages state
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
+
+  // Lightbox state for full-screen image viewing
+  const [lightbox, setLightbox] = useState<string | null>(null);
 
   // Settings panel states
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
@@ -720,6 +829,7 @@ export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProp
                     onProgress={scrollToBottom}
                     animate={idx === messages.length - 1}
                     media={msg.media}
+                    onImageClick={(src) => setLightbox(src)}
                   />
                 )}
               </div>
@@ -889,6 +999,14 @@ export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProp
           </div>
         </div>
       </div>
+
+      {/* Full-screen image lightbox */}
+      {lightbox && (
+        <VoiceLightbox
+          src={lightbox}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   );
 }
