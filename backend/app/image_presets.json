@@ -151,6 +151,25 @@
         "flux_schnell":    { "steps": 6,  "cfg": 1.0 },
         "flux_dev":        { "steps": 40, "cfg": 4.0 }
       }
+    },
+    "ultra": {
+      "ui": {
+        "label": "Ultra (Best)",
+        "description": "Best possible quality, slower generation (12GB VRAM safe)"
+      },
+      "base_values": {
+        "steps": 50,
+        "cfg": 8.5
+      },
+      "model_overrides": {
+        "sd15":            { "steps": 50, "cfg": 8.5 },
+        "sdxl":            { "steps": 60, "cfg": 6.5 },
+        "pony_xl":         { "steps": 45, "cfg": 7.0 },
+        "noobai_xl":       { "steps": 40, "cfg": 5.5 },
+        "noobai_xl_vpred": { "steps": 38, "cfg": 5.5 },
+        "flux_schnell":    { "steps": 8,  "cfg": 1.0 },
+        "flux_dev":        { "steps": 50, "cfg": 4.5 }
+      }
     }
   },
 

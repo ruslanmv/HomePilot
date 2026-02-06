@@ -31,7 +31,14 @@ import AnimateView from './Animate'
 import ModelsView from './Models'
 import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
+import {
+  ChatSettingsPopover,
+  DEFAULT_CHAT_SETTINGS,
+  type ChatScopedSettings,
+} from './components/ChatSettingsPopover'
 import { MessageMarkdown } from './components/MessageMarkdown'
+import { ChatEmptyState } from './components/ChatEmptyState'
+import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
 import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
@@ -64,6 +71,11 @@ export type Msg = {
     images?: string[]
     video_url?: string
   } | null
+  // Phase 4: "Ask before acting" confirmation payload
+  confirm?: {
+    intent: 'generate_images' | 'generate_videos'
+    prompt: string
+  }
 }
 
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio'
@@ -945,7 +957,7 @@ function QueryBar({
         className={[
           'relative w-full overflow-hidden',
           'bg-[#101010] shadow-sm shadow-black/20',
-          'ring-1 ring-inset ring-white/10 hover:ring-white/15 focus-within:ring-white/20',
+          'ring-1 ring-inset ring-white/15 hover:ring-white/20 focus-within:ring-white/25',
           'rounded-[10rem]',
           'transition-[background-color,box-shadow,border-color] duration-100 ease-in-out',
         ].join(' ')}
@@ -1013,7 +1025,7 @@ function QueryBar({
             rows={1}
             placeholder={modeHint(mode)}
             className={[
-              'w-full bg-transparent text-white placeholder:text-white/35',
+              'w-full bg-transparent text-white placeholder:text-white/55',
               'focus:outline-none resize-none',
               'min-h-14 py-4 px-2',
               'max-h-[400px] overflow-y-auto',
@@ -1110,6 +1122,8 @@ function ChatState({
   mode,
   onNewConversation,
   onRetryMessage,
+  chatSettings,
+  onUpdateChatSettings,
   input,
   setInput,
   fileInputRef,
@@ -1123,6 +1137,8 @@ function ChatState({
   mode: Mode
   onNewConversation: () => void
   onRetryMessage: (id: string) => void
+  chatSettings: ChatScopedSettings
+  onUpdateChatSettings: (next: ChatScopedSettings) => void
   input: string
   setInput: (s: string) => void
   fileInputRef: React.RefObject<HTMLInputElement>
@@ -1131,20 +1147,38 @@ function ChatState({
   onUpload: (file: File) => void
 }) {
   const { copied, copy } = useCopyMessage()
+  const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
 
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
-      {/* Top-right fixed New Chat icon (Grok style) */}
+      {/* Top-right fixed: Chat settings gear + New Chat icon (Phase 2, additive) */}
       <div className="fixed top-4 right-4 z-50">
-        <button
-          type="button"
-          onClick={onNewConversation}
-          className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-          title="New Chat"
-          aria-label="New Chat"
-        >
-          <PenLine size={16} />
-        </button>
+        <div className="relative flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setChatSettingsOpen((v) => !v)}
+            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            title="Chat settings"
+            aria-label="Chat settings"
+          >
+            <Settings size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={onNewConversation}
+            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            title="New Chat"
+            aria-label="New Chat"
+          >
+            <PenLine size={16} />
+          </button>
+          <ChatSettingsPopover
+            open={chatSettingsOpen}
+            onClose={() => setChatSettingsOpen(false)}
+            settings={chatSettings}
+            onChange={onUpdateChatSettings}
+          />
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pt-14 pb-8 space-y-8">
@@ -1209,6 +1243,34 @@ function ChatState({
                     <div className="text-sm text-red-200/90">
                       Something went wrong. You can retry the request.
                     </div>
+                  </div>
+                ) : null}
+
+                {/* Phase 4: "Ask before acting" confirmation buttons */}
+                {m.role === 'assistant' && m.confirm && !m.pending ? (
+                  <div className="mt-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="text-xs px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 hover:border-white/20 text-white/80 hover:text-white transition-all"
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent('hp:confirm_action', { detail: { id: m.id, ok: true } })
+                        )
+                      }
+                    >
+                      {m.confirm.intent === 'generate_videos' ? 'Generate video' : 'Generate image'}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-xs px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white/60 hover:text-white transition-all"
+                      onClick={() =>
+                        window.dispatchEvent(
+                          new CustomEvent('hp:confirm_action', { detail: { id: m.id, ok: false } })
+                        )
+                      }
+                    >
+                      Cancel
+                    </button>
                   </div>
                 ) : null}
 
@@ -1384,6 +1446,67 @@ export default function App() {
   const [voiceConversationId, setVoiceConversationId] = useState<string>(() => uuid())
   const [lightbox, setLightbox] = useState<string | null>(null)
 
+  // Phase 2 (additive): per-chat settings stored by conversation id.
+  const chatSettingsStorageKey = useMemo(
+    () => `hp_chat_settings:${chatConversationId}`,
+    [chatConversationId]
+  )
+  const [chatSettings, setChatSettings] = useState<ChatScopedSettings>(() => {
+    try {
+      const raw = localStorage.getItem(`hp_chat_settings:${localStorage.getItem('homepilot_conversation') || ''}`)
+      if (!raw) return DEFAULT_CHAT_SETTINGS
+      const parsed = JSON.parse(raw)
+      return {
+        advancedHelpEnabled: !!parsed.advancedHelpEnabled,
+        askBeforeActing: parsed.askBeforeActing !== false,
+        executionProfile:
+          parsed.executionProfile === 'balanced'
+            ? 'balanced'
+            : parsed.executionProfile === 'quality'
+            ? 'quality'
+            : 'fast',
+      }
+    } catch {
+      return DEFAULT_CHAT_SETTINGS
+    }
+  })
+
+  // Load settings whenever conversation changes
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(chatSettingsStorageKey)
+      if (!raw) {
+        setChatSettings(DEFAULT_CHAT_SETTINGS)
+        return
+      }
+      const parsed = JSON.parse(raw)
+      setChatSettings({
+        advancedHelpEnabled: !!parsed.advancedHelpEnabled,
+        askBeforeActing: parsed.askBeforeActing !== false,
+        executionProfile:
+          parsed.executionProfile === 'balanced'
+            ? 'balanced'
+            : parsed.executionProfile === 'quality'
+            ? 'quality'
+            : 'fast',
+      })
+    } catch {
+      setChatSettings(DEFAULT_CHAT_SETTINGS)
+    }
+  }, [chatSettingsStorageKey])
+
+  const updateChatSettings = useCallback(
+    (next: ChatScopedSettings) => {
+      setChatSettings(next)
+      try {
+        localStorage.setItem(chatSettingsStorageKey, JSON.stringify(next))
+      } catch {
+        // ignore storage errors
+      }
+    },
+    [chatSettingsStorageKey]
+  )
+
   const [mode, setMode] = useState<Mode>(() => {
     return (localStorage.getItem('homepilot_mode') as Mode) || 'chat'
   })
@@ -1434,7 +1557,19 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false)
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [searchQuery, setSearchQuery] = useState('')
-  const [currentProject, setCurrentProject] = useState<{id: string, name: string, document_count: number} | null>(null)
+  const [currentProject, setCurrentProject] = useState<{
+    id: string
+    name: string
+    document_count: number
+    project_type?: string
+    description?: string
+    agentic?: {
+      goal?: string
+      capabilities?: string[]
+      ask_before_acting?: boolean
+      execution_profile?: string
+    }
+  } | null>(null)
 
   // Track last spoken message to avoid re-speaking
   const lastSpokenMessageIdRef = useRef<string | null>(null)
@@ -1858,6 +1993,133 @@ export default function App() {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
 
+  // ─── Phase 4 (additive): dynamic capability discovery from backend ───
+  const [agenticCaps, setAgenticCaps] = useState<string[]>([])
+
+  const refreshAgenticCaps = useCallback(async () => {
+    try {
+      const h: Record<string, string> = {}
+      const k = settings.apiKey.trim()
+      if (k) h['x-api-key'] = k
+      const res = await fetch(`${settings.backendUrl}/v1/agentic/capabilities`, { headers: h })
+      if (!res.ok) return
+      const data = await res.json()
+      const ids = Array.isArray(data?.capabilities)
+        ? data.capabilities.map((c: any) => c.id).filter(Boolean)
+        : []
+      setAgenticCaps(ids)
+    } catch {
+      // agentic unavailable — keep empty
+    }
+  }, [settings.apiKey, settings.backendUrl])
+
+  useEffect(() => {
+    void refreshAgenticCaps()
+  }, [refreshAgenticCaps])
+
+  // Phase 3 (additive): conservative heuristic to detect image generation requests
+  const isLikelyImageRequest = useCallback((text: string) => {
+    const t = text.toLowerCase()
+    const hasVerb =
+      t.includes('generate') || t.includes('create') || t.includes('make') || t.includes('draw')
+    const hasNoun =
+      t.includes('image') || t.includes('picture') || t.includes('photo') || t.includes('portrait') || t.includes('art')
+    const phrase =
+      t.includes('a picture of') || t.includes('an image of') || t.includes('generate me')
+    return (hasVerb && hasNoun) || phrase
+  }, [])
+
+  // Phase 4 (additive): conservative heuristic for video generation requests
+  const isLikelyVideoRequest = useCallback((text: string) => {
+    const t = text.toLowerCase()
+    const hasVerb = t.includes('generate') || t.includes('create') || t.includes('make')
+    const hasNoun = t.includes('video') || t.includes('animation') || t.includes('animate') || t.includes('clip')
+    const phrase = t.includes('a video of') || t.includes('generate a video') || t.includes('make an animation')
+    return (hasVerb && hasNoun) || phrase
+  }, [])
+
+  // Phase 4 (additive): handle "Ask before acting" confirmation clicks
+  const handleConfirmAction = useCallback(
+    async (msgId: string, ok: boolean) => {
+      const msg = messages.find((m) => m.id === msgId)
+      if (!msg?.confirm) return
+
+      if (!ok) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId ? { ...m, confirm: undefined, text: 'Okay, cancelled.' } : m
+          )
+        )
+        return
+      }
+
+      // Turn this message into pending while we invoke
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId ? { ...m, pending: true, confirm: undefined, text: '' } : m
+        )
+      )
+
+      try {
+        const agentic = await postJson<any>(
+          settings.backendUrl,
+          '/v1/agentic/invoke',
+          {
+            session_key: mode === 'voice' ? 'voice' : 'chat',
+            conversation_id: conversationId,
+            project_id: localStorage.getItem('homepilot_current_project') || undefined,
+            intent: msg.confirm.intent,
+            args: { prompt: msg.confirm.prompt },
+            profile: chatSettings.executionProfile,
+            nsfwMode: settingsDraft.nsfwMode,
+          },
+          authHeaders
+        )
+
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? {
+                  ...m,
+                  pending: false,
+                  animate: true,
+                  text: agentic.assistant_text ?? 'Done.',
+                  media: agentic.media ?? null,
+                }
+              : m
+          )
+        )
+
+        if (agentic.conversation_id && agentic.conversation_id !== conversationId) {
+          setConversationId(agentic.conversation_id)
+        }
+        fetchConversations()
+      } catch {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === msgId
+              ? { ...m, pending: false, text: "Sorry, I couldn't complete that." }
+              : m
+          )
+        )
+      }
+    },
+    [authHeaders, chatSettings.executionProfile, conversationId, fetchConversations, messages, mode, settings.backendUrl, settingsDraft.nsfwMode]
+  )
+
+  // Phase 4: listen for confirmation button clicks via custom events
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent
+      const id = ce?.detail?.id as string | undefined
+      const ok = !!ce?.detail?.ok
+      if (!id) return
+      void handleConfirmAction(id, ok)
+    }
+    window.addEventListener('hp:confirm_action', handler as any)
+    return () => window.removeEventListener('hp:confirm_action', handler as any)
+  }, [handleConfirmAction])
+
   const sendTextOrIntent = useCallback(
     async (rawText: string) => {
       const trimmed = rawText.trim()
@@ -1876,6 +2138,106 @@ export default function App() {
 
       // Get current project ID from localStorage if user selected one
       const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+
+      // ─── Phase 4 (additive): agentic invoke with dynamic capabilities ──
+      // Agent projects ALWAYS route agentically (regardless of chatSettings toggle).
+      // Non-agent projects use chatSettings.advancedHelpEnabled as before.
+      // Intent detection now uses the dedicated detectAgenticIntent() module
+      // with slash commands (/image, /video) and conservative NLP heuristics.
+      const isAgentProject = currentProject?.project_type === 'agent'
+      const agenticEnabled = chatSettings?.advancedHelpEnabled === true || isAgentProject
+
+      // Agent projects use wizard-selected capabilities; others use server-advertised
+      const projectCaps: string[] = Array.isArray(currentProject?.agentic?.capabilities)
+        ? currentProject!.agentic!.capabilities
+        : []
+      const allowedCaps = isAgentProject ? projectCaps : agenticCaps
+
+      const canImages = allowedCaps.includes('generate_images')
+      const canVideos = allowedCaps.includes('generate_videos')
+
+      const detected = detectAgenticIntent(trimmed)
+      const detectedIntent: AgenticIntent | null = detected.intent
+      const toolPrompt = detected.prompt
+
+      const intentAllowed =
+        (detectedIntent === 'generate_images' && canImages) ||
+        (detectedIntent === 'generate_videos' && canVideos)
+
+      if (agenticEnabled && detectedIntent && intentAllowed && (mode === 'chat' || mode === 'voice')) {
+        // "Ask before acting" — show confirmation buttons instead of invoking
+        if (chatSettings?.askBeforeActing) {
+          const confirmText =
+            detectedIntent === 'generate_videos'
+              ? 'I can generate a short video for that. Proceed?'
+              : 'I can generate an image for that. Proceed?'
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tmpId
+                ? {
+                    ...m,
+                    pending: false,
+                    text: confirmText,
+                    confirm: { intent: detectedIntent, prompt: toolPrompt || trimmed },
+                  }
+                : m
+            )
+          )
+          return
+        }
+
+        // Invoke immediately (agentic enabled, Ask before acting OFF)
+        try {
+          const agentic = await postJson<any>(
+            settings.backendUrl,
+            '/v1/agentic/invoke',
+            {
+              session_key: mode === 'voice' ? 'voice' : 'chat',
+              conversation_id: conversationId,
+              project_id: currentProjectId,
+              intent: detectedIntent,
+              args: { prompt: toolPrompt || trimmed },
+              profile: chatSettings?.executionProfile,
+              nsfwMode: settingsDraft.nsfwMode,
+            },
+            authHeaders
+          )
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tmpId
+                ? {
+                    ...m,
+                    pending: false,
+                    animate: true,
+                    text: agentic.assistant_text ?? 'Here you go.',
+                    media: agentic.media ?? null,
+                  }
+                : m
+            )
+          )
+
+          if (mode === 'voice' && typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('hp:assistant_message', {
+                detail: {
+                  id: tmpId,
+                  text: agentic.assistant_text ?? 'Here you go.',
+                  media: agentic.media ?? null,
+                },
+              })
+            )
+          }
+
+          if (agentic.conversation_id && agentic.conversation_id !== conversationId) {
+            setConversationId(agentic.conversation_id)
+          }
+          fetchConversations()
+          return
+        } catch {
+          // Silent fallback to normal chat pipeline below
+        }
+      }
 
       // Get voice personality system prompt for voice mode
       // Wraps with brevity instruction for natural spoken conversation
@@ -1925,10 +2287,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             imgCfg: settingsDraft.imgCfg,
             imgSeed: settingsDraft.imgSeed,
             imgModel: settingsDraft.modelImages,
+            imgPreset: settingsDraft.preset,
             vidSeconds: settingsDraft.vidSeconds,
             vidFps: settingsDraft.vidFps,
             vidMotion: settingsDraft.vidMotion,
             vidModel: settingsDraft.modelVideo,
+            vidPreset: settingsDraft.vidPreset,
             nsfwMode: settingsDraft.nsfwMode,
             // Voice mode personality system prompt
             voiceSystemPrompt,
@@ -1948,7 +2312,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         if (mode === 'voice' && typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('hp:assistant_message', {
-              detail: { id: tmpId, text: data.text ?? '…' },
+              detail: { id: tmpId, text: data.text ?? '…', media: data.media ?? null },
             })
           )
         }
@@ -1986,7 +2350,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         if (mode === 'voice' && typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('hp:assistant_message', {
-              detail: { id: tmpId, text: errorText },
+              detail: { id: tmpId, text: errorText, media: null },
             })
           )
         }
@@ -1994,8 +2358,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     },
     [
       authHeaders,
+      chatSettings,
       conversationId,
+      currentProject,
       fetchConversations,
+      agenticCaps,
       messages,
       mode,
       settings.backendUrl,
@@ -2038,10 +2405,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             imgCfg: settingsDraft.imgCfg,
             imgSeed: settingsDraft.imgSeed,
             imgModel: settingsDraft.modelImages,
+            imgPreset: settingsDraft.preset,
             vidSeconds: settingsDraft.vidSeconds,
             vidFps: settingsDraft.vidFps,
             vidMotion: settingsDraft.vidMotion,
             vidModel: settingsDraft.modelVideo,
+            vidPreset: settingsDraft.vidPreset,
             nsfwMode: settingsDraft.nsfwMode,
           },
           authHeaders
@@ -2428,28 +2797,31 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                   setCurrentProject({
                     id: projectId,
                     name: project.name,
-                    document_count: project.document_count || 0
+                    document_count: project.document_count || 0,
+                    project_type: project.project_type,
+                    description: project.description,
+                    agentic: project.agentic,
                   })
 
                   // Start new conversation for this project
                   onNewConversation()
 
-                  // Add welcome message explaining the project
-                  const documentInfo = project.document_count > 0
-                    ? `\n\n📚 **Knowledge Base**: ${project.document_count} document chunks indexed. I have access to your uploaded documents and will reference them when relevant.`
-                    : project.is_example
-                    ? '\n\n💡 **Tip**: Upload documents in Project mode to enable document-based chat.'
-                    : ''
-
-                  const welcomeMsg: Msg = {
-                    id: `welcome-${Date.now()}`,
-                    role: 'assistant',
-                    text: `# ${project.name}\n\n${project.description || 'Welcome to your project!'}\n\n**Instructions**: ${project.instructions || 'No specific instructions set.'}${documentInfo}\n\nHow can I help you today?`,
-                    pending: false,
-                    animate: true,
+                  // Agent projects: auto-enable agentic execution mode
+                  if (project.project_type === 'agent') {
+                    const agentSettings: ChatScopedSettings = {
+                      advancedHelpEnabled: true,
+                      askBeforeActing: project.agentic?.ask_before_acting !== false,
+                      executionProfile: project.agentic?.execution_profile === 'balanced'
+                        ? 'balanced'
+                        : project.agentic?.execution_profile === 'quality'
+                        ? 'quality'
+                        : 'fast',
+                    }
+                    updateChatSettings(agentSettings)
                   }
 
-                  setMessages([welcomeMsg])
+                  // Empty state: no welcome message — ChatEmptyState handles it
+                  setMessages([])
                   setMode('chat')
                 } else {
                   // Fallback if fetch fails
@@ -2578,6 +2950,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               mode={mode}
               onNewConversation={onNewConversation}
               onRetryMessage={retryFailedMessage}
+              chatSettings={chatSettings}
+              onUpdateChatSettings={updateChatSettings}
               input={input}
               setInput={setInput}
               fileInputRef={fileInputRef}
@@ -2586,6 +2960,34 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               onUpload={uploadAndSend}
             />
           )
+        ) : messages.length === 0 && currentProject ? (
+          <div className="flex-1 flex flex-col items-center justify-center px-6">
+            <ChatEmptyState
+              title={currentProject.name}
+              description={currentProject.description}
+              isAgent={currentProject.project_type === 'agent'}
+              capabilityLabels={(currentProject.agentic?.capabilities || []).map((id: string) => {
+                if (id === 'generate_images') return 'Generate images'
+                if (id === 'generate_videos') return 'Generate short videos'
+                if (id === 'analyze_documents') return 'Analyze documents'
+                if (id === 'automate_external') return 'Automate external services'
+                return id
+              })}
+              onPickPrompt={(t) => sendTextOrIntent(t)}
+            />
+            <div className="shrink-0 w-full max-w-3xl pb-6 pt-4">
+              <QueryBar
+                centered={false}
+                mode={mode}
+                input={input}
+                setInput={setInput}
+                fileInputRef={fileInputRef}
+                canSend={canSend}
+                onSend={onSend}
+                onUpload={uploadAndSend}
+              />
+            </div>
+          </div>
         ) : messages.length === 0 ? (
           <EmptyState
             mode={mode}
@@ -2604,6 +3006,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             mode={mode}
             onNewConversation={onNewConversation}
             onRetryMessage={retryFailedMessage}
+            chatSettings={chatSettings}
+            onUpdateChatSettings={updateChatSettings}
             input={input}
             setInput={setInput}
             fileInputRef={fileInputRef}
