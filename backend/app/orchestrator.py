@@ -1272,10 +1272,10 @@ async def orchestrate(
                 refined["ckpt_name"] = normalized_ckpt
 
             # Set checkpoint for all templated workflows ({{ckpt_name}})
-            # SDXL, SD1.5, and Pony workflows all use the {{ckpt_name}} template.
+            # SDXL, SD1.5, NoobAI-XL, and Pony workflows all use the {{ckpt_name}} template.
             # Flux workflows hardcode their model paths (UNETLoader, not CheckpointLoaderSimple).
             checkpoint_override = None
-            if architecture in ("sd15", "sdxl"):
+            if architecture in ("sd15", "sdxl", "noobai_xl", "noobai_xl_vpred", "pony_xl"):
                 checkpoint_override = model_filename
                 refined["ckpt_name"] = checkpoint_override
 
