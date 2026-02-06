@@ -410,10 +410,33 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
             except Exception:
                 pass
 
+        # Agent project: inject capability-aware system prompt
+        agentic_data = project_data.get("agentic")
+        agentic_hint = ""
+        if project_data.get("project_type") == "agent" and agentic_data:
+            caps = agentic_data.get("capabilities", [])
+            goal = agentic_data.get("goal", "")
+            cap_labels = {
+                "generate_images": "generating images",
+                "generate_videos": "generating short videos",
+                "analyze_documents": "analyzing documents",
+                "automate_external": "automating external services",
+            }
+            cap_str = ", ".join(cap_labels.get(c, c) for c in caps) if caps else "general assistance"
+            agentic_hint = f"""
+
+AGENT MODE — ACTIVE
+You are an AI agent with the following goal: {goal}
+Your available capabilities include: {cap_str}.
+When the user asks you to perform an action that matches your capabilities, DO IT rather than explaining how to do it.
+For image generation: describe the scene concisely, the system will generate it automatically.
+For video generation: describe the motion and scene, the system will generate it automatically.
+Do not say "I cannot generate images" — you CAN. The system handles tool execution for you."""
+
         system_instruction = f"""You are HomePilot, acting as a specialized assistant for the project: "{name}".
 
 CONTEXT & INSTRUCTIONS:
-{instructions}
+{instructions}{agentic_hint}
 
 ATTACHED FILES:
 {files_info if files_info else "No files attached yet."}{doc_count_info}

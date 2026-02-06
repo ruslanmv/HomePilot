@@ -60,6 +60,10 @@ interface Message {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  media?: {
+    images?: string[];
+    video_url?: string;
+  } | null;
 }
 
 // State messages
@@ -250,11 +254,13 @@ function RenderTypedMessage({
   typingSpeed,
   onProgress,
   animate,
+  media,
 }: {
   fullText: string;
   typingSpeed: number;
   onProgress?: () => void;
   animate: boolean;
+  media?: Message['media'];
 }) {
   const { displayed, isTyping } = useTypewriterText(fullText, typingSpeed, onProgress, animate);
   const lines = displayed.split('\n');
@@ -297,6 +303,33 @@ function RenderTypedMessage({
           </p>
         );
       })}
+
+      {/* Render generated images (same style as Chat mode) */}
+      {media?.images?.length ? (
+        <div className="mt-3 flex gap-2 overflow-x-auto">
+          {media.images.map((src, i) => (
+            <img
+              key={i}
+              src={src}
+              alt={`Generated ${i + 1}`}
+              className="h-48 w-48 object-cover rounded-xl border border-white/10 bg-black/20"
+              loading="lazy"
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {/* Render generated video */}
+      {media?.video_url ? (
+        <div className="mt-3">
+          <video
+            src={media.video_url}
+            controls
+            playsInline
+            className="w-full max-w-xl rounded-xl border border-white/10 bg-black/20"
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -478,9 +511,10 @@ export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProp
   // Listen for assistant messages from App.tsx (event bridge)
   // Deduplicates by ID to prevent double-append from StrictMode, retries, or TTS events
   useEffect(() => {
-    const handler = (e: CustomEvent<{ id: string; text: string }>) => {
+    const handler = (e: CustomEvent<{ id: string; text: string; media?: Message['media'] }>) => {
       const id = e?.detail?.id;
       const text = e?.detail?.text;
+      const media = e?.detail?.media;
       if (!id || !text) return;
 
       setMessages((prev) => {
@@ -488,11 +522,11 @@ export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProp
         if (idx >= 0) {
           // Update existing message (streaming update)
           const copy = [...prev];
-          copy[idx] = { ...copy[idx], text: String(text) };
+          copy[idx] = { ...copy[idx], text: String(text), media: media ?? copy[idx].media };
           return copy;
         }
         // New message
-        return [...prev, { id, role: 'assistant', text: String(text) }];
+        return [...prev, { id, role: 'assistant', text: String(text), media: media ?? null }];
       });
     };
 
@@ -685,6 +719,7 @@ export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProp
                     typingSpeed={typingSpeed}
                     onProgress={scrollToBottom}
                     animate={idx === messages.length - 1}
+                    media={msg.media}
                   />
                 )}
               </div>
