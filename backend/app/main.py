@@ -1449,6 +1449,103 @@ async def install_model(req: ModelInstallRequest) -> JSONResponse:
         )
 
 
+class ModelDeleteRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    provider: str = Field(..., description="Provider: 'comfyui' or 'ollama'")
+    model_id: str = Field(..., description="Model filename / ID to delete")
+    model_type: Optional[str] = Field("image", description="Model type for path resolution")
+
+
+@app.post("/models/delete", dependencies=[Depends(require_api_key)])
+async def delete_model(req: ModelDeleteRequest) -> JSONResponse:
+    """
+    Delete an installed model from disk.
+
+    Protected models (marked in the catalog) cannot be deleted.
+    Only supports ComfyUI and Ollama providers.
+    """
+    if req.provider not in ("comfyui", "ollama"):
+        return JSONResponse(status_code=400, content=_safe_err("Only comfyui and ollama models can be deleted"))
+
+    # --- Load catalog and check protection ---
+    catalog_path = Path(__file__).parent / "model_catalog_data.json"
+    is_protected = False
+    install_path_hint = None
+    try:
+        catalog = json.loads(catalog_path.read_text())
+        provider_data = catalog.get("providers", {}).get(req.provider, {})
+        for _type_key, entries in provider_data.items():
+            if isinstance(entries, list):
+                for entry in entries:
+                    if entry.get("id") == req.model_id:
+                        is_protected = entry.get("protected", False)
+                        install_path_hint = entry.get("install_path")
+                        break
+    except Exception:
+        pass
+
+    if is_protected:
+        return JSONResponse(
+            status_code=403,
+            content=_safe_err(
+                f"Cannot delete '{req.model_id}': this is a protected default model.",
+                code="protected_model",
+            ),
+        )
+
+    if req.provider == "ollama":
+        # Delete Ollama model via CLI
+        try:
+            result = subprocess.run(
+                ["ollama", "rm", req.model_id],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                return JSONResponse(content={"ok": True, "message": f"Deleted Ollama model: {req.model_id}"})
+            else:
+                return JSONResponse(status_code=500, content=_safe_err(f"Ollama rm failed: {result.stderr.strip()}"))
+        except FileNotFoundError:
+            return JSONResponse(status_code=500, content=_safe_err("Ollama CLI not found"))
+        except Exception as e:
+            return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete: {e}"))
+
+    # --- ComfyUI: resolve file path and delete ---
+    from .providers import get_comfy_models_path
+    models_root = get_comfy_models_path()
+
+    # Determine subdirectory from catalog hint or common locations
+    search_dirs = []
+    if install_path_hint:
+        search_dirs.append(models_root / install_path_hint.rstrip("/"))
+    # Always search common directories as fallback
+    for subdir in ["checkpoints", "unet", "clip", "vae", "controlnet",
+                    "upscale_models", "gfpgan", "sams", "rembg", "diffusion_models"]:
+        d = models_root / subdir
+        if d not in search_dirs:
+            search_dirs.append(d)
+
+    deleted_files = []
+    for directory in search_dirs:
+        candidate = directory / req.model_id
+        if candidate.is_file():
+            try:
+                size_mb = candidate.stat().st_size / (1024 * 1024)
+                candidate.unlink()
+                deleted_files.append(f"{candidate} ({size_mb:.0f} MB)")
+            except OSError as e:
+                return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete file: {e}"))
+
+    if not deleted_files:
+        return JSONResponse(status_code=404, content=_safe_err(f"Model file not found: {req.model_id}"))
+
+    return JSONResponse(content={
+        "ok": True,
+        "message": f"Deleted: {', '.join(deleted_files)}",
+        "deleted": deleted_files,
+    })
+
+
 @app.get("/models/health")
 async def check_models_health(
     model_type: Optional[str] = Query(None, description="Filter by model type: 'image', 'video', 'edit'"),

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X } from 'lucide-react'
+import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2 } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -16,6 +16,7 @@ type ModelCatalogEntry = {
   label?: string
   recommended?: boolean
   recommended_nsfw?: boolean
+  protected?: boolean
   nsfw?: boolean
   description?: string
   size_gb?: number
@@ -508,8 +509,10 @@ export default function ModelsView(props: ModelsParams) {
   const [catalogError, setCatalogError] = useState<string | null>(null)
   const [catalogLoading, setCatalogLoading] = useState(false)
 
-  // Install jobs — optional endpoint (we degrade if not present)
+  // Install/delete jobs — optional endpoint (we degrade if not present)
   const [installBusy, setInstallBusy] = useState<string | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState<string | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
   // Civitai-specific state
@@ -701,6 +704,7 @@ export default function ModelsView(props: ModelsParams) {
       label: string
       recommended?: boolean
       recommended_nsfw?: boolean
+      protected?: boolean
       nsfw?: boolean
       description?: string
       civitai_url?: string
@@ -716,6 +720,7 @@ export default function ModelsView(props: ModelsParams) {
         label: safeLabel(s.id, s.label),
         recommended: s.recommended,
         recommended_nsfw: s.recommended_nsfw,
+        protected: s.protected,
         nsfw: s.nsfw,
         description: s.description,
         civitai_url: s.civitai_url,
@@ -821,6 +826,30 @@ export default function ModelsView(props: ModelsParams) {
       }
     } finally {
       setInstallBusy(null)
+    }
+  }
+
+  const tryDelete = async (modelId: string) => {
+    setDeleteBusy(modelId)
+    setDeleteConfirm(null)
+    try {
+      const body = {
+        provider,
+        model_type: modelType,
+        model_id: modelId,
+      }
+      setToast(`Deleting ${modelId}...`)
+      const res = await postJson<{ ok?: boolean; message?: string }>(backendUrl, '/models/delete', body, authKey)
+      if (res?.ok) {
+        setToast(res.message || `Deleted ${modelId}`)
+        setTimeout(() => refreshInstalled(), 500)
+      } else {
+        setToast(res?.message || 'Delete failed.')
+      }
+    } catch (e: any) {
+      setToast(`Delete failed: ${e?.message || String(e)}`)
+    } finally {
+      setDeleteBusy(null)
     }
   }
 
@@ -1662,6 +1691,7 @@ export default function ModelsView(props: ModelsParams) {
                   // Remote API providers (OpenAI, Claude, Watsonx, openai_compat) don't support local installation
                   const isLocalProvider = provider === 'ollama' || provider === 'comfyui' || provider === 'civitai'
                   const canDownload = row.status === 'missing' && isLocalProvider
+                  const canDelete = (row.status === 'installed' || row.status === 'installed_unsupported') && isLocalProvider && !row.protected
                   const isCivitai = provider === 'civitai'
 
                   return (
@@ -1690,6 +1720,11 @@ export default function ModelsView(props: ModelsParams) {
                           {isCivitai && row.civitai_version_id ? (
                             <div className="px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-[10px] font-bold uppercase tracking-wider text-cyan-200">
                               v{row.civitai_version_id}
+                            </div>
+                          ) : null}
+                          {row.protected && (row.status === 'installed' || row.status === 'installed_unsupported') ? (
+                            <div className="px-3 py-1.5 rounded-lg border border-white/20 bg-white/5 text-[10px] font-bold uppercase tracking-wider text-white/50">
+                              🔒 Default
                             </div>
                           ) : null}
                         </div>
@@ -1794,6 +1829,48 @@ export default function ModelsView(props: ModelsParams) {
                               )}
                             </span>
                           </button>
+                        ) : null}
+
+                        {canDelete ? (
+                          deleteConfirm === row.id ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-bold text-white flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                disabled={deleteBusy === row.id}
+                                onClick={() => void tryDelete(row.id)}
+                              >
+                                {deleteBusy === row.id ? (
+                                  <>
+                                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <span>Deleting...</span>
+                                  </>
+                                ) : (
+                                  <span>Confirm</span>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold transition-all"
+                                onClick={() => setDeleteConfirm(null)}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-red-600/20 border border-white/10 hover:border-red-500/30 text-xs font-bold flex items-center gap-2 transition-all hover:scale-105 active:scale-95 text-white/60 hover:text-red-400"
+                              onClick={() => setDeleteConfirm(row.id)}
+                              title="Delete this model from disk"
+                            >
+                              <Trash2 size={14} />
+                              <span>Delete</span>
+                            </button>
+                          )
                         ) : null}
                       </div>
                     </div>
