@@ -76,6 +76,9 @@ from .outpaint import router as outpaint_router
 # Capabilities module routes
 from .capabilities import router as capabilities_router
 
+# Agentic AI module routes (additive — zero changes to existing code)
+from .agentic.routes import router as agentic_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -103,6 +106,9 @@ app.include_router(outpaint_router)
 
 # Include Capabilities routes (/v1/capabilities)
 app.include_router(capabilities_router)
+
+# Include Agentic AI routes (/v1/agentic/*)
+app.include_router(agentic_router)
 
 # ----------------------------
 # Models
