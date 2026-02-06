@@ -1,0 +1,15 @@
+# Ensure shell scripts always use LF line endings (never CRLF)
+*.sh text eol=lf
+Makefile text eol=lf
+
+# Common binary files
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.safetensors binary
+*.pth binary
+*.onnx binary
+*.ckpt binary
+*.gguf binary
