@@ -39,6 +39,14 @@ A professional content creation suite for YouTube creators, educators, and enter
 - **TV Mode** - Cinematic fullscreen playback experience
 - **Export Options** - PDF storyboards, PPTX slides, and asset bundles
 
+### 🤖 Agentic AI with MCP Context Forge
+Create intelligent **AI Agents** that can use tools, access knowledge bases, and take actions on your behalf:
+- **Agent Projects** - New project type with a guided 4-step wizard (Details → Capabilities → Knowledge → Review)
+- **Dynamic Capabilities** - Agents discover available tools at runtime (image generation, video creation, document analysis, external automation)
+- **MCP Gateway** - Powered by [MCP Context Forge](https://github.com/ruslanmv/mcp-context-forge), a local gateway that connects your agents to 20+ tool servers
+- **Ask-Before-Acting** - Safety-first execution with configurable autonomy levels
+- **Voice Mode Media** - Generated images and videos now render directly in Voice mode conversations
+
 ### 🎮 Play Story Mode
 Simple, relaxing story creation for beginners:
 - Enter a premise and watch your story come to life
@@ -83,6 +91,7 @@ This serves as the foundation for an "enterprise mind" capable of expanding into
 | **Scene Editor** | Edit narration, image prompts, and negative prompts for each scene. Regenerate images on demand. |
 | **TV Mode** | Immersive fullscreen playback with auto-advance, narration display, and cinematic transitions. |
 | **Project Settings** | Comprehensive configuration: format (16:9/9:16), intent (Entertain/Educate/Inspire), visual style, mood & tone. |
+| **Agent Projects** | Create AI agents with custom goals, tool capabilities, and knowledge bases through a guided wizard. Powered by MCP Context Forge. |
 
 ---
 
@@ -172,6 +181,8 @@ graph LR
     Backend -->|Process| Media[Media Service FFMPEG :8002]
     Backend -->|Store| DB[(SQLite)]
     Backend -->|Studio| Studio[Studio API]
+    Backend -->|Agentic| MCP[MCP Gateway :4444]
+    MCP -->|Tools| Servers[MCP Tool Servers]
     Studio -->|Stories| StoryDB[(Story Store)]
 ```
 
@@ -199,6 +210,11 @@ homepilot/
 │               └── stores/             # Zustand state management
 ├── backend/
 │   └── app/
+│       ├── agentic/              # MCP Context Forge integration
+│       │   ├── routes.py         # /v1/agentic/* endpoints
+│       │   ├── capabilities.py   # Dynamic tool discovery
+│       │   ├── client.py         # MCP Gateway HTTP client
+│       │   └── policy.py         # Ask-before-acting policies
 │       └── studio/
 │           ├── routes.py     # Studio API endpoints
 │           ├── models.py     # Pydantic models
@@ -294,6 +310,7 @@ make run
 * **UI:** `http://localhost:3000`
 * **API Docs:** `http://localhost:8000/docs`
 * **ComfyUI:** `http://localhost:8188`
+* **MCP Gateway:** `http://localhost:4444/admin` *(when agentic mode is enabled)*
 
 ---
 
@@ -368,6 +385,14 @@ Located in the bottom-left of the sidebar:
 | `/models` | GET | List available models |
 | `/health` | GET | Health check |
 
+### Agentic Endpoints
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/v1/agentic/capabilities` | GET | List available agent capabilities |
+| `/v1/agentic/invoke` | POST | Execute a tool via MCP Gateway |
+| `/v1/agentic/policy` | GET | Get current execution policy |
+
 ---
 
 ## ⚙️ Workflows (ComfyUI)
@@ -403,6 +428,9 @@ HomePilot is **workflow-driven**. Instead of hardcoded pipelines, it loads JSON 
 | `make down` | Stop and remove containers |
 | `make health` | Run best-effort health checks |
 | `make health-check` | Comprehensive health check of all services |
+| `make start` | Start all services (set `AGENTIC=1` for MCP) |
+| `make start-mcp` | Start MCP Context Forge gateway and servers |
+| `make mcp-register-homepilot` | Register default tools with MCP Gateway |
 | `make dev` | Run frontend locally + backend in Docker |
 | `make clean` | Remove local artifacts and cache |
 
@@ -458,6 +486,10 @@ ProjectTemplate(
 - [x] Capabilities API for runtime feature checks
 - [x] Animate Studio: Video Settings panel, Resolution Override, Hardware Presets
 - [x] Multi-model video support (LTX, Wan, SVD, Hunyuan, Mochi, CogVideo)
+
+- [x] Agentic AI: Agent project type with 4-step creation wizard
+- [x] MCP Context Forge integration with dynamic capability discovery
+- [x] Voice mode media rendering (images and videos)
 
 ### In Progress
 - [ ] Voice narration with TTS
@@ -541,6 +573,7 @@ Apache-2.0
 - [React](https://react.dev) - UI framework
 - [FastAPI](https://fastapi.tiangolo.com) - Backend framework
 - [Zustand](https://zustand-demo.pmnd.rs) - State management
+- [MCP Context Forge](https://github.com/ruslanmv/mcp-context-forge) - Agentic AI gateway and tool servers
 
 ---
 
