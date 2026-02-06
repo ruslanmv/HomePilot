@@ -24,6 +24,7 @@
           "id": "llama3:8b",
           "label": "Llama 3 8B",
           "recommended": true,
+          "protected": true,
           "description": "Fast, efficient 8B parameter model. Great for general-purpose tasks.",
           "size_gb": 4.7,
           "context_window": 8192
@@ -503,6 +504,7 @@
           "id": "sd_xl_base_1.0.safetensors",
           "label": "SDXL Base 1.0",
           "recommended": true,
+          "protected": true,
           "nsfw": false,
           "description": "Stable Diffusion XL base model. Best balance of quality and speed.",
           "size_gb": 6.94,
@@ -513,6 +515,7 @@
         {
           "id": "flux1-schnell.safetensors",
           "label": "Flux.1 Schnell",
+          "protected": true,
           "nsfw": false,
           "description": "Fast Flux model optimized for speed. 4-step generation. Note: Requires additional files (CLIP, VAE).",
           "size_gb": 23.8,
@@ -659,7 +662,7 @@
           "description": "Photorealistic model with excellent skin textures. Uncensored adult content support.",
           "size_gb": 2.13,
           "resolution": "512x512",
-          "download_url": "https://civitai.com/api/download/models/121822",
+          "download_url": "https://civitai.com/api/download/models/115942",
           "install_path": "checkpoints/"
         },
         {
@@ -842,6 +845,7 @@
           "id": "ltx-video-2b-v0.9.1.safetensors",
           "label": "LTX-Video 2B v0.9.1 (I2V/T2V)",
           "recommended": true,
+          "protected": true,
           "nsfw": false,
           "description": "Lightricks LTX-Video checkpoint + T5 text encoder. Fast, lightweight - best for RTX 4080.",
           "size_gb": 10.5,
@@ -1024,6 +1028,7 @@
           "id": "sd_xl_base_1.0_inpainting_0.1.safetensors",
           "label": "SDXL Inpainting 0.1 (Checkpoint)",
           "recommended": true,
+          "protected": true,
           "nsfw": false,
           "description": "High-quality inpainting backbone for natural edits (object removal, region replace) at 1024px.",
           "size_gb": 5.14,
@@ -1078,6 +1083,7 @@
           "id": "4x-UltraSharp.pth",
           "label": "4x UltraSharp (Upscale)",
           "recommended": true,
+          "protected": true,
           "nsfw": false,
           "description": "Sharp, clean 4x upscaler for general photos.",
           "size_gb": 0.08,
@@ -1119,6 +1125,7 @@
           "id": "GFPGANv1.4.pth",
           "label": "GFPGAN v1.4 (Face Restore)",
           "recommended": false,
+          "protected": true,
           "nsfw": false,
           "description": "Optional face restoration after heavy edits or upscaling.",
           "size_gb": 0.35,
@@ -1131,6 +1138,7 @@
           "id": "ComfyUI-VideoHelperSuite",
           "label": "Video Helper Suite (VHS)",
           "recommended": true,
+          "protected": true,
           "description": "Essential video tools: MP4/WebM export, video loading, frame manipulation. Enables proper video output instead of animated WEBP.",
           "install": {
             "type": "git_repo",
@@ -1148,6 +1156,7 @@
           "id": "ComfyUI-LTXVideo",
           "label": "LTX-Video Nodes",
           "recommended": true,
+          "protected": true,
           "description": "Native LTX-Video nodes for optimal performance with LTX-Video checkpoints.",
           "install": {
             "type": "git_repo",
@@ -1198,6 +1207,7 @@
           "id": "ComfyUI-Impact-Pack",
           "label": "Impact Pack",
           "recommended": true,
+          "protected": true,
           "description": "Essential nodes for segmentation, face detection, and advanced image workflows.",
           "install": {
             "type": "git_repo",
