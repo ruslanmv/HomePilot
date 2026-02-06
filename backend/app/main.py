@@ -76,6 +76,9 @@ from .outpaint import router as outpaint_router
 # Capabilities module routes
 from .capabilities import router as capabilities_router
 
+# Agentic AI module routes (additive — zero changes to existing code)
+from .agentic.routes import router as agentic_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -103,6 +106,9 @@ app.include_router(outpaint_router)
 
 # Include Capabilities routes (/v1/capabilities)
 app.include_router(capabilities_router)
+
+# Include Agentic AI routes (/v1/agentic/*)
+app.include_router(agentic_router)
 
 # ----------------------------
 # Models
@@ -157,6 +163,7 @@ class ChatIn(BaseModel):
     imgSeed: Optional[int] = Field(None, description="Image generation seed (0 = random)")
     imgModel: Optional[str] = Field(None, description="Image model selection (sdxl, flux-schnell, flux-dev, pony-xl, sd15-uncensored)")
     imgBatchSize: Optional[int] = Field(1, ge=1, le=4, description="Number of images to generate per request (1, 2, or 4)")
+    imgPreset: Optional[str] = Field(None, description="Image quality preset (low, med, high, ultra)")
     vidSeconds: Optional[int] = Field(None, description="Video duration in seconds")
     vidFps: Optional[int] = Field(None, description="Video FPS")
     vidMotion: Optional[str] = Field(None, description="Video motion bucket")
@@ -671,7 +678,7 @@ async def get_video_presets(
 @app.get("/image-presets")
 async def get_image_presets(
     model: Optional[str] = Query(None, description="Image model architecture: sd15, sdxl, flux_schnell, flux_dev"),
-    preset: Optional[str] = Query(None, description="Quality preset: low, med, high"),
+    preset: Optional[str] = Query(None, description="Quality preset: low, med, high, ultra"),
     aspect_ratio: Optional[str] = Query(None, description="Aspect ratio: 1:1, 4:3, 3:4, 16:9, 9:16"),
 ) -> JSONResponse:
     """
@@ -1921,6 +1928,7 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "imgSeed": inp.imgSeed,
         "imgModel": inp.imgModel,
         "imgBatchSize": inp.imgBatchSize,
+        "imgPreset": inp.imgPreset,
         "vidSeconds": inp.vidSeconds,
         "vidFps": inp.vidFps,
         "vidMotion": inp.vidMotion,

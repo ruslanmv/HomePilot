@@ -1209,17 +1209,24 @@ async def orchestrate(
             # When preset is "custom", use frontend values if provided
             is_custom_preset = preset_to_use == "custom"
 
-            if img_width is None:
-                refined["width"] = model_settings["width"]
-            else:
-                refined["width"] = img_width
-                print(f"[IMAGE] User override width: {img_width}")
+            if is_custom_preset:
+                if img_width is None:
+                    refined["width"] = model_settings["width"]
+                else:
+                    refined["width"] = img_width
+                    print(f"[IMAGE] User override width: {img_width}")
 
-            if img_height is None:
-                refined["height"] = model_settings["height"]
+                if img_height is None:
+                    refined["height"] = model_settings["height"]
+                else:
+                    refined["height"] = img_height
+                    print(f"[IMAGE] User override height: {img_height}")
             else:
-                refined["height"] = img_height
-                print(f"[IMAGE] User override height: {img_height}")
+                # IMPORTANT: ignore stale frontend width/height in non-custom presets
+                refined["width"] = model_settings["width"]
+                refined["height"] = model_settings["height"]
+                if img_width is not None or img_height is not None:
+                    print(f"[IMAGE] Ignoring frontend width/height because preset={preset_to_use} (non-custom). Using safe dims {model_settings['width']}x{model_settings['height']}.")
 
             # Steps and CFG: use preset values unless in custom mode
             if is_custom_preset and img_steps is not None:
