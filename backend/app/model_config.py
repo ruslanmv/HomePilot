@@ -49,7 +49,7 @@ class ModelSettings(TypedDict):
 MODEL_ARCHITECTURES: Dict[str, Architecture] = {
     # --- SDXL Models (Native 1024x1024) ---
     "sd_xl_base_1.0.safetensors": "sdxl",
-    "ponyDiffusionV6XL.safetensors": "sdxl",
+    "ponyDiffusionV6XL.safetensors": "pony_xl",
 
     # --- Flux Models (Native 1024+, Special Steps / CFG behavior) ---
     "flux1-schnell.safetensors": "flux_schnell",  # 4-step turbo model
@@ -124,15 +124,16 @@ SDXL_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
     "1:2":  {"width": 640,  "height": 1536},  # Full Body
 }
 
-# Pony Diffusion V6 XL: SDXL finetune optimized for anime/illustration
+# Pony Diffusion V6 XL: SDXL finetune, trained with bucketed resolutions ~1MP
+# Using exact SDXL training buckets — deviating from these causes glitches/two-heads.
 PONY_XL_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
-    "1:1":  {"width": 1024, "height": 1024},
-    "2:3":  {"width": 832,  "height": 1216},  # Best for anime portraits
-    "4:3":  {"width": 1024, "height": 768},
-    "3:4":  {"width": 768,  "height": 1024},
-    "16:9": {"width": 1344, "height": 768},
-    "9:16": {"width": 768,  "height": 1344},
-    "1:2":  {"width": 640,  "height": 1536},  # Full body
+    "1:1":  {"width": 1024, "height": 1024},  # Native training size
+    "2:3":  {"width": 832,  "height": 1216},   # Classic Portrait (Posters)
+    "4:3":  {"width": 1152, "height": 896},    # Standard Landscape
+    "3:4":  {"width": 896,  "height": 1152},   # Standard Portrait
+    "16:9": {"width": 1344, "height": 768},    # Desktop Wallpaper / Cinematic
+    "9:16": {"width": 768,  "height": 1344},   # Mobile / TikTok / Reels
+    "1:2":  {"width": 704,  "height": 1408},   # Lowest recommended safe limit
 }
 
 # NoobAI-XL (both EPS and V-Pred share the same resolution table)
@@ -166,10 +167,12 @@ PRESETS: Dict[Architecture, Dict[PresetName, StepCfg]] = {
     },
 
     # Pony Diffusion V6 XL (anime-optimized SDXL finetune)
+    # 12GB VRAM sweet spot: all resolutions fit, so presets only differ by steps/cfg.
+    # low = fast testing, med = good quality (30 steps), high = best quality (35 steps)
     "pony_xl": {
-        "low":  {"steps": 15, "cfg": 5.0},
-        "med":  {"steps": 25, "cfg": 5.5},
-        "high": {"steps": 30, "cfg": 6.0},
+        "low":  {"steps": 20, "cfg": 5.5},
+        "med":  {"steps": 30, "cfg": 6.0},
+        "high": {"steps": 35, "cfg": 6.5},
     },
 
     # NoobAI-XL EPS (anime SDXL, standard prediction)
@@ -434,9 +437,18 @@ ANIME_MODEL_SPECIFIC_CONFIG: Dict[str, dict] = {
         "architecture": "pony_xl",
         "clip_skip": 2,
         "default_aspect_ratio": "2:3",
-        "quality_tags_positive": "score_9, score_8_up, score_7_up",
+        "quality_tags_positive": "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime",
         "quality_tags_negative": "score_6, score_5, score_4",
-        "best_sampler": "euler",
+        "best_sampler": "euler_ancestral",
+        "best_cfg_range": [4.0, 7.0],
+    },
+    "ponyDiffusionV6XL.safetensors": {
+        "architecture": "pony_xl",
+        "clip_skip": 2,
+        "default_aspect_ratio": "2:3",
+        "quality_tags_positive": "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime",
+        "quality_tags_negative": "score_6, score_5, score_4",
+        "best_sampler": "euler_ancestral",
         "best_cfg_range": [4.0, 7.0],
     },
     "noobaiXL_epsPred11.safetensors": {

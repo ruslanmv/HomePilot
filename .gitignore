@@ -23,5 +23,8 @@ backend/data/*.db
 backend/data/uploads/
 backend/data/comfy_cache/
  copy*
-* copy* 
+* copy*
 /ComfyUI
+
+# MCP Context Forge (cloned at install time)
+/mcp-context-forge/
