@@ -3,7 +3,22 @@ SHELL := /bin/bash
 # Fix uv hardlink warning on WSL / multi-filesystem setups (optional, safe default)
 export UV_LINK_MODE ?= copy
 
-.PHONY: help install setup run up down stop logs health dev build test clean download download-minimal download-minimum download-recommended download-full download-edit download-enhance download-video download-verify download-health start start-backend start-frontend
+# Agentic mode: set AGENTIC=0 to disable MCP gateway & agent features
+AGENTIC ?= 1
+
+# MCP Context Forge settings
+MCP_DIR          ?= mcp-context-forge
+MCP_REPO         ?= https://github.com/ruslanmv/mcp-context-forge.git
+MCP_GATEWAY_PORT ?= 4444
+MCP_GATEWAY_HOST ?= 127.0.0.1
+
+.PHONY: help install setup run up down stop logs health dev build test clean \
+        download download-minimal download-minimum download-recommended download-full \
+        download-edit download-enhance download-video download-verify download-health \
+        start start-backend start-frontend start-no-agentic \
+        install-mcp start-mcp stop-mcp mcp-status mcp-install-server verify-mcp \
+        mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
+        mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -93,6 +108,19 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@test -x ComfyUI/.venv/bin/python || (echo "  ❌ ERROR: ComfyUI venv missing"; exit 1)
 	@ComfyUI/.venv/bin/python -c "import torch; print('  ✓ torch:', torch.__version__)" 2>/dev/null || echo "  ✓ torch: (will be loaded at runtime)"
 	@echo ""
+	@# ── MCP Context Forge (agentic features) ──
+	@if [ "$(AGENTIC)" = "1" ]; then \
+		echo ""; \
+		echo "✓ Installing MCP Context Forge (agentic gateway)..."; \
+		bash scripts/mcp-setup.sh "$(MCP_DIR)" || { \
+			echo "  ⚠  MCP install failed (non-fatal). You can retry with: make install-mcp"; \
+			echo "  Or skip agentic features with: make install AGENTIC=0"; \
+		}; \
+	else \
+		echo ""; \
+		echo "⏭  Skipping MCP Context Forge (AGENTIC=0)"; \
+	fi
+	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Installation Complete!"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -102,6 +130,11 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "  2. Start Ollama: ollama serve"
 	@echo "  3. Pull a model: ollama pull llama3:8b"
 	@echo "  4. Start HomePilot: make start"
+	@if [ "$(AGENTIC)" = "1" ]; then \
+		echo ""; \
+		echo "  MCP Gateway will start on port $(MCP_GATEWAY_PORT)"; \
+		echo "  To start without MCP: make start-no-agentic"; \
+	fi
 	@echo ""
 
 verify-install: ## Verify that all components are properly installed
@@ -120,6 +153,11 @@ verify-install: ## Verify that all components are properly installed
 	@echo "  ✓ ComfyUI models linked"
 	@test -d models/comfy/checkpoints || (echo "❌ model directories missing"; exit 1)
 	@echo "  ✓ Model directories created"
+	@if [ -d "$(MCP_DIR)/.venv" ]; then \
+		echo "  ✓ MCP Context Forge installed"; \
+	else \
+		echo "  ⚠  MCP Context Forge not installed (optional - run: make install-mcp)"; \
+	fi
 	@echo ""
 	@echo "✅ All components verified successfully!"
 
@@ -166,6 +204,9 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 	@if [ -f "ComfyUI/main.py" ]; then \
 		echo "  ComfyUI:      http://localhost:8188"; \
 	fi
+	@if [ "$(AGENTIC)" = "1" ] && [ -d "$(MCP_DIR)/.venv" ]; then \
+		echo "  MCP Gateway:  http://localhost:$(MCP_GATEWAY_PORT)"; \
+	fi
 	@echo ""
 	@echo "Press Ctrl+C to stop ALL services"
 	@echo ""
@@ -207,9 +248,21 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 			pids="$$pids $$!"; \
 		fi; \
 		\
+		if [ "$(AGENTIC)" = "1" ] && [ -d "$$ROOT/$(MCP_DIR)/.venv" ]; then \
+			echo ""; \
+			echo "Starting MCP Context Forge Gateway on port $(MCP_GATEWAY_PORT)..."; \
+			mcp_pids=$$(bash "$$ROOT/scripts/mcp-start.sh" --with-servers 2>&1 | tail -1); \
+			pids="$$pids $$mcp_pids"; \
+			echo "  ✓ MCP Gateway started"; \
+		fi; \
+		\
 		echo ""; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
-		echo "  ✅ All services started!"; \
+		if [ "$(AGENTIC)" = "1" ] && [ -d "$$ROOT/$(MCP_DIR)/.venv" ]; then \
+			echo "  ✅ All services started! (with MCP agentic features)"; \
+		else \
+			echo "  ✅ All services started!"; \
+		fi; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
 		echo ""; \
 		wait \
@@ -344,6 +397,8 @@ stop: ## Stop all local HomePilot processes (kills processes on ports 3000, 8000
 	@-pkill -9 -f "ComfyUI/main.py" 2>/dev/null && echo "  Killed ComfyUI" || true
 	@-pkill -9 -f "uvicorn app.main:app" 2>/dev/null && echo "  Killed backend" || true
 	@-pkill -9 -f "vite.*--port 3000" 2>/dev/null && echo "  Killed frontend" || true
+	@-pkill -9 -f "mcpgateway.main:app" 2>/dev/null && echo "  Killed MCP Gateway" || true
+	@-pkill -9 -f "server_fastmcp" 2>/dev/null && echo "  Killed MCP servers" || true
 	@echo "  Done"
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -574,7 +629,162 @@ health-check: ## Comprehensive health check of all services
 	@echo "   vLLM:"
 	@curl -fsS http://localhost:8001/v1/models 2>/dev/null >/dev/null && echo "   ✅ vLLM is running" || echo "   ❌ vLLM not reachable at localhost:8001"
 	@echo ""
+	@echo "   MCP Gateway:"
+	@curl -fsS http://localhost:$(MCP_GATEWAY_PORT)/health 2>/dev/null >/dev/null && echo "   ✅ MCP Gateway is running" || echo "   ⚠  MCP Gateway not running (optional - start with: make start-mcp)"
+	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+# --- MCP Context Forge (Agentic Features) ------------------------------------
+
+start-no-agentic: ## Start HomePilot WITHOUT MCP gateway/agentic features
+	@$(MAKE) start AGENTIC=0
+
+install-mcp: ## Install MCP Context Forge separately (gateway + servers + agent)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Installing MCP Context Forge"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@bash scripts/mcp-setup.sh "$(MCP_DIR)"
+
+start-mcp: ## Start only the MCP Gateway (port 4444)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Starting MCP Context Forge Gateway"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@if [ ! -d "$(MCP_DIR)/.venv" ]; then \
+		echo "❌ MCP not installed. Run: make install-mcp"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "  MCP Gateway:  http://localhost:$(MCP_GATEWAY_PORT)"
+	@echo "  Admin UI:     http://localhost:$(MCP_GATEWAY_PORT)/admin"
+	@echo ""
+	@echo "  Press Ctrl+C to stop"
+	@echo ""
+	@cd $(MCP_DIR) && \
+		HOST=0.0.0.0 \
+		BASIC_AUTH_USER=admin BASIC_AUTH_PASSWORD=changeme \
+		AUTH_REQUIRED=false \
+		MCPGATEWAY_UI_ENABLED=true \
+		MCPGATEWAY_ADMIN_API_ENABLED=true \
+		.venv/bin/python -m uvicorn mcpgateway.main:app \
+		--host $(MCP_GATEWAY_HOST) --port $(MCP_GATEWAY_PORT) --reload
+
+stop-mcp: ## Stop MCP Gateway and MCP server processes
+	@echo "Stopping MCP processes..."
+	@-pkill -f "mcpgateway.main:app" 2>/dev/null && echo "  Killed MCP Gateway" || echo "  MCP Gateway not running"
+	@-pkill -f "server_fastmcp" 2>/dev/null && echo "  Killed MCP servers" || echo "  No MCP servers running"
+	@echo "  Done"
+
+mcp-status: ## Show status of MCP Gateway and registered tools
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  MCP Context Forge Status"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "Installation:"
+	@if [ -d "$(MCP_DIR)/.venv" ]; then \
+		echo "  ✓ Gateway installed"; \
+	else \
+		echo "  ❌ Gateway not installed (run: make install-mcp)"; \
+	fi
+	@echo ""
+	@echo "Gateway Health:"
+	@curl -fsS http://localhost:$(MCP_GATEWAY_PORT)/health 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "  ❌ Gateway not running (start with: make start-mcp)"
+	@echo ""
+	@echo "Registered Tools:"
+	@curl -fsS http://localhost:$(MCP_GATEWAY_PORT)/tools 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "  (gateway not reachable)"
+	@echo ""
+
+mcp-install-server: ## Install an individual MCP server (usage: make mcp-install-server NAME=csv_pandas_chat_server)
+	@if [ -z "$(NAME)" ]; then \
+		echo "Usage: make mcp-install-server NAME=<server-name>"; \
+		echo ""; \
+		echo "Available servers:"; \
+		ls -1 $(MCP_DIR)/mcp-servers/python/ 2>/dev/null || echo "  (MCP not installed)"; \
+		exit 1; \
+	fi
+	@echo "Installing MCP server: $(NAME)..."
+	@MCP_SERVERS="$(NAME)" bash scripts/mcp-setup.sh "$(MCP_DIR)"
+
+verify-mcp: ## Verify MCP Context Forge installation
+	@echo "Verifying MCP installation..."
+	@test -d "$(MCP_DIR)" || (echo "❌ $(MCP_DIR)/ directory missing"; exit 1)
+	@echo "  ✓ Repository cloned"
+	@test -d "$(MCP_DIR)/.venv" || (echo "❌ Gateway venv missing"; exit 1)
+	@echo "  ✓ Gateway virtual environment"
+	@test -f "$(MCP_DIR)/.venv/bin/python" || (echo "❌ Gateway python missing"; exit 1)
+	@echo "  ✓ Gateway Python interpreter"
+	@$(MCP_DIR)/.venv/bin/python -c "import mcpgateway" 2>/dev/null && echo "  ✓ mcpgateway package importable" || echo "  ⚠  mcpgateway not importable (may need reinstall)"
+	@echo ""
+	@echo "Installed MCP Servers:"
+	@for d in $(MCP_DIR)/mcp-servers/python/*/; do \
+		name=$$(basename $$d); \
+		if [ -d "$$d/.venv" ]; then \
+			echo "  ✓ $$name"; \
+		fi; \
+	done
+	@echo ""
+	@echo "✅ MCP verification complete"
+
+mcp-start-full: ## Start MCP Gateway + servers + agent (full agentic stack)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Starting Full MCP Agentic Stack"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@if [ ! -d "$(MCP_DIR)/.venv" ]; then \
+		echo "❌ MCP not installed. Run: make install-mcp"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "  MCP Gateway:  http://localhost:$(MCP_GATEWAY_PORT)"
+	@echo "  Admin UI:     http://localhost:$(MCP_GATEWAY_PORT)/admin"
+	@echo "  MCP Servers:  ports 9100+"
+	@echo "  Agent:        http://localhost:9200"
+	@echo ""
+	@echo "  Press Ctrl+C to stop"
+	@echo ""
+	@bash -c ' \
+		ROOT="$$(pwd)"; \
+		pids=""; \
+		cleanup() { echo ""; echo "Stopping MCP stack..."; [ -n "$$pids" ] && kill $$pids 2>/dev/null || true; wait 2>/dev/null || true; echo "Done."; }; \
+		trap cleanup INT TERM EXIT; \
+		mcp_pids=$$(bash "$$ROOT/scripts/mcp-start.sh" --all 2>&1 | tail -1); \
+		pids="$$mcp_pids"; \
+		echo ""; \
+		echo "  ✅ Full MCP stack running!"; \
+		echo ""; \
+		wait \
+	'
+
+mcp-register-homepilot: ## Register HomePilot default tools with MCP Gateway
+	@bash scripts/mcp-register.sh homepilot
+
+mcp-list-tools: ## List all tools registered in MCP Gateway
+	@bash scripts/mcp-register.sh list tools
+
+mcp-list-gateways: ## List all gateways registered in MCP Gateway
+	@bash scripts/mcp-register.sh list gateways
+
+mcp-list-agents: ## List all A2A agents registered in MCP Gateway
+	@bash scripts/mcp-register.sh list agents
+
+mcp-register-tool: ## Register a custom tool (usage: make mcp-register-tool JSON='{"tool":{...}}')
+	@if [ -z "$(JSON)" ]; then \
+		echo "Usage: make mcp-register-tool JSON='{\"tool\":{\"name\":\"my-tool\",\"description\":\"...\"}}'"; \
+		exit 1; \
+	fi
+	@bash scripts/mcp-register.sh tool '$(JSON)'
+
+mcp-register-gateway: ## Register an MCP gateway (usage: make mcp-register-gateway JSON='{"gateway":{...}}')
+	@if [ -z "$(JSON)" ]; then \
+		echo "Usage: make mcp-register-gateway JSON='{\"gateway\":{\"name\":\"my-gw\",\"url\":\"http://...\"}}'"; \
+		exit 1; \
+	fi
+	@bash scripts/mcp-register.sh gateway '$(JSON)'
+
+mcp-register-agent: ## Register an A2A agent (usage: make mcp-register-agent JSON='{"agent":{...}}')
+	@if [ -z "$(JSON)" ]; then \
+		echo "Usage: make mcp-register-agent JSON='{\"agent\":{\"name\":\"my-agent\",\"endpoint_url\":\"http://...\"}}'"; \
+		exit 1; \
+	fi
+	@bash scripts/mcp-register.sh agent '$(JSON)'
 
 # --- Backward Compatibility Aliases -------------------------------------------
 
