@@ -77,6 +77,88 @@ export type SettingsModelV2 = {
   vidPreset?: string;  // Backend preset name: 'low', 'medium', 'high', 'ultra'
 };
 
+// ── Agentic Status sub-component (Phase 1, additive) ─────────────────────────
+function AgenticStatus({ backendUrl, apiKey }: { backendUrl: string; apiKey: string }) {
+  const [status, setStatus] = React.useState<{
+    enabled: boolean; configured: boolean; reachable: boolean; admin_configured: boolean;
+  } | null>(null);
+  const [adminUrl, setAdminUrl] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  const headers: Record<string, string> = {};
+  if (apiKey) headers["X-API-Key"] = apiKey;
+
+  const fetchStatus = React.useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await fetch(`${backendUrl}/v1/agentic/status`, { headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setStatus(data);
+      if (data.admin_configured) {
+        try {
+          const ar = await fetch(`${backendUrl}/v1/agentic/admin`, { headers });
+          if (ar.ok) {
+            const ad = await ar.json();
+            setAdminUrl(ad.admin_url || null);
+          }
+        } catch { /* ignore */ }
+      }
+    } catch (e: any) {
+      setErr(e?.message || String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [backendUrl, apiKey]);
+
+  React.useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  if (loading && !status) {
+    return <div className="text-xs text-white/40">Checking advanced tools...</div>;
+  }
+  if (err) {
+    return (
+      <div className="space-y-2">
+        <div className="text-xs text-red-400/80">Could not reach agentic layer: {err}</div>
+        <button type="button" onClick={fetchStatus}
+          className="text-[11px] px-3 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/60 hover:text-white/80 transition-all">
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (!status) return null;
+
+  const dot = (ok: boolean) => (
+    <span className={`inline-block w-2 h-2 rounded-full ${ok ? "bg-green-400" : "bg-white/20"}`} />
+  );
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        <span className="text-white/50 flex items-center gap-1.5">{dot(status.enabled)} Enabled</span>
+        <span className="text-white/50 flex items-center gap-1.5">{dot(status.configured)} Configured</span>
+        <span className="text-white/50 flex items-center gap-1.5">{dot(status.reachable)} Gateway reachable</span>
+        <span className="text-white/50 flex items-center gap-1.5">{dot(status.admin_configured)} Admin ready</span>
+      </div>
+      <div className="flex items-center gap-2">
+        {adminUrl && (
+          <a href={adminUrl} target="_blank" rel="noopener noreferrer"
+            className="text-[11px] px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white/70 hover:text-white transition-all">
+            Open Tool &amp; Agent Manager
+          </a>
+        )}
+        <button type="button" onClick={fetchStatus}
+          className="text-[11px] px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white/70 hover:text-white transition-all">
+          {loading ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPanel({
   value,
   onChangeDraft,
@@ -917,6 +999,12 @@ export default function SettingsPanel({
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Advanced Tools (Agentic AI) */}
+        <div className="border-t border-white/5 pt-3">
+          <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">Advanced Tools</div>
+          <AgenticStatus backendUrl={value.backendUrl} apiKey={value.apiKey} />
         </div>
 
         {/* Bottom actions */}

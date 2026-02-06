@@ -18,7 +18,7 @@ from typing import Dict, Literal, TypedDict, Union
 # =============================================================================
 
 Architecture = Literal["sd15", "sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred", "flux_schnell", "flux_dev"]
-PresetName = Literal["low", "med", "high"]
+PresetName = Literal["low", "med", "high", "ultra"]
 AspectRatio = Literal["1:1", "2:3", "4:3", "3:4", "16:9", "9:16", "1:2"]
 
 
@@ -49,7 +49,7 @@ class ModelSettings(TypedDict):
 MODEL_ARCHITECTURES: Dict[str, Architecture] = {
     # --- SDXL Models (Native 1024x1024) ---
     "sd_xl_base_1.0.safetensors": "sdxl",
-    "ponyDiffusionV6XL.safetensors": "sdxl",
+    "ponyDiffusionV6XL.safetensors": "pony_xl",
 
     # --- Flux Models (Native 1024+, Special Steps / CFG behavior) ---
     "flux1-schnell.safetensors": "flux_schnell",  # 4-step turbo model
@@ -113,6 +113,18 @@ SD15_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
     "1:2":  {"width": 512, "height": 1024},  # Full Body (use with hires.fix)
 }
 
+# SD 1.5 ULTRA: Higher resolutions for quality models (DreamShaper 8, etc.)
+# 768-based — uses ~4-5 GB VRAM, safe on 12 GB GPUs.
+SD15_ULTRA_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
+    "1:1":  {"width": 768, "height": 768},
+    "2:3":  {"width": 640, "height": 960},
+    "4:3":  {"width": 896, "height": 672},
+    "3:4":  {"width": 672, "height": 896},
+    "16:9": {"width": 1024, "height": 576},
+    "9:16": {"width": 576, "height": 1024},
+    "1:2":  {"width": 512, "height": 1024},
+}
+
 # SDXL / Flux: High Resolution Native (Base 1024)
 SDXL_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
     "1:1":  {"width": 1024, "height": 1024},
@@ -124,15 +136,16 @@ SDXL_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
     "1:2":  {"width": 640,  "height": 1536},  # Full Body
 }
 
-# Pony Diffusion V6 XL: SDXL finetune optimized for anime/illustration
+# Pony Diffusion V6 XL: SDXL finetune, trained with bucketed resolutions ~1MP
+# Using exact SDXL training buckets — deviating from these causes glitches/two-heads.
 PONY_XL_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
-    "1:1":  {"width": 1024, "height": 1024},
-    "2:3":  {"width": 832,  "height": 1216},  # Best for anime portraits
-    "4:3":  {"width": 1024, "height": 768},
-    "3:4":  {"width": 768,  "height": 1024},
-    "16:9": {"width": 1344, "height": 768},
-    "9:16": {"width": 768,  "height": 1344},
-    "1:2":  {"width": 640,  "height": 1536},  # Full body
+    "1:1":  {"width": 1024, "height": 1024},  # Native training size
+    "2:3":  {"width": 832,  "height": 1216},   # Classic Portrait (Posters)
+    "4:3":  {"width": 1152, "height": 896},    # Standard Landscape
+    "3:4":  {"width": 896,  "height": 1152},   # Standard Portrait
+    "16:9": {"width": 1344, "height": 768},    # Desktop Wallpaper / Cinematic
+    "9:16": {"width": 768,  "height": 1344},   # Mobile / TikTok / Reels
+    "1:2":  {"width": 704,  "height": 1408},   # Lowest recommended safe limit
 }
 
 # NoobAI-XL (both EPS and V-Pred share the same resolution table)
@@ -153,51 +166,60 @@ NOOBAI_XL_RESOLUTIONS: Dict[AspectRatio, Dimensions] = {
 PRESETS: Dict[Architecture, Dict[PresetName, StepCfg]] = {
     # Standard SD 1.5 (DreamShaper, Realistic Vision, etc.)
     "sd15": {
-        "low":  {"steps": 20, "cfg": 7.0},
-        "med":  {"steps": 25, "cfg": 7.0},
-        "high": {"steps": 35, "cfg": 8.0},
+        "low":   {"steps": 20, "cfg": 7.0},
+        "med":   {"steps": 25, "cfg": 7.0},
+        "high":  {"steps": 35, "cfg": 8.0},
+        "ultra": {"steps": 50, "cfg": 8.5},
     },
 
     # Standard SDXL (Base)
     "sdxl": {
-        "low":  {"steps": 25, "cfg": 5.0},
-        "med":  {"steps": 30, "cfg": 5.5},
-        "high": {"steps": 45, "cfg": 6.0},
+        "low":   {"steps": 25, "cfg": 5.0},
+        "med":   {"steps": 30, "cfg": 5.5},
+        "high":  {"steps": 45, "cfg": 6.0},
+        "ultra": {"steps": 60, "cfg": 6.5},
     },
 
     # Pony Diffusion V6 XL (anime-optimized SDXL finetune)
+    # 12GB VRAM sweet spot: all resolutions fit, so presets only differ by steps/cfg.
+    # low = fast testing, med = good quality (30 steps), high = best quality (35 steps)
     "pony_xl": {
-        "low":  {"steps": 15, "cfg": 5.0},
-        "med":  {"steps": 25, "cfg": 5.5},
-        "high": {"steps": 30, "cfg": 6.0},
+        "low":   {"steps": 20, "cfg": 5.5},
+        "med":   {"steps": 30, "cfg": 6.0},
+        "high":  {"steps": 35, "cfg": 6.5},
+        "ultra": {"steps": 45, "cfg": 7.0},
     },
 
     # NoobAI-XL EPS (anime SDXL, standard prediction)
     "noobai_xl": {
-        "low":  {"steps": 15, "cfg": 4.0},
-        "med":  {"steps": 25, "cfg": 5.0},
-        "high": {"steps": 30, "cfg": 5.0},
+        "low":   {"steps": 15, "cfg": 4.0},
+        "med":   {"steps": 25, "cfg": 5.0},
+        "high":  {"steps": 30, "cfg": 5.0},
+        "ultra": {"steps": 40, "cfg": 5.5},
     },
 
     # NoobAI-XL V-Pred (anime SDXL, v-prediction scheduler)
     "noobai_xl_vpred": {
-        "low":  {"steps": 15, "cfg": 4.0},
-        "med":  {"steps": 25, "cfg": 5.0},
-        "high": {"steps": 28, "cfg": 5.0},
+        "low":   {"steps": 15, "cfg": 4.0},
+        "med":   {"steps": 25, "cfg": 5.0},
+        "high":  {"steps": 28, "cfg": 5.0},
+        "ultra": {"steps": 38, "cfg": 5.5},
     },
 
     # Flux SCHNELL (Must be fast; optimized for very low step counts)
     "flux_schnell": {
-        "low":  {"steps": 4, "cfg": 1.0},
-        "med":  {"steps": 4, "cfg": 1.0},
-        "high": {"steps": 6, "cfg": 1.0},
+        "low":   {"steps": 4, "cfg": 1.0},
+        "med":   {"steps": 4, "cfg": 1.0},
+        "high":  {"steps": 6, "cfg": 1.0},
+        "ultra": {"steps": 8, "cfg": 1.0},
     },
 
     # Flux DEV (High quality; likes lower CFG)
     "flux_dev": {
-        "low":  {"steps": 20, "cfg": 3.5},
-        "med":  {"steps": 25, "cfg": 3.5},
-        "high": {"steps": 40, "cfg": 4.0},
+        "low":   {"steps": 20, "cfg": 3.5},
+        "med":   {"steps": 25, "cfg": 3.5},
+        "high":  {"steps": 40, "cfg": 4.0},
+        "ultra": {"steps": 50, "cfg": 4.5},
     },
 }
 
@@ -235,11 +257,11 @@ def get_architecture(model_filename: str, *, strict: bool = False) -> Architectu
     return MODEL_ARCHITECTURES.get(model_filename, DEFAULT_ARCH)
 
 
-def get_resolution_table(arch: Architecture) -> Dict[AspectRatio, Dimensions]:
+def get_resolution_table(arch: Architecture, preset: str = "med") -> Dict[AspectRatio, Dimensions]:
     """
-    Returns the resolution table for the given architecture.
-    Pony XL and NoobAI XL have their own optimized tables.
-    Flux uses SDXL resolution table. SD1.5 uses SD15 resolution table.
+    Returns the resolution table for the given architecture and preset.
+    SD1.5 gets higher resolutions (768-based) when preset is "ultra".
+    SDXL/Pony/Flux are already at native 1024px so no ultra bump needed.
     """
     if arch == "pony_xl":
         return PONY_XL_RESOLUTIONS
@@ -247,6 +269,9 @@ def get_resolution_table(arch: Architecture) -> Dict[AspectRatio, Dimensions]:
         return NOOBAI_XL_RESOLUTIONS
     if arch in ("sdxl", "flux_schnell", "flux_dev"):
         return SDXL_RESOLUTIONS
+    # SD1.5: use higher 768-based table for ultra preset
+    if preset == "ultra":
+        return SD15_ULTRA_RESOLUTIONS
     return SD15_RESOLUTIONS
 
 
@@ -262,7 +287,7 @@ def normalize_preset(preset: str) -> PresetName:
     """
     Coerces unknown preset strings to DEFAULT_PRESET instead of raising.
     """
-    return preset if preset in ("low", "med", "high") else DEFAULT_PRESET  # type: ignore[return-value]
+    return preset if preset in ("low", "med", "high", "ultra") else DEFAULT_PRESET  # type: ignore[return-value]
 
 
 def detect_architecture_from_filename(model_filename: str) -> Architecture:
@@ -351,7 +376,7 @@ def get_model_settings(
     ar: AspectRatio = normalize_aspect_ratio(aspect_ratio)
     pr: PresetName = normalize_preset(preset)
 
-    res_table = get_resolution_table(arch)
+    res_table = get_resolution_table(arch, preset=pr)
     dimensions = res_table.get(ar, res_table[DEFAULT_ASPECT])
 
     preset_table = PRESETS[arch]
@@ -434,9 +459,18 @@ ANIME_MODEL_SPECIFIC_CONFIG: Dict[str, dict] = {
         "architecture": "pony_xl",
         "clip_skip": 2,
         "default_aspect_ratio": "2:3",
-        "quality_tags_positive": "score_9, score_8_up, score_7_up",
+        "quality_tags_positive": "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime",
         "quality_tags_negative": "score_6, score_5, score_4",
-        "best_sampler": "euler",
+        "best_sampler": "euler_ancestral",
+        "best_cfg_range": [4.0, 7.0],
+    },
+    "ponyDiffusionV6XL.safetensors": {
+        "architecture": "pony_xl",
+        "clip_skip": 2,
+        "default_aspect_ratio": "2:3",
+        "quality_tags_positive": "score_9, score_8_up, score_7_up, score_6_up, score_5_up, score_4_up, source_anime",
+        "quality_tags_negative": "score_6, score_5, score_4",
+        "best_sampler": "euler_ancestral",
         "best_cfg_range": [4.0, 7.0],
     },
     "noobaiXL_epsPred11.safetensors": {

@@ -126,3 +126,9 @@ def _parse_csv(value: str) -> List[str]:
 CORS_ORIGINS = _parse_csv(os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:3001"))
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+
+# Agentic AI / MCP Context Forge
+AGENTIC_ENABLED = os.getenv("AGENTIC_ENABLED", "true").lower() in ("1", "true", "yes")
+CONTEXT_FORGE_URL = os.getenv("CONTEXT_FORGE_URL", "http://localhost:4444").rstrip("/")
+CONTEXT_FORGE_ADMIN_URL = os.getenv("CONTEXT_FORGE_ADMIN_URL", "http://localhost:4444/admin").rstrip("/")
+CONTEXT_FORGE_TOKEN = os.getenv("CONTEXT_FORGE_TOKEN", "").strip()
