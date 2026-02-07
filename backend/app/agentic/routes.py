@@ -15,6 +15,12 @@ Phase 4 additions:
 Phase 5 additions (additive):
   - /catalog returns real selectable MCP tools, A2A agents, gateways, servers
   - capability_sources map for wiring capabilities to real tool IDs
+
+Phase 6 additions (additive):
+  POST /v1/agentic/register/tool     → register a new tool in Context Forge
+  POST /v1/agentic/register/agent    → register a new A2A agent
+  POST /v1/agentic/register/gateway  → register a new MCP gateway (+ auto-refresh)
+  POST /v1/agentic/register/server   → create a new virtual server
 """
 
 from __future__ import annotations
@@ -39,8 +45,13 @@ from .types import (
     CapabilitiesOut,
     CatalogGateway,
     CatalogServer,
+    CreateServerIn,
     InvokeIn,
     InvokeOut,
+    RegisterAgentIn,
+    RegisterGatewayIn,
+    RegisterOut,
+    RegisterToolIn,
 )
 
 logger = logging.getLogger("homepilot.agentic.routes")
@@ -216,6 +227,138 @@ async def agentic_catalog(_key: str = Depends(require_api_key)):
         servers=servers,
         capability_sources=base.capability_sources,
         source="forge",
+    )
+
+
+# ── POST /v1/agentic/register/* ─────────────────────────────────────────────
+# Phase 6: Write endpoints so the wizard can register tools/agents/gateways/servers
+# directly into Context Forge without requiring curl or the admin UI.
+
+
+@router.post("/register/tool", response_model=RegisterOut)
+async def agentic_register_tool(body: RegisterToolIn, _key: str = Depends(require_api_key)):
+    """Register a new tool in Context Forge from the wizard."""
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    tool_def: Dict[str, Any] = {
+        "name": body.name,
+        "description": body.description,
+        "inputSchema": body.input_schema,
+        "integration_type": body.integration_type,
+        "request_type": body.request_type,
+        "tags": body.tags,
+        "visibility": body.visibility,
+    }
+    if body.url:
+        tool_def["url"] = body.url
+
+    result = await _client().register_tool(tool_def)
+    if "error" in result:
+        return RegisterOut(ok=False, detail=result.get("detail") or result["error"])
+    return RegisterOut(
+        ok=True,
+        id=str(result.get("id", "")),
+        name=str(result.get("name", body.name)),
+        detail="Tool registered successfully",
+    )
+
+
+@router.post("/register/agent", response_model=RegisterOut)
+async def agentic_register_agent(body: RegisterAgentIn, _key: str = Depends(require_api_key)):
+    """Register a new A2A agent in Context Forge from the wizard."""
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    agent_def: Dict[str, Any] = {
+        "name": body.name,
+        "description": body.description,
+        "endpoint_url": body.endpoint_url,
+        "agent_type": body.agent_type,
+        "protocol_version": body.protocol_version,
+        "tags": body.tags,
+        "visibility": body.visibility,
+    }
+
+    result = await _client().register_agent(agent_def)
+    if "error" in result:
+        return RegisterOut(ok=False, detail=result.get("detail") or result["error"])
+    return RegisterOut(
+        ok=True,
+        id=str(result.get("id", "")),
+        name=str(result.get("name", body.name)),
+        detail="Agent registered successfully",
+    )
+
+
+@router.post("/register/gateway", response_model=RegisterOut)
+async def agentic_register_gateway(body: RegisterGatewayIn, _key: str = Depends(require_api_key)):
+    """Register a new MCP gateway in Context Forge from the wizard.
+
+    If auto_refresh is True (default), triggers tool discovery after registration.
+    """
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    gateway_def: Dict[str, Any] = {
+        "name": body.name,
+        "url": body.url,
+        "transport": body.transport,
+        "description": body.description,
+        "tags": body.tags,
+        "visibility": body.visibility,
+    }
+
+    client = _client()
+    result = await client.register_gateway(gateway_def)
+    if "error" in result:
+        return RegisterOut(ok=False, detail=result.get("detail") or result["error"])
+
+    gw_id = str(result.get("id", ""))
+    detail = "Gateway registered successfully"
+
+    # Auto-refresh to discover tools from the new gateway
+    if body.auto_refresh and gw_id:
+        try:
+            refresh = await client.refresh_gateway(gw_id)
+            if "error" not in refresh:
+                detail += " (tools refreshed)"
+            else:
+                detail += f" (refresh failed: {refresh.get('error', 'unknown')})"
+        except Exception as exc:
+            detail += f" (refresh error: {exc})"
+
+    return RegisterOut(
+        ok=True,
+        id=gw_id,
+        name=str(result.get("name", body.name)),
+        detail=detail,
+    )
+
+
+@router.post("/register/server", response_model=RegisterOut)
+async def agentic_register_server(body: CreateServerIn, _key: str = Depends(require_api_key)):
+    """Create a new virtual server in Context Forge from the wizard."""
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    server_def: Dict[str, Any] = {
+        "name": body.name,
+        "description": body.description,
+        "tags": body.tags,
+        "visibility": body.visibility,
+    }
+    if body.tool_ids:
+        server_def["associated_tools"] = body.tool_ids
+
+    result = await _client().create_server(server_def)
+    if "error" in result:
+        return RegisterOut(ok=False, detail=result.get("detail") or result["error"])
+    return RegisterOut(
+        ok=True,
+        id=str(result.get("id", "")),
+        name=str(result.get("name", body.name)),
+        detail="Virtual server created successfully",
     )
 
 

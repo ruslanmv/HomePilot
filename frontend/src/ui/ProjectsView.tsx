@@ -200,11 +200,146 @@ const ProjectWizard = ({
   const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
   const [selectedA2AAgentIds, setSelectedA2AAgentIds] = useState<string[]>([])
 
+  // Additive: inline registration forms (collapsed by default)
+  const [showRegisterTool, setShowRegisterTool] = useState(false)
+  const [showRegisterAgent, setShowRegisterAgent] = useState(false)
+  const [showRegisterGateway, setShowRegisterGateway] = useState(false)
+  const [registerBusy, setRegisterBusy] = useState(false)
+  const [registerMsg, setRegisterMsg] = useState('')
+
+  // Registration form fields
+  const [regToolName, setRegToolName] = useState('')
+  const [regToolDesc, setRegToolDesc] = useState('')
+  const [regToolUrl, setRegToolUrl] = useState('')
+  const [regAgentName, setRegAgentName] = useState('')
+  const [regAgentDesc, setRegAgentDesc] = useState('')
+  const [regAgentUrl, setRegAgentUrl] = useState('')
+  const [regGatewayName, setRegGatewayName] = useState('')
+  const [regGatewayUrl, setRegGatewayUrl] = useState('')
+  const [regGatewayTransport, setRegGatewayTransport] = useState('SSE')
+
   const toggleSelectedTool = (id: string) => {
     setSelectedToolIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
   const toggleSelectedAgent = (id: string) => {
     setSelectedA2AAgentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  // Refresh catalog after registration
+  const refreshCatalog = async () => {
+    try {
+      const headers: Record<string, string> = {}
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/catalog`, { headers })
+      if (!res.ok) return
+      const data = await res.json()
+      setCatalogTools(
+        Array.isArray(data?.tools)
+          ? data.tools
+              .map((t: any) => ({ id: String(t?.id || ''), name: String(t?.name || ''), description: t?.description, enabled: t?.enabled }))
+              .filter((t: any) => t.id && t.name)
+          : []
+      )
+      setCatalogAgents(
+        Array.isArray(data?.a2a_agents)
+          ? data.a2a_agents
+              .map((a: any) => ({ id: String(a?.id || ''), name: String(a?.name || ''), description: a?.description, enabled: a?.enabled }))
+              .filter((a: any) => a.id && a.name)
+          : []
+      )
+    } catch { /* ignore */ }
+  }
+
+  // Registration handlers
+  const handleRegisterTool = async () => {
+    if (!regToolName.trim()) return
+    setRegisterBusy(true)
+    setRegisterMsg('')
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/register/tool`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: regToolName.trim(),
+          description: regToolDesc.trim(),
+          url: regToolUrl.trim() || undefined,
+          input_schema: { type: 'object', properties: { text: { type: 'string' } } },
+        }),
+      })
+      const data = await res.json()
+      if (data?.ok) {
+        setRegisterMsg(`Tool "${regToolName}" registered`)
+        setRegToolName(''); setRegToolDesc(''); setRegToolUrl('')
+        setShowRegisterTool(false)
+        await refreshCatalog()
+        if (data.id) setSelectedToolIds((prev) => [...prev, data.id])
+      } else {
+        setRegisterMsg(`Failed: ${data?.detail || 'unknown error'}`)
+      }
+    } catch (e: any) { setRegisterMsg(`Error: ${e?.message || e}`) }
+    finally { setRegisterBusy(false) }
+  }
+
+  const handleRegisterAgent = async () => {
+    if (!regAgentName.trim() || !regAgentUrl.trim()) return
+    setRegisterBusy(true)
+    setRegisterMsg('')
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/register/agent`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: regAgentName.trim(),
+          description: regAgentDesc.trim(),
+          endpoint_url: regAgentUrl.trim(),
+        }),
+      })
+      const data = await res.json()
+      if (data?.ok) {
+        setRegisterMsg(`Agent "${regAgentName}" registered`)
+        setRegAgentName(''); setRegAgentDesc(''); setRegAgentUrl('')
+        setShowRegisterAgent(false)
+        await refreshCatalog()
+        if (data.id) setSelectedA2AAgentIds((prev) => [...prev, data.id])
+      } else {
+        setRegisterMsg(`Failed: ${data?.detail || 'unknown error'}`)
+      }
+    } catch (e: any) { setRegisterMsg(`Error: ${e?.message || e}`) }
+    finally { setRegisterBusy(false) }
+  }
+
+  const handleRegisterGateway = async () => {
+    if (!regGatewayName.trim() || !regGatewayUrl.trim()) return
+    setRegisterBusy(true)
+    setRegisterMsg('')
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/register/gateway`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: regGatewayName.trim(),
+          url: regGatewayUrl.trim(),
+          transport: regGatewayTransport,
+          auto_refresh: true,
+        }),
+      })
+      const data = await res.json()
+      if (data?.ok) {
+        setRegisterMsg(`Gateway "${regGatewayName}" registered — ${data?.detail || ''}`)
+        setRegGatewayName(''); setRegGatewayUrl('')
+        setShowRegisterGateway(false)
+        await refreshCatalog()
+      } else {
+        setRegisterMsg(`Failed: ${data?.detail || 'unknown error'}`)
+      }
+    } catch (e: any) { setRegisterMsg(`Error: ${e?.message || e}`) }
+    finally { setRegisterBusy(false) }
   }
 
   const totalSteps = projectType === 'agent' ? 4 : 2
@@ -615,22 +750,72 @@ const ProjectWizard = ({
                 </div>
               </div>
 
-              {/* Additive: Real Forge bindings (Tools + A2A Agents) */}
+              {/* Additive: Real Forge bindings (Tools + A2A Agents + Registration) */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="block text-sm font-medium text-white/80">Real Tools & Agents</label>
-                  <span className="text-xs text-white/40">Optional &mdash; attach concrete MCP tools / A2A agents</span>
+                  <button
+                    type="button"
+                    onClick={() => refreshCatalog()}
+                    className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                  >
+                    Refresh
+                  </button>
                 </div>
 
                 <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
                   <div className="text-[11px] text-white/50">
-                    These are fetched from MCP Context Forge. If empty, register at least one tool or A2A agent in Forge
-                    (or create a placeholder) so the wizard can attach it.
+                    Fetched from MCP Context Forge. Select existing items or register new ones below.
                   </div>
 
-                  {/* Tools */}
+                  {/* Status message */}
+                  {registerMsg && (
+                    <div className="text-xs px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white/70">
+                      {registerMsg}
+                    </div>
+                  )}
+
+                  {/* ── Tools section ── */}
                   <div className="space-y-2">
-                    <div className="text-xs font-semibold text-white/70">Tools</div>
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-white/70">Tools</div>
+                      <button
+                        type="button"
+                        onClick={() => { setShowRegisterTool((v) => !v); setShowRegisterAgent(false); setShowRegisterGateway(false) }}
+                        className="text-[11px] text-purple-400 hover:text-purple-300"
+                      >
+                        {showRegisterTool ? 'Cancel' : '+ Register Tool'}
+                      </button>
+                    </div>
+
+                    {/* Inline register tool form */}
+                    {showRegisterTool && (
+                      <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
+                        <input
+                          type="text" placeholder="Tool name" value={regToolName}
+                          onChange={(e) => setRegToolName(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="Description (optional)" value={regToolDesc}
+                          onChange={(e) => setRegToolDesc(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="Endpoint URL (optional, e.g. http://localhost:9101/invoke)" value={regToolUrl}
+                          onChange={(e) => setRegToolUrl(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <button
+                          type="button" disabled={registerBusy || !regToolName.trim()}
+                          onClick={handleRegisterTool}
+                          className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                        >
+                          {registerBusy ? 'Registering...' : 'Register in Forge'}
+                        </button>
+                      </div>
+                    )}
+
                     {catalogTools.length === 0 ? (
                       <div className="text-xs text-white/45">No MCP tools discovered.</div>
                     ) : (
@@ -668,9 +853,47 @@ const ProjectWizard = ({
                     )}
                   </div>
 
-                  {/* A2A Agents */}
+                  {/* ── A2A Agents section ── */}
                   <div className="space-y-2">
-                    <div className="text-xs font-semibold text-white/70">A2A Agents</div>
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-white/70">A2A Agents</div>
+                      <button
+                        type="button"
+                        onClick={() => { setShowRegisterAgent((v) => !v); setShowRegisterTool(false); setShowRegisterGateway(false) }}
+                        className="text-[11px] text-purple-400 hover:text-purple-300"
+                      >
+                        {showRegisterAgent ? 'Cancel' : '+ Register Agent'}
+                      </button>
+                    </div>
+
+                    {/* Inline register agent form */}
+                    {showRegisterAgent && (
+                      <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
+                        <input
+                          type="text" placeholder="Agent name" value={regAgentName}
+                          onChange={(e) => setRegAgentName(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="Description (optional)" value={regAgentDesc}
+                          onChange={(e) => setRegAgentDesc(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="Endpoint URL (required, e.g. http://localhost:9100/a2a)" value={regAgentUrl}
+                          onChange={(e) => setRegAgentUrl(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <button
+                          type="button" disabled={registerBusy || !regAgentName.trim() || !regAgentUrl.trim()}
+                          onClick={handleRegisterAgent}
+                          className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                        >
+                          {registerBusy ? 'Registering...' : 'Register in Forge'}
+                        </button>
+                      </div>
+                    )}
+
                     {catalogAgents.length === 0 ? (
                       <div className="text-xs text-white/45">No A2A agents discovered.</div>
                     ) : (
@@ -706,6 +929,59 @@ const ProjectWizard = ({
                         })}
                       </div>
                     )}
+                  </div>
+
+                  {/* ── MCP Gateway section ── */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-white/70">MCP Gateways</div>
+                      <button
+                        type="button"
+                        onClick={() => { setShowRegisterGateway((v) => !v); setShowRegisterTool(false); setShowRegisterAgent(false) }}
+                        className="text-[11px] text-purple-400 hover:text-purple-300"
+                      >
+                        {showRegisterGateway ? 'Cancel' : '+ Import MCP Server'}
+                      </button>
+                    </div>
+
+                    {/* Inline register gateway form */}
+                    {showRegisterGateway && (
+                      <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
+                        <input
+                          type="text" placeholder="Gateway name" value={regGatewayName}
+                          onChange={(e) => setRegGatewayName(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="MCP Server URL (e.g. http://localhost:3000/sse)" value={regGatewayUrl}
+                          onChange={(e) => setRegGatewayUrl(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <select
+                          value={regGatewayTransport}
+                          onChange={(e) => setRegGatewayTransport(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white focus:border-purple-500/50 focus:outline-none"
+                        >
+                          <option value="SSE">SSE</option>
+                          <option value="STREAMABLEHTTP">Streamable HTTP</option>
+                          <option value="HTTP">HTTP</option>
+                        </select>
+                        <div className="text-[10px] text-white/40">
+                          After registration, Forge will auto-discover tools from this MCP server.
+                        </div>
+                        <button
+                          type="button" disabled={registerBusy || !regGatewayName.trim() || !regGatewayUrl.trim()}
+                          onClick={handleRegisterGateway}
+                          className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                        >
+                          {registerBusy ? 'Registering...' : 'Import MCP Server'}
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="text-[10px] text-white/40">
+                      Import an MCP server as a gateway to auto-discover its tools.
+                    </div>
                   </div>
                 </div>
               </div>
@@ -855,6 +1131,42 @@ const ProjectWizard = ({
                     <span className="text-white/50">Confirmation:</span>{' '}
                     {agentAskBeforeActing ? 'Ask first' : 'Auto'}
                   </div>
+
+                  {/* Attached tools */}
+                  {selectedToolIds.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white/50">Attached tools:</span>
+                      {selectedToolIds.map((tid) => {
+                        const tool = catalogTools.find((t) => t.id === tid)
+                        return (
+                          <span
+                            key={tid}
+                            className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300"
+                          >
+                            {tool?.name || tid}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* Attached A2A agents */}
+                  {selectedA2AAgentIds.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white/50">Attached agents:</span>
+                      {selectedA2AAgentIds.map((aid) => {
+                        const agent = catalogAgents.find((a) => a.id === aid)
+                        return (
+                          <span
+                            key={aid}
+                            className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300"
+                          >
+                            {agent?.name || aid}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-4 text-[11px] text-white/40">

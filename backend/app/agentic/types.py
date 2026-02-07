@@ -94,6 +94,62 @@ class AgenticCatalogOut(BaseModel):
     )
 
 
+# ── Registration (wizard writes new items into Context Forge) ────────────────
+#
+# These models let the wizard register tools, agents, gateways, and servers
+# directly from the UI without needing to use curl or the Forge admin UI.
+#
+
+
+class RegisterToolIn(BaseModel):
+    name: str = Field(description="Unique tool name")
+    description: str = Field(default="", description="Human-readable description")
+    input_schema: Dict[str, Any] = Field(
+        default_factory=lambda: {"type": "object", "properties": {}},
+        description="JSON Schema for tool parameters",
+    )
+    integration_type: str = Field(default="REST", description="REST | MCP | A2A")
+    url: Optional[str] = Field(default=None, description="Tool endpoint URL (for REST tools)")
+    request_type: str = Field(default="POST", description="HTTP method for REST tools")
+    tags: List[str] = Field(default_factory=list)
+    visibility: str = Field(default="public", description="public | team | private")
+
+
+class RegisterAgentIn(BaseModel):
+    name: str = Field(description="Unique agent name")
+    description: str = Field(default="", description="Human-readable description")
+    endpoint_url: str = Field(description="Agent endpoint URL (required)")
+    agent_type: str = Field(default="generic", description="generic | anthropic | openai | custom")
+    protocol_version: str = Field(default="1.0")
+    tags: List[str] = Field(default_factory=list)
+    visibility: str = Field(default="public", description="public | team | private")
+
+
+class RegisterGatewayIn(BaseModel):
+    name: str = Field(description="Unique gateway name")
+    url: str = Field(description="MCP server endpoint URL")
+    transport: str = Field(default="SSE", description="SSE | STREAMABLEHTTP | HTTP | STDIO")
+    description: str = Field(default="")
+    tags: List[str] = Field(default_factory=list)
+    visibility: str = Field(default="public")
+    auto_refresh: bool = Field(default=True, description="Trigger tool refresh after registration")
+
+
+class CreateServerIn(BaseModel):
+    name: str = Field(description="Virtual server name")
+    description: str = Field(default="")
+    tool_ids: List[str] = Field(default_factory=list, description="Tool IDs to include")
+    tags: List[str] = Field(default_factory=list)
+    visibility: str = Field(default="public")
+
+
+class RegisterOut(BaseModel):
+    ok: bool = True
+    id: str = Field(default="", description="Forge-assigned ID for the new resource")
+    name: str = Field(default="")
+    detail: str = Field(default="", description="Human-readable status or error message")
+
+
 # ── Invoke ───────────────────────────────────────────────────────────────────
 
 class InvokeIn(BaseModel):
