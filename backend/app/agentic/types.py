@@ -42,6 +42,58 @@ class CapabilitiesOut(BaseModel):
     )
 
 
+# ── Catalog (wizard-friendly view of Context Forge) ──────────────────────────
+#
+# Additive contract: the UI may call /v1/agentic/catalog to render real selectable
+# MCP tools / A2A agents (and optionally gateways/servers if available).
+#
+
+
+class CatalogTool(BaseModel):
+    id: str = Field(description="Context Forge tool id")
+    name: str = Field(description="Tool name")
+    description: str = Field(default="")
+    enabled: Optional[bool] = Field(default=None)
+
+
+class CatalogA2AAgent(BaseModel):
+    id: str = Field(description="Context Forge A2A agent id")
+    name: str = Field(description="Agent name")
+    description: str = Field(default="")
+    enabled: Optional[bool] = Field(default=None)
+    endpoint_url: Optional[str] = Field(default=None)
+
+
+class CatalogGateway(BaseModel):
+    id: str = Field(description="Context Forge gateway id")
+    name: str = Field(description="Gateway name")
+    url: Optional[str] = Field(default=None)
+    transport: Optional[str] = Field(default=None)
+    enabled: Optional[bool] = Field(default=None)
+
+
+class CatalogServer(BaseModel):
+    id: str = Field(description="Context Forge virtual server id")
+    name: str = Field(description="Virtual server name")
+    enabled: Optional[bool] = Field(default=None)
+    sse_url: Optional[str] = Field(default=None, description="Best-effort SSE endpoint URL")
+
+
+class AgenticCatalogOut(BaseModel):
+    tools: List[CatalogTool] = Field(default_factory=list)
+    a2a_agents: List[CatalogA2AAgent] = Field(default_factory=list)
+    gateways: List[CatalogGateway] = Field(default_factory=list)
+    servers: List[CatalogServer] = Field(default_factory=list)
+    capability_sources: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="Map capability_id -> list of tool_ids that could implement it",
+    )
+    source: str = Field(
+        default="forge",
+        description="Where the catalog came from: forge (best-effort)",
+    )
+
+
 # ── Invoke ───────────────────────────────────────────────────────────────────
 
 class InvokeIn(BaseModel):

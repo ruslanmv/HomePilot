@@ -193,6 +193,20 @@ const ProjectWizard = ({
   const [availableCapabilities, setAvailableCapabilities] = useState<AgentCapability[]>([])
   const [capabilitiesLoaded, setCapabilitiesLoaded] = useState(false)
 
+  // Additive: real catalog from backend (/v1/agentic/catalog)
+  const [catalogLoaded, setCatalogLoaded] = useState(false)
+  const [catalogTools, setCatalogTools] = useState<Array<{ id: string; name: string; description?: string; enabled?: boolean }>>([])
+  const [catalogAgents, setCatalogAgents] = useState<Array<{ id: string; name: string; description?: string; enabled?: boolean }>>([])
+  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
+  const [selectedA2AAgentIds, setSelectedA2AAgentIds] = useState<string[]>([])
+
+  const toggleSelectedTool = (id: string) => {
+    setSelectedToolIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+  const toggleSelectedAgent = (id: string) => {
+    setSelectedA2AAgentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
   const totalSteps = projectType === 'agent' ? 4 : 2
 
   // Catalog: human labels only — no MCP/tool/agent IDs shown to user
@@ -270,6 +284,55 @@ const ProjectWizard = ({
     void run()
   }, [apiKey, backendUrl, capabilitiesLoaded, projectType])
 
+  // Additive: Fetch real catalog (tools + A2A agents + optional gateways/servers)
+  useEffect(() => {
+    if (projectType !== 'agent') return
+    if (catalogLoaded) return
+
+    const run = async () => {
+      try {
+        const headers: Record<string, string> = {}
+        if (apiKey) headers['x-api-key'] = apiKey
+
+        const res = await fetch(`${backendUrl}/v1/agentic/catalog`, { headers })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+
+        const tools = Array.isArray(data?.tools)
+          ? data.tools
+              .map((t: any) => ({
+                id: String(t?.id || ''),
+                name: String(t?.name || ''),
+                description: typeof t?.description === 'string' ? t.description : undefined,
+                enabled: typeof t?.enabled === 'boolean' ? t.enabled : undefined,
+              }))
+              .filter((t: any) => t.id && t.name)
+          : []
+
+        const agents = Array.isArray(data?.a2a_agents)
+          ? data.a2a_agents
+              .map((a: any) => ({
+                id: String(a?.id || ''),
+                name: String(a?.name || ''),
+                description: typeof a?.description === 'string' ? a.description : undefined,
+                enabled: typeof a?.enabled === 'boolean' ? a.enabled : undefined,
+              }))
+              .filter((a: any) => a.id && a.name)
+          : []
+
+        setCatalogTools(tools)
+        setCatalogAgents(agents)
+      } catch {
+        setCatalogTools([])
+        setCatalogAgents([])
+      } finally {
+        setCatalogLoaded(true)
+      }
+    }
+
+    void run()
+  }, [apiKey, backendUrl, catalogLoaded, projectType])
+
   // Smart defaults: preselect capabilities that match the user's goal text
   useEffect(() => {
     if (projectType !== 'agent') return
@@ -327,11 +390,14 @@ const ProjectWizard = ({
       project_type: projectType,
     }
 
-    // Agent metadata: human-level only, no tool IDs exposed
+    // Agent metadata: capabilities + optional real Forge bindings
     if (projectType === 'agent') {
       projectData.agentic = {
         goal: agentGoal,
         capabilities: agentCapabilities,
+        // Additive: store selected Forge bindings (optional, for real tool/agent wiring)
+        tool_ids: selectedToolIds,
+        a2a_agent_ids: selectedA2AAgentIds,
         ask_before_acting: agentAskBeforeActing,
         execution_profile: agentExecutionProfile,
       }
@@ -545,6 +611,101 @@ const ProjectWizard = ({
                   </div>
                   <div className="mt-2 text-[11px] text-white/40">
                     Why? This workspace enables capabilities through advanced tools.
+                  </div>
+                </div>
+              </div>
+
+              {/* Additive: Real Forge bindings (Tools + A2A Agents) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-white/80">Real Tools & Agents</label>
+                  <span className="text-xs text-white/40">Optional &mdash; attach concrete MCP tools / A2A agents</span>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
+                  <div className="text-[11px] text-white/50">
+                    These are fetched from MCP Context Forge. If empty, register at least one tool or A2A agent in Forge
+                    (or create a placeholder) so the wizard can attach it.
+                  </div>
+
+                  {/* Tools */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-white/70">Tools</div>
+                    {catalogTools.length === 0 ? (
+                      <div className="text-xs text-white/45">No MCP tools discovered.</div>
+                    ) : (
+                      <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                        {catalogTools.map((t) => {
+                          const checked = selectedToolIds.includes(t.id)
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => toggleSelectedTool(t.id)}
+                              className={`w-full p-3 rounded-xl border text-left transition-all ${
+                                checked
+                                  ? 'border-purple-500/60 bg-purple-500/10'
+                                  : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-white">{t.name}</div>
+                                  {t.description ? <div className="text-xs text-white/50 mt-1">{t.description}</div> : null}
+                                </div>
+                                <div
+                                  className={`h-5 w-5 rounded-md border flex items-center justify-center ${
+                                    checked ? 'border-purple-400 bg-purple-500/20' : 'border-white/20 bg-white/5'
+                                  }`}
+                                >
+                                  {checked ? <span className="text-purple-300 text-xs">&#10003;</span> : null}
+                                </div>
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* A2A Agents */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-white/70">A2A Agents</div>
+                    {catalogAgents.length === 0 ? (
+                      <div className="text-xs text-white/45">No A2A agents discovered.</div>
+                    ) : (
+                      <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                        {catalogAgents.map((a) => {
+                          const checked = selectedA2AAgentIds.includes(a.id)
+                          return (
+                            <button
+                              key={a.id}
+                              type="button"
+                              onClick={() => toggleSelectedAgent(a.id)}
+                              className={`w-full p-3 rounded-xl border text-left transition-all ${
+                                checked
+                                  ? 'border-purple-500/60 bg-purple-500/10'
+                                  : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-white">{a.name}</div>
+                                  {a.description ? <div className="text-xs text-white/50 mt-1">{a.description}</div> : null}
+                                </div>
+                                <div
+                                  className={`h-5 w-5 rounded-md border flex items-center justify-center ${
+                                    checked ? 'border-purple-400 bg-purple-500/20' : 'border-white/20 bg-white/5'
+                                  }`}
+                                >
+                                  {checked ? <span className="text-purple-300 text-xs">&#10003;</span> : null}
+                                </div>
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

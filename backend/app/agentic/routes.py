@@ -4,32 +4,41 @@ Phase 1–4 endpoints (additive, non-destructive):
   GET  /v1/agentic/status        → health / feature-flag check
   GET  /v1/agentic/admin         → admin UI redirect URL
   GET  /v1/agentic/capabilities  → dynamic discovery from Context Forge + built-ins
+  GET  /v1/agentic/catalog       → wizard-friendly catalog (tools/agents/gateways/servers)
   POST /v1/agentic/invoke        → execute a capability (local orchestrator + Context Forge)
 
 Phase 4 additions:
   - capabilities returns source="forge"|"built_in"|"mixed" field
   - generate_images uses model-config preset system (not hard-coded dims)
   - generate_videos routed to local animate pipeline
+
+Phase 5 additions (additive):
+  - /catalog returns real selectable MCP tools, A2A agents, gateways, servers
+  - capability_sources map for wiring capabilities to real tool IDs
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_api_key
 from ..defaults import DEFAULT_NEGATIVE_PROMPT
 from ..orchestrator import handle_request
-from .capabilities import discover_capabilities
+from .capabilities import discover_capabilities, discover_catalog
 from .client import ContextForgeClient
 from .policy import apply_policy, is_allowed, resolve_profile
 from .types import (
     AgenticAdminOut,
+    AgenticCatalogOut,
     AgenticStatusOut,
     CapabilitiesOut,
+    CatalogGateway,
+    CatalogServer,
     InvokeIn,
     InvokeOut,
 )
@@ -97,6 +106,117 @@ async def agentic_capabilities(_key: str = Depends(require_api_key)):
         logger.warning("capability discovery failed: %s", exc)
         caps, source = [], "built_in"
     return CapabilitiesOut(capabilities=caps, source=source)
+
+
+# ── Helper: best-effort GET for Forge endpoints not covered by client ────────
+
+
+async def _forge_get_json(path: str, timeout: float = 5.0) -> Any:
+    """Best-effort GET helper for Forge endpoints not covered by ContextForgeClient.
+
+    Additive-only: no behavior changes to existing endpoints.
+    """
+    base = _FORGE_URL.rstrip("/")
+    url = f"{base}{path}"
+    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    auth = None
+    if _TOKEN:
+        headers["Authorization"] = f"Bearer {_TOKEN}"
+    else:
+        auth = httpx.BasicAuth(_AUTH_USER, _AUTH_PASS)
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=True) as c:
+        r = await c.get(url, headers=headers, auth=auth)
+        if r.status_code != 200:
+            return None
+        try:
+            return r.json()
+        except Exception:
+            return None
+
+
+# ── GET /v1/agentic/catalog ──────────────────────────────────────────────────
+# Additive endpoint for the Agent Creation Wizard:
+# returns real selectable tools/agents plus best-effort gateways/servers.
+
+
+@router.get("/catalog", response_model=AgenticCatalogOut)
+async def agentic_catalog(_key: str = Depends(require_api_key)):
+    if not _ENABLED:
+        # Keep contract stable: return empty lists rather than 503,
+        # so the UI can gracefully degrade.
+        return AgenticCatalogOut(
+            tools=[], a2a_agents=[], gateways=[], servers=[],
+            capability_sources={}, source="built_in",
+        )
+
+    # tools + a2a agents (+ capability_sources map)
+    base = await discover_catalog(_client())
+
+    # Best-effort gateways/servers (Forge deployments vary; try both public and /admin)
+    gateways_payload = await _forge_get_json("/gateways")
+    if gateways_payload is None:
+        gateways_payload = await _forge_get_json("/admin/gateways")
+
+    servers_payload = await _forge_get_json("/servers")
+    if servers_payload is None:
+        servers_payload = await _forge_get_json("/admin/servers")
+
+    gateways: List[CatalogGateway] = []
+    if isinstance(gateways_payload, list):
+        items = gateways_payload
+    elif isinstance(gateways_payload, dict):
+        items = gateways_payload.get("gateways") or gateways_payload.get("items") or []
+    else:
+        items = []
+    for g in items:
+        if not isinstance(g, dict):
+            continue
+        gid = str(g.get("id") or "")
+        name = str(g.get("name") or "")
+        if not gid or not name:
+            continue
+        gateways.append(
+            CatalogGateway(
+                id=gid,
+                name=name,
+                url=g.get("url") or g.get("endpoint_url") or None,
+                transport=g.get("transport") or None,
+                enabled=g.get("enabled"),
+            )
+        )
+
+    servers: List[CatalogServer] = []
+    if isinstance(servers_payload, list):
+        sitems = servers_payload
+    elif isinstance(servers_payload, dict):
+        sitems = servers_payload.get("servers") or servers_payload.get("items") or []
+    else:
+        sitems = []
+    for s in sitems:
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("id") or "")
+        name = str(s.get("name") or "")
+        if not sid or not name:
+            continue
+        servers.append(
+            CatalogServer(
+                id=sid,
+                name=name,
+                enabled=s.get("enabled"),
+                sse_url=f"{_FORGE_URL}/servers/{sid}/sse",
+            )
+        )
+
+    return AgenticCatalogOut(
+        tools=base.tools,
+        a2a_agents=base.a2a_agents,
+        gateways=gateways,
+        servers=servers,
+        capability_sources=base.capability_sources,
+        source="forge",
+    )
 
 
 # ── POST /v1/agentic/invoke ──────────────────────────────────────────────────
