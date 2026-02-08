@@ -38,6 +38,7 @@ import {
 } from './components/ChatSettingsPopover'
 import { MessageMarkdown } from './components/MessageMarkdown'
 import { ChatEmptyState } from './components/ChatEmptyState'
+import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
 import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
@@ -941,6 +942,7 @@ function QueryBar({
   canSend,
   onSend,
   onUpload,
+  placeholderOverride,
 }: {
   centered: boolean
   input: string
@@ -950,6 +952,7 @@ function QueryBar({
   canSend: boolean
   onSend: () => void
   onUpload: (file: File) => void
+  placeholderOverride?: string
 }) {
   return (
     <div className={`w-full ${centered ? 'max-w-breakout' : ''}`}>
@@ -1023,7 +1026,7 @@ function QueryBar({
               }
             }}
             rows={1}
-            placeholder={modeHint(mode)}
+            placeholder={placeholderOverride ?? modeHint(mode)}
             className={[
               'w-full bg-transparent text-white placeholder:text-white/55',
               'focus:outline-none resize-none',
@@ -1570,6 +1573,20 @@ export default function App() {
       execution_profile?: string
     }
   } | null>(null)
+
+  // Agent-start UX: user's chosen intent (only used while the agent thread is empty).
+  const [agentStartIntent, setAgentStartIntent] = useState<AgentIntent | null>(null)
+
+  // Reset the intent when switching projects or once messages exist.
+  useEffect(() => {
+    if (!currentProject) {
+      setAgentStartIntent(null)
+      return
+    }
+    if (messages.length > 0) {
+      setAgentStartIntent(null)
+    }
+  }, [currentProject?.id, messages.length])
 
   // Track last spoken message to avoid re-speaking
   const lastSpokenMessageIdRef = useRef<string | null>(null)
@@ -2966,6 +2983,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               title={currentProject.name}
               description={currentProject.description}
               isAgent={currentProject.project_type === 'agent'}
+              agentIntent={currentProject.project_type === 'agent' ? agentStartIntent : null}
+              onAgentIntentChange={(intent) => {
+                if (currentProject.project_type !== 'agent') return
+                setAgentStartIntent(intent)
+              }}
               capabilityLabels={(currentProject.agentic?.capabilities || []).map((id: string) => {
                 if (id === 'generate_images') return 'Generate images'
                 if (id === 'generate_videos') return 'Generate short videos'
@@ -2985,6 +3007,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 canSend={canSend}
                 onSend={onSend}
                 onUpload={uploadAndSend}
+                placeholderOverride={
+                  currentProject.project_type === 'agent' && agentStartIntent
+                    ? INTENT_COPY[agentStartIntent].placeholder
+                    : undefined
+                }
               />
             </div>
           </div>
