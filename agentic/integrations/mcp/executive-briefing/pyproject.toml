@@ -1,0 +1,10 @@
+[project]
+name = "homepilot-mcp-executive-briefing"
+version = "0.1.0"
+description = "HomePilot MCP server: Executive Briefing (reference implementation)"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.0",
+]

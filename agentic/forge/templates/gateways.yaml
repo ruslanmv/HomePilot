@@ -1,0 +1,31 @@
+version: 1
+
+# These gateways are registered for admin UI catalog visibility.
+# Tool discovery is done DIRECTLY (not via SSE auto-discovery) by
+# the seed script querying each server's /rpc endpoint for tools/list.
+
+gateways:
+  - name: hp-personal-assistant
+    url: "http://localhost:9101/rpc"
+    transport: "SSE"
+    description: "HomePilot Personal Assistant MCP server"
+
+  - name: hp-knowledge
+    url: "http://localhost:9102/rpc"
+    transport: "SSE"
+    description: "HomePilot Knowledge MCP server"
+
+  - name: hp-decision-copilot
+    url: "http://localhost:9103/rpc"
+    transport: "SSE"
+    description: "HomePilot Decision Copilot MCP server"
+
+  - name: hp-executive-briefing
+    url: "http://localhost:9104/rpc"
+    transport: "SSE"
+    description: "HomePilot Executive Briefing MCP server"
+
+  - name: hp-web-search
+    url: "http://localhost:9105/rpc"
+    transport: "SSE"
+    description: "HomePilot Web Search MCP (SearXNG home / Tavily enterprise)"

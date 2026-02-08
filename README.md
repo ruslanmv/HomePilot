@@ -44,6 +44,8 @@ Create intelligent **AI Agents** that can use tools, access knowledge bases, and
 - **Agent Projects** - New project type with a guided 4-step wizard (Details → Capabilities → Knowledge → Review)
 - **Dynamic Capabilities** - Agents discover available tools at runtime (image generation, video creation, document analysis, external automation)
 - **MCP Gateway** - Powered by [MCP Context Forge](https://github.com/ruslanmv/mcp-context-forge), a local gateway that connects your agents to 20+ tool servers
+- **Built-in MCP Servers** - 5 MCP tool servers (Personal Assistant, Knowledge, Decision Copilot, Executive Briefing, Web Search) and 2 A2A agents (Everyday Assistant, Chief of Staff) launch automatically with `make start`
+- **Web Search** - SearXNG for home users (no API key) or Tavily for enterprise, providing real-time web research tools
 - **Ask-Before-Acting** - Safety-first execution with configurable autonomy levels
 - **Voice Mode Media** - Generated images and videos now render directly in Voice mode conversations
 
@@ -182,7 +184,8 @@ graph LR
     Backend -->|Store| DB[(SQLite)]
     Backend -->|Studio| Studio[Studio API]
     Backend -->|Agentic| MCP[MCP Gateway :4444]
-    MCP -->|Tools| Servers[MCP Tool Servers]
+    MCP -->|Tools| Servers[MCP Tool Servers :9101-9105]
+    MCP -->|A2A| Agents[A2A Agents :9201-9202]
     Studio -->|Stories| StoryDB[(Story Store)]
 ```
 
@@ -215,6 +218,11 @@ homepilot/
 │       │   ├── capabilities.py   # Dynamic tool discovery
 │       │   ├── client.py         # MCP Gateway HTTP client
 │       │   └── policy.py         # Ask-before-acting policies
+├── agentic/                     # MCP tool servers, A2A agents, forge templates
+│   ├── integrations/mcp/        # 5 MCP tool servers (ports 9101-9105)
+│   ├── integrations/a2a/        # 2 A2A agents (ports 9201-9202)
+│   ├── forge/                   # Forge seed scripts and templates
+│   └── suite/                   # Suite manifests (home + pro profiles)
 │       └── studio/
 │           ├── routes.py     # Studio API endpoints
 │           ├── models.py     # Pydantic models
@@ -391,7 +399,9 @@ Located in the bottom-left of the sidebar:
 | :--- | :--- | :--- |
 | `/v1/agentic/capabilities` | GET | List available agent capabilities |
 | `/v1/agentic/invoke` | POST | Execute a tool via MCP Gateway |
-| `/v1/agentic/policy` | GET | Get current execution policy |
+| `/v1/agentic/catalog` | GET | Browse tools, agents, gateways, and servers from Forge |
+| `/v1/agentic/suite` | GET | List available suite profiles (home, pro) |
+| `/v1/agentic/suite/{name}` | GET | Get suite manifest with tool sources and A2A agents |
 
 ---
 
@@ -428,8 +438,9 @@ HomePilot is **workflow-driven**. Instead of hardcoded pipelines, it loads JSON 
 | `make down` | Stop and remove containers |
 | `make health` | Run best-effort health checks |
 | `make health-check` | Comprehensive health check of all services |
-| `make start` | Start all services (set `AGENTIC=1` for MCP) |
+| `make start` | Start all services (set `AGENTIC=1` for MCP + tool servers) |
 | `make start-mcp` | Start MCP Context Forge gateway and servers |
+| `make start-agentic-servers` | Start MCP tool servers + A2A agents standalone |
 | `make mcp-register-homepilot` | Register default tools with MCP Gateway |
 | `make dev` | Run frontend locally + backend in Docker |
 | `make clean` | Remove local artifacts and cache |
@@ -489,6 +500,8 @@ ProjectTemplate(
 
 - [x] Agentic AI: Agent project type with 4-step creation wizard
 - [x] MCP Context Forge integration with dynamic capability discovery
+- [x] Built-in MCP tool servers (Personal Assistant, Knowledge, Decision Copilot, Executive Briefing, Web Search) and A2A agents (Everyday Assistant, Chief of Staff)
+- [x] Web Search MCP server with SearXNG (home) and Tavily (enterprise) providers
 - [x] Voice mode media rendering (images and videos)
 
 ### In Progress

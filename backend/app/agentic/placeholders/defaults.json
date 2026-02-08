@@ -1,0 +1,47 @@
+{
+  "_comment": "Default placeholder definitions for Context Forge seeding. Used by seed_forge.py and documented for reference.",
+  "tool": {
+    "name": "placeholder_echo",
+    "displayName": "Placeholder Echo Tool",
+    "description": "Echoes input text back. Use as a wiring test for the HomePilot wizard.",
+    "integration_type": "REST",
+    "url": "http://localhost:9101/invoke",
+    "request_type": "POST",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Text to echo back"
+        }
+      },
+      "required": ["text"]
+    },
+    "tags": ["placeholder", "testing"],
+    "visibility": "public"
+  },
+  "a2a_agent": {
+    "name": "placeholder_agent",
+    "description": "Placeholder A2A agent for wiring the HomePilot wizard. Replace with a real agent later.",
+    "endpoint_url": "http://localhost:9100/a2a",
+    "agent_type": "generic",
+    "protocol_version": "1.0",
+    "visibility": "public",
+    "tags": ["placeholder", "testing"]
+  },
+  "gateway": {
+    "name": "placeholder_gateway",
+    "description": "Placeholder MCP gateway for development. Replace with a real gateway endpoint.",
+    "url": "http://localhost:3000/mcp",
+    "transport": "SSE",
+    "tags": ["placeholder", "testing"],
+    "visibility": "public"
+  },
+  "server": {
+    "name": "placeholder_server",
+    "description": "Placeholder virtual server for aggregating tools. Replace with real configuration.",
+    "tags": ["placeholder", "testing"],
+    "visibility": "public",
+    "oauth_enabled": false
+  }
+}

@@ -11,7 +11,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 from .client import ContextForgeClient
-from .types import Capability
+from .types import AgenticCatalogOut, CatalogA2AAgent, CatalogTool, Capability
 
 logger = logging.getLogger("homepilot.agentic.capabilities")
 
@@ -87,6 +87,29 @@ def _match_tool(tool_name: str) -> str | None:
             if pat in name_lower:
                 return entry["id"]
     return None
+
+
+def _capability_sources_from_tools(tools: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    """Build a best-effort map: capability_id -> [tool_id, ...].
+
+    This does NOT change the existing capability list behavior.
+    It's additive metadata to help the wizard and later execution wiring.
+    """
+    out: Dict[str, List[str]] = {}
+    for t in tools:
+        if not isinstance(t, dict):
+            continue
+        tool_id = str(t.get("id") or "")
+        name = str(t.get("name") or "")
+        if not tool_id or not name:
+            continue
+        cap_id = _match_tool(name)
+        if not cap_id:
+            continue
+        out.setdefault(cap_id, [])
+        if tool_id not in out[cap_id]:
+            out[cap_id].append(tool_id)
+    return out
 
 
 # ── Built-in capabilities (always available via HomePilot orchestrator) ────────
@@ -185,3 +208,71 @@ async def discover_capabilities(
         len(caps), forge_contributed, len(caps) - forge_contributed, len(tools), len(agents),
     )
     return caps, source
+
+
+# ── Additive: full catalog discovery for the Agent Creation Wizard ───────────
+
+
+async def discover_catalog(client: ContextForgeClient) -> AgenticCatalogOut:
+    """Return a wizard-friendly catalog of *real* Forge objects.
+
+    - tools: raw tool objects (id/name/description/enabled)
+    - a2a_agents: raw agent objects (id/name/description/enabled/endpoint_url)
+    - capability_sources: capability_id -> tool_ids that match patterns
+
+    Gateways/servers are fetched separately in routes.py (best-effort)
+    so this function stays compatible with the existing thin client.
+    """
+    try:
+        tools = await client.list_tools()
+    except Exception:
+        tools = []
+
+    try:
+        agents = await client.list_agents()
+    except Exception:
+        agents = []
+
+    catalog_tools: List[CatalogTool] = []
+    for t in tools:
+        if not isinstance(t, dict):
+            continue
+        tid = str(t.get("id") or "")
+        name = str(t.get("name") or "")
+        if not tid or not name:
+            continue
+        catalog_tools.append(
+            CatalogTool(
+                id=tid,
+                name=name,
+                description=str(t.get("description") or ""),
+                enabled=t.get("enabled"),
+            )
+        )
+
+    catalog_agents: List[CatalogA2AAgent] = []
+    for a in agents:
+        if not isinstance(a, dict):
+            continue
+        aid = str(a.get("id") or "")
+        name = str(a.get("name") or "")
+        if not aid or not name:
+            continue
+        catalog_agents.append(
+            CatalogA2AAgent(
+                id=aid,
+                name=name,
+                description=str(a.get("description") or ""),
+                enabled=a.get("enabled"),
+                endpoint_url=a.get("endpoint_url") or a.get("endpoint") or None,
+            )
+        )
+
+    return AgenticCatalogOut(
+        tools=catalog_tools,
+        a2a_agents=catalog_agents,
+        gateways=[],
+        servers=[],
+        capability_sources=_capability_sources_from_tools(tools),
+        source="forge",
+    )
