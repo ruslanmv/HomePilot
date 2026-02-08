@@ -6,6 +6,11 @@ the agentic module only deals with Python objects.
 Phase 6 additions (additive):
   - register_tool(), register_agent(), register_gateway(), create_server()
   - set_tool_state(), refresh_gateway()
+
+Phase 8 fix (additive):
+  - JWT token acquisition via POST /auth/login (Forge requires Bearer JWT,
+    not basic auth for API endpoints).
+  - Auto-login on first API call when no token is pre-configured.
 """
 
 from __future__ import annotations
@@ -18,6 +23,33 @@ import httpx
 logger = logging.getLogger("homepilot.agentic.client")
 
 
+async def forge_jwt_login(
+    base_url: str,
+    email: str = "admin@example.com",
+    password: str = "changeme",
+    timeout: float = 10.0,
+) -> Optional[str]:
+    """Acquire a JWT token from Context Forge via POST /auth/login.
+
+    Returns the access_token string, or None on failure.
+    """
+    url = f"{base_url.rstrip('/')}/auth/login"
+    payload = {"email": email, "password": password}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
+            r = await c.post(url, json=payload, headers={"Content-Type": "application/json"})
+            if r.status_code == 200:
+                data = r.json()
+                token = data.get("access_token")
+                if token:
+                    logger.debug("Forge JWT acquired for %s", email)
+                    return token
+            logger.warning("Forge JWT login failed: HTTP %d", r.status_code)
+    except Exception as exc:
+        logger.warning("Forge JWT login error: %s", exc)
+    return None
+
+
 class ContextForgeClient:
     """Async client that wraps the MCP Context Forge REST API."""
 
@@ -26,8 +58,29 @@ class ContextForgeClient:
         self.token = token
         self.auth_user = auth_user
         self.auth_pass = auth_pass
+        self._jwt_attempted = False
 
     # ── helpers ───────────────────────────────────────────────────────────
+
+    async def _ensure_token(self) -> None:
+        """Auto-acquire JWT token from Forge /auth/login if none is set.
+
+        Called lazily once per client instance.  Uses platform_admin_email
+        convention (auth_user@example.com) derived from BASIC_AUTH_USER.
+        """
+        if self.token or self._jwt_attempted:
+            return
+        self._jwt_attempted = True
+        # Derive email: if auth_user already looks like email, use it directly
+        email = self.auth_user if "@" in self.auth_user else f"{self.auth_user}@example.com"
+        jwt = await forge_jwt_login(
+            self.base_url,
+            email=email,
+            password=self.auth_pass,
+        )
+        if jwt:
+            self.token = jwt
+            logger.info("Auto-acquired Forge JWT for %s", email)
 
     def _headers(self) -> Dict[str, str]:
         h: Dict[str, str] = {"Content-Type": "application/json"}
@@ -36,6 +89,7 @@ class ContextForgeClient:
         return h
 
     def _auth(self) -> Optional[httpx.BasicAuth]:
+        # With JWT auto-login, basic auth is rarely needed; kept as last resort
         if not self.token and self.auth_user:
             return httpx.BasicAuth(self.auth_user, self.auth_pass)
         return None
@@ -58,6 +112,7 @@ class ContextForgeClient:
 
     async def list_tools(self, timeout: float = 5.0) -> List[Dict[str, Any]]:
         """Fetch all registered tools from the gateway."""
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
                 r = await c.get(f"{self.base_url}/tools", headers=self._headers(), auth=self._auth())
@@ -72,6 +127,7 @@ class ContextForgeClient:
 
     async def list_agents(self, timeout: float = 5.0) -> List[Dict[str, Any]]:
         """Fetch all registered A2A agents."""
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
                 r = await c.get(f"{self.base_url}/a2a", headers=self._headers(), auth=self._auth())
@@ -86,6 +142,7 @@ class ContextForgeClient:
 
     async def list_gateways(self, timeout: float = 5.0) -> List[Dict[str, Any]]:
         """Fetch registered gateways (federated MCP servers)."""
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
                 r = await c.get(f"{self.base_url}/gateways", headers=self._headers(), auth=self._auth())
@@ -98,6 +155,7 @@ class ContextForgeClient:
 
     async def list_servers(self, timeout: float = 5.0) -> List[Dict[str, Any]]:
         """Fetch virtual servers (curated tool bundles)."""
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
                 r = await c.get(f"{self.base_url}/servers", headers=self._headers(), auth=self._auth())
@@ -112,6 +170,7 @@ class ContextForgeClient:
 
     async def invoke_tool(self, tool_id: str, args: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:
         """Execute a tool by ID via JSON-RPC, then REST fallback."""
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             # Try JSON-RPC first
             try:
@@ -151,6 +210,7 @@ class ContextForgeClient:
             tool_def: Tool definition dict with keys: name, description, inputSchema, etc.
                       Wrapped in {"tool": ...} to match Forge API contract.
         """
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
                 payload = {"tool": tool_def} if "tool" not in tool_def else tool_def
@@ -169,6 +229,7 @@ class ContextForgeClient:
 
     async def set_tool_state(self, tool_id: str, activate: bool, timeout: float = 5.0) -> Dict[str, Any]:
         """Enable or disable a tool in Context Forge."""
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
                 r = await c.post(
@@ -193,6 +254,7 @@ class ContextForgeClient:
             agent_def: Agent definition dict with keys: name, description,
                        endpoint_url, agent_type, protocol_version, etc.
         """
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
                 r = await c.post(
@@ -215,14 +277,15 @@ class ContextForgeClient:
 
         Args:
             gateway_def: Gateway definition dict with keys: name, url, transport,
-                         description, etc. Wrapped in {"gateway": ...} if needed.
+                         description, etc. Flat payload (no wrapping needed for gateways).
         """
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
-                payload = {"gateway": gateway_def} if "gateway" not in gateway_def else gateway_def
+                # Gateways use a flat payload (single Body param in Forge API)
                 r = await c.post(
                     f"{self.base_url}/gateways",
-                    json=payload,
+                    json=gateway_def,
                     headers=self._headers(),
                     auth=self._auth(),
                 )
@@ -235,6 +298,7 @@ class ContextForgeClient:
 
     async def refresh_gateway(self, gateway_id: str, timeout: float = 15.0) -> Dict[str, Any]:
         """Trigger tool discovery refresh for a gateway."""
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
                 r = await c.post(
@@ -259,6 +323,7 @@ class ContextForgeClient:
                         tool_ids (optional), etc.
                         Wrapped in {"server": ...} if needed.
         """
+        await self._ensure_token()
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
             try:
                 payload = {"server": server_def} if "server" not in server_def else server_def

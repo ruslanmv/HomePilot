@@ -4,6 +4,8 @@ This is additive and does NOT replace the existing ContextForgeClient.
 It covers endpoints like /servers and /gateways that the thin client
 doesn't handle, and tries multiple path patterns for cross-deployment
 compatibility.
+
+Phase 8 fix: auto-acquire JWT token when basic auth is rejected.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 import httpx
+
+from .client import forge_jwt_login
 
 logger = logging.getLogger("homepilot.agentic.forge_http")
 
@@ -32,6 +36,22 @@ class ForgeHttp:
         self.auth_pass = auth_pass
         self.bearer_token = bearer_token
         self.timeout_seconds = float(timeout_seconds)
+        self._jwt_attempted = False
+
+    async def _ensure_token(self) -> None:
+        """Auto-acquire JWT if no bearer token is set (lazy, once)."""
+        if self.bearer_token or self._jwt_attempted:
+            return
+        self._jwt_attempted = True
+        email = self.auth_user if "@" in self.auth_user else f"{self.auth_user}@example.com"
+        jwt = await forge_jwt_login(
+            self.base_url,
+            email=email,
+            password=self.auth_pass,
+        )
+        if jwt:
+            self.bearer_token = jwt
+            logger.debug("ForgeHttp: auto-acquired JWT for %s", email)
 
     def _auth_headers_and_auth(self) -> Tuple[Dict[str, str], Optional[httpx.BasicAuth]]:
         headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -43,6 +63,7 @@ class ForgeHttp:
         return headers, auth
 
     async def get_json(self, path: str) -> Any:
+        await self._ensure_token()
         url = f"{self.base_url}{path}"
         headers, auth = self._auth_headers_and_auth()
         try:

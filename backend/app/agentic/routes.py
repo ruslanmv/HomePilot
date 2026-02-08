@@ -143,13 +143,23 @@ async def _forge_get_json(path: str, timeout: float = 5.0) -> Any:
     """Best-effort GET helper for Forge endpoints not covered by ContextForgeClient.
 
     Additive-only: no behavior changes to existing endpoints.
+    Uses JWT auto-login via the client module helper.
     """
+    from .client import forge_jwt_login
+
     base = _FORGE_URL.rstrip("/")
     url = f"{base}{path}"
     headers: Dict[str, str] = {"Content-Type": "application/json"}
     auth = None
-    if _TOKEN:
-        headers["Authorization"] = f"Bearer {_TOKEN}"
+
+    # Prefer pre-configured token, then try JWT login
+    token = _TOKEN
+    if not token:
+        email = _AUTH_USER if "@" in _AUTH_USER else f"{_AUTH_USER}@example.com"
+        token = await forge_jwt_login(base, email=email, password=_AUTH_PASS) or ""
+
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     else:
         auth = httpx.BasicAuth(_AUTH_USER, _AUTH_PASS)
 

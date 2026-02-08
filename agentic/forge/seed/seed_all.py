@@ -1,14 +1,19 @@
 """Seed MCP Context Forge with the HomePilot agentic suite.
 
 Strategy:
-  1. Query each local MCP server's /rpc endpoint for tools/list
-  2. Register every tool DIRECTLY with Forge via POST /tools
-  3. Register A2A agents via POST /a2a
-  4. Register gateways for admin UI visibility (optional, no auto-discovery)
-  5. Create virtual servers referencing the collected tool IDs
+  1. Acquire JWT token from Forge via POST /auth/login
+  2. Query each local MCP server's /rpc endpoint for tools/list
+  3. Register every tool DIRECTLY with Forge via POST /tools (integration_type=REST)
+  4. Register A2A agents via POST /a2a
+  5. Register gateways for admin UI visibility (optional, no auto-discovery)
+  6. Create virtual servers referencing the collected tool IDs
 
 This avoids relying on Forge gateway auto-discovery (SSE), since our
 MCP servers speak plain HTTP JSON-RPC at /rpc.
+
+Forge requires JWT Bearer tokens — basic auth is NOT accepted by the API.
+The script acquires a token from POST /auth/login using the platform admin
+email convention: {BASIC_AUTH_USER}@example.com / {BASIC_AUTH_PASSWORD}.
 
 Idempotent: skips items that already exist (matched by name).
 
@@ -34,10 +39,8 @@ import yaml
 
 
 BASE_URL = os.environ.get("MCPGATEWAY_URL", "http://localhost:4444").rstrip("/")
-AUTH = (
-    os.environ.get("BASIC_AUTH_USER", "admin"),
-    os.environ.get("BASIC_AUTH_PASSWORD", "changeme"),
-)
+AUTH_USER = os.environ.get("BASIC_AUTH_USER", "admin")
+AUTH_PASS = os.environ.get("BASIC_AUTH_PASSWORD", "changeme")
 
 # Local MCP servers and their ports (must be running)
 MCP_SERVERS = [
@@ -54,6 +57,27 @@ def _load_yaml(rel: str) -> Dict[str, Any]:
     path = root / "templates" / rel
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+# ── JWT authentication ──────────────────────────────────────────────────────
+
+
+async def _acquire_jwt(client: httpx.AsyncClient) -> str:
+    """Get a JWT token from Forge /auth/login."""
+    email = AUTH_USER if "@" in AUTH_USER else f"{AUTH_USER}@example.com"
+    payload = {"email": email, "password": AUTH_PASS}
+    r = await client.post(
+        f"{BASE_URL}/auth/login",
+        json=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Forge login failed: HTTP {r.status_code} - {r.text[:200]}")
+    data = r.json()
+    token = data.get("access_token")
+    if not token:
+        raise RuntimeError(f"Forge login response missing access_token: {data}")
+    return token
 
 
 # ── Forge API helpers ──────────────────────────────────────────────────────
@@ -103,8 +127,13 @@ async def ensure_tool(
     description: str,
     input_schema: Dict[str, Any],
     existing_tools: Dict[str, str],
+    server_port: int,
 ) -> Optional[str]:
-    """Register a tool with Forge; return its ID. Skip if already exists."""
+    """Register a tool with Forge; return its ID. Skip if already exists.
+
+    Uses integration_type="REST" because Forge blocks manual MCP tool
+    creation (MCP tools must come from gateway auto-discovery).
+    """
     if name in existing_tools:
         return existing_tools[name]
 
@@ -113,8 +142,10 @@ async def ensure_tool(
             "name": name,
             "description": description,
             "inputSchema": input_schema,
-            "integration_type": "MCP",
+            "integration_type": "REST",
             "request_type": "POST",
+            "url": f"http://127.0.0.1:{server_port}/rpc",
+            "tags": ["homepilot"],
         },
         "team_id": None,
     }
@@ -276,11 +307,20 @@ async def main() -> int:
     templates_agents = _load_yaml("a2a_agents.yaml")
 
     async with httpx.AsyncClient(
-        auth=AUTH,
         headers={"Content-Type": "application/json"},
         timeout=30.0,
     ) as client:
         print(f"Seeding Context Forge at {BASE_URL} ...")
+
+        # ── 0. Acquire JWT token ──────────────────────────────────────
+        try:
+            token = await _acquire_jwt(client)
+            client.headers["Authorization"] = f"Bearer {token}"
+            print("  JWT token acquired")
+        except Exception as exc:
+            print(f"  ✗ JWT login failed: {exc}")
+            print("  Hint: ensure Forge is running and BASIC_AUTH_USER/PASSWORD are correct")
+            return 1
 
         # ── Pre-fetch existing items to make idempotent ────────────────
         try:
@@ -341,7 +381,7 @@ async def main() -> int:
                 tname = tool_def.get("name", "")
                 tdesc = tool_def.get("description", "")
                 tschema = tool_def.get("inputSchema", {"type": "object", "properties": {}})
-                tid = await ensure_tool(client, tname, tdesc, tschema, existing_tools)
+                tid = await ensure_tool(client, tname, tdesc, tschema, existing_tools, port)
                 if tid:
                     tool_id_map[tname] = tid
                     existing_tools[tname] = tid
