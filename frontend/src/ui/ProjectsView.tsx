@@ -25,6 +25,7 @@ import {
 // Phase 7: enriched catalog hook + connections panel (additive imports)
 import { useAgenticCatalog } from '../agentic/useAgenticCatalog';
 import { ConnectionsPanel } from '../agentic/ConnectionsPanel';
+import { AgentSettingsPanel } from './components/AgentSettingsPanel';
 
 // --- Components ---
 
@@ -1837,16 +1838,29 @@ export default function ProjectsView({
         />
       )}
       {showEditModal && editingProject && (
-        <EditProjectModal
-          project={editingProject}
-          onClose={() => setShowEditModal(false)}
-          onSave={(updatedProject) => {
-            setProjects(projects.map(p => p.id === updatedProject.id ? updatedProject : p));
-            setShowEditModal(false);
-          }}
-          backendUrl={backendUrl}
-          apiKey={apiKey}
-        />
+        editingProject.project_type === 'agent' ? (
+          <AgentSettingsPanel
+            project={editingProject}
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+            onClose={() => setShowEditModal(false)}
+            onSaved={(updatedProject) => {
+              setProjects(projects.map(p => p.id === updatedProject.id ? { ...p, ...updatedProject } : p));
+              setShowEditModal(false);
+            }}
+          />
+        ) : (
+          <EditProjectModal
+            project={editingProject}
+            onClose={() => setShowEditModal(false)}
+            onSave={(updatedProject) => {
+              setProjects(projects.map(p => p.id === updatedProject.id ? updatedProject : p));
+              setShowEditModal(false);
+            }}
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+          />
+        )
       )}
 
       {/* Header */}

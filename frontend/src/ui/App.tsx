@@ -39,6 +39,7 @@ import {
 import { MessageMarkdown } from './components/MessageMarkdown'
 import { ChatEmptyState } from './components/ChatEmptyState'
 import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
+import { AgentSettingsPanel, type AgentProjectData } from './components/AgentSettingsPanel'
 import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
@@ -1566,13 +1567,21 @@ export default function App() {
     document_count: number
     project_type?: string
     description?: string
+    instructions?: string
+    files?: Array<{ name: string; size?: string; chunks?: number }>
     agentic?: {
       goal?: string
       capabilities?: string[]
+      tool_ids?: string[]
+      a2a_agent_ids?: string[]
+      tool_source?: string
       ask_before_acting?: boolean
-      execution_profile?: string
+      execution_profile?: 'fast' | 'balanced' | 'quality'
     }
   } | null>(null)
+
+  // Agent settings panel toggle
+  const [showAgentSettings, setShowAgentSettings] = useState(false)
 
   // Agent-start UX: user's chosen intent (only used while the agent thread is empty).
   const [agentStartIntent, setAgentStartIntent] = useState<AgentIntent | null>(null)
@@ -2762,21 +2771,42 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               const docCount = currentProject?.document_count || 0
 
               return (
-                <div className="inline-flex items-center gap-2 bg-blue-600/20 text-blue-400 text-xs font-semibold px-4 py-2 rounded-full border border-blue-600/30">
+                <div className={`inline-flex items-center gap-2 ${
+                  currentProject?.project_type === 'agent'
+                    ? 'bg-amber-600/20 text-amber-400 border-amber-600/30'
+                    : 'bg-blue-600/20 text-blue-400 border-blue-600/30'
+                } text-xs font-semibold px-4 py-2 rounded-full border`}>
                   <Folder size={12} />
                   <span>{projectName}</span>
+                  {currentProject?.project_type === 'agent' && (
+                    <span className="px-1.5 py-0.5 bg-amber-600/30 rounded text-[10px]">Agent</span>
+                  )}
                   {docCount > 0 && (
-                    <span className="px-1.5 py-0.5 bg-blue-600/30 rounded text-[10px]" title={`${docCount} document chunks`}>
-                      📚 {docCount}
+                    <span className={`px-1.5 py-0.5 ${
+                      currentProject?.project_type === 'agent' ? 'bg-amber-600/30' : 'bg-blue-600/30'
+                    } rounded text-[10px]`} title={`${docCount} document chunks`}>
+                      {docCount} docs
                     </span>
                   )}
+                  <button
+                    onClick={() => setShowAgentSettings(true)}
+                    className={`ml-0.5 p-0.5 ${
+                      currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
+                    } rounded-full transition-colors`}
+                    title="Project settings"
+                  >
+                    <Settings size={12} />
+                  </button>
                   <button
                     onClick={() => {
                       localStorage.removeItem('homepilot_current_project')
                       setCurrentProject(null)
-                      onNewConversation() // Start fresh conversation
+                      setShowAgentSettings(false)
+                      onNewConversation()
                     }}
-                    className="ml-1 p-0.5 hover:bg-blue-600/30 rounded-full transition-colors"
+                    className={`p-0.5 ${
+                      currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
+                    } rounded-full transition-colors`}
                     title="Exit project mode"
                   >
                     <X size={12} />
@@ -2787,6 +2817,27 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             return null
           })()}
         </header>
+        )}
+
+        {/* Agent Settings Panel — accessible from gear icon in project header */}
+        {showAgentSettings && currentProject && (
+          <AgentSettingsPanel
+            project={currentProject as AgentProjectData}
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            onClose={() => setShowAgentSettings(false)}
+            onSaved={(updated) => {
+              setCurrentProject((prev) => prev ? {
+                ...prev,
+                name: updated.name || prev.name,
+                description: updated.description,
+                instructions: updated.instructions,
+                files: updated.files || prev.files,
+                agentic: updated.agentic || prev.agentic,
+              } : prev)
+              setShowAgentSettings(false)
+            }}
+          />
         )}
 
         {mode === 'voice' ? (
@@ -2817,6 +2868,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     document_count: project.document_count || 0,
                     project_type: project.project_type,
                     description: project.description,
+                    instructions: project.instructions,
+                    files: project.files,
                     agentic: project.agentic,
                   })
 
