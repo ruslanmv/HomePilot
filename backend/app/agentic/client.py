@@ -82,6 +82,32 @@ class ContextForgeClient:
                 logger.warning("list_agents failed: %s", exc)
         return []
 
+    # ── gateways / virtual servers (read) ────────────────────────────────
+
+    async def list_gateways(self, timeout: float = 5.0) -> List[Dict[str, Any]]:
+        """Fetch registered gateways (federated MCP servers)."""
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
+            try:
+                r = await c.get(f"{self.base_url}/gateways", headers=self._headers(), auth=self._auth())
+                if r.status_code == 200:
+                    data = r.json()
+                    return data if isinstance(data, list) else data.get("gateways", [])
+            except Exception as exc:
+                logger.warning("list_gateways failed: %s", exc)
+        return []
+
+    async def list_servers(self, timeout: float = 5.0) -> List[Dict[str, Any]]:
+        """Fetch virtual servers (curated tool bundles)."""
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
+            try:
+                r = await c.get(f"{self.base_url}/servers", headers=self._headers(), auth=self._auth())
+                if r.status_code == 200:
+                    data = r.json()
+                    return data if isinstance(data, list) else data.get("servers", [])
+            except Exception as exc:
+                logger.warning("list_servers failed: %s", exc)
+        return []
+
     # ── invoke ────────────────────────────────────────────────────────────
 
     async def invoke_tool(self, tool_id: str, args: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:

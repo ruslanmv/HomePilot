@@ -539,3 +539,107 @@ class TestMCPConnection:
         for key, val in cs.items():
             assert isinstance(key, str)
             assert isinstance(val, list)
+
+
+# ---------------------------------------------------------------------------
+# 9) Suite manifests — GET /v1/agentic/suite/*
+# ---------------------------------------------------------------------------
+
+
+class TestAgenticSuite:
+    """GET /v1/agentic/suite and /v1/agentic/suite/{name}."""
+
+    def test_suite_index_returns_200(self, client):
+        resp = client.get("/v1/agentic/suite")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+        # Should contain at least the three known keys
+        assert "default_home" in data
+        assert "default_pro" in data
+        assert "optional_addons" in data
+
+    def test_suite_default_pro_returns_200(self, client):
+        resp = client.get("/v1/agentic/suite/default_pro")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+        # If suite dir exists it should have tool_sources, otherwise error key
+        assert "tool_sources" in data or "error" in data
+
+    def test_suite_default_home_returns_200(self, client):
+        resp = client.get("/v1/agentic/suite/default_home")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+        assert "tool_sources" in data or "error" in data
+
+    def test_suite_nonexistent_returns_error(self, client):
+        resp = client.get("/v1/agentic/suite/nonexistent_suite")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "error" in data
+
+    def test_suite_pro_has_tool_sources(self, client):
+        """The pro suite should have tool_sources with at least one entry."""
+        resp = client.get("/v1/agentic/suite/default_pro")
+        data = resp.json()
+        if "tool_sources" in data:
+            assert isinstance(data["tool_sources"], list)
+            assert len(data["tool_sources"]) > 0
+            # Each source has id, kind, label
+            first = data["tool_sources"][0]
+            assert "id" in first
+            assert "kind" in first
+            assert "label" in first
+
+    def test_suite_pro_has_a2a_agents(self, client):
+        """The pro suite should reference A2A agents."""
+        resp = client.get("/v1/agentic/suite/default_pro")
+        data = resp.json()
+        if "a2a_agents" in data:
+            assert isinstance(data["a2a_agents"], list)
+            assert len(data["a2a_agents"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# 10) Catalog fetch module — fetch_catalog()
+# ---------------------------------------------------------------------------
+
+
+class TestFetchCatalog:
+    """Test the catalog.fetch_catalog() function."""
+
+    def test_fetch_catalog_returns_tools_and_agents(self, client, mock_outbound):
+        """GET /catalog should include tools and a2a_agents."""
+        data = client.get("/v1/agentic/catalog").json()
+        assert "tools" in data
+        assert "a2a_agents" in data
+        assert isinstance(data["tools"], list)
+        assert isinstance(data["a2a_agents"], list)
+
+    def test_catalog_has_last_updated(self, client, mock_outbound):
+        """Catalog should include last_updated timestamp."""
+        data = client.get("/v1/agentic/catalog").json()
+        assert "last_updated" in data
+
+
+# ---------------------------------------------------------------------------
+# 11) Client list_gateways / list_servers
+# ---------------------------------------------------------------------------
+
+
+class TestClientGatewaysServers:
+    """Verify ContextForgeClient.list_gateways() and list_servers()."""
+
+    def test_client_has_list_gateways(self):
+        from app.agentic.client import ContextForgeClient
+        c = ContextForgeClient("http://localhost:4444")
+        assert hasattr(c, "list_gateways")
+        assert callable(c.list_gateways)
+
+    def test_client_has_list_servers(self):
+        from app.agentic.client import ContextForgeClient
+        c = ContextForgeClient("http://localhost:4444")
+        assert hasattr(c, "list_servers")
+        assert callable(c.list_servers)

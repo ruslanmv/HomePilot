@@ -32,9 +32,11 @@ from ..auth import require_api_key
 from ..defaults import DEFAULT_NEGATIVE_PROMPT
 from ..orchestrator import handle_request
 from .capabilities import discover_capabilities, discover_catalog
+from .catalog import fetch_catalog
 from .catalog_service import AgenticCatalogService
 from .client import ContextForgeClient
 from .policy import apply_policy, is_allowed, resolve_profile
+from .suite_manifest import list_suites, read_suite
 from .runtime_tool_router import RuntimeToolRouter
 from .types import (
     AgenticAdminOut,
@@ -194,6 +196,22 @@ async def agentic_catalog(_key: str = Depends(require_api_key)):
             "last_updated": "",
             "forge": {"base_url": _FORGE_URL, "healthy": False, "error": str(exc)},
         }
+
+
+# ── GET /v1/agentic/suite/* ────────────────────────────────────────────────
+# Suite manifests drive the wizard UX: tool bundles, A2A agent presets.
+
+
+@router.get("/suite")
+async def agentic_suite_index(_key: str = Depends(require_api_key)):
+    """Return all known suite manifests."""
+    return list_suites()
+
+
+@router.get("/suite/{name}")
+async def agentic_suite(name: str, _key: str = Depends(require_api_key)):
+    """Return a single suite manifest by name (without extension)."""
+    return read_suite(name)
 
 
 # ── POST /v1/agentic/register/* ─────────────────────────────────────────────
