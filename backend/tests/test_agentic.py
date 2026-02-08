@@ -643,3 +643,56 @@ class TestClientGatewaysServers:
         c = ContextForgeClient("http://localhost:4444")
         assert hasattr(c, "list_servers")
         assert callable(c.list_servers)
+
+
+class TestSeedToolIdsByPrefix:
+    """Verify seed_all._tool_ids_by_prefix logic."""
+
+    def test_prefix_matching(self):
+        import sys
+        from pathlib import Path
+        repo = str(Path(__file__).resolve().parents[2])
+        if repo not in sys.path:
+            sys.path.insert(0, repo)
+        from agentic.forge.seed.seed_all import _tool_ids_by_prefix
+
+        tool_map = {
+            "hp.personal.search": "id-1",
+            "hp.personal.plan_day": "id-2",
+            "hp.decision.options": "id-3",
+            "hp.brief.daily": "id-4",
+            "hp.web.search": "id-5",
+        }
+        # Include hp.personal.* only
+        result = _tool_ids_by_prefix(tool_map, ["hp.personal."])
+        assert set(result) == {"id-1", "id-2"}
+
+    def test_prefix_with_exclude(self):
+        import sys
+        from pathlib import Path
+        repo = str(Path(__file__).resolve().parents[2])
+        if repo not in sys.path:
+            sys.path.insert(0, repo)
+        from agentic.forge.seed.seed_all import _tool_ids_by_prefix
+
+        tool_map = {
+            "hp.personal.search": "id-1",
+            "hp.decision.options": "id-2",
+            "hp.action.delete": "id-3",
+        }
+        # Include all hp.* but exclude hp.action.*
+        result = _tool_ids_by_prefix(tool_map, ["hp."], ["hp.action."])
+        assert "id-1" in result
+        assert "id-2" in result
+        assert "id-3" not in result
+
+    def test_empty_prefixes(self):
+        import sys
+        from pathlib import Path
+        repo = str(Path(__file__).resolve().parents[2])
+        if repo not in sys.path:
+            sys.path.insert(0, repo)
+        from agentic.forge.seed.seed_all import _tool_ids_by_prefix
+
+        tool_map = {"hp.web.search": "id-1"}
+        assert _tool_ids_by_prefix(tool_map, []) == []

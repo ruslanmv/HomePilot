@@ -81,13 +81,19 @@ start_server "A2A chief-of-staff" \
 
 # ── Wait for servers to be healthy ───────────────────────────────────────────
 echo "  Waiting for servers to be ready..."
-sleep 2
 
-ok=0
-for port in 9101 9102 9103 9104 9105 9201 9202; do
-    if curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-        ok=$((ok + 1))
+# Retry health checks for up to 10 seconds (servers need a moment to boot)
+for attempt in $(seq 1 10); do
+    ok=0
+    for port in 9101 9102 9103 9104 9105 9201 9202; do
+        if curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+            ok=$((ok + 1))
+        fi
+    done
+    if [ "$ok" -eq 7 ]; then
+        break
     fi
+    sleep 1
 done
 echo "  $ok/7 agentic servers healthy"
 
