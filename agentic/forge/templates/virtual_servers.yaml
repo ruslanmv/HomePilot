@@ -1,0 +1,36 @@
+version: 1
+
+# Virtual servers are curated allow-lists of tools.
+# These names are referenced by suite/default_home.yaml and suite/default_pro.yaml.
+
+servers:
+  - name: "hp-home-default"
+    description: "Home defaults: Personal Assistant Tools (safe, read-only/advisory)"
+    include_tool_prefixes:
+      - "hp.personal."  # personal assistant
+
+  - name: "hp-default-readonly"
+    description: "Pro defaults: Knowledge + Decision + Executive Briefing (read-only/advisory)"
+    include_tool_prefixes:
+      - "hp."           # include all hp.* tools
+    exclude_tool_prefixes:
+      - "hp.action."    # reserved for future action tools
+
+  - name: "hp-decision-room"
+    description: "Knowledge + Decision tools (no executive briefing)"
+    include_tool_prefixes:
+      - "hp.search_"
+      - "hp.get_"
+      - "hp.answer_"
+      - "hp.summarize_"
+      - "hp.decision."
+
+  - name: "hp-exec-briefing"
+    description: "Executive briefing tools only"
+    include_tool_prefixes:
+      - "hp.brief."
+
+  - name: "hp-web-research"
+    description: "Web search + fetch for research (SearXNG home / Tavily enterprise)"
+    include_tool_prefixes:
+      - "hp.web."

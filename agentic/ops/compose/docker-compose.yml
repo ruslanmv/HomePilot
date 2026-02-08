@@ -1,0 +1,69 @@
+services:
+  hp-mcp-personal:
+    build:
+      context: ../../..
+      dockerfile: agentic/ops/compose/dockerfiles/mcp_personal.Dockerfile
+    ports:
+      - "9101:9101"
+    environment:
+      - PORT=9101
+
+  hp-mcp-knowledge:
+    build:
+      context: ../../..
+      dockerfile: agentic/ops/compose/dockerfiles/mcp_knowledge.Dockerfile
+    ports:
+      - "9102:9102"
+    environment:
+      - PORT=9102
+
+  hp-mcp-decision:
+    build:
+      context: ../../..
+      dockerfile: agentic/ops/compose/dockerfiles/mcp_decision.Dockerfile
+    ports:
+      - "9103:9103"
+    environment:
+      - PORT=9103
+
+  hp-mcp-briefing:
+    build:
+      context: ../../..
+      dockerfile: agentic/ops/compose/dockerfiles/mcp_briefing.Dockerfile
+    ports:
+      - "9104:9104"
+    environment:
+      - PORT=9104
+
+  hp-mcp-websearch:
+    build:
+      context: ../../..
+      dockerfile: agentic/ops/compose/dockerfiles/mcp_websearch.Dockerfile
+    ports:
+      - "9105:9105"
+    environment:
+      - PORT=9105
+      - WEB_SEARCH_PROVIDER=${WEB_SEARCH_PROVIDER:-searxng}
+      - SEARXNG_BASE_URL=${SEARXNG_BASE_URL:-http://host.docker.internal:8080}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+
+  hp-a2a-everyday:
+    build:
+      context: ../../..
+      dockerfile: agentic/ops/compose/dockerfiles/a2a_everyday.Dockerfile
+    ports:
+      - "9201:9201"
+    environment:
+      - PORT=9201
+
+  hp-a2a-chief:
+    build:
+      context: ../../..
+      dockerfile: agentic/ops/compose/dockerfiles/a2a_chief.Dockerfile
+    ports:
+      - "9202:9202"
+    environment:
+      - PORT=9202
+      - MCPGATEWAY_URL=${MCPGATEWAY_URL:-http://host.docker.internal:4444}
+      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
+      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
