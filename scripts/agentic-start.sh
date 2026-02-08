@@ -121,6 +121,22 @@ if [ "$SEED" = true ]; then
         || echo "  ⚠  Seed script had errors (non-fatal)"
 
     echo "  ✓ Forge seeded — tools, agents, and virtual servers registered"
+
+    # ── Final verification ────────────────────────────────────────────────
+    echo ""
+    echo "  Verifying all services..."
+    if curl -sf "${MCPGATEWAY_URL}/health" >/dev/null 2>&1; then
+        echo "    ✓ Context Forge (${MCPGATEWAY_URL}): healthy"
+    else
+        echo "    ⚠ Context Forge (${MCPGATEWAY_URL}): not responding"
+    fi
+    for port in 9101 9102 9103 9104 9105; do
+        if curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+            echo "    ✓ MCP server on port ${port}: healthy"
+        else
+            echo "    ⚠ MCP server on port ${port}: not responding"
+        fi
+    done
 fi
 
 # ── Export PIDs for the parent process to manage ─────────────────────────────

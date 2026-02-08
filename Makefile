@@ -204,7 +204,7 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 	@if [ -f "ComfyUI/main.py" ]; then \
 		echo "  ComfyUI:      http://localhost:8188"; \
 	fi
-	@if [ "$(AGENTIC)" = "1" ] && [ -d "$(MCP_DIR)/.venv" ]; then \
+	@if [ "$(AGENTIC)" = "1" ] && ([ -d "$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1); then \
 		echo "  MCP Gateway:  http://localhost:$(MCP_GATEWAY_PORT)"; \
 		echo "  MCP Servers:  http://localhost:9101-9105"; \
 		echo "  A2A Agents:   http://localhost:9201-9202"; \
@@ -250,7 +250,7 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 			pids="$$pids $$!"; \
 		fi; \
 		\
-		if [ "$(AGENTIC)" = "1" ] && [ -d "$$ROOT/$(MCP_DIR)/.venv" ]; then \
+		if [ "$(AGENTIC)" = "1" ] && ([ -d "$$ROOT/$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1); then \
 			echo ""; \
 			echo "Starting MCP Context Forge Gateway on port $(MCP_GATEWAY_PORT)..."; \
 			mcp_pids=$$(bash "$$ROOT/scripts/mcp-start.sh" --with-servers 2>&1 | tail -1); \
@@ -262,11 +262,41 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 			agentic_pids=$$(bash "$$ROOT/scripts/agentic-start.sh" 2>&1 | tail -1); \
 			pids="$$pids $$agentic_pids"; \
 			echo "  ✓ Agentic servers started and Forge seeded"; \
+			\
+			echo ""; \
+			echo "  Running final health check..."; \
+			forge_ok=false; \
+			for _hc in $$(seq 1 5); do \
+				if curl -sf "http://localhost:$(MCP_GATEWAY_PORT)/health" >/dev/null 2>&1; then \
+					forge_ok=true; \
+					break; \
+				fi; \
+				sleep 1; \
+			done; \
+			if [ "$$forge_ok" = "true" ]; then \
+				echo "  ✓ Context Forge (port $(MCP_GATEWAY_PORT)): healthy"; \
+			else \
+				echo "  ⚠ Context Forge (port $(MCP_GATEWAY_PORT)): not responding"; \
+			fi; \
+			mcp_ok=0; mcp_total=5; \
+			for _p in 9101 9102 9103 9104 9105; do \
+				if curl -sf "http://127.0.0.1:$$_p/health" >/dev/null 2>&1; then \
+					mcp_ok=$$((mcp_ok + 1)); \
+				fi; \
+			done; \
+			echo "  ✓ MCP Servers: $$mcp_ok/$$mcp_total healthy"; \
+			a2a_ok=0; a2a_total=2; \
+			for _p in 9201 9202; do \
+				if curl -sf "http://127.0.0.1:$$_p/health" >/dev/null 2>&1; then \
+					a2a_ok=$$((a2a_ok + 1)); \
+				fi; \
+			done; \
+			echo "  ✓ A2A Agents: $$a2a_ok/$$a2a_total healthy"; \
 		fi; \
 		\
 		echo ""; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
-		if [ "$(AGENTIC)" = "1" ] && [ -d "$$ROOT/$(MCP_DIR)/.venv" ]; then \
+		if [ "$(AGENTIC)" = "1" ] && ([ -d "$$ROOT/$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1); then \
 			echo "  ✅ All services started! (with MCP agentic features)"; \
 			echo ""; \
 			echo "  Agentic servers:"; \
