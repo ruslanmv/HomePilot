@@ -1,0 +1,11 @@
+version: 1
+agents:
+  - name: "everyday-assistant"
+    agent_type: "jsonrpc"
+    endpoint_url: "http://localhost:9201/rpc"
+    description: "Friendly helper that summarizes and plans. Read-only + advisory."
+
+  - name: "chief-of-staff"
+    agent_type: "jsonrpc"
+    endpoint_url: "http://localhost:9202/rpc"
+    description: "Orchestrates: gather facts → structure options → produce briefing (safe v1)."

@@ -213,6 +213,8 @@ class ProjectCreateIn(BaseModel):
     instructions: Optional[str] = ""
     files: Optional[list] = []
     is_public: Optional[bool] = False
+    project_type: Optional[str] = "chat"
+    agentic: Optional[dict] = None
 
 
 # ----------------------------

@@ -1,0 +1,39 @@
+version: 1
+profile: home
+label: "Home defaults"
+
+# This file drives the HomePilot agent wizard UX.
+# The backend exposes it via GET /v1/agentic/suite/default_home.
+
+tool_sources:
+  - id: all_enabled
+    kind: all_enabled
+    label: "All enabled tools"
+    description: "Use every tool currently enabled in this workspace (not recommended for shared households)."
+
+  - id: hp_home_default
+    kind: virtual_server
+    match:
+      name: "hp-home-default"
+    label: "Personal Assistant Tools"
+    description: "Safe, everyday tools for planning, reminders, and personal knowledge."
+    recommended: true
+
+  - id: hp_web_research
+    kind: virtual_server
+    match:
+      name: "hp-web-research"
+    label: "Web Research"
+    description: "Web search + fetch via SearXNG (no API key needed, self-hosted)."
+
+a2a_agents:
+  - id: everyday_assistant
+    match:
+      name: "everyday-assistant"
+    label: "Everyday Assistant"
+    description: "Friendly helper that summarizes and plans. Read-only + advisory."
+    default_selected: true
+
+defaults:
+  tool_source_id: hp_home_default
+  a2a_agent_ids: [everyday_assistant]

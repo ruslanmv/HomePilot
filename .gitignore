@@ -28,3 +28,8 @@ backend/data/comfy_cache/
 
 # MCP Context Forge (cloned at install time)
 /mcp-context-forge/
+
+# MCP Context Forge runtime database
+mcp.db
+mcp.db-shm
+mcp.db-wal

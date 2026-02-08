@@ -233,9 +233,15 @@ def create_new_project(data: Dict[str, Any]) -> Dict[str, Any]:
         "instructions": data.get("instructions", ""),
         "files": data.get("files", []),
         "is_public": data.get("is_public", False),
+        "project_type": data.get("project_type", "chat"),
         "created_at": time.time(),
         "updated_at": time.time()
     }
+
+    # Store agentic metadata for agent projects
+    agentic = data.get("agentic")
+    if agentic and isinstance(agentic, dict):
+        new_project["agentic"] = agentic
 
     db[project_id] = new_project
     _save_projects_db(db)
@@ -324,6 +330,10 @@ def update_project(project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, 
         project["instructions"] = data["instructions"]
     if "is_public" in data:
         project["is_public"] = data["is_public"]
+    if "project_type" in data:
+        project["project_type"] = data["project_type"]
+    if "agentic" in data and isinstance(data["agentic"], dict):
+        project["agentic"] = data["agentic"]
 
     project["updated_at"] = time.time()
 
