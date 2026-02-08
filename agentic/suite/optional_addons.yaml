@@ -1,0 +1,20 @@
+version: 1
+profile: addons
+label: "Optional installs"
+
+addons:
+  - id: hp-calendar
+    label: "Calendar + Scheduling"
+    description: "Connect calendar and create schedules (requires action policy + confirmation UX)."
+
+  - id: hp-email
+    label: "Email Assistant"
+    description: "Draft and triage emails (read-only by default; actions optional)."
+
+  - id: hp-jira
+    label: "Jira / Ticketing"
+    description: "Create and update tickets with approval gates."
+
+  - id: hp-slack
+    label: "Slack / Chat Ops"
+    description: "Summaries and announcements with strict approval controls."

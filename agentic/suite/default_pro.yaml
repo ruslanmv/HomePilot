@@ -1,0 +1,53 @@
+version: 1
+profile: pro
+label: "Professional suite"
+
+# This file drives the HomePilot agent wizard UX.
+# The backend exposes it via GET /v1/agentic/suite/default_pro.
+
+tool_sources:
+  - id: all_enabled
+    kind: all_enabled
+    label: "All enabled tools"
+    description: "Use every tool currently enabled in this workspace (least-privilege off)."
+
+  - id: hp_default_readonly
+    kind: virtual_server
+    match:
+      name: "hp-default-readonly"
+    label: "Default Read-only Suite"
+    description: "Knowledge + Decision + Briefings. Read-only and advisory outputs."
+    recommended: true
+
+  - id: hp_decision_room
+    kind: virtual_server
+    match:
+      name: "hp-decision-room"
+    label: "Decision Room"
+    description: "Knowledge + Decision tools only. Designed for structured decisions."
+
+  - id: hp_exec_briefing
+    kind: virtual_server
+    match:
+      name: "hp-exec-briefing"
+    label: "Executive Briefing"
+    description: "High-signal daily/weekly briefs. Great for leadership and status updates."
+
+  - id: hp_web_research
+    kind: virtual_server
+    match:
+      name: "hp-web-research"
+    label: "Web Research"
+    description: "Web search + fetch tools. Enterprise: Tavily API. Home: SearXNG (no API key)."
+
+a2a_agents:
+  - id: chief_of_staff
+    match:
+      name: "chief-of-staff"
+    label: "Chief of Staff"
+    description: "Orchestrates: gather facts → structure options → produce briefing."
+    default_selected: true
+
+defaults:
+  tool_source_id: hp_default_readonly
+  a2a_agent_ids: [chief_of_staff]
