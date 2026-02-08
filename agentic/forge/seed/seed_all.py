@@ -53,7 +53,8 @@ MCP_SERVERS = [
 
 
 def _load_yaml(rel: str) -> Dict[str, Any]:
-    root = Path(__file__).resolve().parents[2]
+    # seed_all.py is at agentic/forge/seed/ — templates are at agentic/forge/templates/
+    root = Path(__file__).resolve().parents[1]
     path = root / "templates" / rel
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)

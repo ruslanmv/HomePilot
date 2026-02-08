@@ -153,7 +153,7 @@ verify-install: ## Verify that all components are properly installed
 	@echo "  ✓ ComfyUI models linked"
 	@test -d models/comfy/checkpoints || (echo "❌ model directories missing"; exit 1)
 	@echo "  ✓ Model directories created"
-	@if [ -d "$(MCP_DIR)/.venv" ]; then \
+	@if [ -d "$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1; then \
 		echo "  ✓ MCP Context Forge installed"; \
 	else \
 		echo "  ⚠  MCP Context Forge not installed (optional - run: make install-mcp)"; \
@@ -747,7 +747,7 @@ start-mcp: ## Start only the MCP Gateway (port 4444)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Starting MCP Context Forge Gateway"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
-	@if [ ! -d "$(MCP_DIR)/.venv" ]; then \
+	@if [ ! -d "$(MCP_DIR)/.venv" ] && ! command -v mcpgateway >/dev/null 2>&1; then \
 		echo "❌ MCP not installed. Run: make install-mcp"; \
 		exit 1; \
 	fi
@@ -757,14 +757,24 @@ start-mcp: ## Start only the MCP Gateway (port 4444)
 	@echo ""
 	@echo "  Press Ctrl+C to stop"
 	@echo ""
-	@cd $(MCP_DIR) && \
+	@if [ -d "$(MCP_DIR)/.venv" ]; then \
+		cd $(MCP_DIR) && \
 		HOST=0.0.0.0 \
 		BASIC_AUTH_USER=admin BASIC_AUTH_PASSWORD=changeme \
 		AUTH_REQUIRED=false \
 		MCPGATEWAY_UI_ENABLED=true \
 		MCPGATEWAY_ADMIN_API_ENABLED=true \
 		.venv/bin/python -m uvicorn mcpgateway.main:app \
-		--host $(MCP_GATEWAY_HOST) --port $(MCP_GATEWAY_PORT) --reload
+		--host $(MCP_GATEWAY_HOST) --port $(MCP_GATEWAY_PORT) --reload; \
+	else \
+		HOST=0.0.0.0 \
+		BASIC_AUTH_USER=admin BASIC_AUTH_PASSWORD=changeme \
+		AUTH_REQUIRED=false \
+		MCPGATEWAY_UI_ENABLED=true \
+		MCPGATEWAY_ADMIN_API_ENABLED=true \
+		mcpgateway mcpgateway.main:app \
+		--host $(MCP_GATEWAY_HOST) --port $(MCP_GATEWAY_PORT) --reload; \
+	fi
 
 stop-mcp: ## Stop MCP Gateway and MCP server processes
 	@echo "Stopping MCP processes..."
@@ -778,7 +788,7 @@ mcp-status: ## Show status of MCP Gateway and registered tools
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
 	@echo "Installation:"
-	@if [ -d "$(MCP_DIR)/.venv" ]; then \
+	@if [ -d "$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1; then \
 		echo "  ✓ Gateway installed"; \
 	else \
 		echo "  ❌ Gateway not installed (run: make install-mcp)"; \
@@ -804,13 +814,17 @@ mcp-install-server: ## Install an individual MCP server (usage: make mcp-install
 
 verify-mcp: ## Verify MCP Context Forge installation
 	@echo "Verifying MCP installation..."
-	@test -d "$(MCP_DIR)" || (echo "❌ $(MCP_DIR)/ directory missing"; exit 1)
-	@echo "  ✓ Repository cloned"
-	@test -d "$(MCP_DIR)/.venv" || (echo "❌ Gateway venv missing"; exit 1)
-	@echo "  ✓ Gateway virtual environment"
-	@test -f "$(MCP_DIR)/.venv/bin/python" || (echo "❌ Gateway python missing"; exit 1)
-	@echo "  ✓ Gateway Python interpreter"
-	@$(MCP_DIR)/.venv/bin/python -c "import mcpgateway" 2>/dev/null && echo "  ✓ mcpgateway package importable" || echo "  ⚠  mcpgateway not importable (may need reinstall)"
+	@if [ -d "$(MCP_DIR)/.venv" ]; then \
+		echo "  ✓ Repository cloned"; \
+		echo "  ✓ Gateway virtual environment"; \
+		test -f "$(MCP_DIR)/.venv/bin/python" && echo "  ✓ Gateway Python interpreter" || echo "  ❌ Gateway python missing"; \
+		$(MCP_DIR)/.venv/bin/python -c "import mcpgateway" 2>/dev/null && echo "  ✓ mcpgateway package importable" || echo "  ⚠  mcpgateway not importable (may need reinstall)"; \
+	elif command -v mcpgateway >/dev/null 2>&1; then \
+		echo "  ✓ mcpgateway installed via pip ($$(which mcpgateway))"; \
+		python3 -c "import mcpgateway" 2>/dev/null && echo "  ✓ mcpgateway package importable" || echo "  ⚠  mcpgateway not importable"; \
+	else \
+		echo "❌ MCP Context Forge not installed"; exit 1; \
+	fi
 	@echo ""
 	@echo "Installed MCP Servers:"
 	@for d in $(MCP_DIR)/mcp-servers/python/*/; do \
@@ -826,7 +840,7 @@ mcp-start-full: ## Start MCP Gateway + servers + agent (full agentic stack)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Starting Full MCP Agentic Stack"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
-	@if [ ! -d "$(MCP_DIR)/.venv" ]; then \
+	@if [ ! -d "$(MCP_DIR)/.venv" ] && ! command -v mcpgateway >/dev/null 2>&1; then \
 		echo "❌ MCP not installed. Run: make install-mcp"; \
 		exit 1; \
 	fi
