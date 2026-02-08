@@ -15,7 +15,7 @@ MCP_GATEWAY_HOST ?= 127.0.0.1
 .PHONY: help install setup run up down stop logs health dev build test test-local test-mcp-servers clean \
         download download-minimal download-minimum download-recommended download-full \
         download-edit download-enhance download-video download-verify download-health \
-        start start-backend start-frontend start-no-agentic \
+        start start-backend start-frontend start-no-agentic start-agentic-servers \
         install-mcp start-mcp stop-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full
@@ -206,6 +206,8 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 	fi
 	@if [ "$(AGENTIC)" = "1" ] && [ -d "$(MCP_DIR)/.venv" ]; then \
 		echo "  MCP Gateway:  http://localhost:$(MCP_GATEWAY_PORT)"; \
+		echo "  MCP Servers:  http://localhost:9101-9104"; \
+		echo "  A2A Agents:   http://localhost:9201-9202"; \
 	fi
 	@echo ""
 	@echo "Press Ctrl+C to stop ALL services"
@@ -254,12 +256,23 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 			mcp_pids=$$(bash "$$ROOT/scripts/mcp-start.sh" --with-servers 2>&1 | tail -1); \
 			pids="$$pids $$mcp_pids"; \
 			echo "  ✓ MCP Gateway started"; \
+			\
+			echo ""; \
+			echo "Starting HomePilot agentic servers (MCP + A2A) + seeding Forge..."; \
+			agentic_pids=$$(bash "$$ROOT/scripts/agentic-start.sh" 2>&1 | tail -1); \
+			pids="$$pids $$agentic_pids"; \
+			echo "  ✓ Agentic servers started and Forge seeded"; \
 		fi; \
 		\
 		echo ""; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
 		if [ "$(AGENTIC)" = "1" ] && [ -d "$$ROOT/$(MCP_DIR)/.venv" ]; then \
 			echo "  ✅ All services started! (with MCP agentic features)"; \
+			echo ""; \
+			echo "  Agentic servers:"; \
+			echo "    MCP:  personal-assistant(:9101) knowledge(:9102) decision(:9103) briefing(:9104)"; \
+			echo "    A2A:  everyday-assistant(:9201) chief-of-staff(:9202)"; \
+			echo "    Forge Admin: http://localhost:$(MCP_GATEWAY_PORT)/admin"; \
 		else \
 			echo "  ✅ All services started!"; \
 		fi; \
@@ -392,13 +405,15 @@ up: ## Development: Start stack WITHOUT Ollama container (use host Ollama)
 down: ## Stop all containers (including Ollama if running)
 	docker compose -f infra/docker-compose.yml --profile ollama down
 
-stop: ## Stop all local HomePilot processes (kills processes on ports 3000, 8000, 8188)
+stop: ## Stop all local HomePilot processes (kills processes on all service ports)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Stopping HomePilot Services"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
 	@# Kill processes by port (works on Linux/macOS/WSL)
-	@for port in 3000 8000 8188; do \
+	@# Core: 3000(frontend) 8000(backend) 8010(edit-session) 8188(comfyui)
+	@# MCP:  9101-9104(MCP servers) 9201-9202(A2A agents)
+	@for port in 3000 8000 8010 8188 9101 9102 9103 9104 9201 9202; do \
 		echo "Checking port $$port..."; \
 		pid=$$(lsof -ti :$$port 2>/dev/null || true); \
 		if [ -n "$$pid" ]; then \
@@ -655,6 +670,42 @@ health-check: ## Comprehensive health check of all services
 
 start-no-agentic: ## Start HomePilot WITHOUT MCP gateway/agentic features
 	@$(MAKE) start AGENTIC=0
+
+start-agentic-servers: ## Start HomePilot MCP servers + A2A agents + seed Forge (standalone)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Starting HomePilot Agentic Servers"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "  MCP servers:  ports 9101-9104"
+	@echo "  A2A agents:   ports 9201-9202"
+	@echo ""
+	@echo "  Press Ctrl+C to stop"
+	@echo ""
+	@bash -c ' \
+		ROOT="$$(pwd)"; \
+		pids=""; \
+		cleanup() { \
+			echo ""; \
+			echo "Stopping agentic servers..."; \
+			[ -n "$$pids" ] && kill $$pids 2>/dev/null || true; \
+			wait 2>/dev/null || true; \
+			echo "Done."; \
+		}; \
+		trap cleanup INT TERM EXIT; \
+		agentic_pids=$$(bash "$$ROOT/scripts/agentic-start.sh" 2>&1 | tail -1); \
+		pids="$$agentic_pids"; \
+		echo ""; \
+		echo "  ✅ Agentic servers running!"; \
+		echo ""; \
+		echo "  MCP:  personal-assistant(:9101) knowledge(:9102) decision(:9103) briefing(:9104)"; \
+		echo "  A2A:  everyday-assistant(:9201) chief-of-staff(:9202)"; \
+		echo ""; \
+		wait \
+	'
 
 install-mcp: ## Install MCP Context Forge separately (gateway + servers + agent)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
