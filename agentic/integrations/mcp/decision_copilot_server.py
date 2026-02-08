@@ -92,7 +92,7 @@ TOOLS: List[ToolDef] = [
             },
             "required": ["goal"],
         },
-        handler=hp_decision_options,
+        handler=lambda args: hp_decision_options(**args),
     ),
     ToolDef(
         name="hp.decision.risk_assessment",
@@ -105,7 +105,7 @@ TOOLS: List[ToolDef] = [
             },
             "required": ["proposal"],
         },
-        handler=hp_decision_risk_assessment,
+        handler=lambda args: hp_decision_risk_assessment(**args),
     ),
     ToolDef(
         name="hp.decision.recommend_next",
@@ -118,7 +118,7 @@ TOOLS: List[ToolDef] = [
             },
             "required": ["options"],
         },
-        handler=hp_decision_recommend_next,
+        handler=lambda args: hp_decision_recommend_next(**args),
     ),
     ToolDef(
         name="hp.decision.plan_next_steps",
@@ -131,13 +131,12 @@ TOOLS: List[ToolDef] = [
             },
             "required": ["decision"],
         },
-        handler=hp_decision_plan_next_steps,
+        handler=lambda args: hp_decision_plan_next_steps(**args),
     ),
 ]
 
 
 app = create_mcp_app(
     server_name="homepilot-decision-copilot",
-    server_version="0.1.0",
     tools=TOOLS,
 )

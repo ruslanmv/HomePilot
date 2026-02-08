@@ -12,7 +12,7 @@ MCP_REPO         ?= https://github.com/ruslanmv/mcp-context-forge.git
 MCP_GATEWAY_PORT ?= 4444
 MCP_GATEWAY_HOST ?= 127.0.0.1
 
-.PHONY: help install setup run up down stop logs health dev build test clean \
+.PHONY: help install setup run up down stop logs health dev build test test-local test-mcp-servers clean \
         download download-minimal download-minimum download-recommended download-full \
         download-edit download-enhance download-video download-verify download-health \
         start start-backend start-frontend start-no-agentic \
@@ -311,11 +311,11 @@ start-comfyui: ## Start ComfyUI locally (required for image/video generation)
 
 # --- Testing & Development ----------------------------------------------------
 
-test: test-local  ## Run all tests (alias for test-local)
+test: test-local test-mcp-servers  ## Run all tests (backend + MCP servers)
 
-test-local: ## Run backend tests locally with pytest
+test-local: ## Run backend API tests locally with pytest
 	@echo "════════════════════════════════════════════════════════════════════════════════"
-	@echo "  Running HomePilot Tests"
+	@echo "  Running HomePilot Backend Tests"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@if [ ! -d "backend/.venv" ]; then \
 		echo "❌ Backend not installed. Run: make install"; \
@@ -323,10 +323,27 @@ test-local: ## Run backend tests locally with pytest
 	fi
 	@echo ""
 	@echo "Testing backend API endpoints..."
-	@cd backend && .venv/bin/pytest -v --tb=short
+	@cd backend && .venv/bin/pytest -v --tb=short --ignore=tests/test_mcp_servers.py
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
-	@echo "  ✅ All tests passed!"
+	@echo "  ✅ Backend tests passed!"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+test-mcp-servers: ## Run MCP server & A2A agent integration tests
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Running MCP Server & A2A Agent Tests"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "Testing all MCP servers (Personal Assistant, Knowledge, Decision, Briefing)..."
+	@echo "Testing all A2A agents (Everyday Assistant, Chief of Staff)..."
+	@cd backend && .venv/bin/pytest tests/test_mcp_servers.py -v --tb=short
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ MCP server & A2A agent tests passed!"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 
 # --- Docker stack -------------------------------------------------------------

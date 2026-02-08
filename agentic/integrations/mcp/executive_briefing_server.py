@@ -56,7 +56,7 @@ tools = [
                 "max_items": {"type": "integer", "default": 7, "minimum": 3, "maximum": 15},
             },
         },
-        handler=hp_brief_daily,
+        handler=lambda args: hp_brief_daily(**args),
     ),
     ToolDef(
         name="hp.brief.weekly",
@@ -69,7 +69,7 @@ tools = [
                 "max_items": {"type": "integer", "default": 10, "minimum": 3, "maximum": 20},
             },
         },
-        handler=hp_brief_weekly,
+        handler=lambda args: hp_brief_weekly(**args),
     ),
     ToolDef(
         name="hp.brief.what_changed_since",
@@ -82,7 +82,7 @@ tools = [
             },
             "required": ["since"],
         },
-        handler=hp_brief_what_changed_since,
+        handler=lambda args: hp_brief_what_changed_since(**args),
     ),
     ToolDef(
         name="hp.brief.digest",
@@ -95,12 +95,11 @@ tools = [
             },
             "required": ["items"],
         },
-        handler=hp_brief_digest,
+        handler=lambda args: hp_brief_digest(**args),
     ),
 ]
 
 app = create_mcp_app(
     server_name="homepilot-executive-briefing",
-    server_version="0.1.0",
     tools=tools,
 )
