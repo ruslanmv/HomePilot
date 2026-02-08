@@ -22,6 +22,10 @@ import {
   Bot,
 } from 'lucide-react';
 
+// Phase 7: enriched catalog hook + connections panel (additive imports)
+import { useAgenticCatalog } from '../agentic/useAgenticCatalog';
+import { ConnectionsPanel } from '../agentic/ConnectionsPanel';
+
 // --- Components ---
 
 const ProjectCard = ({
@@ -193,6 +197,163 @@ const ProjectWizard = ({
   const [availableCapabilities, setAvailableCapabilities] = useState<AgentCapability[]>([])
   const [capabilitiesLoaded, setCapabilitiesLoaded] = useState(false)
 
+  // Additive: real catalog from backend (/v1/agentic/catalog)
+  const [catalogLoaded, setCatalogLoaded] = useState(false)
+  const [catalogTools, setCatalogTools] = useState<Array<{ id: string; name: string; description?: string; enabled?: boolean }>>([])
+  const [catalogAgents, setCatalogAgents] = useState<Array<{ id: string; name: string; description?: string; enabled?: boolean }>>([])
+  const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
+  const [selectedA2AAgentIds, setSelectedA2AAgentIds] = useState<string[]>([])
+
+  // Phase 7: enriched catalog with virtual servers + tool bundle selection
+  const [toolSource, setToolSource] = useState('all')
+  const enrichedCatalog = useAgenticCatalog({
+    backendUrl,
+    apiKey,
+    enabled: projectType === 'agent',
+  })
+
+  // Additive: inline registration forms (collapsed by default)
+  const [showRegisterTool, setShowRegisterTool] = useState(false)
+  const [showRegisterAgent, setShowRegisterAgent] = useState(false)
+  const [showRegisterGateway, setShowRegisterGateway] = useState(false)
+  const [registerBusy, setRegisterBusy] = useState(false)
+  const [registerMsg, setRegisterMsg] = useState('')
+
+  // Registration form fields
+  const [regToolName, setRegToolName] = useState('')
+  const [regToolDesc, setRegToolDesc] = useState('')
+  const [regToolUrl, setRegToolUrl] = useState('')
+  const [regAgentName, setRegAgentName] = useState('')
+  const [regAgentDesc, setRegAgentDesc] = useState('')
+  const [regAgentUrl, setRegAgentUrl] = useState('')
+  const [regGatewayName, setRegGatewayName] = useState('')
+  const [regGatewayUrl, setRegGatewayUrl] = useState('')
+  const [regGatewayTransport, setRegGatewayTransport] = useState('SSE')
+
+  const toggleSelectedTool = (id: string) => {
+    setSelectedToolIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+  const toggleSelectedAgent = (id: string) => {
+    setSelectedA2AAgentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  // Refresh catalog after registration
+  const refreshCatalog = async () => {
+    try {
+      const headers: Record<string, string> = {}
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/catalog`, { headers })
+      if (!res.ok) return
+      const data = await res.json()
+      setCatalogTools(
+        Array.isArray(data?.tools)
+          ? data.tools
+              .map((t: any) => ({ id: String(t?.id || ''), name: String(t?.name || ''), description: t?.description, enabled: t?.enabled }))
+              .filter((t: any) => t.id && t.name)
+          : []
+      )
+      setCatalogAgents(
+        Array.isArray(data?.a2a_agents)
+          ? data.a2a_agents
+              .map((a: any) => ({ id: String(a?.id || ''), name: String(a?.name || ''), description: a?.description, enabled: a?.enabled }))
+              .filter((a: any) => a.id && a.name)
+          : []
+      )
+    } catch { /* ignore */ }
+  }
+
+  // Registration handlers
+  const handleRegisterTool = async () => {
+    if (!regToolName.trim()) return
+    setRegisterBusy(true)
+    setRegisterMsg('')
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/register/tool`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: regToolName.trim(),
+          description: regToolDesc.trim(),
+          url: regToolUrl.trim() || undefined,
+          input_schema: { type: 'object', properties: { text: { type: 'string' } } },
+        }),
+      })
+      const data = await res.json()
+      if (data?.ok) {
+        setRegisterMsg(`Tool "${regToolName}" registered`)
+        setRegToolName(''); setRegToolDesc(''); setRegToolUrl('')
+        setShowRegisterTool(false)
+        await refreshCatalog()
+        if (data.id) setSelectedToolIds((prev) => [...prev, data.id])
+      } else {
+        setRegisterMsg(`Failed: ${data?.detail || 'unknown error'}`)
+      }
+    } catch (e: any) { setRegisterMsg(`Error: ${e?.message || e}`) }
+    finally { setRegisterBusy(false) }
+  }
+
+  const handleRegisterAgent = async () => {
+    if (!regAgentName.trim() || !regAgentUrl.trim()) return
+    setRegisterBusy(true)
+    setRegisterMsg('')
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/register/agent`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: regAgentName.trim(),
+          description: regAgentDesc.trim(),
+          endpoint_url: regAgentUrl.trim(),
+        }),
+      })
+      const data = await res.json()
+      if (data?.ok) {
+        setRegisterMsg(`Agent "${regAgentName}" registered`)
+        setRegAgentName(''); setRegAgentDesc(''); setRegAgentUrl('')
+        setShowRegisterAgent(false)
+        await refreshCatalog()
+        if (data.id) setSelectedA2AAgentIds((prev) => [...prev, data.id])
+      } else {
+        setRegisterMsg(`Failed: ${data?.detail || 'unknown error'}`)
+      }
+    } catch (e: any) { setRegisterMsg(`Error: ${e?.message || e}`) }
+    finally { setRegisterBusy(false) }
+  }
+
+  const handleRegisterGateway = async () => {
+    if (!regGatewayName.trim() || !regGatewayUrl.trim()) return
+    setRegisterBusy(true)
+    setRegisterMsg('')
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/register/gateway`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: regGatewayName.trim(),
+          url: regGatewayUrl.trim(),
+          transport: regGatewayTransport,
+          auto_refresh: true,
+        }),
+      })
+      const data = await res.json()
+      if (data?.ok) {
+        setRegisterMsg(`Gateway "${regGatewayName}" registered — ${data?.detail || ''}`)
+        setRegGatewayName(''); setRegGatewayUrl('')
+        setShowRegisterGateway(false)
+        await refreshCatalog()
+      } else {
+        setRegisterMsg(`Failed: ${data?.detail || 'unknown error'}`)
+      }
+    } catch (e: any) { setRegisterMsg(`Error: ${e?.message || e}`) }
+    finally { setRegisterBusy(false) }
+  }
+
   const totalSteps = projectType === 'agent' ? 4 : 2
 
   // Catalog: human labels only — no MCP/tool/agent IDs shown to user
@@ -270,6 +431,55 @@ const ProjectWizard = ({
     void run()
   }, [apiKey, backendUrl, capabilitiesLoaded, projectType])
 
+  // Additive: Fetch real catalog (tools + A2A agents + optional gateways/servers)
+  useEffect(() => {
+    if (projectType !== 'agent') return
+    if (catalogLoaded) return
+
+    const run = async () => {
+      try {
+        const headers: Record<string, string> = {}
+        if (apiKey) headers['x-api-key'] = apiKey
+
+        const res = await fetch(`${backendUrl}/v1/agentic/catalog`, { headers })
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data = await res.json()
+
+        const tools = Array.isArray(data?.tools)
+          ? data.tools
+              .map((t: any) => ({
+                id: String(t?.id || ''),
+                name: String(t?.name || ''),
+                description: typeof t?.description === 'string' ? t.description : undefined,
+                enabled: typeof t?.enabled === 'boolean' ? t.enabled : undefined,
+              }))
+              .filter((t: any) => t.id && t.name)
+          : []
+
+        const agents = Array.isArray(data?.a2a_agents)
+          ? data.a2a_agents
+              .map((a: any) => ({
+                id: String(a?.id || ''),
+                name: String(a?.name || ''),
+                description: typeof a?.description === 'string' ? a.description : undefined,
+                enabled: typeof a?.enabled === 'boolean' ? a.enabled : undefined,
+              }))
+              .filter((a: any) => a.id && a.name)
+          : []
+
+        setCatalogTools(tools)
+        setCatalogAgents(agents)
+      } catch {
+        setCatalogTools([])
+        setCatalogAgents([])
+      } finally {
+        setCatalogLoaded(true)
+      }
+    }
+
+    void run()
+  }, [apiKey, backendUrl, catalogLoaded, projectType])
+
   // Smart defaults: preselect capabilities that match the user's goal text
   useEffect(() => {
     if (projectType !== 'agent') return
@@ -327,11 +537,16 @@ const ProjectWizard = ({
       project_type: projectType,
     }
 
-    // Agent metadata: human-level only, no tool IDs exposed
+    // Agent metadata: capabilities + optional real Forge bindings
     if (projectType === 'agent') {
       projectData.agentic = {
         goal: agentGoal,
         capabilities: agentCapabilities,
+        // Additive: store selected Forge bindings (optional, for real tool/agent wiring)
+        tool_ids: selectedToolIds,
+        a2a_agent_ids: selectedA2AAgentIds,
+        // Phase 7: virtual-server-first tool scope
+        tool_source: toolSource,
         ask_before_acting: agentAskBeforeActing,
         execution_profile: agentExecutionProfile,
       }
@@ -471,81 +686,322 @@ const ProjectWizard = ({
             </div>
           )}
 
-          {/* STEP 2 (Agent only): Capabilities + Behavior */}
+          {/* STEP 2 (Agent only): Access & Connections + Behavior */}
           {step === 2 && projectType === 'agent' && (
             <div className="space-y-6">
-              {/* Capabilities */}
+              {/* Access & Connections — primary configuration surface */}
+
+              {/* Phase 7: Connections panel (tool bundle + A2A agents) — elevated to top */}
+              <ConnectionsPanel
+                catalog={enrichedCatalog.catalog}
+                loading={enrichedCatalog.loading}
+                error={enrichedCatalog.error}
+                toolSource={toolSource}
+                setToolSource={setToolSource}
+                selectedA2AAgentIds={selectedA2AAgentIds}
+                setSelectedA2AAgentIds={setSelectedA2AAgentIds}
+                onRefresh={enrichedCatalog.refresh}
+              />
+
+              {/* Real Forge bindings (Tools + A2A Agents + Registration) */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="block text-sm font-medium text-white/80">Capabilities</label>
-                  <span className="text-xs text-white/40">Choose what this agent can do</span>
+                  <label className="block text-sm font-medium text-white/80">Real Tools & Agents</label>
+                  <button
+                    type="button"
+                    onClick={() => refreshCatalog()}
+                    className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                  >
+                    Refresh
+                  </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {capabilityCatalog.map((cap) => {
-                    const available = availableSet.has(cap.id)
-                    const checked = agentCapabilities.includes(cap.id)
-                    return (
+                <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
+                  <div className="text-[11px] text-white/50">
+                    Fetched from MCP Context Forge. Select existing items or register new ones below.
+                  </div>
+
+                  {/* Status message */}
+                  {registerMsg && (
+                    <div className="text-xs px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white/70">
+                      {registerMsg}
+                    </div>
+                  )}
+
+                  {/* Guided empty state when catalog has no tools and no agents */}
+                  {catalogTools.length === 0 && catalogAgents.length === 0 && !showRegisterTool && !showRegisterAgent && !showRegisterGateway && (
+                    <div className="rounded-lg border border-dashed border-white/15 bg-white/[0.02] p-4 space-y-3">
+                      <div className="text-xs text-white/60">
+                        No tools or agents registered yet. Get started:
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { setShowRegisterGateway(true); setShowRegisterTool(false); setShowRegisterAgent(false) }}
+                          className="text-[11px] px-3 py-1.5 rounded-lg border border-purple-500/30 bg-purple-500/5 text-purple-300 hover:bg-purple-500/10 transition-all"
+                        >
+                          Import MCP Server
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowRegisterTool(true); setShowRegisterAgent(false); setShowRegisterGateway(false) }}
+                          className="text-[11px] px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-white/60 hover:bg-white/10 transition-all"
+                        >
+                          Register a tool
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowRegisterAgent(true); setShowRegisterTool(false); setShowRegisterGateway(false) }}
+                          className="text-[11px] px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-white/60 hover:bg-white/10 transition-all"
+                        >
+                          Register A2A agent
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Tools section ── */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-white/70">Tools</div>
                       <button
-                        key={cap.id}
                         type="button"
-                        disabled={!available}
-                        onClick={() => (available ? toggleCapability(cap.id) : undefined)}
-                        title={!available ? cap.requiresHint : ''}
-                        className={`p-4 rounded-xl border text-left transition-all ${
-                          available
-                            ? checked
-                              ? 'border-purple-500/60 bg-purple-500/10'
-                              : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
-                            : 'border-white/5 bg-white/[0.03] opacity-50 cursor-not-allowed'
-                        }`}
+                        onClick={() => { setShowRegisterTool((v) => !v); setShowRegisterAgent(false); setShowRegisterGateway(false) }}
+                        className="text-[11px] text-purple-400 hover:text-purple-300"
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-white">{cap.label}</div>
-                            <div className="text-xs text-white/50 mt-1">{cap.desc}</div>
-                          </div>
-
-                          <div
-                            className={`h-5 w-5 rounded-md border flex items-center justify-center ${
-                              checked ? 'border-purple-400 bg-purple-500/20' : 'border-white/20 bg-white/5'
-                            }`}
-                          >
-                            {checked ? <span className="text-purple-300 text-xs">&#10003;</span> : null}
-                          </div>
-                        </div>
-
-                        {!available && (
-                          <div className="mt-2 text-[11px] text-white/45">Not available in this installation</div>
-                        )}
+                        {showRegisterTool ? 'Cancel' : '+ Register Tool'}
                       </button>
-                    )
-                  })}
-                </div>
+                    </div>
 
-                {/* Trust-building badges (read-only) */}
-                <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
-                  <div className="text-xs font-semibold text-white/70">This assistant can:</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {agentCapabilities.length === 0 ? (
-                      <span className="text-xs text-white/45">No capabilities selected yet.</span>
+                    {/* Inline register tool form */}
+                    {showRegisterTool && (
+                      <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
+                        <input
+                          type="text" placeholder="Tool name" value={regToolName}
+                          onChange={(e) => setRegToolName(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="Description (optional)" value={regToolDesc}
+                          onChange={(e) => setRegToolDesc(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="Endpoint URL (optional, e.g. http://localhost:9101/invoke)" value={regToolUrl}
+                          onChange={(e) => setRegToolUrl(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <button
+                          type="button" disabled={registerBusy || !regToolName.trim()}
+                          onClick={handleRegisterTool}
+                          className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                        >
+                          {registerBusy ? 'Registering...' : 'Register in Forge'}
+                        </button>
+                      </div>
+                    )}
+
+                    {catalogTools.length === 0 ? (
+                      <div className="text-xs text-white/45">No MCP tools discovered.</div>
                     ) : (
-                      agentCapabilities.map((id) => {
-                        const label = capabilityCatalog.find((c) => c.id === id)?.label || id
-                        return (
-                          <span
-                            key={id}
-                            className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/80"
-                          >
-                            {label}
-                          </span>
-                        )
-                      })
+                      <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                        {catalogTools.map((t) => {
+                          const checked = selectedToolIds.includes(t.id)
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => toggleSelectedTool(t.id)}
+                              className={`w-full p-3 rounded-xl border text-left transition-all ${
+                                checked
+                                  ? 'border-purple-500/60 bg-purple-500/10'
+                                  : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-white">{t.name}</div>
+                                  {t.description ? <div className="text-xs text-white/50 mt-1">{t.description}</div> : null}
+                                </div>
+                                <div
+                                  className={`h-5 w-5 rounded-md border flex items-center justify-center ${
+                                    checked ? 'border-purple-400 bg-purple-500/20' : 'border-white/20 bg-white/5'
+                                  }`}
+                                >
+                                  {checked ? <span className="text-purple-300 text-xs">&#10003;</span> : null}
+                                </div>
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
                     )}
                   </div>
-                  <div className="mt-2 text-[11px] text-white/40">
-                    Why? This workspace enables capabilities through advanced tools.
+
+                  {/* ── A2A Agents section ── */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-white/70">A2A Agents</div>
+                      <button
+                        type="button"
+                        onClick={() => { setShowRegisterAgent((v) => !v); setShowRegisterTool(false); setShowRegisterGateway(false) }}
+                        className="text-[11px] text-purple-400 hover:text-purple-300"
+                      >
+                        {showRegisterAgent ? 'Cancel' : '+ Register Agent'}
+                      </button>
+                    </div>
+
+                    {/* Inline register agent form */}
+                    {showRegisterAgent && (
+                      <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
+                        <input
+                          type="text" placeholder="Agent name" value={regAgentName}
+                          onChange={(e) => setRegAgentName(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="Description (optional)" value={regAgentDesc}
+                          onChange={(e) => setRegAgentDesc(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="Endpoint URL (required, e.g. http://localhost:9100/a2a)" value={regAgentUrl}
+                          onChange={(e) => setRegAgentUrl(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <button
+                          type="button" disabled={registerBusy || !regAgentName.trim() || !regAgentUrl.trim()}
+                          onClick={handleRegisterAgent}
+                          className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                        >
+                          {registerBusy ? 'Registering...' : 'Register in Forge'}
+                        </button>
+                      </div>
+                    )}
+
+                    {catalogAgents.length === 0 ? (
+                      <div className="text-xs text-white/45">No A2A agents discovered.</div>
+                    ) : (
+                      <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                        {catalogAgents.map((a) => {
+                          const checked = selectedA2AAgentIds.includes(a.id)
+                          return (
+                            <button
+                              key={a.id}
+                              type="button"
+                              onClick={() => toggleSelectedAgent(a.id)}
+                              className={`w-full p-3 rounded-xl border text-left transition-all ${
+                                checked
+                                  ? 'border-purple-500/60 bg-purple-500/10'
+                                  : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <div className="text-sm font-semibold text-white">{a.name}</div>
+                                  {a.description ? <div className="text-xs text-white/50 mt-1">{a.description}</div> : null}
+                                </div>
+                                <div
+                                  className={`h-5 w-5 rounded-md border flex items-center justify-center ${
+                                    checked ? 'border-purple-400 bg-purple-500/20' : 'border-white/20 bg-white/5'
+                                  }`}
+                                >
+                                  {checked ? <span className="text-purple-300 text-xs">&#10003;</span> : null}
+                                </div>
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
+
+                  {/* ── MCP Gateway section ── */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-semibold text-white/70">MCP Gateways</div>
+                      <button
+                        type="button"
+                        onClick={() => { setShowRegisterGateway((v) => !v); setShowRegisterTool(false); setShowRegisterAgent(false) }}
+                        className="text-[11px] text-purple-400 hover:text-purple-300"
+                      >
+                        {showRegisterGateway ? 'Cancel' : '+ Import MCP Server'}
+                      </button>
+                    </div>
+
+                    {/* Inline register gateway form */}
+                    {showRegisterGateway && (
+                      <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
+                        <input
+                          type="text" placeholder="Gateway name" value={regGatewayName}
+                          onChange={(e) => setRegGatewayName(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <input
+                          type="text" placeholder="MCP Server URL (e.g. http://localhost:3000/sse)" value={regGatewayUrl}
+                          onChange={(e) => setRegGatewayUrl(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/30 focus:border-purple-500/50 focus:outline-none"
+                        />
+                        <select
+                          value={regGatewayTransport}
+                          onChange={(e) => setRegGatewayTransport(e.target.value)}
+                          className="w-full px-3 py-1.5 text-xs bg-white/5 border border-white/10 rounded-lg text-white focus:border-purple-500/50 focus:outline-none"
+                        >
+                          <option value="SSE">SSE</option>
+                          <option value="STREAMABLEHTTP">Streamable HTTP</option>
+                          <option value="HTTP">HTTP</option>
+                        </select>
+                        <div className="text-[10px] text-white/40">
+                          After registration, Forge will auto-discover tools from this MCP server.
+                        </div>
+                        <button
+                          type="button" disabled={registerBusy || !regGatewayName.trim() || !regGatewayUrl.trim()}
+                          onClick={handleRegisterGateway}
+                          className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                        >
+                          {registerBusy ? 'Registering...' : 'Import MCP Server'}
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="text-[10px] text-white/40">
+                      Import an MCP server as a gateway to auto-discover its tools.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Effective access summary — replaces old trust badges */}
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
+                <div className="text-xs font-semibold text-white/70">Effective access</div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/80">
+                    {toolSource === 'all'
+                      ? `All enabled tools (${enrichedCatalog.catalog?.tools?.filter(t => t.enabled !== false).length || 0})`
+                      : toolSource === 'none'
+                      ? 'No tools'
+                      : toolSource.startsWith('server:')
+                      ? `Server: ${enrichedCatalog.catalog?.servers?.find(s => s.id === toolSource.replace('server:', ''))?.name || 'unknown'}`
+                      : toolSource}
+                  </span>
+                  {selectedA2AAgentIds.length > 0 && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300">
+                      {selectedA2AAgentIds.length} A2A agent{selectedA2AAgentIds.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {selectedToolIds.length > 0 && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300">
+                      {selectedToolIds.length} directly attached tool{selectedToolIds.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {agentCapabilities.length > 0 && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/60">
+                      {agentCapabilities.length} capability mapping{agentCapabilities.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-white/40">
+                  This summary shows the real permission boundary. Tool scope and connected agents define what the agent can access at runtime.
                 </div>
               </div>
 
@@ -665,21 +1121,57 @@ const ProjectWizard = ({
                     {agentGoal || <span className="text-white/40">(not set)</span>}
                   </div>
 
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-white/50">Capabilities:</span>
-                    {agentCapabilities.length === 0 ? (
-                      <span className="text-white/40">None selected</span>
-                    ) : (
-                      agentCapabilities.map((id) => (
+                  {/* Access summary — policy-driven */}
+                  <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 space-y-2">
+                    <div className="text-xs font-semibold text-white/60">Access policy</div>
+                    <div className="flex flex-wrap gap-2">
+                      <span className={`text-xs px-2 py-1 rounded-full border ${
+                        toolSource === 'all'
+                          ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-200/80'
+                          : toolSource === 'none'
+                          ? 'bg-white/5 border-white/10 text-white/50'
+                          : 'bg-purple-500/10 border-purple-500/30 text-purple-300'
+                      }`}>
+                        {toolSource === 'all'
+                          ? `All enabled tools (${enrichedCatalog.catalog?.tools?.filter(t => t.enabled !== false).length || 0})`
+                          : toolSource === 'none'
+                          ? 'No tools'
+                          : toolSource.startsWith('server:')
+                          ? `Server: ${enrichedCatalog.catalog?.servers?.find(s => s.id === toolSource.replace('server:', ''))?.name || toolSource}`
+                          : toolSource}
+                      </span>
+                      {selectedA2AAgentIds.length > 0 && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300">
+                          {selectedA2AAgentIds.length} A2A agent{selectedA2AAgentIds.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {selectedToolIds.length > 0 && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300">
+                          {selectedToolIds.length} directly attached tool{selectedToolIds.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                    {toolSource === 'all' && (
+                      <div className="text-[11px] text-yellow-200/60">
+                        Wide scope: this agent can use every tool in Forge.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Capabilities (informational, de-emphasized) */}
+                  {agentCapabilities.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white/50">Capability mappings:</span>
+                      {agentCapabilities.map((id) => (
                         <span
                           key={id}
-                          className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/80"
+                          className="text-xs px-2 py-1 rounded-full bg-white/5 border border-white/10 text-white/60"
                         >
                           {capabilityCatalog.find((c) => c.id === id)?.label || id}
                         </span>
-                      ))
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div>
                     <span className="text-white/50">Execution style:</span>{' '}
@@ -694,11 +1186,46 @@ const ProjectWizard = ({
                     <span className="text-white/50">Confirmation:</span>{' '}
                     {agentAskBeforeActing ? 'Ask first' : 'Auto'}
                   </div>
+
+                  {/* Attached tools detail */}
+                  {selectedToolIds.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white/50">Attached tools:</span>
+                      {selectedToolIds.map((tid) => {
+                        const tool = catalogTools.find((t) => t.id === tid)
+                        return (
+                          <span
+                            key={tid}
+                            className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300"
+                          >
+                            {tool?.name || tid}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* Attached A2A agents detail */}
+                  {selectedA2AAgentIds.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white/50">Connected agents:</span>
+                      {selectedA2AAgentIds.map((aid) => {
+                        const agent = catalogAgents.find((a) => a.id === aid)
+                        return (
+                          <span
+                            key={aid}
+                            className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300"
+                          >
+                            {agent?.name || aid}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-4 text-[11px] text-white/40">
-                  Capabilities are based on installed advanced tools and may change over time. If a capability becomes
-                  unavailable, the agent will fall back gracefully.
+                  Access policy defines the runtime permission boundary. Tool scope and connected agents determine what this agent can use.
                 </div>
               </div>
             </div>

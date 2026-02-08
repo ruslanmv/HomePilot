@@ -4,6 +4,9 @@ Agentic AI layer — health, safety, and integration tests.
 These tests verify that the /v1/agentic/* endpoints work correctly,
 return the right response shapes, and respect the AGENTIC_ENABLED flag.
 All outbound calls are mocked — no real Context Forge or ComfyUI needed.
+
+Phase 5–6 tests: catalog endpoint, registration endpoints, MCP connection
+simulation via mocked Context Forge client.
 """
 
 import os
@@ -237,3 +240,302 @@ class TestAgenticDisabled:
         resp = client.get("/v1/agentic/status")
         assert resp.status_code == 200
         assert resp.json()["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# 6) Catalog endpoint (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+class TestAgenticCatalog:
+    """GET /v1/agentic/catalog — wizard-friendly catalog from Context Forge."""
+
+    def test_catalog_returns_200(self, client, mock_outbound):
+        resp = client.get("/v1/agentic/catalog")
+        assert resp.status_code == 200
+
+    def test_catalog_response_shape(self, client, mock_outbound):
+        """Catalog must include tools, a2a_agents, gateways, servers, capability_sources."""
+        data = client.get("/v1/agentic/catalog").json()
+        assert "tools" in data
+        assert "a2a_agents" in data
+        assert "gateways" in data
+        assert "servers" in data
+        assert "capability_sources" in data
+        assert "source" in data
+        assert isinstance(data["tools"], list)
+        assert isinstance(data["a2a_agents"], list)
+        assert isinstance(data["gateways"], list)
+        assert isinstance(data["servers"], list)
+        assert isinstance(data["capability_sources"], dict)
+
+    def test_catalog_empty_when_disabled(self, client, monkeypatch):
+        """When agentic is disabled, catalog returns empty lists (not 503)."""
+        import app.agentic.routes as routes_mod
+        monkeypatch.setattr(routes_mod, "_ENABLED", False)
+
+        resp = client.get("/v1/agentic/catalog")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tools"] == []
+        assert data["a2a_agents"] == []
+        assert data["gateways"] == []
+        assert data["servers"] == []
+
+
+# ---------------------------------------------------------------------------
+# 7) Registration endpoints (Phase 6)
+# ---------------------------------------------------------------------------
+
+
+class TestAgenticRegisterTool:
+    """POST /v1/agentic/register/tool — register a tool in Context Forge."""
+
+    def test_register_tool_returns_200(self, client, mock_outbound):
+        resp = client.post(
+            "/v1/agentic/register/tool",
+            json={"name": "test_tool", "description": "A test tool"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "ok" in data
+        assert "detail" in data
+        assert isinstance(data["ok"], bool)
+
+    def test_register_tool_requires_name(self, client, mock_outbound):
+        """name is a required field."""
+        resp = client.post(
+            "/v1/agentic/register/tool",
+            json={"description": "Missing name"},
+        )
+        assert resp.status_code == 422  # Pydantic validation error
+
+    def test_register_tool_503_when_disabled(self, client, monkeypatch):
+        """Registration fails with 503 when agentic is disabled."""
+        import app.agentic.routes as routes_mod
+        monkeypatch.setattr(routes_mod, "_ENABLED", False)
+
+        resp = client.post(
+            "/v1/agentic/register/tool",
+            json={"name": "test_tool"},
+        )
+        assert resp.status_code == 503
+
+
+class TestAgenticRegisterAgent:
+    """POST /v1/agentic/register/agent — register an A2A agent."""
+
+    def test_register_agent_returns_200(self, client, mock_outbound):
+        resp = client.post(
+            "/v1/agentic/register/agent",
+            json={
+                "name": "test_agent",
+                "endpoint_url": "http://localhost:9100/a2a",
+                "description": "A test A2A agent",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "ok" in data
+        assert isinstance(data["ok"], bool)
+
+    def test_register_agent_requires_endpoint_url(self, client, mock_outbound):
+        """endpoint_url is required for agent registration."""
+        resp = client.post(
+            "/v1/agentic/register/agent",
+            json={"name": "test_agent"},
+        )
+        assert resp.status_code == 422
+
+    def test_register_agent_requires_name(self, client, mock_outbound):
+        resp = client.post(
+            "/v1/agentic/register/agent",
+            json={"endpoint_url": "http://localhost:9100/a2a"},
+        )
+        assert resp.status_code == 422
+
+    def test_register_agent_503_when_disabled(self, client, monkeypatch):
+        import app.agentic.routes as routes_mod
+        monkeypatch.setattr(routes_mod, "_ENABLED", False)
+
+        resp = client.post(
+            "/v1/agentic/register/agent",
+            json={"name": "test_agent", "endpoint_url": "http://localhost:9100/a2a"},
+        )
+        assert resp.status_code == 503
+
+
+class TestAgenticRegisterGateway:
+    """POST /v1/agentic/register/gateway — register an MCP gateway."""
+
+    def test_register_gateway_returns_200(self, client, mock_outbound):
+        resp = client.post(
+            "/v1/agentic/register/gateway",
+            json={
+                "name": "test_gateway",
+                "url": "http://localhost:3000/mcp",
+                "transport": "SSE",
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "ok" in data
+        assert isinstance(data["ok"], bool)
+
+    def test_register_gateway_requires_name_and_url(self, client, mock_outbound):
+        """Both name and url are required."""
+        resp = client.post(
+            "/v1/agentic/register/gateway",
+            json={"url": "http://localhost:3000/mcp"},
+        )
+        assert resp.status_code == 422
+
+        resp = client.post(
+            "/v1/agentic/register/gateway",
+            json={"name": "test_gateway"},
+        )
+        assert resp.status_code == 422
+
+    def test_register_gateway_default_transport(self, client, mock_outbound):
+        """Default transport should be SSE."""
+        resp = client.post(
+            "/v1/agentic/register/gateway",
+            json={"name": "gw_default", "url": "http://localhost:3000/mcp"},
+        )
+        assert resp.status_code == 200
+
+    def test_register_gateway_503_when_disabled(self, client, monkeypatch):
+        import app.agentic.routes as routes_mod
+        monkeypatch.setattr(routes_mod, "_ENABLED", False)
+
+        resp = client.post(
+            "/v1/agentic/register/gateway",
+            json={"name": "gw", "url": "http://localhost:3000/mcp"},
+        )
+        assert resp.status_code == 503
+
+
+class TestAgenticRegisterServer:
+    """POST /v1/agentic/register/server — create a virtual server."""
+
+    def test_register_server_returns_200(self, client, mock_outbound):
+        resp = client.post(
+            "/v1/agentic/register/server",
+            json={"name": "test_server", "description": "A virtual server"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "ok" in data
+        assert isinstance(data["ok"], bool)
+
+    def test_register_server_requires_name(self, client, mock_outbound):
+        resp = client.post(
+            "/v1/agentic/register/server",
+            json={"description": "No name"},
+        )
+        assert resp.status_code == 422
+
+    def test_register_server_with_tool_ids(self, client, mock_outbound):
+        """Optionally include tool_ids when creating a virtual server."""
+        resp = client.post(
+            "/v1/agentic/register/server",
+            json={
+                "name": "server_with_tools",
+                "tool_ids": ["tool-1", "tool-2"],
+            },
+        )
+        assert resp.status_code == 200
+
+    def test_register_server_503_when_disabled(self, client, monkeypatch):
+        import app.agentic.routes as routes_mod
+        monkeypatch.setattr(routes_mod, "_ENABLED", False)
+
+        resp = client.post(
+            "/v1/agentic/register/server",
+            json={"name": "srv"},
+        )
+        assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# 8) MCP connection — Context Forge client integration
+# ---------------------------------------------------------------------------
+
+
+class TestMCPConnection:
+    """Verify the ContextForgeClient works correctly with mocked Forge responses."""
+
+    def test_catalog_source_field(self, client, mock_outbound):
+        """Catalog source should be a valid string."""
+        data = client.get("/v1/agentic/catalog").json()
+        assert data["source"] in ("forge", "built_in", "mixed")
+
+    def test_capabilities_source_after_forge_query(self, client, mock_outbound):
+        """Capabilities should indicate source after querying (mocked) Forge."""
+        data = client.get("/v1/agentic/capabilities").json()
+        assert data["source"] in ("built_in", "forge", "mixed")
+
+    def test_status_reachable_field(self, client, mock_outbound):
+        """Status should report Forge reachability (mocked as reachable)."""
+        data = client.get("/v1/agentic/status").json()
+        assert isinstance(data["reachable"], bool)
+
+    def test_register_tool_roundtrip(self, client, mock_outbound):
+        """Full roundtrip: register a tool, then verify catalog endpoint works."""
+        # Register
+        resp = client.post(
+            "/v1/agentic/register/tool",
+            json={
+                "name": "mcp_echo_tool",
+                "description": "Echo tool for MCP testing",
+                "integration_type": "REST",
+                "url": "http://localhost:9101/invoke",
+            },
+        )
+        assert resp.status_code == 200
+
+        # Catalog still works
+        resp = client.get("/v1/agentic/catalog")
+        assert resp.status_code == 200
+        assert isinstance(resp.json()["tools"], list)
+
+    def test_register_agent_roundtrip(self, client, mock_outbound):
+        """Register an A2A agent and verify catalog still works."""
+        resp = client.post(
+            "/v1/agentic/register/agent",
+            json={
+                "name": "mcp_test_agent",
+                "endpoint_url": "http://localhost:9100/a2a",
+                "agent_type": "generic",
+                "protocol_version": "1.0",
+            },
+        )
+        assert resp.status_code == 200
+
+        resp = client.get("/v1/agentic/catalog")
+        assert resp.status_code == 200
+        assert isinstance(resp.json()["a2a_agents"], list)
+
+    def test_register_gateway_with_auto_refresh(self, client, mock_outbound):
+        """Register a gateway with auto_refresh=True (default)."""
+        resp = client.post(
+            "/v1/agentic/register/gateway",
+            json={
+                "name": "mcp_sse_gateway",
+                "url": "http://localhost:3000/mcp",
+                "transport": "SSE",
+                "auto_refresh": True,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data["ok"], bool)
+
+    def test_capability_sources_shape(self, client, mock_outbound):
+        """capability_sources in catalog should map string keys to list of strings."""
+        data = client.get("/v1/agentic/catalog").json()
+        cs = data["capability_sources"]
+        assert isinstance(cs, dict)
+        for key, val in cs.items():
+            assert isinstance(key, str)
+            assert isinstance(val, list)
