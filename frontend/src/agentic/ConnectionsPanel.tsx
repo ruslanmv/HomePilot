@@ -109,6 +109,14 @@ export function ConnectionsPanel(props: Props) {
           connected agents.
         </div>
 
+        {/* Enterprise warning for "All enabled tools" */}
+        {toolSource === 'all' && enabledTools.length > 0 && (
+          <div className="text-[11px] px-3 py-2 rounded-lg border border-yellow-500/20 bg-yellow-500/5 text-yellow-200/80">
+            <strong>Wide scope:</strong> &quot;All enabled tools&quot; grants access to every tool in Forge.
+            For tighter control, select a Virtual Server bundle instead.
+          </div>
+        )}
+
         {catalog?.last_updated ? (
           <div className="text-[10px] text-white/30">
             Last updated: {new Date(catalog.last_updated).toLocaleTimeString()}

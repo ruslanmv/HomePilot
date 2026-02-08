@@ -686,85 +686,24 @@ const ProjectWizard = ({
             </div>
           )}
 
-          {/* STEP 2 (Agent only): Capabilities + Behavior */}
+          {/* STEP 2 (Agent only): Access & Connections + Behavior */}
           {step === 2 && projectType === 'agent' && (
             <div className="space-y-6">
-              {/* Capabilities */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className="block text-sm font-medium text-white/80">Capabilities</label>
-                  <span className="text-xs text-white/40">Choose what this agent can do</span>
-                </div>
+              {/* Access & Connections — primary configuration surface */}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {capabilityCatalog.map((cap) => {
-                    const available = availableSet.has(cap.id)
-                    const checked = agentCapabilities.includes(cap.id)
-                    return (
-                      <button
-                        key={cap.id}
-                        type="button"
-                        disabled={!available}
-                        onClick={() => (available ? toggleCapability(cap.id) : undefined)}
-                        title={!available ? cap.requiresHint : ''}
-                        className={`p-4 rounded-xl border text-left transition-all ${
-                          available
-                            ? checked
-                              ? 'border-purple-500/60 bg-purple-500/10'
-                              : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
-                            : 'border-white/5 bg-white/[0.03] opacity-50 cursor-not-allowed'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <div className="text-sm font-semibold text-white">{cap.label}</div>
-                            <div className="text-xs text-white/50 mt-1">{cap.desc}</div>
-                          </div>
+              {/* Phase 7: Connections panel (tool bundle + A2A agents) — elevated to top */}
+              <ConnectionsPanel
+                catalog={enrichedCatalog.catalog}
+                loading={enrichedCatalog.loading}
+                error={enrichedCatalog.error}
+                toolSource={toolSource}
+                setToolSource={setToolSource}
+                selectedA2AAgentIds={selectedA2AAgentIds}
+                setSelectedA2AAgentIds={setSelectedA2AAgentIds}
+                onRefresh={enrichedCatalog.refresh}
+              />
 
-                          <div
-                            className={`h-5 w-5 rounded-md border flex items-center justify-center ${
-                              checked ? 'border-purple-400 bg-purple-500/20' : 'border-white/20 bg-white/5'
-                            }`}
-                          >
-                            {checked ? <span className="text-purple-300 text-xs">&#10003;</span> : null}
-                          </div>
-                        </div>
-
-                        {!available && (
-                          <div className="mt-2 text-[11px] text-white/45">Not available in this installation</div>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {/* Trust-building badges (read-only) */}
-                <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
-                  <div className="text-xs font-semibold text-white/70">This assistant can:</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {agentCapabilities.length === 0 ? (
-                      <span className="text-xs text-white/45">No capabilities selected yet.</span>
-                    ) : (
-                      agentCapabilities.map((id) => {
-                        const label = capabilityCatalog.find((c) => c.id === id)?.label || id
-                        return (
-                          <span
-                            key={id}
-                            className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/80"
-                          >
-                            {label}
-                          </span>
-                        )
-                      })
-                    )}
-                  </div>
-                  <div className="mt-2 text-[11px] text-white/40">
-                    Why? This workspace enables capabilities through advanced tools.
-                  </div>
-                </div>
-              </div>
-
-              {/* Additive: Real Forge bindings (Tools + A2A Agents + Registration) */}
+              {/* Real Forge bindings (Tools + A2A Agents + Registration) */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="block text-sm font-medium text-white/80">Real Tools & Agents</label>
@@ -786,6 +725,38 @@ const ProjectWizard = ({
                   {registerMsg && (
                     <div className="text-xs px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white/70">
                       {registerMsg}
+                    </div>
+                  )}
+
+                  {/* Guided empty state when catalog has no tools and no agents */}
+                  {catalogTools.length === 0 && catalogAgents.length === 0 && !showRegisterTool && !showRegisterAgent && !showRegisterGateway && (
+                    <div className="rounded-lg border border-dashed border-white/15 bg-white/[0.02] p-4 space-y-3">
+                      <div className="text-xs text-white/60">
+                        No tools or agents registered yet. Get started:
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { setShowRegisterGateway(true); setShowRegisterTool(false); setShowRegisterAgent(false) }}
+                          className="text-[11px] px-3 py-1.5 rounded-lg border border-purple-500/30 bg-purple-500/5 text-purple-300 hover:bg-purple-500/10 transition-all"
+                        >
+                          Import MCP Server
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowRegisterTool(true); setShowRegisterAgent(false); setShowRegisterGateway(false) }}
+                          className="text-[11px] px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-white/60 hover:bg-white/10 transition-all"
+                        >
+                          Register a tool
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowRegisterAgent(true); setShowRegisterTool(false); setShowRegisterGateway(false) }}
+                          className="text-[11px] px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 text-white/60 hover:bg-white/10 transition-all"
+                        >
+                          Register A2A agent
+                        </button>
+                      </div>
                     </div>
                   )}
 
@@ -1000,17 +971,39 @@ const ProjectWizard = ({
                 </div>
               </div>
 
-              {/* Phase 7: Connections panel (tool bundle + A2A agents) */}
-              <ConnectionsPanel
-                catalog={enrichedCatalog.catalog}
-                loading={enrichedCatalog.loading}
-                error={enrichedCatalog.error}
-                toolSource={toolSource}
-                setToolSource={setToolSource}
-                selectedA2AAgentIds={selectedA2AAgentIds}
-                setSelectedA2AAgentIds={setSelectedA2AAgentIds}
-                onRefresh={enrichedCatalog.refresh}
-              />
+              {/* Effective access summary — replaces old trust badges */}
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
+                <div className="text-xs font-semibold text-white/70">Effective access</div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/80">
+                    {toolSource === 'all'
+                      ? `All enabled tools (${enrichedCatalog.catalog?.tools?.filter(t => t.enabled !== false).length || 0})`
+                      : toolSource === 'none'
+                      ? 'No tools'
+                      : toolSource.startsWith('server:')
+                      ? `Server: ${enrichedCatalog.catalog?.servers?.find(s => s.id === toolSource.replace('server:', ''))?.name || 'unknown'}`
+                      : toolSource}
+                  </span>
+                  {selectedA2AAgentIds.length > 0 && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300">
+                      {selectedA2AAgentIds.length} A2A agent{selectedA2AAgentIds.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {selectedToolIds.length > 0 && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300">
+                      {selectedToolIds.length} directly attached tool{selectedToolIds.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {agentCapabilities.length > 0 && (
+                    <span className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/60">
+                      {agentCapabilities.length} capability mapping{agentCapabilities.length > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-white/40">
+                  This summary shows the real permission boundary. Tool scope and connected agents define what the agent can access at runtime.
+                </div>
+              </div>
 
               {/* Behavior */}
               <div className="space-y-3">
@@ -1128,21 +1121,57 @@ const ProjectWizard = ({
                     {agentGoal || <span className="text-white/40">(not set)</span>}
                   </div>
 
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-white/50">Capabilities:</span>
-                    {agentCapabilities.length === 0 ? (
-                      <span className="text-white/40">None selected</span>
-                    ) : (
-                      agentCapabilities.map((id) => (
+                  {/* Access summary — policy-driven */}
+                  <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 space-y-2">
+                    <div className="text-xs font-semibold text-white/60">Access policy</div>
+                    <div className="flex flex-wrap gap-2">
+                      <span className={`text-xs px-2 py-1 rounded-full border ${
+                        toolSource === 'all'
+                          ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-200/80'
+                          : toolSource === 'none'
+                          ? 'bg-white/5 border-white/10 text-white/50'
+                          : 'bg-purple-500/10 border-purple-500/30 text-purple-300'
+                      }`}>
+                        {toolSource === 'all'
+                          ? `All enabled tools (${enrichedCatalog.catalog?.tools?.filter(t => t.enabled !== false).length || 0})`
+                          : toolSource === 'none'
+                          ? 'No tools'
+                          : toolSource.startsWith('server:')
+                          ? `Server: ${enrichedCatalog.catalog?.servers?.find(s => s.id === toolSource.replace('server:', ''))?.name || toolSource}`
+                          : toolSource}
+                      </span>
+                      {selectedA2AAgentIds.length > 0 && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300">
+                          {selectedA2AAgentIds.length} A2A agent{selectedA2AAgentIds.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {selectedToolIds.length > 0 && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-purple-500/10 border border-purple-500/30 text-purple-300">
+                          {selectedToolIds.length} directly attached tool{selectedToolIds.length > 1 ? 's' : ''}
+                        </span>
+                      )}
+                    </div>
+                    {toolSource === 'all' && (
+                      <div className="text-[11px] text-yellow-200/60">
+                        Wide scope: this agent can use every tool in Forge.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Capabilities (informational, de-emphasized) */}
+                  {agentCapabilities.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-white/50">Capability mappings:</span>
+                      {agentCapabilities.map((id) => (
                         <span
                           key={id}
-                          className="text-xs px-2 py-1 rounded-full bg-white/10 border border-white/10 text-white/80"
+                          className="text-xs px-2 py-1 rounded-full bg-white/5 border border-white/10 text-white/60"
                         >
                           {capabilityCatalog.find((c) => c.id === id)?.label || id}
                         </span>
-                      ))
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
 
                   <div>
                     <span className="text-white/50">Execution style:</span>{' '}
@@ -1158,19 +1187,7 @@ const ProjectWizard = ({
                     {agentAskBeforeActing ? 'Ask first' : 'Auto'}
                   </div>
 
-                  {/* Tool source */}
-                  <div>
-                    <span className="text-white/50">Tool scope:</span>{' '}
-                    {toolSource === 'all'
-                      ? 'All enabled tools'
-                      : toolSource === 'none'
-                      ? 'No tools'
-                      : toolSource.startsWith('server:')
-                      ? `Virtual server: ${enrichedCatalog.catalog?.servers?.find(s => s.id === toolSource.replace('server:', ''))?.name || toolSource}`
-                      : toolSource}
-                  </div>
-
-                  {/* Attached tools */}
+                  {/* Attached tools detail */}
                   {selectedToolIds.length > 0 && (
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-white/50">Attached tools:</span>
@@ -1188,10 +1205,10 @@ const ProjectWizard = ({
                     </div>
                   )}
 
-                  {/* Attached A2A agents */}
+                  {/* Attached A2A agents detail */}
                   {selectedA2AAgentIds.length > 0 && (
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-white/50">Attached agents:</span>
+                      <span className="text-white/50">Connected agents:</span>
                       {selectedA2AAgentIds.map((aid) => {
                         const agent = catalogAgents.find((a) => a.id === aid)
                         return (
@@ -1208,8 +1225,7 @@ const ProjectWizard = ({
                 </div>
 
                 <div className="mt-4 text-[11px] text-white/40">
-                  Capabilities are based on installed advanced tools and may change over time. If a capability becomes
-                  unavailable, the agent will fall back gracefully.
+                  Access policy defines the runtime permission boundary. Tool scope and connected agents determine what this agent can use.
                 </div>
               </div>
             </div>
