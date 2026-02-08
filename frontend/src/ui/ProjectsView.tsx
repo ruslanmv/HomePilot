@@ -22,6 +22,10 @@ import {
   Bot,
 } from 'lucide-react';
 
+// Phase 7: enriched catalog hook + connections panel (additive imports)
+import { useAgenticCatalog } from '../agentic/useAgenticCatalog';
+import { ConnectionsPanel } from '../agentic/ConnectionsPanel';
+
 // --- Components ---
 
 const ProjectCard = ({
@@ -199,6 +203,14 @@ const ProjectWizard = ({
   const [catalogAgents, setCatalogAgents] = useState<Array<{ id: string; name: string; description?: string; enabled?: boolean }>>([])
   const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
   const [selectedA2AAgentIds, setSelectedA2AAgentIds] = useState<string[]>([])
+
+  // Phase 7: enriched catalog with virtual servers + tool bundle selection
+  const [toolSource, setToolSource] = useState('all')
+  const enrichedCatalog = useAgenticCatalog({
+    backendUrl,
+    apiKey,
+    enabled: projectType === 'agent',
+  })
 
   // Additive: inline registration forms (collapsed by default)
   const [showRegisterTool, setShowRegisterTool] = useState(false)
@@ -533,6 +545,8 @@ const ProjectWizard = ({
         // Additive: store selected Forge bindings (optional, for real tool/agent wiring)
         tool_ids: selectedToolIds,
         a2a_agent_ids: selectedA2AAgentIds,
+        // Phase 7: virtual-server-first tool scope
+        tool_source: toolSource,
         ask_before_acting: agentAskBeforeActing,
         execution_profile: agentExecutionProfile,
       }
@@ -986,6 +1000,18 @@ const ProjectWizard = ({
                 </div>
               </div>
 
+              {/* Phase 7: Connections panel (tool bundle + A2A agents) */}
+              <ConnectionsPanel
+                catalog={enrichedCatalog.catalog}
+                loading={enrichedCatalog.loading}
+                error={enrichedCatalog.error}
+                toolSource={toolSource}
+                setToolSource={setToolSource}
+                selectedA2AAgentIds={selectedA2AAgentIds}
+                setSelectedA2AAgentIds={setSelectedA2AAgentIds}
+                onRefresh={enrichedCatalog.refresh}
+              />
+
               {/* Behavior */}
               <div className="space-y-3">
                 <label className="block text-sm font-medium text-white/80">Behavior</label>
@@ -1130,6 +1156,18 @@ const ProjectWizard = ({
                   <div>
                     <span className="text-white/50">Confirmation:</span>{' '}
                     {agentAskBeforeActing ? 'Ask first' : 'Auto'}
+                  </div>
+
+                  {/* Tool source */}
+                  <div>
+                    <span className="text-white/50">Tool scope:</span>{' '}
+                    {toolSource === 'all'
+                      ? 'All enabled tools'
+                      : toolSource === 'none'
+                      ? 'No tools'
+                      : toolSource.startsWith('server:')
+                      ? `Virtual server: ${enrichedCatalog.catalog?.servers?.find(s => s.id === toolSource.replace('server:', ''))?.name || toolSource}`
+                      : toolSource}
                   </div>
 
                   {/* Attached tools */}

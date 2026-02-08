@@ -7,20 +7,16 @@ Phase 1–4 endpoints (additive, non-destructive):
   GET  /v1/agentic/catalog       → wizard-friendly catalog (tools/agents/gateways/servers)
   POST /v1/agentic/invoke        → execute a capability (local orchestrator + Context Forge)
 
-Phase 4 additions:
-  - capabilities returns source="forge"|"built_in"|"mixed" field
-  - generate_images uses model-config preset system (not hard-coded dims)
-  - generate_videos routed to local animate pipeline
-
-Phase 5 additions (additive):
+Phase 5–6 additions (additive):
   - /catalog returns real selectable MCP tools, A2A agents, gateways, servers
   - capability_sources map for wiring capabilities to real tool IDs
+  - POST /v1/agentic/register/{tool,agent,gateway,server}
 
-Phase 6 additions (additive):
-  POST /v1/agentic/register/tool     → register a new tool in Context Forge
-  POST /v1/agentic/register/agent    → register a new A2A agent
-  POST /v1/agentic/register/gateway  → register a new MCP gateway (+ auto-refresh)
-  POST /v1/agentic/register/server   → create a new virtual server
+Phase 7 additions (additive):
+  - /catalog upgraded: returns enriched AgenticCatalog with ForgeStatus,
+    last_updated, virtual server tool_ids, and TTL caching via AgenticCatalogService
+  - /invoke upgraded: RuntimeToolRouter resolves capability → tool_id
+    within virtual-server scope (fallback-safe for legacy projects)
 """
 
 from __future__ import annotations
@@ -36,8 +32,10 @@ from ..auth import require_api_key
 from ..defaults import DEFAULT_NEGATIVE_PROMPT
 from ..orchestrator import handle_request
 from .capabilities import discover_capabilities, discover_catalog
+from .catalog_service import AgenticCatalogService
 from .client import ContextForgeClient
 from .policy import apply_policy, is_allowed, resolve_profile
+from .runtime_tool_router import RuntimeToolRouter
 from .types import (
     AgenticAdminOut,
     AgenticCatalogOut,
@@ -75,6 +73,23 @@ def _client() -> ContextForgeClient:
         auth_user=_AUTH_USER,
         auth_pass=_AUTH_PASS,
     )
+
+
+# ── Phase 7: Catalog service (TTL-cached) and runtime tool router ────────────
+# Module-level singletons — additive, does not change any existing endpoint
+# behavior unless the caller passes tool_source.
+
+_catalog_service = AgenticCatalogService(
+    forge_base_url=_FORGE_URL,
+    auth_user=_AUTH_USER,
+    auth_pass=_AUTH_PASS,
+    bearer_token=_TOKEN or None,
+    ttl_seconds=15.0,
+)
+
+
+def _tool_router() -> RuntimeToolRouter:
+    return RuntimeToolRouter(catalog_service=_catalog_service, client=_client())
 
 
 # ── GET /v1/agentic/status ───────────────────────────────────────────────────
@@ -147,87 +162,38 @@ async def _forge_get_json(path: str, timeout: float = 5.0) -> Any:
 
 
 # ── GET /v1/agentic/catalog ──────────────────────────────────────────────────
-# Additive endpoint for the Agent Creation Wizard:
-# returns real selectable tools/agents plus best-effort gateways/servers.
+# Phase 7: upgraded to use AgenticCatalogService (TTL-cached, enriched).
+# Response is backward-compatible with the original AgenticCatalogOut contract:
+# the UI reads the same fields (tools, a2a_agents, gateways, servers,
+# capability_sources, source) plus new enriched fields (last_updated, forge).
 
 
-@router.get("/catalog", response_model=AgenticCatalogOut)
+@router.get("/catalog")
 async def agentic_catalog(_key: str = Depends(require_api_key)):
     if not _ENABLED:
-        # Keep contract stable: return empty lists rather than 503,
-        # so the UI can gracefully degrade.
-        return AgenticCatalogOut(
-            tools=[], a2a_agents=[], gateways=[], servers=[],
-            capability_sources={}, source="built_in",
-        )
+        return {
+            "tools": [], "a2a_agents": [], "gateways": [], "servers": [],
+            "capability_sources": {}, "source": "built_in",
+            "last_updated": "", "forge": {"base_url": _FORGE_URL, "healthy": False, "error": "disabled"},
+        }
 
-    # tools + a2a agents (+ capability_sources map)
-    base = await discover_catalog(_client())
-
-    # Best-effort gateways/servers (Forge deployments vary; try both public and /admin)
-    gateways_payload = await _forge_get_json("/gateways")
-    if gateways_payload is None:
-        gateways_payload = await _forge_get_json("/admin/gateways")
-
-    servers_payload = await _forge_get_json("/servers")
-    if servers_payload is None:
-        servers_payload = await _forge_get_json("/admin/servers")
-
-    gateways: List[CatalogGateway] = []
-    if isinstance(gateways_payload, list):
-        items = gateways_payload
-    elif isinstance(gateways_payload, dict):
-        items = gateways_payload.get("gateways") or gateways_payload.get("items") or []
-    else:
-        items = []
-    for g in items:
-        if not isinstance(g, dict):
-            continue
-        gid = str(g.get("id") or "")
-        name = str(g.get("name") or "")
-        if not gid or not name:
-            continue
-        gateways.append(
-            CatalogGateway(
-                id=gid,
-                name=name,
-                url=g.get("url") or g.get("endpoint_url") or None,
-                transport=g.get("transport") or None,
-                enabled=g.get("enabled"),
-            )
-        )
-
-    servers: List[CatalogServer] = []
-    if isinstance(servers_payload, list):
-        sitems = servers_payload
-    elif isinstance(servers_payload, dict):
-        sitems = servers_payload.get("servers") or servers_payload.get("items") or []
-    else:
-        sitems = []
-    for s in sitems:
-        if not isinstance(s, dict):
-            continue
-        sid = str(s.get("id") or "")
-        name = str(s.get("name") or "")
-        if not sid or not name:
-            continue
-        servers.append(
-            CatalogServer(
-                id=sid,
-                name=name,
-                enabled=s.get("enabled"),
-                sse_url=f"{_FORGE_URL}/servers/{sid}/sse",
-            )
-        )
-
-    return AgenticCatalogOut(
-        tools=base.tools,
-        a2a_agents=base.a2a_agents,
-        gateways=gateways,
-        servers=servers,
-        capability_sources=base.capability_sources,
-        source="forge",
-    )
+    try:
+        catalog = await _catalog_service.get_cached(_client())
+        return catalog.model_dump()
+    except Exception as exc:
+        logger.warning("catalog_service failed, falling back: %s", exc)
+        # Graceful fallback to legacy discover_catalog
+        base = await discover_catalog(_client())
+        return {
+            "tools": [t.model_dump() for t in base.tools],
+            "a2a_agents": [a.model_dump() for a in base.a2a_agents],
+            "gateways": [],
+            "servers": [],
+            "capability_sources": base.capability_sources,
+            "source": "forge",
+            "last_updated": "",
+            "forge": {"base_url": _FORGE_URL, "healthy": False, "error": str(exc)},
+        }
 
 
 # ── POST /v1/agentic/register/* ─────────────────────────────────────────────
@@ -256,6 +222,7 @@ async def agentic_register_tool(body: RegisterToolIn, _key: str = Depends(requir
     result = await _client().register_tool(tool_def)
     if "error" in result:
         return RegisterOut(ok=False, detail=result.get("detail") or result["error"])
+    _catalog_service.invalidate()  # bust cache so next /catalog reflects new tool
     return RegisterOut(
         ok=True,
         id=str(result.get("id", "")),
@@ -283,6 +250,7 @@ async def agentic_register_agent(body: RegisterAgentIn, _key: str = Depends(requ
     result = await _client().register_agent(agent_def)
     if "error" in result:
         return RegisterOut(ok=False, detail=result.get("detail") or result["error"])
+    _catalog_service.invalidate()
     return RegisterOut(
         ok=True,
         id=str(result.get("id", "")),
@@ -328,6 +296,7 @@ async def agentic_register_gateway(body: RegisterGatewayIn, _key: str = Depends(
         except Exception as exc:
             detail += f" (refresh error: {exc})"
 
+    _catalog_service.invalidate()
     return RegisterOut(
         ok=True,
         id=gw_id,
@@ -354,6 +323,7 @@ async def agentic_register_server(body: CreateServerIn, _key: str = Depends(requ
     result = await _client().create_server(server_def)
     if "error" in result:
         return RegisterOut(ok=False, detail=result.get("detail") or result["error"])
+    _catalog_service.invalidate()
     return RegisterOut(
         ok=True,
         id=str(result.get("id", "")),
@@ -467,7 +437,34 @@ async def agentic_invoke(body: InvokeIn, _key: str = Depends(require_api_key)):
         raise HTTPException(status_code=403, detail=str(exc))
 
     client = _client()
-    result = await client.invoke_tool(body.intent, merged_args)
+
+    # Phase 7: resolve capability → tool_id via RuntimeToolRouter
+    # when the project has a tool_source configured.  Falls back to
+    # legacy behavior (invoke by intent name) if tool_source is not set.
+    tool_source = body.args.pop("tool_source", None)
+    router_instance = _tool_router()
+    decision = await router_instance.resolve(body.intent, tool_source)
+
+    if decision.mode != "fallback":
+        if decision.mode == "none":
+            return InvokeOut(
+                ok=False,
+                conversation_id=body.conversation_id or "",
+                assistant_text="This agent is configured with no tools.",
+                meta={"intent": body.intent, "mode": decision.mode, "reason": decision.reason},
+            )
+        if decision.resolved_tool_id is None:
+            return InvokeOut(
+                ok=False,
+                conversation_id=body.conversation_id or "",
+                assistant_text=decision.reason,
+                meta={"intent": body.intent, "mode": decision.mode, "reason": decision.reason},
+            )
+        # Use resolved tool_id instead of intent name
+        result = await client.invoke_tool(decision.resolved_tool_id, merged_args)
+    else:
+        # Legacy fallback: invoke by intent name (unchanged behavior)
+        result = await client.invoke_tool(body.intent, merged_args)
 
     if "error" in result:
         return InvokeOut(
