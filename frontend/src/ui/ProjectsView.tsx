@@ -1908,20 +1908,31 @@ export default function ProjectsView({
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {projects.map((project) => (
-                  <ProjectCard
-                    key={project.id}
-                    icon={FolderKanban}
-                    iconColor="text-purple-400"
-                    title={project.name}
-                    type={prettyProjectType(project.project_type)}
-                    description={project.description || 'No description'}
-                    onClick={() => onProjectSelect?.(project.id)}
-                    onDelete={() => handleDeleteProject(project.id, project.name)}
-                    onEdit={() => handleEditProject(project.id)}
-                    isExample={false}
-                  />
-                ))}
+                {projects.map((project) => {
+                  const ptype = String(project.project_type || 'chat').toLowerCase()
+                  const cardIcon = ptype === 'agent' ? Bot
+                    : ptype === 'image' ? ImageIcon
+                    : ptype === 'video' ? Film
+                    : MessageSquare
+                  const cardIconColor = ptype === 'agent' ? 'text-amber-400'
+                    : ptype === 'image' ? 'text-fuchsia-400'
+                    : ptype === 'video' ? 'text-emerald-400'
+                    : 'text-blue-400'
+                  return (
+                    <ProjectCard
+                      key={project.id}
+                      icon={cardIcon}
+                      iconColor={cardIconColor}
+                      title={project.name}
+                      type={prettyProjectType(project.project_type)}
+                      description={project.description || 'No description'}
+                      onClick={() => onProjectSelect?.(project.id)}
+                      onDelete={() => handleDeleteProject(project.id, project.name)}
+                      onEdit={() => handleEditProject(project.id)}
+                      isExample={false}
+                    />
+                  )
+                })}
               </div>
             )}
 

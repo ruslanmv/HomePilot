@@ -2839,7 +2839,15 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
                   // Empty state: no welcome message — ChatEmptyState handles it
                   setMessages([])
-                  setMode('chat')
+
+                  // Route to the correct mode based on project type
+                  if (project.project_type === 'image') {
+                    setMode('imagine')
+                  } else if (project.project_type === 'video') {
+                    setMode('animate')
+                  } else {
+                    setMode('chat')
+                  }
                 } else {
                   // Fallback if fetch fails
                   localStorage.setItem('homepilot_current_project', projectId)
