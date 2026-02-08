@@ -29,3 +29,8 @@ servers:
     description: "Executive briefing tools only"
     include_tool_prefixes:
       - "hp.brief."
+
+  - name: "hp-web-research"
+    description: "Web search + fetch for research (SearXNG home / Tavily enterprise)"
+    include_tool_prefixes:
+      - "hp.web."

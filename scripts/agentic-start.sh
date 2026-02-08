@@ -2,7 +2,7 @@
 # ==============================================================================
 #  HomePilot Agentic Servers — start + seed
 #
-#  Starts the 4 MCP servers + 2 A2A agents from agentic/integrations/,
+#  Starts the 5 MCP servers + 2 A2A agents from agentic/integrations/,
 #  then seeds Context Forge with gateways, A2A agents, and virtual servers
 #  so they appear in the wizard's catalog.
 #
@@ -15,6 +15,7 @@
 #    MCP  9102  knowledge
 #    MCP  9103  decision-copilot
 #    MCP  9104  executive-briefing
+#    MCP  9105  web-search
 #    A2A  9201  everyday-assistant
 #    A2A  9202  chief-of-staff
 #
@@ -68,6 +69,8 @@ start_server "MCP decision-copilot" \
     "agentic.integrations.mcp.decision_copilot_server:app" 9103
 start_server "MCP executive-briefing" \
     "agentic.integrations.mcp.executive_briefing_server:app" 9104
+start_server "MCP web-search" \
+    "agentic.integrations.mcp.web_search_server:app" 9105
 
 # ── Start A2A agents ─────────────────────────────────────────────────────────
 echo "  Starting HomePilot A2A agents..."
@@ -81,12 +84,12 @@ echo "  Waiting for servers to be ready..."
 sleep 2
 
 ok=0
-for port in 9101 9102 9103 9104 9201 9202; do
+for port in 9101 9102 9103 9104 9105 9201 9202; do
     if curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
         ok=$((ok + 1))
     fi
 done
-echo "  $ok/6 agentic servers healthy"
+echo "  $ok/7 agentic servers healthy"
 
 # ── Seed Context Forge ───────────────────────────────────────────────────────
 if [ "$SEED" = true ]; then

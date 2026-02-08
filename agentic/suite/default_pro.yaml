@@ -33,6 +33,13 @@ tool_sources:
     label: "Executive Briefing"
     description: "High-signal daily/weekly briefs. Great for leadership and status updates."
 
+  - id: hp_web_research
+    kind: virtual_server
+    match:
+      name: "hp-web-research"
+    label: "Web Research"
+    description: "Web search + fetch tools. Enterprise: Tavily API. Home: SearXNG (no API key)."
+
 a2a_agents:
   - id: chief_of_staff
     match:

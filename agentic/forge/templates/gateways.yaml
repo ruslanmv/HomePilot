@@ -19,3 +19,8 @@ gateways:
     url: "http://localhost:9104/rpc"
     transport: "jsonrpc"
     description: "HomePilot Executive Briefing MCP server (reference)"
+
+  - name: hp-web-search
+    url: "http://localhost:9105/rpc"
+    transport: "jsonrpc"
+    description: "HomePilot Web Search MCP (SearXNG home / Tavily enterprise)"

@@ -19,6 +19,13 @@ tool_sources:
     description: "Safe, everyday tools for planning, reminders, and personal knowledge."
     recommended: true
 
+  - id: hp_web_research
+    kind: virtual_server
+    match:
+      name: "hp-web-research"
+    label: "Web Research"
+    description: "Web search + fetch via SearXNG (no API key needed, self-hosted)."
+
 a2a_agents:
   - id: everyday_assistant
     match:

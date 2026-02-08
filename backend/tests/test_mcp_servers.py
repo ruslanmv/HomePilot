@@ -35,10 +35,13 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # ── Import all server apps ──────────────────────────────────────────────────
+from unittest.mock import AsyncMock, patch
+
 from agentic.integrations.mcp.personal_assistant_server import app as personal_assistant_app
 from agentic.integrations.mcp.knowledge_server import app as knowledge_app
 from agentic.integrations.mcp.decision_copilot_server import app as decision_copilot_app
 from agentic.integrations.mcp.executive_briefing_server import app as executive_briefing_app
+from agentic.integrations.mcp.web_search_server import app as web_search_app
 from agentic.integrations.a2a.everyday_assistant_agent import app as everyday_assistant_app
 from agentic.integrations.a2a.chief_of_staff_agent import app as chief_of_staff_app
 
@@ -80,6 +83,7 @@ MCP_SERVERS = [
     ("knowledge", knowledge_app),
     ("decision-copilot", decision_copilot_app),
     ("executive-briefing", executive_briefing_app),
+    ("web-search", web_search_app),
 ]
 
 
@@ -318,6 +322,94 @@ class TestMCPUnknownMethod:
     async def test_unknown_method(self, name, app):
         data = await _post_rpc(app, "nonexistent/method")
         assert "error" in data
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# WEB SEARCH MCP — SearXNG PROVIDER (MOCKED, NO API KEY)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Fake SearXNG JSON response used to mock httpx calls.
+_FAKE_SEARXNG_RESPONSE = {
+    "results": [
+        {
+            "title": "Example Result",
+            "url": "https://example.com/article",
+            "content": "This is a snippet from the search result.",
+        },
+        {
+            "title": "Another Result",
+            "url": "https://example.com/page2",
+            "content": "Another snippet.",
+        },
+    ]
+}
+
+
+class TestWebSearchSearXNG:
+    """Web-search MCP tool tests with a mocked SearXNG backend."""
+
+    @pytest.mark.asyncio
+    async def test_web_search_returns_results(self):
+        """hp.web.search returns markdown-formatted results via SearXNG."""
+        from agentic.integrations.mcp.web_search.providers import SearchResult
+
+        fake_results = [
+            SearchResult(
+                title="Example Result",
+                url="https://example.com/article",
+                snippet="This is a snippet from the search result.",
+                source="searxng",
+            ),
+            SearchResult(
+                title="Another Result",
+                url="https://example.com/page2",
+                snippet="Another snippet.",
+                source="searxng",
+            ),
+        ]
+
+        with patch(
+            "agentic.integrations.mcp.web_search_server.get_provider"
+        ) as mock_get_provider:
+            mock_provider = AsyncMock()
+            mock_provider.search.return_value = fake_results
+            mock_get_provider.return_value = mock_provider
+
+            data = await _post_rpc(
+                web_search_app,
+                "tools/call",
+                {"name": "hp.web.search", "arguments": {"query": "test search"}},
+            )
+
+        result = data["result"]
+        assert "content" in result
+        text = result["content"][0]["text"]
+        assert "Example Result" in text
+        assert "https://example.com/article" in text
+
+    @pytest.mark.asyncio
+    async def test_web_search_empty_query(self):
+        """hp.web.search rejects empty queries."""
+        data = await _post_rpc(
+            web_search_app,
+            "tools/call",
+            {"name": "hp.web.search", "arguments": {"query": ""}},
+        )
+        result = data["result"]
+        text = result["content"][0]["text"]
+        assert "non-empty" in text.lower()
+
+    @pytest.mark.asyncio
+    async def test_web_fetch_empty_url(self):
+        """hp.web.fetch rejects empty URL."""
+        data = await _post_rpc(
+            web_search_app,
+            "tools/call",
+            {"name": "hp.web.fetch", "arguments": {"url": ""}},
+        )
+        result = data["result"]
+        text = result["content"][0]["text"]
+        assert "non-empty" in text.lower()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
