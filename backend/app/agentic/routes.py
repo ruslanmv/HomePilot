@@ -38,6 +38,7 @@ from .client import ContextForgeClient
 from .policy import apply_policy, is_allowed, resolve_profile
 from .suite_manifest import list_suites, read_suite
 from .runtime_tool_router import RuntimeToolRouter
+from .sync_service import sync_homepilot
 from .types import (
     AgenticAdminOut,
     AgenticCatalogOut,
@@ -222,6 +223,52 @@ async def agentic_suite_index(_key: str = Depends(require_api_key)):
 async def agentic_suite(name: str, _key: str = Depends(require_api_key)):
     """Return a single suite manifest by name (without extension)."""
     return read_suite(name)
+
+
+# ── POST /v1/agentic/sync ──────────────────────────────────────────────────
+# Bulk-sync HomePilot MCP servers, tools, A2A agents, and virtual servers
+# into Context Forge.  Discovers tools from running MCP servers (ports 9101-9105),
+# registers them, creates virtual servers from templates, then returns the
+# refreshed catalog.
+
+
+@router.post("/sync")
+async def agentic_sync(_key: str = Depends(require_api_key)):
+    """Sync all HomePilot MCP servers, tools, agents into Context Forge.
+
+    Discovers tools from running MCP servers (ports 9101-9105),
+    registers A2A agents and virtual servers from templates.
+    Idempotent: skips items that already exist.
+    Returns sync summary + refreshed catalog.
+    """
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    try:
+        result = await sync_homepilot(
+            base_url=_FORGE_URL,
+            auth_user=_AUTH_USER,
+            auth_pass=_AUTH_PASS,
+            bearer_token=_TOKEN or None,
+        )
+    except Exception as exc:
+        logger.error("sync_homepilot failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Sync failed: {exc}")
+
+    # Invalidate catalog cache so next fetch shows newly registered items
+    _catalog_service.invalidate()
+
+    # Fetch refreshed catalog
+    try:
+        catalog = await _catalog_service.get_cached(_client())
+        catalog_data = catalog.model_dump()
+    except Exception:
+        catalog_data = None
+
+    return {
+        "sync": result,
+        "catalog": catalog_data,
+    }
 
 
 # ── POST /v1/agentic/register/* ─────────────────────────────────────────────

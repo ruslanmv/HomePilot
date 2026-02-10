@@ -219,6 +219,7 @@ const ProjectWizard = ({
   const [showRegisterGateway, setShowRegisterGateway] = useState(false)
   const [registerBusy, setRegisterBusy] = useState(false)
   const [registerMsg, setRegisterMsg] = useState('')
+  const [syncBusy, setSyncBusy] = useState(false)
 
   // Registration form fields
   const [regToolName, setRegToolName] = useState('')
@@ -353,6 +354,38 @@ const ProjectWizard = ({
       }
     } catch (e: any) { setRegisterMsg(`Error: ${e?.message || e}`) }
     finally { setRegisterBusy(false) }
+  }
+
+  const handleSyncHomePilot = async () => {
+    setSyncBusy(true)
+    setRegisterMsg('')
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/sync`, {
+        method: 'POST',
+        headers,
+      })
+      const data = await res.json()
+      const sync = data?.sync
+      if (sync) {
+        const parts = []
+        if (sync.tools_registered > 0) parts.push(`${sync.tools_registered} tools registered`)
+        if (sync.tools_skipped > 0) parts.push(`${sync.tools_skipped} tools already existed`)
+        if (sync.agents_registered > 0) parts.push(`${sync.agents_registered} agents registered`)
+        if (sync.virtual_servers_created > 0) parts.push(`${sync.virtual_servers_created} virtual servers created`)
+        if (sync.mcp_servers_reachable < sync.mcp_servers_total) parts.push(`${sync.mcp_servers_total - sync.mcp_servers_reachable} MCP servers unreachable`)
+        setRegisterMsg(parts.length > 0 ? `Sync complete: ${parts.join(', ')}` : 'Sync complete (everything up to date)')
+      } else {
+        setRegisterMsg('Sync completed')
+      }
+      await refreshCatalog()
+      enrichedCatalog.refresh()
+    } catch (e: any) {
+      setRegisterMsg(`Sync error: ${e?.message || e}`)
+    } finally {
+      setSyncBusy(false)
+    }
   }
 
   const totalSteps = projectType === 'agent' ? 4 : 2
@@ -708,13 +741,23 @@ const ProjectWizard = ({
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="block text-sm font-medium text-white/80">Real Tools & Agents</label>
-                  <button
-                    type="button"
-                    onClick={() => refreshCatalog()}
-                    className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
-                  >
-                    Refresh
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={syncBusy}
+                      onClick={handleSyncHomePilot}
+                      className="text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition-colors"
+                    >
+                      {syncBusy ? 'Syncing...' : 'Sync HomePilot'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => refreshCatalog()}
+                      className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                    >
+                      Refresh
+                    </button>
+                  </div>
                 </div>
 
                 <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
@@ -736,6 +779,14 @@ const ProjectWizard = ({
                         No tools or agents registered yet. Get started:
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={syncBusy}
+                          onClick={handleSyncHomePilot}
+                          className="text-[11px] px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 transition-all"
+                        >
+                          {syncBusy ? 'Syncing...' : 'Sync HomePilot MCP'}
+                        </button>
                         <button
                           type="button"
                           onClick={() => { setShowRegisterGateway(true); setShowRegisterTool(false); setShowRegisterAgent(false) }}
