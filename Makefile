@@ -18,7 +18,8 @@ MCP_GATEWAY_HOST ?= 127.0.0.1
         start start-backend start-frontend start-no-agentic start-agentic-servers \
         install-mcp start-mcp stop-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
-        mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full
+        mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
+        mcp-inventory
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -864,6 +865,15 @@ mcp-start-full: ## Start MCP Gateway + servers + agent (full agentic stack)
 		echo ""; \
 		wait \
 	'
+
+mcp-inventory: ## List all MCP Context Forge inventory (gateways, servers, tools, agents)
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
+		exit 1; \
+	fi
+	@MCPF_BASE_URL="http://localhost:$(MCP_GATEWAY_PORT)" \
+		MCPF_BASIC_USER=admin MCPF_BASIC_PASS=changeme \
+		backend/.venv/bin/python -m app.agentic.list_forge_inventory
 
 mcp-register-homepilot: ## Register HomePilot default tools with MCP Gateway
 	@bash scripts/mcp-register.sh homepilot
