@@ -309,7 +309,12 @@ The project ships with 22 Python MCP servers in `mcp-servers/python/`:
 
 ---
 
-## 8. Admin UI & API Docs
+## 8. HomePilot Wizard Integration
+
+The Agentic Creator wizard exposes a **Sync HomePilot** button (`POST /v1/agentic/sync`) that bulk-discovers tools from running MCP servers and registers them in Forge in one click.
+The `ForgeInventory` helper (`backend/app/agentic/list_forge_inventory.py`) and `sync_service.py` power both the CLI (`make mcp-inventory`) and the wizard sync flow.
+
+## 9. Admin UI & API Docs
 
 - **Admin UI**: `http://localhost:4444/admin` - Web-based management dashboard
 - **API Docs (Swagger)**: `http://localhost:4444/docs` - Full OpenAPI documentation
@@ -344,6 +349,9 @@ curl -s "http://localhost:4444/gateways" -u admin:changeme
 # 6. List all servers
 curl -s "http://localhost:4444/servers" -u admin:changeme
 
-# 7. Run the interactive demo
+# 7. Bulk-sync HomePilot MCP servers, tools, agents, and virtual servers
+curl -X POST "http://localhost:4444/v1/agentic/sync" -H "x-api-key: YOUR_KEY"
+
+# 8. Run the interactive demo
 bash demo.sh
 ```
