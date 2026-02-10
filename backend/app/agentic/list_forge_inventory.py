@@ -6,7 +6,7 @@ List MCP Context Forge inventory:
 - Tools (/tools)
 - A2A Agents (/a2a)
 
-Supports either Basic Auth (admin:changeme) or Bearer token (Authorization: Bearer ...).
+Supports Basic Auth, Bearer token, and auto-login via /auth/login (JWT).
 
 Usage as standalone script:
   export MCPF_BASE_URL="http://localhost:4444"
@@ -14,7 +14,7 @@ Usage as standalone script:
   export MCPF_BASIC_PASS="changeme"
   python -m app.agentic.list_forge_inventory
 
-  # OR with bearer token
+  # OR with bearer token directly
   export MCPF_BEARER_TOKEN="YOUR_TOKEN"
   python -m app.agentic.list_forge_inventory
 
@@ -53,6 +53,11 @@ class ForgeInventory:
 
     This class is designed to be imported into the HomePilot agentic backend
     so that any route or service can display the current Forge state.
+
+    Auth modes (tried in order):
+      1. MCPF_BEARER_TOKEN — use directly as Bearer header
+      2. MCPF_BASIC_USER + MCPF_BASIC_PASS — first attempts JWT login
+         via POST /auth/login, then falls back to HTTP Basic Auth
     """
 
     def __init__(
@@ -70,23 +75,68 @@ class ForgeInventory:
         self.basic_pass = basic_pass or _env("MCPF_BASIC_PASS")
         self.timeout = timeout
         self.verify_ssl = verify_ssl
+        self._jwt_attempted = False
 
         # Build session
         self._session = requests.Session()
         self._session.headers.update({"Accept": "application/json"})
+        self._session.verify = self.verify_ssl
+
         if self.bearer_token:
             self._session.headers["Authorization"] = f"Bearer {self.bearer_token}"
             self.auth_mode = "bearer"
         elif self.basic_user and self.basic_pass:
+            # Start with basic auth as fallback; JWT login attempted lazily
             self._session.auth = HTTPBasicAuth(self.basic_user, self.basic_pass)
             self.auth_mode = "basic"
         else:
             self.auth_mode = "none"
-        self._session.verify = self.verify_ssl
+
+    # -- JWT auto-login -----------------------------------------------------
+
+    def _login_and_set_bearer(self) -> None:
+        """Attempt to acquire a JWT token via POST /auth/login.
+
+        HomePilot's Context Forge requires Bearer JWT for API endpoints.
+        This method derives an email from BASIC_AUTH_USER (appending
+        @example.com if needed) and calls /auth/login to obtain a token.
+        Once acquired, all subsequent requests use the Bearer token.
+        """
+        if self._jwt_attempted:
+            return
+        self._jwt_attempted = True
+
+        if "Authorization" in self._session.headers:
+            return  # already have a bearer token
+
+        user = self.basic_user
+        pwd = self.basic_pass
+        if not (user and pwd):
+            return
+
+        email = user if "@" in user else f"{user}@example.com"
+        url = f"{self.base_url}/auth/login"
+        try:
+            r = self._session.post(
+                url,
+                json={"email": email, "password": pwd},
+                timeout=self.timeout,
+            )
+            if r.status_code == 200:
+                token = r.json().get("access_token")
+                if token:
+                    self._session.headers["Authorization"] = f"Bearer {token}"
+                    self._session.auth = None  # drop basic auth
+                    self.auth_mode = "jwt"
+                    return
+        except Exception:
+            pass
+        # JWT login failed — keep basic auth as fallback
 
     # -- low-level helpers --------------------------------------------------
 
     def _get_json(self, path: str, params: Optional[Dict[str, str]] = None) -> Any:
+        self._login_and_set_bearer()
         url = f"{self.base_url}{path}"
         r = self._session.get(url, timeout=self.timeout, params=params)
         r.raise_for_status()
@@ -102,7 +152,8 @@ class ForgeInventory:
         if isinstance(payload, list):
             return [x for x in payload if isinstance(x, dict)]
         if isinstance(payload, dict):
-            for k in ("items", "data", "servers", "tools", "gateways", "agents", "results"):
+            for k in ("items", "data", "servers", "tools", "gateways",
+                       "agents", "a2a_agents", "results"):
                 v = payload.get(k)
                 if isinstance(v, list):
                     return [x for x in v if isinstance(x, dict)]
@@ -121,7 +172,7 @@ class ForgeInventory:
     def health(self) -> Tuple[bool, Optional[str]]:
         """Return (healthy, error_message)."""
         try:
-            data = self._get_json("/health")
+            self._get_json("/health")
             return True, None
         except Exception as exc:
             return False, str(exc)
@@ -161,6 +212,7 @@ class ForgeInventory:
         ok, err = self.health()
         return {
             "base_url": self.base_url,
+            "auth_mode": self.auth_mode,
             "healthy": ok,
             "error": err,
             "gateways": self.fetch_gateways(include_inactive),
@@ -173,6 +225,9 @@ class ForgeInventory:
 
     def print_gateways(self, gateways: List[Dict[str, Any]]) -> None:
         _print_section(f"Gateways (registered remote MCP servers): {len(gateways)}")
+        if not gateways:
+            print("  (none registered)")
+            return
         for g in gateways:
             gid = self._pick(g, "id", "gateway_id", "uuid", default="(no id)")
             name = self._pick(g, "name", default="(no name)")
@@ -188,6 +243,9 @@ class ForgeInventory:
 
     def print_servers(self, servers: List[Dict[str, Any]]) -> None:
         _print_section(f"Virtual Servers (/servers): {len(servers)}")
+        if not servers:
+            print("  (none registered)")
+            return
         for sv in servers:
             sid = self._pick(sv, "id", "server_id", "uuid", default="(no id)")
             name = self._pick(sv, "name", default="(no name)")
@@ -201,12 +259,15 @@ class ForgeInventory:
                 print(f"    active/enabled: {active}")
             if sse_endpoint:
                 print(f"    connect (SSE): {sse_endpoint}")
-            tool_ids = self._pick(sv, "tool_ids", "tools", default=None)
+            tool_ids = self._pick(sv, "tool_ids", "associated_tools", "tools", default=None)
             if isinstance(tool_ids, list) and tool_ids:
                 print(f"    tools linked: {len(tool_ids)}")
 
     def print_tools(self, tools: List[Dict[str, Any]]) -> None:
         _print_section(f"Tools (/tools): {len(tools)}")
+        if not tools:
+            print("  (none registered)")
+            return
         for t in tools:
             tid = self._pick(t, "id", "tool_id", "uuid", default="(no id)")
             name = self._pick(t, "name", default="(no name)")
@@ -220,6 +281,9 @@ class ForgeInventory:
 
     def print_agents(self, agents: List[Dict[str, Any]]) -> None:
         _print_section(f"A2A Agents (/a2a): {len(agents)}")
+        if not agents:
+            print("  (none registered)")
+            return
         for a in agents:
             aid = self._pick(a, "id", "agent_id", "uuid", default="(no id)")
             name = self._pick(a, "name", default="(no name)")
@@ -236,9 +300,9 @@ class ForgeInventory:
     def print_all(self) -> int:
         """Fetch everything and print a formatted report. Returns 0 on success."""
         print(f"Base URL:  {self.base_url}")
-        print(f"Auth mode: {self.auth_mode}")
 
         data = self.fetch_all()
+        print(f"Auth mode: {data['auth_mode']}")
 
         if not data["healthy"]:
             print(f"\n[ERROR] Forge not healthy: {data['error']}")

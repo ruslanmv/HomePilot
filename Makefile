@@ -867,13 +867,10 @@ mcp-start-full: ## Start MCP Gateway + servers + agent (full agentic stack)
 	'
 
 mcp-inventory: ## List all MCP Context Forge inventory (gateways, servers, tools, agents)
-	@if [ ! -d "backend/.venv" ]; then \
-		echo "❌ Backend not installed. Run: make install"; \
-		exit 1; \
-	fi
 	@MCPF_BASE_URL="http://localhost:$(MCP_GATEWAY_PORT)" \
 		MCPF_BASIC_USER=admin MCPF_BASIC_PASS=changeme \
-		backend/.venv/bin/python -m app.agentic.list_forge_inventory
+		PYTHON=$$([ -x backend/.venv/bin/python ] && echo backend/.venv/bin/python || echo python3) && \
+		cd backend && $$PYTHON -m app.agentic.list_forge_inventory
 
 mcp-register-homepilot: ## Register HomePilot default tools with MCP Gateway
 	@bash scripts/mcp-register.sh homepilot
