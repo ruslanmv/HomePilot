@@ -18,7 +18,7 @@ from . import video_presets
 
 # Import specialized handlers
 from .search import run_search
-from .projects import run_project_chat
+from .projects import run_project_chat, get_project_by_id, _save_project_conversation
 from .edit_flags import parse_edit_flags, build_edit_workflow_vars, determine_workflow
 
 IMAGE_RE = re.compile(r"\b(imagine|generate|create|draw|make)\b.*\b(image|picture|photo|art)\b", re.I)
@@ -1486,7 +1486,87 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
         }
 
     elif handler == "project":
-        # Project mode: project-scoped chat
+        # Project mode: check if the message should trigger media generation
+        # based on the project's agentic capabilities.
+        _msg = (payload.get("message") or "").strip()
+        _project_id = payload.get("project_id")
+        _project_data = get_project_by_id(_project_id) if _project_id else None
+        _agentic = (_project_data or {}).get("agentic") or {}
+        _caps = _agentic.get("capabilities") or []
+        _has_images = "generate_images" in _caps
+        _has_videos = "generate_videos" in _caps
+        _wants_image = _has_images and (mode == "imagine" or IMAGE_RE.search(_msg))
+        _wants_video = _has_videos and (mode == "animate" or ANIM_RE.search(_msg))
+
+        if _wants_image or _wants_video:
+            # Delegate to orchestrate for actual media generation while
+            # keeping the conversation under the project's conversation_id.
+            print(f"[PROJECT] Media capability detected: image={_wants_image} video={_wants_video}")
+            print(f"[PROJECT] Delegating to orchestrate for project '{_project_id}'")
+            _prov = payload.get("provider") or DEFAULT_PROVIDER
+            _base_url = payload.get("provider_base_url")
+            _model = payload.get("provider_model")
+            if not _base_url:
+                if _prov == "ollama":
+                    _base_url = payload.get("ollama_base_url")
+                elif _prov == "openai_compat":
+                    _base_url = payload.get("llm_base_url")
+            if not _model:
+                if _prov == "ollama":
+                    _model = payload.get("ollama_model")
+                elif _prov == "openai_compat":
+                    _model = payload.get("llm_model")
+            _ar = payload.get("imgAspectRatio")
+            _chat_model = payload.get("ollama_model") or payload.get("llm_model")
+
+            _effective_mode = mode
+            if _wants_image and (not mode or mode == "chat" or mode == "project"):
+                _effective_mode = "imagine"
+            elif _wants_video and (not mode or mode == "chat" or mode == "project"):
+                _effective_mode = "animate"
+
+            return await orchestrate(
+                user_text=_msg,
+                conversation_id=payload.get("conversation_id"),
+                fun_mode=payload.get("fun_mode", False),
+                mode=_effective_mode,
+                provider=_prov,
+                provider_base_url=_base_url,
+                provider_model=_model,
+                text_temperature=payload.get("textTemperature"),
+                text_max_tokens=payload.get("textMaxTokens"),
+                img_width=payload.get("imgWidth"),
+                img_height=payload.get("imgHeight"),
+                img_aspect_ratio=_ar,
+                img_steps=payload.get("imgSteps"),
+                img_cfg=payload.get("imgCfg"),
+                img_seed=payload.get("imgSeed"),
+                img_model=payload.get("imgModel"),
+                img_batch_size=payload.get("imgBatchSize"),
+                img_preset=payload.get("imgPreset"),
+                vid_seconds=payload.get("vidSeconds"),
+                vid_fps=payload.get("vidFps"),
+                vid_motion=payload.get("vidMotion"),
+                vid_model=payload.get("vidModel"),
+                vid_steps=payload.get("vidSteps"),
+                vid_cfg=payload.get("vidCfg"),
+                vid_denoise=payload.get("vidDenoise"),
+                vid_seed=payload.get("vidSeed"),
+                vid_preset=payload.get("vidPreset"),
+                vid_aspect_ratio=payload.get("vidAspectRatio"),
+                vid_negative_prompt=payload.get("vidNegativePrompt"),
+                nsfw_mode=payload.get("nsfwMode"),
+                prompt_refinement=payload.get("promptRefinement", True),
+                img_reference=payload.get("imgReference"),
+                img_ref_strength=payload.get("imgRefStrength"),
+                chat_model=_chat_model,
+            )
+            # Tag this conversation with the project for history persistence
+            if _project_id and result.get("conversation_id"):
+                _save_project_conversation(_project_id, result["conversation_id"])
+            return result
+
+        # Normal project chat (no media generation needed)
         result = await run_project_chat(payload)
         return {
             "conversation_id": result.get("conversation_id", ""),
