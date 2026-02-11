@@ -324,7 +324,9 @@ export default function AnimateView(props: AnimateParams) {
         if (detectedModelType) params.set('model', detectedModelType)
         // Map hardware presets to video quality presets
         // Hardware: 4060 → low, 4080 → medium, a100 → high, custom → medium
+        // Also normalise "med" → "medium" (UI shorthand)
         const videoPreset = qualityPreset === 'custom' ? 'medium'
+          : qualityPreset === 'med' ? 'medium'
           : qualityPreset === '4060' ? 'low'
           : qualityPreset === '4080' ? 'medium'
           : qualityPreset === 'a100' ? 'high'
@@ -703,8 +705,9 @@ export default function AnimateView(props: AnimateParams) {
         ? availableResolutions.find(r => r.id === customResolution)
         : null
 
-      // Map hardware presets to video quality presets
+      // Map hardware presets to video quality presets (normalise "med" → "medium")
       const videoPreset = qualityPreset === 'custom' ? 'medium'
+        : qualityPreset === 'med' ? 'medium'
         : qualityPreset === '4060' ? 'low'
         : qualityPreset === '4080' ? 'medium'
         : qualityPreset === 'a100' ? 'high'
@@ -895,8 +898,9 @@ export default function AnimateView(props: AnimateParams) {
         ? availableResolutions.find(r => r.id === customResolution)
         : null
 
-      // Map hardware presets to video quality presets
+      // Map hardware presets to video quality presets (normalise "med" → "medium")
       const videoPreset = qualityPreset === 'custom' ? 'medium'
+        : qualityPreset === 'med' ? 'medium'
         : qualityPreset === '4060' ? 'low'
         : qualityPreset === '4080' ? 'medium'
         : qualityPreset === 'a100' ? 'high'
