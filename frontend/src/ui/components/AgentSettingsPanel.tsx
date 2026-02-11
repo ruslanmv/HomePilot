@@ -33,6 +33,8 @@ export type AgentProjectData = {
     capabilities?: string[]
     tool_ids?: string[]
     a2a_agent_ids?: string[]
+    tool_details?: Array<{ id: string; name: string; description?: string }>
+    agent_details?: Array<{ id: string; name: string; description?: string }>
     tool_source?: string
     ask_before_acting?: boolean
     execution_profile?: 'fast' | 'balanced' | 'quality'
@@ -40,6 +42,7 @@ export type AgentProjectData = {
 }
 
 type CatalogItem = { id: string; name: string; description?: string; enabled?: boolean }
+type CatalogServer = { id: string; name: string; description?: string; enabled?: boolean; tool_ids?: string[] }
 
 type Props = {
   project: AgentProjectData
@@ -149,6 +152,7 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
   // --- Catalog data ---
   const [catalogTools, setCatalogTools] = useState<CatalogItem[]>([])
   const [catalogAgents, setCatalogAgents] = useState<CatalogItem[]>([])
+  const [catalogServers, setCatalogServers] = useState<CatalogServer[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
 
   // --- Documents ---
@@ -174,6 +178,19 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (data) {
+          setCatalogServers(
+            Array.isArray(data.servers)
+              ? data.servers.map((s: any) => ({
+                  id: String(s.id || s.name),
+                  name: String(s.name || s.id),
+                  description: s.description,
+                  enabled: s.enabled !== false,
+                  tool_ids: Array.isArray(s.tool_ids)
+                    ? s.tool_ids
+                    : (Array.isArray(s.associated_tools) ? s.associated_tools : []),
+                }))
+              : []
+          )
           setCatalogTools(
             Array.isArray(data.tools)
               ? data.tools.map((t: any) => ({ id: t.id || t.name, name: t.name, description: t.description, enabled: t.enabled !== false }))
@@ -190,12 +207,72 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
       .finally(() => setCatalogLoading(false))
   }, [backendUrl, apiKey])
 
+  // --- Derived: effective access policy (matches wizard + backend enforcement) ---
+  const enabledCatalogTools = catalogTools.filter((t) => t.enabled !== false)
+
+  const serverToolCount = (() => {
+    if (!toolSource.startsWith('server:')) return 0
+    const sid = toolSource.replace('server:', '')
+    const s = catalogServers.find((x) => x.id === sid)
+    return s?.tool_ids?.length || 0
+  })()
+
+  const effectiveToolCount = (() => {
+    if (toolSource === 'none') return 0
+    if (toolSource === 'all') return enabledCatalogTools.length
+    if (toolSource.startsWith('server:')) return serverToolCount
+    return 0
+  })()
+
+  const visibleTools = (() => {
+    if (toolSource === 'none') return []
+    if (toolSource === 'all') return enabledCatalogTools
+    if (toolSource.startsWith('server:')) {
+      const sid = toolSource.replace('server:', '')
+      const s = catalogServers.find((x) => x.id === sid)
+      if (!s?.tool_ids?.length) return []
+      const ids = new Set(s.tool_ids)
+      return enabledCatalogTools.filter((t) => ids.has(t.id))
+    }
+    return []
+  })()
+
   // --- Save ---
   const handleSave = useCallback(async () => {
     setSaving(true)
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['x-api-key'] = apiKey
+
+      // Build lookup from previously saved details so we can fall back if catalog is empty/stale
+      const prevToolDetails: Record<string, { name: string; description?: string }> = {}
+      for (const d of (ag.tool_details || [])) {
+        if (d && typeof d === 'object' && d.id) prevToolDetails[d.id] = d
+      }
+      const prevAgentDetails: Record<string, { name: string; description?: string }> = {}
+      for (const d of (ag.agent_details || [])) {
+        if (d && typeof d === 'object' && d.id) prevAgentDetails[d.id] = d
+      }
+
+      // Resolve human-readable names for tools & agents (catalog → previous save → fallback)
+      const toolDetails = toolIds.map((tid) => {
+        const t = catalogTools.find((x) => x.id === tid)
+        const prev = prevToolDetails[tid]
+        return {
+          id: tid,
+          name: t?.name || prev?.name || tid,
+          description: t?.description || prev?.description || '',
+        }
+      })
+      const agentDetailsList = agentIds.map((aid) => {
+        const a = catalogAgents.find((x) => x.id === aid)
+        const prev = prevAgentDetails[aid]
+        return {
+          id: aid,
+          name: a?.name || prev?.name || aid,
+          description: a?.description || prev?.description || '',
+        }
+      })
 
       const body = {
         name,
@@ -207,6 +284,8 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
           capabilities,
           tool_ids: toolIds,
           a2a_agent_ids: agentIds,
+          tool_details: toolDetails,
+          agent_details: agentDetailsList,
           tool_source: toolSource,
           ask_before_acting: askFirst,
           execution_profile: profile,
@@ -231,7 +310,7 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
     } finally {
       setSaving(false)
     }
-  }, [name, description, instructions, goal, capabilities, profile, askFirst, toolIds, agentIds, toolSource, backendUrl, apiKey, project.id, onSaved])
+  }, [name, description, instructions, goal, capabilities, profile, askFirst, toolIds, agentIds, toolSource, backendUrl, apiKey, project.id, onSaved, catalogTools, catalogAgents, ag.tool_details, ag.agent_details])
 
   // --- Document delete ---
   const handleDeleteDoc = async (docName: string) => {
@@ -395,7 +474,7 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
 
           {/* ─── Section: Connected Tools ─── */}
           <section>
-            <SectionHeader icon={Wrench} title="Connected Tools" badge={catalogTools.length} />
+            <SectionHeader icon={Wrench} title="Connected Tools" badge={effectiveToolCount} />
             {catalogLoading ? (
               <div className="flex items-center gap-2 text-xs text-white/40 py-3">
                 <Loader2 size={12} className="animate-spin" /> Loading catalog...
@@ -412,12 +491,12 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
                   className="flex items-center gap-2 text-xs text-white/50 hover:text-white/80 transition-colors mb-2"
                 >
                   {showTools ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  {showTools ? 'Collapse' : `Show ${catalogTools.length} tools`}
+                  {showTools ? 'Collapse' : `Browse ${effectiveToolCount} in bundle (${toolIds.length} pinned)`}
                 </button>
 
                 {showTools && (
                   <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
-                    {catalogTools.map((tool) => {
+                    {visibleTools.map((tool) => {
                       const bound = toolIds.includes(tool.id)
                       return (
                         <button
@@ -450,16 +529,25 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
                   </div>
                 )}
 
+                <p className="text-[11px] text-white/35 mt-2 px-1">
+                  The tool bundle sets the runtime permission boundary. Checkmarks above are optional pinned tools
+                  (UI hint) and do not expand access beyond the selected bundle.
+                </p>
+
                 <div className="flex items-center gap-3 mt-2 pt-2 border-t border-white/5">
-                  <label className="text-xs text-white/50">Tool scope:</label>
+                  <label className="text-xs text-white/50">Tool bundle:</label>
                   <select
                     value={toolSource}
                     onChange={(e) => setToolSource(e.target.value)}
                     className="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-purple-500/50"
                   >
-                    <option value="all">All available</option>
-                    <option value="none">None (chat only)</option>
-                    <option value="selected">Selected only</option>
+                    <option value="all">All enabled tools</option>
+                    {catalogServers.map((s) => (
+                      <option key={s.id} value={`server:${s.id}`}>
+                        Virtual server: {s.name}
+                      </option>
+                    ))}
+                    <option value="none">No tools</option>
                   </select>
                 </div>
               </div>
@@ -468,7 +556,7 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
 
           {/* ─── Section: Connected Agents ─── */}
           <section>
-            <SectionHeader icon={Users} title="Connected Agents" badge={catalogAgents.length} />
+            <SectionHeader icon={Users} title="Connected Agents" badge={agentIds.length} />
             {catalogLoading ? (
               <div className="flex items-center gap-2 text-xs text-white/40 py-3">
                 <Loader2 size={12} className="animate-spin" /> Loading...
@@ -485,7 +573,7 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
                   className="flex items-center gap-2 text-xs text-white/50 hover:text-white/80 transition-colors mb-2"
                 >
                   {showAgents ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  {showAgents ? 'Collapse' : `Show ${catalogAgents.length} agents`}
+                  {showAgents ? 'Collapse' : `Browse ${catalogAgents.length} available (${agentIds.length} connected)`}
                 </button>
 
                 {showAgents && (
@@ -524,6 +612,45 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
                 )}
               </div>
             )}
+          </section>
+
+          {/* ─── Section: Effective Access Summary ─── */}
+          <section>
+            <SectionHeader icon={Server} title="Effective Access" />
+            <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-white/50">Tool bundle</span>
+                <span className="text-white/80 font-medium">
+                  {toolSource === 'all'
+                    ? `All enabled tools (${effectiveToolCount})`
+                    : toolSource === 'none'
+                    ? 'No tools'
+                    : (() => {
+                        const sid = toolSource.replace('server:', '')
+                        const s = catalogServers.find((x) => x.id === sid)
+                        return s ? `${s.name} (${effectiveToolCount})` : toolSource
+                      })()}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-white/50">Connected agents</span>
+                <span className="text-white/80 font-medium">
+                  {agentIds.length === 0
+                    ? 'None'
+                    : agentIds
+                        .map((id) => catalogAgents.find((a) => a.id === id)?.name || id)
+                        .join(', ')}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-white/50">Pinned tools</span>
+                <span className="text-white/80 font-medium">{toolIds.length}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-white/50">Execution</span>
+                <span className="text-white/80 font-medium">{profile} / {askFirst ? 'Ask first' : 'Auto-execute'}</span>
+              </div>
+            </div>
           </section>
 
           {/* ─── Section: Instructions ─── */}
