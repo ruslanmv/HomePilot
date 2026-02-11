@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   FolderKanban,
   Plus,
@@ -198,10 +198,7 @@ const ProjectWizard = ({
   const [availableCapabilities, setAvailableCapabilities] = useState<AgentCapability[]>([])
   const [capabilitiesLoaded, setCapabilitiesLoaded] = useState(false)
 
-  // Additive: real catalog from backend (/v1/agentic/catalog)
-  const [catalogLoaded, setCatalogLoaded] = useState(false)
-  const [catalogTools, setCatalogTools] = useState<Array<{ id: string; name: string; description?: string; enabled?: boolean }>>([])
-  const [catalogAgents, setCatalogAgents] = useState<Array<{ id: string; name: string; description?: string; enabled?: boolean }>>([])
+  // Tool/agent selection state
   const [selectedToolIds, setSelectedToolIds] = useState<string[]>([])
   const [selectedA2AAgentIds, setSelectedA2AAgentIds] = useState<string[]>([])
 
@@ -213,12 +210,36 @@ const ProjectWizard = ({
     enabled: projectType === 'agent',
   })
 
+  // Derive catalog tools/agents/gateways from the enriched catalog (single source of truth)
+  const catalogTools = useMemo((): Array<{ id: string; name: string; description?: string; enabled?: boolean }> => {
+    const tools = enrichedCatalog.catalog?.tools
+    if (!tools) return []
+    return tools
+      .filter((t) => t.id && t.name)
+      .map((t) => ({ id: t.id, name: t.name, description: t.description || undefined, enabled: t.enabled ?? undefined }))
+  }, [enrichedCatalog.catalog?.tools])
+
+  const catalogAgents = useMemo((): Array<{ id: string; name: string; description?: string; enabled?: boolean }> => {
+    const agents = enrichedCatalog.catalog?.a2a_agents
+    if (!agents) return []
+    return agents
+      .filter((a) => a.id && a.name)
+      .map((a) => ({ id: a.id, name: a.name, description: a.description || undefined, enabled: a.enabled ?? undefined }))
+  }, [enrichedCatalog.catalog?.a2a_agents])
+
+  const catalogGateways = useMemo(() => {
+    const gateways = enrichedCatalog.catalog?.gateways
+    if (!gateways) return []
+    return gateways.filter((g) => g.id && g.name)
+  }, [enrichedCatalog.catalog?.gateways])
+
   // Additive: inline registration forms (collapsed by default)
   const [showRegisterTool, setShowRegisterTool] = useState(false)
   const [showRegisterAgent, setShowRegisterAgent] = useState(false)
   const [showRegisterGateway, setShowRegisterGateway] = useState(false)
   const [registerBusy, setRegisterBusy] = useState(false)
   const [registerMsg, setRegisterMsg] = useState('')
+  const [syncBusy, setSyncBusy] = useState(false)
 
   // Registration form fields
   const [regToolName, setRegToolName] = useState('')
@@ -238,29 +259,9 @@ const ProjectWizard = ({
     setSelectedA2AAgentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
 
-  // Refresh catalog after registration
+  // Refresh catalog — delegates to the enriched catalog hook (single source of truth)
   const refreshCatalog = async () => {
-    try {
-      const headers: Record<string, string> = {}
-      if (apiKey) headers['x-api-key'] = apiKey
-      const res = await fetch(`${backendUrl}/v1/agentic/catalog`, { headers })
-      if (!res.ok) return
-      const data = await res.json()
-      setCatalogTools(
-        Array.isArray(data?.tools)
-          ? data.tools
-              .map((t: any) => ({ id: String(t?.id || ''), name: String(t?.name || ''), description: t?.description, enabled: t?.enabled }))
-              .filter((t: any) => t.id && t.name)
-          : []
-      )
-      setCatalogAgents(
-        Array.isArray(data?.a2a_agents)
-          ? data.a2a_agents
-              .map((a: any) => ({ id: String(a?.id || ''), name: String(a?.name || ''), description: a?.description, enabled: a?.enabled }))
-              .filter((a: any) => a.id && a.name)
-          : []
-      )
-    } catch { /* ignore */ }
+    await enrichedCatalog.refresh()
   }
 
   // Registration handlers
@@ -355,6 +356,37 @@ const ProjectWizard = ({
     finally { setRegisterBusy(false) }
   }
 
+  const handleSyncHomePilot = async () => {
+    setSyncBusy(true)
+    setRegisterMsg('')
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (apiKey) headers['x-api-key'] = apiKey
+      const res = await fetch(`${backendUrl}/v1/agentic/sync`, {
+        method: 'POST',
+        headers,
+      })
+      const data = await res.json()
+      const sync = data?.sync
+      if (sync) {
+        const parts = []
+        if (sync.tools_registered > 0) parts.push(`${sync.tools_registered} tools registered`)
+        if (sync.tools_skipped > 0) parts.push(`${sync.tools_skipped} tools already existed`)
+        if (sync.agents_registered > 0) parts.push(`${sync.agents_registered} agents registered`)
+        if (sync.virtual_servers_created > 0) parts.push(`${sync.virtual_servers_created} virtual servers created`)
+        if (sync.mcp_servers_reachable < sync.mcp_servers_total) parts.push(`${sync.mcp_servers_total - sync.mcp_servers_reachable} MCP servers unreachable`)
+        setRegisterMsg(parts.length > 0 ? `Sync complete: ${parts.join(', ')}` : 'Sync complete (everything up to date)')
+      } else {
+        setRegisterMsg('Sync completed')
+      }
+      await enrichedCatalog.refresh()
+    } catch (e: any) {
+      setRegisterMsg(`Sync error: ${e?.message || e}`)
+    } finally {
+      setSyncBusy(false)
+    }
+  }
+
   const totalSteps = projectType === 'agent' ? 4 : 2
 
   // Catalog: human labels only — no MCP/tool/agent IDs shown to user
@@ -431,55 +463,6 @@ const ProjectWizard = ({
 
     void run()
   }, [apiKey, backendUrl, capabilitiesLoaded, projectType])
-
-  // Additive: Fetch real catalog (tools + A2A agents + optional gateways/servers)
-  useEffect(() => {
-    if (projectType !== 'agent') return
-    if (catalogLoaded) return
-
-    const run = async () => {
-      try {
-        const headers: Record<string, string> = {}
-        if (apiKey) headers['x-api-key'] = apiKey
-
-        const res = await fetch(`${backendUrl}/v1/agentic/catalog`, { headers })
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data = await res.json()
-
-        const tools = Array.isArray(data?.tools)
-          ? data.tools
-              .map((t: any) => ({
-                id: String(t?.id || ''),
-                name: String(t?.name || ''),
-                description: typeof t?.description === 'string' ? t.description : undefined,
-                enabled: typeof t?.enabled === 'boolean' ? t.enabled : undefined,
-              }))
-              .filter((t: any) => t.id && t.name)
-          : []
-
-        const agents = Array.isArray(data?.a2a_agents)
-          ? data.a2a_agents
-              .map((a: any) => ({
-                id: String(a?.id || ''),
-                name: String(a?.name || ''),
-                description: typeof a?.description === 'string' ? a.description : undefined,
-                enabled: typeof a?.enabled === 'boolean' ? a.enabled : undefined,
-              }))
-              .filter((a: any) => a.id && a.name)
-          : []
-
-        setCatalogTools(tools)
-        setCatalogAgents(agents)
-      } catch {
-        setCatalogTools([])
-        setCatalogAgents([])
-      } finally {
-        setCatalogLoaded(true)
-      }
-    }
-
-    void run()
-  }, [apiKey, backendUrl, catalogLoaded, projectType])
 
   // Smart defaults: preselect capabilities that match the user's goal text
   useEffect(() => {
@@ -702,24 +685,36 @@ const ProjectWizard = ({
                 selectedA2AAgentIds={selectedA2AAgentIds}
                 setSelectedA2AAgentIds={setSelectedA2AAgentIds}
                 onRefresh={enrichedCatalog.refresh}
+                onSync={handleSyncHomePilot}
+                syncBusy={syncBusy}
               />
 
               {/* Real Forge bindings (Tools + A2A Agents + Registration) */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label className="block text-sm font-medium text-white/80">Real Tools & Agents</label>
-                  <button
-                    type="button"
-                    onClick={() => refreshCatalog()}
-                    className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
-                  >
-                    Refresh
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={syncBusy}
+                      onClick={handleSyncHomePilot}
+                      className="text-xs text-amber-400 hover:text-amber-300 disabled:opacity-50 transition-colors"
+                    >
+                      {syncBusy ? 'Syncing...' : 'Sync HomePilot'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => enrichedCatalog.refresh()}
+                      className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                    >
+                      Refresh
+                    </button>
+                  </div>
                 </div>
 
                 <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-4">
                   <div className="text-[11px] text-white/50">
-                    Fetched from MCP Context Forge. Select existing items or register new ones below.
+                    Fetched from MCP Context Forge ({catalogTools.length} tools, {catalogAgents.length} agents, {catalogGateways.length} gateways). Select existing items or register new ones below.
                   </div>
 
                   {/* Status message */}
@@ -733,9 +728,17 @@ const ProjectWizard = ({
                   {catalogTools.length === 0 && catalogAgents.length === 0 && !showRegisterTool && !showRegisterAgent && !showRegisterGateway && (
                     <div className="rounded-lg border border-dashed border-white/15 bg-white/[0.02] p-4 space-y-3">
                       <div className="text-xs text-white/60">
-                        No tools or agents registered yet. Get started:
+                        No tools or agents registered in MCP Context Forge yet. Get started:
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={syncBusy}
+                          onClick={handleSyncHomePilot}
+                          className="text-[11px] px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/5 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 transition-all"
+                        >
+                          {syncBusy ? 'Syncing...' : 'Sync HomePilot MCP'}
+                        </button>
                         <button
                           type="button"
                           onClick={() => { setShowRegisterGateway(true); setShowRegisterTool(false); setShowRegisterAgent(false) }}
@@ -803,7 +806,7 @@ const ProjectWizard = ({
                     )}
 
                     {catalogTools.length === 0 ? (
-                      <div className="text-xs text-white/45">No MCP tools discovered.</div>
+                      <div className="text-xs text-white/45">No tools registered in MCP Context Forge yet.</div>
                     ) : (
                       <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                         {catalogTools.map((t) => {
@@ -881,7 +884,7 @@ const ProjectWizard = ({
                     )}
 
                     {catalogAgents.length === 0 ? (
-                      <div className="text-xs text-white/45">No A2A agents discovered.</div>
+                      <div className="text-xs text-white/45">No A2A agents registered in MCP Context Forge yet.</div>
                     ) : (
                       <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                         {catalogAgents.map((a) => {
@@ -965,9 +968,38 @@ const ProjectWizard = ({
                       </div>
                     )}
 
-                    <div className="text-[10px] text-white/40">
-                      Import an MCP server as a gateway to auto-discover its tools.
-                    </div>
+                    {/* Discovered gateways list */}
+                    {catalogGateways.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {catalogGateways.map((g) => (
+                          <div
+                            key={g.id}
+                            className="flex items-center justify-between p-2 rounded-lg bg-white/[0.03] border border-white/5"
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                  g.enabled !== false ? 'bg-green-400/60' : 'bg-white/20'
+                                }`}
+                              />
+                              <div className="min-w-0">
+                                <div className="text-xs font-medium text-white/80 truncate">{g.name}</div>
+                                {g.url ? (
+                                  <div className="text-[10px] text-white/40 truncate">{g.url}</div>
+                                ) : null}
+                              </div>
+                            </div>
+                            {g.transport ? (
+                              <span className="text-[10px] text-white/30 shrink-0 ml-2">{g.transport}</span>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-white/40">
+                        No MCP servers imported yet. Import one to auto-discover its tools.
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
