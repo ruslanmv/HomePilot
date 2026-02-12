@@ -88,6 +88,11 @@ def get_aspect_ratios_for_model(model_type: Optional[str]) -> List[Dict[str, Any
     return result
 
 
+def _snap_to_grid(value: int, grid: int = 32) -> int:
+    """Snap a dimension to the nearest multiple of *grid*."""
+    return max(grid, round(value / grid) * grid)
+
+
 def get_dimensions_for_aspect_ratio(
     aspect_ratio: str,
     preset_name: str,
@@ -96,13 +101,16 @@ def get_dimensions_for_aspect_ratio(
     """
     Get width/height dimensions for a specific aspect ratio and preset.
 
+    Both width and height are guaranteed to be divisible by 32 (required by
+    LTX-Video and recommended for all video diffusion models).
+
     Args:
         aspect_ratio: The aspect ratio ('16:9', '9:16', '1:1', '4:3', '3:4')
         preset_name: Quality preset ('low', 'medium', 'high', 'ultra')
         model_type: Optional model type for compatibility check
 
     Returns:
-        Dict with 'width' and 'height' keys
+        Dict with 'width' and 'height' keys (both divisible by 32)
     """
     presets = _load_presets()
     aspect_ratios = presets.get("aspect_ratios", {})
@@ -120,9 +128,14 @@ def get_dimensions_for_aspect_ratio(
     dimensions = ratio_config.get("dimensions", {})
     preset_dims = dimensions.get(preset_name, dimensions.get("medium", {}))
 
+    # Snap to nearest multiple of 32 — prevents edge artifacts from
+    # internal padding/cropping in LTX-Video and similar models.
+    width = _snap_to_grid(preset_dims.get("width", 832))
+    height = _snap_to_grid(preset_dims.get("height", 480))
+
     return {
-        "width": preset_dims.get("width", 832),
-        "height": preset_dims.get("height", 480),
+        "width": width,
+        "height": height,
     }
 
 
