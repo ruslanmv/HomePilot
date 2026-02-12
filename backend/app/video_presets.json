@@ -12,24 +12,24 @@
       "compatible_models": ["ltx", "wan", "hunyuan"],
       "dimensions": {
         "test":   { "width": 480, "height": 320 },
-        "low":    { "width": 720, "height": 480 },
+        "low":    { "width": 672, "height": 448 },
         "medium": { "width": 960, "height": 640 },
         "high":   { "width": 1056, "height": 704 },
         "ultra":  { "width": 1152, "height": 768 }
       },
-      "notes": "All dimensions divisible by 32. Test=480x320 for quick testing, Low=720x480 safe for 8GB."
+      "notes": "All dimensions divisible by 32. Test=480x320 for quick testing, Low=672x448 safe for 8GB."
     },
     "16:9": {
       "ui_label": "Widescreen (16:9)",
       "compatible_models": ["svd", "ltx", "wan", "hunyuan", "mochi", "cogvideo"],
       "dimensions": {
         "test":   { "width": 512, "height": 288 },
-        "low":    { "width": 768, "height": 432 },
+        "low":    { "width": 800, "height": 448 },
         "medium": { "width": 1024, "height": 576 },
-        "high":   { "width": 1280, "height": 720 },
-        "ultra":  { "width": 1280, "height": 720 }
+        "high":   { "width": 1280, "height": 736 },
+        "ultra":  { "width": 1280, "height": 736 }
       },
-      "notes": "LTX native sweet spot. Test=512x288 minimal, Low=768x432 safe for 8GB, Medium=1024x576 optimal."
+      "notes": "All dimensions divisible by 32 (LTX requirement). Test=512x288 minimal, Low=800x448 safe for 8GB, Medium=1024x576 optimal."
     },
     "9:16": {
       "ui_label": "Vertical / Mobile (9:16)",
@@ -131,7 +131,7 @@
       },
       "model_overrides": {
         "svd": { "fps": 8, "steps": 20, "cfg": 2.5, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 97, "steps": 30, "cfg": 3.5, "denoise": 0.80 },
+        "ltx": { "fps": 24, "frames": 97, "steps": 30, "cfg": 3.5, "denoise": 0.70 },
         "wan": { "fps": 16, "steps": 30, "cfg": 5.0, "denoise": 1.0 },
         "hunyuan": { "fps": 16, "steps": 25, "cfg": 6.0, "denoise": 1.0, "notes": "Requires GGUF/Quantization on 12GB" },
         "mochi": { "fps": 24, "frames": 37, "steps": 40, "cfg": 4.5, "denoise": 1.0, "notes": "Requires FP8/Offloading on 12GB" }
@@ -155,7 +155,7 @@
       },
       "model_overrides": {
         "svd": { "fps": 8, "frames": 25, "steps": 25, "cfg": 2.5, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 129, "steps": 35, "cfg": 3.5, "denoise": 0.80 },
+        "ltx": { "fps": 24, "frames": 129, "steps": 35, "cfg": 3.5, "denoise": 0.70 },
         "wan": { "fps": 24, "frames": 97, "steps": 35, "cfg": 5.0, "denoise": 1.0 },
         "hunyuan": { "fps": 24, "frames": 97, "steps": 30, "cfg": 6.0, "denoise": 1.0 },
         "mochi": { "fps": 24, "frames": 85, "steps": 50, "cfg": 4.5, "denoise": 1.0 },
