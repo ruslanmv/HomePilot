@@ -48,12 +48,13 @@
     }
   },
   "6": {
-    "class_type": "ImageScaleToTotalPixels",
+    "class_type": "ImageScale",
     "inputs": {
       "image": ["1", 0],
       "upscale_method": "lanczos",
-      "megapixels": 0.4,
-      "resolution_steps": 32
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "crop": "center"
     }
   },
   "7": {
