@@ -52,12 +52,13 @@
     }
   },
   "7": {
-    "class_type": "ImageScaleToTotalPixels",
+    "class_type": "ImageScale",
     "inputs": {
       "image": ["1", 0],
       "upscale_method": "lanczos",
-      "megapixels": 0.4,
-      "resolution_steps": 64
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "crop": "center"
     }
   },
   "8": {
@@ -70,8 +71,8 @@
   "9": {
     "class_type": "EmptyHunyuanLatentVideo",
     "inputs": {
-      "width": 848,
-      "height": 480,
+      "width": "{{width}}",
+      "height": "{{height}}",
       "length": "{{frames}}",
       "batch_size": 1
     }
