@@ -175,6 +175,9 @@ class ChatIn(BaseModel):
     vidDenoise: Optional[float] = Field(None, description="Override denoise strength for video generation")
     vidSeed: Optional[int] = Field(None, description="Override seed for video generation (0 = random)")
     vidNegativePrompt: Optional[str] = Field(None, description="Custom negative prompt for video generation")
+    vidResolutionMode: Optional[str] = Field(None, description="Resolution mode: 'auto' (from preset) or 'override' (use vidWidth/vidHeight)")
+    vidWidth: Optional[int] = Field(None, description="Override video width (must be divisible by 32)")
+    vidHeight: Optional[int] = Field(None, description="Override video height (must be divisible by 32)")
     nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
     promptRefinement: Optional[bool] = Field(True, description="Enable AI prompt refinement for image generation (default: True)")
     # ----------------------------
@@ -581,8 +584,9 @@ async def get_video_presets(
         with open(presets_path, "r", encoding="utf-8") as f:
             presets_data = json.load(f)
 
-        # Default to medium preset
-        preset_name = preset or "medium"
+        # Default to medium preset; normalise common aliases
+        _preset_aliases = {"med": "medium"}
+        preset_name = _preset_aliases.get(preset or "", preset or "medium")
         if preset_name not in presets_data.get("presets", {}):
             return JSONResponse(
                 status_code=400,
@@ -636,10 +640,14 @@ async def get_video_presets(
         for ratio_id, ratio_config in aspect_ratios_data.items():
             compatible = ratio_config.get("compatible_models", [])
             if not model_lower or model_lower in compatible:
+                all_dims = ratio_config.get("dimensions", {})
                 compatible_ratios.append({
                     "id": ratio_id,
                     "label": ratio_config.get("ui_label", ratio_id),
-                    "dimensions": ratio_config.get("dimensions", {}).get(preset_name, {}),
+                    # Single-preset dims (backward compat)
+                    "dimensions": all_dims.get(preset_name, {}),
+                    # ALL preset tiers so the Override grid can show every option
+                    "all_dimensions": all_dims,
                 })
 
         # Determine default aspect ratio for the model
@@ -1687,10 +1695,10 @@ async def check_models_health(
 
 
 @app.get("/conversations")
-async def conversations(limit: int = Query(50, ge=1, le=200)) -> JSONResponse:
-    """List saved conversations (History/Today sidebar)."""
+async def conversations(limit: int = Query(50, ge=1, le=200), project_id: Optional[str] = Query(None)) -> JSONResponse:
+    """List saved conversations (History/Today sidebar). Optionally filter by project_id."""
     try:
-        items = list_conversations(limit=limit)
+        items = list_conversations(limit=limit, project_id=project_id)
         return JSONResponse(status_code=200, content={"ok": True, "conversations": items})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to list conversations: {e}", code="conversations_error"))
@@ -2039,6 +2047,9 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "vidDenoise": inp.vidDenoise,
         "vidSeed": inp.vidSeed,
         "vidNegativePrompt": inp.vidNegativePrompt,
+        "vidResolutionMode": inp.vidResolutionMode,
+        "vidWidth": inp.vidWidth,
+        "vidHeight": inp.vidHeight,
         "nsfwMode": inp.nsfwMode,
         "promptRefinement": inp.promptRefinement,
         # Reference image for img2img similar generation
