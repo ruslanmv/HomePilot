@@ -1156,8 +1156,8 @@ function ChatState({
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
       {/* Top-right fixed: Chat settings gear + New Chat icon (Phase 2, additive) */}
-      <div className="fixed top-4 right-4 z-50">
-        <div className="relative flex items-center gap-2">
+      <div className="fixed top-3 right-5 z-50">
+        <div className="relative flex items-center gap-3">
           <button
             type="button"
             onClick={() => setChatSettingsOpen((v) => !v)}
@@ -1893,9 +1893,14 @@ export default function App() {
 
   const fetchConversations = useCallback(async () => {
     try {
+      // When inside a project, only show that project's conversations
+      const projectId = localStorage.getItem('homepilot_current_project')
+      const path = projectId
+        ? `/conversations?project_id=${encodeURIComponent(projectId)}`
+        : '/conversations'
       const data = await getJson<{ ok: boolean; conversations: Conversation[] }>(
         settings.backendUrl,
-        '/conversations',
+        path,
         authHeaders
       )
       if (data.ok && data.conversations) {
@@ -1989,11 +1994,46 @@ export default function App() {
           )
           if (response.ok) {
             const data = await response.json()
+            const project = data.project
             setCurrentProject({
               id: projectId,
-              name: data.project.name,
-              document_count: data.project.document_count || 0
+              name: project.name,
+              document_count: project.document_count || 0,
+              project_type: project.project_type,
+              description: project.description,
+              instructions: project.instructions,
+              files: project.files,
+              agentic: project.agentic,
             })
+
+            // Restore last conversation for this project
+            const lastConvId = project.last_conversation_id
+            if (lastConvId) {
+              try {
+                const convData = await getJson<{
+                  ok: boolean
+                  messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
+                }>(
+                  settings.backendUrl,
+                  `/conversations/${lastConvId}/messages`,
+                  authHeaders
+                )
+                if (convData.ok && convData.messages && convData.messages.length > 0) {
+                  setChatConversationId(lastConvId)
+                  setChatMessages(
+                    convData.messages.map((m, idx) => ({
+                      id: `restored-${idx}`,
+                      role: m.role as 'user' | 'assistant',
+                      text: m.content,
+                      animate: false,
+                      media: m.media || undefined,
+                    }))
+                  )
+                }
+              } catch {
+                // Conversation load failed — keep current state
+              }
+            }
           }
         } catch (error) {
           console.error('Error loading project info:', error)
@@ -2762,7 +2802,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         {/* Top-right Project Indicator - Only shown in chat mode when a project is active */}
         {mode === 'chat' && (
-        <header className="absolute top-0 right-0 p-5 z-20 flex items-center gap-4">
+        <header className="absolute top-0 left-0 right-0 pr-[7rem] pl-5 py-3 z-20 flex items-center justify-end gap-3 pointer-events-none">
           {/* Project Indicator */}
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')
@@ -2771,13 +2811,13 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               const docCount = currentProject?.document_count || 0
 
               return (
-                <div className={`inline-flex items-center gap-2 ${
+                <div className={`pointer-events-auto inline-flex items-center gap-2 ${
                   currentProject?.project_type === 'agent'
                     ? 'bg-amber-600/20 text-amber-400 border-amber-600/30'
                     : 'bg-blue-600/20 text-blue-400 border-blue-600/30'
                 } text-xs font-semibold px-4 py-2 rounded-full border`}>
                   <Folder size={12} />
-                  <span>{projectName}</span>
+                  <span className="max-w-[120px] truncate">{projectName}</span>
                   {currentProject?.project_type === 'agent' && (
                     <span className="px-1.5 py-0.5 bg-amber-600/30 rounded text-[10px]">Agent</span>
                   )}
@@ -2873,8 +2913,42 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     agentic: project.agentic,
                   })
 
-                  // Start new conversation for this project
-                  onNewConversation()
+                  // Restore last conversation or start fresh
+                  const lastConvId = project.last_conversation_id
+                  if (lastConvId) {
+                    // Restore previous conversation for this project
+                    try {
+                      const convData = await getJson<{
+                        ok: boolean
+                        messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
+                      }>(
+                        settingsDraft.backendUrl,
+                        `/conversations/${lastConvId}/messages`,
+                        authHeaders
+                      )
+                      if (convData.ok && convData.messages && convData.messages.length > 0) {
+                        setConversationId(lastConvId)
+                        setMessages(
+                          convData.messages.map((m, idx) => ({
+                            id: `restored-${idx}`,
+                            role: m.role as 'user' | 'assistant',
+                            text: m.content,
+                            animate: false,
+                            media: m.media || undefined,
+                          }))
+                        )
+                      } else {
+                        // Conversation was empty/deleted — start fresh
+                        onNewConversation()
+                      }
+                    } catch {
+                      // Failed to load — start fresh
+                      onNewConversation()
+                    }
+                  } else {
+                    // No previous conversation — start fresh
+                    onNewConversation()
+                  }
 
                   // Agent projects: auto-enable agentic execution mode
                   if (project.project_type === 'agent') {
@@ -2889,9 +2963,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     }
                     updateChatSettings(agentSettings)
                   }
-
-                  // Empty state: no welcome message — ChatEmptyState handles it
-                  setMessages([])
 
                   // Route to the correct mode based on project type
                   if (project.project_type === 'image') {

@@ -259,6 +259,30 @@ const ProjectWizard = ({
     setSelectedA2AAgentIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
 
+  // Sync tool checkboxes when the bundle dropdown changes
+  // "All enabled tools" → check all enabled, "server:X" → check that server's tools, "none" → uncheck all
+  const catalogServers = useMemo(() => enrichedCatalog.catalog?.servers || [], [enrichedCatalog.catalog?.servers])
+
+  useEffect(() => {
+    if (projectType !== 'agent') return
+    if (!enrichedCatalog.catalog) return   // catalog not loaded yet
+
+    let nextIds: string[] = []
+    if (toolSource === 'all') {
+      nextIds = catalogTools.filter((t) => t.enabled !== false).map((t) => t.id)
+    } else if (toolSource.startsWith('server:')) {
+      const sid = toolSource.replace('server:', '')
+      const server = catalogServers.find((s) => s.id === sid)
+      if (server) {
+        const serverSet = new Set(server.tool_ids || [])
+        nextIds = catalogTools.filter((t) => serverSet.has(t.id)).map((t) => t.id)
+      }
+    }
+    // For 'none' → nextIds stays empty
+
+    setSelectedToolIds(nextIds)
+  }, [toolSource, catalogTools, catalogServers, projectType, enrichedCatalog.catalog])
+
   // Refresh catalog — delegates to the enriched catalog hook (single source of truth)
   const refreshCatalog = async () => {
     await enrichedCatalog.refresh()
@@ -523,12 +547,25 @@ const ProjectWizard = ({
 
     // Agent metadata: capabilities + optional real Forge bindings
     if (projectType === 'agent') {
+      // Resolve human-readable names for tools & agents so the system prompt can reference them
+      const toolDetails = selectedToolIds.map((tid) => {
+        const t = catalogTools.find((x) => x.id === tid)
+        return { id: tid, name: t?.name || tid, description: t?.description || '' }
+      })
+      const agentDetails = selectedA2AAgentIds.map((aid) => {
+        const a = catalogAgents.find((x) => x.id === aid)
+        return { id: aid, name: a?.name || aid, description: a?.description || '' }
+      })
+
       projectData.agentic = {
         goal: agentGoal,
         capabilities: agentCapabilities,
         // Additive: store selected Forge bindings (optional, for real tool/agent wiring)
         tool_ids: selectedToolIds,
         a2a_agent_ids: selectedA2AAgentIds,
+        // Resolved details for system prompt
+        tool_details: toolDetails,
+        agent_details: agentDetails,
         // Phase 7: virtual-server-first tool scope
         tool_source: toolSource,
         ask_before_acting: agentAskBeforeActing,
@@ -767,7 +804,14 @@ const ProjectWizard = ({
                   {/* ── Tools section ── */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <div className="text-xs font-semibold text-white/70">Tools</div>
+                      <div>
+                        <div className="text-xs font-semibold text-white/70">Tools</div>
+                        {toolSource !== 'none' && selectedToolIds.length > 0 && (
+                          <div className="text-[10px] text-white/40 mt-0.5">
+                            Auto-selected from {toolSource === 'all' ? 'all enabled tools' : 'virtual server'} — toggle to override
+                          </div>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => { setShowRegisterTool((v) => !v); setShowRegisterAgent(false); setShowRegisterGateway(false) }}

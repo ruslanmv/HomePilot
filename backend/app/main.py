@@ -581,8 +581,9 @@ async def get_video_presets(
         with open(presets_path, "r", encoding="utf-8") as f:
             presets_data = json.load(f)
 
-        # Default to medium preset
-        preset_name = preset or "medium"
+        # Default to medium preset; normalise common aliases
+        _preset_aliases = {"med": "medium"}
+        preset_name = _preset_aliases.get(preset or "", preset or "medium")
         if preset_name not in presets_data.get("presets", {}):
             return JSONResponse(
                 status_code=400,
@@ -1687,10 +1688,10 @@ async def check_models_health(
 
 
 @app.get("/conversations")
-async def conversations(limit: int = Query(50, ge=1, le=200)) -> JSONResponse:
-    """List saved conversations (History/Today sidebar)."""
+async def conversations(limit: int = Query(50, ge=1, le=200), project_id: Optional[str] = Query(None)) -> JSONResponse:
+    """List saved conversations (History/Today sidebar). Optionally filter by project_id."""
     try:
-        items = list_conversations(limit=limit)
+        items = list_conversations(limit=limit, project_id=project_id)
         return JSONResponse(status_code=200, content={"ok": True, "conversations": items})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to list conversations: {e}", code="conversations_error"))
