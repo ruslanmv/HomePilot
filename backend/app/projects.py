@@ -333,7 +333,20 @@ def update_project(project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, 
     if "project_type" in data:
         project["project_type"] = data["project_type"]
     if "agentic" in data and isinstance(data["agentic"], dict):
-        project["agentic"] = data["agentic"]
+        # Deep-merge: start from existing agentic data, overlay incoming fields.
+        # This prevents accidental loss of tool_ids / a2a_agent_ids when the
+        # frontend sends a partial update (e.g. only capabilities changed).
+        existing_agentic = project.get("agentic") or {}
+        merged = {**existing_agentic, **data["agentic"]}
+        # Preserve tool_details / agent_details from existing if incoming is empty
+        # but IDs are still present (stale-catalog guard).
+        for details_key, ids_key in [("tool_details", "tool_ids"), ("agent_details", "a2a_agent_ids")]:
+            incoming_details = data["agentic"].get(details_key)
+            incoming_ids = data["agentic"].get(ids_key)
+            existing_details = existing_agentic.get(details_key)
+            if (not incoming_details or len(incoming_details) == 0) and incoming_ids and existing_details:
+                merged[details_key] = existing_details
+        project["agentic"] = merged
 
     project["updated_at"] = time.time()
 
@@ -341,6 +354,20 @@ def update_project(project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, 
     _save_projects_db(db)
 
     return project
+
+def _save_project_conversation(project_id: str, conversation_id: str) -> None:
+    """Persist the last conversation_id on the project so it can be restored."""
+    db = _load_projects_db()
+    project = db.get(project_id)
+    if not project:
+        return
+    project.setdefault("conversation_ids", [])
+    if conversation_id not in project["conversation_ids"]:
+        project["conversation_ids"].append(conversation_id)
+    project["last_conversation_id"] = conversation_id
+    db[project_id] = project
+    _save_projects_db(db)
+
 
 # -------------------------------------------------------------------------
 # Chat Logic
@@ -365,8 +392,8 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
             "media": None
         }
 
-    # 1. Add user message to storage
-    add_message(conversation_id, "user", message)
+    # 1. Add user message to storage (tagged with project_id for history)
+    add_message(conversation_id, "user", message, project_id=project_id)
 
     # 2. Get recent conversation history
     history = get_recent(conversation_id, limit=24)
@@ -426,22 +453,83 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
         if project_data.get("project_type") == "agent" and agentic_data:
             caps = agentic_data.get("capabilities", [])
             goal = agentic_data.get("goal", "")
+            tool_ids = agentic_data.get("tool_ids", [])
+            a2a_agent_ids = agentic_data.get("a2a_agent_ids", [])
+            tool_source = agentic_data.get("tool_source", "none")
+            # Resolved details saved at project creation (name + description)
+            tool_details = {d["id"]: d for d in agentic_data.get("tool_details", []) if isinstance(d, dict)}
+            agent_details = {d["id"]: d for d in agentic_data.get("agent_details", []) if isinstance(d, dict)}
+
+            # Build human-readable list of attached tools & agents
+            attached_items: List[str] = []
+            for tid in tool_ids:
+                detail = tool_details.get(tid, {})
+                label = detail.get("name") or tid.replace("-", " ").replace("_", " ").title()
+                desc = detail.get("description", "")
+                entry = f"Tool: {label}"
+                if desc:
+                    entry += f" — {desc}"
+                attached_items.append(entry)
+            for aid in a2a_agent_ids:
+                detail = agent_details.get(aid, {})
+                label = detail.get("name") or aid.replace("-", " ").replace("_", " ").title()
+                desc = detail.get("description", "")
+                entry = f"A2A Agent: {label}"
+                if desc:
+                    entry += f" — {desc}"
+                attached_items.append(entry)
+
             cap_labels = {
                 "generate_images": "generating images",
                 "generate_videos": "generating short videos",
                 "analyze_documents": "analyzing documents",
                 "automate_external": "automating external services",
             }
-            cap_str = ", ".join(cap_labels.get(c, c) for c in caps) if caps else "general assistance"
+            cap_parts = [cap_labels.get(c, c) for c in caps]
+
+            # Compose the access description
+            access_lines: List[str] = []
+            if attached_items:
+                access_lines.append("Connected tools and agents:\n" + "\n".join(f"  - {it}" for it in attached_items))
+            if cap_parts:
+                access_lines.append("Capabilities: " + ", ".join(cap_parts) + ".")
+            if tool_source == "all":
+                access_lines.append("Tool scope: all enabled platform tools.")
+            elif tool_source.startswith("server:"):
+                access_lines.append(f"Tool scope: virtual server {tool_source.replace('server:', '')}.")
+
+            if not access_lines:
+                access_description = "general assistance (no specific tools attached)."
+            else:
+                access_description = "\n".join(access_lines)
+
+            # Build capability-specific usage hints (only for selected capabilities)
+            cap_hints: List[str] = []
+            has_images = "generate_images" in caps
+            has_videos = "generate_videos" in caps
+            if has_images:
+                cap_hints.append("For image generation: describe the scene concisely, the system will generate it automatically.")
+            if has_videos:
+                cap_hints.append("For video generation: describe the motion and scene, the system will generate it automatically.")
+            if has_images or has_videos:
+                media_types = []
+                if has_images:
+                    media_types.append("images")
+                if has_videos:
+                    media_types.append("videos")
+                cap_hints.append(f"Do not say \"I cannot generate {' or '.join(media_types)}\" — you CAN. The system handles it for you.")
+
+            cap_hints_str = "\n".join(cap_hints)
+
             agentic_hint = f"""
 
 AGENT MODE — ACTIVE
 You are an AI agent with the following goal: {goal}
-Your available capabilities include: {cap_str}.
+Your available resources:
+{access_description}
+IMPORTANT: When the user asks what tools or capabilities you have, list ONLY the resources described above. Do NOT invent, assume, or add any tools or capabilities beyond what is listed.
 When the user asks you to perform an action that matches your capabilities, DO IT rather than explaining how to do it.
-For image generation: describe the scene concisely, the system will generate it automatically.
-For video generation: describe the motion and scene, the system will generate it automatically.
-Do not say "I cannot generate images" — you CAN. The system handles tool execution for you."""
+{cap_hints_str}"""
 
         system_instruction = f"""You are HomePilot, acting as a specialized assistant for the project: "{name}".
 
@@ -480,8 +568,11 @@ Stick to the persona defined in the instructions. Be helpful, concise, and relev
         text = response.get("choices", [{}])[0].get("message", {}).get("content", "")
         text = text.strip() or "Could not generate response."
 
-        # 6. Add assistant message to storage
-        add_message(conversation_id, "assistant", text)
+        # 6. Add assistant message to storage (tagged with project_id)
+        add_message(conversation_id, "assistant", text, project_id=project_id)
+
+        # 7. Save last conversation_id on the project so it can be restored
+        _save_project_conversation(project_id, conversation_id)
 
         return {
             "type": "project",
@@ -493,7 +584,7 @@ Stick to the persona defined in the instructions. Be helpful, concise, and relev
 
     except Exception as e:
         error_text = f"Error in project chat: {str(e)}"
-        add_message(conversation_id, "assistant", error_text)
+        add_message(conversation_id, "assistant", error_text, project_id=project_id)
         return {
             "type": "project",
             "conversation_id": conversation_id,

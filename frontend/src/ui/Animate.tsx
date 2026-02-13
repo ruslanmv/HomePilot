@@ -161,6 +161,51 @@ type ResolutionOption = {
 }
 
 // -----------------------------------------------------------------------------
+// Video resolution helpers (additive)
+// -----------------------------------------------------------------------------
+
+type Dim = { width: number; height: number }
+
+function isDim(x: any): x is Dim {
+  return x && typeof x.width === 'number' && typeof x.height === 'number'
+}
+
+/** Returns the preset-derived (Auto) resolution for the current aspectRatio + qualityPreset */
+function getAutoVideoDims(opts: {
+  rawAspectRatioData: any[]
+  aspectRatio: string
+  qualityPreset: string
+}): Dim | null {
+  const { rawAspectRatioData, aspectRatio, qualityPreset } = opts
+  const ratioEntry = rawAspectRatioData?.find((ar: any) => ar.id === aspectRatio)
+
+  // Prefer all_dimensions (keyed by tier), fall back to legacy dimensions
+  const allDims = ratioEntry?.all_dimensions
+  if (allDims) {
+    const d = allDims[qualityPreset]
+    if (isDim(d)) return d
+    const fallback = allDims['medium']
+    return isDim(fallback) ? fallback : null
+  }
+
+  // Legacy path: dimensions was a flat {width, height} for the selected preset
+  const flat = ratioEntry?.dimensions
+  if (isDim(flat)) return flat
+  return null
+}
+
+/** Returns the override tier dims from availableResolutions */
+function getOverrideVideoDims(opts: {
+  availableResolutions: ResolutionOption[]
+  customResolution: string
+}): Dim | null {
+  const { availableResolutions, customResolution } = opts
+  if (customResolution === 'auto') return null
+  const hit = availableResolutions?.find((r) => r.id === customResolution)
+  return hit ? { width: hit.width, height: hit.height } : null
+}
+
+// -----------------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------------
 
@@ -299,6 +344,8 @@ export default function AnimateView(props: AnimateParams) {
   // Resolution override (allows testing different resolutions in Advanced Mode)
   const [customResolution, setCustomResolution] = useState<string>('auto')  // 'auto' | 'low' | 'medium' | 'high' | 'ultra'
   const [availableResolutions, setAvailableResolutions] = useState<ResolutionOption[]>([])
+  // Resolution mode (additive): "auto" uses preset-derived dims, "override" uses customResolution tier
+  const [vidResolutionMode, setVidResolutionMode] = useState<'auto' | 'override'>('auto')
 
   // Preset defaults from API (model-specific)
   const [presetDefaults, setPresetDefaults] = useState<PresetValues>(FALLBACK_ADVANCED_PARAMS)
@@ -324,7 +371,9 @@ export default function AnimateView(props: AnimateParams) {
         if (detectedModelType) params.set('model', detectedModelType)
         // Map hardware presets to video quality presets
         // Hardware: 4060 → low, 4080 → medium, a100 → high, custom → medium
+        // Also normalise "med" → "medium" (UI shorthand)
         const videoPreset = qualityPreset === 'custom' ? 'medium'
+          : qualityPreset === 'med' ? 'medium'
           : qualityPreset === '4060' ? 'low'
           : qualityPreset === '4080' ? 'medium'
           : qualityPreset === 'a100' ? 'high'
@@ -382,12 +431,15 @@ export default function AnimateView(props: AnimateParams) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.backendUrl, authKey, detectedModelType, qualityPreset])
 
-  // Update available resolutions when aspect ratio changes
+  // Update available resolutions when aspect ratio or model changes
+  // Uses all_dimensions (every tier) so the Override grid shows all options
   useEffect(() => {
     if (rawAspectRatioData.length === 0) return
 
     const currentRatioData = rawAspectRatioData.find((ar: any) => ar.id === aspectRatio)
-    if (currentRatioData?.dimensions) {
+    // Prefer all_dimensions (every tier), fall back to single-preset dimensions
+    const allDims = currentRatioData?.all_dimensions || currentRatioData?.dimensions
+    if (allDims && typeof allDims === 'object') {
       const presetLabels: Record<string, string> = {
         test: 'Lowest (6GB)',
         low: 'Low (8GB)',
@@ -395,19 +447,30 @@ export default function AnimateView(props: AnimateParams) {
         high: 'High (16GB)',
         ultra: 'Ultra (24GB+)',
       }
-      const resolutions: ResolutionOption[] = Object.entries(currentRatioData.dimensions)
-        .filter(([_, dims]: [string, any]) => dims?.width && dims?.height)
-        .map(([preset, dims]: [string, any]) => ({
-          id: preset,
-          label: `${dims.width}×${dims.height} ${presetLabels[preset] || preset}`,
-          width: dims.width,
-          height: dims.height,
+      // Ensure consistent ordering
+      const tierOrder = ['test', 'low', 'medium', 'high', 'ultra']
+      const resolutions: ResolutionOption[] = tierOrder
+        .filter((tier) => allDims[tier]?.width && allDims[tier]?.height)
+        .map((tier) => ({
+          id: tier,
+          label: `${allDims[tier].width}×${allDims[tier].height} ${presetLabels[tier] || tier}`,
+          width: allDims[tier].width,
+          height: allDims[tier].height,
         }))
       setAvailableResolutions(resolutions)
-      // Reset to auto when aspect ratio changes
-      setCustomResolution('auto')
+      // Smart reset: keep override tier if still available, otherwise fall back to auto
+      if (vidResolutionMode === 'override' && customResolution !== 'auto') {
+        const stillValid = resolutions.some((r) => r.id === customResolution)
+        if (!stillValid) {
+          setCustomResolution('auto')
+          setVidResolutionMode('auto')
+        }
+      } else {
+        setCustomResolution('auto')
+        setVidResolutionMode('auto')
+      }
     }
-  }, [aspectRatio, rawAspectRatioData])
+  }, [aspectRatio, rawAspectRatioData])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Helper to get preview dimensions for aspect ratio thumbnails
   function getPreviewDimension(ratioId: string, dimension: 'width' | 'height'): number {
@@ -432,6 +495,7 @@ export default function AnimateView(props: AnimateParams) {
     setCustomNegativePrompt('')
     setShowNegativePrompt(false)
     setCustomResolution('auto')  // Reset resolution to use preset default
+    setVidResolutionMode('auto')
   }, [presetDefaults])
 
   // Reset Video Settings to model-specific defaults
@@ -644,6 +708,24 @@ export default function AnimateView(props: AnimateParams) {
     }
   }, [props.backendUrl, authKey])
 
+  // --- Compute effective video dimensions (used by callbacks + render) ---
+  const mappedPreset = useMemo(() => {
+    return qualityPreset === 'custom' ? 'medium'
+      : qualityPreset === 'med' ? 'medium'
+      : qualityPreset === '4060' ? 'low'
+      : qualityPreset === '4080' ? 'medium'
+      : qualityPreset === 'a100' ? 'high'
+      : qualityPreset
+  }, [qualityPreset])
+  const autoDims = useMemo(() => getAutoVideoDims({ rawAspectRatioData, aspectRatio, qualityPreset: mappedPreset }), [rawAspectRatioData, aspectRatio, mappedPreset])
+  const overrideDims = useMemo(() => getOverrideVideoDims({ availableResolutions, customResolution }), [availableResolutions, customResolution])
+  const effectiveDims = vidResolutionMode === 'override' && overrideDims ? overrideDims : autoDims
+  // Actual duration from frames/fps (honest reporting)
+  const actualDuration = presetDefaults?.frames && presetDefaults?.fps
+    ? (presetDefaults.frames / presetDefaults.fps).toFixed(1)
+    : null
+  // Model capability flags (for conditional UI)
+  const isMotionSupported = detectedModelType !== 'svd'
   const handleGenerate = useCallback(async () => {
     // For animate, we need either a prompt or a reference image
     const t = prompt.trim()
@@ -698,13 +780,14 @@ export default function AnimateView(props: AnimateParams) {
         ? `animate ${referenceUrl} ${effectivePrompt}`
         : `animate ${effectivePrompt}`
 
-      // Get custom resolution dimensions if not auto
-      const customResDims = customResolution !== 'auto'
-        ? availableResolutions.find(r => r.id === customResolution)
-        : null
+      // Determine video resolution override values (additive + backward compatible)
+      const useOverride = vidResolutionMode === 'override' && overrideDims != null
+      const resolvedVidWidth = useOverride ? overrideDims!.width : autoDims?.width
+      const resolvedVidHeight = useOverride ? overrideDims!.height : autoDims?.height
 
-      // Map hardware presets to video quality presets
+      // Map hardware presets to video quality presets (normalise "med" → "medium")
       const videoPreset = qualityPreset === 'custom' ? 'medium'
+        : qualityPreset === 'med' ? 'medium'
         : qualityPreset === '4060' ? 'low'
         : qualityPreset === '4080' ? 'medium'
         : qualityPreset === 'a100' ? 'high'
@@ -722,6 +805,19 @@ export default function AnimateView(props: AnimateParams) {
         vidPreset: videoPreset,
         vidAspectRatio: aspectRatio,
 
+        // Video resolution override (new, preferred fields)
+        vidResolutionMode: useOverride ? 'override' : 'auto',
+        ...(useOverride && {
+          vidWidth: resolvedVidWidth,
+          vidHeight: resolvedVidHeight,
+        }),
+
+        // Legacy compatibility (keep until backend fully switches to vidWidth/vidHeight)
+        ...(useOverride && {
+          imgWidth: resolvedVidWidth,
+          imgHeight: resolvedVidHeight,
+        }),
+
         // Advanced parameters (when enabled)
         ...(advancedMode && {
           vidSteps: customSteps,
@@ -729,11 +825,6 @@ export default function AnimateView(props: AnimateParams) {
           vidDenoise: customDenoise,
           ...(seedLock && { vidSeed: customSeed }),
           ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
-          // Custom resolution override (for testing different VRAM requirements)
-          ...(customResDims && {
-            imgWidth: customResDims.width,
-            imgHeight: customResDims.height,
-          }),
         }),
 
         // Provider settings
@@ -836,7 +927,7 @@ export default function AnimateView(props: AnimateParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, aspectRatio, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
+  }, [prompt, referenceUrl, isGenerating, seconds, fps, motion, qualityPreset, aspectRatio, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt, vidResolutionMode, autoDims, overrideDims])
 
   const handleDelete = useCallback((item: AnimateItem, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -890,13 +981,14 @@ export default function AnimateView(props: AnimateParams) {
         ? `animate ${existingSourceImage} ${lightboxPrompt}`
         : `animate ${lightboxPrompt}`
 
-      // Get custom resolution dimensions if not auto
-      const customResDims = customResolution !== 'auto'
-        ? availableResolutions.find(r => r.id === customResolution)
-        : null
+      // Determine video resolution override values (additive + backward compatible)
+      const regenUseOverride = vidResolutionMode === 'override' && overrideDims != null
+      const regenVidWidth = regenUseOverride ? overrideDims!.width : autoDims?.width
+      const regenVidHeight = regenUseOverride ? overrideDims!.height : autoDims?.height
 
-      // Map hardware presets to video quality presets
+      // Map hardware presets to video quality presets (normalise "med" → "medium")
       const videoPreset = qualityPreset === 'custom' ? 'medium'
+        : qualityPreset === 'med' ? 'medium'
         : qualityPreset === '4060' ? 'low'
         : qualityPreset === '4080' ? 'medium'
         : qualityPreset === 'a100' ? 'high'
@@ -914,17 +1006,23 @@ export default function AnimateView(props: AnimateParams) {
         // When we have an existing source image, tell backend to skip image generation
         // The prompt should only affect the animation, not regenerate the source
         ...(existingSourceImage && { skipImageGeneration: true }),
+        // Video resolution override (new, preferred fields)
+        vidResolutionMode: regenUseOverride ? 'override' : 'auto',
+        ...(regenUseOverride && {
+          vidWidth: regenVidWidth,
+          vidHeight: regenVidHeight,
+        }),
+        // Legacy compatibility
+        ...(regenUseOverride && {
+          imgWidth: regenVidWidth,
+          imgHeight: regenVidHeight,
+        }),
         ...(advancedMode && {
           vidSteps: customSteps,
           vidCfg: customCfg,
           vidDenoise: customDenoise,
           ...(seedLock && { vidSeed: customSeed }),
           ...(customNegativePrompt.trim() && { vidNegativePrompt: customNegativePrompt.trim() }),
-          // Custom resolution override
-          ...(customResDims && {
-            imgWidth: customResDims.width,
-            imgHeight: customResDims.height,
-          }),
         }),
         provider: props.providerVideo === 'comfyui' ? 'ollama' : props.providerVideo,
         provider_base_url: props.baseUrlVideo || undefined,
@@ -1005,7 +1103,7 @@ export default function AnimateView(props: AnimateParams) {
       setRegenProgress(null)
       setRegenAbortController(null)
     }
-  }, [selectedVideo, lightboxPrompt, isRegenerating, seconds, fps, motion, qualityPreset, aspectRatio, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt])
+  }, [selectedVideo, lightboxPrompt, isRegenerating, seconds, fps, motion, qualityPreset, aspectRatio, props, authKey, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, customNegativePrompt, vidResolutionMode, autoDims, overrideDims])
 
   // Cancel in-place regeneration
   const handleCancelRegeneration = useCallback(() => {
@@ -1102,38 +1200,66 @@ export default function AnimateView(props: AnimateParams) {
                   </div>
                 </div>
 
-                {/* Resolution Override */}
+                {/* Resolution: Auto(Preset) vs Override tier */}
                 <div className="space-y-2">
                   <div className="flex justify-between items-center text-xs">
                     <span className="uppercase tracking-wider text-white/40 font-semibold">Resolution</span>
-                    <span className="text-white/40 text-[10px]">{aspectRatio}</span>
+                    {effectiveDims && (
+                      <span className="text-purple-400/60 font-mono text-[10px]">
+                        {effectiveDims.width}x{effectiveDims.height}
+                      </span>
+                    )}
                   </div>
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <div className="flex gap-1.5 mb-1.5">
                     <button
-                      onClick={() => setCustomResolution('auto')}
-                      className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
-                        customResolution === 'auto'
+                      onClick={() => { setVidResolutionMode('auto'); setCustomResolution('auto') }}
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                        vidResolutionMode === 'auto'
                           ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
                           : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
                       }`}
                     >
                       Auto (Preset)
                     </button>
-                    {availableResolutions.map((r) => (
-                      <button
-                        key={r.id}
-                        onClick={() => setCustomResolution(r.id)}
-                        title={`${r.width}×${r.height}`}
-                        className={`py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
-                          customResolution === r.id
-                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                            : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                        }`}
-                      >
-                        {r.label}
-                      </button>
-                    ))}
+                    <button
+                      onClick={() => setVidResolutionMode('override')}
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                        vidResolutionMode === 'override'
+                          ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                          : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                      }`}
+                    >
+                      Override
+                    </button>
                   </div>
+                  {vidResolutionMode === 'override' && (
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {availableResolutions.map((r) => {
+                        const isSelected = customResolution === r.id
+                        const isCurrentPreset = r.id === mappedPreset
+                        return (
+                          <button
+                            key={r.id}
+                            onClick={() => setCustomResolution(r.id)}
+                            title={`${r.width}x${r.height}${isCurrentPreset ? ' (current preset default)' : ''}`}
+                            className={`relative py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                              isSelected
+                                ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                                : isCurrentPreset
+                                  ? 'bg-white/8 text-white/80 border border-white/20 ring-1 ring-purple-500/25'
+                                  : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                            }`}
+                          >
+                            <div className="font-mono text-[10px]">{r.width}x{r.height}</div>
+                            <div className="text-[9px] text-white/40 capitalize">{r.id}</div>
+                            {isCurrentPreset && !isSelected && (
+                              <div className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-purple-400/60 rounded-full" />
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                   <p className="text-[10px] text-white/30 leading-relaxed">
                     Override resolution to test what works best on your GPU. Lower = faster, less VRAM.
                   </p>
@@ -1241,6 +1367,37 @@ export default function AnimateView(props: AnimateParams) {
                     placeholder="Seed value"
                   />
                 )}
+
+                {/* Final Output Summary */}
+                <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10">
+                  <div className="uppercase tracking-wider text-white/40 font-semibold text-xs mb-2">Final Output</div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Resolution</span>
+                      <span className="text-white/70 font-mono">
+                        {effectiveDims ? `${effectiveDims.width}x${effectiveDims.height}` : '\u2014'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Aspect</span>
+                      <span className="text-white/70 font-mono">{aspectRatio}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/40">Frames</span>
+                      <span className="text-white/70 font-mono">{presetDefaults?.frames ?? '\u2014'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-white/40">FPS</span>
+                      <span className="text-white/70 font-mono">{presetDefaults?.fps ?? '\u2014'}</span>
+                    </div>
+                    <div className="flex justify-between col-span-2">
+                      <span className="text-white/40">Duration</span>
+                      <span className="text-white/70 font-mono">
+                        {actualDuration ? `~${actualDuration}s` : '\u2014'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1519,21 +1676,27 @@ export default function AnimateView(props: AnimateParams) {
                 </div>
               </div>
 
-              {/* Motion Strength */}
-              <div className="mb-4">
-                <label className="text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2 block">
-                  Motion Strength
-                </label>
+              {/* Motion Strength (model-aware: disabled for SVD) */}
+              <div className={`mb-4 ${!isMotionSupported ? 'opacity-50' : ''}`}>
+                <div className="flex justify-between items-center text-[11px] font-bold text-white/40 uppercase tracking-wider mb-2">
+                  <span>Motion Strength</span>
+                  {!isMotionSupported && detectedModelType && (
+                    <span className="text-yellow-500/60 normal-case font-normal text-[10px]">
+                      Not supported by {detectedModelType.toUpperCase()}
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   {MOTION_PRESETS.map((m) => (
                     <button
                       key={m.value}
-                      onClick={() => setMotion(m.value)}
+                      onClick={() => isMotionSupported && setMotion(m.value)}
+                      disabled={!isMotionSupported}
                       className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
                         motion === m.value
                           ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
                           : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                      }`}
+                      } ${!isMotionSupported ? 'cursor-not-allowed' : ''}`}
                     >
                       <div>{m.label}</div>
                       <div className="text-[10px] text-white/40 mt-0.5">{m.description}</div>
@@ -1692,7 +1855,8 @@ export default function AnimateView(props: AnimateParams) {
               <span>·</span>
               <span className="text-white/55">{aspectRatio}</span>
               <span>·</span>
-              <span>{qualityPreset} · {seconds}s @ {fps}fps · {motion} motion</span>
+              {effectiveDims && <><span className="text-white/55 font-mono">{effectiveDims.width}x{effectiveDims.height}</span><span>·</span></>}
+              <span>{qualityPreset} · {actualDuration ? `~${actualDuration}s` : `${seconds}s`} @ {fps}fps · {motion} motion</span>
             </div>
           </div>
         </div>

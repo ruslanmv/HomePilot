@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .auth import require_api_key
+from .model_config import get_model_settings, detect_architecture_from_filename
 # Import config and storage as modules so we can patch paths if needed
 from . import config, storage, projects, search
 from .config import (
@@ -164,6 +165,7 @@ class ChatIn(BaseModel):
     imgModel: Optional[str] = Field(None, description="Image model selection (sdxl, flux-schnell, flux-dev, pony-xl, sd15-uncensored)")
     imgBatchSize: Optional[int] = Field(1, ge=1, le=4, description="Number of images to generate per request (1, 2, or 4)")
     imgPreset: Optional[str] = Field(None, description="Image quality preset (low, med, high, ultra)")
+    imgResolutionOverride: Optional[bool] = Field(None, description="When true, imgWidth/imgHeight override preset dims additively")
     vidSeconds: Optional[int] = Field(None, description="Video duration in seconds")
     vidFps: Optional[int] = Field(None, description="Video FPS")
     vidMotion: Optional[str] = Field(None, description="Video motion bucket")
@@ -175,6 +177,9 @@ class ChatIn(BaseModel):
     vidDenoise: Optional[float] = Field(None, description="Override denoise strength for video generation")
     vidSeed: Optional[int] = Field(None, description="Override seed for video generation (0 = random)")
     vidNegativePrompt: Optional[str] = Field(None, description="Custom negative prompt for video generation")
+    vidResolutionMode: Optional[str] = Field(None, description="Resolution mode: 'auto' (from preset) or 'override' (use vidWidth/vidHeight)")
+    vidWidth: Optional[int] = Field(None, description="Override video width (must be divisible by 32)")
+    vidHeight: Optional[int] = Field(None, description="Override video height (must be divisible by 32)")
     nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
     promptRefinement: Optional[bool] = Field(True, description="Enable AI prompt refinement for image generation (default: True)")
     # ----------------------------
@@ -581,8 +586,9 @@ async def get_video_presets(
         with open(presets_path, "r", encoding="utf-8") as f:
             presets_data = json.load(f)
 
-        # Default to medium preset
-        preset_name = preset or "medium"
+        # Default to medium preset; normalise common aliases
+        _preset_aliases = {"med": "medium"}
+        preset_name = _preset_aliases.get(preset or "", preset or "medium")
         if preset_name not in presets_data.get("presets", {}):
             return JSONResponse(
                 status_code=400,
@@ -636,10 +642,14 @@ async def get_video_presets(
         for ratio_id, ratio_config in aspect_ratios_data.items():
             compatible = ratio_config.get("compatible_models", [])
             if not model_lower or model_lower in compatible:
+                all_dims = ratio_config.get("dimensions", {})
                 compatible_ratios.append({
                     "id": ratio_id,
                     "label": ratio_config.get("ui_label", ratio_id),
-                    "dimensions": ratio_config.get("dimensions", {}).get(preset_name, {}),
+                    # Single-preset dims (backward compat)
+                    "dimensions": all_dims.get(preset_name, {}),
+                    # ALL preset tiers so the Override grid can show every option
+                    "all_dimensions": all_dims,
                 })
 
         # Determine default aspect ratio for the model
@@ -760,6 +770,36 @@ async def get_image_presets(
         if not default_aspect_ratio:
             default_aspect_ratio = "1:1"
 
+        # Compute resolution for EVERY available preset tier (low/med/high/ultra)
+        # for EVERY compatible aspect ratio, using the actual model_config preset
+        # system. This gives the frontend the exact WxH that each preset produces.
+        available_presets = list(presets_data.get("presets", {}).keys())
+        preset_resolutions: Dict[str, Any] = {}  # { aspect_ratio: { preset: {w,h} } }
+        if model:
+            for cr in compatible_ratios:
+                ar_id = cr["id"]
+                ar_presets: Dict[str, Any] = {}
+                for pr in available_presets:
+                    try:
+                        settings = get_model_settings(
+                            model_filename=model,
+                            aspect_ratio=ar_id,
+                            preset=pr,
+                        )
+                        ar_presets[pr] = {
+                            "width": settings["width"],
+                            "height": settings["height"],
+                        }
+                    except Exception:
+                        pass
+                if ar_presets:
+                    preset_resolutions[ar_id] = ar_presets
+
+        # Also include UI labels from presets for the resolution grid
+        preset_ui = {}
+        for pr_name, pr_config in presets_data.get("presets", {}).items():
+            preset_ui[pr_name] = pr_config.get("ui", {})
+
         return JSONResponse(
             status_code=200,
             content={
@@ -772,6 +812,9 @@ async def get_image_presets(
                 "ui": preset_config.get("ui", {}),
                 "compatible_aspect_ratios": compatible_ratios,
                 "default_aspect_ratio": default_aspect_ratio,
+                "preset_resolutions": preset_resolutions,
+                "preset_ui": preset_ui,
+                "available_presets": available_presets,
             },
         )
 
@@ -1687,10 +1730,10 @@ async def check_models_health(
 
 
 @app.get("/conversations")
-async def conversations(limit: int = Query(50, ge=1, le=200)) -> JSONResponse:
-    """List saved conversations (History/Today sidebar)."""
+async def conversations(limit: int = Query(50, ge=1, le=200), project_id: Optional[str] = Query(None)) -> JSONResponse:
+    """List saved conversations (History/Today sidebar). Optionally filter by project_id."""
     try:
-        items = list_conversations(limit=limit)
+        items = list_conversations(limit=limit, project_id=project_id)
         return JSONResponse(status_code=200, content={"ok": True, "conversations": items})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to list conversations: {e}", code="conversations_error"))
@@ -2021,6 +2064,7 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "textMaxTokens": inp.textMaxTokens,
         "imgWidth": inp.imgWidth,
         "imgHeight": inp.imgHeight,
+        "imgResolutionOverride": inp.imgResolutionOverride,
         "imgAspectRatio": inp.imgAspectRatio,
         "imgSteps": inp.imgSteps,
         "imgCfg": inp.imgCfg,
@@ -2039,6 +2083,9 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "vidDenoise": inp.vidDenoise,
         "vidSeed": inp.vidSeed,
         "vidNegativePrompt": inp.vidNegativePrompt,
+        "vidResolutionMode": inp.vidResolutionMode,
+        "vidWidth": inp.vidWidth,
+        "vidHeight": inp.vidHeight,
         "nsfwMode": inp.nsfwMode,
         "promptRefinement": inp.promptRefinement,
         # Reference image for img2img similar generation
