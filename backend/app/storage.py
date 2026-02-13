@@ -58,11 +58,18 @@ def init_db():
     except sqlite3.OperationalError:
         # Column already exists
         pass
+    # Add project_id column to existing tables (migration)
+    try:
+        cur.execute("ALTER TABLE messages ADD COLUMN project_id TEXT")
+        con.commit()
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
     con.commit()
     con.close()
 
 
-def add_message(conversation_id: str, role: str, content: str, media: Optional[Dict[str, Any]] = None):
+def add_message(conversation_id: str, role: str, content: str, media: Optional[Dict[str, Any]] = None, project_id: Optional[str] = None):
     """
     Add a message to the database with optional media attachments.
 
@@ -72,6 +79,7 @@ def add_message(conversation_id: str, role: str, content: str, media: Optional[D
         content: Message text content
         media: Optional dict containing images/videos, e.g.:
                {"images": ["url1", "url2"], "video_url": "url"}
+        project_id: Optional project ID this conversation belongs to
     """
     path = _get_db_path()
     con = sqlite3.connect(path)
@@ -81,8 +89,8 @@ def add_message(conversation_id: str, role: str, content: str, media: Optional[D
     media_json = json.dumps(media) if media else None
 
     cur.execute(
-        "INSERT INTO messages(conversation_id, role, content, media) VALUES (?,?,?,?)",
-        (conversation_id, role, content, media_json),
+        "INSERT INTO messages(conversation_id, role, content, media, project_id) VALUES (?,?,?,?,?)",
+        (conversation_id, role, content, media_json, project_id),
     )
     con.commit()
     con.close()
@@ -106,24 +114,40 @@ def get_recent(conversation_id: str, limit: int = 24) -> List[Tuple[str, str]]:
     return list(reversed(rows))
 
 
-def list_conversations(limit: int = 50) -> List[Dict[str, Any]]:
+def list_conversations(limit: int = 50, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Returns most recent conversations, with last message preview.
+    If project_id is given, only returns conversations belonging to that project.
     """
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
-    cur.execute(
-        """
-        SELECT m.conversation_id,
-               MAX(m.id) as max_id
-        FROM messages m
-        GROUP BY m.conversation_id
-        ORDER BY max_id DESC
-        LIMIT ?
-        """,
-        (limit,),
-    )
+
+    if project_id:
+        cur.execute(
+            """
+            SELECT m.conversation_id,
+                   MAX(m.id) as max_id
+            FROM messages m
+            WHERE m.project_id = ?
+            GROUP BY m.conversation_id
+            ORDER BY max_id DESC
+            LIMIT ?
+            """,
+            (project_id, limit),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT m.conversation_id,
+                   MAX(m.id) as max_id
+            FROM messages m
+            GROUP BY m.conversation_id
+            ORDER BY max_id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
     convs = cur.fetchall()
 
     out: List[Dict[str, Any]] = []

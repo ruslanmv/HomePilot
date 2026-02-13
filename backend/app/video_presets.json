@@ -12,24 +12,24 @@
       "compatible_models": ["ltx", "wan", "hunyuan"],
       "dimensions": {
         "test":   { "width": 480, "height": 320 },
-        "low":    { "width": 720, "height": 480 },
-        "medium": { "width": 960, "height": 640 },
-        "high":   { "width": 1056, "height": 704 },
+        "low":    { "width": 576, "height": 384 },
+        "medium": { "width": 768, "height": 512 },
+        "high":   { "width": 864, "height": 576 },
         "ultra":  { "width": 1152, "height": 768 }
       },
-      "notes": "All dimensions divisible by 32. Test=480x320 for quick testing, Low=720x480 safe for 8GB."
+      "notes": "All dims ÷32. 768x512 is the LTX v0.9.1 native training resolution. High=864x576 fits 12GB."
     },
     "16:9": {
       "ui_label": "Widescreen (16:9)",
       "compatible_models": ["svd", "ltx", "wan", "hunyuan", "mochi", "cogvideo"],
       "dimensions": {
         "test":   { "width": 512, "height": 288 },
-        "low":    { "width": 768, "height": 432 },
-        "medium": { "width": 1024, "height": 576 },
-        "high":   { "width": 1280, "height": 720 },
-        "ultra":  { "width": 1280, "height": 720 }
+        "low":    { "width": 640, "height": 352 },
+        "medium": { "width": 800, "height": 448 },
+        "high":   { "width": 896, "height": 512 },
+        "ultra":  { "width": 1280, "height": 736 }
       },
-      "notes": "LTX native sweet spot. Test=512x288 minimal, Low=768x432 safe for 8GB, Medium=1024x576 optimal."
+      "notes": "All dims ÷32. Medium=800x448 balanced for 12GB. High=896x512 pushes 12GB. Ultra exceeds 12GB (24GB+)."
     },
     "9:16": {
       "ui_label": "Vertical / Mobile (9:16)",
@@ -37,11 +37,11 @@
       "dimensions": {
         "test":   { "width": 288, "height": 512 },
         "low":    { "width": 352, "height": 640 },
-        "medium": { "width": 480, "height": 832 },
-        "high":   { "width": 480, "height": 832 },
+        "medium": { "width": 448, "height": 800 },
+        "high":   { "width": 512, "height": 896 },
         "ultra":  { "width": 576, "height": 1024 }
       },
-      "notes": "Excluded SVD, Mochi, and CogVideo due to poor vertical training data."
+      "notes": "Mirror of 16:9. Excluded SVD, Mochi, and CogVideo (poor vertical training data)."
     },
     "1:1": {
       "ui_label": "Square (1:1)",
@@ -50,10 +50,10 @@
         "test":   { "width": 384, "height": 384 },
         "low":    { "width": 512, "height": 512 },
         "medium": { "width": 640, "height": 640 },
-        "high":   { "width": 768, "height": 768 },
+        "high":   { "width": 704, "height": 704 },
         "ultra":  { "width": 896, "height": 896 }
       },
-      "notes": "Excluded SVD and Mochi (landscape bias)."
+      "notes": "Excluded SVD and Mochi (landscape bias). High=704x704 fits 12GB."
     },
     "4:3": {
       "ui_label": "Classic TV (4:3)",
@@ -62,9 +62,10 @@
         "test":   { "width": 416, "height": 320 },
         "low":    { "width": 576, "height": 448 },
         "medium": { "width": 768, "height": 576 },
-        "high":   { "width": 768, "height": 576 },
+        "high":   { "width": 832, "height": 608 },
         "ultra":  { "width": 896, "height": 672 }
-      }
+      },
+      "notes": "High=832x608 fits 12GB. All dims ÷32."
     },
     "3:4": {
       "ui_label": "Portrait (3:4)",
@@ -73,9 +74,10 @@
         "test":   { "width": 320, "height": 416 },
         "low":    { "width": 448, "height": 576 },
         "medium": { "width": 576, "height": 768 },
-        "high":   { "width": 576, "height": 768 },
+        "high":   { "width": 608, "height": 832 },
         "ultra":  { "width": 672, "height": 896 }
-      }
+      },
+      "notes": "Mirror of 4:3. High=608x832 fits 12GB."
     },
     "21:9": {
       "ui_label": "Cinematic Ultra-Wide (21:9)",
@@ -84,10 +86,10 @@
         "test":   { "width": 512, "height": 224 },
         "low":    { "width": 672, "height": 288 },
         "medium": { "width": 896, "height": 384 },
-        "high":   { "width": 896, "height": 384 },
+        "high":   { "width": 960, "height": 416 },
         "ultra":  { "width": 1120, "height": 480 }
       },
-      "notes": "Cinematic letterbox. Keep pixel count moderate for stability."
+      "notes": "Cinematic letterbox. High=960x416 fits 12GB. All dims ÷32."
     }
   },
 
@@ -109,7 +111,7 @@
       },
       "model_overrides": {
         "svd": { "fps": 6, "steps": 16, "cfg": 2.2, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 49, "steps": 25, "cfg": 3.0, "denoise": 0.70 },
+        "ltx": { "fps": 24, "frames": 49, "steps": 25, "cfg": 3.0, "denoise": 0.80 },
         "wan": { "fps": 16, "steps": 20, "cfg": 4.0, "denoise": 1.0, "notes": "Use Wan 1.3B only" }
       }
     },
@@ -131,7 +133,7 @@
       },
       "model_overrides": {
         "svd": { "fps": 8, "steps": 20, "cfg": 2.5, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 97, "steps": 30, "cfg": 3.5, "denoise": 0.80 },
+        "ltx": { "fps": 24, "frames": 97, "steps": 30, "cfg": 3.5, "denoise": 0.85 },
         "wan": { "fps": 16, "steps": 30, "cfg": 5.0, "denoise": 1.0 },
         "hunyuan": { "fps": 16, "steps": 25, "cfg": 6.0, "denoise": 1.0, "notes": "Requires GGUF/Quantization on 12GB" },
         "mochi": { "fps": 24, "frames": 37, "steps": 40, "cfg": 4.5, "denoise": 1.0, "notes": "Requires FP8/Offloading on 12GB" }
@@ -141,8 +143,8 @@
     "high": {
       "ui": {
         "label": "High (Quality)",
-        "short": "Proven stable quality",
-        "description": "For 16GB+ VRAM. Matches proven working LTX configuration."
+        "short": "Best quality for 12GB",
+        "description": "For 12GB VRAM (RTX 4080). Higher resolution + more steps than medium, same duration."
       },
       "base": {
         "fps": 24,
@@ -155,7 +157,7 @@
       },
       "model_overrides": {
         "svd": { "fps": 8, "frames": 25, "steps": 25, "cfg": 2.5, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 129, "steps": 35, "cfg": 3.5, "denoise": 0.80 },
+        "ltx": { "fps": 24, "frames": 97, "steps": 35, "cfg": 3.5, "denoise": 0.90 },
         "wan": { "fps": 24, "frames": 97, "steps": 35, "cfg": 5.0, "denoise": 1.0 },
         "hunyuan": { "fps": 24, "frames": 97, "steps": 30, "cfg": 6.0, "denoise": 1.0 },
         "mochi": { "fps": 24, "frames": 85, "steps": 50, "cfg": 4.5, "denoise": 1.0 },
@@ -180,7 +182,7 @@
       },
       "model_overrides": {
         "svd": { "frames": 25, "steps": 30, "denoise": 1.0 },
-        "ltx": { "fps": 24, "frames": 169, "steps": 40, "cfg": 4.0, "denoise": 0.80 },
+        "ltx": { "fps": 24, "frames": 169, "steps": 40, "cfg": 4.0, "denoise": 0.95 },
         "wan": { "fps": 24, "frames": 129, "steps": 40, "cfg": 5.5, "denoise": 1.0 },
         "hunyuan": { "fps": 24, "frames": 129, "steps": 40, "cfg": 6.0, "denoise": 1.0 },
         "mochi": { "fps": 24, "frames": 163, "steps": 60, "cfg": 4.5, "denoise": 1.0 },
