@@ -88,6 +88,11 @@ def get_aspect_ratios_for_model(model_type: Optional[str]) -> List[Dict[str, Any
     return result
 
 
+def _snap_to_grid(value: int, grid: int = 32) -> int:
+    """Snap a dimension to the nearest multiple of *grid*."""
+    return max(grid, round(value / grid) * grid)
+
+
 def get_dimensions_for_aspect_ratio(
     aspect_ratio: str,
     preset_name: str,
@@ -96,13 +101,16 @@ def get_dimensions_for_aspect_ratio(
     """
     Get width/height dimensions for a specific aspect ratio and preset.
 
+    Both width and height are guaranteed to be divisible by 32 (required by
+    LTX-Video and recommended for all video diffusion models).
+
     Args:
         aspect_ratio: The aspect ratio ('16:9', '9:16', '1:1', '4:3', '3:4')
         preset_name: Quality preset ('low', 'medium', 'high', 'ultra')
         model_type: Optional model type for compatibility check
 
     Returns:
-        Dict with 'width' and 'height' keys
+        Dict with 'width' and 'height' keys (both divisible by 32)
     """
     presets = _load_presets()
     aspect_ratios = presets.get("aspect_ratios", {})
@@ -120,9 +128,14 @@ def get_dimensions_for_aspect_ratio(
     dimensions = ratio_config.get("dimensions", {})
     preset_dims = dimensions.get(preset_name, dimensions.get("medium", {}))
 
+    # Snap to nearest multiple of 32 — prevents edge artifacts from
+    # internal padding/cropping in LTX-Video and similar models.
+    width = _snap_to_grid(preset_dims.get("width", 832))
+    height = _snap_to_grid(preset_dims.get("height", 480))
+
     return {
-        "width": preset_dims.get("width", 832),
-        "height": preset_dims.get("height", 480),
+        "width": width,
+        "height": height,
     }
 
 
@@ -363,6 +376,8 @@ def apply_preset_to_workflow_vars(
     vid_denoise: Optional[float] = None,
     vid_seed: Optional[int] = None,
     vid_negative_prompt: Optional[str] = None,
+    vid_width: Optional[int] = None,
+    vid_height: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Convenience function to apply preset with user overrides.
@@ -375,6 +390,8 @@ def apply_preset_to_workflow_vars(
         aspect_ratio: Optional aspect ratio ('16:9', '9:16', '1:1', '4:3', '3:4')
         vid_*: Optional user overrides from Advanced Controls
         vid_negative_prompt: Optional user override for negative prompt
+        vid_width: Optional resolution override width (must be ÷32)
+        vid_height: Optional resolution override height (must be ÷32)
 
     Returns:
         Dict with all workflow variables ready to use
@@ -400,6 +417,12 @@ def apply_preset_to_workflow_vars(
         custom_overrides["denoise"] = vid_denoise
     if vid_fps is not None:
         custom_overrides["fps"] = vid_fps
+
+    # Resolution override: snap to ÷32 grid for safety, then apply
+    if vid_width is not None:
+        custom_overrides["width"] = _snap_to_grid(vid_width)
+    if vid_height is not None:
+        custom_overrides["height"] = _snap_to_grid(vid_height)
 
     # Get preset values with overrides (now includes aspect ratio dimensions)
     result = get_workflow_vars(preset_name, model_type, aspect_ratio, custom_overrides)
