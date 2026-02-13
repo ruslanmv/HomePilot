@@ -18,7 +18,7 @@ from . import video_presets
 
 # Import specialized handlers
 from .search import run_search
-from .projects import run_project_chat
+from .projects import run_project_chat, get_project_by_id, _save_project_conversation
 from .edit_flags import parse_edit_flags, build_edit_workflow_vars, determine_workflow
 
 IMAGE_RE = re.compile(r"\b(imagine|generate|create|draw|make)\b.*\b(image|picture|photo|art)\b", re.I)
@@ -579,6 +579,7 @@ async def orchestrate(
     img_model: Optional[str] = None,
     img_batch_size: Optional[int] = None,
     img_preset: Optional[str] = None,  # Accept preset from frontend ("low", "med", "high", "custom")
+    img_resolution_override: Optional[bool] = None,  # When true, allow imgWidth/imgHeight to override preset dims
     vid_seconds: Optional[int] = None,
     vid_fps: Optional[int] = None,
     vid_motion: Optional[str] = None,
@@ -590,6 +591,8 @@ async def orchestrate(
     vid_preset: Optional[str] = None,  # Quality preset: 'low', 'medium', 'high', 'ultra'
     vid_aspect_ratio: Optional[str] = None,  # Aspect ratio: '16:9', '9:16', '1:1', '4:3', '3:4'
     vid_negative_prompt: Optional[str] = None,  # Custom negative prompt for video
+    vid_width: Optional[int] = None,  # Resolution override width (must be ÷32)
+    vid_height: Optional[int] = None,  # Resolution override height (must be ÷32)
     nsfw_mode: Optional[bool] = None,
     prompt_refinement: Optional[bool] = True,
     img_reference: Optional[str] = None,  # Reference image URL for img2img
@@ -620,9 +623,25 @@ async def orchestrate(
 
     # --- Animate ---
     if (m == "animate") or (image_url and ANIM_RE.search(text_in)):
+        # Normalise frontend shorthand: "med" → "medium"
+        _PRESET_ALIASES = {"med": "medium"}
+        vid_preset = _PRESET_ALIASES.get(vid_preset or "", vid_preset)
+
         # Store metadata about auto-generated image (if we create one)
         auto_generated_image = None
         auto_generated_meta = None
+
+        # Pre-compute the video target dimensions so the starter image
+        # can be generated at the EXACT same resolution as the video.
+        _vid_ar = vid_aspect_ratio or "16:9"
+        _vid_pr = vid_preset or "medium"
+        _vid_mt = video_presets.detect_model_type(vid_model)
+        video_target_dims = video_presets.get_dimensions_for_aspect_ratio(
+            _vid_ar, _vid_pr, _vid_mt,
+        )
+        print(f"[ANIMATE] Video target dims (from preset): "
+              f"{video_target_dims['width']}x{video_target_dims['height']} "
+              f"(ar={_vid_ar}, preset={_vid_pr}, model={_vid_mt})")
 
         if not image_url:
             # ================================================================
@@ -661,14 +680,14 @@ async def orchestrate(
                         refined = {
                             "prompt": img_prompt,
                             "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
-                            "aspect_ratio": "16:9",  # Better for video
+                            "aspect_ratio": vid_aspect_ratio or "16:9",
                             "style": "photorealistic",
                         }
                 else:
                     refined = {
                         "prompt": img_prompt,
                         "negative_prompt": DEFAULT_NEGATIVE_PROMPT,
-                        "aspect_ratio": "16:9",  # Better for video
+                        "aspect_ratio": vid_aspect_ratio or "16:9",
                         "style": "photorealistic",
                     }
 
@@ -684,18 +703,26 @@ async def orchestrate(
                 if model_filename in short_name_map:
                     model_filename = short_name_map[model_filename]
 
-                # Use 16:9 aspect ratio for better video compatibility
-                aspect_ratio = "16:9"
+                # Use the video aspect ratio as the source of truth for the starter image.
+                # The conditioning image MUST match the video dimensions exactly.
+                aspect_ratio = vid_aspect_ratio or "16:9"
                 preset_to_use = img_preset or "med"
                 model_settings = get_model_settings(model_filename, aspect_ratio, preset=preset_to_use)
                 architecture = model_settings["architecture"]
 
+                # CRITICAL: override image dims with VIDEO preset dims so the
+                # starter image is generated at the exact video resolution.
+                # This prevents dimension mismatches between the conditioning
+                # image and the latent space.
+                img_w = video_target_dims["width"]
+                img_h = video_target_dims["height"]
+
                 print(f"[ANIMATE] Image model: {model_filename}, arch: {architecture}")
-                print(f"[ANIMATE] Dimensions: {model_settings['width']}x{model_settings['height']}")
+                print(f"[ANIMATE] Dimensions: {img_w}x{img_h} (from video preset, was {model_settings['width']}x{model_settings['height']})")
 
                 # 4. Apply settings to refined dict
-                refined["width"] = model_settings["width"]
-                refined["height"] = model_settings["height"]
+                refined["width"] = img_w
+                refined["height"] = img_h
                 refined["steps"] = model_settings["steps"]
                 refined["cfg"] = model_settings["cfg"]
                 refined["seed"] = random.randint(1, 2147483647)
@@ -797,6 +824,12 @@ async def orchestrate(
             # fps be used. The frontend sends vid_fps=8 as default, which would override
             # the correct model-specific fps (e.g., 24 for LTX).
             # Pass detected_model_type to ensure correct model-specific settings are used
+            # Resolution override: frontend sends vidWidth/vidHeight when user picks
+            # a different tier (e.g. "low" instead of preset-default "medium").
+            # Also accepts legacy imgWidth/imgHeight for backward compatibility.
+            _vid_width = vid_width or img_width
+            _vid_height = vid_height or img_height
+
             preset_vars = video_presets.apply_preset_to_workflow_vars(
                 preset_name=vid_preset,  # None defaults to 'medium'
                 model_name=detected_model_type,  # Use detected type, not raw vid_model
@@ -808,6 +841,8 @@ async def orchestrate(
                 vid_denoise=vid_denoise,
                 vid_seed=vid_seed,
                 vid_negative_prompt=vid_negative_prompt,
+                vid_width=_vid_width,
+                vid_height=_vid_height,
             )
 
             # ================================================================
@@ -860,8 +895,8 @@ async def orchestrate(
                 print(f"[ANIMATE] Prompt refinement disabled, using original prompt")
 
             # Select T5 encoder based on preset with fallback
-            # FP16: ~10GB VRAM, used for high/ultra/None (proven working configuration)
-            # FP8: ~5GB VRAM, used for low/medium (12GB VRAM compatibility)
+            # FP16: ~10GB VRAM, used ONLY for ultra (24GB+ VRAM)
+            # FP8: ~5GB VRAM, used for low/medium/high (12GB RTX 4080 compatibility)
             # Fallback: If preferred encoder not installed, use the other one
             from .providers import get_comfy_models_path
 
@@ -870,7 +905,8 @@ async def orchestrate(
             fp8_available = (clip_path / "t5xxl_fp8_e4m3fn.safetensors").exists()
 
             # Determine preferred encoder based on preset
-            if vid_preset in ("high", "ultra") or vid_preset is None:
+            # Only ultra gets FP16 — everything else must fit 12GB
+            if vid_preset == "ultra":
                 preferred_encoder = "t5xxl_fp16.safetensors"
                 fallback_encoder = "t5xxl_fp8_e4m3fn.safetensors"
                 preferred_available = fp16_available
@@ -884,17 +920,26 @@ async def orchestrate(
             # Select encoder with fallback logic
             if preferred_available:
                 t5_encoder = preferred_encoder
-                print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset or 'default->high'})")
+                print(f"[ANIMATE] Using T5 encoder: {t5_encoder} (preset: {vid_preset or 'default->medium'})")
             elif fallback_available:
                 t5_encoder = fallback_encoder
-                print(f"[ANIMATE] ⚠️ WARNING: Preferred encoder {preferred_encoder} not installed")
-                print(f"[ANIMATE] Using superior T5 encoder as fallback: {t5_encoder}")
+                print(f"[ANIMATE] ⚠️ WARNING: {preferred_encoder} not installed")
+                if t5_encoder == "t5xxl_fp16.safetensors":
+                    print(f"[ANIMATE] Using FP16 T5 as fallback — works fine but uses ~10GB VRAM "
+                          f"(install FP8 to save ~5GB)")
+                else:
+                    print(f"[ANIMATE] Using FP8 T5 as fallback: {t5_encoder}")
             else:
                 # Neither available - use preferred and let ComfyUI error with helpful message
                 t5_encoder = preferred_encoder
                 print(f"[ANIMATE] ⚠️ No T5 encoder found! Please install from Models > Add-ons")
 
             # Build final workflow variables
+            target_width = preset_vars.get("width", 768)
+            target_height = preset_vars.get("height", 512)
+            if _vid_width or _vid_height:
+                print(f"[ANIMATE] Resolution override applied: {target_width}x{target_height} "
+                      f"(requested: {_vid_width}x{_vid_height})")
             workflow_vars = {
                 "image_path": image_url,
                 "prompt": video_prompt,
@@ -908,12 +953,21 @@ async def orchestrate(
                 "steps": preset_vars.get("steps", 30),
                 "cfg": preset_vars.get("cfg", 3.5),
                 "denoise": preset_vars.get("denoise", 0.85),
-                # Resolution (for OOM retry reduction)
-                "width": preset_vars.get("width", 768),
-                "height": preset_vars.get("height", 512),
+                # Resolution — drives both the conditioning image crop and the latent space
+                "width": target_width,
+                "height": target_height,
                 # T5 text encoder selection (FP8 for <=16GB, FP16 for 24GB+)
                 "t5_encoder": t5_encoder,
             }
+
+            # Aspect-ratio sanity log: conditioning image + latent must agree
+            vid_frames = workflow_vars.get("frames", 33)
+            vid_fps_val = workflow_vars.get("fps", 24)
+            actual_seconds = round(vid_frames / vid_fps_val, 2) if vid_fps_val else 0
+            print(f"[ANIMATE] Target video dimensions: {target_width}x{target_height} "
+                  f"(aspect ratio: {vid_aspect_ratio or '16:9'})")
+            print(f"[ANIMATE] Duration: {vid_frames} frames / {vid_fps_val} fps "
+                  f"= {actual_seconds}s actual")
 
             # Run workflow with OOM retry logic
             max_retries = 3
@@ -1209,7 +1263,15 @@ async def orchestrate(
             # When preset is "custom", use frontend values if provided
             is_custom_preset = preset_to_use == "custom"
 
-            if is_custom_preset:
+            # Resolution override: when imgResolutionOverride is set, the user
+            # explicitly picked a resolution tier from the UI — honour it even
+            # in non-custom presets (additive: only dims change, steps/cfg stay).
+            if img_resolution_override and img_width is not None and img_height is not None:
+                refined["width"] = img_width
+                refined["height"] = img_height
+                print(f"[IMAGE] Resolution override (additive): {img_width}x{img_height} "
+                      f"(preset={preset_to_use}, steps/cfg unchanged)")
+            elif is_custom_preset:
                 if img_width is None:
                     refined["width"] = model_settings["width"]
                 else:
@@ -1486,7 +1548,90 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
         }
 
     elif handler == "project":
-        # Project mode: project-scoped chat
+        # Project mode: check if the message should trigger media generation
+        # based on the project's agentic capabilities.
+        _msg = (payload.get("message") or "").strip()
+        _project_id = payload.get("project_id")
+        _project_data = get_project_by_id(_project_id) if _project_id else None
+        _agentic = (_project_data or {}).get("agentic") or {}
+        _caps = _agentic.get("capabilities") or []
+        _has_images = "generate_images" in _caps
+        _has_videos = "generate_videos" in _caps
+        _wants_image = _has_images and (mode == "imagine" or IMAGE_RE.search(_msg))
+        _wants_video = _has_videos and (mode == "animate" or ANIM_RE.search(_msg))
+
+        if _wants_image or _wants_video:
+            # Delegate to orchestrate for actual media generation while
+            # keeping the conversation under the project's conversation_id.
+            print(f"[PROJECT] Media capability detected: image={_wants_image} video={_wants_video}")
+            print(f"[PROJECT] Delegating to orchestrate for project '{_project_id}'")
+            _prov = payload.get("provider") or DEFAULT_PROVIDER
+            _base_url = payload.get("provider_base_url")
+            _model = payload.get("provider_model")
+            if not _base_url:
+                if _prov == "ollama":
+                    _base_url = payload.get("ollama_base_url")
+                elif _prov == "openai_compat":
+                    _base_url = payload.get("llm_base_url")
+            if not _model:
+                if _prov == "ollama":
+                    _model = payload.get("ollama_model")
+                elif _prov == "openai_compat":
+                    _model = payload.get("llm_model")
+            _ar = payload.get("imgAspectRatio")
+            _chat_model = payload.get("ollama_model") or payload.get("llm_model")
+
+            _effective_mode = mode
+            if _wants_image and (not mode or mode == "chat" or mode == "project"):
+                _effective_mode = "imagine"
+            elif _wants_video and (not mode or mode == "chat" or mode == "project"):
+                _effective_mode = "animate"
+
+            return await orchestrate(
+                user_text=_msg,
+                conversation_id=payload.get("conversation_id"),
+                fun_mode=payload.get("fun_mode", False),
+                mode=_effective_mode,
+                provider=_prov,
+                provider_base_url=_base_url,
+                provider_model=_model,
+                text_temperature=payload.get("textTemperature"),
+                text_max_tokens=payload.get("textMaxTokens"),
+                img_width=payload.get("imgWidth"),
+                img_height=payload.get("imgHeight"),
+                img_aspect_ratio=_ar,
+                img_steps=payload.get("imgSteps"),
+                img_cfg=payload.get("imgCfg"),
+                img_seed=payload.get("imgSeed"),
+                img_model=payload.get("imgModel"),
+                img_batch_size=payload.get("imgBatchSize"),
+                img_preset=payload.get("imgPreset"),
+                img_resolution_override=payload.get("imgResolutionOverride"),
+                vid_seconds=payload.get("vidSeconds"),
+                vid_fps=payload.get("vidFps"),
+                vid_motion=payload.get("vidMotion"),
+                vid_model=payload.get("vidModel"),
+                vid_steps=payload.get("vidSteps"),
+                vid_cfg=payload.get("vidCfg"),
+                vid_denoise=payload.get("vidDenoise"),
+                vid_seed=payload.get("vidSeed"),
+                vid_preset=payload.get("vidPreset"),
+                vid_aspect_ratio=payload.get("vidAspectRatio"),
+                vid_negative_prompt=payload.get("vidNegativePrompt"),
+                vid_width=payload.get("vidWidth"),
+                vid_height=payload.get("vidHeight"),
+                nsfw_mode=payload.get("nsfwMode"),
+                prompt_refinement=payload.get("promptRefinement", True),
+                img_reference=payload.get("imgReference"),
+                img_ref_strength=payload.get("imgRefStrength"),
+                chat_model=_chat_model,
+            )
+            # Tag this conversation with the project for history persistence
+            if _project_id and result.get("conversation_id"):
+                _save_project_conversation(_project_id, result["conversation_id"])
+            return result
+
+        # Normal project chat (no media generation needed)
         result = await run_project_chat(payload)
         return {
             "conversation_id": result.get("conversation_id", ""),
@@ -1538,6 +1683,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             img_model=payload.get("imgModel"),
             img_batch_size=payload.get("imgBatchSize"),
             img_preset=payload.get("imgPreset"),  # Pass preset for architecture-aware settings
+            img_resolution_override=payload.get("imgResolutionOverride"),
             vid_seconds=payload.get("vidSeconds"),
             vid_fps=payload.get("vidFps"),
             vid_motion=payload.get("vidMotion"),
@@ -1549,6 +1695,8 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             vid_preset=payload.get("vidPreset"),
             vid_aspect_ratio=payload.get("vidAspectRatio"),
             vid_negative_prompt=payload.get("vidNegativePrompt"),
+            vid_width=payload.get("vidWidth"),
+            vid_height=payload.get("vidHeight"),
             nsfw_mode=payload.get("nsfwMode"),
             prompt_refinement=payload.get("promptRefinement", True),
             img_reference=payload.get("imgReference"),

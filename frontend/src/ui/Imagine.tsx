@@ -25,6 +25,13 @@ type ImageAspectRatio = {
   dimensions?: { width: number; height: number }
 }
 
+type ResolutionTier = {
+  id: string        // "low" | "med" | "high" | "ultra"
+  label: string     // e.g. "Medium (Balanced)"
+  width: number
+  height: number
+}
+
 type ImagineItem = {
   id: string
   url?: string  // Only present when status is "done"
@@ -228,6 +235,20 @@ export default function ImagineView(props: ImagineParams) {
   const [regenProgress, setRegenProgress] = useState<number | null>(null)  // Progress 0-100 during regen
   const [regenAbortController, setRegenAbortController] = useState<AbortController | null>(null)  // For cancellation
 
+  // Fullscreen + navigation (additive)
+  const lightboxRef = useRef<HTMLDivElement | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [fullscreenStretch, setFullscreenStretch] = useState(false)  // false = fit (contain), true = fill (cover/crop)
+
+  // Track selected index for arrow navigation
+  const selectedIndex = useMemo(() => {
+    if (!selectedImage) return -1
+    return items.findIndex((it) => it.id === selectedImage.id)
+  }, [items, selectedImage])
+
+  // Detect newly completed images for slideshow
+  const prevItemsRef = useRef<ImagineItem[]>(items)
+
   const [aspect, setAspect] = useState<string>('1:1')
   const [showAspectPanel, setShowAspectPanel] = useState(false)
   const [compatibleAspectRatios, setCompatibleAspectRatios] = useState<ImageAspectRatio[]>([])
@@ -265,6 +286,12 @@ export default function ImagineView(props: ImagineParams) {
   const [customSeed, setCustomSeed] = useState(0)
   const [useControlNet, setUseControlNet] = useState(false)
   const [cnStrength, setCnStrength] = useState(1.0)
+
+  // Resolution override state (preset-based, additive — only dims change)
+  const [resolutionTiers, setResolutionTiers] = useState<ResolutionTier[]>([])
+  const [selectedResTier, setSelectedResTier] = useState<string>('') // empty = current preset (no override)
+  const [presetResolutions, setPresetResolutions] = useState<Record<string, Record<string, { width: number; height: number }>>>({}) // { aspect: { preset: {w,h} } }
+  const [presetUiLabels, setPresetUiLabels] = useState<Record<string, { label?: string }>>({}) // { preset: { label } }
 
   // Reference Image state (for img2img similar generation)
   const referenceInputRef = useRef<HTMLInputElement>(null)
@@ -363,6 +390,82 @@ export default function ImagineView(props: ImagineParams) {
     }
   }, [selectedImage])
 
+  // PATCH B — Track fullscreen state
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement))
+    }
+    document.addEventListener("fullscreenchange", onFsChange)
+    return () => document.removeEventListener("fullscreenchange", onFsChange)
+  }, [])
+
+  // PATCH C — Keyboard navigation (ArrowLeft/Right + Esc)
+  useEffect(() => {
+    if (!selectedImage) return
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Don't hijack typing in inputs
+      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase()
+      if (tag === "input" || tag === "textarea") return
+
+      if (e.key === "Escape") {
+        setSelectedImage(null)
+        setShowDetails(false)
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {})
+        }
+        return
+      }
+
+      if (e.key === "ArrowLeft") {
+        e.preventDefault()
+        const i = selectedIndex
+        if (i >= 0 && i < items.length - 1) {
+          // Items are newest-first; ArrowLeft = older
+          setSelectedImage(items[i + 1])
+        }
+      }
+
+      if (e.key === "ArrowRight") {
+        e.preventDefault()
+        const i = selectedIndex
+        if (i > 0) {
+          // ArrowRight = newer
+          setSelectedImage(items[i - 1])
+        }
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [selectedImage, selectedIndex, items])
+
+  // PATCH D — Slideshow auto-advance (Game Mode + Auto + Fullscreen)
+  useEffect(() => {
+    if (!selectedImage) {
+      prevItemsRef.current = items
+      return
+    }
+    if (!(gameMode && isAutoGenerating && isFullscreen)) {
+      prevItemsRef.current = items
+      return
+    }
+
+    const prev = prevItemsRef.current
+    prevItemsRef.current = items
+
+    // Find newest DONE image now vs before
+    const newestNow = items.find((it) => it.status === "done" && it.url)
+    if (!newestNow) return
+
+    const newestPrev = prev.find((it) => it.status === "done" && it.url)
+
+    // If there was no previous done, or newest changed -> advance
+    if (!newestPrev || newestPrev.id !== newestNow.id) {
+      setSelectedImage(newestNow)
+    }
+  }, [items, selectedImage, gameMode, isAutoGenerating, isFullscreen])
+
   // Helper function to get preview dimensions for aspect ratio
   const getPreviewDimension = (ratioId: string, dim: 'width' | 'height'): number => {
     const previewMap: Record<string, { width: number; height: number }> = {
@@ -420,6 +523,14 @@ export default function ImagineView(props: ImagineParams) {
               }
             }
           }
+
+          // Store preset resolutions for resolution grid in Advanced Controls
+          if (data.preset_resolutions) {
+            setPresetResolutions(data.preset_resolutions)
+          }
+          if (data.preset_ui) {
+            setPresetUiLabels(data.preset_ui)
+          }
         }
       } catch (err) {
         console.error('[Imagine] Failed to fetch image presets:', err)
@@ -437,6 +548,32 @@ export default function ImagineView(props: ImagineParams) {
 
     fetchImagePresets()
   }, [props.modelImages, props.imgPreset, props.backendUrl, authKey])
+
+  // Recompute resolution tiers when aspect ratio changes
+  // Uses preset_resolutions from the API (computed from model_config.get_model_settings)
+  useEffect(() => {
+    const arPresets = presetResolutions[aspect]
+    if (!arPresets || Object.keys(arPresets).length === 0) {
+      setResolutionTiers([])
+      return
+    }
+
+    const tierOrder = ['low', 'med', 'high', 'ultra']
+    const mapped: ResolutionTier[] = tierOrder
+      .filter((tid) => arPresets[tid]?.width && arPresets[tid]?.height)
+      .map((tid) => ({
+        id: tid,
+        label: presetUiLabels[tid]?.label || tid,
+        width: arPresets[tid].width,
+        height: arPresets[tid].height,
+      }))
+    setResolutionTiers(mapped)
+
+    // If current selection is no longer valid, reset
+    if (selectedResTier && !mapped.find((t) => t.id === selectedResTier)) {
+      setSelectedResTier('')
+    }
+  }, [aspect, presetResolutions, presetUiLabels]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const aspectObj = useMemo(() => {
     // Prefer compatible ratios from API, fallback to static list
@@ -552,6 +689,12 @@ export default function ImagineView(props: ImagineParams) {
       // Only send explicit width/height if user set them in settings.
       const hasExplicitDimensions = props.imgWidth && props.imgWidth > 0 && props.imgHeight && props.imgHeight > 0
 
+      // Resolution tier override: if user picked a tier different from current preset, send the dims
+      const currentPresetId = props.imgPreset || 'med'
+      const resTierOverride = selectedResTier && selectedResTier !== currentPresetId
+        ? resolutionTiers.find((t) => t.id === selectedResTier)
+        : null
+
       // Map 'comfyui' provider to 'ollama' for prompt refinement
       // ComfyUI is used automatically for actual image generation
       const llmProvider = props.providerImages === 'comfyui' ? 'ollama' : props.providerImages
@@ -582,8 +725,10 @@ export default function ImagineView(props: ImagineParams) {
         // Send aspect ratio for backend to calculate model-appropriate dimensions
         // Only send explicit width/height if user set them in settings (not from aspect picker)
         imgAspectRatio: aspect,  // e.g., "16:9", "1:1", etc.
-        imgWidth: hasExplicitDimensions ? props.imgWidth : undefined,
-        imgHeight: hasExplicitDimensions ? props.imgHeight : undefined,
+        // Resolution override: tier selection > explicit props > auto from preset
+        imgWidth: resTierOverride ? resTierOverride.width : hasExplicitDimensions ? props.imgWidth : undefined,
+        imgHeight: resTierOverride ? resTierOverride.height : hasExplicitDimensions ? props.imgHeight : undefined,
+        imgResolutionOverride: resTierOverride ? true : undefined,
         // Use custom settings if advanced mode is enabled, otherwise use props
         imgSteps: advancedMode ? customSteps : props.imgSteps,
         imgCfg: advancedMode ? customCfg : props.imgCfg,
@@ -754,7 +899,7 @@ export default function ImagineView(props: ImagineParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, spicyStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength])
+  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, spicyStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength, selectedResTier, resolutionTiers])
 
   // Auto-generation loop for Game Mode
   useEffect(() => {
@@ -1217,6 +1362,57 @@ export default function ImagineView(props: ImagineParams) {
 
             {advancedMode && (
               <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Resolution — preset-based tier grid */}
+                {resolutionTiers.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="uppercase tracking-wider text-white/40 font-semibold">Resolution</span>
+                      {(() => {
+                        const currentPresetId = props.imgPreset || 'med'
+                        const activeTier = resolutionTiers.find((t) => t.id === (selectedResTier || currentPresetId))
+                        return activeTier ? (
+                          <span className="text-purple-400/60 font-mono text-[10px]">
+                            {activeTier.width}x{activeTier.height}
+                          </span>
+                        ) : null
+                      })()}
+                    </div>
+                    <div className={`grid gap-1.5 ${resolutionTiers.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
+                      {resolutionTiers.map((t) => {
+                        const currentPresetId = props.imgPreset || 'med'
+                        const isActive = selectedResTier ? selectedResTier === t.id : t.id === currentPresetId
+                        const isCurrentPreset = t.id === currentPresetId
+                        return (
+                          <button
+                            key={t.id}
+                            onClick={() => {
+                              if (t.id === currentPresetId) {
+                                setSelectedResTier('') // reset to auto
+                              } else {
+                                setSelectedResTier(t.id)
+                              }
+                            }}
+                            title={`${t.width}x${t.height} — ${t.label}${isCurrentPreset ? ' (current preset)' : ''}`}
+                            className={`relative py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                              isActive
+                                ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                                : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                            }`}
+                          >
+                            <div className="font-mono text-[10px]">{t.width}x{t.height}</div>
+                            <div className="text-[9px] text-white/40 capitalize">
+                              {t.id}{isCurrentPreset ? ' \u2713' : ''}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <p className="text-[10px] text-white/30 leading-relaxed">
+                      Override resolution from a different preset tier. Checkmark shows your current preset. Only resolution changes — steps and CFG stay the same.
+                    </p>
+                  </div>
+                )}
+
                 {/* Steps */}
                 <div className="space-y-2">
                   <div className="flex justify-between text-xs">
@@ -1317,6 +1513,20 @@ export default function ImagineView(props: ImagineParams) {
                     />
                   </div>
                 )}
+
+                {/* Fullscreen Stretch Toggle */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-white/80">Fullscreen Stretch</span>
+                  <button
+                    onClick={() => setFullscreenStretch(!fullscreenStretch)}
+                    className={`w-10 h-5 rounded-full transition-colors relative ${fullscreenStretch ? 'bg-purple-500' : 'bg-white/20'}`}
+                  >
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${fullscreenStretch ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                <div className="text-[11px] text-white/40 -mt-3 leading-snug">
+                  OFF: fit entire image on screen (may letterbox). ON: fill screen (may crop edges).
+                </div>
               </div>
             )}
 
@@ -1689,11 +1899,22 @@ export default function ImagineView(props: ImagineParams) {
       {/* Immersive Lightbox - Clean, Image-first Design */}
       {selectedImage && (
         <div
+          ref={lightboxRef}
           className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
           onClick={() => { setSelectedImage(null); setShowDetails(false); }}
         >
           {/* Floating Controls - Top Right */}
           <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+            {/* Slideshow indicator — visible when Game Mode + Auto + Fullscreen */}
+            {gameMode && isAutoGenerating && isFullscreen && (
+              <div
+                className="p-2.5 bg-purple-500/20 text-purple-200 border border-purple-500/30 rounded-full"
+                title="Slideshow: auto-advancing to new images"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <Film size={18} />
+              </div>
+            )}
             <button
               className={`p-2.5 rounded-full transition-all ${showDetails ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'}`}
               onClick={(e) => { e.stopPropagation(); setShowDetails(!showDetails); }}
@@ -1706,10 +1927,11 @@ export default function ImagineView(props: ImagineParams) {
               className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all"
               onClick={(e) => {
                 e.stopPropagation()
-                // Use native fullscreen API - find the image element and fullscreen it
-                const imgEl = document.querySelector('[data-lightbox-media]') as HTMLElement
-                if (imgEl?.requestFullscreen) {
-                  imgEl.requestFullscreen().catch(() => {})
+                // Fullscreen the lightbox container (not just the image)
+                // so overlay controls, slideshow icon, and keyboard nav work inside fullscreen
+                const el = lightboxRef.current
+                if (el?.requestFullscreen) {
+                  el.requestFullscreen().catch(() => {})
                 }
               }}
               type="button"
@@ -1728,14 +1950,20 @@ export default function ImagineView(props: ImagineParams) {
           </div>
 
           {/* Main Content Area */}
-          <div className="flex-1 flex" onClick={(e) => e.stopPropagation()}>
+          <div className="flex-1 flex min-h-0" onClick={(e) => e.stopPropagation()}>
             {/* Hero Image Container - LARGER, fills more space */}
-            <div className="flex-1 flex items-center justify-center p-2 relative group">
+            <div className="flex-1 flex items-center justify-center p-2 relative group min-h-0 overflow-hidden">
               {selectedImage.url ? (
                 <img
                   src={selectedImage.url}
                   data-lightbox-media
-                  className="max-h-[calc(100vh-140px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  className={
+                    isFullscreen
+                      ? fullscreenStretch
+                        ? "w-full h-full object-cover"
+                        : "w-full h-full object-contain"
+                      : "max-h-[calc(100vh-140px)] max-w-full object-contain rounded-lg shadow-2xl"
+                  }
                   alt="Selected"
                 />
               ) : (
