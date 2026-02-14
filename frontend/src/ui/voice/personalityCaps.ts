@@ -16,7 +16,7 @@ import type { PersonalityId } from './personalities';
 // Re-export PersonalityId for consumers
 export type { PersonalityId };
 
-export type PersonalityCategory = 'general' | 'kids' | 'wellness' | 'adult';
+export type PersonalityCategory = 'general' | 'kids' | 'wellness' | 'adult' | 'personas';
 
 export interface PersonalityCaps {
   /** Category for UI grouping */

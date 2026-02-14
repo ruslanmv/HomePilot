@@ -106,6 +106,14 @@ export function MessageMarkdown({ text }: { text: string }) {
           thead: ({ children }) => <thead className="bg-white/5">{children}</thead>,
           th: ({ children }) => <th className="text-left px-3 py-2 font-semibold">{children}</th>,
           td: ({ children }) => <td className="px-3 py-2 border-t border-white/10">{children}</td>,
+          img: ({ src, alt }) => (
+            <img
+              src={src}
+              alt={alt || 'Photo'}
+              className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
+              loading="lazy"
+            />
+          ),
           p: ({ children }) => <p className="leading-relaxed">{children}</p>,
         }}
       >

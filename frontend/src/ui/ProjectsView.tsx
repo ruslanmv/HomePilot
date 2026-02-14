@@ -20,12 +20,15 @@ import {
   Trash2,
   Edit,
   Bot,
+  User,
 } from 'lucide-react';
 
 // Phase 7: enriched catalog hook + connections panel (additive imports)
 import { useAgenticCatalog } from '../agentic/useAgenticCatalog';
 import { ConnectionsPanel } from '../agentic/ConnectionsPanel';
 import { AgentSettingsPanel } from './components/AgentSettingsPanel';
+import { PersonaSettingsPanel } from './components/PersonaSettingsPanel';
+import { PersonaWizard } from './PersonaWizard';
 
 // --- Components ---
 
@@ -77,6 +80,8 @@ const ProjectCard = ({
                 ? 'bg-fuchsia-500/20 text-fuchsia-300'
                 : type === 'Video'
                 ? 'bg-emerald-500/20 text-emerald-300'
+                : type === 'Persona'
+                ? 'bg-pink-500/20 text-pink-300'
                 : 'bg-blue-500/20 text-blue-300'
             }`}
           >
@@ -174,11 +179,13 @@ const ProjectWizard = ({
   onSave,
   backendUrl,
   apiKey,
+  onOpenPersonaWizard,
 }: {
   onClose: () => void
   onSave: (data: any) => void
   backendUrl: string
   apiKey?: string
+  onOpenPersonaWizard?: () => void
 }) => {
   const [step, setStep] = useState(1)
   const [files, setFiles] = useState<Array<{ name: string; size: string; file?: File }>>([])
@@ -616,11 +623,16 @@ const ProjectWizard = ({
                     { id: 'image', icon: ImageIcon, label: 'Image', desc: 'Image generation', color: 'purple' },
                     { id: 'video', icon: Film, label: 'Video', desc: 'Video generation', color: 'green' },
                     { id: 'agent', icon: Bot, label: 'Agent', desc: 'Advanced help with tools', color: 'amber' },
+                    { id: 'persona', icon: User, label: 'Persona', desc: 'Custom personality + avatar', color: 'pink' },
                   ].map((type) => (
                     <button
                       key={type.id}
                       type="button"
                       onClick={() => {
+                        if (type.id === 'persona' && onOpenPersonaWizard) {
+                          onOpenPersonaWizard()
+                          return
+                        }
                         setProjectType(type.id as any)
                         setStep(1)
                       }}
@@ -1669,6 +1681,7 @@ export default function ProjectsView({
 }) {
   const [activeTab, setActiveTab] = useState('My Projects');
   const [showWizard, setShowWizard] = useState(false);
+  const [showPersonaWizard, setShowPersonaWizard] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingProject, setEditingProject] = useState<any>(null);
@@ -1690,6 +1703,7 @@ export default function ProjectsView({
     if (v === 'image') return 'Image'
     if (v === 'video') return 'Video'
     if (v === 'agent') return 'Agent'
+    if (v === 'persona') return 'Persona'
     return t || 'Chat / LLM'
   }
 
@@ -1902,6 +1916,22 @@ export default function ProjectsView({
           onSave={handleSaveProject}
           backendUrl={backendUrl}
           apiKey={apiKey}
+          onOpenPersonaWizard={() => {
+            setShowWizard(false)
+            setShowPersonaWizard(true)
+          }}
+        />
+      )}
+      {showPersonaWizard && (
+        <PersonaWizard
+          backendUrl={backendUrl}
+          apiKey={apiKey}
+          onClose={() => setShowPersonaWizard(false)}
+          onCreated={(project) => {
+            setProjects((prev) => [project, ...prev])
+            setShowPersonaWizard(false)
+            if (project?.id) onProjectSelect?.(project.id)
+          }}
         />
       )}
       {showSearch && (
@@ -1922,6 +1952,18 @@ export default function ProjectsView({
             onClose={() => setShowEditModal(false)}
             onSaved={(updatedProject) => {
               setProjects(projects.map(p => p.id === updatedProject.id ? { ...p, ...updatedProject } : p));
+              setShowEditModal(false);
+            }}
+          />
+        ) : editingProject.project_type === 'persona' ? (
+          <PersonaSettingsPanel
+            project={editingProject}
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+            onClose={() => setShowEditModal(false)}
+            onSaved={(updatedProject) => {
+              setProjects(projects.map(p => p.id === updatedProject.id ? { ...p, ...updatedProject } : p));
+              window.dispatchEvent(new CustomEvent('hp:persona_project_saved'));
               setShowEditModal(false);
             }}
           />
@@ -2003,10 +2045,12 @@ export default function ProjectsView({
                   const cardIcon = ptype === 'agent' ? Bot
                     : ptype === 'image' ? ImageIcon
                     : ptype === 'video' ? Film
+                    : ptype === 'persona' ? User
                     : MessageSquare
                   const cardIconColor = ptype === 'agent' ? 'text-amber-400'
                     : ptype === 'image' ? 'text-fuchsia-400'
                     : ptype === 'video' ? 'text-emerald-400'
+                    : ptype === 'persona' ? 'text-pink-400'
                     : 'text-blue-400'
                   return (
                     <ProjectCard
