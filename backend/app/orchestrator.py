@@ -25,6 +25,11 @@ from .edit_flags import parse_edit_flags, build_edit_workflow_vars, determine_wo
 # Personality agent framework
 from .personalities import registry as personality_registry, build_system_prompt, ConversationMemory
 
+# Companion-grade persona modules (additive)
+from . import sessions as persona_sessions_mod
+from . import ltm as persona_ltm_mod
+from . import jobs as persona_jobs_mod
+
 # Per-conversation memory store (lives in-process, per session)
 _conversation_memories: Dict[str, ConversationMemory] = {}
 
@@ -1641,6 +1646,11 @@ async def orchestrate(
     memory = None
     is_voice_mode = voice_system_prompt is not None or personality_id is not None
 
+    # Companion-grade: LTM + session summary context for persona projects
+    ltm_context = ""
+    session_summaries_context = ""
+    active_persona_session = None
+
     if personality_id and personality_id in personality_registry:
         # Backend personality agent — full framework
         personality_agent = personality_registry.get(personality_id)
@@ -1662,6 +1672,46 @@ async def orchestrate(
         system = voice_system_prompt
     else:
         system = BASE_SYSTEM + ("\n" + FUN_SYSTEM if fun_mode else "")
+
+    # ================================================================
+    # COMPANION-GRADE: Session tracking + LTM injection (additive)
+    #
+    # When a persona project is linked (via project_id from handle_request),
+    # inject Long-Term Memory and session summaries into the system prompt.
+    # Also track the session for continuity.
+    # ================================================================
+    _project_id_for_session = None
+    # Look up session for ANY conversation (voice or text) linked to a persona project.
+    # The session was created with this conversation_id when the user opened the project.
+    _session = persona_sessions_mod.get_session_by_conversation(cid)
+    if _session:
+        _project_id_for_session = _session.get("project_id")
+        active_persona_session = _session
+
+    if _project_id_for_session:
+        try:
+            # Inject LTM (long-term memory about the user)
+            ltm_context = persona_ltm_mod.build_ltm_context(_project_id_for_session)
+            if ltm_context:
+                system = system + "\n\n" + ltm_context
+
+            # Inject recent session summaries (cross-session continuity)
+            session_summaries_context = persona_ltm_mod.build_session_summaries_context(
+                _project_id_for_session, max_sessions=3
+            )
+            if session_summaries_context:
+                system = system + "\n\n" + session_summaries_context
+
+            # Update session message count
+            if active_persona_session:
+                persona_sessions_mod.update_session_message_count(
+                    active_persona_session["id"], delta=1
+                )
+
+            print(f"[COMPANION] LTM injected: {len(ltm_context)} chars, "
+                  f"summaries: {len(session_summaries_context)} chars")
+        except Exception as e:
+            print(f"[COMPANION] Warning: LTM/session injection failed (non-fatal): {e}")
 
     messages = [{"role": "system", "content": system}]
     for role, content in history:
@@ -1752,6 +1802,21 @@ async def orchestrate(
                 text = "I'm here. What's on your mind?"
 
     add_message(cid, "assistant", text)
+
+    # Companion-grade: update session message count for assistant + process pending jobs
+    if active_persona_session:
+        try:
+            persona_sessions_mod.update_session_message_count(
+                active_persona_session["id"], delta=1
+            )
+        except Exception:
+            pass
+    # Opportunistically process one pending job (non-blocking, rate-limited)
+    try:
+        await persona_jobs_mod.process_one_pending_job()
+    except Exception:
+        pass
+
     return {"conversation_id": cid, "text": text, "media": None}
 
 
