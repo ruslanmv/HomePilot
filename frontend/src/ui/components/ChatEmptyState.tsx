@@ -6,20 +6,25 @@ type Props = {
   title: string
   description?: string
   isAgent?: boolean
+  isPersona?: boolean
   capabilityLabels?: string[]
   onPickPrompt: (text: string) => void
   agentIntent?: AgentIntent | null
   onAgentIntentChange?: (intent: AgentIntent | null) => void
+  /** Callback to switch to voice mode — shown for persona projects */
+  onResumeVoice?: () => void
 }
 
 export function ChatEmptyState({
   title,
   description,
   isAgent,
+  isPersona,
   capabilityLabels = [],
   onPickPrompt,
   agentIntent = null,
   onAgentIntentChange,
+  onResumeVoice,
 }: Props) {
   return (
     <div className="h-full w-full flex items-center justify-center px-6">
@@ -34,6 +39,22 @@ export function ChatEmptyState({
               ? 'This project is an advanced assistant. Ask normally — it can use available capabilities when needed.'
               : 'Start a conversation, upload files, or use voice mode.'}
           </div>
+
+          {/* Persona projects: prominent "Continue in Voice" button */}
+          {isPersona && onResumeVoice && (
+            <div className="mt-5 flex flex-col gap-2">
+              <button
+                onClick={onResumeVoice}
+                className="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-purple-600/30 to-blue-600/30 border border-purple-500/40 hover:border-purple-400/60 transition-all text-white font-medium text-sm"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                Continue in Voice
+              </button>
+              <p className="text-center text-[11px] text-white/40">
+                Or type below to chat via text
+              </p>
+            </div>
+          )}
 
           {isAgent && capabilityLabels.length > 0 ? (
             <div className="mt-4">

@@ -15,6 +15,9 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
+### 🎭 Voice Personas
+HomePilot now features **15 built-in personality agents** for Voice Mode — from a calm Therapist and Kids Story Time narrator to a hardcore Motivational coach and creative Storyteller. Each persona carries its own tone, conversation style, and behavioral prompts so the AI stays in character throughout the session. You can also create fully **custom Personas** with your own instructions, or link a Persona to a project for persistent memory and tool access. See [docs/Persona.md](docs/Persona.md) for the full guide.
+
 ### 🎬 Animate Studio Enhancements
 Professional video generation controls for image-to-video:
 - **Video Settings Panel** - Aspect Ratio, Quality Preset, and Motion controls
@@ -503,9 +506,13 @@ ProjectTemplate(
 - [x] Built-in MCP tool servers (Personal Assistant, Knowledge, Decision Copilot, Executive Briefing, Web Search) and A2A agents (Everyday Assistant, Chief of Staff)
 - [x] Web Search MCP server with SearXNG (home) and Tavily (enterprise) providers
 - [x] Voice mode media rendering (images and videos)
+- [x] Voice Input/Output with browser TTS and speech recognition
+- [x] Voice narration with TTS (6 voice personas, speed control, hands-free mode)
+- [x] 15 built-in personality agents with backend-authoritative prompts
+- [x] Custom Personas with linked/unlinked project modes
+- [x] Adult content gating with age verification
 
 ### In Progress
-- [ ] Voice narration with TTS
 - [ ] Background music integration
 - [ ] Timeline editor with drag-and-drop
 - [ ] Multi-chapter support
@@ -515,7 +522,6 @@ ProjectTemplate(
 - [ ] Collaborative editing
 - [ ] Plugin system for custom workflows
 - [ ] Multi-provider LLM routing
-- [ ] Voice Input/Output integration
 - [ ] OpenTelemetry observability
 
 ---
