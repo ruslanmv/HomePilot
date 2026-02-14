@@ -65,6 +65,79 @@ def init_db():
     except sqlite3.OperationalError:
         # Column already exists
         pass
+
+    # -----------------------------------------------------------------------
+    # Companion-grade persona tables (additive — zero changes to existing)
+    # -----------------------------------------------------------------------
+
+    # Sessions: threads within a persona project (voice or text)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS persona_sessions(
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            conversation_id TEXT NOT NULL UNIQUE,
+            mode TEXT DEFAULT 'text',
+            title TEXT,
+            started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            ended_at DATETIME,
+            message_count INTEGER DEFAULT 0,
+            summary TEXT,
+            UNIQUE(conversation_id)
+        )
+        """
+    )
+    # Indexes for fast session lookups
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_project ON persona_sessions(project_id)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_active ON persona_sessions(project_id, ended_at)"
+    )
+
+    # Long-term memory: persistent per-persona facts that survive across sessions
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS persona_memory(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL,
+            category TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            confidence REAL DEFAULT 1.0,
+            source_session TEXT,
+            source_type TEXT DEFAULT 'inferred',
+            visibility TEXT DEFAULT 'private',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(project_id, category, key)
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_memory_project ON persona_memory(project_id)"
+    )
+
+    # Durable async jobs: survives restarts, processes lazily
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS persona_jobs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL,
+            session_id TEXT,
+            job_type TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            payload TEXT,
+            result TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_pending ON persona_jobs(status, created_at)"
+    )
+
     con.commit()
     con.close()
 

@@ -52,6 +52,10 @@ import {
   setPersonasEnabled as setPersonasEnabledGating,
   LS_PERSONA_CACHE,
 } from './voice/personalityGating'
+// Companion-grade session management (additive)
+import { resolveSession, createSession, endSession } from './sessions'
+import { SessionPanel } from './sessions'
+import type { PersonaSession } from './sessions'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -1593,6 +1597,9 @@ export default function App() {
   // Agent settings panel toggle
   const [showAgentSettings, setShowAgentSettings] = useState(false)
 
+  // Companion-grade: show session hub when opening a persona project
+  const [showSessionPanel, setShowSessionPanel] = useState(false)
+
   // Agent-start UX: user's chosen intent (only used while the agent thread is empty).
   const [agentStartIntent, setAgentStartIntent] = useState<AgentIntent | null>(null)
 
@@ -1608,6 +1615,7 @@ export default function App() {
   }, [currentProject?.id, messages.length])
 
   // Auto-link voice to project when switching to voice while a persona project is active
+  // Companion-grade: resolves a persistent session instead of ephemeral conversation
   useEffect(() => {
     if (mode !== 'voice') return
     if (!currentProject) return
@@ -1638,6 +1646,43 @@ export default function App() {
         localStorage.setItem(LS_PERSONA_CACHE, JSON.stringify(cache))
       }
     } catch (err) { console.warn('[Voice] Auto-link cache update failed:', err) }
+
+    // Companion-grade: resolve a persistent session for this persona project
+    // This ensures voice uses the SAME conversation_id across mode switches
+    resolveSession(currentProject.id, 'voice')
+      .then(async (session) => {
+        console.log('[Voice] Resolved session:', session.id, 'conversation:', session.conversation_id)
+        setVoiceConversationId(session.conversation_id)
+        // Store session reference for later use
+        localStorage.setItem('homepilot_active_voice_session', JSON.stringify(session))
+        // Load message history so user sees previous conversation
+        try {
+          const convData = await getJson<{
+            ok: boolean
+            messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
+          }>(
+            settingsDraft.backendUrl,
+            `/conversations/${session.conversation_id}/messages`,
+            authHeaders
+          )
+          if (convData.ok && convData.messages && convData.messages.length > 0) {
+            setVoiceMessages(
+              convData.messages.map((m, idx) => ({
+                id: `restored-${idx}`,
+                role: m.role as 'user' | 'assistant',
+                text: m.content,
+                animate: false,
+                media: m.media || undefined,
+              }))
+            )
+          }
+        } catch {
+          // No messages yet — that's fine for new sessions
+        }
+      })
+      .catch((err) => {
+        console.warn('[Voice] Session resolution failed (using ephemeral):', err)
+      })
   }, [mode, currentProject])
 
   // Track last spoken message to avoid re-speaking
@@ -1702,13 +1747,21 @@ export default function App() {
   useEffect(() => localStorage.setItem('homepilot_conversation', chatConversationId), [chatConversationId])
   useEffect(() => localStorage.setItem('homepilot_mode', mode), [mode])
 
-  // Clear voice session when exiting Voice mode (ephemeral like Alexa/Grok)
-  // A new voiceConversationId ensures a fresh personality memory on re-entry.
-  // Backend GC auto-evicts stale memories after 2 hours — no need to DELETE here.
+  // Clear voice session when exiting Voice mode — BUT NOT when linked to persona.
+  // Linked persona sessions persist across mode switches (companion-grade).
+  // Unlinked voice stays ephemeral (like Alexa/Grok).
   useEffect(() => {
     if (mode !== 'voice') {
-      setVoiceMessages([])
-      setVoiceConversationId(uuid())
+      const linkedProjectId = getVoiceLinkedProjectId()
+      if (linkedProjectId) {
+        // Linked mode: keep conversation_id intact — session persists
+        // Only clear the UI message list (will reload from backend on re-entry)
+        setVoiceMessages([])
+      } else {
+        // Unlinked mode: ephemeral — fresh conversation each time
+        setVoiceMessages([])
+        setVoiceConversationId(uuid())
+      }
     }
   }, [mode])
 
@@ -2966,6 +3019,25 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                       {docCount} docs
                     </span>
                   )}
+                  {/* Persona projects: Session Hub + Resume Voice buttons */}
+                  {currentProject?.project_type === 'persona' && (
+                    <>
+                      <button
+                        onClick={() => setMode('voice')}
+                        className="ml-0.5 p-0.5 hover:bg-purple-600/30 rounded-full transition-colors text-purple-400"
+                        title="Continue in Voice"
+                      >
+                        <Mic size={12} />
+                      </button>
+                      <button
+                        onClick={() => setShowSessionPanel(true)}
+                        className="p-0.5 hover:bg-purple-600/30 rounded-full transition-colors text-purple-400"
+                        title="Session Hub"
+                      >
+                        <Clock size={12} />
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={() => setShowAgentSettings(true)}
                     className={`ml-0.5 p-0.5 ${
@@ -3042,12 +3114,127 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           )
         )}
 
+        {/* Companion-grade: Session Hub for persona projects */}
+        {showSessionPanel && currentProject?.project_type === 'persona' && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+            <div className="relative w-full max-w-md mx-4 bg-gray-900 rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
+              {/* Close button */}
+              <button
+                onClick={() => setShowSessionPanel(false)}
+                className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors z-10"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+              <SessionPanel
+                projectId={currentProject.id}
+                projectName={currentProject.name}
+                projectCreatedAt={(currentProject as any).created_at}
+                onOpenSession={async (session) => {
+                  // Open text session: set conversation_id and load messages
+                  setChatConversationId(session.conversation_id)
+                  localStorage.setItem('homepilot_active_voice_session', JSON.stringify(session))
+                  try {
+                    const convData = await getJson<{
+                      ok: boolean
+                      messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
+                    }>(
+                      settingsDraft.backendUrl,
+                      `/conversations/${session.conversation_id}/messages`,
+                      authHeaders
+                    )
+                    if (convData.ok && convData.messages && convData.messages.length > 0) {
+                      setChatMessages(
+                        convData.messages.map((m, idx) => ({
+                          id: `restored-${idx}`,
+                          role: m.role as 'user' | 'assistant',
+                          text: m.content,
+                          animate: false,
+                          media: m.media || undefined,
+                        }))
+                      )
+                    } else {
+                      setChatMessages([])
+                    }
+                  } catch {
+                    setChatMessages([])
+                  }
+                  setShowSessionPanel(false)
+                  setMode('chat')
+                }}
+                onOpenVoiceSession={async (session) => {
+                  // Open voice session: set voice conversation_id and switch to voice
+                  setVoiceConversationId(session.conversation_id)
+                  localStorage.setItem('homepilot_active_voice_session', JSON.stringify(session))
+                  // Auto-link persona to voice
+                  const personaId = `persona:${currentProject.id}`
+                  localStorage.setItem('homepilot_personality_id', personaId)
+                  setVoiceLinkedToProject(true)
+                  if (!isPersonasEnabled()) setPersonasEnabledGating(true)
+                  // Load message history so user can see previous conversation
+                  try {
+                    const convData = await getJson<{
+                      ok: boolean
+                      messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
+                    }>(
+                      settingsDraft.backendUrl,
+                      `/conversations/${session.conversation_id}/messages`,
+                      authHeaders
+                    )
+                    if (convData.ok && convData.messages && convData.messages.length > 0) {
+                      setVoiceMessages(
+                        convData.messages.map((m, idx) => ({
+                          id: `restored-${idx}`,
+                          role: m.role as 'user' | 'assistant',
+                          text: m.content,
+                          animate: false,
+                          media: m.media || undefined,
+                        }))
+                      )
+                    } else {
+                      setVoiceMessages([])
+                    }
+                  } catch {
+                    setVoiceMessages([])
+                  }
+                  setShowSessionPanel(false)
+                  setMode('voice')
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         {mode === 'voice' ? (
           <VoiceMode
             onSendText={(text) => sendTextOrIntent(text)}
-            onNewChat={() => {
+            onNewChat={async () => {
               setVoiceMessages([])
-              setVoiceConversationId(uuid())
+              // Companion-grade: when linked to persona, create a proper new session
+              const linkedProjectId = getVoiceLinkedProjectId()
+              if (linkedProjectId) {
+                try {
+                  // End the current session (triggers summary + memory extraction)
+                  const activeSessionRaw = localStorage.getItem('homepilot_active_voice_session')
+                  if (activeSessionRaw) {
+                    const activeSession = JSON.parse(activeSessionRaw) as PersonaSession
+                    if (activeSession.id && !activeSession.ended_at) {
+                      await endSession(activeSession.id)
+                    }
+                  }
+                  // Create a fresh session
+                  const newSession = await createSession(linkedProjectId, 'voice')
+                  setVoiceConversationId(newSession.conversation_id)
+                  localStorage.setItem('homepilot_active_voice_session', JSON.stringify(newSession))
+                  console.log('[Voice] New session created:', newSession.id)
+                } catch (err) {
+                  console.warn('[Voice] New session creation failed (using ephemeral):', err)
+                  setVoiceConversationId(uuid())
+                }
+              } else {
+                // Unlinked: ephemeral as before
+                setVoiceConversationId(uuid())
+              }
             }}
           />
         ) : mode === 'project' ? (
@@ -3134,8 +3321,50 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     updateChatSettings(agentSettings)
                   }
 
+                  // Companion-grade: for persona projects, resolve a session
+                  // This ensures we use the persistent session conversation_id
+                  if (project.project_type === 'persona') {
+                    try {
+                      const session = await resolveSession(projectId, 'text')
+                      console.log('[Project] Resolved persona session:', session.id)
+                      setConversationId(session.conversation_id)
+                      localStorage.setItem('homepilot_active_voice_session', JSON.stringify(session))
+                      // Load session messages if they exist
+                      try {
+                        const convData = await getJson<{
+                          ok: boolean
+                          messages: Array<{ role: string; content: string; created_at: string; media?: { images?: string[]; video_url?: string } | null }>
+                        }>(
+                          settingsDraft.backendUrl,
+                          `/conversations/${session.conversation_id}/messages`,
+                          authHeaders
+                        )
+                        if (convData.ok && convData.messages && convData.messages.length > 0) {
+                          setMessages(
+                            convData.messages.map((m, idx) => ({
+                              id: `restored-${idx}`,
+                              role: m.role as 'user' | 'assistant',
+                              text: m.content,
+                              animate: false,
+                              media: m.media || undefined,
+                            }))
+                          )
+                        }
+                      } catch {
+                        // No messages yet — that's fine
+                      }
+                    } catch (err) {
+                      console.warn('[Project] Session resolution failed:', err)
+                    }
+                  }
+
                   // Route to the correct mode based on project type
-                  if (project.project_type === 'image') {
+                  if (project.project_type === 'persona') {
+                    // Companion-grade: show the Session Hub first
+                    // User picks Continue / New Voice / New Text
+                    setShowSessionPanel(true)
+                    setMode('chat')
+                  } else if (project.project_type === 'image') {
                     setMode('imagine')
                   } else if (project.project_type === 'video') {
                     setMode('animate')
@@ -3286,6 +3515,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               title={currentProject.name}
               description={currentProject.description}
               isAgent={currentProject.project_type === 'agent'}
+              isPersona={currentProject.project_type === 'persona'}
               agentIntent={currentProject.project_type === 'agent' ? agentStartIntent : null}
               onAgentIntentChange={(intent) => {
                 if (currentProject.project_type !== 'agent') return
@@ -3299,6 +3529,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 return id
               })}
               onPickPrompt={(t) => sendTextOrIntent(t)}
+              onResumeVoice={currentProject.project_type === 'persona' ? () => setMode('voice') : undefined}
             />
             <div className="shrink-0 w-full max-w-3xl pb-6 pt-4">
               <QueryBar

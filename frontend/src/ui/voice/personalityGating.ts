@@ -185,3 +185,18 @@ export function getVoiceLinkedProjectId(): string | undefined {
   if (!projectId || !/^[0-9a-f-]{36}$/i.test(projectId)) return undefined;
   return projectId;
 }
+
+/**
+ * Get the active voice session's conversation_id (companion-grade).
+ * Returns undefined if no active session is stored.
+ */
+export function getActiveVoiceSessionConversationId(): string | undefined {
+  try {
+    const raw = localStorage.getItem('homepilot_active_voice_session');
+    if (!raw) return undefined;
+    const session = JSON.parse(raw);
+    return session?.conversation_id || undefined;
+  } catch {
+    return undefined;
+  }
+}

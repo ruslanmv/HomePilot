@@ -53,11 +53,9 @@ import {
   getPersonalityById,
   LS_PERSONALITY_ID,
 } from './voice/personalities';
-import { User, Link2, Unlink } from 'lucide-react';
+import { User } from 'lucide-react';
 import {
   LS_PERSONA_CACHE,
-  isVoiceLinkedToProject,
-  setVoiceLinkedToProject,
 } from './voice/personalityGating';
 
 // localStorage keys
@@ -624,16 +622,6 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
     return 1.0;
   });
 
-  // Linked-to-project state (reactive to Settings toggle and pill icon)
-  const [voiceLinked, setVoiceLinked] = useState(() => isVoiceLinkedToProject());
-
-  // Toggle linked mode from pill icon
-  const toggleLinked = useCallback(() => {
-    const next = !voiceLinked;
-    setVoiceLinkedToProject(next);
-    setVoiceLinked(next);
-  }, [voiceLinked]);
-
   const [isMuted, setIsMuted] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem(LS_MUTED) === 'true';
@@ -876,11 +864,7 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
       {/* Settings Modal - Contains advanced audio settings */}
       <SettingsModal
         isOpen={showSystemSettings}
-        onClose={() => {
-          setShowSystemSettings(false);
-          // Sync linked state in case user changed it in Settings
-          setVoiceLinked(isVoiceLinkedToProject());
-        }}
+        onClose={() => setShowSystemSettings(false)}
         showAudioMeter={showAudioMeter}
         setShowAudioMeter={setShowAudioMeter}
         browserVoices={voice.voices}
@@ -1114,24 +1098,6 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
                       }`}
                     />
                   </button>
-
-                  {/* Link-to-Project toggle icon — only visible when a persona is selected */}
-                  {activePersonality.isPersona && (
-                    <button
-                      onClick={toggleLinked}
-                      className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all ${
-                        voiceLinked
-                          ? 'bg-blue-500/20 border-blue-500/40 text-blue-400'
-                          : 'bg-white/5 border-white/10 text-white/30 hover:bg-white/10 hover:text-white/50'
-                      }`}
-                      title={voiceLinked
-                        ? 'Linked to Project — persistent memory & tools'
-                        : 'Unlinked — ephemeral session'
-                      }
-                    >
-                      {voiceLinked ? <Link2 size={16} /> : <Unlink size={16} />}
-                    </button>
-                  )}
 
                   {/* Voice Settings Panel */}
                   {/* Voice Settings Panel - Voice persona, personality, speed */}
