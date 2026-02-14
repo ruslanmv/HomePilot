@@ -594,4 +594,6 @@ Apache-2.0
   <b>HomePilot</b> - Your AI-Powered Creative Studio
   <br>
   <sub>Built with ❤️ for creators, by creators</sub>
+  <br><br>
+  <sub>🎭 15 backend-authoritative personality agents with conversation memory, dynamic prompts, and per-turn engagement — voice AI that actually listens.</sub>
 </p>

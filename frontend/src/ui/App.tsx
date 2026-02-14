@@ -1660,6 +1660,8 @@ export default function App() {
   useEffect(() => localStorage.setItem('homepilot_mode', mode), [mode])
 
   // Clear voice session when exiting Voice mode (ephemeral like Alexa/Grok)
+  // A new voiceConversationId ensures a fresh personality memory on re-entry.
+  // Backend GC auto-evicts stale memories after 2 hours — no need to DELETE here.
   useEffect(() => {
     if (mode !== 'voice') {
       setVoiceMessages([])
@@ -1777,6 +1779,9 @@ export default function App() {
   }, [settings.apiKey])
 
   const onNewConversation = useCallback(() => {
+    // New UUID → backend auto-creates fresh personality memory.
+    // Old conversation stays in SQLite (browsable via History panel).
+    // Backend GC evicts stale personality memories after 2h.
     setConversationId(uuid())
     setMessages([])
   }, [])
@@ -2360,8 +2365,16 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             vidModel: settingsDraft.modelVideo,
             vidPreset: settingsDraft.vidPreset,
             nsfwMode: settingsDraft.nsfwMode,
+            promptRefinement: settingsDraft.promptRefinement ?? true,
             // Voice mode personality system prompt
             voiceSystemPrompt,
+            // Backend personality agent id — needed for personality-aware
+            // image generation (inject visual style + conversation context)
+            personalityId: localStorage.getItem('homepilot_personality_id') || undefined,
+            // Chat model identity for prompt refinement fallback
+            // (backend needs this separately from provider_model which may be image model)
+            ollama_model: settingsDraft.providerChat === 'ollama' ? settingsDraft.modelChat : undefined,
+            llm_model: settingsDraft.providerChat === 'openai_compat' ? settingsDraft.modelChat : undefined,
           },
           authHeaders
         )
@@ -2881,7 +2894,13 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         )}
 
         {mode === 'voice' ? (
-          <VoiceMode onSendText={(text) => sendTextOrIntent(text)} />
+          <VoiceMode
+            onSendText={(text) => sendTextOrIntent(text)}
+            onNewChat={() => {
+              setVoiceMessages([])
+              setVoiceConversationId(uuid())
+            }}
+          />
         ) : mode === 'project' ? (
           <ProjectsView
             backendUrl={settingsDraft.backendUrl}

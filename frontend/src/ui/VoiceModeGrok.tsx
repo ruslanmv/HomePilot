@@ -443,9 +443,10 @@ function VoiceLightbox({ src, onClose }: { src: string; onClose: () => void }) {
 interface VoiceModeGrokProps {
   onSendText: (text: string) => void;
   onClose?: () => void;
+  onNewChat?: () => void;
 }
 
-export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProps) {
+export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceModeGrokProps) {
   // Messages state
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -663,9 +664,12 @@ export default function VoiceModeGrok({ onSendText, onClose }: VoiceModeGrokProp
     }
   };
 
-  // Clear conversation
+  // Clear conversation — reset local messages AND tell App.tsx to
+  // generate a new voiceConversationId so backend personality memory
+  // starts fresh (the old conversation ID's memory will be GC'd).
   const clearConversation = () => {
     setMessages([]);
+    onNewChat?.();
   };
 
   const isListening = voice.state === 'LISTENING';

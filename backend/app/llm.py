@@ -13,9 +13,16 @@ import re
 
 # Patterns that identify thinking/reasoning models (DeepSeek R1, QwQ, Qwen3, etc.)
 # These models emit <think>...</think> tags and need extra tokens for voice mode.
-THINKING_MODEL_PATTERNS = ["deepseek-r1", "deepseek-reasoner", "qwq", "qwen3"]
+THINKING_MODEL_PATTERNS = [
+    "deepseek-r1", "deepseek-reasoner", "qwq", "qwen3",
+    "reflection", "reasoning", "think",
+]
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+# Match all common reasoning tag formats emitted by thinking models
+_THINK_RE = re.compile(
+    r"<(?:think|thinking|reasoning|reflection)>.*?</(?:think|thinking|reasoning|reflection)>",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 def is_thinking_model(model_name: str) -> bool:
@@ -26,9 +33,143 @@ def is_thinking_model(model_name: str) -> bool:
     return any(p in lower for p in THINKING_MODEL_PATTERNS)
 
 
+# Phrases that indicate leaked reasoning / self-instructions, NOT spoken dialogue.
+# Used to filter the thinking-field recovery so meta-text never reaches the user.
+_REASONING_PREFIXES = (
+    "Let me", "I need to", "I should", "The user", "So I", "Also,",
+    "First,", "Now,", "Next,", "Maybe", "Perhaps", "Since they",
+    "Keep the response", "Make sure", "I will", "I'll",
+    "Their ", "They ", "This means", "Based on",
+    "Alternatively", "However,", "But since", "In this case",
+    "Given that", "Okay,", "Alright,", "Hmm,", "Wait,",
+    "Looking at", "Considering", "To respond",
+    "So, the", "So the response", "So, I",
+)
+# Single phrases that are strong indicators of leaked reasoning (any match → reasoning)
+_REASONING_PHRASES = [
+    "previous interactions",
+    "matching their",
+    "as if I",
+    "I'm a real",
+    "to show my",
+    "to leave a lasting",
+    "to the point",
+    "avoid any hesitation",
+    "the user wants",
+    "the user asked",
+    "the user just",
+    "the user's last",
+    "the user said",
+    "connect it to",
+    "use phrases like",
+    "use exclamation",
+    "let me check",
+    "maintain consistency",
+    "fits well",
+    "could be effective",
+    "might be better",
+    "a good response",
+    "respond with",
+    "my response",
+    "previous response",
+    "previous message",
+    "in character",
+    "stay in character",
+    "break character",
+    "system prompt",
+    "instructions say",
+    "the response should",
+    "response should be",
+    "should respond",
+    "connects to their",
+    "their previous interest",
+    "provides an interesting",
+    "something like:",
+    "would be something like",
+    "i would say",
+]
+# Scoring-based indicators: each match adds 1 point, threshold ≥ 2 = reasoning
+_REASONING_SIGNALS = [
+    "the user",           # 3rd person reference
+    "their message",      # 3rd person reference
+    "the human",          # 3rd person reference
+    "i should",           # self-instruction
+    "i need to",          # self-instruction
+    "let me ",            # self-instruction (mid-text)
+    "i'll respond",       # response planning
+    "direct question",    # meta-commentary
+    "a metaphor",         # meta-commentary about technique
+    "double entendre",    # meta-commentary about technique
+    "alternatively",      # deliberation
+    "this means",         # analysis
+    "since they",         # analysis
+    "because the",        # analysis
+    "keep it",            # self-instruction
+    "make sure",          # self-instruction
+    "effectively",        # meta-evaluation
+    "appropriate",        # meta-evaluation
+]
+
+
+def _is_reasoning_text(text: str) -> bool:
+    """
+    Return True if text looks like leaked model reasoning, not spoken dialogue.
+
+    Uses a three-layer approach:
+      1. Prefix check — text starts with reasoning starters
+      2. Phrase check — text contains strong reasoning indicators
+      3. Scoring check — multiple weak signals together confirm reasoning
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    # Layer 1: Prefix patterns (model talking to itself)
+    if stripped.startswith(_REASONING_PREFIXES):
+        return True
+    lower = stripped.lower()
+    # Layer 2: Strong reasoning phrases (any single match = reasoning)
+    if any(phrase in lower for phrase in _REASONING_PHRASES):
+        return True
+    # Layer 3: Scoring — accumulate weak signals, threshold ≥ 2
+    score = sum(1 for signal in _REASONING_SIGNALS if signal in lower)
+    return score >= 2
+
+
+# Regex to extract a quoted "actual response" from leaked reasoning.
+# Matches: something like: "actual text" or "actual text" at end
+_QUOTED_RESPONSE_RE = re.compile(
+    r'(?:something like|should be|respond with|would say)[:\s]*["\u201c](.+?)["\u201d]',
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def recover_from_reasoning(text: str) -> str | None:
+    """Try to extract the intended spoken response from leaked reasoning text.
+
+    Thinking models sometimes output reasoning like:
+      'So, the response should be something like: "Hey! Did you know..."'
+
+    Instead of discarding everything and falling back to a generic reply,
+    we attempt to extract the quoted spoken response.  Returns None if
+    no recoverable response is found.
+    """
+    if not text:
+        return None
+    m = _QUOTED_RESPONSE_RE.search(text)
+    if m:
+        candidate = m.group(1).strip()
+        # Sanity: extracted text should be dialogue, not more reasoning
+        if candidate and len(candidate) >= 8 and not _is_reasoning_text(candidate):
+            return candidate
+    return None
+
+
 def strip_think_tags(text: str) -> str:
-    """Strip <think>...</think> reasoning blocks from model output."""
-    if not text or "<think>" not in text.lower():
+    """Strip reasoning blocks (<think>, <thinking>, <reasoning>, <reflection>) from model output."""
+    if not text:
+        return text
+    lower = text.lower()
+    if not any(tag in lower for tag in ("<think>", "<thinking>", "<reasoning>", "<reflection>")):
         return text
     cleaned = _THINK_RE.sub("", text).strip()
     return cleaned if cleaned else text  # keep original if everything was inside think tags
@@ -409,14 +550,22 @@ async def chat_ollama(
                 if lines:
                     # Use the last 1-2 non-empty lines (most likely the final answer)
                     tail = " ".join(lines[-2:])
-                    # Only use if it looks like a response (not reasoning meta-text)
-                    if len(tail) > 5 and not tail.startswith(("Let me", "I need to", "The user", "So I")):
+                    # Only use if it looks like a spoken response, NOT reasoning meta-text.
+                    # Reasoning leaks contain self-instructions / third-person user refs.
+                    if len(tail) > 5 and not _is_reasoning_text(tail):
                         content = tail
                         print(f"[OLLAMA] Recovered plain text from thinking tail: '{content[:100]}'")
                     else:
-                        # Last resort: use the very last line regardless
-                        content = lines[-1]
-                        print(f"[OLLAMA] Last-resort recovery from thinking: '{content[:100]}'")
+                        # Walk backwards through lines to find the first non-reasoning line
+                        for ln in reversed(lines):
+                            if len(ln) > 5 and not _is_reasoning_text(ln):
+                                content = ln
+                                print(f"[OLLAMA] Recovered non-reasoning line: '{content[:100]}'")
+                                break
+                        if not content.strip():
+                            # Last resort: use the very last line regardless
+                            content = lines[-1]
+                            print(f"[OLLAMA] Last-resort recovery from thinking: '{content[:100]}'")
 
     # Debug logging when content is still empty
     if not content.strip():
