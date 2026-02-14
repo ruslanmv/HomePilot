@@ -40,6 +40,7 @@ import { MessageMarkdown } from './components/MessageMarkdown'
 import { ChatEmptyState } from './components/ChatEmptyState'
 import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
 import { AgentSettingsPanel, type AgentProjectData } from './components/AgentSettingsPanel'
+import { PersonaSettingsPanel } from './components/PersonaSettingsPanel'
 import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
@@ -1578,6 +1579,8 @@ export default function App() {
       ask_before_acting?: boolean
       execution_profile?: 'fast' | 'balanced' | 'quality'
     }
+    persona_agent?: Record<string, any>
+    persona_appearance?: Record<string, any>
   } | null>(null)
 
   // Agent settings panel toggle
@@ -2009,6 +2012,8 @@ export default function App() {
               instructions: project.instructions,
               files: project.files,
               agentic: project.agentic,
+              persona_agent: project.persona_agent,
+              persona_appearance: project.persona_appearance,
             })
 
             // Restore last conversation for this project
@@ -2872,25 +2877,47 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         </header>
         )}
 
-        {/* Agent Settings Panel — accessible from gear icon in project header */}
+        {/* Project Settings Panel — accessible from gear icon in project header */}
         {showAgentSettings && currentProject && (
-          <AgentSettingsPanel
-            project={currentProject as AgentProjectData}
-            backendUrl={settingsDraft.backendUrl}
-            apiKey={settingsDraft.apiKey}
-            onClose={() => setShowAgentSettings(false)}
-            onSaved={(updated) => {
-              setCurrentProject((prev) => prev ? {
-                ...prev,
-                name: updated.name || prev.name,
-                description: updated.description,
-                instructions: updated.instructions,
-                files: updated.files || prev.files,
-                agentic: updated.agentic || prev.agentic,
-              } : prev)
-              setShowAgentSettings(false)
-            }}
-          />
+          currentProject.project_type === 'persona' ? (
+            <PersonaSettingsPanel
+              project={currentProject as any}
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              onClose={() => setShowAgentSettings(false)}
+              onSaved={(updated: any) => {
+                setCurrentProject((prev) => prev ? {
+                  ...prev,
+                  name: updated.name || prev.name,
+                  description: updated.description,
+                  instructions: updated.instructions,
+                  files: updated.files || prev.files,
+                  agentic: updated.agentic || prev.agentic,
+                  persona_agent: updated.persona_agent || prev.persona_agent,
+                  persona_appearance: updated.persona_appearance || prev.persona_appearance,
+                } : prev)
+                setShowAgentSettings(false)
+              }}
+            />
+          ) : (
+            <AgentSettingsPanel
+              project={currentProject as AgentProjectData}
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              onClose={() => setShowAgentSettings(false)}
+              onSaved={(updated) => {
+                setCurrentProject((prev) => prev ? {
+                  ...prev,
+                  name: updated.name || prev.name,
+                  description: updated.description,
+                  instructions: updated.instructions,
+                  files: updated.files || prev.files,
+                  agentic: updated.agentic || prev.agentic,
+                } : prev)
+                setShowAgentSettings(false)
+              }}
+            />
+          )
         )}
 
         {mode === 'voice' ? (
@@ -2930,6 +2957,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     instructions: project.instructions,
                     files: project.files,
                     agentic: project.agentic,
+                    persona_agent: project.persona_agent,
+                    persona_appearance: project.persona_appearance,
                   })
 
                   // Restore last conversation or start fresh
@@ -3126,6 +3155,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               canSend={canSend}
               onSend={onSend}
               onUpload={uploadAndSend}
+
             />
           )
         ) : messages.length === 0 && currentProject ? (
