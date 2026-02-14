@@ -56,7 +56,7 @@ function CodeBlock({ lang, raw }: { lang: string; raw: string }) {
  * - Safe by default (no raw HTML).
  * - Code blocks have header + language + copy button.
  */
-export function MessageMarkdown({ text }: { text: string }) {
+export function MessageMarkdown({ text, onImageClick }: { text: string; onImageClick?: (src: string) => void }) {
   const normalized = useMemo(() => (text ?? '').replace(/\r\n/g, '\n'), [text])
 
   return (
@@ -110,6 +110,7 @@ export function MessageMarkdown({ text }: { text: string }) {
             <img
               src={src}
               alt={alt || 'Photo'}
+              onClick={src ? () => onImageClick?.(src) : undefined}
               className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
               loading="lazy"
             />
