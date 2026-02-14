@@ -12,9 +12,9 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom';
-import { ChevronDown, Check, Sparkles, Stars, Heart, Flame } from 'lucide-react';
+import { ChevronDown, Check, Sparkles, Stars, Heart, Flame, User } from 'lucide-react';
 import { PersonalityDef } from './personalities';
-import { PERSONALITY_CAPS, PersonalityCategory } from './personalityCaps';
+import { PERSONALITY_CAPS, PersonalityCategory, PersonalityId } from './personalityCaps';
 import {
   getPersonalitiesByCategory,
   getCategoryLabel,
@@ -24,11 +24,14 @@ import {
 interface PersonalityListProps {
   activePersonality: PersonalityDef;
   onSelect: (personality: PersonalityDef) => void;
+  /** Persona entries from user projects (shown when personas toggle is on) */
+  personas?: PersonalityDef[];
 }
 
 export default function PersonalityList({
   activePersonality,
   onSelect,
+  personas = [],
 }: PersonalityListProps) {
   const [showList, setShowList] = useState(false);
   const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, height: 400 });
@@ -90,6 +93,7 @@ export default function PersonalityList({
     kids: <Stars size={12} />,
     wellness: <Heart size={12} />,
     adult: <Flame size={12} />,
+    personas: <User size={12} />,
   };
 
   return (
@@ -161,7 +165,7 @@ export default function PersonalityList({
                       {personalities.map((p) => {
                         const PIcon = p.icon;
                         const isActive = activePersonality.id === p.id;
-                        const caps = PERSONALITY_CAPS[p.id];
+                        const caps = PERSONALITY_CAPS[p.id as PersonalityId];
 
                         return (
                           <button
@@ -202,6 +206,49 @@ export default function PersonalityList({
                   </div>
                 );
               })}
+
+              {/* Persona entries from user projects */}
+              {personas.length > 0 && (
+                <div className="mb-2">
+                  <div className="flex items-center gap-2 px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-violet-400/70">
+                    <User size={12} />
+                    <span>Personas</span>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    {personas.map((p) => {
+                      const isActive = activePersonality.id === p.id;
+
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => handleSelect(p)}
+                          className={`
+                            flex items-center gap-3 p-2.5 rounded-[12px] text-left transition-all cursor-pointer
+                            ${isActive
+                              ? 'bg-violet-500/15 text-white'
+                              : 'text-white/50 hover:bg-white/5 hover:text-white'
+                            }
+                          `}
+                        >
+                          <User size={16} className={isActive ? 'text-violet-400' : 'opacity-60'} />
+                          <div className="flex-1 min-w-0">
+                            <span className="text-[12px] font-medium block truncate">
+                              {p.label}
+                            </span>
+                            {p.personaTone && (
+                              <span className="text-[9px] text-white/30 block truncate">
+                                {p.personaTone}
+                              </span>
+                            )}
+                          </div>
+                          {isActive && <Check size={12} className="text-violet-400 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Adult content hint if not enabled */}
               {!adultAllowed && (

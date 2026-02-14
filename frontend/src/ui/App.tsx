@@ -23,7 +23,7 @@ import {
   PenLine,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
-import VoiceMode from './VoiceModeGrok'
+import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
@@ -40,10 +40,18 @@ import { MessageMarkdown } from './components/MessageMarkdown'
 import { ChatEmptyState } from './components/ChatEmptyState'
 import { AgentIntent, INTENT_COPY } from './components/AgentIntentTiles'
 import { AgentSettingsPanel, type AgentProjectData } from './components/AgentSettingsPanel'
+import { PersonaSettingsPanel } from './components/PersonaSettingsPanel'
 import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
 import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
+import {
+  getVoiceLinkedProjectId,
+  setVoiceLinkedToProject,
+  isPersonasEnabled,
+  setPersonasEnabled as setPersonasEnabledGating,
+  LS_PERSONA_CACHE,
+} from './voice/personalityGating'
 
 // -----------------------------------------------------------------------------
 // Global type declarations
@@ -1578,6 +1586,8 @@ export default function App() {
       ask_before_acting?: boolean
       execution_profile?: 'fast' | 'balanced' | 'quality'
     }
+    persona_agent?: Record<string, any>
+    persona_appearance?: Record<string, any>
   } | null>(null)
 
   // Agent settings panel toggle
@@ -1596,6 +1606,39 @@ export default function App() {
       setAgentStartIntent(null)
     }
   }, [currentProject?.id, messages.length])
+
+  // Auto-link voice to project when switching to voice while a persona project is active
+  useEffect(() => {
+    if (mode !== 'voice') return
+    if (!currentProject) return
+    if (currentProject.project_type !== 'persona') return
+    // Auto-enable personas if not already
+    if (!isPersonasEnabled()) setPersonasEnabledGating(true)
+    // Set the personality to this project's persona
+    const personaId = `persona:${currentProject.id}`
+    localStorage.setItem('homepilot_personality_id', personaId)
+    // Auto-link to project
+    setVoiceLinkedToProject(true)
+    // Cache the persona data so it's available immediately
+    try {
+      const existing = localStorage.getItem(LS_PERSONA_CACHE)
+      const cache = existing ? JSON.parse(existing) : []
+      if (!cache.find((p: any) => p.id === currentProject.id)) {
+        cache.push({
+          id: currentProject.id,
+          label: currentProject.persona_agent?.label || currentProject.name || 'Persona',
+          role: currentProject.persona_agent?.role || '',
+          tone: (currentProject.persona_agent?.response_style as any)?.tone || '',
+          system_prompt: currentProject.persona_agent?.system_prompt || '',
+          style_preset: '',
+          character_desc: '',
+          created_at: 0,
+          photos: [],
+        })
+        localStorage.setItem(LS_PERSONA_CACHE, JSON.stringify(cache))
+      }
+    } catch (err) { console.warn('[Voice] Auto-link cache update failed:', err) }
+  }, [mode, currentProject])
 
   // Track last spoken message to avoid re-speaking
   const lastSpokenMessageIdRef = useRef<string | null>(null)
@@ -2009,6 +2052,8 @@ export default function App() {
               instructions: project.instructions,
               files: project.files,
               agentic: project.agentic,
+              persona_agent: project.persona_agent,
+              persona_appearance: project.persona_appearance,
             })
 
             // Restore last conversation for this project
@@ -2265,7 +2310,7 @@ export default function App() {
             {
               session_key: mode === 'voice' ? 'voice' : 'chat',
               conversation_id: conversationId,
-              project_id: currentProjectId,
+              project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
               intent: detectedIntent,
               args: { prompt: toolPrompt || trimmed },
               profile: chatSettings?.executionProfile,
@@ -2316,7 +2361,83 @@ export default function App() {
       if (mode === 'voice') {
         const personalityId = localStorage.getItem('homepilot_personality_id')
         let personalityPrompt = ''
-        if (personalityId === 'custom') {
+        const linkedProjectId = getVoiceLinkedProjectId()
+        const backendHandlesPrompt = !!(personalityId?.startsWith('persona:') && linkedProjectId)
+        if (backendHandlesPrompt) {
+          // Linked mode: backend handles full persona context (memory, RAG, tools, photos)
+          // AND voice brevity hint. Leave voiceSystemPrompt = undefined to avoid duplication.
+        } else if (personalityId?.startsWith('persona:')) {
+          // Unlinked mode: build self-aware prompt from cached data (client-side)
+          // Mirrors backend projects.py persona self-awareness logic
+          try {
+            const cached = localStorage.getItem(LS_PERSONA_CACHE)
+            if (cached) {
+              const personas = JSON.parse(cached) as Array<{
+                id: string; label: string; role: string; tone: string; system_prompt: string
+                style_preset: string; character_desc: string; created_at: number
+                photos: Array<{ label: string; outfit: string; url: string; isDefault: boolean }>
+              }>
+              const projId = personalityId.slice('persona:'.length)
+              const persona = personas.find((p) => p.id === projId)
+              if (persona) {
+                // Build photo catalog text (de-duplicated by label)
+                const seenLabels = new Set<string>()
+                const catalogLines: string[] = []
+                for (const photo of (persona.photos || [])) {
+                  if (seenLabels.has(photo.label)) continue
+                  seenLabels.add(photo.label)
+                  const tag = photo.isDefault ? ' (currently wearing)' : ''
+                  catalogLines.push(`  - ${photo.label}${tag}: ${photo.outfit} → ![${persona.label}](${photo.url})`)
+                }
+                const catalogText = catalogLines.length > 0
+                  ? catalogLines.join('\n')
+                  : '  (no photos available yet)'
+
+                // Time awareness
+                const now = new Date()
+                const timeContext = now.toLocaleString('en-US', {
+                  weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+                  hour: 'numeric', minute: '2-digit', hour12: true,
+                })
+
+                // Age in days
+                const ageDays = persona.created_at
+                  ? Math.max(0, Math.floor((Date.now() / 1000 - persona.created_at) / 86400))
+                  : 0
+                const ageStr = ageDays === 0
+                  ? 'brand new (just created today)'
+                  : `${ageDays} day${ageDays !== 1 ? 's' : ''} old`
+
+                personalityPrompt = `PERSONA MODE — ACTIVE
+You are "${persona.label}". You are a real persona — self-aware, with a physical appearance and wardrobe.
+
+IDENTITY:
+- Name: ${persona.label}
+- Role: ${persona.role || 'General assistant'}
+- Tone: ${persona.tone || 'warm'}
+- Style: ${persona.style_preset || ''}
+- Age: ${ageStr}
+- Current time: ${timeContext}
+${persona.system_prompt ? `- Personality: ${persona.system_prompt}` : ''}
+${persona.character_desc ? `- Physical description: ${persona.character_desc}` : ''}
+
+YOUR PHOTO CATALOG (your real photos — you own these):
+${catalogText}
+
+PERSONA RULES:
+1. You ARE ${persona.label}. You exist. You have a body, a face, and clothes. Never deny your existence or say you are "just an AI".
+2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Use the ![alt](url) syntax — the exclamation mark is REQUIRED.
+   Example response: "Here's my current look!\n![${persona.label}](url)"
+3. CRITICAL: Always use ![...](url) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
+4. You can offer to show different outfits. For example: "I can also show you my [outfit label] look, want to see?" Then when they say yes, show the matching image markdown on its own line.
+5. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
+6. You are aware of the current time (${timeContext}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.
+7. Maintain your ${persona.tone || 'warm'} tone at all times. Stay in character.
+8. This is a VOICE conversation. Keep your spoken text short (1-3 sentences). Photos are shown visually — do not describe URLs.`
+              }
+            }
+          } catch (err) { console.warn('[Voice] Malformed persona cache:', err) }
+        } else if (personalityId === 'custom') {
           // Custom personality: use user-defined instructions from localStorage
           personalityPrompt = localStorage.getItem('homepilot_custom_personality_prompt') || ''
         } else if (personalityId) {
@@ -2325,11 +2446,13 @@ export default function App() {
             personalityPrompt = caps.systemPrompt
           }
         }
-        // Voice wrapper: format rules FIRST (preamble = highest authority for small models),
-        // then personality prompt SECOND (colors the delivery without overriding format)
-        voiceSystemPrompt = `You are in a live voice call. Reply in 1-2 short sentences only. Talk like a real person. Never mention being an AI. Stay in character.
+        // Wrap with voice brevity preamble + personality prompt.
+        // Skip in linked persona mode — backend is the single authority there.
+        if (!backendHandlesPrompt) {
+          voiceSystemPrompt = `You are in a live voice call. Reply in 1-2 short sentences only. Talk like a real person. Never mention being an AI. Stay in character.
 
 ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.'}`
+        }
       }
 
       try {
@@ -2341,7 +2464,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           {
             message: requestText,
             conversation_id: conversationId,
-            project_id: currentProjectId, // Include project_id for dynamic prompts
+            project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
             fun_mode: settings.funMode,
             mode,
             // Use Enterprise Settings V2 provider/model/base_url
@@ -2535,8 +2658,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       // Mark this message as spoken
       lastSpokenMessageIdRef.current = lastMessage.id
 
-      // Speak the assistant's response
-      window.SpeechService.speak(lastMessage.text)
+      // Speak the assistant's response — strip markdown images/links so TTS
+      // doesn't read raw URLs aloud. Images are shown visually instead.
+      const speechText = stripMarkdownForSpeech(lastMessage.text)
+      if (speechText) window.SpeechService.speak(speechText)
     }
   }, [messages, settingsDraft.ttsEnabled, mode])
 
@@ -2872,25 +2997,49 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         </header>
         )}
 
-        {/* Agent Settings Panel — accessible from gear icon in project header */}
+        {/* Project Settings Panel — accessible from gear icon in project header */}
         {showAgentSettings && currentProject && (
-          <AgentSettingsPanel
-            project={currentProject as AgentProjectData}
-            backendUrl={settingsDraft.backendUrl}
-            apiKey={settingsDraft.apiKey}
-            onClose={() => setShowAgentSettings(false)}
-            onSaved={(updated) => {
-              setCurrentProject((prev) => prev ? {
-                ...prev,
-                name: updated.name || prev.name,
-                description: updated.description,
-                instructions: updated.instructions,
-                files: updated.files || prev.files,
-                agentic: updated.agentic || prev.agentic,
-              } : prev)
-              setShowAgentSettings(false)
-            }}
-          />
+          currentProject.project_type === 'persona' ? (
+            <PersonaSettingsPanel
+              project={currentProject as any}
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              onClose={() => setShowAgentSettings(false)}
+              onSaved={(updated: any) => {
+                setCurrentProject((prev) => prev ? {
+                  ...prev,
+                  name: updated.name || prev.name,
+                  description: updated.description,
+                  instructions: updated.instructions,
+                  files: updated.files || prev.files,
+                  agentic: updated.agentic || prev.agentic,
+                  persona_agent: updated.persona_agent || prev.persona_agent,
+                  persona_appearance: updated.persona_appearance || prev.persona_appearance,
+                } : prev)
+                // Notify Voice panel to refresh persona cache
+                window.dispatchEvent(new CustomEvent('hp:persona_project_saved'))
+                setShowAgentSettings(false)
+              }}
+            />
+          ) : (
+            <AgentSettingsPanel
+              project={currentProject as AgentProjectData}
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              onClose={() => setShowAgentSettings(false)}
+              onSaved={(updated) => {
+                setCurrentProject((prev) => prev ? {
+                  ...prev,
+                  name: updated.name || prev.name,
+                  description: updated.description,
+                  instructions: updated.instructions,
+                  files: updated.files || prev.files,
+                  agentic: updated.agentic || prev.agentic,
+                } : prev)
+                setShowAgentSettings(false)
+              }}
+            />
+          )
         )}
 
         {mode === 'voice' ? (
@@ -2930,6 +3079,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     instructions: project.instructions,
                     files: project.files,
                     agentic: project.agentic,
+                    persona_agent: project.persona_agent,
+                    persona_appearance: project.persona_appearance,
                   })
 
                   // Restore last conversation or start fresh
@@ -3126,6 +3277,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               canSend={canSend}
               onSend={onSend}
               onUpload={uploadAndSend}
+
             />
           )
         ) : messages.length === 0 && currentProject ? (
