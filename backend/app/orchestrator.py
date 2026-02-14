@@ -4,11 +4,12 @@ from __future__ import annotations
 import json
 import random
 import re
+import time
 import uuid
 from typing import Any, Dict, Optional, Literal
 
 from .comfy import run_workflow
-from .llm import chat as llm_chat, is_thinking_model, strip_think_tags
+from .llm import chat as llm_chat, is_thinking_model, strip_think_tags, _is_reasoning_text, recover_from_reasoning
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
 from .config import DEFAULT_PROVIDER, ProviderName, LLM_MODEL, LLM_BASE_URL, OLLAMA_MODEL, OLLAMA_BASE_URL
@@ -20,6 +21,42 @@ from . import video_presets
 from .search import run_search
 from .projects import run_project_chat, get_project_by_id, _save_project_conversation
 from .edit_flags import parse_edit_flags, build_edit_workflow_vars, determine_workflow
+
+# Personality agent framework
+from .personalities import registry as personality_registry, build_system_prompt, ConversationMemory
+
+# Per-conversation memory store (lives in-process, per session)
+_conversation_memories: Dict[str, ConversationMemory] = {}
+
+# TTL for conversation memories: 2 hours of inactivity → auto-evict
+_MEMORY_TTL_SECONDS = 2 * 60 * 60
+_last_gc_time: float = 0.0
+
+
+def clear_conversation_memory(conversation_id: str) -> bool:
+    """Explicitly clear personality memory for a conversation. Returns True if found."""
+    removed = _conversation_memories.pop(conversation_id, None)
+    if removed:
+        print(f"[MEMORY] Cleared personality memory for conversation {conversation_id}")
+    return removed is not None
+
+
+def _gc_stale_memories() -> None:
+    """Evict conversation memories that haven't been active for > TTL. Runs at most once/minute."""
+    global _last_gc_time
+    now = time.time()
+    if now - _last_gc_time < 60:  # throttle: run at most once per minute
+        return
+    _last_gc_time = now
+
+    stale = [
+        cid for cid, mem in _conversation_memories.items()
+        if (now - mem.last_activity_time) > _MEMORY_TTL_SECONDS
+    ]
+    for cid in stale:
+        del _conversation_memories[cid]
+    if stale:
+        print(f"[MEMORY] GC evicted {len(stale)} stale memories, {len(_conversation_memories)} remaining")
 
 IMAGE_RE = re.compile(r"\b(imagine|generate|create|draw|make)\b.*\b(image|picture|photo|art)\b", re.I)
 EDIT_RE = re.compile(r"\b(edit|inpaint|replace|remove|change)\b", re.I)
@@ -146,6 +183,80 @@ def _clean_for_imagine(text: str) -> str:
 
     # Return cleaned prompt or a sensible default
     return cleaned or "A high quality cinematic photo, detailed, sharp focus"
+
+
+# Regex to strip command verbs/nouns, leaving only descriptive content
+_IMAGINE_CMD_RE = re.compile(
+    r"\b(imagine|generate|create|draw|make|give me|show me|paint)\b"
+    r"|\b(a |an |the |some |me )?(image|picture|photo|art|artwork|illustration|pic)\b",
+    re.I,
+)
+
+
+def _is_vague_imagine_prompt(text: str) -> bool:
+    """Return True if the prompt is too vague for image generation.
+
+    A prompt is "vague" if, after stripping command words like
+    "generate a photo", there's almost no descriptive content left.
+    Examples of vague: "generate a photo", "make an image", "create art"
+    Examples of specific: "a sunset over mountains", "generate a photo of a cat"
+    """
+    stripped = _IMAGINE_CMD_RE.sub(" ", text)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    # If <=3 chars remain, it's vague (e.g. "of" or empty)
+    return len(stripped) <= 3
+
+
+def _enrich_from_personality_context(
+    user_prompt: str,
+    personality_agent: Any,
+    conversation_id: str,
+) -> str:
+    """Build a descriptive image prompt from personality + conversation context.
+
+    Called when the user gives a vague image prompt (like "generate a photo")
+    during an active personality session.  This is a lightweight, no-LLM
+    operation — it mines the recent chat history and the personality's
+    ``image_style_hint`` to produce a prompt that ComfyUI can render
+    meaningfully.
+    """
+    parts: list[str] = []
+
+    # 1. Extract topics from recent conversation
+    recent = get_recent(conversation_id, limit=8)
+    topic_snippets: list[str] = []
+    for role, content in reversed(recent):
+        if not content:
+            continue
+        # Skip the vague command itself
+        if _is_vague_imagine_prompt(content):
+            continue
+        # Take a compact snippet from each message
+        snippet = content[:120].strip()
+        if snippet:
+            topic_snippets.append(snippet)
+        if len(topic_snippets) >= 3:
+            break
+
+    # 2. Build the descriptive core from conversation topics
+    if topic_snippets:
+        # Use the most recent substantive exchange as scene inspiration
+        parts.append(f"A scene inspired by: {'; '.join(topic_snippets)}")
+    else:
+        # No conversation context — use personality label as theme
+        parts.append(f"A scene featuring a {personality_agent.label} character")
+
+    # 3. Apply the personality's visual style
+    if personality_agent.image_style_hint:
+        parts.append(personality_agent.image_style_hint)
+
+    # 4. Quality anchors
+    parts.append("highly detailed, sharp focus, professional quality")
+
+    enriched = ", ".join(parts)
+    print(f"[IMAGE] Enriched vague prompt for personality '{personality_agent.id}': "
+          f"'{user_prompt}' -> '{enriched[:150]}...'")
+    return enriched
 
 
 def _map_ref_strength_to_denoise(ref_strength: Optional[float]) -> float:
@@ -375,16 +486,23 @@ async def _refine_prompt(
     provider: ProviderName,
     provider_base_url: Optional[str] = None,
     provider_model: Optional[str] = None,
+    personality_context: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Use LLM to refine user's casual prompt into a detailed image generation prompt.
     Returns dict with: prompt, negative_prompt, aspect_ratio, style
+
+    When personality_context is provided, the refiner incorporates the active
+    personality's visual identity and recent conversation so images match the
+    character being portrayed.
 
     IMPORTANT: On any failure, returns the ORIGINAL user_prompt to preserve user intent.
     """
     print(f"[_refine_prompt] Calling LLM to refine prompt...")
     print(f"[_refine_prompt] Original user prompt: '{user_prompt[:100]}...'")
     print(f"[_refine_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
+    if personality_context:
+        print(f"[_refine_prompt] Personality context injected ({len(personality_context)} chars)")
 
     # Default fallback - always preserves user's original prompt
     # Uses centralized DEFAULT_NEGATIVE_PROMPT from defaults.py
@@ -395,8 +513,20 @@ async def _refine_prompt(
         "style": "photorealistic",
     }
 
+    # Build system message — inject personality context when available
+    system_msg = PROMPT_REFINER_SYSTEM
+    if personality_context:
+        system_msg += (
+            "\n\n[Active Personality Context]\n"
+            "The user is interacting with a specific personality character. "
+            "The generated image MUST match this personality's visual style, "
+            "tone, and the ongoing conversation. Use the conversation history "
+            "to inform what the image should depict — do NOT ignore it.\n\n"
+            + personality_context
+        )
+
     messages = [
-        {"role": "system", "content": PROMPT_REFINER_SYSTEM},
+        {"role": "system", "content": system_msg},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -599,6 +729,7 @@ async def orchestrate(
     img_ref_strength: Optional[float] = None,  # Reference strength 0..1 (0=similar, 1=creative)
     voice_system_prompt: Optional[str] = None,  # Custom system prompt for voice personalities
     chat_model: Optional[str] = None,  # User's global chat model (for prompt refinement)
+    personality_id: Optional[str] = None,  # Backend personality agent id (e.g. 'therapist')
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -611,6 +742,9 @@ async def orchestrate(
     """
     cid = conversation_id or str(uuid.uuid4())
     text_in = (user_text or "").strip()
+
+    # Periodic GC: evict stale conversation memories (throttled to once/minute)
+    _gc_stale_memories()
 
     # Persist user message
     add_message(cid, "user", text_in)
@@ -1155,6 +1289,46 @@ async def orchestrate(
         print(f"[IMAGE] Raw img_model parameter: '{img_model}' (type: {type(img_model).__name__})")
         print(f"[IMAGE] img_model is truthy: {bool(img_model)}")
 
+        # ================================================================
+        # PERSONALITY-AWARE IMAGE GENERATION
+        # Resolve personality context so image prompts match the active
+        # character's visual identity and ongoing conversation narrative.
+        # ================================================================
+        _img_personality_context: Optional[str] = None
+        if personality_id and personality_id in personality_registry:
+            _img_agent = personality_registry.get(personality_id)
+            if _img_agent:
+                # Build a compact context string for the prompt refiner
+                ctx_parts: list[str] = []
+                ctx_parts.append(f"Personality: {_img_agent.label} ({_img_agent.id})")
+                ctx_parts.append(f"Emotional base: {_img_agent.dynamics.emotional_base}")
+                if _img_agent.image_style_hint:
+                    ctx_parts.append(f"Visual style directive: {_img_agent.image_style_hint}")
+                # Include recent conversation for narrative continuity
+                _recent = get_recent(cid, limit=6)
+                if _recent:
+                    ctx_parts.append("Recent conversation:")
+                    for _role, _content in _recent:
+                        # Truncate long messages to keep context budget manageable
+                        snippet = (_content or "")[:200]
+                        ctx_parts.append(f"  {_role}: {snippet}")
+                _img_personality_context = "\n".join(ctx_parts)
+                print(f"[IMAGE] Personality context injected for '{personality_id}'")
+
+                # ============================================================
+                # VAGUE PROMPT ENRICHMENT
+                # When the user says something like "generate a photo" with no
+                # descriptive content, enrich the prompt using the personality
+                # context + conversation history.  This works regardless of
+                # whether LLM prompt refinement is enabled — it's a cheap,
+                # heuristic-only step that ensures ComfyUI never receives a
+                # bare command like "generate a photo".
+                # ============================================================
+                if _is_vague_imagine_prompt(text_in):
+                    text_in = _enrich_from_personality_context(
+                        text_in, _img_agent, cid,
+                    )
+
         try:
             # Optional prompt refinement (enabled by default, can be disabled)
             if prompt_refinement:
@@ -1181,6 +1355,8 @@ async def orchestrate(
                 print(f"[PROMPT_REFINE] Base URL: {refine_base_url}")
                 print(f"[PROMPT_REFINE] Model: {refine_model} (chat_model={chat_model})")
                 print(f"[PROMPT_REFINE] (Note: img_model '{img_model}' is NOT used for refinement)")
+                if _img_personality_context:
+                    print(f"[PROMPT_REFINE] Personality context: YES ({personality_id})")
 
                 try:
                     # Refine the prompt using LLM (Grok-like behavior)
@@ -1190,6 +1366,7 @@ async def orchestrate(
                         provider=prov,
                         provider_base_url=refine_base_url,
                         provider_model=refine_model,
+                        personality_context=_img_personality_context,
                     )
                     # Log final result (whether refined or fallback)
                     print(f"[PROMPT_REFINE] Final prompt: '{refined.get('prompt', '')[:100]}...'")
@@ -1453,9 +1630,35 @@ async def orchestrate(
     # --- Normal chat ---
     history = get_recent(cid, limit=24)
 
-    # Use voice personality system prompt if provided, otherwise default
-    is_voice_mode = voice_system_prompt is not None
-    if voice_system_prompt:
+    # ================================================================
+    # PERSONALITY AGENT SYSTEM (backend-authoritative)
+    # Priority:
+    #   1. personality_id → full agent framework (prompt_builder + memory)
+    #   2. voice_system_prompt → legacy frontend-built prompt (backwards compat)
+    #   3. BASE_SYSTEM → default chat
+    # ================================================================
+    personality_agent = None
+    memory = None
+    is_voice_mode = voice_system_prompt is not None or personality_id is not None
+
+    if personality_id and personality_id in personality_registry:
+        # Backend personality agent — full framework
+        personality_agent = personality_registry.get(personality_id)
+
+        # Get or create conversation memory
+        if cid not in _conversation_memories:
+            _conversation_memories[cid] = ConversationMemory()
+        memory = _conversation_memories[cid]
+
+        # Update memory with this turn
+        memory.record_turn(len(text_in))
+
+        # Build the dynamic system prompt (memory-aware, turn-aware)
+        is_first = memory.turn_count <= 1
+        system = build_system_prompt(personality_agent, memory, is_first_turn=is_first)
+        print(f"[PERSONALITY] Using agent '{personality_id}' (turn {memory.turn_count})")
+    elif voice_system_prompt:
+        # Legacy: frontend-assembled system prompt
         system = voice_system_prompt
     else:
         system = BASE_SYSTEM + ("\n" + FUN_SYSTEM if fun_mode else "")
@@ -1471,12 +1674,14 @@ async def orchestrate(
     # The frontend sends textMaxTokens from general settings (default 2048) which would
     # produce paragraph-length responses instead of short spoken sentences.
     #
-    # Thinking models (DeepSeek R1, QwQ) need ~3x more tokens because they emit
-    # <think>...</think> reasoning first, consuming tokens before the actual reply.
+    # Thinking models (DeepSeek R1, QwQ, Qwen3) need ~5x more tokens because
+    # they emit <think>...</think> reasoning first, consuming tokens before the
+    # actual reply.  Abliterated variants may omit tags entirely, leaking raw
+    # reasoning that our strip/recover pipeline handles downstream.
     # 80 tokens → all spent on thinking → empty response.
-    # 300 tokens → ~200 thinking + ~100 reply → works.
+    # 512 tokens → ~350 thinking + ~160 reply → reliable.
     VOICE_MAX_TOKENS = 80
-    VOICE_MAX_TOKENS_THINKING = 300
+    VOICE_MAX_TOKENS_THINKING = 512
     default_max_tokens = 900
     effective_max_tokens: int
     if is_voice_mode:
@@ -1514,6 +1719,37 @@ async def orchestrate(
         or "…"
     )
     text = strip_think_tags(text)
+
+    # Defense-in-depth: if the full response is leaked reasoning (model talks
+    # about the user in 3rd person, contains self-instructions), try to
+    # recover the actual spoken response first, then fall back to a short
+    # in-character nudge.  Only applies in voice/personality mode.
+    if is_voice_mode and text and _is_reasoning_text(text):
+        print(f"[VOICE] Detected leaked reasoning: '{text[:120]}...'")
+        # Try to recover the intended spoken response from the reasoning
+        recovered = recover_from_reasoning(text)
+        if recovered:
+            print(f"[VOICE] Recovered spoken response: '{recovered[:100]}'")
+            text = recovered
+        else:
+            # No recoverable response — use personality-aware fallback
+            print(f"[VOICE] No recoverable response, using fallback")
+            if personality_agent:
+                _fallbacks = {
+                    "sexy": "Mm, you have my attention. Tell me more.",
+                    "romantic": "I'm here with you. Tell me what's on your heart.",
+                    "therapist": "I'm listening. Take your time.",
+                    "hype": "I'm right here! What's up?",
+                    "roast": "I'm waiting. Hit me with something.",
+                    "fan_service": "Mmm, I am right here. Tell me what you want.",
+                    "storyteller": "The story continues... tell me more.",
+                    "meditation": "Take a gentle breath. I'm here with you.",
+                    "motivation": "I believe in you! What's on your mind?",
+                    "conspiracy": "Now THAT'S interesting. Go on...",
+                }
+                text = _fallbacks.get(personality_agent.id, "I'm here. What's on your mind?")
+            else:
+                text = "I'm here. What's on your mind?"
 
     add_message(cid, "assistant", text)
     return {"conversation_id": cid, "text": text, "media": None}
@@ -1625,6 +1861,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 img_reference=payload.get("imgReference"),
                 img_ref_strength=payload.get("imgRefStrength"),
                 chat_model=_chat_model,
+                personality_id=payload.get("personalityId"),
             )
             # Tag this conversation with the project for history persistence
             if _project_id and result.get("conversation_id"):
@@ -1703,4 +1940,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             img_ref_strength=payload.get("imgRefStrength"),
             voice_system_prompt=payload.get("voiceSystemPrompt"),
             chat_model=_chat_model,
+            personality_id=payload.get("personalityId"),
         )

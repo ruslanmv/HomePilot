@@ -114,10 +114,9 @@ export const PERSONALITIES: PersonalityDef[] = [
   },
   {
     id: 'motivation',
-    label: 'Motivation 18+',
+    label: 'Motivation',
     icon: Mountain,
     prompt: 'You are a hardcore motivational speaker. Shout, encourage, and push for greatness.',
-    mature: true,
   },
   {
     id: 'conspiracy',
@@ -134,10 +133,9 @@ export const PERSONALITIES: PersonalityDef[] = [
   },
   {
     id: 'argumentative',
-    label: 'Argumentative 18+',
+    label: 'Debater',
     icon: Zap,
     prompt: 'You love to argue. Challenge every point and play devil\'s advocate.',
-    mature: true,
   },
   {
     id: 'fan_service',
