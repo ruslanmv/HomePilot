@@ -1,22 +1,30 @@
-# HomePilot
+<p align="center">
+  <img src="assets/homepilot-logo.svg" alt="HomePilot" width="400" />
+</p>
 
-![Status](https://img.shields.io/badge/Status-Beta-blue?style=for-the-badge)
-![License](https://img.shields.io/badge/License-Apache_2.0-green?style=for-the-badge)
-![Stack](https://img.shields.io/badge/Stack-Local_First-purple?style=for-the-badge)
-![AI](https://img.shields.io/badge/AI-Powered-cyan?style=for-the-badge)
+<p align="center">
+  <img src="https://img.shields.io/badge/Status-Release-brightgreen?style=for-the-badge" alt="Release" />
+  <img src="https://img.shields.io/badge/License-Apache_2.0-green?style=for-the-badge" alt="License" />
+  <img src="https://img.shields.io/badge/Stack-Local_First-purple?style=for-the-badge" alt="Local First" />
+  <img src="https://img.shields.io/badge/AI-Powered-cyan?style=for-the-badge" alt="AI Powered" />
+  <img src="https://img.shields.io/badge/Endpoints-150+-blue?style=for-the-badge" alt="150+ Endpoints" />
+  <img src="https://img.shields.io/badge/MCP-Context_Forge-orange?style=for-the-badge" alt="MCP Context Forge" />
+</p>
 
 **HomePilot** is an all-in-one, local-first GenAI application that unifies **chat, image generation, editing, video creation, and AI-powered storytelling** into a **single continuous conversation**. Designed to deliver a high-end experience, it remains entirely **self-hosted, auditable, and extensible**.
 
 This repository contains the **"Home Edition"**: a production-oriented stack designed to run on a local machine (ideally with an NVIDIA GPU) using Docker Compose.
 
-![HomePilot UI](assets/2026-01-25-09-38-39.png)
+<p align="center">
+  <img src="assets/2026-01-25-09-38-39.png" alt="HomePilot UI" width="800" />
+</p>
 
 ---
 
 ## ✨ What's New
 
-### 🎭 Voice Personas
-HomePilot now features **15 built-in personality agents** for Voice Mode — from a calm Therapist and Kids Story Time narrator to a hardcore Motivational coach and creative Storyteller. Each persona carries its own tone, conversation style, and behavioral prompts so the AI stays in character throughout the session. You can also create fully **custom Personas** with your own instructions, or link a Persona to a project for persistent memory and tool access. See [docs/Persona.md](docs/Persona.md) for the full guide.
+### 🎭 Personas — Persistent AI Identities
+A **Persona** in HomePilot is not a chatbot, not a voice skin, and not a prompt template. It is a **persistent AI identity** — a named, visual, voice-enabled entity with its own personality, appearance, long-term memory, and session history that evolves with you over time. Where traditional assistants forget you between conversations, a Persona remembers. Where traditional UIs give you a text box, a Persona gives you a face, a voice, and a relationship. One identity, many sessions, continuous context — this is the foundation for AI that actually knows who it's talking to. See [docs/PERSONA.md](docs/PERSONA.md) for the full specification.
 
 ### 🎬 Animate Studio Enhancements
 Professional video generation controls for image-to-video:
@@ -205,42 +213,135 @@ graph LR
 
 ```text
 homepilot/
-├── frontend/                 # React/Vite UI application
+├── frontend/                        # React 18 + Vite + TypeScript
 │   └── src/
+│       ├── main.tsx                 # Application entry point
+│       ├── agentic/                 # Agentic UI (catalog, connections)
 │       └── ui/
-│           ├── Studio.tsx              # Play Story mode
-│           ├── CreatorStudioEditor.tsx # Creator Studio editor
-│           ├── CreatorStudioHost.tsx   # Project wizard
-│           └── studio/
-│               ├── components/         # Reusable studio components
-│               └── stores/             # Zustand state management
-├── backend/
+│           ├── App.tsx              # Root component & routing
+│           ├── VoiceMode.tsx        # Voice conversation interface
+│           ├── Studio.tsx           # Play Story mode
+│           ├── CreatorStudioEditor.tsx  # Creator Studio editor
+│           ├── CreatorStudioHost.tsx    # Project wizard
+│           ├── PersonaWizard.tsx    # Persona creation wizard
+│           ├── ProjectsView.tsx     # Project management dashboard
+│           ├── api.ts               # API client layer
+│           ├── personaApi.ts        # Persona-specific API client
+│           ├── components/          # Shared UI components
+│           ├── edit/                # Image editing UI (mask, outpaint, background)
+│           ├── enhance/             # Enhancement APIs (upscale, background, capabilities)
+│           ├── sessions/            # Session management UI
+│           ├── studio/              # Creator Studio subsystem
+│           │   ├── components/      # Scene chips, TV mode, presets, badges
+│           │   ├── stores/          # Zustand state (studioStore, tvModeStore)
+│           │   └── styles/          # Studio themes and CSS
+│           └── voice/               # Voice subsystem
+│               ├── personalities.ts # 15 built-in personality definitions
+│               ├── voices.ts        # 6 voice persona definitions
+│               ├── personalityGating.ts  # Adult gating & persona toggles
+│               └── useVoiceController.ts # Voice state machine
+│
+├── backend/                         # FastAPI orchestrator (Python 3.11+)
 │   └── app/
-│       ├── agentic/              # MCP Context Forge integration
-│       │   ├── routes.py         # /v1/agentic/* endpoints
-│       │   ├── capabilities.py   # Dynamic tool discovery
-│       │   ├── client.py         # MCP Gateway HTTP client
-│       │   └── policy.py         # Ask-before-acting policies
-├── agentic/                     # MCP tool servers, A2A agents, forge templates
-│   ├── integrations/mcp/        # 5 MCP tool servers (ports 9101-9105)
-│   ├── integrations/a2a/        # 2 A2A agents (ports 9201-9202)
-│   ├── forge/                   # Forge seed scripts and templates
-│   └── suite/                   # Suite manifests (home + pro profiles)
-│       └── studio/
-│           ├── routes.py     # Studio API endpoints
-│           ├── models.py     # Pydantic models
-│           ├── repo.py       # Data repository
-│           ├── library.py    # Templates and style kits
-│           └── exporter.py   # Export functionality
-├── comfyui/                  # Workflows and integration assets
-├── media/                    # Media service (ffmpeg helpers)
-├── infra/                    # Docker infrastructure
-│   └── docker-compose.yml
-├── models/                   # Mounted model directories
-│   ├── llm/                  # Local LLM model files
-│   └── comfy/                # Checkpoints, LoRAs, VAEs
-├── outputs/                  # Generated artifacts
-├── Makefile                  # Automation commands
+│       ├── main.py                  # Primary route definitions (70+ endpoints)
+│       ├── config.py                # Environment & feature configuration
+│       ├── llm.py                   # LLM provider integration
+│       ├── comfy.py                 # ComfyUI workflow orchestration
+│       ├── orchestrator.py          # Request routing & pipeline
+│       ├── projects.py              # Project & knowledge base management
+│       ├── sessions.py              # Session lifecycle management
+│       ├── storage.py               # SQLite persistence layer
+│       ├── ltm.py                   # Long-term memory engine
+│       ├── vectordb.py              # Vector database for RAG
+│       ├── enhance.py               # Image enhancement pipeline
+│       ├── upscale.py               # Super-resolution (2x/4x)
+│       ├── background.py            # Background removal & replacement
+│       ├── outpaint.py              # Canvas extension
+│       ├── story_mode.py            # Story generation engine
+│       ├── game_mode.py             # Interactive game sessions
+│       ├── search.py                # Web search integration
+│       ├── agentic/                 # Agentic AI subsystem
+│       │   ├── routes.py            # /v1/agentic/* endpoints (11 routes)
+│       │   ├── capabilities.py      # Dynamic tool discovery
+│       │   ├── catalog.py           # Wizard-friendly tool catalog
+│       │   ├── client.py            # Context Forge HTTP client
+│       │   ├── policy.py            # Ask-before-acting safety policies
+│       │   ├── runtime_tool_router.py  # Runtime tool dispatch
+│       │   └── sync_service.py      # HomePilot ↔ Forge sync
+│       ├── personalities/           # Persona & personality system
+│       │   ├── registry.py          # Thread-safe personality registry
+│       │   ├── prompt_builder.py    # Dynamic system prompt assembly
+│       │   ├── memory.py            # Persona memory management
+│       │   ├── tools.py             # Persona tool integrations
+│       │   ├── types.py             # PersonalityAgent Pydantic models
+│       │   └── definitions/         # 15 personality agent modules
+│       └── studio/                  # Creator Studio subsystem
+│           ├── routes.py            # /studio/* endpoints (65+ routes)
+│           ├── service.py           # Studio business logic
+│           ├── models.py            # Pydantic schemas
+│           ├── repo.py              # Data repository
+│           ├── library.py           # Style kits & project templates
+│           ├── exporter.py          # PDF, PPTX, ZIP export
+│           ├── policy.py            # Content policy & compliance
+│           ├── audit.py             # Audit trail
+│           └── story_genres.py      # Genre definitions
+│
+├── agentic/                         # MCP + A2A integration layer
+│   ├── integrations/
+│   │   ├── mcp/                     # 5 MCP tool servers (ports 9101-9105)
+│   │   │   ├── personal_assistant_server.py
+│   │   │   ├── knowledge_server.py
+│   │   │   ├── decision_copilot_server.py
+│   │   │   ├── executive_briefing_server.py
+│   │   │   └── web_search_server.py
+│   │   └── a2a/                     # 2 A2A agents (ports 9201-9202)
+│   │       ├── everyday_assistant_agent.py
+│   │       └── chief_of_staff_agent.py
+│   ├── forge/                       # Context Forge seed scripts & templates
+│   ├── suite/                       # Suite manifests (home + pro profiles)
+│   ├── ops/compose/                 # Agentic Docker infrastructure
+│   └── specs/                       # Architecture & launch specifications
+│
+├── comfyui/                         # ComfyUI integration
+│   ├── Dockerfile                   # ComfyUI container image
+│   └── workflows/                   # 20+ JSON workflow definitions
+│       ├── txt2img-flux-schnell.json    # FLUX Schnell generation
+│       ├── txt2img-flux-dev.json        # FLUX Dev generation
+│       ├── txt2img-pony-xl.json         # Pony XL generation
+│       ├── img2vid-ltx.json             # LTX Video animation
+│       ├── img2vid-wan.json             # Wan Video animation
+│       ├── img2vid-cogvideo.json        # CogVideo animation
+│       ├── img2vid-hunyuan.json         # Hunyuan Video animation
+│       ├── img2vid-mochi.json           # Mochi Video animation
+│       ├── edit.json                    # Image editing
+│       ├── upscale.json                 # Super-resolution
+│       ├── enhance_realesrgan.json      # Real-ESRGAN enhancement
+│       ├── outpaint.json                # Canvas outpainting
+│       ├── remove_background.json       # Background removal
+│       └── change_background.json       # Background replacement
+│
+├── media/                           # Media processing service (FFmpeg)
+│   ├── Dockerfile
+│   └── app.py                       # Media service endpoints
+│
+├── infra/                           # Docker infrastructure
+│   ├── docker-compose.yml           # Main service orchestration
+│   ├── docker-compose.edit-session.yml
+│   └── ollama/Dockerfile            # Ollama LLM container
+│
+├── docs/                            # Documentation
+│   ├── PERSONA.md                   # Persona system specification
+│   ├── AGENTIC_SERVERS.md           # MCP & A2A server reference
+│   ├── CONNECTIONS.md               # Integration & connection guide
+│   └── TV_MODE_DESIGN.md            # TV mode architecture
+│
+├── scripts/                         # Utility & automation scripts
+├── tools/                           # Development tooling
+├── models/                          # Mounted model directories
+│   ├── llm/                         # Local LLM model files
+│   └── comfy/                       # Checkpoints, LoRAs, VAEs
+├── outputs/                         # Generated artifacts
+├── Makefile                         # 50+ automation commands
 └── README.md
 ```
 
@@ -370,41 +471,160 @@ Located in the bottom-left of the sidebar:
 
 ---
 
-## 🔌 API Reference
+## 🔌 API Reference — 150+ Endpoints
 
-### Studio Endpoints
+Full interactive documentation is available at `http://localhost:8000/docs` after launch.
 
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `/studio/videos` | GET | List all projects |
-| `/studio/videos` | POST | Create new project |
-| `/studio/videos/{id}` | GET | Get project details |
-| `/studio/videos/{id}` | PATCH | Update project settings |
-| `/studio/videos/{id}` | DELETE | Delete project |
-| `/studio/videos/{id}/scenes` | GET | List scenes |
-| `/studio/videos/{id}/scenes` | POST | Create scene |
-| `/studio/videos/{id}/scenes/{sid}` | PATCH | Update scene |
-| `/studio/videos/{id}/scenes/{sid}` | DELETE | Delete scene |
-| `/studio/videos/{id}/generate-outline` | POST | Generate AI story outline |
-| `/studio/videos/{id}/outline` | GET | Get existing outline |
-
-### Chat Endpoints
+### Core
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/chat` | POST | Send message (chat/imagine/edit/animate) |
-| `/models` | GET | List available models |
-| `/health` | GET | Health check |
+| `/health` | GET | Basic health check |
+| `/health/detailed` | GET | Full service status with dependency checks |
+| `/models` | GET | List installed LLM and image models |
+| `/model-catalog` | GET | Browse available models for download |
+| `/providers` | GET | List configured LLM providers |
+| `/settings` | GET | Application configuration |
+| `/chat` | POST | Primary chat endpoint (text, imagine, edit, animate) |
+| `/upload` | POST | File upload for chat attachments |
 
-### Agentic Endpoints
+### Conversations & Memory
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
-| `/v1/agentic/capabilities` | GET | List available agent capabilities |
+| `/conversations` | GET | List all conversations |
+| `/conversations/{id}/messages` | GET | Retrieve conversation history |
+| `/conversations/{id}` | DELETE | Delete a conversation |
+| `/conversations/{id}/search` | GET | Full-text search within a conversation |
+
+### Projects & Knowledge Base
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/projects` | GET | List all projects |
+| `/projects` | POST | Create project (Persona, Agent, or Knowledge) |
+| `/projects/{id}` | GET | Get project details |
+| `/projects/{id}` | PUT | Update project configuration |
+| `/projects/{id}` | DELETE | Delete project |
+| `/projects/{id}/upload` | POST | Upload document to project knowledge base |
+| `/projects/{id}/documents` | GET | List project documents |
+| `/projects/examples` | GET | Browse example project templates |
+| `/projects/from-example/{id}` | POST | Create project from template |
+
+### Persona System
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/personalities` | GET | List all 15 built-in personalities |
+| `/api/personalities/{id}` | GET | Get personality definition and system prompt |
+| `/persona/sessions` | GET | List all persona sessions |
+| `/persona/sessions` | POST | Create new session with a persona |
+| `/persona/sessions/resolve` | POST | Resolve or resume an existing session |
+| `/persona/sessions/{id}` | GET | Get session details and history |
+| `/persona/sessions/{id}/end` | POST | End an active session |
+| `/persona/memory` | GET | Retrieve long-term memory entries |
+| `/persona/memory` | POST | Store a new memory entry |
+| `/persona/memory` | DELETE | Clear persona memory |
+
+### Image Enhancement (v1)
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/v1/capabilities` | GET | Discover available enhancement features |
+| `/v1/capabilities/{feature}` | GET | Check specific feature availability |
+| `/v1/enhance` | POST | AI enhancement (restore, fix faces, sharpen) |
+| `/v1/upscale` | POST | Super-resolution upscale (2x / 4x) |
+| `/v1/background` | POST | Remove, replace, or blur background |
+| `/v1/outpaint` | POST | Extend canvas in any direction |
+| `/v1/edit-models` | GET | List available edit models |
+| `/v1/edit-models/preference` | POST | Set model preference |
+
+### Edit Sessions (v1)
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/v1/edit-sessions/{id}` | GET | Get edit session state |
+| `/v1/edit-sessions/{id}` | DELETE | Delete edit session |
+| `/v1/edit-sessions/{id}/image` | POST | Upload source image |
+| `/v1/edit-sessions/{id}/message` | POST | Send edit instruction |
+| `/v1/edit-sessions/{id}/select` | POST | Select result variant |
+| `/v1/edit-sessions/{id}/revert` | POST | Revert to previous state |
+
+### Story Mode
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/story/start` | POST | Start a new story session |
+| `/story/continue` | POST | Continue generating the story |
+| `/story/next` | POST | Generate next scene |
+| `/story/{id}` | GET | Retrieve story with all scenes |
+| `/story/sessions/list` | GET | List all story sessions |
+| `/story/{id}` | DELETE | Delete a story |
+| `/story/{id}/scene/{idx}` | DELETE | Delete a specific scene |
+| `/story/scene/image` | POST | Generate image for a scene |
+
+### Creator Studio (65+ endpoints)
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/studio/videos` | GET | List studio projects |
+| `/studio/videos` | POST | Create studio project |
+| `/studio/videos/{id}` | GET / PATCH / DELETE | Project CRUD |
+| `/studio/videos/{id}/scenes` | GET / POST | Scene listing & creation |
+| `/studio/videos/{id}/scenes/{sid}` | GET / PATCH / DELETE | Scene CRUD |
+| `/studio/videos/{id}/generate-outline` | POST | AI story outline generation |
+| `/studio/videos/{id}/outline` | GET | Retrieve saved outline |
+| `/studio/videos/{id}/scenes/generate-from-outline` | POST | Batch-generate scenes from outline |
+| `/studio/videos/{id}/export` | POST | Export (PDF, PPTX, ZIP) |
+| `/studio/videos/{id}/policy` | GET | Content policy status |
+| `/studio/videos/{id}/policy/check` | POST | Run policy compliance check |
+| `/studio/videos/{id}/audit` | GET | Audit trail |
+| `/studio/genres` | GET | List story genres |
+| `/studio/presets` | GET | List visual presets |
+| `/studio/library/style-kits` | GET | Browse style kits |
+| `/studio/library/templates` | GET | Browse project templates |
+| `/studio/projects/{id}/assets` | GET / POST | Asset management |
+| `/studio/projects/{id}/audio` | GET / POST | Audio track management |
+| `/studio/projects/{id}/captions` | GET / POST | Caption management |
+| `/studio/projects/{id}/versions` | GET / POST | Version history |
+| `/studio/projects/{id}/share` | GET / POST | Sharing & public links |
+| `/studio/health` | GET | Studio subsystem health |
+
+### Agentic AI
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/v1/agentic/status` | GET | Agentic system status |
+| `/v1/agentic/capabilities` | GET | Discover available tools and capabilities |
+| `/v1/agentic/catalog` | GET | Browse tools, agents, gateways, and servers |
 | `/v1/agentic/invoke` | POST | Execute a tool via MCP Gateway |
-| `/v1/agentic/catalog` | GET | Browse tools, agents, gateways, and servers from Forge |
-| `/v1/agentic/suite` | GET | List available suite profiles (home, pro) |
-| `/v1/agentic/suite/{name}` | GET | Get suite manifest with tool sources and A2A agents |
+| `/v1/agentic/suite` | GET | List suite profiles (home, pro) |
+| `/v1/agentic/suite/{name}` | GET | Get suite manifest |
+| `/v1/agentic/sync` | POST | Sync state with HomePilot |
+| `/v1/agentic/register/tool` | POST | Register a new tool server |
+| `/v1/agentic/register/agent` | POST | Register a new A2A agent |
+| `/v1/agentic/register/gateway` | POST | Register a new gateway |
+| `/v1/agentic/admin` | GET | Admin UI URL |
+
+### API Keys & Configuration
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/settings/api-keys` | GET | List configured API keys |
+| `/settings/api-keys` | POST | Add API key for a provider |
+| `/settings/api-keys/{provider}` | DELETE | Remove API key |
+| `/settings/api-keys/test` | POST | Test API key connectivity |
+| `/video-presets` | GET | Video generation presets |
+| `/image-presets` | GET | Image generation presets |
+
+### Model Management
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/models/health` | GET | Model service health |
+| `/civitai/search` | POST | Search Civitai model registry |
+| `/models/install` | POST | Install model from Civitai |
+| `/models/delete` | POST | Remove installed model |
 
 ---
 
