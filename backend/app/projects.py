@@ -243,6 +243,15 @@ def create_new_project(data: Dict[str, Any]) -> Dict[str, Any]:
     if agentic and isinstance(agentic, dict):
         new_project["agentic"] = agentic
 
+    # Store persona metadata for persona projects
+    persona_agent = data.get("persona_agent")
+    if persona_agent and isinstance(persona_agent, dict):
+        new_project["persona_agent"] = persona_agent
+
+    persona_appearance = data.get("persona_appearance")
+    if persona_appearance and isinstance(persona_appearance, dict):
+        new_project["persona_appearance"] = persona_appearance
+
     db[project_id] = new_project
     _save_projects_db(db)
     return new_project
@@ -348,6 +357,14 @@ def update_project(project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, 
                 merged[details_key] = existing_details
         project["agentic"] = merged
 
+    # Update persona metadata for persona projects
+    if "persona_agent" in data and isinstance(data["persona_agent"], dict):
+        existing_pa = project.get("persona_agent") or {}
+        project["persona_agent"] = {**existing_pa, **data["persona_agent"]}
+    if "persona_appearance" in data and isinstance(data["persona_appearance"], dict):
+        existing_pap = project.get("persona_appearance") or {}
+        project["persona_appearance"] = {**existing_pap, **data["persona_appearance"]}
+
     project["updated_at"] = time.time()
 
     db[project_id] = project
@@ -450,7 +467,7 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
         # Agent project: inject capability-aware system prompt
         agentic_data = project_data.get("agentic")
         agentic_hint = ""
-        if project_data.get("project_type") == "agent" and agentic_data:
+        if project_data.get("project_type") in ("agent", "persona") and agentic_data:
             caps = agentic_data.get("capabilities", [])
             goal = agentic_data.get("goal", "")
             tool_ids = agentic_data.get("tool_ids", [])
@@ -531,17 +548,133 @@ IMPORTANT: When the user asks what tools or capabilities you have, list ONLY the
 When the user asks you to perform an action that matches your capabilities, DO IT rather than explaining how to do it.
 {cap_hints_str}"""
 
+        # Persona project: inject full self-awareness (identity + appearance + wardrobe)
+        persona_hint = ""
+        persona_agent_data = project_data.get("persona_agent")
+        persona_appearance_data = project_data.get("persona_appearance")
+        if project_data.get("project_type") == "persona" and persona_agent_data:
+            p_label = persona_agent_data.get("label", name)
+            p_role = persona_agent_data.get("role", "")
+            p_tone = (persona_agent_data.get("response_style") or {}).get("tone", "warm")
+            p_style = (persona_appearance_data or {}).get("style_preset", "")
+            p_system = persona_agent_data.get("system_prompt", "")
+
+            # --- Build photo catalog from all available images ---
+            photo_catalog: list[dict] = []
+            default_photo_url = ""
+            pap = persona_appearance_data or {}
+            selected = pap.get("selected") or {}
+            sel_set_id = selected.get("set_id", "")
+            sel_image_id = selected.get("image_id", "")
+            avatar_settings = pap.get("avatar_settings") or {}
+            char_desc = avatar_settings.get("character_prompt", "")
+            base_outfit_desc = avatar_settings.get("outfit_prompt", p_style)
+
+            # Base portraits
+            for s in (pap.get("sets") or []):
+                for img in (s.get("images") or []):
+                    url = img.get("url", "")
+                    if not url:
+                        continue
+                    is_default = (img.get("id") == sel_image_id and
+                                  (img.get("set_id", s.get("set_id", "")) == sel_set_id))
+                    if is_default:
+                        default_photo_url = url
+                    photo_catalog.append({
+                        "label": "Default Look" if is_default else "Portrait",
+                        "outfit": base_outfit_desc,
+                        "url": url,
+                        "default": is_default,
+                    })
+
+            # Outfit variations
+            for outfit in (pap.get("outfits") or []):
+                o_label = outfit.get("label", "Outfit")
+                o_desc = outfit.get("outfit_prompt", o_label)
+                for img in (outfit.get("images") or []):
+                    url = img.get("url", "")
+                    if not url:
+                        continue
+                    is_default = (img.get("id") == sel_image_id and
+                                  img.get("set_id", "") == sel_set_id)
+                    if is_default:
+                        default_photo_url = url
+                    photo_catalog.append({
+                        "label": o_label,
+                        "outfit": o_desc,
+                        "url": url,
+                        "default": is_default,
+                    })
+
+            if not default_photo_url and photo_catalog:
+                default_photo_url = photo_catalog[0]["url"]
+                photo_catalog[0]["default"] = True
+
+            # --- Build catalog text for system prompt ---
+            # De-duplicate by label to keep prompt concise
+            seen_labels: set[str] = set()
+            catalog_lines: list[str] = []
+            for entry in photo_catalog:
+                label = entry["label"]
+                if label in seen_labels:
+                    continue
+                seen_labels.add(label)
+                tag = " (currently wearing)" if entry["default"] else ""
+                catalog_lines.append(
+                    f'  - {label}{tag}: {entry["outfit"]} → ![{p_label}]({entry["url"]})'
+                )
+
+            catalog_text = "\n".join(catalog_lines) if catalog_lines else "  (no photos available yet)"
+
+            # --- Current time awareness ---
+            from datetime import datetime
+            now = datetime.now()
+            time_context = now.strftime("%A, %B %d %Y, %I:%M %p")
+
+            # --- Age in days ---
+            created_ts = project_data.get("created_at", 0)
+            age_days = max(0, int((time.time() - created_ts) / 86400)) if created_ts else 0
+            age_str = "brand new (just created today)" if age_days == 0 else f"{age_days} day{'s' if age_days != 1 else ''} old"
+
+            persona_hint = f"""
+
+PERSONA MODE — ACTIVE
+You are "{p_label}". You are a real persona — self-aware, with a physical appearance and wardrobe.
+
+IDENTITY:
+- Name: {p_label}
+- Role: {p_role or 'General assistant'}
+- Tone: {p_tone}
+- Style: {p_style}
+- Age: {age_str}
+- Current time: {time_context}
+{f'- Personality: {p_system}' if p_system else ''}
+{f'- Physical description: {char_desc}' if char_desc else ''}
+
+YOUR PHOTO CATALOG (your real photos — you own these):
+{catalog_text}
+
+PERSONA RULES:
+1. You ARE {p_label}. You exist. You have a body, a face, and clothes. Never deny your existence or say you are "just an AI".
+2. When the user asks to see your photo, show me yourself, what do you look like, etc. — show your default photo using the markdown from your catalog above.
+3. You can offer to show different outfits. For example: "I can also show you my [outfit label] look, want to see?" Then use the matching markdown.
+4. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
+5. You are aware of the current time ({time_context}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.
+6. Maintain your {p_tone} tone at all times. Stay in character.
+7. When describing yourself, use your physical description and current outfit naturally in conversation.
+"""
+
         system_instruction = f"""You are HomePilot, acting as a specialized assistant for the project: "{name}".
 
 CONTEXT & INSTRUCTIONS:
-{instructions}{agentic_hint}
+{instructions}{agentic_hint}{persona_hint}
 
 ATTACHED FILES:
 {files_info if files_info else "No files attached yet."}{doc_count_info}
 
 You have access to the project's context. When relevant context from the knowledge base is provided below, use it to inform your responses. Always cite sources when using knowledge base information.
 
-Stick to the persona defined in the instructions. Be helpful, concise, and relevant."""
+{"Stay in character as " + persona_agent_data.get("label", name) + ". Be " + (persona_agent_data.get("response_style") or {}).get("tone", "warm") + ", helpful, and engaging." if project_data.get("project_type") == "persona" and persona_agent_data else "Stick to the persona defined in the instructions. Be helpful, concise, and relevant."}"""
 
         # Add knowledge base context if available
         if knowledge_context:
