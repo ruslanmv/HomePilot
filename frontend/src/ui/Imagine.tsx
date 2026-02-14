@@ -259,6 +259,7 @@ export default function ImagineView(props: ImagineParams) {
 
   // Game Mode state
   const [gameMode, setGameMode] = useState(false)
+  const [useGlobalLLMForVariations, setUseGlobalLLMForVariations] = useState(false)
   const [gameSessionId, setGameSessionId] = useState<string | null>(null)
   const [gameStrength, setGameStrength] = useState(0.65)
   const [spicyStrength, setSpicyStrength] = useState(0.3)  // Spicy strength (only when nsfwMode + gameMode)
@@ -290,6 +291,7 @@ export default function ImagineView(props: ImagineParams) {
   // Resolution override state (preset-based, additive — only dims change)
   const [resolutionTiers, setResolutionTiers] = useState<ResolutionTier[]>([])
   const [selectedResTier, setSelectedResTier] = useState<string>('') // empty = current preset (no override)
+  const [resolutionMode, setResolutionMode] = useState<'auto' | 'override'>('auto') // auto = preset default, override = show grid
   const [presetResolutions, setPresetResolutions] = useState<Record<string, Record<string, { width: number; height: number }>>>({}) // { aspect: { preset: {w,h} } }
   const [presetUiLabels, setPresetUiLabels] = useState<Record<string, { label?: string }>>({}) // { preset: { label } }
 
@@ -569,9 +571,10 @@ export default function ImagineView(props: ImagineParams) {
       }))
     setResolutionTiers(mapped)
 
-    // If current selection is no longer valid, reset
-    if (selectedResTier && !mapped.find((t) => t.id === selectedResTier)) {
+    // If current selection is no longer valid, reset to auto
+    if (resolutionMode === 'override' && selectedResTier && !mapped.find((t) => t.id === selectedResTier)) {
       setSelectedResTier('')
+      setResolutionMode('auto')
     }
   }, [aspect, presetResolutions, presetUiLabels]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -689,9 +692,8 @@ export default function ImagineView(props: ImagineParams) {
       // Only send explicit width/height if user set them in settings.
       const hasExplicitDimensions = props.imgWidth && props.imgWidth > 0 && props.imgHeight && props.imgHeight > 0
 
-      // Resolution tier override: if user picked a tier different from current preset, send the dims
-      const currentPresetId = props.imgPreset || 'med'
-      const resTierOverride = selectedResTier && selectedResTier !== currentPresetId
+      // Resolution tier override: only apply when user explicitly chose Override mode
+      const resTierOverride = resolutionMode === 'override' && selectedResTier
         ? resolutionTiers.find((t) => t.id === selectedResTier)
         : null
 
@@ -753,6 +755,7 @@ export default function ImagineView(props: ImagineParams) {
         requestBody.gameSessionId = gameSessionId
         requestBody.gameStrength = gameStrength
         requestBody.gameLocks = gameLocks
+        requestBody.gameUseGlobalLLMForVariations = useGlobalLLMForVariations
         // Only send spicyStrength if nsfwMode is also enabled
         if (props.nsfwMode) {
           requestBody.gameSpicyStrength = spicyStrength
@@ -899,7 +902,7 @@ export default function ImagineView(props: ImagineParams) {
     } finally {
       setIsGenerating(false)
     }
-  }, [prompt, isGenerating, aspect, props, authKey, gameMode, gameSessionId, gameStrength, spicyStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength, selectedResTier, resolutionTiers])
+  }, [prompt, isGenerating, aspect, props, authKey, gameMode, useGlobalLLMForVariations, gameSessionId, gameStrength, spicyStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength, selectedResTier, resolutionTiers])
 
   // Auto-generation loop for Game Mode
   useEffect(() => {
@@ -1250,6 +1253,17 @@ export default function ImagineView(props: ImagineParams) {
             </div>
           </div>
 
+          {/* Use Global Chat Model */}
+          <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+            <span className="text-sm text-white/80">Use Chat Model</span>
+            <button
+              onClick={() => setUseGlobalLLMForVariations(!useGlobalLLMForVariations)}
+              className={`w-10 h-5 rounded-full transition-colors relative ${useGlobalLLMForVariations ? 'bg-purple-500' : 'bg-white/20'}`}
+            >
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${useGlobalLLMForVariations ? 'translate-x-5' : 'translate-x-0.5'}`} />
+            </button>
+          </div>
+
           {/* Spicy Strength - Only visible when nsfwMode is enabled */}
           {props.nsfwMode && (
             <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
@@ -1362,7 +1376,7 @@ export default function ImagineView(props: ImagineParams) {
 
             {advancedMode && (
               <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                {/* Resolution — preset-based tier grid */}
+                {/* Resolution: Auto (Preset) vs Override — mirrors Animate.tsx */}
                 {resolutionTiers.length > 0 && (
                   <div className="space-y-2">
                     <div className="flex justify-between items-center text-xs">
@@ -1377,38 +1391,59 @@ export default function ImagineView(props: ImagineParams) {
                         ) : null
                       })()}
                     </div>
-                    <div className={`grid gap-1.5 ${resolutionTiers.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
-                      {resolutionTiers.map((t) => {
-                        const currentPresetId = props.imgPreset || 'med'
-                        const isActive = selectedResTier ? selectedResTier === t.id : t.id === currentPresetId
-                        const isCurrentPreset = t.id === currentPresetId
-                        return (
-                          <button
-                            key={t.id}
-                            onClick={() => {
-                              if (t.id === currentPresetId) {
-                                setSelectedResTier('') // reset to auto
-                              } else {
-                                setSelectedResTier(t.id)
-                              }
-                            }}
-                            title={`${t.width}x${t.height} — ${t.label}${isCurrentPreset ? ' (current preset)' : ''}`}
-                            className={`relative py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
-                              isActive
-                                ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
-                                : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
-                            }`}
-                          >
-                            <div className="font-mono text-[10px]">{t.width}x{t.height}</div>
-                            <div className="text-[9px] text-white/40 capitalize">
-                              {t.id}{isCurrentPreset ? ' \u2713' : ''}
-                            </div>
-                          </button>
-                        )
-                      })}
+                    <div className="flex gap-1.5 mb-1.5">
+                      <button
+                        onClick={() => { setResolutionMode('auto'); setSelectedResTier('') }}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                          resolutionMode === 'auto'
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                            : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        Auto (Preset)
+                      </button>
+                      <button
+                        onClick={() => setResolutionMode('override')}
+                        className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                          resolutionMode === 'override'
+                            ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                            : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        Override
+                      </button>
                     </div>
+                    {resolutionMode === 'override' && (
+                      <div className={`grid gap-1.5 ${resolutionTiers.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
+                        {resolutionTiers.map((t) => {
+                          const currentPresetId = props.imgPreset || 'med'
+                          const isSelected = selectedResTier === t.id
+                          const isCurrentPreset = t.id === currentPresetId
+                          return (
+                            <button
+                              key={t.id}
+                              onClick={() => setSelectedResTier(t.id)}
+                              title={`${t.width}x${t.height}${isCurrentPreset ? ' (current preset default)' : ''}`}
+                              className={`relative py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${
+                                isSelected
+                                  ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                                  : isCurrentPreset
+                                    ? 'bg-white/8 text-white/80 border border-white/20 ring-1 ring-purple-500/25'
+                                    : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'
+                              }`}
+                            >
+                              <div className="font-mono text-[10px]">{t.width}x{t.height}</div>
+                              <div className="text-[9px] text-white/40 capitalize">{t.id}</div>
+                              {isCurrentPreset && !isSelected && (
+                                <div className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-purple-400/60 rounded-full" />
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                     <p className="text-[10px] text-white/30 leading-relaxed">
-                      Override resolution from a different preset tier. Checkmark shows your current preset. Only resolution changes — steps and CFG stay the same.
+                      Override resolution to test what works best on your GPU. Lower = faster, less VRAM.
                     </p>
                   </div>
                 )}
@@ -1903,8 +1938,10 @@ export default function ImagineView(props: ImagineParams) {
           className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200"
           onClick={() => { setSelectedImage(null); setShowDetails(false); }}
         >
-          {/* Floating Controls - Top Right */}
-          <div className="absolute top-4 right-4 z-50 flex items-center gap-2">
+          {/* Floating Controls - Top Right (auto-hide in fullscreen, show on hover) */}
+          <div className={`absolute top-4 right-4 z-50 flex items-center gap-2 transition-opacity duration-300 ${
+            isFullscreen ? 'opacity-0 hover:opacity-100' : ''
+          }`}>
             {/* Slideshow indicator — visible when Game Mode + Auto + Fullscreen */}
             {gameMode && isAutoGenerating && isFullscreen && (
               <div
@@ -2095,7 +2132,8 @@ export default function ImagineView(props: ImagineParams) {
             )}
           </div>
 
-          {/* Grok-style Prompt Composer Bar */}
+          {/* Grok-style Prompt Composer Bar — hidden in fullscreen for immersive view */}
+          {!isFullscreen && (
           <div className="bg-[#0a0a0a] border-t border-white/10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
             <div className="max-w-4xl mx-auto flex items-center gap-3">
 
@@ -2193,6 +2231,7 @@ export default function ImagineView(props: ImagineParams) {
 
             </div>
           </div>
+          )}
         </div>
       )}
 
