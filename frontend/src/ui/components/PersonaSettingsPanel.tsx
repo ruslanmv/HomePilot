@@ -38,6 +38,7 @@ import {
   Plus,
   Copy,
 } from 'lucide-react'
+import { ImageViewer } from '../ImageViewer'
 import type { PersonaImageRef, PersonaOutfit } from '../personaTypes'
 import { OUTFIT_PRESETS, PERSONA_BLUEPRINTS } from '../personaTypes'
 import { generateOutfitImages } from '../personaApi'
@@ -246,6 +247,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   // UI state
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [lightbox, setLightbox] = useState<string | null>(null)
   const [showGallery, setShowGallery] = useState(false)
   const [showTools, setShowTools] = useState(false)
   const [showAgents, setShowAgents] = useState(false)
@@ -639,7 +641,8 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                     <img
                       src={selectedUrl}
                       alt={name}
-                      className="w-40 h-52 object-cover object-top rounded-xl border-2 border-pink-500/30 shadow-lg shadow-pink-500/10"
+                      onClick={() => setLightbox(selectedUrl)}
+                      className="w-40 h-52 object-cover object-top rounded-xl border-2 border-pink-500/30 shadow-lg shadow-pink-500/10 cursor-zoom-in"
                     />
                   ) : (
                     <div className="w-40 h-52 bg-white/5 border-2 border-dashed border-white/20 rounded-xl flex items-center justify-center">
@@ -1521,6 +1524,16 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
           </div>
         </div>
       </div>
+
+      {/* Lightbox for full-screen avatar viewing */}
+      {lightbox ? (
+        <ImageViewer
+          imageUrl={lightbox}
+          onClose={() => setLightbox(null)}
+          onEdit={() => {}}
+          onGenerateVideo={() => {}}
+        />
+      ) : null}
     </div>
   )
 }
