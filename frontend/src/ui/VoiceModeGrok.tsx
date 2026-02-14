@@ -53,11 +53,9 @@ import {
   getPersonalityById,
   LS_PERSONALITY_ID,
 } from './voice/personalities';
-import { User, Link2, Unlink } from 'lucide-react';
+import { User } from 'lucide-react';
 import {
   LS_PERSONA_CACHE,
-  isVoiceLinkedToProject,
-  setVoiceLinkedToProject,
 } from './voice/personalityGating';
 
 // localStorage keys
@@ -385,6 +383,11 @@ function RenderTypedMessage({
   const { displayed, isTyping } = useTypewriterText(fullText, typingSpeed, onProgress, animate);
   const lines = displayed.split('\n');
 
+  // Two-phase rendering: plain text while typing, markdown after done.
+  // Prevents flickering half-links / half-images during the typewriter animation.
+  const renderInline = (text: string) =>
+    isTyping ? text : parseInlineMarkdown(text, onImageClick);
+
   return (
     <div className="hp-message-assistant text-[17px]">
       {lines.map((line, i) => {
@@ -405,7 +408,7 @@ function RenderTypedMessage({
             <div key={i} className="ml-4 my-1 flex gap-2">
               <span>•</span>
               <span>
-                {parseInlineMarkdown(content, onImageClick)}
+                {renderInline(content)}
                 {showCursor && (
                   <span className="inline-block w-[2px] h-[1em] bg-white/80 ml-[1px] hp-cursor align-middle" />
                 )}
@@ -415,8 +418,8 @@ function RenderTypedMessage({
         }
 
         return (
-          <p key={i} className="my-2">
-            {parseInlineMarkdown(line, onImageClick)}
+          <p key={i} className="my-2 whitespace-pre-wrap">
+            {renderInline(line)}
             {showCursor && (
               <span className="inline-block w-[2px] h-[1em] bg-white/80 ml-[1px] hp-cursor align-middle" />
             )}
@@ -556,11 +559,23 @@ interface VoiceModeGrokProps {
   onSendText: (text: string) => void;
   onClose?: () => void;
   onNewChat?: () => void;
+  /** Parent-controlled transcript (e.g. App's voiceMessages). */
+  messages?: Message[];
+  /** Parent-controlled setter so mutations propagate back to App. */
+  setMessages?: React.Dispatch<React.SetStateAction<Message[]>>;
 }
 
-export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceModeGrokProps) {
-  // Messages state
-  const [messages, setMessages] = useState<Message[]>([]);
+export default function VoiceModeGrok({
+  onSendText,
+  onClose,
+  onNewChat,
+  messages: controlledMessages,
+  setMessages: setControlledMessages,
+}: VoiceModeGrokProps) {
+  // Messages state — use parent's if provided, fallback to internal
+  const [internalMessages, setInternalMessages] = useState<Message[]>([]);
+  const messages = controlledMessages ?? internalMessages;
+  const setMessages = setControlledMessages ?? setInternalMessages;
   const [inputText, setInputText] = useState('');
 
   // Lightbox state for full-screen image viewing
@@ -624,16 +639,6 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
     return 1.0;
   });
 
-  // Linked-to-project state (reactive to Settings toggle and pill icon)
-  const [voiceLinked, setVoiceLinked] = useState(() => isVoiceLinkedToProject());
-
-  // Toggle linked mode from pill icon
-  const toggleLinked = useCallback(() => {
-    const next = !voiceLinked;
-    setVoiceLinkedToProject(next);
-    setVoiceLinked(next);
-  }, [voiceLinked]);
-
   const [isMuted, setIsMuted] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem(LS_MUTED) === 'true';
@@ -680,14 +685,18 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
   }, [showAudioMeter]);
 
   // Handle voice input
+  const isControlled = controlledMessages !== undefined;
   function handleVoiceInput(text: string) {
     if (!text.trim()) return;
 
-    // Add user message with unique ID
-    const userMsg: Message = { id: `user-${Date.now()}`, role: 'user', text: text.trim() };
-    setMessages((prev) => [...prev, userMsg]);
+    // When parent controls messages, App.tsx's sendTextOrIntent already
+    // appends the user message — adding it here would double-add.
+    if (!isControlled) {
+      const userMsg: Message = { id: `user-${Date.now()}`, role: 'user', text: text.trim() };
+      setMessages((prev) => [...prev, userMsg]);
+    }
 
-    // Forward to parent handler
+    // Forward to parent handler (App adds user + pending assistant messages)
     onSendText(text.trim());
   }
 
@@ -764,8 +773,11 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
   }, []);
 
   // Listen for assistant messages from App.tsx (event bridge)
-  // Deduplicates by ID to prevent double-append from StrictMode, retries, or TTS events
+  // Only needed in uncontrolled mode — when parent provides messages/setMessages,
+  // App already writes directly into voiceMessages so the event bridge is redundant.
   useEffect(() => {
+    if (isControlled) return;
+
     const handler = (e: CustomEvent<{ id: string; text: string; media?: Message['media'] }>) => {
       const id = e?.detail?.id;
       const text = e?.detail?.text;
@@ -787,7 +799,7 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
 
     window.addEventListener('hp:assistant_message', handler as EventListener);
     return () => window.removeEventListener('hp:assistant_message', handler as EventListener);
-  }, []);
+  }, [isControlled]);
 
   // Handle text input submit
   const handleSubmit = (e: React.FormEvent) => {
@@ -876,11 +888,7 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
       {/* Settings Modal - Contains advanced audio settings */}
       <SettingsModal
         isOpen={showSystemSettings}
-        onClose={() => {
-          setShowSystemSettings(false);
-          // Sync linked state in case user changed it in Settings
-          setVoiceLinked(isVoiceLinkedToProject());
-        }}
+        onClose={() => setShowSystemSettings(false)}
         showAudioMeter={showAudioMeter}
         setShowAudioMeter={setShowAudioMeter}
         browserVoices={voice.voices}
@@ -970,24 +978,28 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
         ) : (
           /* Conversation View */
           <div className="w-full max-w-3xl space-y-6 pt-16 hp-slide-up">
-            {messages.map((msg, idx) => (
-              <div key={msg.id} className={msg.role === 'user' ? 'flex justify-end' : ''}>
-                {msg.role === 'user' ? (
-                  <div className="hp-message-user">
-                    <p className="text-white/90 text-[17px] leading-relaxed">{msg.text}</p>
-                  </div>
-                ) : (
-                  <RenderTypedMessage
-                    fullText={msg.text}
-                    typingSpeed={typingSpeed}
-                    onProgress={scrollToBottom}
-                    animate={idx === messages.length - 1}
-                    media={msg.media}
-                    onImageClick={(src) => setLightbox(src)}
-                  />
-                )}
-              </div>
-            ))}
+            {messages.map((msg, idx) => {
+              // Skip empty pending placeholders (App adds { text: '', pending: true })
+              if (!msg.text && (msg as any).pending) return null;
+              return (
+                <div key={msg.id} className={msg.role === 'user' ? 'flex justify-end' : ''}>
+                  {msg.role === 'user' ? (
+                    <div className="hp-message-user">
+                      <p className="text-white/90 text-[17px] leading-relaxed">{msg.text}</p>
+                    </div>
+                  ) : (
+                    <RenderTypedMessage
+                      fullText={msg.text}
+                      typingSpeed={typingSpeed}
+                      onProgress={scrollToBottom}
+                      animate={idx === messages.length - 1}
+                      media={msg.media}
+                      onImageClick={(src) => setLightbox(src)}
+                    />
+                  )}
+                </div>
+              );
+            })}
 
             {/* Show interim text while listening */}
             {voice.interimText && (
@@ -1114,24 +1126,6 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
                       }`}
                     />
                   </button>
-
-                  {/* Link-to-Project toggle icon — only visible when a persona is selected */}
-                  {activePersonality.isPersona && (
-                    <button
-                      onClick={toggleLinked}
-                      className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all ${
-                        voiceLinked
-                          ? 'bg-blue-500/20 border-blue-500/40 text-blue-400'
-                          : 'bg-white/5 border-white/10 text-white/30 hover:bg-white/10 hover:text-white/50'
-                      }`}
-                      title={voiceLinked
-                        ? 'Linked to Project — persistent memory & tools'
-                        : 'Unlinked — ephemeral session'
-                      }
-                    >
-                      {voiceLinked ? <Link2 size={16} /> : <Unlink size={16} />}
-                    </button>
-                  )}
 
                   {/* Voice Settings Panel */}
                   {/* Voice Settings Panel - Voice persona, personality, speed */}

@@ -1881,6 +1881,18 @@ async def get_project(project_id: str) -> JSONResponse:
         else:
             result = {**result, "document_count": 0}
 
+        # Companion-grade: include session info for persona projects
+        if result.get("project_type") == "persona":
+            try:
+                all_sessions = persona_sessions_mod.list_sessions(project_id, limit=20)
+                active_session = persona_sessions_mod.resolve_session(project_id)
+                mem_count = persona_ltm_mod.memory_count(project_id)
+                result["sessions"] = all_sessions
+                result["active_session"] = active_session
+                result["memory_count"] = mem_count
+            except Exception as e:
+                print(f"[COMPANION] Warning: Could not load session info: {e}")
+
         return JSONResponse(status_code=200, content={"ok": True, "project": result})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to get project: {e}"))
@@ -2090,6 +2102,203 @@ async def get_personality(personality_id: str):
     if not agent:
         raise HTTPException(status_code=404, detail=f"Personality '{personality_id}' not found")
     return agent.model_dump()
+
+
+# ----------------------------
+# Persona Sessions & Long-Term Memory (additive — companion-grade)
+# ----------------------------
+
+from . import sessions as persona_sessions_mod
+from . import ltm as persona_ltm_mod
+from . import jobs as persona_jobs_mod
+
+
+class SessionCreateIn(BaseModel):
+    project_id: str = Field(..., description="Persona project ID")
+    mode: str = Field("text", description="Session mode: 'voice' or 'text'")
+    title: Optional[str] = Field(None, description="Optional session title")
+
+
+@app.get("/persona/sessions", dependencies=[Depends(require_api_key)])
+async def list_persona_sessions(
+    project_id: str = Query(..., description="Persona project ID"),
+    limit: int = Query(50, ge=1, le=200),
+    include_ended: bool = Query(True),
+) -> JSONResponse:
+    """List all sessions for a persona project."""
+    try:
+        items = persona_sessions_mod.list_sessions(
+            project_id, limit=limit, include_ended=include_ended
+        )
+        return JSONResponse(status_code=200, content={"ok": True, "sessions": items})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Failed to list sessions: {e}", code="sessions_error"),
+        )
+
+
+@app.post("/persona/sessions", dependencies=[Depends(require_api_key)])
+async def create_persona_session(data: SessionCreateIn) -> JSONResponse:
+    """Start a new session for a persona project."""
+    try:
+        session = persona_sessions_mod.create_session(
+            project_id=data.project_id,
+            mode=data.mode,
+            title=data.title,
+        )
+        return JSONResponse(status_code=201, content={"ok": True, "session": session})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Failed to create session: {e}", code="session_create_error"),
+        )
+
+
+@app.post("/persona/sessions/resolve", dependencies=[Depends(require_api_key)])
+async def resolve_persona_session(request: Request) -> JSONResponse:
+    """
+    Resolve the best session to resume for a persona project.
+    Uses the bulletproof resume algorithm.
+    Returns existing session or creates a new one.
+    """
+    try:
+        body = await request.json()
+        project_id = body.get("project_id")
+        mode = body.get("mode", "text")
+        if not project_id:
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err("project_id is required", code="missing_project_id"),
+            )
+        session = persona_sessions_mod.get_or_create_session(project_id, mode=mode)
+        return JSONResponse(status_code=200, content={"ok": True, "session": session})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Failed to resolve session: {e}", code="session_resolve_error"),
+        )
+
+
+@app.post("/persona/sessions/{session_id}/end", dependencies=[Depends(require_api_key)])
+async def end_persona_session(session_id: str) -> JSONResponse:
+    """End a session (marks ended_at, schedules summary + memory extraction jobs)."""
+    try:
+        ended = persona_sessions_mod.end_session(session_id)
+        if ended:
+            # Get session to schedule jobs
+            session = persona_sessions_mod.get_session(session_id)
+            if session:
+                persona_jobs_mod.schedule_session_jobs(session["project_id"], session_id)
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "ended": ended, "session_id": session_id},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Failed to end session: {e}", code="session_end_error"),
+        )
+
+
+@app.get("/persona/sessions/{session_id}", dependencies=[Depends(require_api_key)])
+async def get_persona_session(session_id: str) -> JSONResponse:
+    """Get details of a specific session."""
+    try:
+        session = persona_sessions_mod.get_session(session_id)
+        if not session:
+            return JSONResponse(
+                status_code=404,
+                content=_safe_err("Session not found", code="session_not_found"),
+            )
+        return JSONResponse(status_code=200, content={"ok": True, "session": session})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Failed to get session: {e}", code="session_get_error"),
+        )
+
+
+# --- Long-Term Memory ---
+
+@app.get("/persona/memory", dependencies=[Depends(require_api_key)])
+async def get_persona_memory(
+    project_id: str = Query(..., description="Persona project ID"),
+    category: Optional[str] = Query(None, description="Filter by category"),
+) -> JSONResponse:
+    """Get all memories for a persona project ('What I know about you')."""
+    try:
+        memories = persona_ltm_mod.get_memories(project_id, category=category)
+        count = persona_ltm_mod.memory_count(project_id)
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "memories": memories, "count": count},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Failed to get memories: {e}", code="memory_error"),
+        )
+
+
+@app.post("/persona/memory", dependencies=[Depends(require_api_key)])
+async def upsert_persona_memory(request: Request) -> JSONResponse:
+    """Add or update a memory entry."""
+    try:
+        body = await request.json()
+        result = persona_ltm_mod.upsert_memory(
+            project_id=body["project_id"],
+            category=body.get("category", "fact"),
+            key=body["key"],
+            value=body["value"],
+            confidence=body.get("confidence", 1.0),
+            source_type=body.get("source_type", "user_statement"),
+        )
+        return JSONResponse(status_code=200, content={"ok": True, "memory": result})
+    except KeyError as e:
+        return JSONResponse(
+            status_code=400,
+            content=_safe_err(f"Missing required field: {e}", code="missing_field"),
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Failed to save memory: {e}", code="memory_save_error"),
+        )
+
+
+@app.delete("/persona/memory", dependencies=[Depends(require_api_key)])
+async def delete_persona_memory(request: Request) -> JSONResponse:
+    """Delete a specific memory entry or forget all."""
+    try:
+        body = await request.json()
+        project_id = body.get("project_id")
+        if not project_id:
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err("project_id is required", code="missing_project_id"),
+            )
+
+        # If key is provided, delete specific entry; otherwise forget all
+        key = body.get("key")
+        category = body.get("category")
+        if key and category:
+            deleted = persona_ltm_mod.delete_memory(project_id, category, key)
+            return JSONResponse(
+                status_code=200,
+                content={"ok": True, "deleted": deleted},
+            )
+        else:
+            count = persona_ltm_mod.forget_all(project_id)
+            return JSONResponse(
+                status_code=200,
+                content={"ok": True, "forgotten": count, "message": f"Forgot {count} memories"},
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Failed to delete memory: {e}", code="memory_delete_error"),
+        )
 
 
 # ----------------------------
