@@ -578,6 +578,14 @@ export default function VoiceModeGrok({
   const setMessages = setControlledMessages ?? setInternalMessages;
   const [inputText, setInputText] = useState('');
 
+  // Track which messages were loaded as session history so we skip their
+  // typewriter animation.  The ref captures message IDs from the first
+  // non-empty snapshot; any message whose ID is in the set is "historical".
+  const historyIdsRef = useRef<Set<string> | null>(null);
+  if (historyIdsRef.current === null && messages.length > 0) {
+    historyIdsRef.current = new Set(messages.map((m) => m.id));
+  }
+
   // Lightbox state for full-screen image viewing
   const [lightbox, setLightbox] = useState<string | null>(null);
 
@@ -992,7 +1000,7 @@ export default function VoiceModeGrok({
                       fullText={msg.text}
                       typingSpeed={typingSpeed}
                       onProgress={scrollToBottom}
-                      animate={idx === messages.length - 1}
+                      animate={idx === messages.length - 1 && !historyIdsRef.current?.has(msg.id)}
                       media={msg.media}
                       onImageClick={(src) => setLightbox(src)}
                     />
