@@ -222,6 +222,8 @@ class ProjectCreateIn(BaseModel):
     is_public: Optional[bool] = False
     project_type: Optional[str] = "chat"
     agentic: Optional[dict] = None
+    persona_agent: Optional[dict] = None
+    persona_appearance: Optional[dict] = None
 
 
 # ----------------------------
