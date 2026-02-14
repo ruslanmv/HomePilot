@@ -20,12 +20,19 @@ import {
   Settings,
   Shield,
   AlertTriangle,
+  Users,
+  Link2,
 } from 'lucide-react';
 import {
   isAdultContentEnabled,
   isAgeConfirmed,
   setAdultContentEnabled,
   setAgeConfirmed,
+  isPersonasEnabled,
+  setPersonasEnabled,
+  isVoiceLinkedToProject,
+  setVoiceLinkedToProject,
+  LS_PERSONA_CACHE,
 } from './personalityGating';
 
 interface SettingsModalProps {
@@ -53,11 +60,43 @@ export default function SettingsModal({
   const [ageConfirmed, setAgeConfirmedState] = useState(false);
   const [showAgeConfirmation, setShowAgeConfirmation] = useState(false);
 
-  // Load adult content settings on mount
+  // Personas in Voice state
+  const [personasEnabled, setPersonasEnabledState] = useState(false);
+
+  // Linked-to-project state
+  const [linkedToProject, setLinkedToProjectState] = useState(false);
+
+  // Load settings on mount
   useEffect(() => {
     setAdultEnabled(isAdultContentEnabled());
     setAgeConfirmedState(isAgeConfirmed());
+    setPersonasEnabledState(isPersonasEnabled());
+    setLinkedToProjectState(isVoiceLinkedToProject());
   }, [isOpen]);
+
+  // Handle personas toggle
+  const handlePersonasToggle = () => {
+    const next = !personasEnabled;
+    setPersonasEnabled(next);
+    setPersonasEnabledState(next);
+    if (!next) {
+      // Clear persona cache, unlink, and reset personality if it was a persona
+      localStorage.removeItem(LS_PERSONA_CACHE);
+      const pid = localStorage.getItem('homepilot_personality_id');
+      if (pid?.startsWith('persona:')) {
+        localStorage.removeItem('homepilot_personality_id');
+      }
+      setVoiceLinkedToProject(false);
+      setLinkedToProjectState(false);
+    }
+  };
+
+  // Handle linked-to-project toggle
+  const handleLinkedToggle = () => {
+    const next = !linkedToProject;
+    setVoiceLinkedToProject(next);
+    setLinkedToProjectState(next);
+  };
 
   // Handle adult content toggle
   const handleAdultToggle = () => {
@@ -252,6 +291,80 @@ export default function SettingsModal({
                   These modes may contain mature themes, strong language, and explicit content.
                 </p>
               </div>
+            )}
+
+            {/* Personas in Voice Toggle */}
+            <div className="flex items-center justify-between p-3 rounded-[12px] bg-white/5">
+              <div className="flex items-center gap-3">
+                <Users size={16} className="text-violet-400/70" />
+                <div>
+                  <span className="text-[13px] text-white/80 block">Enable Personas</span>
+                  <span className="text-[10px] text-white/40">Use custom Personas as voice identities</span>
+                </div>
+              </div>
+              <button
+                onClick={handlePersonasToggle}
+                className={`w-12 h-6 rounded-full transition-all ${
+                  personasEnabled ? 'bg-violet-500/30 border border-violet-500/50' : toggleOff
+                }`}
+              >
+                <div
+                  className={`w-5 h-5 rounded-full shadow-sm transition-transform ${
+                    personasEnabled ? 'translate-x-6 bg-violet-400' : 'translate-x-0.5 bg-white'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {personasEnabled && (
+              <div className="p-3 rounded-[12px] bg-violet-500/10 border border-violet-500/20">
+                <p className="text-[11px] text-violet-300/80">
+                  Your Personas from Settings & Projects are now available in the Personality selector.
+                </p>
+              </div>
+            )}
+
+            {/* Link to Project Toggle — only visible when personas are enabled */}
+            {personasEnabled && (
+              <>
+                <div className="flex items-center justify-between p-3 rounded-[12px] bg-white/5">
+                  <div className="flex items-center gap-3">
+                    <Link2 size={16} className="text-blue-400/70" />
+                    <div>
+                      <span className="text-[13px] text-white/80 block">Link to Project</span>
+                      <span className="text-[10px] text-white/40">Enable memory, RAG & tools for persona sessions</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleLinkedToggle}
+                    className={`w-12 h-6 rounded-full transition-all ${
+                      linkedToProject ? 'bg-blue-500/30 border border-blue-500/50' : toggleOff
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 rounded-full shadow-sm transition-transform ${
+                        linkedToProject ? 'translate-x-6 bg-blue-400' : 'translate-x-0.5 bg-white'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {linkedToProject && (
+                  <div className="p-3 rounded-[12px] bg-blue-500/10 border border-blue-500/20">
+                    <p className="text-[11px] text-blue-300/80">
+                      Linked mode: Voice sessions use the persona's full project context — memory, documents, and tools persist across sessions.
+                    </p>
+                  </div>
+                )}
+
+                {!linkedToProject && (
+                  <div className="p-3 rounded-[12px] bg-white/[0.03] border border-white/5">
+                    <p className="text-[10px] text-white/30">
+                      Unlinked: Voice is fast & ephemeral — no conversation history saved.
+                    </p>
+                  </div>
+                )}
+              </>
             )}
           </div>
 

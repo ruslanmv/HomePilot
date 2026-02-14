@@ -42,11 +42,19 @@ export type PersonalityId =
   | 'fan_service';
 
 export interface PersonalityDef {
-  id: PersonalityId;
+  id: PersonalityId | string;
   label: string;
   icon: LucideIcon;
   prompt: string;
   mature?: boolean;
+  /** True when this entry comes from a user Persona project */
+  isPersona?: boolean;
+  /** Full system prompt from persona (used in voice prompt assembly) */
+  personaSystemPrompt?: string;
+  /** Persona tone hint (e.g. "warm", "professional") */
+  personaTone?: string;
+  /** Persona role (e.g. "Executive Assistant") */
+  personaRole?: string;
 }
 
 export const PERSONALITIES: PersonalityDef[] = [

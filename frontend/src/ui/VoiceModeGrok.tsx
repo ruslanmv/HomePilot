@@ -53,12 +53,124 @@ import {
   getPersonalityById,
   LS_PERSONALITY_ID,
 } from './voice/personalities';
+import { User, Link2, Unlink } from 'lucide-react';
+import {
+  LS_PERSONA_CACHE,
+  isVoiceLinkedToProject,
+  setVoiceLinkedToProject,
+} from './voice/personalityGating';
 
 // localStorage keys
 const LS_SPEED = 'homepilot_speech_speed';
 const LS_MUTED = 'homepilot_voice_muted';
 const LS_HANDSFREE = 'homepilot_voice_handsfree';
 const LS_SHOW_METER = 'homepilot_voice_show_meter';
+
+// ---------------------------------------------------------------------------
+// Markdown-aware helpers for Voice mode
+// ---------------------------------------------------------------------------
+
+/** Regex matching markdown images: ![alt](url) */
+const RE_MD_IMAGE = /!\[([^\]]*)\]\(([^)]+)\)/g;
+/** Regex matching markdown links: [text](url) */
+const RE_MD_LINK = /\[([^\]]*)\]\(([^)]+)\)/g;
+
+/**
+ * Strip markdown images and links from text for TTS.
+ * - ![alt](url) → removes entirely (image should be seen, not read)
+ * - [text](url) → keeps only the link text (the URL is not spoken)
+ * - Collapses leftover whitespace so speech sounds natural.
+ */
+export function stripMarkdownForSpeech(text: string): string {
+  return text
+    // Remove image markdown entirely (the user sees the image, no need to speak it)
+    .replace(RE_MD_IMAGE, '')
+    // Replace link markdown with just the visible text
+    .replace(RE_MD_LINK, '$1')
+    // Clean up arrows pointing to removed images (e.g. "outfit → " becomes "outfit")
+    .replace(/\s*→\s*$/gm, '')
+    // Collapse multiple spaces / blank lines left behind
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Parse a single line of text and return React nodes,
+ * rendering inline markdown images ![alt](url) and links [text](url)
+ * as actual <img> / <a> elements. Everything else is plain text.
+ */
+function parseInlineMarkdown(
+  line: string,
+  onImageClick?: (src: string) => void,
+): React.ReactNode[] {
+  // Combined regex: images first (so ![...] doesn't match as [...]  link)
+  const RE_INLINE = /(!?\[([^\]]*)\]\(([^)]+)\))/g;
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = RE_INLINE.exec(line)) !== null) {
+    // Push text before this match
+    if (match.index > lastIndex) {
+      nodes.push(line.slice(lastIndex, match.index));
+    }
+    const fullMatch = match[1];
+    const alt = match[2];
+    const url = match[3];
+    const isImage = fullMatch.startsWith('!');
+
+    if (isImage) {
+      nodes.push(
+        <img
+          key={`img-${match.index}`}
+          src={url}
+          alt={alt || 'Photo'}
+          className="inline-block max-h-72 max-w-72 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
+          loading="lazy"
+          onClick={() => onImageClick?.(url)}
+        />
+      );
+    } else {
+      // It's a link [text](url) — render as clickable image if URL looks like an image,
+      // otherwise render as a styled link.
+      const looksLikeImage = /\.(png|jpe?g|gif|webp|svg|bmp)|\/view\?filename=|\/uploads\//i.test(url);
+      if (looksLikeImage) {
+        // Treat as an image (LLMs often drop the ! prefix)
+        nodes.push(
+          <img
+            key={`lnkimg-${match.index}`}
+            src={url}
+            alt={alt || 'Photo'}
+            className="inline-block max-h-72 max-w-72 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
+            loading="lazy"
+            onClick={() => onImageClick?.(url)}
+          />
+        );
+      } else {
+        nodes.push(
+          <a
+            key={`lnk-${match.index}`}
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-400 underline hover:text-blue-300"
+          >
+            {alt}
+          </a>
+        );
+      }
+    }
+    lastIndex = match.index + fullMatch.length;
+  }
+
+  // Push any remaining text after the last match
+  if (lastIndex < line.length) {
+    nodes.push(line.slice(lastIndex));
+  }
+
+  return nodes.length > 0 ? nodes : [line];
+}
 
 // Message type with stable ID for deduplication
 interface Message {
@@ -293,7 +405,7 @@ function RenderTypedMessage({
             <div key={i} className="ml-4 my-1 flex gap-2">
               <span>•</span>
               <span>
-                {content}
+                {parseInlineMarkdown(content, onImageClick)}
                 {showCursor && (
                   <span className="inline-block w-[2px] h-[1em] bg-white/80 ml-[1px] hp-cursor align-middle" />
                 )}
@@ -304,7 +416,7 @@ function RenderTypedMessage({
 
         return (
           <p key={i} className="my-2">
-            {line}
+            {parseInlineMarkdown(line, onImageClick)}
             {showCursor && (
               <span className="inline-block w-[2px] h-[1em] bg-white/80 ml-[1px] hp-cursor align-middle" />
             )}
@@ -474,6 +586,29 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
     if (typeof window !== 'undefined') {
       const savedId = localStorage.getItem(LS_PERSONALITY_ID);
       if (savedId) {
+        // Restore persona selection from cache
+        if (savedId.startsWith('persona:')) {
+          try {
+            const cached = localStorage.getItem(LS_PERSONA_CACHE);
+            if (cached) {
+              const personas = JSON.parse(cached) as Array<{ id: string; label: string; role: string; tone: string; system_prompt: string }>;
+              const projId = savedId.slice('persona:'.length);
+              const persona = personas.find((p) => p.id === projId);
+              if (persona) {
+                return {
+                  id: savedId,
+                  label: persona.label,
+                  icon: User,
+                  prompt: persona.system_prompt || '',
+                  isPersona: true,
+                  personaSystemPrompt: persona.system_prompt,
+                  personaTone: persona.tone,
+                  personaRole: persona.role,
+                };
+              }
+            }
+          } catch { /* fall through to default */ }
+        }
         const personality = getPersonalityById(savedId as any);
         if (personality) return personality;
       }
@@ -488,6 +623,16 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
     }
     return 1.0;
   });
+
+  // Linked-to-project state (reactive to Settings toggle and pill icon)
+  const [voiceLinked, setVoiceLinked] = useState(() => isVoiceLinkedToProject());
+
+  // Toggle linked mode from pill icon
+  const toggleLinked = useCallback(() => {
+    const next = !voiceLinked;
+    setVoiceLinkedToProject(next);
+    setVoiceLinked(next);
+  }, [voiceLinked]);
 
   const [isMuted, setIsMuted] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -731,7 +876,11 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
       {/* Settings Modal - Contains advanced audio settings */}
       <SettingsModal
         isOpen={showSystemSettings}
-        onClose={() => setShowSystemSettings(false)}
+        onClose={() => {
+          setShowSystemSettings(false);
+          // Sync linked state in case user changed it in Settings
+          setVoiceLinked(isVoiceLinkedToProject());
+        }}
         showAudioMeter={showAudioMeter}
         setShowAudioMeter={setShowAudioMeter}
         browserVoices={voice.voices}
@@ -965,6 +1114,24 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
                       }`}
                     />
                   </button>
+
+                  {/* Link-to-Project toggle icon — only visible when a persona is selected */}
+                  {activePersonality.isPersona && (
+                    <button
+                      onClick={toggleLinked}
+                      className={`w-10 h-10 rounded-full border flex items-center justify-center transition-all ${
+                        voiceLinked
+                          ? 'bg-blue-500/20 border-blue-500/40 text-blue-400'
+                          : 'bg-white/5 border-white/10 text-white/30 hover:bg-white/10 hover:text-white/50'
+                      }`}
+                      title={voiceLinked
+                        ? 'Linked to Project — persistent memory & tools'
+                        : 'Unlinked — ephemeral session'
+                      }
+                    >
+                      {voiceLinked ? <Link2 size={16} /> : <Unlink size={16} />}
+                    </button>
+                  )}
 
                   {/* Voice Settings Panel */}
                   {/* Voice Settings Panel - Voice persona, personality, speed */}
