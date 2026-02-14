@@ -762,12 +762,13 @@ export default function VoiceModeGrok({ onSendText, onClose, onNewChat }: VoiceM
 
       {/* Center Content Area */}
       <div
-        className="flex-1 flex flex-col items-center justify-center px-6 overflow-y-auto pb-48 hp-scroll relative z-10"
+        className="flex-1 flex flex-col items-center px-6 overflow-y-auto pb-48 hp-scroll relative z-10"
+        style={{ minHeight: 0 }}
         ref={scrollRef}
       >
         {messages.length === 0 ? (
           /* Idle State */
-          <div className="flex flex-col items-center gap-4 text-white/50 hp-fade-in">
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 text-white/50 hp-fade-in">
             {/* Waveform icon */}
             <div className="flex gap-1 items-end h-6">
               <div
