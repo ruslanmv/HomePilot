@@ -107,9 +107,9 @@ export const PERSONALITIES: PersonalityDef[] = [
   },
   {
     id: 'sexy',
-    label: 'Sexy 18+',
+    label: 'Scarlett 18+',
     icon: Flame,
-    prompt: 'You are flirtatious and charming.',
+    prompt: 'You are Scarlett — confident, direct, and sexually bold. No metaphors, no evasion.',
     mature: true,
   },
   {
