@@ -33,7 +33,7 @@ from .config import (
     OLLAMA_BASE_URL,
     EDIT_SESSION_URL,
 )
-from .orchestrator import orchestrate, handle_request
+from .orchestrator import orchestrate, handle_request, clear_conversation_memory
 from .providers import provider_info
 from .storage import init_db, list_conversations, get_messages, delete_image_url, delete_conversation
 from .migrations import run_migrations
@@ -191,6 +191,7 @@ class ChatIn(BaseModel):
     gameSpicyStrength: Optional[float] = Field(0.0, description="Spicy variation strength 0..1 (only used when nsfwMode + gameMode)")
     gameLocks: Optional[Dict[str, Any]] = Field(None, description="Lock settings (world/style/etc)")
     gameWorldBible: Optional[str] = Field("", description="Optional world bible text for consistency")
+    gameUseGlobalLLMForVariations: Optional[bool] = Field(False, description="Use global chat model for Game Mode variations (default: False)")
     # ----------------------------
     # Reference Image (img2img similar generation)
     # ----------------------------
@@ -199,7 +200,8 @@ class ChatIn(BaseModel):
     # ----------------------------
     # Voice Mode Personality
     # ----------------------------
-    voiceSystemPrompt: Optional[str] = Field(None, description="Custom system prompt for voice mode personalities")
+    voiceSystemPrompt: Optional[str] = Field(None, description="Custom system prompt for voice mode personalities (legacy)")
+    personalityId: Optional[str] = Field(None, description="Backend personality agent id (e.g. 'therapist', 'assistant')")
 
 
 class ChatOut(BaseModel):
@@ -1751,9 +1753,11 @@ async def conversation_messages(conversation_id: str, limit: int = Query(200, ge
 
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation_endpoint(conversation_id: str) -> JSONResponse:
-    """Delete all messages from a specific conversation."""
+    """Delete all messages and personality memory from a specific conversation."""
     try:
         deleted_count = delete_conversation(conversation_id)
+        # Also clear in-memory personality context (topics, emotions, engagement)
+        clear_conversation_memory(conversation_id)
         return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted_count > 0, "deleted_messages": deleted_count, "conversation_id": conversation_id})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete conversation: {e}", code="delete_conversation_error"))
@@ -2034,6 +2038,59 @@ async def delete_project_document(project_id: str, document_name: str) -> JSONRe
 
 
 # ----------------------------
+# Personality Agents API
+# ----------------------------
+
+from .personalities import registry as _personality_registry
+
+
+@app.get("/api/personalities")
+async def list_personalities(category: Optional[str] = None):
+    """
+    List all available personality agents.
+
+    Optional query param:
+      ?category=general|kids|wellness|adult
+
+    Returns compact JSON array with id, label, category, and safety info.
+    """
+    if category:
+        agents = _personality_registry.by_category(category)
+    else:
+        agents = _personality_registry.all()
+
+    return [
+        {
+            "id": a.id,
+            "label": a.label,
+            "category": a.category,
+            "psychology_approach": a.psychology_approach,
+            "voice_style": a.voice_style.model_dump(),
+            "response_style": a.response_style.model_dump(),
+            "safety": a.safety.model_dump(),
+            "dynamics": {
+                "initiative": a.dynamics.initiative,
+                "depth": a.dynamics.depth,
+                "emotional_base": a.dynamics.emotional_base,
+            },
+            "allowed_tools": a.allowed_tools,
+        }
+        for a in agents
+    ]
+
+
+@app.get("/api/personalities/{personality_id}")
+async def get_personality(personality_id: str):
+    """
+    Get full details for a single personality agent.
+    """
+    agent = _personality_registry.get(personality_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Personality '{personality_id}' not found")
+    return agent.model_dump()
+
+
+# ----------------------------
 # Chat & Upload
 # ----------------------------
 
@@ -2044,8 +2101,9 @@ async def chat(inp: ChatIn) -> JSONResponse:
     Stable response schema:
       { conversation_id, text, media }
     """
-    # Debug: Log incoming imgModel parameter
+    # Debug: Log incoming parameters
     print(f"[CHAT ENDPOINT] imgModel received from frontend: '{inp.imgModel}' (type: {type(inp.imgModel).__name__ if inp.imgModel is not None else 'None'})")
+    print(f"[CHAT ENDPOINT] personalityId: {inp.personalityId!r}, ollama_model: {inp.ollama_model!r}")
 
     # Build payload for mode-aware handler
     payload = {
@@ -2093,6 +2151,8 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "imgRefStrength": inp.imgRefStrength,
         # Voice mode personality
         "voiceSystemPrompt": inp.voiceSystemPrompt,
+        # Backend personality agent
+        "personalityId": inp.personalityId,
     }
 
     # ----------------------------
@@ -2115,22 +2175,30 @@ async def chat(inp: ChatIn) -> JSONResponse:
                 "world_bible": inp.gameWorldBible or "",
             }
 
-            # Resolve Ollama settings for Game Mode variation generation
-            # Fallback chain: explicit ollama fields -> provider fields -> config defaults
-            game_ollama_url = (
-                inp.ollama_base_url
-                or inp.provider_base_url
-                or inp.llm_base_url
-                or OLLAMA_BASE_URL
-            )
-            # For model, only use ollama_model or llm_model (NOT provider_model which is image checkpoint)
-            game_ollama_model = (
-                inp.ollama_model
-                or inp.llm_model
-                or None  # Let game_mode.py use OLLAMA_MODEL from config
-            )
+            # Resolve LLM settings for Game Mode variation generation
+            # Default (backward-compatible): ALWAYS use fast local model llama3:8b unless user explicitly opts in.
+            use_global_for_variations = bool(getattr(inp, "gameUseGlobalLLMForVariations", False))
 
-            print(f"[GAME MODE] ollama_base_url={game_ollama_url}, ollama_model={game_ollama_model}")
+            if use_global_for_variations:
+                # Fallback chain (global): explicit ollama fields -> provider fields -> llm fields -> config defaults
+                game_ollama_url = (
+                    inp.ollama_base_url
+                    or inp.provider_base_url
+                    or inp.llm_base_url
+                    or OLLAMA_BASE_URL
+                )
+                # For model, only use ollama_model or llm_model (NOT provider_model which is image checkpoint)
+                game_ollama_model = (
+                    inp.ollama_model
+                    or inp.llm_model
+                    or None  # Let game_mode.py use OLLAMA_MODEL from config
+                )
+            else:
+                # Fast path: keep variations stable + snappy, regardless of global chat model selection
+                game_ollama_url = inp.ollama_base_url or OLLAMA_BASE_URL
+                game_ollama_model = "llama3:8b"
+
+            print(f"[GAME MODE] use_global_llm_for_variations={use_global_for_variations} | ollama_base_url={game_ollama_url}, ollama_model={game_ollama_model}")
 
             # Time-box the LLM call to prevent hanging (15s timeout)
             # If Ollama is slow/unavailable, we fall back to original prompt
