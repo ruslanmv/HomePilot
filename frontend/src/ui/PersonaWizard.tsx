@@ -898,7 +898,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
                       Generate a set to view options
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 gap-3 max-h-[440px] overflow-y-auto custom-scrollbar pr-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 max-h-[440px] overflow-y-auto custom-scrollbar pr-1">
                       {allImages.map((img) => {
                         const isSel =
                           draft.persona_appearance.selected?.set_id === img.set_id &&
@@ -923,7 +923,9 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
                                 : 'border-white/10 hover:border-white/30'
                             }`}
                           >
-                            <img src={img.url} className="w-full h-48 object-cover" alt="" loading="lazy" />
+                            <div className="aspect-[4/5] w-full overflow-hidden bg-zinc-900">
+                              <img src={img.url} className="w-full h-full object-cover" alt="" loading="lazy" decoding="async" />
+                            </div>
                             {isSel && (
                               <div className="absolute top-2 right-2 text-xs bg-purple-500 px-2 py-1 rounded-full font-medium shadow-lg">
                                 Selected
