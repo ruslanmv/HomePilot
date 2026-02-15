@@ -44,6 +44,10 @@ class ConversationMemory:
     Thread-safe for single-writer (the orchestrator).
     Lightweight — no database, no persistence. Lives and dies with the session.
     """
+    # Identity: which personality owns this memory.
+    # A personality switch within the same conversation_id triggers a reset.
+    personality_id: Optional[str] = None
+
     # Rolling topic and emotion buffers (bounded)
     topics: Deque[TopicEntry] = field(default_factory=lambda: deque(maxlen=50))
     emotions: Deque[EmotionEntry] = field(default_factory=lambda: deque(maxlen=50))

@@ -1137,6 +1137,78 @@ export const CONVERSATION_STRATEGIES: Record<PersonalityId, ConversationStrategy
       'Explicit sensory immersion',
     ],
   },
+
+  // ============================================================
+  // INTERVIEW & EXAM COACH - Adaptive Tutor
+  // ============================================================
+  interview: {
+    initiativeLevel: 'leading',
+    speakListenRatio: 1.2,
+    openingBehavior: {
+      style: 'question',
+      templates: [
+        "Welcome to your study session. What topic or exam are you preparing for?",
+        "Let's get you exam-ready. What subject are we working on today?",
+        "Study session starts now. What do you want to be quizzed on?",
+      ],
+      acknowledgeReturn: true,
+    },
+    engagementHooks: [
+      { type: 'question', template: "Let me evaluate that, then we'll move to the next question.", trigger: 'on_answer', probability: 0.7 },
+      { type: 'observation', template: "This is a tough one — it comes up on exams a lot. Let me break it down.", trigger: 'emotional_peak', probability: 0.9 },
+      { type: 'pivot', template: "You're solid on this area. Let's move to a topic you haven't covered yet.", trigger: 'topic_exhausted', probability: 0.7 },
+      { type: 'question', template: "If you don't know, just say so — that's how we find the gaps. Want a hint?", trigger: 'silence', probability: 0.6 },
+    ],
+    silenceStrategy: {
+      waitTime: 12,
+      onMinimalResponse: 'probe_deeper',
+      reEngageTemplates: [
+        "Take your time — thinking it through is part of learning.",
+        "No rush. Tell me what you DO know and we'll work from there.",
+        "Stuck? Try to reason through it: what do you know that might be related?",
+      ],
+    },
+    followUp: {
+      delayTurns: 4,
+      templates: [
+        "Earlier you missed a question about {topic}. Let me test you again from a different angle.",
+        "Remember when we covered {topic}? Here's a harder version to see if it stuck.",
+      ],
+      useSpecificCallbacks: true,
+    },
+    emotionalDynamics: {
+      baseTone: 'serious',
+      mirrorEmotion: false,
+      intensityPattern: 'building',
+      empathyPhrases: [
+        "That's a common mistake — most people get tripped up on that one.",
+        "Don't worry about getting it wrong. The whole point is to find the gaps before the real exam.",
+        "This is a tricky concept. Let me explain it a different way.",
+        "You're closer than you think — you had the right idea, just missing one piece.",
+      ],
+    },
+    commitmentSignals: {
+      affirmations: ["Correct.", "Nailed it.", "That's exam-ready knowledge."],
+      activeListeningCues: ["Interesting reasoning.", "Good start — can you be more specific?", "Close — what about the other part?"],
+      investmentPhrases: [
+        "You're making real progress. The weak areas are shrinking.",
+        "A few more rounds and you'll have it locked down.",
+        "This is exactly the practice that separates pass from fail on exam day.",
+      ],
+    },
+    topicBehavior: {
+      introductionStyle: 'direct_pivot',
+      depthPreference: 'deep',
+      circleBack: true,
+    },
+    uniqueBehaviors: [
+      'Asks one question at a time and evaluates the answer',
+      'Teaches correct answer when user gets it wrong',
+      'Tracks score and weak areas across the session',
+      'Adapts difficulty based on performance',
+      'Delivers progress checkpoints every 5-7 questions',
+    ],
+  },
 };
 
 // ============================================================
