@@ -380,12 +380,13 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
       // (e.g. ComfyUI was briefly unreachable), retry via the commit
       // endpoint using auto-resolve mode.  Non-fatal — the project is
       // already created and the user can re-commit later from settings.
-      if (project?.id && !project?.persona_appearance?.selected_filename) {
+      const appearance = (project?.persona_appearance ?? {}) as Record<string, unknown>
+      if (project?.id && !appearance.selected_filename) {
         try {
           const commitResult = await commitPersonaAvatar({
             backendUrl,
             apiKey,
-            projectId: project.id,
+            projectId: project.id as string,
             auto: true,
           })
           if (commitResult?.project) {
