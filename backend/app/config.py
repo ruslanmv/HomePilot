@@ -132,3 +132,12 @@ AGENTIC_ENABLED = os.getenv("AGENTIC_ENABLED", "true").lower() in ("1", "true", 
 CONTEXT_FORGE_URL = os.getenv("CONTEXT_FORGE_URL", "http://localhost:4444").rstrip("/")
 CONTEXT_FORGE_ADMIN_URL = os.getenv("CONTEXT_FORGE_ADMIN_URL", "http://localhost:4444/admin").rstrip("/")
 CONTEXT_FORGE_TOKEN = os.getenv("CONTEXT_FORGE_TOKEN", "").strip()
+
+# Community Gallery — Cloudflare Worker (production, edge-cached, no rate limits)
+# Primary upstream for registry, previews, cards, and packages.
+COMMUNITY_GALLERY_URL = os.getenv("COMMUNITY_GALLERY_URL", "").strip().rstrip("/")
+
+# Community Gallery — R2 Direct Access (fallback, rate-limited by Cloudflare)
+# Used only when COMMUNITY_GALLERY_URL is not set.
+# Priority: COMMUNITY_GALLERY_URL (Worker) > R2_PUBLIC_URL (direct R2).
+R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "").strip().rstrip("/")
