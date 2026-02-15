@@ -3188,6 +3188,38 @@ async def persona_export(project_id: str, mode: str = Query("blueprint")) -> Res
     if not p:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    # ------------------------------------------------------------------
+    # Just-in-time auto-commit: ensure avatar is committed before export.
+    #
+    # Projects created before the creation-time auto-commit fix (or where
+    # that step failed) only have ComfyUI URLs in persona_appearance but
+    # no local files.  Attempt to download + commit now so the exported
+    # .hpersona actually contains images in assets/.
+    #
+    # Non-fatal: if ComfyUI is unreachable or the URL is stale, the
+    # export proceeds without images (same as the old behaviour).
+    # ------------------------------------------------------------------
+    if p.get("project_type") == "persona":
+        appearance = dict(p.get("persona_appearance") or {})
+        if not appearance.get("selected_filename"):
+            try:
+                selected_url = _resolve_selected_image_url(appearance)
+                if selected_url:
+                    source_filename = await _download_comfy_image(
+                        selected_url, UPLOAD_PATH,
+                    )
+                    project_root = UPLOAD_PATH / "projects" / project_id
+                    commit_result = commit_persona_avatar(
+                        UPLOAD_PATH, project_root, source_filename,
+                    )
+                    appearance["selected_filename"] = commit_result.selected_filename
+                    appearance["selected_thumb_filename"] = commit_result.thumb_filename
+                    p = projects.update_project(
+                        project_id, {"persona_appearance": appearance},
+                    )
+            except Exception as jit_err:
+                print(f"[PERSONA] Export JIT auto-commit skipped: {jit_err}")
+
     try:
         out = export_persona_project(UPLOAD_PATH, p, mode=mode)
     except ValueError as e:

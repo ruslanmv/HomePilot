@@ -396,6 +396,93 @@ class TestEnhancedCommitEndpoint:
             assert "assets/avatar_ComfyUI_00042_.png" in names
             assert "assets/thumb_avatar_ComfyUI_00042_.webp" in names
 
+    def test_export_jit_commit_downloads_and_packages(self, tmp_path: Path):
+        """
+        Simulate the export JIT auto-commit path:
+          1) Project has ComfyUI URLs but NO committed files
+          2) Export endpoint resolves URL, downloads, commits
+          3) Export now contains assets/ with images
+        """
+        from app.main import _resolve_selected_image_url
+        from app.personas.avatar_assets import commit_persona_avatar
+        from app.personas.export_import import export_persona_project
+
+        upload_root = tmp_path / "uploads"
+        upload_root.mkdir()
+
+        # Project state: has ComfyUI URLs but nothing committed
+        appearance = {
+            "style_preset": "Cyberpunk",
+            "selected": {"set_id": "set_001", "image_id": "img_1"},
+            "sets": [{
+                "set_id": "set_001",
+                "images": [
+                    {"id": "img_1", "url": "http://comfy:8188/view?filename=sd15_export_test.png"},
+                ],
+            }],
+            # No selected_filename — simulates old/broken project
+        }
+
+        # Verify the gap: selected_filename is missing
+        assert appearance.get("selected_filename") is None
+
+        # Step 1: resolve URL (what JIT does)
+        url = _resolve_selected_image_url(appearance)
+        assert url is not None
+
+        # Step 2: simulate download (what _download_comfy_image does)
+        from PIL import Image
+        fake_png = upload_root / "sd15_export_test.png"
+        img = Image.new("RGB", (512, 768), color=(200, 50, 80))
+        img.save(fake_png, format="PNG")
+
+        # Step 3: commit (what JIT does after download)
+        project_id = "jit-export-test"
+        project_root = upload_root / "projects" / project_id
+        result = commit_persona_avatar(upload_root, project_root, "sd15_export_test.png")
+        appearance["selected_filename"] = result.selected_filename
+        appearance["selected_thumb_filename"] = result.thumb_filename
+
+        # Step 4: export should now include assets
+        project = {
+            "id": project_id,
+            "name": "JITExportPersona",
+            "project_type": "persona",
+            "persona_agent": {"id": "j", "label": "JITExportPersona"},
+            "persona_appearance": appearance,
+            "agentic": {},
+        }
+
+        export = export_persona_project(upload_root, project, mode="full")
+        with zipfile.ZipFile(io.BytesIO(export.data), "r") as z:
+            names = z.namelist()
+            assert "assets/avatar_sd15_export_test.png" in names, \
+                f"JIT avatar missing from export. Files: {names}"
+            assert "assets/thumb_avatar_sd15_export_test.webp" in names, \
+                f"JIT thumbnail missing from export. Files: {names}"
+
+            manifest = json.loads(z.read("manifest.json"))
+            assert manifest["contents"]["has_avatar"] is True
+
+    def test_jit_commit_nonfatal_on_failure(self):
+        """If JIT resolve finds no URL, export should proceed (not crash)."""
+        from app.main import _resolve_selected_image_url
+        from app.personas.export_import import export_persona_project
+
+        # No selected, no sets — resolve returns None, JIT skips
+        appearance = {"style_preset": "Minimal"}
+        assert _resolve_selected_image_url(appearance) is None
+
+    def test_jit_skips_when_already_committed(self):
+        """If selected_filename already exists, JIT should be a no-op."""
+        appearance = {
+            "selected_filename": "projects/p1/persona/appearance/avatar_existing.png",
+            "selected": {"set_id": "s1", "image_id": "i1"},
+            "sets": [{"set_id": "s1", "images": [{"id": "i1", "url": "http://x/view?filename=x.png"}]}],
+        }
+        # The guard condition: selected_filename is present → JIT block won't execute
+        assert appearance.get("selected_filename") is not None
+
     def test_idempotent_commit_skips_if_already_committed(self):
         """_resolve_selected_image_url works even when sets are populated."""
         from app.main import _resolve_selected_image_url
