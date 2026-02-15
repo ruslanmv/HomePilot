@@ -85,6 +85,9 @@ from .personas.avatar_assets import commit_persona_avatar
 from .personas.export_import import export_persona_project, import_persona_package, preview_persona_package
 from .personas.dependency_checker import check_dependencies
 
+# Community gallery proxy (Phase 3 — additive)
+from .community import router as community_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -115,6 +118,9 @@ app.include_router(capabilities_router)
 
 # Include Agentic AI routes (/v1/agentic/*)
 app.include_router(agentic_router)
+
+# Include Community Gallery proxy routes (/community/*)
+app.include_router(community_router)
 
 # ----------------------------
 # Models

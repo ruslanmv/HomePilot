@@ -905,6 +905,20 @@ mcp-register-agent: ## Register an A2A agent (usage: make mcp-register-agent JSO
 	fi
 	@bash scripts/mcp-register.sh agent '$(JSON)'
 
+# --- Community Gallery ---------------------------------------------------------
+
+community-bootstrap: ## Bootstrap Cloudflare R2 + Worker + Pages for Community Gallery
+	@echo "Bootstrapping Community Gallery..."
+	@cd community && bash bootstrap.sh
+
+community-deploy-worker: ## Deploy the Community Gallery Cloudflare Worker
+	@echo "Deploying Community Gallery Worker..."
+	@cd community/worker && npm install && npx wrangler deploy
+
+community-deploy-pages: ## Deploy the Community Gallery static site (Cloudflare Pages)
+	@echo "Deploying Community Gallery Pages..."
+	@cd community && npx wrangler pages deploy pages/ --project-name homepilot-persona-gallery-pages
+
 # --- Backward Compatibility Aliases -------------------------------------------
 
 local: start  ## Alias for 'make start' (backward compatibility)

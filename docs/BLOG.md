@@ -135,7 +135,87 @@ HomePilot ships with personalities ready to use — from a professional **Assist
 
 But built-in personalities are just the starting point. **Custom Personas** are project-backed characters you create — with their own avatars, wardrobe systems, and configurable behavior. Create a "Personal Secretary" Persona and it will remember your preferences, your schedule patterns, your communication style — across every session, indefinitely.
 
+### Persona Portability — Share & Install Anywhere
+
+Create a persona in Tokyo, share it with someone in Brazil, and they get the exact same identity — personality, tools, and all. HomePilot packages personas into a portable **`.hpersona`** file:
+
+- **Export** any persona project as a single `.hpersona` package with one click
+- **Import** by dragging the file into HomePilot — a 3-step preview shows the persona card, system prompt, and a dependency check before installing
+- **Dependency awareness** — the package records which image models, personality tools, MCP servers, and A2A agents the persona relies on; the importer shows green/amber/red status for each
+- **Schema versioned** (v2) with backward compatibility
+
 > The full Persona specification is at [docs/PERSONA.md](PERSONA.md).
+
+---
+
+## Community Gallery: Share Personas with the World
+
+HomePilot includes a **Community Gallery** — a public registry where anyone can browse, download, and install personas created by other users. The gallery runs on two tiers:
+
+### Cloudflare-Hosted Gallery (Production)
+
+For high-traffic production deployments, HomePilot supports a **Cloudflare R2 + Workers** backend following an MMORPG patcher pattern:
+
+- `registry.json` as a patch manifest with aggressive CDN caching
+- Immutable versioned packages — once uploaded, never changed
+- Backend proxy at `/community/*` keeps CORS clean and keys private
+- Users browse and install directly from the **"Shared with me"** tab
+
+### GitHub-Native Gallery (Zero Infrastructure)
+
+For open-source communities and projects that want **zero infrastructure cost**, HomePilot now ships a fully serverless persona sharing pipeline powered entirely by GitHub:
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌──────────────────────┐
+│  USER            │     │  ADMIN           │     │  GITHUB ACTIONS      │
+│                  │     │                  │     │                      │
+│ 1. Export        │     │ 4. Review issue  │     │ 6. Download package  │
+│    .hpersona     │────▶│ 5. Add label     │────▶│ 7. Validate ZIP      │
+│ 2. Open Issue    │     │    "persona-     │     │ 8. Extract preview   │
+│ 3. Attach file   │     │     approved"    │     │ 9. Create Release    │
+│                  │     │                  │     │ 10. Update registry  │
+└─────────────────┘     └──────────────────┘     │ 11. Comment + close  │
+                                                  └──────────┬───────────┘
+                                                             │ auto-rebuild
+                                                  ┌──────────▼───────────┐
+                                                  │  GITHUB PAGES        │
+                                                  │                      │
+                                                  │  gallery.html        │
+                                                  │  registry.json       │
+                                                  │  previews/           │
+                                                  └──────────┬───────────┘
+                                                             │ fetch
+                                                  ┌──────────▼───────────┐
+                                                  │  HOMEPILOT CLIENT    │
+                                                  │                      │
+                                                  │  Browse → Download   │
+                                                  │  → Preview → Install │
+                                                  └──────────────────────┘
+```
+
+**How to submit a persona:**
+
+1. In HomePilot, go to **My Projects**, find your persona, and click **Export** to get a `.hpersona` file
+2. Go to the [Persona Submission](https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml) page on GitHub
+3. Fill in the form: name, description, tags, content rating
+4. Drag and drop your `.hpersona` file into the attachment field
+5. Submit the issue — a maintainer will review it
+6. Once approved (label: `persona-approved`), the pipeline runs automatically:
+   - Validates the package (ZIP integrity, manifest schema, path traversal check)
+   - Creates a GitHub Release with the `.hpersona` as a downloadable asset
+   - Extracts preview images and card metadata
+   - Updates `registry.json` on GitHub Pages
+   - Comments on the issue with install instructions and closes it
+
+**How to install a community persona:**
+
+- **From the app**: Open HomePilot > **Shared with me** tab > browse > click **Install**
+- **From the web**: Visit the [Community Gallery](https://ruslanmv.github.io/HomePilot/gallery.html) > download the `.hpersona` file > import into HomePilot
+- **From a release**: Go to the GitHub Release page > download > drag into HomePilot
+
+The gallery page supports search, tag filtering, content rating filters, and sorting — all running client-side with zero backend.
+
+> See [docs/COMMUNITY_GALLERY.md](COMMUNITY_GALLERY.md) for the full architecture.
 
 ---
 
@@ -233,7 +313,7 @@ User → Frontend (React :3000) → Backend (FastAPI :8000) → Services
                                         └── Studio API (content pipeline)
 ```
 
-**150+ API endpoints** cover every operation — from chat and image generation to persona sessions, content policy enforcement, version history, and tool registration. Full OpenAPI docs ship at `/docs`.
+**160+ API endpoints** cover every operation — from chat and image generation to persona sessions, content policy enforcement, version history, and tool registration. Full OpenAPI docs ship at `/docs`.
 
 **20+ ComfyUI workflows** handle image and video generation. To upgrade capabilities, swap a JSON file. No code changes needed.
 
@@ -241,32 +321,102 @@ User → Frontend (React :3000) → Backend (FastAPI :8000) → Services
 
 ---
 
-## Getting Started
+## Tutorial: From Install to Your First Shared Persona
 
-### Prerequisites
+This step-by-step walkthrough takes you from a fresh clone to a published persona in the community gallery.
 
-- Linux or WSL2 (macOS supported, CPU-only)
-- Docker Engine + Docker Compose
-- NVIDIA GPU with 8GB+ VRAM recommended (12GB+ for FLUX models)
-
-### Install
+### Step 1 — Install HomePilot
 
 ```bash
+# Clone the repository
 git clone https://github.com/ruslanmv/homepilot
 cd homepilot
+
+# Copy environment config
 cp .env.example .env
 
-# Download models (choose your tier)
+# Download models (pick your tier)
 make download-recommended    # ~14GB — FLUX Schnell + SDXL
-# make download-minimal      # ~7GB  — FLUX Schnell only
-# make download-full         # ~65GB — Everything
 
-# Build and launch
+# Build and launch all services
 make install
 make run
 ```
 
-### Access
+Open `http://localhost:3000` in your browser. You should see the main interface.
+
+### Step 2 — Create a Persona
+
+1. Open the sidebar and go to **My Projects**
+2. Click **New Project** > **Persona**
+3. Walk through the creation wizard:
+   - **Identity**: Name, role, personality description
+   - **Appearance**: Generate an avatar, choose a style preset
+   - **Voice**: Pick a voice persona and speed
+   - **Tools**: Enable MCP tool access if desired
+4. Click **Create** — your persona is live
+
+### Step 3 — Have a Conversation
+
+1. From My Projects, click your new persona card
+2. Click **Start Session** (voice or text)
+3. Talk to your persona — it remembers everything across sessions
+4. The persona's long-term memory builds automatically: preferences, facts, emotional patterns
+
+### Step 4 — Export the Persona
+
+1. In **My Projects**, find your persona card
+2. Click the **Export** button
+3. HomePilot packages everything into a `.hpersona` file:
+   - Blueprint (personality, appearance, agentic config)
+   - Dependencies (tools, MCP servers, models)
+   - Avatar images
+   - Preview card for galleries
+
+### Step 5 — Share with the Community
+
+1. Go to [Submit a Persona](https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml)
+2. Fill in the form:
+   - **Persona Name**: e.g., "Atlas"
+   - **Short Description**: one line for the gallery card
+   - **Tags**: select from professional, creative, educational, etc.
+   - **Content Rating**: SFW or NSFW
+   - **Package File**: drag your `.hpersona` file into the box
+   - **Preview Image** (optional): drag a cover image
+3. Check the agreement boxes and submit
+
+A maintainer reviews your submission. Once they add the `persona-approved` label, the automated pipeline:
+- Validates your package
+- Creates a GitHub Release
+- Updates the public registry
+- Publishes to the [Community Gallery](https://ruslanmv.github.io/HomePilot/gallery.html)
+
+### Step 6 — Install a Community Persona
+
+Other users can now find and install your persona:
+
+1. Open HomePilot > **Shared with me** tab
+2. Browse the gallery — search by name, filter by tag
+3. Click **Install** on any persona card
+4. The 3-step wizard shows: persona preview, dependency check, and install confirmation
+5. Click **Confirm** — the persona appears in My Projects, ready to use
+
+Or browse the web gallery at [ruslanmv.github.io/HomePilot/gallery.html](https://ruslanmv.github.io/HomePilot/gallery.html) and download directly.
+
+### Step 7 — Enable Agentic Mode (Optional)
+
+To give your persona real-world tool access:
+
+```bash
+# Start HomePilot with MCP tool servers
+AGENTIC=1 make start
+```
+
+This launches the MCP Gateway and all built-in tool servers. Your persona can now search the web, manage tasks, query knowledge bases, and coordinate with A2A agents.
+
+---
+
+### Access Points
 
 | Service | URL |
 | :--- | :--- |
@@ -274,8 +424,7 @@ make run
 | **API Documentation** | `http://localhost:8000/docs` |
 | **ComfyUI** | `http://localhost:8188` |
 | **MCP Admin** | `http://localhost:4444/admin` |
-
-From zero to running in under 15 minutes on a modern workstation.
+| **Community Gallery** | [ruslanmv.github.io/HomePilot/gallery.html](https://ruslanmv.github.io/HomePilot/gallery.html) |
 
 ---
 
@@ -287,7 +436,7 @@ From zero to running in under 15 minutes on a modern workstation.
 
 **Enterprises** evaluating AI for internal workflows, who need audit trails, configurable safety policies, and zero data exfiltration risk.
 
-**Developers** building AI applications who want a production-ready reference architecture with 150+ endpoints, modular services, and extensible tool integration.
+**Developers** building AI applications who want a production-ready reference architecture with 160+ endpoints, modular services, and extensible tool integration.
 
 **Anyone** who is tired of AI products that forget you the moment you close the tab.
 
@@ -303,6 +452,7 @@ From zero to running in under 15 minutes on a modern workstation.
 | **Content creation** | Copy-paste workflows | Integrated studio with outlines, scenes, export |
 | **Tools** | None or proprietary plugins | Open MCP gateway with unlimited tool servers |
 | **Integrations** | Closed ecosystem | Email, WhatsApp, Slack, GitHub, Calendar, Home Automation |
+| **Community** | Isolated users | Public persona gallery with one-click install |
 | **Data** | Sent to vendor servers | 100% local, self-hosted |
 | **Cost** | Per-seat, per-month | One-time setup, your hardware |
 | **Extensibility** | Closed ecosystem | Swap any service, add any tool, modify any workflow |
@@ -313,7 +463,7 @@ From zero to running in under 15 minutes on a modern workstation.
 
 HomePilot is not a wrapper around an API. It is a **complete AI operating environment** — conversation, creation, memory, identity, and action — running on your hardware, under your control.
 
-Install it. Create a Persona. Start a conversation that does not end when you close the browser.
+Install it. Create a Persona. Share it with the world. Start a conversation that does not end when you close the browser.
 
 ```bash
 git clone https://github.com/ruslanmv/homepilot && cd homepilot && make install && make run
@@ -324,5 +474,5 @@ git clone https://github.com/ruslanmv/homepilot && cd homepilot && make install 
 <p align="center">
   <img src="../assets/homepilot-logo.svg" alt="HomePilot" width="300" /><br><br>
   <b>HomePilot</b> — Your AI. Your data. Your rules.<br>
-  <a href="https://github.com/ruslanmv/homepilot">GitHub</a> · <a href="PERSONA.md">Persona Spec</a> · <a href="INTEGRATIONS.md">Integrations Guide</a>
+  <a href="https://github.com/ruslanmv/homepilot">GitHub</a> · <a href="PERSONA.md">Persona Spec</a> · <a href="INTEGRATIONS.md">Integrations Guide</a> · <a href="https://ruslanmv.github.io/HomePilot/gallery.html">Community Gallery</a>
 </p>
