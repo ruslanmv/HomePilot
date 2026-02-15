@@ -81,12 +81,9 @@ jobs:
 
             const personaName = getField('Persona Name');
             const shortDesc = getField('Short Description');
-            const detailedDesc = getField('Detailed Description');
             const tags = getField('Tags');
             const contentRating = getField('Content Rating');
-            const packageField = getField('Persona Package');
-            const previewField = getField('Preview Image \\(optional\\)');
-            const version = getField('Version') || '1.0.0';
+            const packageField = getField('Persona Package \\(\\.zip\\)');
 
             // Extract attachment URL from markdown link: [name](url)
             // Also handle raw URLs and GitHub user-attachments URLs
@@ -101,10 +98,9 @@ jobs:
             }
 
             const packageUrl = extractUrl(packageField);
-            const previewUrl = extractUrl(previewField);
 
             if (!packageUrl) {
-              core.setFailed('Could not find .hpersona attachment URL in the issue body');
+              core.setFailed('Could not find .zip attachment URL in the issue body');
               return;
             }
 
@@ -123,35 +119,58 @@ jobs:
 
             core.setOutput('persona_name', personaName);
             core.setOutput('short_desc', shortDesc);
-            core.setOutput('detailed_desc', detailedDesc);
             core.setOutput('tags', JSON.stringify(parsedTags));
             core.setOutput('content_rating', isNsfw ? 'nsfw' : 'sfw');
             core.setOutput('nsfw', isNsfw ? 'true' : 'false');
             core.setOutput('package_url', packageUrl);
-            core.setOutput('preview_url', previewUrl);
-            core.setOutput('version', version);
+            core.setOutput('version', '1.0.0');
             core.setOutput('slug', slug);
             core.setOutput('author', author);
             core.setOutput('issue_number', issueNumber.toString());
 
-            console.log(`Parsed submission: ${personaName} (${slug}) v${version} by @${author}`);
+            console.log(`Parsed submission: ${personaName} (${slug}) by @${author}`);
             console.log(`Package URL: ${packageUrl}`);
             console.log(`Tags: ${parsedTags.join(', ')}`);
 
-      # ── 3. Download .hpersona ────────────────────────────────────
-      - name: Download persona package
+      # ── 3. Download uploaded .zip ───────────────────────────────
+      - name: Download persona zip
         run: |
           mkdir -p /tmp/persona-work
-          curl -fSL -o /tmp/persona-work/persona.hpersona \
+          curl -fSL -o /tmp/persona-work/upload.zip \
             "${{ steps.parse.outputs.package_url }}"
-          echo "Downloaded: $(stat -c%s /tmp/persona-work/persona.hpersona) bytes"
+          echo "Downloaded: $(stat -c%s /tmp/persona-work/upload.zip) bytes"
 
-      # ── 4. Download preview image (if provided) ─────────────────
-      - name: Download preview image
-        if: steps.parse.outputs.preview_url != ''
+      # ── 4. Unwrap: extract .hpersona from zip ──────────────────
+      - name: Unwrap .hpersona from uploaded zip
         run: |
-          curl -fSL -o /tmp/persona-work/user_preview.img \
-            "${{ steps.parse.outputs.preview_url }}" || true
+          cd /tmp/persona-work
+
+          # Smart detection: is the zip itself a .hpersona (renamed)?
+          # A valid .hpersona contains manifest.json at the root.
+          if unzip -l upload.zip | grep -q "manifest.json"; then
+            echo "Zip IS a .hpersona (contains manifest.json at root). Using directly."
+            cp upload.zip persona.hpersona
+          else
+            # It's a wrapper zip containing a .hpersona file
+            echo "Extracting .hpersona from wrapper zip..."
+            unzip -o upload.zip -d unwrapped/
+
+            HPERSONA=$(find unwrapped/ -name "*.hpersona" -type f | head -1)
+            if [ -z "$HPERSONA" ]; then
+              echo "::error::No .hpersona file found inside the uploaded zip"
+              exit 1
+            fi
+
+            HCOUNT=$(find unwrapped/ -name "*.hpersona" -type f | wc -l)
+            if [ "$HCOUNT" -gt 1 ]; then
+              echo "::warning::Multiple .hpersona files found, using first: $HPERSONA"
+            fi
+
+            cp "$HPERSONA" persona.hpersona
+            echo "Extracted: $HPERSONA"
+          fi
+
+          echo "Final package: $(stat -c%s persona.hpersona) bytes"
 
       # ── 5. Validate package ──────────────────────────────────────
       - name: Validate .hpersona package
@@ -193,10 +212,8 @@ jobs:
           UPLOAD_DIR="/tmp/persona-work/r2-upload"
           mkdir -p "$UPLOAD_DIR"
 
-          # Use user-provided preview if available, else extracted avatar
-          if [ -f /tmp/persona-work/user_preview.img ]; then
-            cp /tmp/persona-work/user_preview.img "$UPLOAD_DIR/preview.webp"
-          elif ls /tmp/persona-work/extracted/preview.* 1>/dev/null 2>&1; then
+          # Use extracted avatar from the .hpersona package
+          if ls /tmp/persona-work/extracted/preview.* 1>/dev/null 2>&1; then
             cp /tmp/persona-work/extracted/preview.* "$UPLOAD_DIR/preview.webp"
           fi
 
