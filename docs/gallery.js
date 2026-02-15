@@ -2,67 +2,74 @@
  * HomePilot Community Gallery — Client-side logic
  *
  * Fetches registry.json and renders persona cards with search, tag
- * filtering, content rating, and sorting.
+ * filtering, content rating, sorting, and MMORPG character-sheet
+ * detail modals.
  *
  * Supports three source modes:
  *   1. Default (GitHub Pages) — reads ./registry.json from the same origin
  *   2. Worker mode — reads from a Cloudflare Worker URL
  *   3. R2 direct mode — reads from an R2 public bucket URL
  *
- * Configure by setting window.GALLERY_API and window.GALLERY_MODE in the
- * HTML before this script loads.
- *
- * Zero dependencies. Vanilla JS. Works offline once cached.
+ * Zero dependencies. Vanilla JS.
  */
 (function () {
   "use strict";
 
   // ── Configuration ──────────────────────────────────────────────
   var GALLERY_API  = (window.GALLERY_API || "").replace(/\/+$/, "");
-  var GALLERY_MODE = window.GALLERY_MODE || "";  // "worker", "r2", or "" (GitHub Pages)
+  var GALLERY_MODE = window.GALLERY_MODE || "";
 
-  /**
-   * Build the registry fetch URL.
-   * - GitHub Pages: ./registry.json (relative to page)
-   * - Worker:       <api>/registry.json
-   * - R2:           <api>/registry/registry.json
-   */
   function registryUrl() {
     if (!GALLERY_API) return "./registry.json";
     if (GALLERY_MODE === "r2") return GALLERY_API + "/registry/registry.json";
     return GALLERY_API + "/registry.json";
   }
 
-  /**
-   * Resolve a relative URL from the registry to absolute.
-   * When using a remote API, prepends the base URL.
-   * When using GitHub Pages, returns as-is (relative to docs/).
-   */
   function resolveUrl(url) {
     if (!url) return "";
     if (url.startsWith("http")) return url;
-    if (!GALLERY_API) return url;  // GitHub Pages — keep relative
+    if (!GALLERY_API) return url;
     if (url.startsWith("/")) return GALLERY_API + url;
     return GALLERY_API + "/" + url;
   }
 
-  // Cache bust: append timestamp query to avoid stale CDN caches
-  var CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
   // ── DOM refs ───────────────────────────────────────────────────
-  var $grid        = document.getElementById("grid");
-  var $status      = document.getElementById("status");
-  var $statsBar    = document.getElementById("stats-bar");
-  var $showCount   = document.getElementById("showing-count");
-  var $totalCount  = document.getElementById("total-count");
-  var $search      = document.getElementById("search");
-  var $filterTag   = document.getElementById("filter-tag");
-  var $filterRate  = document.getElementById("filter-rating");
-  var $sort        = document.getElementById("sort");
+  var $grid       = document.getElementById("grid");
+  var $status     = document.getElementById("status");
+  var $statsBar   = document.getElementById("stats-bar");
+  var $showCount  = document.getElementById("showing-count");
+  var $totalCount = document.getElementById("total-count");
+  var $search     = document.getElementById("search");
+  var $filterTag  = document.getElementById("filter-tag");
+  var $filterRate = document.getElementById("filter-rating");
+  var $sort       = document.getElementById("sort");
+
+  // Modal refs
+  var $modalOverlay     = document.getElementById("modal-overlay");
+  var $modalClose       = document.getElementById("modal-close");
+  var $modalCloseBtn    = document.getElementById("modal-close-btn");
+  var $modalAvatar      = document.getElementById("modal-avatar");
+  var $modalClassBadge  = document.getElementById("modal-class-badge");
+  var $modalName        = document.getElementById("modal-name");
+  var $modalRole        = document.getElementById("modal-role");
+  var $modalLevel       = document.getElementById("modal-level");
+  var $modalContentRate = document.getElementById("modal-content-rating");
+  var $modalStats       = document.getElementById("modal-stats");
+  var $modalStyleTags   = document.getElementById("modal-style-tags");
+  var $modalToolsSection= document.getElementById("modal-tools-section");
+  var $modalTools       = document.getElementById("modal-tools");
+  var $modalBackstoryS  = document.getElementById("modal-backstory-section");
+  var $modalBackstory   = document.getElementById("modal-backstory");
+  var $modalAuthor      = document.getElementById("modal-author");
+  var $modalDownloads   = document.getElementById("modal-downloads");
+  var $modalVersion     = document.getElementById("modal-version");
+  var $modalSize        = document.getElementById("modal-size");
+  var $modalDownload    = document.getElementById("modal-download");
 
   // ── State ──────────────────────────────────────────────────────
   var allItems = [];
   var allTags  = [];
+  var cardCache = {};
 
   // ── Helpers ────────────────────────────────────────────────────
 
@@ -114,15 +121,12 @@
 
   async function fetchRegistry() {
     showLoading();
-
     try {
       var data;
       var primaryUrl = registryUrl();
-
       try {
         data = await fetchRegistryFrom(primaryUrl);
       } catch (primaryErr) {
-        // Fallback to GitHub Pages local registry.json
         if (GALLERY_API) {
           console.warn("Primary registry failed (" + primaryErr.message + "), falling back to local registry.json");
           data = await fetchRegistryFrom("./registry.json?_=" + Date.now());
@@ -130,16 +134,12 @@
           throw primaryErr;
         }
       }
-
       allItems = data.items || [];
-
-      // Collect all unique tags
       var tagSet = new Set();
       allItems.forEach(function (item) {
         (item.tags || []).forEach(function (t) { tagSet.add(t); });
       });
       allTags = Array.from(tagSet).sort();
-
       populateTagFilter();
       $status.innerHTML = "";
       render();
@@ -152,56 +152,39 @@
   // ── Populate tag dropdown ──────────────────────────────────────
 
   function populateTagFilter() {
-    // Preserve current selection
     var current = $filterTag.value;
     $filterTag.innerHTML = '<option value="">All Tags</option>';
-
     allTags.forEach(function (tag) {
       var opt = document.createElement("option");
       opt.value = tag;
       opt.textContent = tag.charAt(0).toUpperCase() + tag.slice(1);
       $filterTag.appendChild(opt);
     });
-
-    if (current && allTags.includes(current)) {
-      $filterTag.value = current;
-    }
+    if (current && allTags.includes(current)) $filterTag.value = current;
   }
 
   // ── Filter + Sort ──────────────────────────────────────────────
 
   function getFiltered() {
-    var query   = ($search.value || "").toLowerCase().trim();
-    var tag     = $filterTag.value;
-    var rating  = $filterRate.value;
-    var sortBy  = $sort.value;
+    var query  = ($search.value || "").toLowerCase().trim();
+    var tag    = $filterTag.value;
+    var rating = $filterRate.value;
+    var sortBy = $sort.value;
 
     var items = allItems.filter(function (item) {
-      // Rating filter
       if (rating === "sfw" && item.nsfw) return false;
       if (rating === "nsfw" && !item.nsfw) return false;
-
-      // Tag filter
       if (tag && !(item.tags || []).includes(tag)) return false;
-
-      // Search
       if (query) {
         var hay = [item.name, item.short, item.author, (item.tags || []).join(" ")].join(" ").toLowerCase();
         if (hay.indexOf(query) === -1) return false;
       }
-
       return true;
     });
 
-    // Sort
     items.sort(function (a, b) {
-      if (sortBy === "newest") {
-        return (b.submitted_at || "").localeCompare(a.submitted_at || "");
-      }
-      if (sortBy === "size") {
-        return ((a.latest || {}).size_bytes || 0) - ((b.latest || {}).size_bytes || 0);
-      }
-      // Default: name A-Z
+      if (sortBy === "newest") return (b.submitted_at || "").localeCompare(a.submitted_at || "");
+      if (sortBy === "size") return ((a.latest || {}).size_bytes || 0) - ((b.latest || {}).size_bytes || 0);
       return (a.name || "").localeCompare(b.name || "");
     });
 
@@ -219,7 +202,6 @@
     var sizeStr = formatSize(latest.size_bytes);
     var version = latest.version || "1.0.0";
 
-    // Preview image — onerror degrades to placeholder silently
     var previewHtml;
     if (previewUrl) {
       previewHtml = '<img src="' + escapeHtml(previewUrl) + '" alt="' + escapeHtml(item.name) + ' preview" loading="lazy" onerror="this.outerHTML=\'<div class=placeholder>🎭</div>\'" />';
@@ -227,23 +209,20 @@
       previewHtml = '<div class="placeholder">🎭</div>';
     }
 
-    // Content rating badge
     var ratingBadge = nsfw
       ? '<span class="card-nsfw">NSFW</span>'
       : '<span class="card-rating-sfw">SFW</span>';
 
-    // Tags HTML
     var tagsHtml = tags.map(function (t) {
       return '<span class="tag">' + escapeHtml(t) + '</span>';
     }).join("");
 
-    // GitHub issue link
     var issueLink = item.issue_number
       ? '<a href="https://github.com/ruslanmv/HomePilot/issues/' + item.issue_number + '" target="_blank" rel="noopener">#' + item.issue_number + '</a>'
       : '';
 
     return [
-      '<article class="card">',
+      '<article class="card" data-persona-id="' + escapeHtml(item.id) + '">',
       '  <div class="card-preview">',
       '    ' + previewHtml,
       '    ' + ratingBadge,
@@ -258,13 +237,11 @@
       '    </div>',
       '    <div class="card-actions">',
       packageUrl
-        ? '      <a href="' + escapeHtml(packageUrl) + '" class="card-btn card-btn--download" download>' +
+        ? '      <a href="' + escapeHtml(packageUrl) + '" class="card-btn card-btn--download" download onclick="event.stopPropagation()">' +
           '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>' +
           'Download</a>'
         : '',
-      latest.card_url
-        ? '      <a href="' + escapeHtml(resolveUrl(latest.card_url)) + '" class="card-btn card-btn--details" target="_blank" rel="noopener">Details</a>'
-        : '',
+      '      <button class="card-btn card-btn--details" onclick="event.stopPropagation(); window.__openDetails(\'' + escapeHtml(item.id) + '\')">Details</button>',
       '    </div>',
       '  </div>',
       '</article>',
@@ -273,7 +250,6 @@
 
   function render() {
     var items = getFiltered();
-
     $totalCount.textContent = allItems.length;
     $showCount.textContent  = items.length;
     $statsBar.style.display = allItems.length > 0 ? "flex" : "none";
@@ -284,7 +260,157 @@
     }
 
     $grid.innerHTML = items.map(renderCard).join("\n");
+
+    // Clicking a card opens the detail modal
+    $grid.querySelectorAll(".card").forEach(function (card) {
+      card.addEventListener("click", function () {
+        var id = card.getAttribute("data-persona-id");
+        if (id) openDetailModal(id);
+      });
+    });
   }
+
+  // ── Character Sheet Modal ──────────────────────────────────────
+
+  function closeModal() {
+    $modalOverlay.classList.remove("active");
+  }
+
+  $modalClose.addEventListener("click", closeModal);
+  $modalCloseBtn.addEventListener("click", closeModal);
+  $modalOverlay.addEventListener("click", function (e) {
+    if (e.target === $modalOverlay) closeModal();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeModal();
+  });
+
+  async function openDetailModal(personaId) {
+    var item = allItems.find(function (i) { return i.id === personaId; });
+    if (!item) return;
+
+    var latest = item.latest || {};
+    var previewUrl = resolveUrl(latest.preview_url);
+    var packageUrl = resolveUrl(latest.package_url);
+    var cardUrl = resolveUrl(latest.card_url);
+
+    // Set basic info from registry
+    $modalName.textContent = item.name;
+    $modalRole.textContent = item.short;
+    $modalAuthor.textContent = "by @" + (item.author || "community");
+    $modalDownloads.textContent = (item.downloads || 0).toLocaleString() + " downloads";
+    $modalVersion.textContent = "v" + (latest.version || "1.0.0");
+    $modalSize.textContent = formatSize(latest.size_bytes);
+    $modalContentRate.textContent = item.nsfw ? "NSFW" : "SFW";
+    $modalContentRate.style.color = item.nsfw ? "var(--red)" : "var(--green)";
+
+    // Avatar
+    if (previewUrl) {
+      $modalAvatar.innerHTML = '<img src="' + escapeHtml(previewUrl) + '" alt="' + escapeHtml(item.name) + '" onerror="this.outerHTML=\'<div class=placeholder>🎭</div>\'" />';
+    } else {
+      $modalAvatar.innerHTML = '<div class="placeholder">🎭</div>';
+    }
+
+    // Download link
+    if (packageUrl) {
+      $modalDownload.href = packageUrl;
+      $modalDownload.style.display = "";
+    } else {
+      $modalDownload.style.display = "none";
+    }
+
+    // Default stats
+    var defaultStats = { charisma: 50, elegance: 50, confidence: 50, warmth: 50, level: 1 };
+    renderModalStats(defaultStats);
+    $modalClassBadge.textContent = item.class_id || "persona";
+    $modalStyleTags.innerHTML = (item.tags || []).map(function (t) {
+      return '<span class="modal-tag">' + escapeHtml(t) + '</span>';
+    }).join("");
+    $modalToolsSection.style.display = "none";
+    $modalBackstoryS.style.display = "none";
+
+    // Show modal immediately
+    $modalOverlay.classList.add("active");
+
+    // Fetch enriched card data
+    try {
+      var card;
+      if (cardCache[personaId]) {
+        card = cardCache[personaId];
+      } else if (cardUrl) {
+        var resp = await fetch(cardUrl);
+        if (resp.ok) {
+          card = await resp.json();
+          cardCache[personaId] = card;
+        }
+      }
+
+      if (card) {
+        if (card.role) $modalRole.textContent = card.role;
+        if (card.class_id) $modalClassBadge.textContent = card.class_id;
+
+        if (card.stats) renderModalStats(card.stats);
+
+        // Style & Tone tags
+        var tagsHtml = "";
+        if (card.style_tags) {
+          tagsHtml += card.style_tags.map(function (t) {
+            return '<span class="modal-tag style">' + escapeHtml(t) + '</span>';
+          }).join("");
+        }
+        if (card.tone_tags) {
+          tagsHtml += card.tone_tags.map(function (t) {
+            return '<span class="modal-tag tone">' + escapeHtml(t) + '</span>';
+          }).join("");
+        }
+        if (card.tags) {
+          tagsHtml += card.tags.map(function (t) {
+            return '<span class="modal-tag">' + escapeHtml(t) + '</span>';
+          }).join("");
+        }
+        if (tagsHtml) $modalStyleTags.innerHTML = tagsHtml;
+
+        // Tools
+        if (card.tools && card.tools.length > 0) {
+          $modalToolsSection.style.display = "";
+          $modalTools.innerHTML = card.tools.map(function (t) {
+            return '<span class="modal-tag tool">' + escapeHtml(t) + '</span>';
+          }).join("");
+        }
+
+        // Backstory
+        if (card.backstory) {
+          $modalBackstoryS.style.display = "";
+          $modalBackstory.textContent = card.backstory;
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch card data:", err);
+    }
+  }
+
+  function renderModalStats(stats) {
+    var level = stats.level || 1;
+    $modalLevel.textContent = "LV " + level;
+
+    var statNames = ["charisma", "elegance", "confidence", "warmth"];
+    var html = "";
+    statNames.forEach(function (name) {
+      var val = stats[name] || 0;
+      html += [
+        '<div class="stat-row">',
+        '  <span class="stat-label">' + name + '</span>',
+        '  <div class="stat-bar-bg">',
+        '    <div class="stat-bar-fill ' + name + '" style="width:' + Math.min(val, 100) + '%"></div>',
+        '  </div>',
+        '  <span class="stat-value">' + val + '</span>',
+        '</div>',
+      ].join("");
+    });
+    $modalStats.innerHTML = html;
+  }
+
+  window.__openDetails = openDetailModal;
 
   // ── Event listeners ────────────────────────────────────────────
 
