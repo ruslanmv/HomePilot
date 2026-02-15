@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Simple tool IDs from PersonalityAgent.allowed_tools",
+    "tools": ["calendar", "email_draft", "meeting_notes"]
+  },
+  "forge_tools": {
+    "description": "Tool references from Context Forge / MCP",
+    "tools": []
+  },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": [],
+    "optional": []
+  }
+}

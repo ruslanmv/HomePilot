@@ -7,6 +7,7 @@
   "tags": ["professional", "secretary", "productivity"],
   "tools": ["calendar", "email_draft", "meeting_notes"],
   "content_rating": "sfw",
+  "has_avatar": true,
   "stats": {
     "charisma": 40,
     "elegance": 60,

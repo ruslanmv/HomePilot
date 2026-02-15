@@ -12,13 +12,14 @@
       "author": "HomePilot Community",
       "downloads": 1204,
       "class_id": "secretary",
+      "has_avatar": true,
       "latest": {
         "version": "1.0.0",
         "package_url": "/p/scarlett_exec_secretary/1.0.0",
         "preview_url": "/v/scarlett_exec_secretary/1.0.0",
         "card_url": "/c/scarlett_exec_secretary/1.0.0",
         "sha256": "",
-        "size_bytes": 1994
+        "size_bytes": 19292
       }
     },
     {
@@ -30,13 +31,14 @@
       "author": "HomePilot Community",
       "downloads": 876,
       "class_id": "assistant",
+      "has_avatar": true,
       "latest": {
         "version": "1.0.0",
         "package_url": "/p/atlas_research_assistant/1.0.0",
         "preview_url": "/v/atlas_research_assistant/1.0.0",
         "card_url": "/c/atlas_research_assistant/1.0.0",
         "sha256": "",
-        "size_bytes": 1978
+        "size_bytes": 17164
       }
     }
   ]

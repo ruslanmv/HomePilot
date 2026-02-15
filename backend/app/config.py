@@ -135,7 +135,9 @@ CONTEXT_FORGE_TOKEN = os.getenv("CONTEXT_FORGE_TOKEN", "").strip()
 
 # Community Gallery — Cloudflare Worker (production, edge-cached, no rate limits)
 # Primary upstream for registry, previews, cards, and packages.
-COMMUNITY_GALLERY_URL = os.getenv("COMMUNITY_GALLERY_URL", "").strip().rstrip("/")
+# Works out-of-the-box; override via COMMUNITY_GALLERY_URL env var or set "" to disable.
+_DEFAULT_GALLERY_URL = "https://homepilot-persona-gallery.cloud-data.workers.dev"
+COMMUNITY_GALLERY_URL = os.getenv("COMMUNITY_GALLERY_URL", _DEFAULT_GALLERY_URL).strip().rstrip("/")
 
 # Community Gallery — R2 Direct Access (fallback, rate-limited by Cloudflare)
 # Used only when COMMUNITY_GALLERY_URL is not set.

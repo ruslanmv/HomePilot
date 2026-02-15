@@ -422,9 +422,11 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
         <Globe size={40} className="mb-4 opacity-40" />
         <p className="text-base font-semibold text-white/60 mb-2">Community Gallery</p>
         <p className="text-sm text-white/40 text-center max-w-md mb-4">
-          Browse and install community-created personas. Set{' '}
+          Browse and install community-created personas. The gallery was explicitly disabled.
+          Remove{' '}
           <code className="text-xs bg-white/10 px-1.5 py-0.5 rounded">COMMUNITY_GALLERY_URL</code>{' '}
-          in your <code className="text-xs bg-white/10 px-1.5 py-0.5 rounded">.env</code> to enable.
+          from your <code className="text-xs bg-white/10 px-1.5 py-0.5 rounded">.env</code>{' '}
+          to restore the default gallery, or set a custom URL.
         </p>
         <a
           href="https://github.com/ruslanmv/HomePilot/blob/main/docs/COMMUNITY_GALLERY.md"

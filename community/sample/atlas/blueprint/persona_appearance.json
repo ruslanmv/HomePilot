@@ -3,5 +3,6 @@
   "aspect_ratio": "2:3",
   "img_preset": "med",
   "sets": [],
-  "selected": null
+  "selected_filename": "avatar_atlas.png",
+  "selected_thumb_filename": "thumb_avatar_atlas.webp"
 }
