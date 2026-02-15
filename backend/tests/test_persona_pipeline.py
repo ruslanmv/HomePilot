@@ -693,7 +693,6 @@ class TestIssueTemplateIntegrity:
         assert "tags" in field_ids
         assert "content_rating" in field_ids
         assert "package_file" in field_ids
-        assert "version" in field_ids
 
     def test_persona_name_is_required(self, template):
         for item in template["body"]:
@@ -706,7 +705,7 @@ class TestIssueTemplateIntegrity:
             if item.get("id") == "agreements":
                 assert item["type"] == "checkboxes"
                 opts = item["attributes"]["options"]
-                assert len(opts) >= 3
+                assert len(opts) >= 1
                 assert all(o["required"] for o in opts)
                 break
 

@@ -4,24 +4,24 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>HomePilot — Your AI. Your Data. Your Rules.</title>
-  <meta name="description" content="HomePilot is an open-source, local-first GenAI application unifying chat, image generation, video creation, and AI-powered storytelling in a single self-hosted platform." />
-  <meta name="keywords" content="HomePilot, GenAI, open-source, self-hosted, AI, local-first, image generation, video creation, storytelling, MCP, ComfyUI, personas" />
+  <meta name="description" content="HomePilot is a free, private AI platform for chat, image creation, video generation, and intelligent AI characters — all running on your own computer." />
+  <meta name="keywords" content="HomePilot, AI, private AI, local AI, image generation, video creation, AI characters, open source, free" />
   <meta name="author" content="HomePilot Community" />
   <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://ruslanmv.github.io/HomePilot/" />
 
   <!-- Open Graph -->
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="HomePilot — Open-Source Local-First GenAI Platform" />
-  <meta property="og:description" content="All-in-one self-hosted GenAI: chat, image generation, video creation, and AI storytelling. 160+ endpoints. Privacy-first." />
+  <meta property="og:title" content="HomePilot — Your AI. Your Data. Your Rules." />
+  <meta property="og:description" content="Free, private AI for chat, images, video, and intelligent characters. Runs entirely on your computer." />
   <meta property="og:url" content="https://ruslanmv.github.io/HomePilot/" />
   <meta property="og:image" content="https://raw.githubusercontent.com/ruslanmv/HomePilot/master/assets/2026-01-25-09-38-39.png" />
   <meta property="og:site_name" content="HomePilot" />
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="HomePilot — Open-Source Local-First GenAI Platform" />
-  <meta name="twitter:description" content="All-in-one self-hosted GenAI: chat, image generation, video creation, and AI storytelling." />
+  <meta name="twitter:title" content="HomePilot — Your AI. Your Data. Your Rules." />
+  <meta name="twitter:description" content="Free, private AI for chat, images, video, and intelligent characters." />
   <meta name="twitter:image" content="https://raw.githubusercontent.com/ruslanmv/HomePilot/master/assets/2026-01-25-09-38-39.png" />
 
   <!-- Favicon -->
@@ -34,24 +34,17 @@
     "@type": "SoftwareApplication",
     "name": "HomePilot",
     "applicationCategory": "Multimedia",
-    "operatingSystem": "Linux, Windows, macOS (via Docker)",
-    "description": "An open-source, local-first GenAI application unifying chat, image generation, video creation, and AI-powered storytelling.",
+    "operatingSystem": "Linux, Windows, macOS",
+    "description": "A free, private AI platform for chat, image creation, video generation, and intelligent AI characters.",
     "url": "https://github.com/ruslanmv/HomePilot",
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
-    "author": {
-      "@type": "Organization",
-      "name": "HomePilot Community"
-    },
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD"
-    }
+    "author": { "@type": "Organization", "name": "HomePilot Community" },
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
   }
   </script>
 
   <style>
-    /* ── Reset & Base ─────────────────────────────────── */
+    /* ── Reset & Theme ─────────────────────────────── */
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
       --bg:           #09090b;
@@ -66,250 +59,159 @@
       --accent-purple:#8b5cf6;
       --gradient:     linear-gradient(135deg, #06b6d4, #3b82f6, #8b5cf6);
       --radius:       12px;
-      --max-w:        1120px;
-      --section-gap:  96px;
+      --max-w:        1080px;
     }
     html { scroll-behavior: smooth; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.65;
-      -webkit-font-smoothing: antialiased;
+      background: var(--bg); color: var(--text);
+      line-height: 1.65; -webkit-font-smoothing: antialiased;
     }
     a { color: var(--accent-cyan); text-decoration: none; transition: color .2s; }
     a:hover { color: var(--accent-blue); }
     img { max-width: 100%; height: auto; }
     ::selection { background: rgba(59,130,246,.3); }
 
-    /* ── Utility ──────────────────────────────────────── */
     .container { max-width: var(--max-w); margin: 0 auto; padding: 0 24px; }
-    .section   { padding: var(--section-gap) 0; }
-    .section-title {
-      font-size: clamp(1.75rem, 4vw, 2.5rem);
-      font-weight: 800;
-      letter-spacing: -0.02em;
-      margin-bottom: 12px;
-    }
-    .section-subtitle {
-      color: var(--text-muted);
-      font-size: 1.05rem;
-      max-width: 600px;
-      margin-bottom: 48px;
-    }
     .gradient-text {
       background: var(--gradient);
-      -webkit-background-clip: text;
-      background-clip: text;
+      -webkit-background-clip: text; background-clip: text;
       -webkit-text-fill-color: transparent;
     }
 
-    /* ── Nav ───────────────────────────────────────────── */
+    /* ── Nav ──────────────────────────────────────── */
     nav {
       position: sticky; top: 0; z-index: 50;
-      background: rgba(9,9,11,.85);
-      backdrop-filter: blur(12px);
+      background: rgba(9,9,11,.85); backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
     }
     .nav-inner {
       display: flex; align-items: center; justify-content: space-between;
-      height: 64px;
+      height: 60px;
     }
     .nav-brand {
       display: flex; align-items: center; gap: 10px;
       font-size: 18px; font-weight: 700; color: var(--text);
     }
-    .nav-brand svg { width: 32px; height: 32px; }
-    .nav-links { display: flex; align-items: center; gap: 28px; list-style: none; }
+    .nav-brand svg { width: 30px; height: 30px; }
+    .nav-links { display: flex; align-items: center; gap: 24px; list-style: none; }
     .nav-links a { color: var(--text-muted); font-size: 14px; font-weight: 500; }
     .nav-links a:hover { color: var(--text); }
     .nav-star {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 7px 16px; border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--bg-card);
-      color: var(--text); font-size: 13px; font-weight: 600;
-      transition: all .2s;
+      border: 1px solid var(--border); background: var(--bg-card);
+      color: var(--text); font-size: 13px; font-weight: 600; transition: all .2s;
     }
     .nav-star:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
     .nav-star svg { width: 16px; height: 16px; }
     .mobile-toggle { display: none; background: none; border: none; color: var(--text); cursor: pointer; }
 
-    /* ── Hero ──────────────────────────────────────────── */
+    /* ── Hero ─────────────────────────────────────── */
     .hero {
-      padding: 100px 0 80px;
-      text-align: center;
-      position: relative;
-      overflow: hidden;
+      padding: 96px 0 72px; text-align: center;
+      position: relative; overflow: hidden;
     }
     .hero::before {
-      content: '';
-      position: absolute; inset: 0;
+      content: ''; position: absolute; inset: 0;
       background: radial-gradient(ellipse 60% 50% at 50% 0%, rgba(59,130,246,.08), transparent);
       pointer-events: none;
     }
-    .hero-logo { width: 340px; margin: 0 auto 32px; }
+    .hero-logo { width: 300px; margin: 0 auto 28px; }
     .hero h1 {
-      font-size: clamp(2.2rem, 5vw, 3.5rem);
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      line-height: 1.15;
-      margin-bottom: 20px;
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 800; letter-spacing: -0.03em;
+      line-height: 1.15; margin-bottom: 18px;
     }
     .hero p {
-      color: var(--text-muted); font-size: 1.15rem;
-      max-width: 640px; margin: 0 auto 40px;
+      color: var(--text-muted); font-size: 1.12rem;
+      max-width: 560px; margin: 0 auto 36px;
     }
-    .hero-badges {
-      display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
-      margin-bottom: 40px;
-    }
-    .badge {
-      display: inline-block; padding: 5px 14px; border-radius: 999px;
-      font-size: 12px; font-weight: 600; letter-spacing: 0.03em;
-      border: 1px solid var(--border); background: var(--bg-card); color: var(--text-muted);
-    }
-    .badge--accent { border-color: rgba(139,92,246,.3); color: #c084fc; background: rgba(139,92,246,.08); }
     .cta-group { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; }
     .btn {
       display: inline-flex; align-items: center; gap: 8px;
       padding: 13px 28px; border-radius: 10px;
-      font-size: 15px; font-weight: 600;
-      transition: all .2s; cursor: pointer; border: none;
+      font-size: 15px; font-weight: 600; transition: all .2s;
+      cursor: pointer; border: none;
     }
     .btn-primary {
       background: var(--gradient); color: #fff;
       box-shadow: 0 4px 24px rgba(59,130,246,.2);
     }
     .btn-primary:hover { opacity: .9; transform: translateY(-1px); color: #fff; }
-    .btn-outline {
-      background: transparent; color: var(--text);
-      border: 1px solid var(--border);
-    }
+    .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
     .btn-outline:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
     .btn svg { width: 18px; height: 18px; }
+
     .hero-screenshot {
-      margin-top: 56px; border-radius: 16px;
+      margin-top: 48px; border-radius: 16px;
       border: 1px solid var(--border);
       box-shadow: 0 24px 80px rgba(0,0,0,.5);
     }
 
-    /* ── About ─────────────────────────────────────────── */
-    .about { background: var(--bg-surface); }
-    .about-grid {
+    /* ── Capabilities ─────────────────────────────── */
+    .capabilities { padding: 88px 0; }
+    .capabilities h2 {
+      text-align: center;
+      font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+      font-weight: 800; letter-spacing: -0.02em;
+      margin-bottom: 48px;
+    }
+    .cap-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 56px; align-items: center;
-    }
-    .about-text h2 { margin-bottom: 20px; }
-    .about-text p { color: var(--text-muted); margin-bottom: 16px; font-size: 1.02rem; }
-    .about-text ul { list-style: none; margin-top: 24px; }
-    .about-text li {
-      position: relative; padding-left: 28px; margin-bottom: 14px;
-      color: var(--text-muted); font-size: 0.95rem;
-    }
-    .about-text li::before {
-      content: ''; position: absolute; left: 0; top: 7px;
-      width: 12px; height: 12px; border-radius: 3px;
-      background: var(--gradient);
-    }
-    .about-stats {
-      display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;
-    }
-    .stat-card {
-      background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 28px; text-align: center; transition: border-color .2s;
-    }
-    .stat-card:hover { border-color: var(--border-hover); }
-    .stat-number {
-      font-size: 2rem; font-weight: 800;
-      background: var(--gradient);
-      -webkit-background-clip: text; background-clip: text;
-      -webkit-text-fill-color: transparent;
-      margin-bottom: 6px;
-    }
-    .stat-label { color: var(--text-muted); font-size: 13px; font-weight: 500; }
-
-    /* ── Features ──────────────────────────────────────── */
-    .features-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
       gap: 20px;
     }
-    .feature-card {
-      background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 32px; transition: border-color .2s, transform .15s;
+    .cap-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 28px;
+      transition: border-color .2s, transform .15s;
     }
-    .feature-card:hover { border-color: var(--border-hover); transform: translateY(-2px); }
-    .feature-icon {
-      width: 44px; height: 44px; border-radius: 10px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 22px; margin-bottom: 18px;
-      background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.15);
-    }
-    .feature-card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }
-    .feature-card p  { color: var(--text-muted); font-size: 0.9rem; line-height: 1.6; }
+    .cap-card:hover { border-color: var(--border-hover); transform: translateY(-2px); }
+    .cap-icon { font-size: 28px; margin-bottom: 14px; }
+    .cap-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 6px; }
+    .cap-card p { color: var(--text-muted); font-size: 0.88rem; line-height: 1.55; }
 
-    /* ── Architecture ─────────────────────────────────── */
-    .arch { background: var(--bg-surface); }
-    .arch-diagram {
-      background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 40px; overflow-x: auto;
+    /* ── Why section ──────────────────────────────── */
+    .why { background: var(--bg-surface); padding: 88px 0; }
+    .why h2 {
+      text-align: center;
+      font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+      font-weight: 800; letter-spacing: -0.02em;
+      margin-bottom: 48px;
     }
-    .arch-layers { display: flex; flex-direction: column; gap: 24px; min-width: 700px; }
-    .arch-layer { display: flex; align-items: stretch; gap: 16px; }
-    .arch-label {
-      min-width: 120px; padding: 12px 16px;
-      border-radius: 8px; font-size: 12px; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 0.08em;
-      display: flex; align-items: center; justify-content: center;
-      text-align: center; white-space: nowrap;
+    .why-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 20px;
     }
-    .arch-label--ui      { background: rgba(6,182,212,.1); border: 1px solid rgba(6,182,212,.25); color: #22d3ee; }
-    .arch-label--api     { background: rgba(59,130,246,.1); border: 1px solid rgba(59,130,246,.25); color: #60a5fa; }
-    .arch-label--service { background: rgba(139,92,246,.1); border: 1px solid rgba(139,92,246,.25); color: #a78bfa; }
-    .arch-label--infra   { background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.2);  color: #4ade80; }
-    .arch-items { display: flex; flex-wrap: wrap; gap: 10px; flex: 1; }
-    .arch-item {
-      padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 500;
-      background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-muted);
-      white-space: nowrap;
+    .why-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 32px;
+      transition: border-color .2s;
     }
-    .arch-arrow { text-align: center; color: var(--text-muted); font-size: 20px; }
+    .why-card:hover { border-color: var(--border-hover); }
+    .why-card h3 { font-size: 1.05rem; font-weight: 700; margin-bottom: 8px; }
+    .why-card p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.6; }
 
-    /* ── Community / Stars ────────────────────────────── */
-    .community-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
-    }
-    .comm-card {
-      background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 40px; transition: border-color .2s;
-    }
-    .comm-card:hover { border-color: var(--border-hover); }
-    .comm-card h3 { font-size: 1.15rem; font-weight: 700; margin-bottom: 10px; }
-    .comm-card p  { color: var(--text-muted); font-size: 0.92rem; margin-bottom: 20px; }
-
-    .star-banner {
-      text-align: center; padding: 72px 24px;
+    /* ── CTA Banner ──────────────────────────────── */
+    .cta-banner {
+      text-align: center; padding: 80px 24px;
       background: linear-gradient(180deg, var(--bg-surface), var(--bg));
       border-top: 1px solid var(--border);
     }
-    .star-banner h2 { margin-bottom: 14px; }
-    .star-banner p { color: var(--text-muted); max-width: 520px; margin: 0 auto 32px; }
-    .star-btn {
-      display: inline-flex; align-items: center; gap: 10px;
-      padding: 14px 36px; border-radius: 10px;
-      font-size: 16px; font-weight: 700;
-      background: var(--gradient); color: #fff;
-      box-shadow: 0 4px 24px rgba(59,130,246,.25);
-      transition: all .2s;
+    .cta-banner h2 {
+      font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+      font-weight: 800; margin-bottom: 14px;
     }
-    .star-btn:hover { opacity: .9; transform: translateY(-1px); color: #fff; }
-    .star-btn svg { width: 20px; height: 20px; }
+    .cta-banner p {
+      color: var(--text-muted); max-width: 480px;
+      margin: 0 auto 32px; font-size: 1.02rem;
+    }
+    .cta-banner .cta-group { margin-bottom: 20px; }
 
-    /* ── Footer ────────────────────────────────────────── */
+    /* ── Footer ───────────────────────────────────── */
     footer {
-      border-top: 1px solid var(--border); padding: 40px 0;
+      border-top: 1px solid var(--border); padding: 32px 0;
       color: var(--text-muted); font-size: 13px;
     }
     .footer-inner {
@@ -320,25 +222,24 @@
     .footer-links a { color: var(--text-muted); font-size: 13px; }
     .footer-links a:hover { color: var(--text); }
 
-    /* ── Responsive ────────────────────────────────────── */
+    /* ── Responsive ───────────────────────────────── */
     @media (max-width: 768px) {
       .nav-links { display: none; }
       .mobile-toggle { display: block; }
       .nav-links.open {
         display: flex; flex-direction: column;
-        position: absolute; top: 64px; left: 0; right: 0;
+        position: absolute; top: 60px; left: 0; right: 0;
         background: rgba(9,9,11,.97); backdrop-filter: blur(12px);
         padding: 16px 24px; gap: 16px;
         border-bottom: 1px solid var(--border);
       }
-      .about-grid { grid-template-columns: 1fr; }
-      .community-grid { grid-template-columns: 1fr; }
-      .features-grid { grid-template-columns: 1fr; }
-      .hero-logo { width: 240px; }
-      :root { --section-gap: 64px; }
+      .hero-logo { width: 220px; }
+      .cap-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 480px) {
+      .cap-grid { grid-template-columns: 1fr; }
     }
 
-    /* ── Skip link (a11y) ─────────────────────────────── */
     .skip-link {
       position: absolute; top: -100%; left: 16px;
       padding: 8px 16px; background: var(--accent-blue); color: #fff;
@@ -348,10 +249,9 @@
   </style>
 </head>
 <body>
-  <!-- Accessibility: skip to content -->
   <a class="skip-link" href="#main">Skip to main content</a>
 
-  <!-- ── Navigation ──────────────────────────────────── -->
+  <!-- ── Navigation ──────────────────────────────── -->
   <nav aria-label="Primary navigation">
     <div class="container nav-inner">
       <a href="#" class="nav-brand" aria-label="HomePilot home">
@@ -373,13 +273,11 @@
       </button>
 
       <ul class="nav-links" role="list">
-        <li><a href="#about">About</a></li>
-        <li><a href="#features">Features</a></li>
-        <li><a href="#architecture">Architecture</a></li>
-        <li><a href="#community">Community</a></li>
+        <li><a href="#capabilities">Features</a></li>
+        <li><a href="#why">Why HomePilot</a></li>
         <li><a href="gallery.html">Gallery</a></li>
         <li>
-          <a href="https://github.com/ruslanmv/HomePilot" target="_blank" rel="noopener" class="nav-star" aria-label="Star HomePilot on GitHub">
+          <a href="https://github.com/ruslanmv/HomePilot" target="_blank" rel="noopener" class="nav-star" aria-label="Star on GitHub">
             <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
             Star on GitHub
           </a>
@@ -388,40 +286,36 @@
     </div>
   </nav>
 
-  <!-- ── Hero ────────────────────────────────────────── -->
+  <main id="main">
+
+  <!-- ── Hero ─────────────────────────────────────── -->
   <section class="hero" aria-labelledby="hero-heading">
     <div class="container">
-      <img src="../assets/homepilot-logo.svg" alt="HomePilot logo" class="hero-logo" width="340" height="102" />
-
-      <div class="hero-badges" role="list" aria-label="Project highlights">
-        <span class="badge" role="listitem">Apache 2.0</span>
-        <span class="badge badge--accent" role="listitem">Local-First</span>
-        <span class="badge" role="listitem">160+ Endpoints</span>
-        <span class="badge badge--accent" role="listitem">AI-Powered</span>
-        <span class="badge" role="listitem">MCP Context Forge</span>
-      </div>
+      <img src="https://raw.githubusercontent.com/ruslanmv/HomePilot/master/assets/homepilot-logo.svg" alt="HomePilot logo" class="hero-logo" width="300" height="90" />
 
       <h1 id="hero-heading">
-        All-in-One <span class="gradient-text">GenAI Platform</span><br />
-        You Own Completely
+        Your Personal AI.<br /><span class="gradient-text">Private. Free. Yours.</span>
       </h1>
 
-      <p>Chat, generate images, create videos, build AI stories, and deploy intelligent agents &mdash; all from a single self-hosted application. Your data never leaves your machine.</p>
+      <p>
+        Chat with AI, create stunning images, generate videos, and build
+        unique AI characters &mdash; all running privately on your computer.
+        No subscriptions. No data sharing. Ever.
+      </p>
 
       <div class="cta-group">
         <a href="https://github.com/ruslanmv/HomePilot#-quickstart" class="btn btn-primary" target="_blank" rel="noopener">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          Get Started
+          Get Started Free
         </a>
-        <a href="https://github.com/ruslanmv/HomePilot" class="btn btn-outline" target="_blank" rel="noopener">
-          <svg viewBox="0 0 16 16" fill="currentColor" width="18" height="18" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-          View on GitHub
+        <a href="gallery.html" class="btn btn-outline">
+          Browse AI Characters
         </a>
       </div>
 
       <img
-        src="../assets/2026-01-25-09-38-39.png"
-        alt="HomePilot user interface showing the unified chat and creation experience"
+        src="https://raw.githubusercontent.com/ruslanmv/HomePilot/master/assets/2026-01-25-09-38-39.png"
+        alt="HomePilot interface showing AI characters and creative tools"
         class="hero-screenshot"
         loading="lazy"
         width="1000"
@@ -430,187 +324,75 @@
     </div>
   </section>
 
-  <!-- ── About ───────────────────────────────────────── -->
-  <section id="about" class="section about" aria-labelledby="about-heading">
-    <div class="container about-grid">
-      <div class="about-text">
-        <h2 id="about-heading" class="section-title">About <span class="gradient-text">HomePilot</span></h2>
-        <p>
-          HomePilot is a <strong>production-oriented, fully open-source</strong> GenAI application designed to run
-          entirely on your own hardware. It unifies <strong>chat, image generation, editing, video creation, and
-          AI-powered storytelling</strong> into a single continuous conversation &mdash; no cloud dependency,
-          no data leakage, no vendor lock-in.
-        </p>
-        <p>
-          Built as the <strong>"Home Edition"</strong> of a broader enterprise vision, it is optimized for local
-          machines with NVIDIA GPUs while remaining extensible enough to power professional content-creation
-          workflows, intelligent AI agents, and team collaboration.
-        </p>
-        <ul>
-          <li><strong>Privacy-first:</strong> all processing stays on your machine</li>
-          <li><strong>Self-hosted:</strong> Docker Compose orchestration for easy deployment</li>
-          <li><strong>Extensible:</strong> 160+ API endpoints, MCP tool servers, and A2A agents</li>
-          <li><strong>Community-driven:</strong> Apache 2.0 licensed, contributions welcome</li>
-        </ul>
-      </div>
-
-      <div class="about-stats" aria-label="Project statistics">
-        <div class="stat-card">
-          <div class="stat-number">160+</div>
-          <div class="stat-label">API Endpoints</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-number">50+</div>
-          <div class="stat-label">Make Commands</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-number">7</div>
-          <div class="stat-label">Docker Services</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-number">5</div>
-          <div class="stat-label">MCP Tool Servers</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Main content anchor ─────────────────────────── -->
-  <main id="main">
-
-  <!-- ── Features ──────────────────────────────────────── -->
-  <section id="features" class="section" aria-labelledby="features-heading">
+  <!-- ── Capabilities ─────────────────────────────── -->
+  <section id="capabilities" class="capabilities" aria-labelledby="cap-heading">
     <div class="container">
-      <h2 id="features-heading" class="section-title">Key <span class="gradient-text">Features</span></h2>
-      <p class="section-subtitle">Everything you need for local-first GenAI, from conversational AI to professional content creation.</p>
+      <h2 id="cap-heading">Everything you need, <span class="gradient-text">one platform</span></h2>
 
-      <div class="features-grid" role="list">
-        <article class="feature-card" role="listitem">
-          <div class="feature-icon" aria-hidden="true">💬</div>
-          <h3>Multi-Turn Chat</h3>
-          <p>Conversational AI with OpenAI-style routing, backend-hosted or Ollama LLMs, voice mode, and persistent persona identities that remember you across sessions.</p>
+      <div class="cap-grid" role="list">
+        <article class="cap-card" role="listitem">
+          <div class="cap-icon" aria-hidden="true">💬</div>
+          <h3>AI Chat</h3>
+          <p>Have natural conversations with AI that remembers your preferences and adapts to you over time.</p>
         </article>
-        <article class="feature-card" role="listitem">
-          <div class="feature-icon" aria-hidden="true">🖼️</div>
-          <h3>Image Generation &amp; Editing</h3>
-          <p>Text-to-image via ComfyUI workflows. Edit, enhance, upscale (2x/4x), remove backgrounds, and outpaint &mdash; all inline within the conversation.</p>
+        <article class="cap-card" role="listitem">
+          <div class="cap-icon" aria-hidden="true">🖼️</div>
+          <h3>Image Creation</h3>
+          <p>Describe what you imagine and watch it come to life. Edit, enhance, and upscale with simple commands.</p>
         </article>
-        <article class="feature-card" role="listitem">
-          <div class="feature-icon" aria-hidden="true">🎬</div>
-          <h3>Video Creation</h3>
-          <p>Image-to-video with LTX, Wan, SVD, Hunyuan, Mochi, and CogVideo. Hardware-aware quality presets from RTX 4060 to A100.</p>
+        <article class="cap-card" role="listitem">
+          <div class="cap-icon" aria-hidden="true">🎬</div>
+          <h3>Video Generation</h3>
+          <p>Turn any image into a video. Create animated content with state-of-the-art AI models.</p>
         </article>
-        <article class="feature-card" role="listitem">
-          <div class="feature-icon" aria-hidden="true">🎭</div>
-          <h3>Personas</h3>
-          <p>Persistent AI identities with personality, appearance, voice, and long-term memory. Export as portable <code>.hpersona</code> packages and share with the community.</p>
+        <article class="cap-card" role="listitem">
+          <div class="cap-icon" aria-hidden="true">🎭</div>
+          <h3>AI Characters</h3>
+          <p>Create unique AI personalities with their own look, voice, and memory. Share them with the community.</p>
         </article>
-        <article class="feature-card" role="listitem">
-          <div class="feature-icon" aria-hidden="true">🎮</div>
-          <h3>Creator Studio &amp; Play Story</h3>
-          <p>Professional content-creation suite with AI story outlines, scene management, TV mode playback, and export to PDF, PPTX, and asset bundles.</p>
+        <article class="cap-card" role="listitem">
+          <div class="cap-icon" aria-hidden="true">📖</div>
+          <h3>Story Creator</h3>
+          <p>Build interactive stories with AI-generated scenes, images, and narration. Export as presentations or PDFs.</p>
         </article>
-        <article class="feature-card" role="listitem">
-          <div class="feature-icon" aria-hidden="true">🤖</div>
-          <h3>Agentic AI &amp; MCP</h3>
-          <p>Build intelligent agents through a guided wizard. Powered by MCP Context Forge with 20+ tool servers, web search, and ask-before-acting safety.</p>
+        <article class="cap-card" role="listitem">
+          <div class="cap-icon" aria-hidden="true">🔒</div>
+          <h3>100% Private</h3>
+          <p>Everything runs on your computer. Your conversations, creations, and data never leave your machine.</p>
         </article>
       </div>
     </div>
   </section>
 
-  <!-- ── Architecture ─────────────────────────────────── -->
-  <section id="architecture" class="section arch" aria-labelledby="arch-heading">
+  <!-- ── Why ──────────────────────────────────────── -->
+  <section id="why" class="why" aria-labelledby="why-heading">
     <div class="container">
-      <h2 id="arch-heading" class="section-title">Platform <span class="gradient-text">Architecture</span></h2>
-      <p class="section-subtitle">A modular, Docker-orchestrated stack designed for performance, extensibility, and operational simplicity.</p>
+      <h2 id="why-heading">Why people choose <span class="gradient-text">HomePilot</span></h2>
 
-      <div class="arch-diagram" role="img" aria-label="HomePilot architecture overview showing four layers: UI, API Gateway, Services, and Infrastructure">
-        <div class="arch-layers">
-          <div class="arch-layer">
-            <div class="arch-label arch-label--ui">UI Layer</div>
-            <div class="arch-items">
-              <span class="arch-item">React 18 + Vite</span>
-              <span class="arch-item">TypeScript</span>
-              <span class="arch-item">Tailwind CSS</span>
-              <span class="arch-item">Zustand State</span>
-              <span class="arch-item">Voice Mode</span>
-            </div>
-          </div>
-          <div class="arch-arrow" aria-hidden="true">&#8595;</div>
-          <div class="arch-layer">
-            <div class="arch-label arch-label--api">API Gateway</div>
-            <div class="arch-items">
-              <span class="arch-item">FastAPI Orchestrator</span>
-              <span class="arch-item">160+ REST Endpoints</span>
-              <span class="arch-item">WebSocket Streaming</span>
-              <span class="arch-item">Community Proxy</span>
-            </div>
-          </div>
-          <div class="arch-arrow" aria-hidden="true">&#8595;</div>
-          <div class="arch-layer">
-            <div class="arch-label arch-label--service">Services</div>
-            <div class="arch-items">
-              <span class="arch-item">ComfyUI (Diffusion)</span>
-              <span class="arch-item">Ollama (LLM)</span>
-              <span class="arch-item">FFmpeg (Media)</span>
-              <span class="arch-item">MCP Gateway</span>
-              <span class="arch-item">A2A Agents</span>
-            </div>
-          </div>
-          <div class="arch-arrow" aria-hidden="true">&#8595;</div>
-          <div class="arch-layer">
-            <div class="arch-label arch-label--infra">Infrastructure</div>
-            <div class="arch-items">
-              <span class="arch-item">Docker Compose</span>
-              <span class="arch-item">NVIDIA GPU</span>
-              <span class="arch-item">ChromaDB (Vectors)</span>
-              <span class="arch-item">Persistent Volumes</span>
-            </div>
-          </div>
+      <div class="why-grid" role="list">
+        <div class="why-card" role="listitem">
+          <h3>Completely Free</h3>
+          <p>No subscriptions, no hidden fees, no premium tiers. HomePilot is open-source and free forever under the Apache 2.0 license.</p>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Community ────────────────────────────────────── -->
-  <section id="community" class="section" aria-labelledby="community-heading">
-    <div class="container">
-      <h2 id="community-heading" class="section-title">Join the <span class="gradient-text">Community</span></h2>
-      <p class="section-subtitle">HomePilot is built by the community, for the community. Contribute, share personas, and help shape the future of local-first AI.</p>
-
-      <div class="community-grid">
-        <div class="comm-card">
-          <h3>Persona Gallery</h3>
-          <p>Browse community-created AI personas, search by tag, preview cards, and download <code>.hpersona</code> packages &mdash; all from your browser.</p>
-          <a href="gallery.html" class="btn btn-primary" style="display:inline-flex">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            Browse Gallery
-          </a>
+        <div class="why-card" role="listitem">
+          <h3>Your Data Stays Home</h3>
+          <p>Unlike cloud AI services, nothing is sent to external servers. Your conversations, images, and videos are yours alone.</p>
         </div>
-        <div class="comm-card">
-          <h3>Submit a Persona</h3>
-          <p>Share your creation with the world. Open a GitHub Issue, attach your <code>.hpersona</code> file, and a maintainer will review and publish it.</p>
-          <a href="https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml" class="btn btn-outline" target="_blank" rel="noopener">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Submit Persona
-          </a>
+        <div class="why-card" role="listitem">
+          <h3>All-in-One</h3>
+          <p>No need for separate tools for chat, images, and video. One app does it all in a seamless experience.</p>
         </div>
-        <div class="comm-card">
-          <h3>Contribute</h3>
-          <p>Found a bug? Have a feature idea? We welcome pull requests, issue reports, documentation improvements, and community personas.</p>
-          <a href="https://github.com/ruslanmv/HomePilot/issues" class="btn btn-outline" target="_blank" rel="noopener">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            Open an Issue
-          </a>
+        <div class="why-card" role="listitem">
+          <h3>Community Powered</h3>
+          <p>Download AI characters created by others, share your own, and join a growing community of creators worldwide.</p>
         </div>
-        <div class="comm-card">
-          <h3>Documentation</h3>
-          <p>Detailed guides covering deployment, development, personas, agentic AI, integrations, and every one of the 160+ API endpoints.</p>
-          <a href="https://github.com/ruslanmv/HomePilot#readme" class="btn btn-outline" target="_blank" rel="noopener">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-            Read the Docs
-          </a>
+        <div class="why-card" role="listitem">
+          <h3>Works on Your Hardware</h3>
+          <p>Optimized to run on consumer hardware. From gaming PCs to professional workstations — if you have a GPU, you're ready.</p>
+        </div>
+        <div class="why-card" role="listitem">
+          <h3>No Limits</h3>
+          <p>No message caps, no generation limits, no waiting in queues. Use it as much as you want, whenever you want.</p>
         </div>
       </div>
     </div>
@@ -618,28 +400,33 @@
 
   </main>
 
-  <!-- ── Star Banner ──────────────────────────────────── -->
-  <section class="star-banner" aria-labelledby="star-heading">
-    <h2 id="star-heading" class="section-title">Support <span class="gradient-text">Open Source</span></h2>
-    <p>If HomePilot is useful to you, consider giving the project a star. It helps others discover the project and motivates continued development.</p>
-    <a href="https://github.com/ruslanmv/HomePilot" class="star-btn" target="_blank" rel="noopener" aria-label="Star HomePilot on GitHub">
-      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
-      Star on GitHub
-    </a>
+  <!-- ── CTA Banner ──────────────────────────────── -->
+  <section class="cta-banner" aria-labelledby="cta-heading">
+    <h2 id="cta-heading">Ready to <span class="gradient-text">get started</span>?</h2>
+    <p>Join thousands of users running their own private AI. Free, open-source, and yours to keep.</p>
+    <div class="cta-group">
+      <a href="https://github.com/ruslanmv/HomePilot#-quickstart" class="btn btn-primary" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Get Started Free
+      </a>
+      <a href="https://github.com/ruslanmv/HomePilot" class="btn btn-outline" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" fill="currentColor" width="18" height="18" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        View on GitHub
+      </a>
+    </div>
     <div style="margin-top: 20px;">
-      <img src="https://img.shields.io/github/stars/ruslanmv/HomePilot?style=social" alt="GitHub stars count" loading="lazy" />
+      <img src="https://img.shields.io/github/stars/ruslanmv/HomePilot?style=social" alt="GitHub stars" loading="lazy" />
     </div>
   </section>
 
-  <!-- ── Footer ───────────────────────────────────────── -->
+  <!-- ── Footer ──────────────────────────────────── -->
   <footer>
     <div class="container footer-inner">
-      <span>&copy; 2026 HomePilot Community &middot; Apache 2.0 License</span>
+      <span>&copy; 2026 HomePilot &middot; Free &amp; Open Source &middot; Apache 2.0</span>
       <ul class="footer-links" role="list">
         <li><a href="https://github.com/ruslanmv/HomePilot" target="_blank" rel="noopener">GitHub</a></li>
         <li><a href="https://github.com/ruslanmv/HomePilot#readme" target="_blank" rel="noopener">Docs</a></li>
-        <li><a href="https://github.com/ruslanmv/HomePilot/issues" target="_blank" rel="noopener">Issues</a></li>
-        <li><a href="https://github.com/ruslanmv/HomePilot/blob/master/LICENSE" target="_blank" rel="noopener">License</a></li>
+        <li><a href="gallery.html">Gallery</a></li>
       </ul>
     </div>
   </footer>
