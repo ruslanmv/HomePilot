@@ -41,7 +41,9 @@ router = APIRouter(prefix="/community", tags=["community"])
 # ---------------------------------------------------------------------------
 
 # Primary — Cloudflare Worker (production, edge-cached, no rate limits)
-GALLERY_URL = os.getenv("COMMUNITY_GALLERY_URL", "").strip().rstrip("/")
+# Default URL enables gallery out-of-the-box; override via env var or set "" to disable.
+_DEFAULT_GALLERY_URL = "https://homepilot-persona-gallery.cloud-data.workers.dev"
+GALLERY_URL = os.getenv("COMMUNITY_GALLERY_URL", _DEFAULT_GALLERY_URL).strip().rstrip("/")
 
 # Fallback — R2 direct (development only, rate-limited by Cloudflare)
 R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "").strip().rstrip("/")
