@@ -106,16 +106,31 @@
 
   // ── Fetch registry ─────────────────────────────────────────────
 
+  async function fetchRegistryFrom(url) {
+    var resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    return resp.json();
+  }
+
   async function fetchRegistry() {
     showLoading();
 
     try {
-      var url = registryUrl();
-      // Cache bust for GitHub Pages
-      if (!GALLERY_API) url += "?_=" + Date.now();
-      var resp = await fetch(url, GALLERY_API ? { cache: "no-store" } : {});
-      if (!resp.ok) throw new Error("HTTP " + resp.status);
-      var data = await resp.json();
+      var data;
+      var primaryUrl = registryUrl();
+
+      try {
+        data = await fetchRegistryFrom(primaryUrl);
+      } catch (primaryErr) {
+        // Fallback to GitHub Pages local registry.json
+        if (GALLERY_API) {
+          console.warn("Primary registry failed (" + primaryErr.message + "), falling back to local registry.json");
+          data = await fetchRegistryFrom("./registry.json?_=" + Date.now());
+        } else {
+          throw primaryErr;
+        }
+      }
+
       allItems = data.items || [];
 
       // Collect all unique tags
@@ -204,10 +219,10 @@
     var sizeStr = formatSize(latest.size_bytes);
     var version = latest.version || "1.0.0";
 
-    // Preview image
+    // Preview image — onerror degrades to placeholder silently
     var previewHtml;
     if (previewUrl) {
-      previewHtml = '<img src="' + escapeHtml(previewUrl) + '" alt="' + escapeHtml(item.name) + ' preview" loading="lazy" />';
+      previewHtml = '<img src="' + escapeHtml(previewUrl) + '" alt="' + escapeHtml(item.name) + ' preview" loading="lazy" onerror="this.outerHTML=\'<div class=placeholder>🎭</div>\'" />';
     } else {
       previewHtml = '<div class="placeholder">🎭</div>';
     }
