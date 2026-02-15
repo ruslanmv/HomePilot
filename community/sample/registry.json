@@ -10,7 +10,7 @@
       "tags": ["professional", "secretary", "productivity"],
       "nsfw": false,
       "author": "HomePilot Community",
-      "downloads": 1204,
+      "downloads": 0,
       "class_id": "secretary",
       "has_avatar": true,
       "latest": {
@@ -19,7 +19,7 @@
         "preview_url": "/v/scarlett_exec_secretary/1.0.0",
         "card_url": "/c/scarlett_exec_secretary/1.0.0",
         "sha256": "",
-        "size_bytes": 19292
+        "size_bytes": 285802
       }
     },
     {
@@ -29,7 +29,7 @@
       "tags": ["research", "assistant", "academic"],
       "nsfw": false,
       "author": "HomePilot Community",
-      "downloads": 876,
+      "downloads": 0,
       "class_id": "assistant",
       "has_avatar": true,
       "latest": {
@@ -38,7 +38,7 @@
         "preview_url": "/v/atlas_research_assistant/1.0.0",
         "card_url": "/c/atlas_research_assistant/1.0.0",
         "sha256": "",
-        "size_bytes": 17164
+        "size_bytes": 525225
       }
     }
   ]

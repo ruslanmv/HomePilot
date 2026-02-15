@@ -384,6 +384,29 @@ def export_persona_project(
     selected = persona_appearance.get("selected_filename")
     thumb = persona_appearance.get("selected_thumb_filename")
 
+    # If selected_filename is absent but a ComfyUI image was selected via the
+    # wizard (persona_appearance.selected + sets), resolve the actual filename
+    # so it can be exported.  The image URL is like "/files/<filename>".
+    if not selected:
+        sel_ref = persona_appearance.get("selected")
+        if isinstance(sel_ref, dict) and sel_ref.get("image_id"):
+            target_id = sel_ref["image_id"]
+            target_set = sel_ref.get("set_id")
+            for s in (persona_appearance.get("sets") or []):
+                for img in (s.get("images") or []):
+                    if img.get("id") == target_id and (not target_set or img.get("set_id") == target_set):
+                        url = img.get("url") or ""
+                        # Extract filename from URL:
+                        #   /files/ComfyUI_00042_.png → ComfyUI_00042_.png
+                        #   http://…/view?filename=X.png → X.png
+                        if "/files/" in url:
+                            selected = url.rsplit("/files/", 1)[-1].split("?")[0]
+                        elif "filename=" in url:
+                            selected = url.split("filename=")[-1].split("&")[0]
+                        break
+                if selected:
+                    break
+
     # Build dependency manifests
     tools_manifest = _build_tools_manifest(project)
     mcp_manifest = _build_mcp_servers_manifest(project)
@@ -441,8 +464,12 @@ def export_persona_project(
             if rel_path.startswith("projects/"):
                 abs_path = upload_root / rel_path
             else:
-                # Fallback: treat as basename and look in appearance dir
-                abs_path = appearance_dir / _safe_basename(rel_path)
+                # Try appearance dir first, then upload_root (for uncommitted
+                # ComfyUI outputs that were selected but never committed).
+                basename = _safe_basename(rel_path)
+                abs_path = appearance_dir / basename
+                if not abs_path.exists():
+                    abs_path = upload_root / basename
             arcname = f"assets/{_safe_basename(abs_path.name)}"
             _add_file(abs_path, arcname)
 
