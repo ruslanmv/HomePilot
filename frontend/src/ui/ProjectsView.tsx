@@ -46,6 +46,7 @@ const ProjectCard = ({
   onEdit,
   onExport,
   isExample,
+  avatarUrl,
 }: {
   icon: React.ElementType
   iconColor: string
@@ -57,6 +58,7 @@ const ProjectCard = ({
   onEdit?: () => void
   onExport?: React.ReactNode
   isExample?: boolean
+  avatarUrl?: string | null
 }) => (
   <div className="relative group">
     <div
@@ -66,11 +68,17 @@ const ProjectCard = ({
       {/* Header */}
       <div className="flex justify-between items-start gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <div
-            className={`w-10 h-10 shrink-0 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-white/10 flex items-center justify-center ${iconColor}`}
-          >
-            <Icon size={18} strokeWidth={2} />
-          </div>
+          {avatarUrl ? (
+            <div className="w-10 h-10 shrink-0 rounded-xl overflow-hidden border border-pink-500/30">
+              <img src={avatarUrl} alt="" className="block w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+            </div>
+          ) : (
+            <div
+              className={`w-10 h-10 shrink-0 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-white/10 flex items-center justify-center ${iconColor}`}
+            >
+              <Icon size={18} strokeWidth={2} />
+            </div>
+          )}
           <h3 className="font-semibold text-base text-white truncate">{title}</h3>
         </div>
 
@@ -2081,6 +2089,13 @@ export default function ProjectsView({
                     : ptype === 'video' ? 'text-emerald-400'
                     : ptype === 'persona' ? 'text-pink-400'
                     : 'text-blue-400'
+                  const personaAvatarUrl = ptype === 'persona'
+                    ? (() => {
+                        const pap = project.persona_appearance || {}
+                        const rel = pap.selected_thumb_filename || pap.selected_filename
+                        return rel ? `${backendUrl}/files/${String(rel).replace(/^\/+/, '')}` : null
+                      })()
+                    : null
                   return (
                     <ProjectCard
                       key={project.id}
@@ -2100,6 +2115,7 @@ export default function ProjectsView({
                         />
                       ) : undefined}
                       isExample={false}
+                      avatarUrl={personaAvatarUrl}
                     />
                   )
                 })}
