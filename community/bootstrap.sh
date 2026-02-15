@@ -179,10 +179,35 @@ build_hpersona() {
   local out_file="$2"
   if [[ -d "$persona_dir" ]] && [[ -f "${persona_dir}/manifest.json" ]]; then
     log "  Building package: ${out_file}"
-    # v2 packages include: manifest, blueprint, dependencies, preview, assets
-    (cd "$persona_dir" && zip -r "${out_file}" manifest.json blueprint/ dependencies/ preview/ assets/ 2>/dev/null || \
-     cd "$persona_dir" && zip -r "${out_file}" manifest.json blueprint/ preview/ assets/ 2>/dev/null || \
-     cd "$persona_dir" && zip -r "${out_file}" manifest.json blueprint/ preview/ 2>/dev/null)
+
+    # Validate: assets/ must exist with at least one avatar image (v2 requirement)
+    if [[ ! -d "${persona_dir}/assets" ]]; then
+      err "  Missing assets/ directory in ${persona_dir} — refusing to build broken package."
+      err "  Persona packages require assets/avatar_*.png and assets/thumb_avatar_*.webp"
+      return 1
+    fi
+
+    # Build the v2 package with all expected directories
+    local zip_dirs="manifest.json blueprint/"
+    [[ -d "${persona_dir}/dependencies" ]] && zip_dirs="${zip_dirs} dependencies/"
+    [[ -d "${persona_dir}/preview" ]]      && zip_dirs="${zip_dirs} preview/"
+    zip_dirs="${zip_dirs} assets/"
+
+    (cd "$persona_dir" && zip -r "${out_file}" ${zip_dirs})
+
+    # Post-build validation: verify avatar files are present in the ZIP
+    if ! unzip -l "${out_file}" 2>/dev/null | grep -qE 'assets/avatar_.*\.(png|jpg|jpeg|webp)'; then
+      err "  Package validation failed: no avatar_* image found in assets/"
+      err "  Expected: assets/avatar_<name>.png (or .jpg/.webp)"
+      rm -f "${out_file}"
+      return 1
+    fi
+
+    if ! unzip -l "${out_file}" 2>/dev/null | grep -qE 'assets/thumb_avatar_.*\.webp'; then
+      warn "  Package missing thumbnail (assets/thumb_avatar_*.webp) — gallery previews may be degraded."
+    fi
+
+    ok "  Package built and validated: ${out_file}"
   fi
 }
 

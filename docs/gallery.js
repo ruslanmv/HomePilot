@@ -70,6 +70,9 @@
   var allItems = [];
   var allTags  = [];
   var cardCache = {};
+  var PAGE_SIZE = 48;
+  var currentFiltered = [];
+  var visibleCount = PAGE_SIZE;
 
   // ── Helpers ────────────────────────────────────────────────────
 
@@ -249,25 +252,62 @@
   }
 
   function render() {
-    var items = getFiltered();
+    currentFiltered = getFiltered();
+    visibleCount = PAGE_SIZE;
     $totalCount.textContent = allItems.length;
-    $showCount.textContent  = items.length;
+    $showCount.textContent  = currentFiltered.length;
     $statsBar.style.display = allItems.length > 0 ? "flex" : "none";
 
-    if (items.length === 0) {
+    if (currentFiltered.length === 0) {
       showEmpty($search.value);
+      updateLoadMore();
       return;
     }
 
-    $grid.innerHTML = items.map(renderCard).join("\n");
+    var slice = currentFiltered.slice(0, visibleCount);
+    $grid.innerHTML = slice.map(renderCard).join("\n");
+    bindCardClicks();
+    updateLoadMore();
+  }
 
-    // Clicking a card opens the detail modal
+  function loadMoreItems() {
+    var start = visibleCount;
+    visibleCount += PAGE_SIZE;
+    var slice = currentFiltered.slice(start, visibleCount);
+    $grid.insertAdjacentHTML("beforeend", slice.map(renderCard).join("\n"));
+    // Bind only the newly added cards
+    var cards = $grid.querySelectorAll(".card");
+    for (var i = start; i < Math.min(visibleCount, currentFiltered.length); i++) {
+      (function (card) {
+        card.addEventListener("click", function () {
+          var id = card.getAttribute("data-persona-id");
+          if (id) openDetailModal(id);
+        });
+      })(cards[i]);
+    }
+    updateLoadMore();
+  }
+
+  function bindCardClicks() {
     $grid.querySelectorAll(".card").forEach(function (card) {
       card.addEventListener("click", function () {
         var id = card.getAttribute("data-persona-id");
         if (id) openDetailModal(id);
       });
     });
+  }
+
+  function updateLoadMore() {
+    var $loadMoreWrap = document.getElementById("load-more-wrap");
+    if (!$loadMoreWrap) return;
+    if (visibleCount < currentFiltered.length) {
+      var remaining = currentFiltered.length - visibleCount;
+      $loadMoreWrap.style.display = "flex";
+      document.getElementById("load-more-btn").textContent =
+        "Load more (" + remaining + " remaining)";
+    } else {
+      $loadMoreWrap.style.display = "none";
+    }
   }
 
   // ── Character Sheet Modal ──────────────────────────────────────
@@ -422,6 +462,10 @@
   $filterTag.addEventListener("change", render);
   $filterRate.addEventListener("change", render);
   $sort.addEventListener("change", render);
+
+  // Wire up Load More button
+  var $loadMoreBtn = document.getElementById("load-more-btn");
+  if ($loadMoreBtn) $loadMoreBtn.addEventListener("click", loadMoreItems);
 
   // ── Init ───────────────────────────────────────────────────────
   fetchRegistry();

@@ -8,6 +8,7 @@ import uuid as uuidlib
 import traceback
 from pathlib import Path
 from typing import Any, Dict, Optional, Literal
+from urllib.parse import urlparse, parse_qs
 
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
@@ -1833,6 +1834,88 @@ async def search_conversation(
 
 
 # ----------------------------
+# Persona avatar auto-commit helpers
+# ----------------------------
+
+
+def _resolve_selected_image_url(persona_appearance: Dict[str, Any]) -> Optional[str]:
+    """
+    Resolve the selected avatar image URL from persona_appearance.
+
+    The wizard stores a selection reference (set_id + image_id) and the
+    generated image URLs in sets[].images[].  Walk the sets to find the
+    matching URL so we can download it for durable storage.
+    """
+    if not isinstance(persona_appearance, dict):
+        return None
+
+    selected = persona_appearance.get("selected") or {}
+    target_set_id = selected.get("set_id")
+    target_image_id = selected.get("image_id")
+    if not target_set_id or not target_image_id:
+        return None
+
+    for s in (persona_appearance.get("sets") or []):
+        if s.get("set_id") != target_set_id:
+            continue
+        for img in (s.get("images") or []):
+            if img.get("id") == target_image_id:
+                url = img.get("url")
+                if isinstance(url, str) and url.strip():
+                    return url.strip()
+    return None
+
+
+async def _download_comfy_image(url: str, upload_root: Path) -> str:
+    """
+    Download a ComfyUI ``/view?filename=...`` image into *upload_root*.
+
+    Returns the saved filename (basename only).
+
+    Security:
+      - Only allows downloads from the configured COMFY_BASE_URL host.
+      - Only allows the ``/view`` endpoint path.
+      - Prevents path-traversal in the filename query parameter.
+    """
+    parsed = urlparse(url)
+    comfy_parsed = urlparse(COMFY_BASE_URL)
+
+    # Strict host allowlist — only the configured ComfyUI instance
+    if parsed.hostname != comfy_parsed.hostname:
+        raise ValueError(
+            f"Refusing to download from non-ComfyUI host: {parsed.hostname}"
+        )
+
+    # Only the /view endpoint serves generated images
+    if not parsed.path.rstrip("/").endswith("/view"):
+        raise ValueError(
+            f"Refusing to download from non-/view path: {parsed.path}"
+        )
+
+    qs = parse_qs(parsed.query)
+    filename = (qs.get("filename") or [None])[0]
+    if not filename:
+        raise ValueError("ComfyUI /view URL missing 'filename' parameter")
+
+    # Path-traversal prevention — keep only the basename
+    filename = os.path.basename(filename)
+    if filename in ("", ".", ".."):
+        raise ValueError("Invalid filename from ComfyUI URL")
+
+    dest = upload_root / filename
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0, connect=10.0),
+        follow_redirects=True,
+    ) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        dest.write_bytes(resp.content)
+
+    return filename
+
+
+# ----------------------------
 # Projects API
 # ----------------------------
 
@@ -1843,6 +1926,50 @@ async def create_project(data: ProjectCreateIn) -> JSONResponse:
         # Convert pydantic model to dict for storage
         project_dict = data.dict()
         result = projects.create_new_project(project_dict)
+
+        # --------------------------------------------------------------
+        # Auto-commit persona avatar into project-owned durable storage.
+        #
+        # The PersonaWizard stores image URLs from ComfyUI and a
+        # selection reference, but never commits the binary file into
+        # the project directory.  Without this step the export ZIP
+        # has no assets/ folder because there are no local files.
+        #
+        # Non-fatal: if the commit fails (e.g. ComfyUI is unreachable,
+        # temp file was cleaned) the project is still created normally.
+        # The user can re-commit later via the avatar/commit endpoint.
+        # --------------------------------------------------------------
+        if result.get("project_type") == "persona":
+            try:
+                appearance = dict(result.get("persona_appearance") or {})
+
+                # Skip if avatar already committed (idempotency guard)
+                if not appearance.get("selected_filename"):
+                    selected_url = _resolve_selected_image_url(appearance)
+
+                    if selected_url:
+                        # Download the ComfyUI image into UPLOAD_PATH
+                        source_filename = await _download_comfy_image(
+                            selected_url, UPLOAD_PATH,
+                        )
+
+                        # Commit: copy into project dir + generate thumbnail
+                        project_root = UPLOAD_PATH / "projects" / result["id"]
+                        commit_result = commit_persona_avatar(
+                            UPLOAD_PATH, project_root, source_filename,
+                        )
+
+                        # Persist the committed paths on the project
+                        appearance["selected_filename"] = commit_result.selected_filename
+                        appearance["selected_thumb_filename"] = commit_result.thumb_filename
+                        result = projects.update_project(
+                            result["id"], {"persona_appearance": appearance},
+                        )
+            except Exception as commit_err:
+                # Non-fatal — project creation succeeded, avatar commit
+                # can be retried later via POST /projects/{id}/persona/avatar/commit
+                print(f"[PERSONA] Auto-commit avatar skipped: {commit_err}")
+
         return JSONResponse(status_code=201, content={"ok": True, "project": result})
     except Exception as e:
         print(f"ERROR creating project: {e}")
@@ -2961,11 +3088,21 @@ async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
     """
     Commit a selected avatar image into project-owned durable storage.
 
-    Body: { "source_filename": "ComfyUI_00042_.png" }
+    Accepts ONE of:
+      { "source_filename": "ComfyUI_00042_.png" }
+          — file already in UPLOAD_PATH (legacy / direct upload)
 
-    This copies the source image from UPLOAD_PATH into:
+      { "source_url": "http://comfy:8188/view?filename=..." }
+          — ComfyUI URL; downloaded into UPLOAD_PATH first, then committed.
+            Only URLs matching COMFY_BASE_URL host + /view path are allowed.
+
+      { "auto": true }
+          — resolve the selected image URL from persona_appearance.sets
+            and commit it automatically (repair mode for existing projects).
+
+    The image is copied into:
       projects/<project_id>/persona/appearance/avatar_<name>.<ext>
-    and generates a thumbnail:
+    and a 256x256 thumbnail is generated:
       projects/<project_id>/persona/appearance/thumb_avatar_<name>.webp
 
     Updates project.persona_appearance with the committed paths.
@@ -2977,12 +3114,50 @@ async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Not a persona project")
 
     source_filename = body.get("source_filename")
-    if not isinstance(source_filename, str) or not source_filename.strip():
-        raise HTTPException(status_code=400, detail="source_filename required")
+    source_url = body.get("source_url")
+    auto_mode = body.get("auto", False)
 
+    # ── Resolve the source file ──────────────────────────────────────────
+    try:
+        if auto_mode:
+            # Auto-resolve: walk persona_appearance.sets to find selected URL
+            appearance_data = p.get("persona_appearance") or {}
+            resolved_url = _resolve_selected_image_url(appearance_data)
+            if not resolved_url:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot auto-resolve: no selected image URL in persona_appearance.sets",
+                )
+            source_filename = await _download_comfy_image(resolved_url, UPLOAD_PATH)
+
+        elif source_url:
+            # Download from explicit ComfyUI URL into UPLOAD_PATH
+            if not isinstance(source_url, str) or not source_url.strip():
+                raise HTTPException(status_code=400, detail="source_url must be a non-empty string")
+            source_filename = await _download_comfy_image(source_url.strip(), UPLOAD_PATH)
+
+        elif source_filename:
+            # Legacy path: file already in UPLOAD_PATH
+            if not isinstance(source_filename, str) or not source_filename.strip():
+                raise HTTPException(status_code=400, detail="source_filename must be a non-empty string")
+            source_filename = source_filename.strip()
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide one of: source_filename, source_url, or auto:true",
+            )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to download image: {e}")
+
+    # ── Commit into project-owned storage ────────────────────────────────
     try:
         project_root = UPLOAD_PATH / "projects" / project_id
-        result = commit_persona_avatar(UPLOAD_PATH, project_root, source_filename.strip())
+        result = commit_persona_avatar(UPLOAD_PATH, project_root, source_filename)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
@@ -3012,6 +3187,38 @@ async def persona_export(project_id: str, mode: str = Query("blueprint")) -> Res
     p = projects.get_project_by_id(project_id)
     if not p:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # ------------------------------------------------------------------
+    # Just-in-time auto-commit: ensure avatar is committed before export.
+    #
+    # Projects created before the creation-time auto-commit fix (or where
+    # that step failed) only have ComfyUI URLs in persona_appearance but
+    # no local files.  Attempt to download + commit now so the exported
+    # .hpersona actually contains images in assets/.
+    #
+    # Non-fatal: if ComfyUI is unreachable or the URL is stale, the
+    # export proceeds without images (same as the old behaviour).
+    # ------------------------------------------------------------------
+    if p.get("project_type") == "persona":
+        appearance = dict(p.get("persona_appearance") or {})
+        if not appearance.get("selected_filename"):
+            try:
+                selected_url = _resolve_selected_image_url(appearance)
+                if selected_url:
+                    source_filename = await _download_comfy_image(
+                        selected_url, UPLOAD_PATH,
+                    )
+                    project_root = UPLOAD_PATH / "projects" / project_id
+                    commit_result = commit_persona_avatar(
+                        UPLOAD_PATH, project_root, source_filename,
+                    )
+                    appearance["selected_filename"] = commit_result.selected_filename
+                    appearance["selected_thumb_filename"] = commit_result.thumb_filename
+                    p = projects.update_project(
+                        project_id, {"persona_appearance": appearance},
+                    )
+            except Exception as jit_err:
+                print(f"[PERSONA] Export JIT auto-commit skipped: {jit_err}")
 
     try:
         out = export_persona_project(UPLOAD_PATH, p, mode=mode)
