@@ -184,13 +184,29 @@ export async function importPersonaPackage(params: {
 
 /**
  * Commit an avatar to durable project storage.
+ *
+ * Supports three modes (provide exactly one):
+ *   - sourceFilename: file already in UPLOAD_PATH (legacy)
+ *   - sourceUrl: ComfyUI /view?... URL (downloads first, then commits)
+ *   - auto: true — resolve from persona_appearance.sets (repair mode)
  */
 export async function commitPersonaAvatar(params: {
   backendUrl: string
   apiKey?: string
   projectId: string
-  sourceFilename: string
+  sourceFilename?: string
+  sourceUrl?: string
+  auto?: boolean
 }): Promise<Record<string, any>> {
+  const body: Record<string, unknown> = {}
+  if (params.auto) {
+    body.auto = true
+  } else if (params.sourceUrl) {
+    body.source_url = params.sourceUrl
+  } else if (params.sourceFilename) {
+    body.source_filename = params.sourceFilename
+  }
+
   const res = await fetch(
     `${params.backendUrl}/projects/${params.projectId}/persona/avatar/commit`,
     {
@@ -199,7 +215,7 @@ export async function commitPersonaAvatar(params: {
         'Content-Type': 'application/json',
         ...authHeaders(params.apiKey),
       },
-      body: JSON.stringify({ source_filename: params.sourceFilename }),
+      body: JSON.stringify(body),
     }
   )
 
