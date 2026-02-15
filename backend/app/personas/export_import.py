@@ -416,20 +416,56 @@ def export_persona_project(
         # Preview
         z.writestr("preview/card.json", json.dumps(preview_card, indent=2))
 
-        # Assets
-        def add_asset(rel_path: Optional[str]) -> None:
+        # Assets — collect from the project's appearance directory on disk.
+        # We try two strategies:
+        #   1) Resolve selected_filename / selected_thumb_filename paths
+        #   2) Scan the project's appearance directory for all image files
+        # This ensures avatars and outfit images are always included when
+        # they exist on disk, even if the DB paths are stale or incomplete.
+
+        _added_assets: set = set()  # track arcnames to avoid duplicates
+
+        def _add_file(abs_path: Path, arcname: str) -> None:
+            """Add a single file to the ZIP under assets/ if it exists."""
+            if arcname in _added_assets:
+                return
+            if abs_path.exists() and abs_path.is_file():
+                z.write(abs_path, arcname=arcname)
+                _added_assets.add(arcname)
+
+        def add_asset_by_relpath(rel_path: Optional[str]) -> None:
+            """Resolve a DB-stored relative path and add to ZIP."""
             if not rel_path:
                 return
             rel_path = rel_path.replace("\\", "/")
-            if not rel_path.startswith("projects/"):
-                return
-            abs_path = upload_root / rel_path
-            if abs_path.exists() and abs_path.is_file():
-                arcname = f"assets/{_safe_basename(abs_path.name)}"
-                z.write(abs_path, arcname=arcname)
+            if rel_path.startswith("projects/"):
+                abs_path = upload_root / rel_path
+            else:
+                # Fallback: treat as basename and look in appearance dir
+                abs_path = appearance_dir / _safe_basename(rel_path)
+            arcname = f"assets/{_safe_basename(abs_path.name)}"
+            _add_file(abs_path, arcname)
 
-        add_asset(selected)
-        add_asset(thumb)
+        # Locate the project's appearance directory
+        project_id = project.get("id") or ""
+        appearance_dir = upload_root / "projects" / project_id / "persona" / "appearance"
+
+        # Strategy 1: explicit DB paths
+        add_asset_by_relpath(selected)
+        add_asset_by_relpath(thumb)
+
+        # Strategy 2: scan appearance directory for all image/asset files
+        _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff"}
+        if appearance_dir.is_dir():
+            for f in sorted(appearance_dir.iterdir()):
+                if f.is_file() and f.suffix.lower() in _IMAGE_EXTS:
+                    arcname = f"assets/{_safe_basename(f.name)}"
+                    _add_file(f, arcname)
+
+        # Strategy 3: outfit images (may be stored outside appearance dir)
+        for outfit in (persona_appearance.get("outfits") or []):
+            add_asset_by_relpath(outfit.get("filename"))
+            add_asset_by_relpath(outfit.get("thumb_filename"))
 
     name = project.get("name") or persona_agent.get("label") or "persona"
     safe_name = "".join(c for c in name if c.isalnum() or c in ("-", "_")).strip() or "persona"
@@ -569,26 +605,46 @@ def import_persona_package(
             with z.open(info, "r") as r, open(dst, "wb") as w:
                 shutil.copyfileobj(r, w)
 
-        # Remap avatar paths to new project
+        # Remap avatar paths to new project.
+        # Strategy: try explicit DB paths first, then auto-detect from
+        # extracted assets if the DB paths are empty or stale.
         updated: Dict[str, Any] = {}
         sel = persona_appearance.get("selected_filename")
         th = persona_appearance.get("selected_thumb_filename")
-        if isinstance(sel, str):
-            bn = _safe_basename(sel)
+
+        def _remap(field: str, val: Optional[str]) -> None:
+            if not isinstance(val, str):
+                return
+            bn = _safe_basename(val)
             candidate = appearance_dir / bn
             if candidate.exists():
                 updated.setdefault("persona_appearance", dict(persona_appearance))
-                updated["persona_appearance"]["selected_filename"] = str(
+                updated["persona_appearance"][field] = str(
                     candidate.relative_to(upload_root)
                 )
-        if isinstance(th, str):
-            bn = _safe_basename(th)
-            candidate = appearance_dir / bn
-            if candidate.exists():
-                updated.setdefault("persona_appearance", dict(persona_appearance))
-                updated["persona_appearance"]["selected_thumb_filename"] = str(
-                    candidate.relative_to(upload_root)
-                )
+
+        _remap("selected_filename", sel)
+        _remap("selected_thumb_filename", th)
+
+        # Auto-detect: if no selected_filename was remapped but avatar files
+        # exist on disk (extracted from assets/), pick the first match.
+        if "persona_appearance" not in updated or \
+                not updated["persona_appearance"].get("selected_filename"):
+            extracted = sorted(appearance_dir.iterdir()) if appearance_dir.is_dir() else []
+            for f in extracted:
+                if f.is_file() and f.name.startswith("avatar_") and not f.name.startswith("thumb_"):
+                    updated.setdefault("persona_appearance", dict(persona_appearance))
+                    updated["persona_appearance"]["selected_filename"] = str(
+                        f.relative_to(upload_root)
+                    )
+                    break
+            for f in extracted:
+                if f.is_file() and f.name.startswith("thumb_avatar_"):
+                    updated.setdefault("persona_appearance", dict(persona_appearance))
+                    updated["persona_appearance"]["selected_thumb_filename"] = str(
+                        f.relative_to(upload_root)
+                    )
+                    break
 
         if updated:
             created = projects.update_project(project_id, updated)
