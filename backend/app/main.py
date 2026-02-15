@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional, Literal
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -79,6 +79,11 @@ from .capabilities import router as capabilities_router
 
 # Agentic AI module routes (additive — zero changes to existing code)
 from .agentic.routes import router as agentic_router
+
+# Persona Phase 3 — production hardening (avatar durability, export/import)
+from .personas.avatar_assets import commit_persona_avatar
+from .personas.export_import import export_persona_project, import_persona_package, preview_persona_package
+from .personas.dependency_checker import check_dependencies
 
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
@@ -238,6 +243,22 @@ def _base_url_from_request(req: Request) -> str:
 
 def _safe_err(message: str, *, code: str = "error") -> Dict[str, Any]:
     return {"ok": False, "code": code, "message": message}
+
+
+def _is_photo_intent(msg: str) -> bool:
+    """Detect deterministic 'show me your photo' intent for persona projects."""
+    m = (msg or "").lower().strip()
+    triggers = [
+        "show me your photo",
+        "show me your picture",
+        "show your photo",
+        "show your picture",
+        "your photo",
+        "your picture",
+        "what do you look like",
+        "how do you look",
+    ]
+    return any(t in m for t in triggers)
 
 
 def _compute_upload_dir() -> Path:
@@ -2367,6 +2388,31 @@ async def chat(inp: ChatIn) -> JSONResponse:
     }
 
     # ----------------------------
+    # Persona photo intent (deterministic — no LLM guessing)
+    # If user says "show me your photo" and a committed persona avatar exists,
+    # return it immediately in media.images[] without hitting the LLM.
+    # ----------------------------
+    if inp.project_id and _is_photo_intent(inp.message):
+        proj = projects.get_project_by_id(inp.project_id)
+        if proj and proj.get("project_type") == "persona":
+            appearance = proj.get("persona_appearance") or {}
+            sel = appearance.get("selected_filename")
+            if isinstance(sel, str) and sel:
+                base = _base_url_from_request(
+                    # ChatIn doesn't carry a Request; use PUBLIC_BASE_URL fallback
+                    type("_R", (), {"base_url": PUBLIC_BASE_URL or "http://localhost:8000/"})()
+                )
+                cid = inp.conversation_id or str(uuidlib.uuid4())
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "conversation_id": cid,
+                        "text": "Here's my current photo.",
+                        "media": {"images": [f"{base}/files/{sel}"]},
+                    },
+                )
+
+    # ----------------------------
     # Game Mode: Infinite Variations
     # Works independently of promptRefinement - generates variations of user prompt
     # If promptRefinement is also enabled, the variation will be further refined
@@ -2897,3 +2943,140 @@ async def select_edit_image(request: Request, conversation_id: str) -> JSONRespo
 async def revert_edit_session(request: Request, conversation_id: str) -> JSONResponse:
     """Revert to a previous state in the edit session history (proxied to sidecar)."""
     return await _proxy_to_edit_session(request, f"{conversation_id}/revert", "POST")
+
+
+# ============================================================================
+# Persona Phase 3 — Production Hardening Endpoints (additive)
+# ============================================================================
+
+
+@app.post("/projects/{project_id}/persona/avatar/commit", dependencies=[Depends(require_api_key)])
+async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
+    """
+    Commit a selected avatar image into project-owned durable storage.
+
+    Body: { "source_filename": "ComfyUI_00042_.png" }
+
+    This copies the source image from UPLOAD_PATH into:
+      projects/<project_id>/persona/appearance/avatar_<name>.<ext>
+    and generates a thumbnail:
+      projects/<project_id>/persona/appearance/thumb_avatar_<name>.webp
+
+    Updates project.persona_appearance with the committed paths.
+    """
+    p = projects.get_project_by_id(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if p.get("project_type") != "persona":
+        raise HTTPException(status_code=400, detail="Not a persona project")
+
+    source_filename = body.get("source_filename")
+    if not isinstance(source_filename, str) or not source_filename.strip():
+        raise HTTPException(status_code=400, detail="source_filename required")
+
+    try:
+        project_root = UPLOAD_PATH / "projects" / project_id
+        result = commit_persona_avatar(UPLOAD_PATH, project_root, source_filename.strip())
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    appearance = dict(p.get("persona_appearance") or {})
+    appearance["selected_filename"] = result.selected_filename
+    appearance["selected_thumb_filename"] = result.thumb_filename
+
+    updated = projects.update_project(project_id, {"persona_appearance": appearance})
+    return JSONResponse(
+        status_code=200,
+        content={"ok": True, "project": updated, "selected": appearance},
+    )
+
+
+@app.get("/projects/{project_id}/persona/export", dependencies=[Depends(require_api_key)])
+async def persona_export(project_id: str, mode: str = Query("blueprint")) -> Response:
+    """
+    Export a persona project as a .hpersona package (zip).
+
+    Query params:
+      mode: "blueprint" (safe — agent config + avatar) or "full" (with consent)
+
+    Returns the .hpersona file as an attachment download.
+    """
+    p = projects.get_project_by_id(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        out = export_persona_project(UPLOAD_PATH, p, mode=mode)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return Response(
+        content=out.data,
+        media_type=out.content_type,
+        headers={"Content-Disposition": f'attachment; filename="{out.filename}"'},
+    )
+
+
+@app.post("/persona/import", dependencies=[Depends(require_api_key)])
+async def persona_import(file: UploadFile = File(...)) -> JSONResponse:
+    """
+    Import a .hpersona package and create a new persona project.
+
+    Accepts a multipart file upload of a .hpersona file.
+    Validates schema version and creates the project with assets.
+    """
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    try:
+        created = import_persona_package(UPLOAD_PATH, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Import failed: {e}")
+
+    return JSONResponse(
+        status_code=201,
+        content={"ok": True, "project": created},
+    )
+
+
+@app.post("/persona/import/preview", dependencies=[Depends(require_api_key)])
+async def persona_import_preview(file: UploadFile = File(...)) -> JSONResponse:
+    """
+    Preview a .hpersona package without creating a project.
+
+    Returns the package contents (agent, appearance, dependencies)
+    plus a dependency check report showing what's available locally.
+    """
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    try:
+        preview = preview_persona_package(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview failed: {e}")
+
+    # Run dependency check
+    dep_report = check_dependencies(preview.dependencies)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "manifest": preview.manifest,
+            "persona_agent": preview.persona_agent,
+            "persona_appearance": preview.persona_appearance,
+            "agentic": preview.agentic,
+            "dependencies": preview.dependencies,
+            "has_avatar": preview.has_avatar,
+            "asset_names": preview.asset_names,
+            "dependency_check": dep_report.to_dict(),
+        },
+    )

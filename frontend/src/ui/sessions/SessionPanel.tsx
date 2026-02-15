@@ -140,6 +140,12 @@ export default function SessionPanel({
       ? '1 day together'
       : `${ageDays} days together`
 
+  // Determine first-time state: no real conversations have happened yet.
+  // A session with 0 messages is just a system placeholder, not a real session.
+  const realSessions = sessions.filter((s) => s.message_count > 0)
+  const hasRealActiveSession = activeSession && activeSession.message_count > 0
+  const isFirstTime = realSessions.length === 0
+
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8 text-gray-400">
@@ -148,6 +154,53 @@ export default function SessionPanel({
     )
   }
 
+  // ----- First-time welcome (brand new persona, no conversations yet) -----
+  if (isFirstTime) {
+    return (
+      <div className="flex flex-col gap-5 p-4 max-w-lg mx-auto">
+        {/* Welcome header */}
+        <div className="text-center mb-1">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-purple-500/30 mb-3">
+            <span className="text-3xl">{'\u2728'}</span>
+          </div>
+          <h2 className="text-xl font-semibold text-white">{projectName}</h2>
+          <p className="text-sm text-purple-300/80 mt-1">Ready to meet you</p>
+        </div>
+
+        {/* First-time prompt */}
+        <p className="text-center text-gray-400 text-sm leading-relaxed px-4">
+          Start your first conversation — pick voice or text below.
+        </p>
+
+        {/* Primary action buttons */}
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={handleNewVoice}
+            className="w-full flex items-center gap-3 px-4 py-4 rounded-xl bg-gradient-to-r from-purple-600/30 to-pink-600/30 border border-purple-500/40 hover:border-purple-400/60 transition-all text-left"
+          >
+            <span className="text-2xl">{'\uD83C\uDFA4'}</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-white font-medium text-sm">Start Voice Session</div>
+              <div className="text-gray-400 text-xs">Talk to {projectName} out loud</div>
+            </div>
+          </button>
+
+          <button
+            onClick={handleNewText}
+            className="w-full flex items-center gap-3 px-4 py-4 rounded-xl bg-gradient-to-r from-blue-600/30 to-purple-600/30 border border-blue-500/40 hover:border-blue-400/60 transition-all text-left"
+          >
+            <span className="text-2xl">{'\uD83D\uDCAC'}</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-white font-medium text-sm">Start Text Session</div>
+              <div className="text-gray-400 text-xs">Chat with {projectName} via text</div>
+            </div>
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ----- Returning user (has real conversation history) -----
   return (
     <div className="flex flex-col gap-4 p-4 max-w-lg mx-auto">
       {/* Header */}
@@ -163,8 +216,8 @@ export default function SessionPanel({
 
       {/* Action Buttons */}
       <div className="flex flex-col gap-2">
-        {/* Continue Last Session */}
-        {activeSession && (
+        {/* Continue Last Session — only when there are real messages to continue */}
+        {hasRealActiveSession && (
           <button
             onClick={handleContinue}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-purple-600/30 to-blue-600/30 border border-purple-500/40 hover:border-purple-400/60 transition-all text-left"
@@ -208,14 +261,14 @@ export default function SessionPanel({
         </button>
       </div>
 
-      {/* Past Sessions */}
-      {sessions.length > 0 && (
+      {/* Past Sessions — only show sessions that have actual messages */}
+      {realSessions.length > 0 && (
         <div className="mt-2">
           <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-2 px-1">
             Past Sessions
           </h3>
           <div className="flex flex-col gap-1">
-            {sessions.map((session) => (
+            {realSessions.map((session) => (
               <button
                 key={session.id}
                 onClick={() => handleOpenPast(session)}
@@ -236,13 +289,6 @@ export default function SessionPanel({
               </button>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* Empty state */}
-      {sessions.length === 0 && (
-        <div className="text-center text-gray-500 text-sm py-4">
-          No sessions yet. Start your first conversation!
         </div>
       )}
     </div>
