@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import copy
 import os
+import sqlite3
 import time
 from typing import Any, Dict, Optional
 
@@ -51,6 +52,78 @@ R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "").strip().rstrip("/")
 # Simple in-memory cache for the registry (avoids hammering upstream)
 _registry_cache: Dict[str, Any] = {"data": None, "fetched_at": 0.0}
 _REGISTRY_TTL = 120  # seconds
+
+
+# ---------------------------------------------------------------------------
+# Download counter (SQLite-backed)
+# ---------------------------------------------------------------------------
+
+
+def _get_db_path() -> str:
+    from .storage import _get_db_path as _storage_db_path
+    return _storage_db_path()
+
+
+def _ensure_download_table() -> None:
+    """Create the community_downloads table if it doesn't exist."""
+    con = sqlite3.connect(_get_db_path())
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS community_downloads(
+            persona_id TEXT NOT NULL,
+            version    TEXT NOT NULL,
+            count      INTEGER NOT NULL DEFAULT 0,
+            last_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (persona_id, version)
+        )
+        """
+    )
+    con.commit()
+    con.close()
+
+
+_download_table_ready = False
+
+
+def _increment_download(persona_id: str, version: str) -> int:
+    """Increment and return the new download count."""
+    global _download_table_ready
+    if not _download_table_ready:
+        _ensure_download_table()
+        _download_table_ready = True
+
+    con = sqlite3.connect(_get_db_path())
+    con.execute(
+        """
+        INSERT INTO community_downloads(persona_id, version, count, last_at)
+        VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+        ON CONFLICT(persona_id, version)
+        DO UPDATE SET count = count + 1, last_at = CURRENT_TIMESTAMP
+        """,
+        (persona_id, version),
+    )
+    con.commit()
+    row = con.execute(
+        "SELECT count FROM community_downloads WHERE persona_id = ? AND version = ?",
+        (persona_id, version),
+    ).fetchone()
+    con.close()
+    return row[0] if row else 0
+
+
+def _get_all_download_counts() -> Dict[str, int]:
+    """Return {persona_id: total_count} for all personas."""
+    global _download_table_ready
+    if not _download_table_ready:
+        _ensure_download_table()
+        _download_table_ready = True
+
+    con = sqlite3.connect(_get_db_path())
+    rows = con.execute(
+        "SELECT persona_id, SUM(count) FROM community_downloads GROUP BY persona_id"
+    ).fetchall()
+    con.close()
+    return {r[0]: r[1] for r in rows}
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +317,16 @@ async def community_registry(
     for item in items:
         _resolve_item_urls(item)
 
+    # Merge real download counts from local DB (overrides static registry values)
+    try:
+        local_counts = _get_all_download_counts()
+        for item in items:
+            pid = item.get("id", "")
+            if pid in local_counts:
+                item["downloads"] = local_counts[pid]
+    except Exception:
+        pass  # Counter read failure must never break registry
+
     return JSONResponse(
         content={
             "schema_version": data.get("schema_version", 1),
@@ -316,6 +399,12 @@ async def community_download(persona_id: str, version: str):
             resp.raise_for_status()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to download package: {e}")
+
+    # Track download
+    try:
+        _increment_download(persona_id, version)
+    except Exception:
+        pass  # Counter failure must never block the download
 
     return Response(
         content=resp.content,
