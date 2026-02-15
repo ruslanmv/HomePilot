@@ -81,59 +81,109 @@ function populateTags(items) {
   }
 }
 
+// ── Pagination ──────────────────────────────────────────────────────
+
+var PAGE_SIZE = 48;
+var currentFiltered = [];
+var visibleCount = PAGE_SIZE;
+
+// ── Debounce helper ─────────────────────────────────────────────────
+
+function debounce(fn, ms) {
+  var t;
+  return function () {
+    clearTimeout(t);
+    var args = arguments;
+    var self = this;
+    t = setTimeout(function () { fn.apply(self, args); }, ms);
+  };
+}
+
 // ── Render ──────────────────────────────────────────────────────────
+
+function buildCard(it) {
+  var card = document.createElement("div");
+  card.className = "card";
+
+  var latest = it.latest || {};
+  var previewUrl = resolveUrl(latest.preview_url);
+  var packageUrl = resolveUrl(latest.package_url);
+  var tags = (it.tags || []).slice(0, 3);
+  var sizeText = formatBytes(latest.size_bytes);
+  var version = latest.version || "1.0.0";
+
+  var tagsHtml = tags.map(function (t) {
+    return '<span class="tag">' + escapeHtml(t) + '</span>';
+  }).join("");
+
+  var ratingBadge = it.nsfw
+    ? '<span class="nsfw-badge">NSFW</span>'
+    : '<span class="sfw-badge">SFW</span>';
+
+  card.innerHTML =
+    '<div class="preview-wrap">' +
+      (previewUrl
+        ? '<img class="preview" src="' + escapeHtml(previewUrl) + '" alt="' + escapeHtml(it.name) + '" loading="lazy" decoding="async" onerror="this.outerHTML=\'<div class=\\\'preview placeholder\\\'>🎭</div>\'" />'
+        : '<div class="preview placeholder">🎭</div>') +
+      ratingBadge +
+    '</div>' +
+    '<div class="body">' +
+      '<div class="name">' + escapeHtml(it.name) + '</div>' +
+      '<div class="short">' + escapeHtml(it.short || "") + '</div>' +
+      '<div class="meta">' +
+        '<div class="tags">' + tagsHtml + '</div>' +
+        '<div class="downloads">' + (it.downloads || 0).toLocaleString() + ' downloads</div>' +
+      '</div>' +
+      (packageUrl
+        ? '<a class="btn" href="' + escapeHtml(packageUrl) + '" download>Download .hpersona</a>'
+        : '<button class="btn" disabled>Not available</button>') +
+      (sizeText ? '<div class="size">v' + escapeHtml(version) + ' &middot; ' + sizeText + '</div>' : '') +
+    '</div>';
+
+  return card;
+}
 
 function render(items) {
   var grid = document.getElementById("grid");
   grid.innerHTML = "";
 
+  currentFiltered = items;
+  visibleCount = PAGE_SIZE;
+
   if (!items.length) {
     grid.innerHTML = '<div class="empty"><div class="icon">🎭</div><div class="title">No personas found</div><p>Try a different search or check back later.</p></div>';
+    updateLoadMore();
     return;
   }
 
-  for (var i = 0; i < items.length; i++) {
-    var it = items[i];
-    var card = document.createElement("div");
-    card.className = "card";
+  var slice = items.slice(0, visibleCount);
+  for (var i = 0; i < slice.length; i++) {
+    grid.appendChild(buildCard(slice[i]));
+  }
+  updateLoadMore();
+}
 
-    var latest = it.latest || {};
-    var previewUrl = resolveUrl(latest.preview_url);
-    var packageUrl = resolveUrl(latest.package_url);
-    var cardUrl = resolveUrl(latest.card_url);
-    var tags = (it.tags || []).slice(0, 3);
-    var sizeText = formatBytes(latest.size_bytes);
-    var version = latest.version || "1.0.0";
+function loadMore() {
+  var grid = document.getElementById("grid");
+  var start = visibleCount;
+  visibleCount += PAGE_SIZE;
+  var slice = currentFiltered.slice(start, visibleCount);
+  for (var i = 0; i < slice.length; i++) {
+    grid.appendChild(buildCard(slice[i]));
+  }
+  updateLoadMore();
+}
 
-    var tagsHtml = tags.map(function (t) {
-      return '<span class="tag">' + escapeHtml(t) + '</span>';
-    }).join("");
-
-    var ratingBadge = it.nsfw
-      ? '<span class="nsfw-badge">NSFW</span>'
-      : '<span class="sfw-badge">SFW</span>';
-
-    card.innerHTML =
-      '<div class="preview-wrap">' +
-        (previewUrl
-          ? '<img class="preview" src="' + escapeHtml(previewUrl) + '" alt="' + escapeHtml(it.name) + '" loading="lazy" onerror="this.outerHTML=\'<div class=\\\'preview placeholder\\\'>🎭</div>\'" />'
-          : '<div class="preview placeholder">🎭</div>') +
-        ratingBadge +
-      '</div>' +
-      '<div class="body">' +
-        '<div class="name">' + escapeHtml(it.name) + '</div>' +
-        '<div class="short">' + escapeHtml(it.short || "") + '</div>' +
-        '<div class="meta">' +
-          '<div class="tags">' + tagsHtml + '</div>' +
-          '<div class="downloads">' + (it.downloads || 0).toLocaleString() + ' downloads</div>' +
-        '</div>' +
-        (packageUrl
-          ? '<a class="btn" href="' + escapeHtml(packageUrl) + '" download>Download .hpersona</a>'
-          : '<button class="btn" disabled>Not available</button>') +
-        (sizeText ? '<div class="size">v' + escapeHtml(version) + ' &middot; ' + sizeText + '</div>' : '') +
-      '</div>';
-
-    grid.appendChild(card);
+function updateLoadMore() {
+  var wrap = document.getElementById("load-more-wrap");
+  if (!wrap) return;
+  if (visibleCount < currentFiltered.length) {
+    var remaining = currentFiltered.length - visibleCount;
+    wrap.style.display = "flex";
+    wrap.querySelector(".load-more-btn").textContent =
+      "Load more (" + remaining + " remaining)";
+  } else {
+    wrap.style.display = "none";
   }
 }
 
@@ -187,10 +237,17 @@ function render(items) {
     setStats(all, filtered.length);
   }
 
-  q.addEventListener("input", apply);
+  // Debounced search — prevents jank when typing fast
+  q.addEventListener("input", debounce(apply, 200));
   filterTag.addEventListener("change", apply);
   if (filterRating) filterRating.addEventListener("change", apply);
   refreshBtn.addEventListener("click", reload);
+
+  // Load More button — wired up at boot, visibility managed by updateLoadMore()
+  var loadMoreWrap = document.getElementById("load-more-wrap");
+  if (loadMoreWrap) {
+    loadMoreWrap.querySelector(".load-more-btn").addEventListener("click", loadMore);
+  }
 
   reload();
 })();

@@ -89,7 +89,7 @@ function GalleryCard({
   return (
     <div className="relative bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden hover:border-white/[0.16] transition-all group">
       {/* Preview */}
-      <div className="relative aspect-[3/4] bg-black/20">
+      <div className="relative aspect-[4/5] max-h-[360px] bg-black/20 overflow-hidden">
         {item.latest?.preview_url ? (
           <img
             src={item.latest.preview_url}
@@ -480,6 +480,8 @@ function InstallToast({
 // Main Component
 // ---------------------------------------------------------------------------
 
+const PAGE_SIZE = 48
+
 export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityGalleryProps) {
   const [gallery, setGallery] = useState<GalleryState>({ kind: 'loading' })
   const [search, setSearch] = useState('')
@@ -487,6 +489,7 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
   const [install, setInstall] = useState<InstallState>({ kind: 'idle' })
   const [detail, setDetail] = useState<{ item: CommunityPersonaItem; card: Record<string, any> } | null>(null)
   const [detailLoading, setDetailLoading] = useState<string | null>(null)
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const cleanUrl = backendUrl.replace(/\/+$/, '')
 
@@ -696,7 +699,7 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
           <input
             type="text"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setVisibleCount(PAGE_SIZE) }}
             placeholder="Search personas..."
             className="w-full pl-9 pr-4 py-2 rounded-lg bg-white/[0.06] border border-white/[0.08] text-sm text-white placeholder:text-white/30 outline-none focus:border-purple-500/50 transition-colors"
           />
@@ -705,7 +708,7 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
         {allTags.length > 0 && (
           <select
             value={tagFilter}
-            onChange={(e) => setTagFilter(e.target.value)}
+            onChange={(e) => { setTagFilter(e.target.value); setVisibleCount(PAGE_SIZE) }}
             className="px-3 py-2 rounded-lg bg-white/[0.06] border border-white/[0.08] text-sm text-white/70 outline-none focus:border-purple-500/50 transition-colors"
           >
             <option value="">All Tags</option>
@@ -745,20 +748,32 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {items.map((item) => (
-            <GalleryCard
-              key={item.id}
-              item={item}
-              installing={
-                (install.kind === 'downloading' || install.kind === 'previewing' || install.kind === 'installing')
-                && install.personaId === item.id
-              }
-              onInstall={() => handleInstall(item)}
-              onDetail={() => handleDetail(item)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {items.slice(0, visibleCount).map((item) => (
+              <GalleryCard
+                key={item.id}
+                item={item}
+                installing={
+                  (install.kind === 'downloading' || install.kind === 'previewing' || install.kind === 'installing')
+                  && install.personaId === item.id
+                }
+                onInstall={() => handleInstall(item)}
+                onDetail={() => handleDetail(item)}
+              />
+            ))}
+          </div>
+          {visibleCount < items.length && (
+            <div className="flex justify-center pt-6 pb-2">
+              <button
+                onClick={() => setVisibleCount((v) => v + PAGE_SIZE)}
+                className="px-7 py-2.5 rounded-full border border-white/[0.08] bg-white/[0.04] text-white/50 text-sm font-semibold hover:border-purple-500/40 hover:text-purple-300 transition-all"
+              >
+                Load more ({items.length - visibleCount} remaining)
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {/* Detail modal */}
