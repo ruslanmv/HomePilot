@@ -87,46 +87,65 @@ function GalleryCard({
     : null
 
   return (
-    <div className="relative w-full max-w-[340px] bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden hover:border-white/[0.16] transition-all group">
-      {/* Preview */}
-      <div className="relative aspect-[4/5] bg-black/20 overflow-hidden">
+    <div className="
+      w-full max-w-[340px]
+      rounded-2xl overflow-hidden
+      border border-white/10 hover:border-white/[0.18]
+      bg-gradient-to-b from-white/[0.05] to-white/[0.03]
+      shadow-[0_14px_40px_rgba(0,0,0,0.55)]
+      transition-all duration-150 hover:-translate-y-px
+    ">
+      {/* Preview: full-bleed with gallery overlay */}
+      <div className="relative aspect-[4/5] overflow-hidden bg-white/[0.03]">
         {item.latest?.preview_url ? (
           <img
             src={item.latest.preview_url}
             alt={item.name}
             loading="lazy"
+            decoding="async"
             className="block w-full h-full object-cover"
             onError={(e) => {
               ;(e.target as HTMLImageElement).style.display = 'none'
             }}
           />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-white/20">
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-violet-900/20 to-black/20 text-white/20">
             <User size={48} />
           </div>
         )}
-        {item.nsfw && (
-          <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-red-500/80 text-white text-[10px] font-bold uppercase backdrop-blur-sm">
-            NSFW
-          </span>
-        )}
+        {/* Readability overlay */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/60" />
+
+        {/* Badges */}
+        <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 z-[1]">
+          {item.nsfw ? (
+            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-500/25 border border-red-500/40 text-red-200 backdrop-blur-sm">
+              NSFW
+            </span>
+          ) : (
+            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 border border-emerald-500/35 text-emerald-200 backdrop-blur-sm">
+              SFW
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Body */}
-      <div className="p-3.5">
-        <div className="text-sm font-semibold text-white truncate mb-1">
+      <div className="p-4">
+        <div className="text-sm font-bold text-white truncate mb-1">
           {item.name}
         </div>
-        <div className="text-xs text-white/40 line-clamp-2 mb-2.5 min-h-[32px]">
+        <div className="text-xs text-white/50 line-clamp-2 mb-3 min-h-[32px] leading-relaxed">
           {item.short}
         </div>
 
-        {/* Tags */}
-        <div className="flex items-center gap-1.5 mb-2.5 flex-wrap">
+        {/* Tags — enterprise violet chips */}
+        <div className="flex items-center gap-1.5 mb-3 flex-wrap">
           {item.tags.slice(0, 3).map((t) => (
             <span
               key={t}
-              className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-300"
+              className="inline-flex items-center rounded-full px-2.5 py-1 text-[10px]
+                border border-violet-400/35 bg-violet-400/10 text-violet-100"
             >
               {t}
             </span>
@@ -134,18 +153,18 @@ function GalleryCard({
         </div>
 
         {/* Meta */}
-        <div className="flex items-center justify-between text-[11px] text-white/30 mb-3">
+        <div className="flex items-center justify-between text-[11px] text-white/35 mb-3">
           <span>{(item.downloads || 0).toLocaleString()} downloads</span>
           {sizeLabel && <span>{sizeLabel}</span>}
         </div>
 
-        {/* Action buttons */}
+        {/* Action buttons — enterprise gradient primary + glass secondary */}
         <div className="flex gap-2">
           <button
             onClick={onDetail}
-            className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all
-              bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white
-              border border-white/[0.08]
+            className="flex-1 py-2.5 rounded-xl text-xs font-semibold transition-all
+              bg-white/[0.06] border border-white/10 hover:border-white/20
+              text-white/70 hover:text-white
               flex items-center justify-center gap-1.5"
           >
             <Info size={13} />
@@ -154,8 +173,9 @@ function GalleryCard({
           <button
             onClick={onInstall}
             disabled={installing}
-            className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all
-              bg-purple-500/90 hover:bg-purple-500 text-white
+            className="flex-1 py-2.5 rounded-xl text-xs font-semibold transition-all
+              bg-gradient-to-b from-violet-400 to-violet-600
+              border border-white/10 hover:brightness-105 text-white
               disabled:opacity-50 disabled:cursor-not-allowed
               flex items-center justify-center gap-1.5"
           >
@@ -291,64 +311,107 @@ function DetailModal({
   onClose: () => void
   onInstall: () => void
 }) {
-  const stats = card.stats || {} as Record<string, number>
-  const statEntries = Object.entries(stats).filter(([k]) => k !== 'level') as [string, number][]
+  const stats = (card.stats || {}) as Record<string, number>
+  const statEntries = (Object.entries(stats).filter(([k]) => k !== 'level') as [string, number][])
   const level = stats.level ?? 0
 
+  const isNsfw = !!item.nsfw
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
       <div
-        className="bg-[#1a1a1c] border border-white/10 rounded-2xl max-w-lg w-full mx-4 overflow-hidden shadow-2xl"
+        className="
+          bg-[#1a1a1c]
+          border border-white/10
+          rounded-2xl
+          max-w-lg w-full mx-4
+          overflow-hidden
+          shadow-2xl
+        "
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header with preview */}
+        {/* Header with full-bleed preview (gallery-like) */}
         <div className="relative">
-          {previewUrl ? (
-            <img
-              src={previewUrl}
-              alt={card.name || item.name}
-              className="w-full h-48 object-cover"
-              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-            />
-          ) : (
-            <div className="w-full h-32 bg-gradient-to-br from-purple-900/40 to-black/40 flex items-center justify-center">
-              <User size={48} className="text-white/20" />
+          <div className="relative aspect-[4/5] w-full overflow-hidden bg-white/[0.03]">
+            {previewUrl ? (
+              <img
+                src={previewUrl}
+                alt={card.name || item.name}
+                className="block w-full h-full object-cover"
+                loading="lazy"
+                decoding="async"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+              />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-br from-purple-900/40 to-black/40 flex items-center justify-center">
+                <User size={48} className="text-white/20" />
+              </div>
+            )}
+
+            {/* Gallery-style readability overlay */}
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/65" />
+
+            {/* Close button */}
+            <button
+              onClick={onClose}
+              className="absolute top-3 right-3 p-1.5 rounded-full bg-black/50 text-white/70 hover:text-white backdrop-blur-sm transition-colors"
+            >
+              <X size={16} />
+            </button>
+
+            {/* Badges row (enterprise + gallery feel) */}
+            <div className="absolute top-3 left-3 flex items-center gap-2">
+              <span
+                className={
+                  isNsfw
+                    ? "px-2.5 py-1 rounded-full text-[10px] font-bold bg-red-500/25 border border-red-500/40 text-red-200 backdrop-blur-sm"
+                    : "px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/20 border border-emerald-500/35 text-emerald-200 backdrop-blur-sm"
+                }
+              >
+                {isNsfw ? 'NSFW' : 'SFW'}
+              </span>
+
+              {level > 0 && (
+                <span className="px-2.5 py-1 rounded-full bg-purple-500/25 border border-purple-500/40 text-purple-200 text-[10px] font-bold backdrop-blur-sm">
+                  Lv. {level}
+                </span>
+              )}
             </div>
-          )}
-          <button
-            onClick={onClose}
-            className="absolute top-3 right-3 p-1.5 rounded-full bg-black/50 text-white/70 hover:text-white backdrop-blur-sm transition-colors"
-          >
-            <X size={16} />
-          </button>
-          {level > 0 && (
-            <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-full bg-purple-500/80 text-white text-[10px] font-bold backdrop-blur-sm">
-              Lv. {level}
+
+            {/* Title overlay */}
+            <div className="absolute bottom-3 left-3 right-3">
+              <div className="text-base font-bold text-white drop-shadow">
+                {card.name || item.name}
+              </div>
+              {!!(card.role) && (
+                <div className="text-xs text-white/70 drop-shadow">
+                  {card.role}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
 
         {/* Body */}
         <div className="p-5 space-y-4 max-h-[50vh] overflow-y-auto">
-          {/* Name & Role */}
-          <div>
-            <h2 className="text-lg font-bold text-white">{card.name || item.name}</h2>
-            <p className="text-sm text-white/50">{card.role || ''}</p>
-          </div>
-
           {/* Short description */}
           {card.short && (
-            <p className="text-sm text-white/60 leading-relaxed">{card.short}</p>
+            <p className="text-sm text-white/70 leading-relaxed">
+              {card.short}
+            </p>
           )}
 
           {/* Backstory */}
           {card.backstory && (
             <div>
-              <div className="flex items-center gap-1.5 text-xs font-medium text-white/50 mb-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-white/55 mb-1.5">
                 <BookOpen size={12} />
                 Backstory
               </div>
-              <p className="text-xs text-white/50 bg-white/[0.03] border border-white/[0.06] rounded-lg p-3 leading-relaxed">
+              <p className="text-xs text-white/55 bg-white/[0.03] border border-white/[0.06] rounded-xl p-3 leading-relaxed">
                 {card.backstory}
               </p>
             </div>
@@ -357,21 +420,21 @@ function DetailModal({
           {/* Stats bars */}
           {statEntries.length > 0 && (
             <div>
-              <div className="flex items-center gap-1.5 text-xs font-medium text-white/50 mb-2">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-white/55 mb-2">
                 <Sparkles size={12} />
                 Stats
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 {statEntries.map(([key, val]) => (
                   <div key={key} className="flex items-center gap-2">
-                    <span className="text-[10px] text-white/40 w-20 capitalize">{key}</span>
-                    <div className="flex-1 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                    <span className="text-[10px] text-white/45 w-20 capitalize">{key}</span>
+                    <div className="flex-1 h-2 bg-white/[0.06] rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-purple-500/70 rounded-full transition-all"
+                        className="h-full bg-purple-500/75 rounded-full"
                         style={{ width: `${Math.min(100, val)}%` }}
                       />
                     </div>
-                    <span className="text-[10px] text-white/30 w-6 text-right">{val}</span>
+                    <span className="text-[10px] text-white/35 w-7 text-right">{val}</span>
                   </div>
                 ))}
               </div>
@@ -382,12 +445,18 @@ function DetailModal({
           {(card.style_tags?.length > 0 || card.tone_tags?.length > 0) && (
             <div className="flex flex-wrap gap-1.5">
               {(card.style_tags || []).map((t: string) => (
-                <span key={`s-${t}`} className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300">
+                <span
+                  key={`s-${t}`}
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-200"
+                >
                   {t}
                 </span>
               ))}
               {(card.tone_tags || []).map((t: string) => (
-                <span key={`t-${t}`} className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                <span
+                  key={`t-${t}`}
+                  className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] border border-white/[0.08] text-white/60"
+                >
                   {t}
                 </span>
               ))}
@@ -397,13 +466,16 @@ function DetailModal({
           {/* Tools */}
           {card.tools?.length > 0 && (
             <div>
-              <div className="flex items-center gap-1.5 text-xs font-medium text-white/50 mb-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-white/55 mb-1.5">
                 <Wrench size={12} />
                 Tools
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {card.tools.map((t: string) => (
-                  <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-white/50">
+                  <span
+                    key={t}
+                    className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] border border-white/[0.08] text-white/55"
+                  >
                     {t}
                   </span>
                 ))}
@@ -414,7 +486,7 @@ function DetailModal({
 
         {/* Footer */}
         <div className="p-4 border-t border-white/[0.06] flex items-center justify-between">
-          <div className="text-xs text-white/30">
+          <div className="text-xs text-white/35">
             {(item.downloads || 0).toLocaleString()} downloads
           </div>
           <div className="flex gap-3">
@@ -426,7 +498,9 @@ function DetailModal({
             </button>
             <button
               onClick={() => { onClose(); onInstall() }}
-              className="px-5 py-2 rounded-lg text-sm font-semibold bg-purple-500 hover:bg-purple-600 text-white transition-colors flex items-center gap-2"
+              className="px-5 py-2 rounded-xl text-sm font-semibold
+                         bg-purple-500 hover:bg-purple-600 text-white transition-colors
+                         flex items-center gap-2"
             >
               <Download size={14} />
               Install
