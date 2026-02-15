@@ -19,6 +19,7 @@ import React, { useMemo, useState } from 'react'
 import { X, ChevronRight, ChevronLeft, Sparkles, Loader2, Shield, Star, Check } from 'lucide-react'
 import type {
   PersonaAppearance,
+  PersonaGender,
   PersonaImageRef,
   PersonaWizardDraft,
   PersonaClassId,
@@ -64,6 +65,7 @@ function defaultAppearance(): PersonaAppearance {
     img_preset: 'med',
     img_model: 'dreamshaper_8.safetensors',
     nsfwMode: false,
+    gender: 'female',
     sets: [],
     outfits: [],
   }
@@ -119,6 +121,48 @@ const OUTFIT_HINTS: Record<string, string> = {
   'Evening gown': 'revealing evening gown, low neckline, thigh slit',
   'Crop top': 'crop top, tight shorts, midriff showing',
   'None specified': '',
+}
+
+// ---------------------------------------------------------------------------
+// Gender helpers
+// ---------------------------------------------------------------------------
+
+const GENDERS: Array<{ value: PersonaGender; label: string }> = [
+  { value: 'female', label: 'Female' },
+  { value: 'male', label: 'Male' },
+  { value: 'neutral', label: 'Neutral' },
+]
+
+function baseByGender(g: PersonaGender): string {
+  if (g === 'male') return 'handsome man'
+  if (g === 'female') return 'beautiful woman'
+  return 'person'
+}
+
+function styleHint(style?: string): string {
+  switch (style) {
+    case 'Executive': return 'professional, neat grooming'
+    case 'Elegant': return 'refined features, classy'
+    case 'Romantic': return 'soft lighting, warm smile'
+    case 'Casual': return 'relaxed look, natural'
+    default: return ''
+  }
+}
+
+/** Auto-fill description based on gender + style — only replaces if current looks like a default. */
+function autoDescription(g: PersonaGender, stylePreset?: string, current?: string): string {
+  const looksDefault =
+    !current ||
+    current.includes('beautiful woman') ||
+    current.includes('handsome man') ||
+    current.trim().toLowerCase() === 'person' ||
+    current.trim() === ''
+
+  if (!looksDefault) return current!
+
+  const base = baseByGender(g)
+  const hint = styleHint(stylePreset)
+  return [base, 'portrait', hint, 'high detail'].filter(Boolean).join(', ')
 }
 
 // ---------------------------------------------------------------------------
@@ -247,11 +291,14 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
     let characterPrompt: string
     let outfitPrompt: string
 
+    const gender = draft.persona_appearance.gender ?? 'female'
+    const genderBase = baseByGender(gender)
+
     if (characterDesc.trim()) {
       // User-edited character description
       characterPrompt = characterDesc.trim()
     } else {
-      characterPrompt = `high quality studio portrait, beautiful adult woman, ${personaName}${role ? `, ${role}` : ''}`
+      characterPrompt = `high quality studio portrait, ${genderBase}, ${personaName}${role ? `, ${role}` : ''}`
     }
 
     if (isNsfw) {
@@ -318,6 +365,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
         outfit_prompt: outfitPrompt,
         full_prompt: out.final_prompt ?? fullPrompt,
         style_preset: isNsfw ? nsfwStylePreset : draft.persona_appearance.style_preset,
+        gender: draft.persona_appearance.gender ?? 'female',
         body_type: isNsfw ? bodyType : undefined,
         custom_extras: customPromptExtra || undefined,
         img_model: out.model ?? draft.persona_appearance.img_model ?? 'dreamshaper_8.safetensors',
@@ -708,6 +756,38 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 {/* Left: Generation controls */}
                 <div className="space-y-4">
+                  {/* Gender selector */}
+                  <div className="space-y-3">
+                    <label className="block text-sm font-medium text-white/80">Gender</label>
+                    <div className="flex flex-wrap gap-2">
+                      {GENDERS.map((g) => (
+                        <button
+                          key={g.value}
+                          type="button"
+                          onClick={() => {
+                            const newDesc = autoDescription(
+                              g.value,
+                              draft.persona_appearance.style_preset,
+                              characterDesc,
+                            )
+                            setDraft({
+                              ...draft,
+                              persona_appearance: { ...draft.persona_appearance, gender: g.value },
+                            })
+                            setCharacterDesc(newDesc)
+                          }}
+                          className={`px-4 py-2 rounded-full border text-sm transition-all ${
+                            (draft.persona_appearance.gender ?? 'female') === g.value
+                              ? 'bg-purple-500/20 border-purple-500/50 text-purple-300'
+                              : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white/80'
+                          }`}
+                        >
+                          {g.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* Style presets — SFW or NSFW shown dynamically based on global setting */}
                   {isSpicy ? (
                     <>
@@ -823,7 +903,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/40 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition-all min-h-[60px] resize-y text-sm"
                       value={characterDesc}
                       onChange={(e) => setCharacterDesc(e.target.value)}
-                      placeholder="e.g., beautiful woman, long brown hair, green eyes, fair skin, elegant face..."
+                      placeholder="e.g., long brown hair, green eyes, fair skin, elegant face..."
                     />
                     <p className="text-[10px] text-white/30 px-1">
                       This description defines your character's physical appearance and stays constant across

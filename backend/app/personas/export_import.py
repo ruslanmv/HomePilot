@@ -30,6 +30,7 @@ Schema versioning ensures forward compatibility:
 """
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -67,6 +68,7 @@ class PreviewResult:
     dependencies: Dict[str, Any]
     has_avatar: bool
     asset_names: List[str]
+    thumb_data_url: Optional[str] = None
 
 
 def _safe_basename(name: str) -> str:
@@ -552,6 +554,31 @@ def preview_persona_package(package_bytes: bytes) -> PreviewResult:
             or any(n.startswith("avatar_") for n in asset_names)
         )
 
+        # Extract thumbnail for preview display (small webp/png data URL)
+        thumb_data_url: Optional[str] = None
+        thumb_name = next(
+            (n for n in asset_names if n.startswith("thumb_avatar_")), None
+        )
+        if not thumb_name:
+            # Fall back to full avatar if no thumb exists
+            thumb_name = next(
+                (n for n in asset_names if n.startswith("avatar_")), None
+            )
+        if thumb_name:
+            try:
+                blob = z.read(f"assets/{thumb_name}")
+                b64 = base64.b64encode(blob).decode("ascii")
+                ext = thumb_name.rsplit(".", 1)[-1].lower()
+                mime = {
+                    "webp": "image/webp",
+                    "png": "image/png",
+                    "jpg": "image/jpeg",
+                    "jpeg": "image/jpeg",
+                }.get(ext, "image/png")
+                thumb_data_url = f"data:{mime};base64,{b64}"
+            except Exception:
+                pass  # non-critical — preview will just show an icon
+
         return PreviewResult(
             manifest=manifest,
             persona_agent=persona_agent,
@@ -560,6 +587,7 @@ def preview_persona_package(package_bytes: bytes) -> PreviewResult:
             dependencies=dependencies,
             has_avatar=has_avatar,
             asset_names=asset_names,
+            thumb_data_url=thumb_data_url,
         )
 
 

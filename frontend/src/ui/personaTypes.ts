@@ -7,6 +7,12 @@
  */
 
 // ---------------------------------------------------------------------------
+// Gender
+// ---------------------------------------------------------------------------
+
+export type PersonaGender = 'neutral' | 'female' | 'male'
+
+// ---------------------------------------------------------------------------
 // Image Reference
 // ---------------------------------------------------------------------------
 
@@ -28,6 +34,7 @@ export type AvatarGenerationSettings = {
   full_prompt: string        // the combined prompt sent to the backend
   negative_prompt?: string
   style_preset: string
+  gender?: PersonaGender
   body_type?: string
   custom_extras?: string
   img_model: string
@@ -61,6 +68,7 @@ export type PersonaAppearance = {
   img_model?: string
   final_prompt?: string
   nsfwMode?: boolean
+  gender?: PersonaGender
   sets: Array<{
     set_id: string
     images: PersonaImageRef[]

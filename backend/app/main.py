@@ -3291,5 +3291,6 @@ async def persona_import_preview(file: UploadFile = File(...)) -> JSONResponse:
             "has_avatar": preview.has_avatar,
             "asset_names": preview.asset_names,
             "dependency_check": dep_report.to_dict(),
+            "avatar_preview_data_url": preview.thumb_data_url,
         },
     )
