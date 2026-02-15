@@ -53,11 +53,29 @@ export default {
     }
 
     // 2) Preview image: /v/<persona_id>/<version>
+    //    Tries multiple image formats since uploads may be webp, png, or jpg
     const vMatch = path.match(/^\/v\/([a-z0-9_-]+)\/([a-z0-9._-]+)$/i);
     if (vMatch) {
       const [, personaId, version] = vMatch;
-      const key = `previews/${personaId}/${version}/preview.webp`;
-      return r2File(env, key, "image/webp", 3600);
+      const candidates = [
+        { key: `previews/${personaId}/${version}/preview.webp`, ct: "image/webp" },
+        { key: `previews/${personaId}/${version}/preview.png`, ct: "image/png" },
+        { key: `previews/${personaId}/${version}/preview.jpg`, ct: "image/jpeg" },
+        { key: `previews/${personaId}/${version}/preview.jpeg`, ct: "image/jpeg" },
+      ];
+      for (const c of candidates) {
+        const obj = await env.PERSONA_BUCKET.get(c.key);
+        if (obj) {
+          return new Response(obj.body, {
+            headers: {
+              ...corsHeaders(),
+              "content-type": c.ct,
+              "cache-control": `public, max-age=3600, s-maxage=${3600 * 7}, immutable`,
+            },
+          });
+        }
+      }
+      return json({ error: "no preview image", persona: personaId }, 404);
     }
 
     // 3) Card JSON: /c/<persona_id>/<version>
@@ -73,7 +91,16 @@ export default {
     if (pMatch) {
       const [, personaId, version] = pMatch;
       const key = `packages/${personaId}/${version}/persona.hpersona`;
-      return r2File(env, key, "application/octet-stream", 86400);
+      const obj = await env.PERSONA_BUCKET.get(key);
+      if (!obj) return json({ error: "not found", key }, 404);
+      return new Response(obj.body, {
+        headers: {
+          ...corsHeaders(),
+          "content-type": "application/octet-stream",
+          "content-disposition": `attachment; filename="${personaId}.hpersona"`,
+          "cache-control": `public, max-age=86400, s-maxage=${86400 * 7}, immutable`,
+        },
+      });
     }
 
     return json({ error: "not found" }, 404);
