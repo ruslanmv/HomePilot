@@ -27,6 +27,7 @@ import type {
 } from './personaTypes'
 import { PERSONA_BLUEPRINTS } from './personaTypes'
 import { createPersonaProject, generatePersonaImages } from './personaApi'
+import { commitPersonaAvatar } from './personaPortability'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -373,7 +374,31 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
         },
       })
 
-      onCreated?.(result.project ?? result)
+      let project = result.project ?? result
+
+      // Safety net: if the backend auto-commit didn't persist the avatar
+      // (e.g. ComfyUI was briefly unreachable), retry via the commit
+      // endpoint using auto-resolve mode.  Non-fatal — the project is
+      // already created and the user can re-commit later from settings.
+      const appearance = (project?.persona_appearance ?? {}) as Record<string, unknown>
+      if (project?.id && !appearance.selected_filename) {
+        try {
+          const commitResult = await commitPersonaAvatar({
+            backendUrl,
+            apiKey,
+            projectId: project.id as string,
+            auto: true,
+          })
+          if (commitResult?.project) {
+            project = commitResult.project
+          }
+        } catch {
+          // Non-fatal: project creation succeeded, avatar can be committed later
+          console.warn('[PersonaWizard] Avatar auto-commit retry skipped')
+        }
+      }
+
+      onCreated?.(project)
       onClose()
     } catch (err: any) {
       alert(`Failed to create persona project: ${err?.message || 'Unknown error'}`)
@@ -874,7 +899,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
                       Generate a set to view options
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 gap-3 max-h-[440px] overflow-y-auto custom-scrollbar pr-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 max-h-[440px] overflow-y-auto custom-scrollbar pr-1">
                       {allImages.map((img) => {
                         const isSel =
                           draft.persona_appearance.selected?.set_id === img.set_id &&
@@ -899,7 +924,9 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
                                 : 'border-white/10 hover:border-white/30'
                             }`}
                           >
-                            <img src={img.url} className="w-full h-48 object-cover" alt="" loading="lazy" />
+                            <div className="aspect-[4/5] w-full overflow-hidden bg-zinc-900">
+                              <img src={img.url} className="w-full h-full object-cover" alt="" loading="lazy" decoding="async" />
+                            </div>
                             {isSel && (
                               <div className="absolute top-2 right-2 text-xs bg-purple-500 px-2 py-1 rounded-full font-medium shadow-lg">
                                 Selected

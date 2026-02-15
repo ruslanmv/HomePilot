@@ -91,7 +91,7 @@
     .header-btn--primary:hover { opacity: .9; color: #fff; }
 
     /* ── Main ───────────────────────────────────────── */
-    main { flex: 1; padding: 28px 24px; max-width: 1200px; margin: 0 auto; width: 100%; }
+    main { flex: 1; padding: 28px 24px; max-width: 1360px; margin: 0 auto; width: 100%; }
 
     /* ── Stats bar ──────────────────────────────────── */
     .stats-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
@@ -99,8 +99,11 @@
     .stats-text strong { color: var(--text); }
     .sort-select { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); font-size: 13px; outline: none; }
 
-    /* ── Card grid ──────────────────────────────────── */
-    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+    /* ── Card grid — max 4 columns ─────────────────── */
+    .grid { display: grid; grid-template-columns: repeat(1, minmax(0, 1fr)); gap: 20px; }
+    @media (min-width: 640px)  { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (min-width: 960px)  { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (min-width: 1280px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
     .card {
       background: var(--bg-card); border: 1px solid var(--border);
       border-radius: var(--radius); overflow: hidden;
@@ -109,7 +112,7 @@
     }
     .card:hover { border-color: var(--border-hover); transform: translateY(-2px); }
     .card-preview {
-      position: relative; width: 100%; aspect-ratio: 3/4;
+      position: relative; width: 100%; aspect-ratio: 4/5; max-height: 360px;
       background: linear-gradient(135deg, var(--bg-surface), var(--bg));
       display: flex; align-items: center; justify-content: center; overflow: hidden;
     }
@@ -260,10 +263,34 @@
     @media (max-width: 640px) {
       .header-inner { height: auto; padding: 12px 0; }
       .header-right input[type="search"] { width: 100%; }
-      .grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+      .grid { gap: 14px; }
+      .card-preview { max-height: 280px; }
       .modal { margin: 10px; border-radius: 16px; }
       .modal-hero { flex-direction: column; align-items: center; text-align: center; }
       .modal-avatar { width: 80px; height: 80px; }
+    }
+
+    /* ── Load More button ──────────────────────────── */
+    .load-more-wrap {
+      display: none;
+      justify-content: center;
+      padding: 28px 0 8px;
+    }
+    .load-more-btn {
+      padding: 10px 28px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .load-more-btn:hover {
+      border-color: var(--accent-purple);
+      color: var(--accent-purple);
+      background: rgba(139,92,246,.06);
     }
   </style>
 </head>
@@ -307,6 +334,9 @@
       </select>
     </div>
     <div id="grid" class="grid"></div>
+    <div id="load-more-wrap" class="load-more-wrap">
+      <button id="load-more-btn" class="load-more-btn">Load more</button>
+    </div>
   </main>
 
   <!-- ── Character Sheet Modal ────────────────────── -->
