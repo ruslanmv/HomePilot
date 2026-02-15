@@ -3233,6 +3233,26 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                   localStorage.setItem('homepilot_personality_id', personaId)
                   setVoiceLinkedToProject(true)
                   if (!isPersonasEnabled()) setPersonasEnabledGating(true)
+                  // Populate persona cache so VoiceModeGrok can resolve the personality
+                  // on mount (the auto-link useEffect is skipped for explicit sessions).
+                  try {
+                    const existing = localStorage.getItem(LS_PERSONA_CACHE)
+                    const cache = existing ? JSON.parse(existing) : []
+                    if (!cache.find((p: any) => p.id === currentProject.id)) {
+                      cache.push({
+                        id: currentProject.id,
+                        label: currentProject.persona_agent?.label || currentProject.name || 'Persona',
+                        role: currentProject.persona_agent?.role || '',
+                        tone: (currentProject.persona_agent?.response_style as any)?.tone || '',
+                        system_prompt: currentProject.persona_agent?.system_prompt || '',
+                        style_preset: '',
+                        character_desc: '',
+                        created_at: 0,
+                        photos: [],
+                      })
+                      localStorage.setItem(LS_PERSONA_CACHE, JSON.stringify(cache))
+                    }
+                  } catch (err) { console.warn('[Voice] Session persona cache update failed:', err) }
                   // Load message history so user can see previous conversation
                   try {
                     const convData = await getJson<{
