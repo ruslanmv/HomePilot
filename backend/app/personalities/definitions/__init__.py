@@ -20,6 +20,7 @@ from . import (
     romantic,
     argumentative,
     fan_service,
+    interview,
 )
 
 ALL_MODULES = [
@@ -38,4 +39,5 @@ ALL_MODULES = [
     romantic,
     argumentative,
     fan_service,
+    interview,
 ]

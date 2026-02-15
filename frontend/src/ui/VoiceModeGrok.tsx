@@ -726,10 +726,24 @@ export default function VoiceModeGrok({
     }
   }, [activeVoice, speed]);
 
-  // Persist personality selection
+  // Track previous personality to detect mid-session switches
+  const prevPersonalityRef = useRef<string>(activePersonality.id);
+
+  // Persist personality selection AND reset session on identity switch.
+  // A personality change is an identity boundary — the new persona should
+  // start with a fresh conversation (no stale history from the old identity).
   useEffect(() => {
     localStorage.setItem(LS_PERSONALITY_ID, activePersonality.id);
-  }, [activePersonality]);
+
+    const prev = prevPersonalityRef.current;
+    if (prev && prev !== activePersonality.id) {
+      console.log(`[Voice] Personality switch: '${prev}' → '${activePersonality.id}' — starting fresh session`);
+      // Reset session: clear messages + get fresh conversationId.
+      // The voice UI stays open — only the backend session boundary changes.
+      onNewChat?.();
+    }
+    prevPersonalityRef.current = activePersonality.id;
+  }, [activePersonality, onNewChat]);
 
   // Persist speed
   useEffect(() => {

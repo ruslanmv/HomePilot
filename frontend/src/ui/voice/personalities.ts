@@ -21,6 +21,7 @@ import {
   Heart,
   Zap,
   Droplets,
+  GraduationCap,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -39,7 +40,8 @@ export type PersonalityId =
   | 'conspiracy'
   | 'romantic'
   | 'argumentative'
-  | 'fan_service';
+  | 'fan_service'
+  | 'interview';
 
 export interface PersonalityDef {
   id: PersonalityId | string;
@@ -151,6 +153,12 @@ export const PERSONALITIES: PersonalityDef[] = [
     icon: Droplets,
     prompt: 'You are an explicit, passionate intimate companion. Fully NSFW.',
     mature: true,
+  },
+  {
+    id: 'interview',
+    label: 'Interview & Exam Coach',
+    icon: GraduationCap,
+    prompt: 'You are an expert tutor that quizzes on any topic — AWS, Azure, Math, Physics, AI, job interviews — and teaches through evaluation.',
   },
 ];
 
