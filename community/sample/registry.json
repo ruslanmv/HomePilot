@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-02-15T12:00:00Z",
+  "items": [
+    {
+      "id": "scarlett_exec_secretary",
+      "name": "Scarlett",
+      "short": "Executive secretary — professional, proactive, detail-oriented",
+      "tags": ["professional", "secretary", "productivity"],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 1204,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/scarlett_exec_secretary/1.0.0",
+        "preview_url": "/v/scarlett_exec_secretary/1.0.0",
+        "card_url": "/c/scarlett_exec_secretary/1.0.0",
+        "sha256": "",
+        "size_bytes": 524288
+      }
+    },
+    {
+      "id": "atlas_research_assistant",
+      "name": "Atlas",
+      "short": "Research assistant — analytical, thorough, citation-focused",
+      "tags": ["research", "assistant", "academic"],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 876,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/atlas_research_assistant/1.0.0",
+        "preview_url": "/v/atlas_research_assistant/1.0.0",
+        "card_url": "/c/atlas_research_assistant/1.0.0",
+        "sha256": "",
+        "size_bytes": 389120
+      }
+    }
+  ]
+}

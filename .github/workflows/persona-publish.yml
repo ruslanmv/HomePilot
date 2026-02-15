@@ -1,0 +1,473 @@
+##############################################################################
+# Persona Publish Pipeline
+#
+# Triggered when a maintainer adds the "persona-approved" label to an issue
+# created from the Persona Submission template.
+#
+# Flow:
+#   1. Parse the structured issue body for metadata + attachment URL
+#   2. Download the .hpersona package
+#   3. Validate package integrity (ZIP, manifest, schema)
+#   4. Extract preview image + card metadata
+#   5. Create a GitHub Release with the .hpersona as a release asset
+#   6. Upload preview, card, and package directly to Cloudflare R2
+#   7. Update registry.json in R2
+#   8. Purge the Cloudflare Worker cache so gallery updates immediately
+#   9. Comment on the issue with a success message and close it
+#
+# Required GitHub Secrets:
+#   R2_ACCESS_KEY_ID      — R2 API token Access Key ID
+#   R2_SECRET_ACCESS_KEY  — R2 API token Secret Access Key
+#   CLOUDFLARE_ACCOUNT_ID — Cloudflare account ID
+#   R2_BUCKET_NAME        — R2 bucket name (e.g. "homepilot")
+#   CLOUDFLARE_API_TOKEN  — (optional) Cloudflare API token with Cache Purge
+#                           permission; used to purge the Worker edge cache
+#                           after registry update. If not set, the cache
+#                           expires naturally (60s registry, 1h assets).
+##############################################################################
+name: Persona Publish
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  publish:
+    # Only run when the "persona-approved" label is added
+    if: github.event.label.name == 'persona-approved'
+    runs-on: ubuntu-latest
+
+    env:
+      R2_BUCKET: ${{ secrets.R2_BUCKET_NAME }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_ENDPOINT: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── 2. Parse issue body ──────────────────────────────────────
+      - name: Parse submission from issue
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+            const author = context.payload.issue.user.login;
+            const issueNumber = context.payload.issue.number;
+
+            // Parse structured fields from GitHub Issue Forms
+            // Fields appear as: ### Field Label\n\nvalue\n
+            function getField(label) {
+              const regex = new RegExp(`### ${label}\\s*\\n\\n([\\s\\S]*?)(?=\\n### |$)`, 'i');
+              const match = body.match(regex);
+              return match ? match[1].trim() : '';
+            }
+
+            const personaName = getField('Persona Name');
+            const shortDesc = getField('Short Description');
+            const detailedDesc = getField('Detailed Description');
+            const tags = getField('Tags');
+            const contentRating = getField('Content Rating');
+            const packageField = getField('Persona Package');
+            const previewField = getField('Preview Image \\(optional\\)');
+            const version = getField('Version') || '1.0.0';
+
+            // Extract attachment URL from markdown link: [name](url)
+            // Also handle raw URLs and GitHub user-attachments URLs
+            function extractUrl(text) {
+              // Markdown link: [text](url)
+              let match = text.match(/\[.*?\]\((https?:\/\/[^\s)]+)\)/);
+              if (match) return match[1];
+              // Raw URL
+              match = text.match(/(https?:\/\/[^\s]+)/);
+              if (match) return match[1];
+              return '';
+            }
+
+            const packageUrl = extractUrl(packageField);
+            const previewUrl = extractUrl(previewField);
+
+            if (!packageUrl) {
+              core.setFailed('Could not find .hpersona attachment URL in the issue body');
+              return;
+            }
+
+            if (!personaName) {
+              core.setFailed('Could not parse persona name from the issue');
+              return;
+            }
+
+            // Build slug from persona name
+            const slug = personaName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'persona';
+
+            // Parse tags: Issue Forms multi-select produces comma-separated values
+            const parsedTags = tags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+
+            const isNsfw = contentRating.toLowerCase().includes('nsfw');
+
+            core.setOutput('persona_name', personaName);
+            core.setOutput('short_desc', shortDesc);
+            core.setOutput('detailed_desc', detailedDesc);
+            core.setOutput('tags', JSON.stringify(parsedTags));
+            core.setOutput('content_rating', isNsfw ? 'nsfw' : 'sfw');
+            core.setOutput('nsfw', isNsfw ? 'true' : 'false');
+            core.setOutput('package_url', packageUrl);
+            core.setOutput('preview_url', previewUrl);
+            core.setOutput('version', version);
+            core.setOutput('slug', slug);
+            core.setOutput('author', author);
+            core.setOutput('issue_number', issueNumber.toString());
+
+            console.log(`Parsed submission: ${personaName} (${slug}) v${version} by @${author}`);
+            console.log(`Package URL: ${packageUrl}`);
+            console.log(`Tags: ${parsedTags.join(', ')}`);
+
+      # ── 3. Download .hpersona ────────────────────────────────────
+      - name: Download persona package
+        run: |
+          mkdir -p /tmp/persona-work
+          curl -fSL -o /tmp/persona-work/persona.hpersona \
+            "${{ steps.parse.outputs.package_url }}"
+          echo "Downloaded: $(stat -c%s /tmp/persona-work/persona.hpersona) bytes"
+
+      # ── 4. Download preview image (if provided) ─────────────────
+      - name: Download preview image
+        if: steps.parse.outputs.preview_url != ''
+        run: |
+          curl -fSL -o /tmp/persona-work/user_preview.img \
+            "${{ steps.parse.outputs.preview_url }}" || true
+
+      # ── 5. Validate package ──────────────────────────────────────
+      - name: Validate .hpersona package
+        id: validate
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          RESULT=$(python community/scripts/process_submission.py validate \
+            /tmp/persona-work/persona.hpersona)
+          echo "$RESULT" | python -m json.tool
+          VALID=$(echo "$RESULT" | python -c "import sys,json; print(json.load(sys.stdin)['valid'])")
+          if [ "$VALID" != "True" ]; then
+            echo "::error::Package validation failed"
+            ERRORS=$(echo "$RESULT" | python -c "import sys,json; print('\n'.join(json.load(sys.stdin)['errors']))")
+            echo "errors<<EOF" >> $GITHUB_OUTPUT
+            echo "$ERRORS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          SHA=$(echo "$RESULT" | python -c "import sys,json; print(json.load(sys.stdin).get('sha256',''))")
+          SIZE=$(echo "$RESULT" | python -c "import sys,json; print(json.load(sys.stdin).get('size_bytes',0))")
+          echo "sha256=$SHA" >> $GITHUB_OUTPUT
+          echo "size_bytes=$SIZE" >> $GITHUB_OUTPUT
+
+      # ── 6. Extract metadata + preview ────────────────────────────
+      - name: Extract metadata and preview assets
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          python community/scripts/process_submission.py extract \
+            /tmp/persona-work/persona.hpersona \
+            /tmp/persona-work/extracted
+
+          ls -la /tmp/persona-work/extracted/
+
+      # ── 7. Prepare preview files ─────────────────────────────────
+      - name: Prepare preview files for R2 upload
+        run: |
+          PERSONA_ID="${{ steps.parse.outputs.slug }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+          UPLOAD_DIR="/tmp/persona-work/r2-upload"
+          mkdir -p "$UPLOAD_DIR"
+
+          # Use user-provided preview if available, else extracted avatar
+          if [ -f /tmp/persona-work/user_preview.img ]; then
+            cp /tmp/persona-work/user_preview.img "$UPLOAD_DIR/preview.webp"
+          elif ls /tmp/persona-work/extracted/preview.* 1>/dev/null 2>&1; then
+            cp /tmp/persona-work/extracted/preview.* "$UPLOAD_DIR/preview.webp"
+          fi
+
+          # Copy card metadata
+          if [ -f /tmp/persona-work/extracted/card.json ]; then
+            cp /tmp/persona-work/extracted/card.json "$UPLOAD_DIR/card.json"
+          fi
+
+          # Copy the .hpersona package itself
+          cp /tmp/persona-work/persona.hpersona "$UPLOAD_DIR/persona.hpersona"
+
+          ls -la "$UPLOAD_DIR/"
+
+      # ── 8. Create GitHub Release ─────────────────────────────────
+      - name: Create GitHub Release with package
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PERSONA_ID="${{ steps.parse.outputs.slug }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+          TAG="persona-${PERSONA_ID}-v${VERSION}"
+          NAME="${{ steps.parse.outputs.persona_name }}"
+          SHORT="${{ steps.parse.outputs.short_desc }}"
+          AUTHOR="${{ steps.parse.outputs.author }}"
+          ISSUE="${{ steps.parse.outputs.issue_number }}"
+
+          # Delete existing release/tag if re-publishing same version
+          gh release delete "$TAG" --yes 2>/dev/null || true
+          git tag -d "$TAG" 2>/dev/null || true
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+
+          BODY="## ${NAME}
+
+          ${SHORT}
+
+          **Submitted by:** @${AUTHOR}
+          **Issue:** #${ISSUE}
+          **Version:** ${VERSION}
+          **SHA-256:** \`${{ steps.validate.outputs.sha256 }}\`
+
+          ### Install
+          1. Download the \`.hpersona\` file below
+          2. In HomePilot, go to **My Projects** > **Import**
+          3. Drag the file in and follow the 3-step install wizard
+
+          Or browse in the Community Gallery."
+
+          gh release create "$TAG" \
+            /tmp/persona-work/persona.hpersona \
+            --title "Persona: ${NAME} v${VERSION}" \
+            --notes "$BODY" \
+            --latest=false
+
+          # Get the download URL for the release asset
+          DOWNLOAD_URL=$(gh release view "$TAG" --json assets \
+            --jq '.assets[0].url')
+          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          echo "Release created: $TAG"
+
+      # ── 9. Upload to Cloudflare R2 ─────────────────────────────
+      - name: Upload persona assets to R2
+        run: |
+          PERSONA_ID="${{ steps.parse.outputs.slug }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+          UPLOAD_DIR="/tmp/persona-work/r2-upload"
+
+          # Upload .hpersona package
+          aws s3 cp "$UPLOAD_DIR/persona.hpersona" \
+            "s3://${R2_BUCKET}/packages/${PERSONA_ID}/${VERSION}/persona.hpersona" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/octet-stream"
+          echo "Uploaded package to R2"
+
+          # Upload preview image
+          if [ -f "$UPLOAD_DIR/preview.webp" ]; then
+            aws s3 cp "$UPLOAD_DIR/preview.webp" \
+              "s3://${R2_BUCKET}/previews/${PERSONA_ID}/${VERSION}/preview.webp" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --content-type "image/webp"
+            echo "Uploaded preview to R2"
+          fi
+
+          # Upload card.json
+          if [ -f "$UPLOAD_DIR/card.json" ]; then
+            aws s3 cp "$UPLOAD_DIR/card.json" \
+              "s3://${R2_BUCKET}/previews/${PERSONA_ID}/${VERSION}/card.json" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --content-type "application/json"
+            echo "Uploaded card to R2"
+          fi
+
+      # ── 10. Build + upload registry entry ──────────────────────
+      - name: Update registry.json in R2
+        run: |
+          PERSONA_ID="${{ steps.parse.outputs.slug }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+          TAG="${{ steps.release.outputs.tag }}"
+          REPO="${{ github.repository }}"
+
+          # Package URL points to R2 Worker (or direct R2 public URL)
+          PACKAGE_URL="packages/${PERSONA_ID}/${VERSION}/persona.hpersona"
+          PREVIEW_URL="previews/${PERSONA_ID}/${VERSION}/preview.webp"
+          CARD_URL="previews/${PERSONA_ID}/${VERSION}/card.json"
+
+          # Create registry entry
+          cat > /tmp/persona-work/entry.json <<ENTRY_EOF
+          {
+            "id": "${PERSONA_ID}",
+            "name": "${{ steps.parse.outputs.persona_name }}",
+            "short": $(echo '${{ steps.parse.outputs.short_desc }}' | python -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))"),
+            "tags": ${{ steps.parse.outputs.tags }},
+            "nsfw": ${{ steps.parse.outputs.nsfw }},
+            "author": "${{ steps.parse.outputs.author }}",
+            "issue_number": ${{ steps.parse.outputs.issue_number }},
+            "submitted_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "downloads": 0,
+            "latest": {
+              "version": "${VERSION}",
+              "package_url": "${PACKAGE_URL}",
+              "preview_url": "${PREVIEW_URL}",
+              "card_url": "${CARD_URL}",
+              "sha256": "${{ steps.validate.outputs.sha256 }}",
+              "size_bytes": ${{ steps.validate.outputs.size_bytes }}
+            }
+          }
+          ENTRY_EOF
+
+          cat /tmp/persona-work/entry.json | python -m json.tool
+
+          # Download current registry from R2 (or start fresh)
+          aws s3 cp "s3://${R2_BUCKET}/registry/registry.json" \
+            /tmp/persona-work/registry.json \
+            --endpoint-url "$R2_ENDPOINT" 2>/dev/null \
+            || echo '{"personas":[]}' > /tmp/persona-work/registry.json
+
+          # Merge new entry into registry
+          cd "$GITHUB_WORKSPACE"
+          python community/scripts/process_submission.py registry \
+            /tmp/persona-work/registry.json \
+            /tmp/persona-work/entry.json
+
+          echo "Updated registry:"
+          python -m json.tool /tmp/persona-work/registry.json
+
+          # Upload updated registry back to R2
+          aws s3 cp /tmp/persona-work/registry.json \
+            "s3://${R2_BUCKET}/registry/registry.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json"
+          echo "Registry uploaded to R2"
+
+      # ── 11. Purge Cloudflare Worker edge cache ─────────────────
+      - name: Purge Worker cache for updated registry
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WORKER_URL: https://homepilot-persona-gallery.cloud-data.workers.dev
+        run: |
+          PERSONA_ID="${{ steps.parse.outputs.slug }}"
+          VERSION="${{ steps.parse.outputs.version }}"
+
+          # Purge the registry + the newly uploaded persona assets
+          # so gallery shows the update immediately (no 60s stale cache).
+          PURGE_URLS=$(cat <<URLS
+          [
+            "${WORKER_URL}/registry.json",
+            "${WORKER_URL}/v/${PERSONA_ID}/${VERSION}",
+            "${WORKER_URL}/c/${PERSONA_ID}/${VERSION}",
+            "${WORKER_URL}/p/${PERSONA_ID}/${VERSION}"
+          ]
+          URLS
+          )
+
+          # Use Cloudflare API to purge by URL
+          # https://developers.cloudflare.com/api/resources/cache/methods/purge/
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ACCOUNT_ID}/purge_cache" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"files\": ${PURGE_URLS}}" || true)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "Cache purge response (HTTP ${HTTP_CODE}):"
+          echo "$BODY" | python -m json.tool 2>/dev/null || echo "$BODY"
+
+          # Non-fatal — if purge fails, cache expires naturally (60s for registry)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::Cache purge returned HTTP ${HTTP_CODE}. Registry cache will expire in ~60s."
+          else
+            echo "Edge cache purged for ${PERSONA_ID} v${VERSION}"
+          fi
+
+      # ── 12. Comment + Close issue ────────────────────────────────
+      - name: Comment and close issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = parseInt('${{ steps.parse.outputs.issue_number }}');
+            const personaName = '${{ steps.parse.outputs.persona_name }}';
+            const slug = '${{ steps.parse.outputs.slug }}';
+            const version = '${{ steps.parse.outputs.version }}';
+            const tag = '${{ steps.release.outputs.tag }}';
+            const sha = '${{ steps.validate.outputs.sha256 }}';
+            const repo = context.repo;
+
+            const releaseUrl = `https://github.com/${repo.owner}/${repo.repo}/releases/tag/${tag}`;
+
+            const body = [
+              `### Persona Published Successfully`,
+              ``,
+              `**${personaName}** is now live in the Community Gallery!`,
+              ``,
+              `| Detail | Value |`,
+              `|--------|-------|`,
+              `| **Release** | [${tag}](${releaseUrl}) |`,
+              `| **Version** | ${version} |`,
+              `| **SHA-256** | \`${sha}\` |`,
+              `| **Storage** | Cloudflare R2 |`,
+              ``,
+              `#### How users install this persona:`,
+              `1. Open HomePilot > **Shared with me** tab`,
+              `2. Find **${personaName}** and click **Install**`,
+              `3. Or download directly from the [release page](${releaseUrl})`,
+              ``,
+              `Thank you for your contribution! :tada:`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              ...repo,
+              issue_number: issueNumber,
+              body: body,
+            });
+
+            await github.rest.issues.update({
+              ...repo,
+              issue_number: issueNumber,
+              state: 'closed',
+              labels: ['persona-submission', 'persona-approved', 'persona-published'],
+            });
+
+      # ── Error handling: notify on failure ────────────────────────
+      - name: Comment failure on issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.payload.issue.number;
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const errors = `${{ steps.validate.outputs.errors || 'See workflow logs for details.' }}`;
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: [
+                `### Persona Publish Failed`,
+                ``,
+                `The automated pipeline encountered an error while processing this submission.`,
+                ``,
+                `**Errors:**`,
+                '```',
+                errors,
+                '```',
+                ``,
+                `**Workflow run:** [View logs](${runUrl})`,
+                ``,
+                `A maintainer will investigate. The \`persona-approved\` label has been kept so the pipeline can be re-triggered after fixes.`,
+              ].join('\n'),
+            });

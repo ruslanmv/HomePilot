@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HomePilot Community Personas</title>
+  <meta name="description" content="Browse and download community-created AI personas for HomePilot." />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="HomePilot Community Persona Gallery" />
+  <meta property="og:description" content="Browse community-created AI personas. Download and install with one click." />
+
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎭</text></svg>" />
+</head>
+<body>
+  <header class="bar">
+    <div class="bar-left">
+      <div class="logo">HomePilot</div>
+      <div class="subtitle">Community Personas</div>
+    </div>
+    <div class="bar-right">
+      <input id="q" type="search" placeholder="Search personas..." autocomplete="off" />
+      <select id="filter-tag" title="Filter by tag">
+        <option value="">All Tags</option>
+      </select>
+      <select id="filter-rating" title="Filter by content rating">
+        <option value="">All Ratings</option>
+        <option value="sfw" selected>SFW Only</option>
+        <option value="nsfw">NSFW Only</option>
+      </select>
+      <a
+        href="https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml"
+        class="submit-btn"
+        target="_blank" rel="noopener"
+      >+ Submit Persona</a>
+      <button id="refresh" title="Refresh registry">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="status" class="status"></div>
+    <div id="stats" class="stats"></div>
+    <div id="grid" class="grid"></div>
+  </main>
+
+  <footer class="footer">
+    <p>
+      Personas are community-contributed <code>.hpersona</code> packages shared under
+      <a href="https://github.com/ruslanmv/HomePilot/blob/master/LICENSE" target="_blank" rel="noopener">Apache 2.0</a>.
+      Download and import into <a href="https://github.com/ruslanmv/HomePilot" target="_blank" rel="noopener">HomePilot</a> to use.
+      <br><br>
+      Want to share yours? <a href="https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml" target="_blank" rel="noopener">Submit a Persona</a>
+    </p>
+  </footer>
+
+  <script>
+    // ── Gallery API configuration ──────────────────────────────────
+    // Primary — Cloudflare Worker (edge-cached, no rate limits):
+    window.GALLERY_API  = "https://homepilot-persona-gallery.cloud-data.workers.dev";
+    window.GALLERY_MODE = "worker";
+    //
+    // Fallback — R2 direct (rate-limited, uncomment to use instead):
+    // window.GALLERY_API  = "https://pub-0274961e62694c09bdb4c8f2822ca3f1.r2.dev";
+    // window.GALLERY_MODE = "r2";
+  </script>
+  <script src="./app.js"></script>
+</body>
+</html>

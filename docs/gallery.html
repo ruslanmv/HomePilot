@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Community Gallery — HomePilot</title>
+  <meta name="description" content="Browse and install community-created AI personas for HomePilot. Free, open-source, and powered by GitHub." />
+  <link rel="canonical" href="https://ruslanmv.github.io/HomePilot/gallery.html" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="HomePilot Community Persona Gallery" />
+  <meta property="og:description" content="Browse community-created AI personas. Download and install with one click." />
+  <meta property="og:url" content="https://ruslanmv.github.io/HomePilot/gallery.html" />
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎭</text></svg>" />
+
+  <style>
+    /* ── Reset & Theme ──────────────────────────────── */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg:           #09090b;
+      --bg-surface:   #111113;
+      --bg-card:      #161618;
+      --border:       rgba(255,255,255,0.06);
+      --border-hover: rgba(255,255,255,0.14);
+      --text:         #e4e4e7;
+      --text-muted:   #71717a;
+      --accent-cyan:  #06b6d4;
+      --accent-blue:  #3b82f6;
+      --accent-purple:#8b5cf6;
+      --gradient:     linear-gradient(135deg, #06b6d4, #3b82f6, #8b5cf6);
+      --green:        #22c55e;
+      --amber:        #f59e0b;
+      --red:          #ef4444;
+      --radius:       12px;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent-cyan); text-decoration: none; }
+    a:hover { color: var(--accent-blue); }
+    ::selection { background: rgba(59,130,246,.3); }
+
+    /* ── Header ─────────────────────────────────────── */
+    .header {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(9,9,11,.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+    }
+    .header-inner {
+      max-width: 1200px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      height: 64px; flex-wrap: wrap; gap: 12px;
+    }
+    .header-left {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .brand {
+      font-size: 18px; font-weight: 700; color: var(--text);
+    }
+    .brand-sub {
+      font-size: 14px; color: var(--text-muted); font-weight: 400;
+    }
+    .header-right {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .header-right input[type="search"],
+    .header-right select {
+      padding: 8px 14px; border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg); color: var(--text);
+      font-size: 14px; outline: none;
+      transition: border-color .2s;
+    }
+    .header-right input:focus,
+    .header-right select:focus {
+      border-color: var(--accent-purple);
+    }
+    .header-right input[type="search"] { width: 220px; }
+    .header-btn {
+      padding: 8px 16px; border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg-card); color: var(--text-muted);
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      transition: all .2s; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .header-btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+    .header-btn--primary {
+      background: var(--gradient); color: #fff; border-color: transparent;
+    }
+    .header-btn--primary:hover { opacity: .9; color: #fff; }
+
+    /* ── Main ───────────────────────────────────────── */
+    main {
+      flex: 1; padding: 28px 24px;
+      max-width: 1200px; margin: 0 auto; width: 100%;
+    }
+
+    /* ── Stats bar ──────────────────────────────────── */
+    .stats-bar {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+    }
+    .stats-text { color: var(--text-muted); font-size: 14px; }
+    .stats-text strong { color: var(--text); }
+    .sort-select {
+      padding: 6px 12px; border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg); color: var(--text-muted);
+      font-size: 13px; outline: none;
+    }
+
+    /* ── Card grid ──────────────────────────────────── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      transition: border-color .2s, transform .15s;
+      display: flex; flex-direction: column;
+    }
+    .card:hover { border-color: var(--border-hover); transform: translateY(-2px); }
+
+    .card-preview {
+      position: relative;
+      width: 100%; aspect-ratio: 3/4;
+      background: linear-gradient(135deg, var(--bg-surface), var(--bg));
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+    .card-preview img {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    .card-preview .placeholder {
+      font-size: 56px; color: var(--text-muted); opacity: .5;
+    }
+    .card-nsfw {
+      position: absolute; top: 8px; right: 8px;
+      padding: 3px 10px; border-radius: 999px;
+      background: rgba(239,68,68,.85); color: #fff;
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      backdrop-filter: blur(4px);
+    }
+    .card-rating-sfw {
+      position: absolute; top: 8px; right: 8px;
+      padding: 3px 10px; border-radius: 999px;
+      background: rgba(34,197,94,.2); color: var(--green);
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      border: 1px solid rgba(34,197,94,.3);
+    }
+
+    .card-body { padding: 16px; flex: 1; display: flex; flex-direction: column; }
+    .card-name {
+      font-size: 16px; font-weight: 700;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      margin-bottom: 4px;
+    }
+    .card-short {
+      font-size: 13px; color: var(--text-muted);
+      line-height: 1.5;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      overflow: hidden; margin-bottom: 12px; min-height: 39px;
+    }
+    .card-tags {
+      display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px;
+    }
+    .tag {
+      padding: 2px 10px; border-radius: 999px;
+      font-size: 11px; font-weight: 500;
+      background: rgba(139,92,246,.08); border: 1px solid rgba(139,92,246,.2);
+      color: #c084fc;
+    }
+    .card-meta {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px; color: var(--text-muted); margin-bottom: 14px;
+    }
+    .card-author { display: flex; align-items: center; gap: 4px; }
+    .card-size { white-space: nowrap; }
+
+    .card-actions { margin-top: auto; display: flex; gap: 8px; }
+    .card-btn {
+      flex: 1; padding: 10px 14px; border-radius: 8px;
+      border: none; font-size: 13px; font-weight: 600;
+      text-align: center; cursor: pointer; transition: all .2s;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      text-decoration: none;
+    }
+    .card-btn--download {
+      background: var(--accent-purple); color: #fff;
+    }
+    .card-btn--download:hover { background: #7c3aed; color: #fff; }
+    .card-btn--details {
+      background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
+    }
+    .card-btn--details:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
+
+    /* ── Empty state ────────────────────────────────── */
+    .empty {
+      text-align: center; padding: 80px 24px; color: var(--text-muted);
+    }
+    .empty-icon { font-size: 56px; margin-bottom: 16px; }
+    .empty-title { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+    .empty-text { max-width: 420px; margin: 0 auto 24px; }
+
+    /* ── Loading ─────────────────────────────────────── */
+    .loading { text-align: center; padding: 48px; color: var(--text-muted); }
+    .spinner {
+      width: 32px; height: 32px; margin: 0 auto 16px;
+      border: 3px solid var(--border); border-top-color: var(--accent-purple);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Error ───────────────────────────────────────── */
+    .error-banner {
+      padding: 14px 20px; border-radius: 8px;
+      background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.2);
+      color: var(--red); font-size: 14px; margin-bottom: 24px;
+    }
+
+    /* ── Footer ──────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border); padding: 24px;
+      text-align: center; color: var(--text-muted); font-size: 13px;
+    }
+    footer a { color: var(--accent-cyan); }
+    footer code {
+      background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 4px;
+      font-size: 12px;
+    }
+
+    /* ── Responsive ──────────────────────────────────── */
+    @media (max-width: 640px) {
+      .header-inner { height: auto; padding: 12px 0; }
+      .header-right input[type="search"] { width: 100%; }
+      .grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ───────────────────────────────────── -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="header-left">
+        <a href="./" class="brand">HomePilot</a>
+        <span class="brand-sub">Community Gallery</span>
+      </div>
+      <div class="header-right">
+        <input id="search" type="search" placeholder="Search personas..." autocomplete="off" aria-label="Search personas" />
+        <select id="filter-tag" aria-label="Filter by tag">
+          <option value="">All Tags</option>
+        </select>
+        <select id="filter-rating" aria-label="Filter by content rating">
+          <option value="">All Ratings</option>
+          <option value="sfw" selected>SFW Only</option>
+          <option value="nsfw">NSFW Only</option>
+        </select>
+        <a
+          href="https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml"
+          class="header-btn header-btn--primary"
+          target="_blank" rel="noopener"
+          aria-label="Submit a persona"
+        >
+          + Submit Persona
+        </a>
+        <a href="https://github.com/ruslanmv/HomePilot" class="header-btn" target="_blank" rel="noopener">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
+          Star
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main content ─────────────────────────────── -->
+  <main>
+    <div id="status"></div>
+    <div id="stats-bar" class="stats-bar" style="display:none">
+      <div class="stats-text">
+        Showing <strong id="showing-count">0</strong> of <strong id="total-count">0</strong> personas
+      </div>
+      <select id="sort" class="sort-select" aria-label="Sort personas">
+        <option value="name">Sort: Name A-Z</option>
+        <option value="newest">Sort: Newest First</option>
+        <option value="size">Sort: Smallest First</option>
+      </select>
+    </div>
+    <div id="grid" class="grid"></div>
+  </main>
+
+  <!-- ── Footer ───────────────────────────────────── -->
+  <footer>
+    <p>
+      Personas are community-contributed <code>.hpersona</code> packages shared under
+      <a href="https://github.com/ruslanmv/HomePilot/blob/master/LICENSE" target="_blank" rel="noopener">Apache 2.0</a>.
+      Download and import into <a href="https://github.com/ruslanmv/HomePilot" target="_blank" rel="noopener">HomePilot</a> to use.
+      <br><br>
+      Want to share yours? <a href="https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml" target="_blank" rel="noopener">Submit a Persona</a>
+    </p>
+  </footer>
+
+  <script>
+    // ── Gallery source configuration ───────────────────────────────
+    // Primary — Cloudflare Worker (edge-cached, no rate limits):
+    window.GALLERY_API  = "https://homepilot-persona-gallery.cloud-data.workers.dev";
+    window.GALLERY_MODE = "worker";
+    //
+    // Fallback — R2 direct (rate-limited, uncomment to use instead):
+    // window.GALLERY_API  = "https://pub-0274961e62694c09bdb4c8f2822ca3f1.r2.dev";
+    // window.GALLERY_MODE = "r2";
+    //
+    // When both are commented out, gallery.js reads ./registry.json from GitHub Pages.
+  </script>
+  <script src="gallery.js"></script>
+</body>
+</html>
