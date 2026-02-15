@@ -277,11 +277,18 @@ export function PersonaImportModal({
 
               {/* Persona card */}
               <div className="flex items-start gap-4 p-4 rounded-xl bg-white/[0.04] border border-white/[0.08]">
-                <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-white/10 flex items-center justify-center shrink-0">
-                  {preview.has_avatar
-                    ? <ImageIcon size={24} className="text-pink-400" />
-                    : <Bot size={24} className="text-purple-400" />
-                  }
+                <div className="w-16 h-16 rounded-xl overflow-hidden bg-gradient-to-br from-purple-500/20 to-pink-500/20 border border-white/10 flex items-center justify-center shrink-0">
+                  {preview.avatar_preview_data_url ? (
+                    <img
+                      src={preview.avatar_preview_data_url}
+                      alt={agentLabel}
+                      className="block w-full h-full object-cover"
+                    />
+                  ) : preview.has_avatar ? (
+                    <ImageIcon size={24} className="text-pink-400" />
+                  ) : (
+                    <Bot size={24} className="text-purple-400" />
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="text-lg font-semibold text-white">{agentLabel}</h3>
