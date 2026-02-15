@@ -115,6 +115,13 @@ function readNsfwMode(): boolean {
   }
 }
 
+/** Build a displayable /files/ URL from a DB-stored relative path. */
+function fileUrl(backendUrl: string, rel?: string | null): string | null {
+  if (!rel) return null
+  const clean = rel.replace(/^\/+/, '')
+  return `${backendUrl}/files/${clean}`
+}
+
 let _imgCounter = 0
 function nextImageId(): string {
   return `pimg_${Date.now()}_${++_imgCounter}`
@@ -222,10 +229,32 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   const [catalogLoading, setCatalogLoading] = useState(true)
 
   // Avatar state (sets is stateful so individual image deletions trigger re-render)
-  const [sets, setSets] = useState<Array<{ set_id: string; images: Array<{ id: string; url: string; set_id: string }> }>>(pap.sets || [])
+  // For imported personas: sets may be empty but selected_filename exists on disk.
+  // Synthesize a fallback set so the portrait renders immediately.
+  const initialSets = (() => {
+    const raw = Array.isArray(pap.sets) ? pap.sets : []
+    if (raw.length > 0) return raw
+
+    const thumb = pap.selected_thumb_filename as string | undefined
+    const full = pap.selected_filename as string | undefined
+    const url = fileUrl(backendUrl, thumb || full)
+    if (!url) return []
+
+    return [
+      {
+        set_id: 'set_imported_001',
+        images: [{ id: 'pimg_imported_001', url, set_id: 'set_imported_001' }],
+      },
+    ]
+  })()
+
+  const [sets, setSets] = useState<Array<{ set_id: string; images: Array<{ id: string; url: string; set_id: string }> }>>(initialSets)
   const allImages = sets.flatMap((s) => (s.images || []).map((img) => ({ ...img, set_id: s.set_id })))
   const [selectedImage, setSelectedImage] = useState<{ set_id: string; image_id: string } | null>(
-    pap.selected || null,
+    pap.selected
+      || (initialSets.length > 0
+        ? { set_id: initialSets[0].set_id, image_id: initialSets[0].images[0].id }
+        : null),
   )
 
   // Outfit / wardrobe state
@@ -263,18 +292,22 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
 
   // Find selected image URL — must search base portraits AND outfit images
   const selectedUrl = (() => {
-    if (!selectedImage) return null
-    // Check base portraits
-    for (const img of allImages) {
-      if (img.id === selectedImage.image_id && img.set_id === selectedImage.set_id) return img.url
-    }
-    // Check outfit images
-    for (const outfit of outfits) {
-      for (const img of outfit.images) {
+    if (selectedImage) {
+      // Check base portraits
+      for (const img of allImages) {
         if (img.id === selectedImage.image_id && img.set_id === selectedImage.set_id) return img.url
       }
+      // Check outfit images
+      for (const outfit of outfits) {
+        for (const img of outfit.images) {
+          if (img.id === selectedImage.image_id && img.set_id === selectedImage.set_id) return img.url
+        }
+      }
     }
-    return allImages[0]?.url || null
+    // Fallback: first image in gallery, or resolve from imported filename fields
+    return allImages[0]?.url
+      || fileUrl(backendUrl, pap.selected_thumb_filename as string | undefined)
+      || fileUrl(backendUrl, pap.selected_filename as string | undefined)
   })()
 
   // --- RPG stat bars derived from persona config ---
