@@ -87,15 +87,15 @@ function GalleryCard({
     : null
 
   return (
-    <div className="relative bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden hover:border-white/[0.16] transition-all group">
+    <div className="relative w-full max-w-[340px] bg-white/[0.04] border border-white/[0.08] rounded-xl overflow-hidden hover:border-white/[0.16] transition-all group">
       {/* Preview */}
-      <div className="relative aspect-[4/5] max-h-[360px] bg-black/20 overflow-hidden">
+      <div className="relative aspect-[4/5] bg-black/20 overflow-hidden">
         {item.latest?.preview_url ? (
           <img
             src={item.latest.preview_url}
             alt={item.name}
             loading="lazy"
-            className="w-full h-full object-cover"
+            className="block w-full h-full object-cover"
             onError={(e) => {
               ;(e.target as HTMLImageElement).style.display = 'none'
             }}
@@ -749,7 +749,7 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 justify-items-center">
             {items.slice(0, visibleCount).map((item) => (
               <GalleryCard
                 key={item.id}
