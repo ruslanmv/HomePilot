@@ -69,6 +69,7 @@ export type PersonaPreview = {
   has_avatar: boolean
   asset_names: string[]
   dependency_check: DependencyReport
+  avatar_preview_data_url?: string | null
 }
 
 // ---------------------------------------------------------------------------
