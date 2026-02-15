@@ -37,11 +37,17 @@ PERSONA_ID="${PERSONA_ID:-scarlett_exec_secretary}"
 VERSION="${VERSION:-1.0.0}"
 MAX_RETRIES="${MAX_RETRIES:-4}"
 
-# R2 object keys
+# R2 object keys — Scarlett
 REGISTRY_KEY="registry/registry.json"
 PKG_KEY="packages/${PERSONA_ID}/${VERSION}/persona.hpersona"
 PREVIEW_KEY="previews/${PERSONA_ID}/${VERSION}/preview.webp"
 CARD_KEY="previews/${PERSONA_ID}/${VERSION}/card.json"
+
+# R2 object keys — Atlas
+ATLAS_ID="atlas_research_assistant"
+ATLAS_PKG_KEY="packages/${ATLAS_ID}/${VERSION}/persona.hpersona"
+ATLAS_CARD_KEY="previews/${ATLAS_ID}/${VERSION}/card.json"
+ATLAS_PREVIEW_KEY="previews/${ATLAS_ID}/${VERSION}/preview.webp"
 
 # Local files
 LOCAL_REGISTRY="${SAMPLE_DIR}/registry.json"
@@ -167,29 +173,68 @@ CREATE_OUTPUT=$(wrangler r2 bucket create "${R2_BUCKET}" 2>&1) && {
   fi
 }
 
-# ── 2) Upload sample objects (with retries) ──────────────────────────────
+# ── 2) Build .hpersona packages from sample dirs if not pre-built ─────────
+build_hpersona() {
+  local persona_dir="$1"
+  local out_file="$2"
+  if [[ -d "$persona_dir" ]] && [[ -f "${persona_dir}/manifest.json" ]]; then
+    log "  Building package: ${out_file}"
+    (cd "$persona_dir" && zip -r "${out_file}" manifest.json blueprint/ preview/ assets/ 2>/dev/null || \
+     cd "$persona_dir" && zip -r "${out_file}" manifest.json blueprint/ preview/ 2>/dev/null)
+  fi
+}
+
+SCARLETT_PKG="${SAMPLE_DIR}/scarlett.hpersona"
+ATLAS_PKG="${SAMPLE_DIR}/atlas.hpersona"
+
+# Build packages if sample dirs exist but packages don't
+[[ ! -f "$SCARLETT_PKG" ]] && build_hpersona "${SAMPLE_DIR}/scarlett" "$(cd "${SAMPLE_DIR}" && pwd)/scarlett.hpersona"
+[[ ! -f "$ATLAS_PKG" ]] && build_hpersona "${SAMPLE_DIR}/atlas" "$(cd "${SAMPLE_DIR}" && pwd)/atlas.hpersona"
+
+# ── 3) Upload sample objects (with retries) ──────────────────────────────
 log "Uploading registry..."
 r2_upload "${REGISTRY_KEY}" "${LOCAL_REGISTRY}" "application/json; charset=utf-8" || true
 
-log "Uploading card..."
+log "Uploading Scarlett card..."
 r2_upload "${CARD_KEY}" "${LOCAL_CARD}" "application/json; charset=utf-8" || true
 
-# Optional: upload .hpersona package if present
-LOCAL_PKG="${SAMPLE_DIR}/persona.hpersona"
-if [[ -f "$LOCAL_PKG" ]]; then
-  log "Uploading package..."
-  r2_upload "${PKG_KEY}" "${LOCAL_PKG}" "application/octet-stream" || true
+# Scarlett package
+if [[ -f "$SCARLETT_PKG" ]]; then
+  log "Uploading Scarlett package..."
+  r2_upload "${PKG_KEY}" "${SCARLETT_PKG}" "application/octet-stream" || true
 else
-  warn "No sample .hpersona at ${LOCAL_PKG} — skipping package upload."
+  warn "No Scarlett package at ${SCARLETT_PKG} — skipping."
 fi
 
-# Optional: upload preview image if present
-LOCAL_PREVIEW="${SAMPLE_DIR}/preview.webp"
-if [[ -f "$LOCAL_PREVIEW" ]]; then
-  log "Uploading preview..."
-  r2_upload "${PREVIEW_KEY}" "${LOCAL_PREVIEW}" "image/webp" || true
+# Scarlett preview image (optional, supports webp/png/jpg)
+for ext in webp png jpg jpeg; do
+  LOCAL_PREVIEW="${SAMPLE_DIR}/preview.${ext}"
+  if [[ -f "$LOCAL_PREVIEW" ]]; then
+    case "$ext" in
+      webp) ct="image/webp" ;;
+      png)  ct="image/png" ;;
+      *)    ct="image/jpeg" ;;
+    esac
+    PREVIEW_R2_KEY="previews/${PERSONA_ID}/${VERSION}/preview.${ext}"
+    log "Uploading Scarlett preview (${ext})..."
+    r2_upload "${PREVIEW_R2_KEY}" "${LOCAL_PREVIEW}" "${ct}" || true
+    break
+  fi
+done
+
+# Atlas card
+ATLAS_CARD_FILE="${SAMPLE_DIR}/atlas/preview/card.json"
+if [[ -f "$ATLAS_CARD_FILE" ]]; then
+  log "Uploading Atlas card..."
+  r2_upload "${ATLAS_CARD_KEY}" "${ATLAS_CARD_FILE}" "application/json; charset=utf-8" || true
+fi
+
+# Atlas package
+if [[ -f "$ATLAS_PKG" ]]; then
+  log "Uploading Atlas package..."
+  r2_upload "${ATLAS_PKG_KEY}" "${ATLAS_PKG}" "application/octet-stream" || true
 else
-  warn "No sample preview at ${LOCAL_PREVIEW} — skipping preview upload."
+  warn "No Atlas package at ${ATLAS_PKG} — skipping."
 fi
 
 # Report upload results
@@ -198,7 +243,7 @@ if (( UPLOAD_FAILURES > 0 )); then
   warn "or upload manually via Cloudflare Dashboard > R2 > ${R2_BUCKET}."
 fi
 
-# ── 3) Deploy Worker ───────────────────────────────────────────────────────
+# ── 4) Deploy Worker ───────────────────────────────────────────────────────
 WORKER_DIR="${SCRIPT_DIR}/worker"
 if [[ -d "$WORKER_DIR" ]]; then
   log "Deploying Worker: ${WORKER_NAME}"
@@ -211,7 +256,7 @@ else
   warn "Worker dir not found at ${WORKER_DIR} — skipping."
 fi
 
-# ── 4) Deploy Pages (optional) ────────────────────────────────────────────
+# ── 5) Deploy Pages (optional) ────────────────────────────────────────────
 if [[ -d "${PAGES_DIR}" ]]; then
   log "Deploying Pages: ${PAGES_NAME}"
 

@@ -457,3 +457,102 @@ class TestRoundtripV2:
         assert imported["persona_agent"]["allowed_tools"] == ["imagine", "search"]
         assert imported["agentic"]["goal"] == "Help with everything"
         assert "everyday-assistant" in imported["agentic"]["a2a_agent_ids"]
+
+    def test_roundtrip_with_avatar_assets(self, tmp_path: Path, monkeypatch):
+        """Export includes avatar images, import extracts and remaps them."""
+        from app.personas.export_import import export_persona_project, import_persona_package
+        from app.personas import export_import
+
+        monkeypatch.setattr(export_import.projects, "create_new_project", _fake_create_new_project)
+        monkeypatch.setattr(export_import.projects, "update_project", _fake_update_project)
+
+        upload_root = tmp_path / "uploads"
+        upload_root.mkdir()
+
+        # Simulate committed avatar on disk
+        project_id = "avatar-test"
+        appearance_dir = upload_root / "projects" / project_id / "persona" / "appearance"
+        appearance_dir.mkdir(parents=True)
+
+        avatar_file = appearance_dir / "avatar_scarlett.png"
+        avatar_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)  # fake PNG
+
+        thumb_file = appearance_dir / "thumb_avatar_scarlett.webp"
+        thumb_file.write_bytes(b"RIFF" + b"\x00" * 50)  # fake WebP
+
+        original = {
+            "id": project_id,
+            "name": "Scarlett",
+            "project_type": "persona",
+            "persona_agent": {
+                "id": "scarlett",
+                "label": "Scarlett",
+                "system_prompt": "You are Scarlett.",
+                "allowed_tools": [],
+            },
+            "persona_appearance": {
+                "style_preset": "Elegant",
+                "selected_filename": f"projects/{project_id}/persona/appearance/avatar_scarlett.png",
+                "selected_thumb_filename": f"projects/{project_id}/persona/appearance/thumb_avatar_scarlett.webp",
+            },
+            "agentic": {},
+        }
+
+        # Export
+        exported = export_persona_project(upload_root, original, mode="full")
+
+        # Verify assets are in the ZIP
+        with zipfile.ZipFile(io.BytesIO(exported.data), "r") as z:
+            names = z.namelist()
+            assert "assets/avatar_scarlett.png" in names, f"Missing avatar in ZIP: {names}"
+            assert "assets/thumb_avatar_scarlett.webp" in names, f"Missing thumb in ZIP: {names}"
+            # Verify file contents
+            assert z.read("assets/avatar_scarlett.png") == avatar_file.read_bytes()
+            assert z.read("assets/thumb_avatar_scarlett.webp") == thumb_file.read_bytes()
+
+        # Import into a fresh project
+        imported = import_persona_package(upload_root, exported.data)
+
+        # Verify avatar files exist in new project
+        new_id = imported["id"]
+        new_appearance_dir = upload_root / "projects" / new_id / "persona" / "appearance"
+        assert (new_appearance_dir / "avatar_scarlett.png").exists()
+        assert (new_appearance_dir / "thumb_avatar_scarlett.webp").exists()
+
+        # Verify paths were remapped to new project
+        sel = imported["persona_appearance"]["selected_filename"]
+        assert sel.startswith(f"projects/{new_id}/"), f"Path not remapped: {sel}"
+        assert sel.endswith("avatar_scarlett.png")
+
+    def test_export_scans_appearance_dir(self, tmp_path: Path):
+        """Export picks up images from appearance dir even without DB paths."""
+        from app.personas.export_import import export_persona_project
+
+        upload_root = tmp_path / "uploads"
+        upload_root.mkdir()
+
+        project_id = "scan-test"
+        appearance_dir = upload_root / "projects" / project_id / "persona" / "appearance"
+        appearance_dir.mkdir(parents=True)
+
+        # Put an avatar on disk but DON'T set selected_filename
+        avatar_file = appearance_dir / "avatar_mystery.png"
+        avatar_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
+
+        project = {
+            "id": project_id,
+            "name": "Mystery",
+            "project_type": "persona",
+            "persona_agent": {"id": "m", "label": "Mystery"},
+            "persona_appearance": {
+                "style_preset": "Dark",
+                # No selected_filename — simulates stale/missing DB path
+            },
+            "agentic": {},
+        }
+
+        exported = export_persona_project(upload_root, project, mode="full")
+
+        with zipfile.ZipFile(io.BytesIO(exported.data), "r") as z:
+            names = z.namelist()
+            assert "assets/avatar_mystery.png" in names, f"Dir scan missed avatar: {names}"
