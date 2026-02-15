@@ -95,6 +95,21 @@ export async function communityRegistry(params: {
 }
 
 /**
+ * Fetch card metadata for a specific persona from the gallery.
+ */
+export async function communityCard(params: {
+  backendUrl: string
+  apiKey?: string
+  personaId: string
+  version: string
+}): Promise<Record<string, any>> {
+  const url = `${params.backendUrl.replace(/\/+$/, '')}/community/card/${params.personaId}/${params.version}`
+  const res = await fetch(url, { headers: authHeaders(params.apiKey) })
+  if (!res.ok) throw new Error(`Card fetch failed: HTTP ${res.status}`)
+  return res.json()
+}
+
+/**
  * Download a .hpersona package from the community gallery via the backend proxy.
  * Returns a File object ready for the import flow.
  */
