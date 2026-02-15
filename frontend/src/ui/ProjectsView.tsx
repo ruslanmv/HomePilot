@@ -21,6 +21,7 @@ import {
   Edit,
   Bot,
   User,
+  Download,
 } from 'lucide-react';
 
 // Phase 7: enriched catalog hook + connections panel (additive imports)
@@ -29,6 +30,7 @@ import { ConnectionsPanel } from '../agentic/ConnectionsPanel';
 import { AgentSettingsPanel } from './components/AgentSettingsPanel';
 import { PersonaSettingsPanel } from './components/PersonaSettingsPanel';
 import { PersonaWizard } from './PersonaWizard';
+import { PersonaImportModal, PersonaExportButton } from './PersonaImportExport';
 
 // --- Components ---
 
@@ -41,6 +43,7 @@ const ProjectCard = ({
   onClick,
   onDelete,
   onEdit,
+  onExport,
   isExample,
 }: {
   icon: React.ElementType
@@ -51,6 +54,7 @@ const ProjectCard = ({
   onClick: () => void
   onDelete?: () => void
   onEdit?: () => void
+  onExport?: React.ReactNode
   isExample?: boolean
 }) => (
   <div className="relative group">
@@ -96,8 +100,9 @@ const ProjectCard = ({
       </p>
 
       {/* Actions row (below content, no overlap with badge) */}
-      {!isExample && (onDelete || onEdit) ? (
+      {!isExample && (onDelete || onEdit || onExport) ? (
         <div className="mt-2 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {onExport}
           {onEdit ? (
             <button
               onClick={(e) => {
@@ -1682,6 +1687,7 @@ export default function ProjectsView({
   const [activeTab, setActiveTab] = useState('My Projects');
   const [showWizard, setShowWizard] = useState(false);
   const [showPersonaWizard, setShowPersonaWizard] = useState(false);
+  const [showPersonaImport, setShowPersonaImport] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingProject, setEditingProject] = useState<any>(null);
@@ -1922,6 +1928,18 @@ export default function ProjectsView({
           }}
         />
       )}
+      {showPersonaImport && (
+        <PersonaImportModal
+          backendUrl={backendUrl}
+          apiKey={apiKey}
+          onClose={() => setShowPersonaImport(false)}
+          onImported={(project) => {
+            setProjects((prev) => [project, ...prev])
+            setShowPersonaImport(false)
+            if (project?.id) onProjectSelect?.(project.id)
+          }}
+        />
+      )}
       {showPersonaWizard && (
         <PersonaWizard
           backendUrl={backendUrl}
@@ -2003,6 +2021,15 @@ export default function ProjectsView({
           </button>
 
           <button
+            onClick={() => setShowPersonaImport(true)}
+            className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-4 py-2 rounded-full text-sm font-medium transition-colors text-white/80 hover:text-white"
+            title="Import a .hpersona package"
+          >
+            <Download size={16} />
+            Import Persona
+          </button>
+
+          <button
             onClick={() => setShowWizard(true)}
             className="flex items-center gap-2 bg-purple-500 hover:bg-purple-600 px-4 py-2 rounded-full text-sm font-semibold transition-all"
           >
@@ -2063,6 +2090,13 @@ export default function ProjectsView({
                       onClick={() => onProjectSelect?.(project.id)}
                       onDelete={() => handleDeleteProject(project.id, project.name)}
                       onEdit={() => handleEditProject(project.id)}
+                      onExport={ptype === 'persona' ? (
+                        <PersonaExportButton
+                          projectId={project.id}
+                          backendUrl={backendUrl}
+                          apiKey={apiKey}
+                        />
+                      ) : undefined}
                       isExample={false}
                     />
                   )

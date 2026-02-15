@@ -26,6 +26,14 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 ### 🎭 Personas — Persistent AI Identities
 A **Persona** in HomePilot is not a chatbot, not a voice skin, and not a prompt template. It is a **persistent AI identity** — a named, visual, voice-enabled entity with its own personality, appearance, long-term memory, and session history that evolves with you over time. Where traditional assistants forget you between conversations, a Persona remembers. Where traditional UIs give you a text box, a Persona gives you a face, a voice, and a relationship. One identity, many sessions, continuous context — this is the foundation for AI that actually knows who it's talking to. See [docs/PERSONA.md](docs/PERSONA.md) for the full specification.
 
+### 📦 Persona Portability — Share & Install Anywhere
+Create a persona in Tokyo, share it with someone in Brazil, and they get the exact same identity — personality, tools, and all. HomePilot now packages personas into a portable **`.hpersona`** file that carries everything needed to reproduce the experience on any machine:
+- **Export** any persona project as a single `.hpersona` package with one click
+- **Import** by dragging the file into HomePilot — a 3-step preview shows the persona card, system prompt, and a dependency check (models, tools, MCP servers, A2A agents) before installing
+- **Dependency awareness** — the package records which image models, personality tools, MCP servers, and A2A agents the persona relies on; the importer shows green/amber/red status for each so you know what's ready and what needs setup
+- **Schema versioned** (v2) with backward compatibility — today's exports will still import correctly in future versions
+- **Durable avatars** — persona images are committed into project-owned storage with top-crop face-anchored thumbnails, surviving host changes and container restarts
+
 ### 🎬 Animate Studio Enhancements
 Professional video generation controls for image-to-video:
 - **Video Settings Panel** - Aspect Ratio, Quality Preset, and Motion controls
@@ -227,6 +235,8 @@ homepilot/
 │           ├── ProjectsView.tsx     # Project management dashboard
 │           ├── api.ts               # API client layer
 │           ├── personaApi.ts        # Persona-specific API client
+│           ├── personaPortability.ts # Export/import types & API helpers
+│           ├── PersonaImportExport.tsx # Import modal + export button
 │           ├── components/          # Shared UI components
 │           ├── edit/                # Image editing UI (mask, outpaint, background)
 │           ├── enhance/             # Enhancement APIs (upscale, background, capabilities)
@@ -275,6 +285,10 @@ homepilot/
 │       │   ├── tools.py             # Persona tool integrations
 │       │   ├── types.py             # PersonalityAgent Pydantic models
 │       │   └── definitions/         # 15 personality agent modules
+│       ├── personas/                # Persona portability (Phase 3)
+│       │   ├── avatar_assets.py     # Durable avatar commit + face-crop thumbnails
+│       │   ├── export_import.py     # .hpersona v2 package export/import
+│       │   └── dependency_checker.py # Model/tool/MCP/agent availability check
 │       └── studio/                  # Creator Studio subsystem
 │           ├── routes.py            # /studio/* endpoints (65+ routes)
 │           ├── service.py           # Studio business logic
@@ -525,6 +539,10 @@ Full interactive documentation is available at `http://localhost:8000/docs` afte
 | `/persona/memory` | GET | Retrieve long-term memory entries |
 | `/persona/memory` | POST | Store a new memory entry |
 | `/persona/memory` | DELETE | Clear persona memory |
+| `/projects/{id}/persona/avatar/commit` | POST | Commit avatar to durable project-owned storage |
+| `/projects/{id}/persona/export` | GET | Download persona as `.hpersona` package |
+| `/persona/import` | POST | Upload `.hpersona` and create project |
+| `/persona/import/preview` | POST | Preview package contents and dependency check |
 
 ### Image Enhancement (v1)
 
@@ -731,6 +749,9 @@ ProjectTemplate(
 - [x] 15 built-in personality agents with backend-authoritative prompts
 - [x] Custom Personas with linked/unlinked project modes
 - [x] Adult content gating with age verification
+- [x] Persona portability: `.hpersona` export/import with dependency manifests (tools, MCP, A2A, models)
+- [x] Durable avatar storage with face-anchored thumbnails
+- [x] First-time persona welcome screen (replaces empty "Continue Last Session")
 
 ### In Progress
 - [ ] Background music integration
@@ -821,5 +842,5 @@ Apache-2.0
   <br>
   <sub>Built with ❤️ for creators, by creators</sub>
   <br><br>
-  <sub>🎭 15 backend-authoritative personality agents with conversation memory, dynamic prompts, and per-turn engagement — voice AI that actually listens.</sub>
+  <sub>🎭 15 personality agents with conversation memory, dynamic prompts, and per-turn engagement — plus portable persona packages you can share with the world.</sub>
 </p>
