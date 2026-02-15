@@ -27,6 +27,7 @@ import type {
 } from './personaTypes'
 import { PERSONA_BLUEPRINTS } from './personaTypes'
 import { createPersonaProject, generatePersonaImages } from './personaApi'
+import { commitPersonaAvatar } from './personaPortability'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -373,7 +374,30 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
         },
       })
 
-      onCreated?.(result.project ?? result)
+      let project = result.project ?? result
+
+      // Safety net: if the backend auto-commit didn't persist the avatar
+      // (e.g. ComfyUI was briefly unreachable), retry via the commit
+      // endpoint using auto-resolve mode.  Non-fatal — the project is
+      // already created and the user can re-commit later from settings.
+      if (project?.id && !project?.persona_appearance?.selected_filename) {
+        try {
+          const commitResult = await commitPersonaAvatar({
+            backendUrl,
+            apiKey,
+            projectId: project.id,
+            auto: true,
+          })
+          if (commitResult?.project) {
+            project = commitResult.project
+          }
+        } catch {
+          // Non-fatal: project creation succeeded, avatar can be committed later
+          console.warn('[PersonaWizard] Avatar auto-commit retry skipped')
+        }
+      }
+
+      onCreated?.(project)
       onClose()
     } catch (err: any) {
       alert(`Failed to create persona project: ${err?.message || 'Unknown error'}`)

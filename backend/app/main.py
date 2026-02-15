@@ -7,7 +7,7 @@ import subprocess
 import uuid as uuidlib
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Literal
+from typing import Any, Dict, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
@@ -3088,11 +3088,21 @@ async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
     """
     Commit a selected avatar image into project-owned durable storage.
 
-    Body: { "source_filename": "ComfyUI_00042_.png" }
+    Accepts ONE of:
+      { "source_filename": "ComfyUI_00042_.png" }
+          — file already in UPLOAD_PATH (legacy / direct upload)
 
-    This copies the source image from UPLOAD_PATH into:
+      { "source_url": "http://comfy:8188/view?filename=..." }
+          — ComfyUI URL; downloaded into UPLOAD_PATH first, then committed.
+            Only URLs matching COMFY_BASE_URL host + /view path are allowed.
+
+      { "auto": true }
+          — resolve the selected image URL from persona_appearance.sets
+            and commit it automatically (repair mode for existing projects).
+
+    The image is copied into:
       projects/<project_id>/persona/appearance/avatar_<name>.<ext>
-    and generates a thumbnail:
+    and a 256x256 thumbnail is generated:
       projects/<project_id>/persona/appearance/thumb_avatar_<name>.webp
 
     Updates project.persona_appearance with the committed paths.
@@ -3104,12 +3114,50 @@ async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
         raise HTTPException(status_code=400, detail="Not a persona project")
 
     source_filename = body.get("source_filename")
-    if not isinstance(source_filename, str) or not source_filename.strip():
-        raise HTTPException(status_code=400, detail="source_filename required")
+    source_url = body.get("source_url")
+    auto_mode = body.get("auto", False)
 
+    # ── Resolve the source file ──────────────────────────────────────────
+    try:
+        if auto_mode:
+            # Auto-resolve: walk persona_appearance.sets to find selected URL
+            appearance_data = p.get("persona_appearance") or {}
+            resolved_url = _resolve_selected_image_url(appearance_data)
+            if not resolved_url:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot auto-resolve: no selected image URL in persona_appearance.sets",
+                )
+            source_filename = await _download_comfy_image(resolved_url, UPLOAD_PATH)
+
+        elif source_url:
+            # Download from explicit ComfyUI URL into UPLOAD_PATH
+            if not isinstance(source_url, str) or not source_url.strip():
+                raise HTTPException(status_code=400, detail="source_url must be a non-empty string")
+            source_filename = await _download_comfy_image(source_url.strip(), UPLOAD_PATH)
+
+        elif source_filename:
+            # Legacy path: file already in UPLOAD_PATH
+            if not isinstance(source_filename, str) or not source_filename.strip():
+                raise HTTPException(status_code=400, detail="source_filename must be a non-empty string")
+            source_filename = source_filename.strip()
+
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide one of: source_filename, source_url, or auto:true",
+            )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to download image: {e}")
+
+    # ── Commit into project-owned storage ────────────────────────────────
     try:
         project_root = UPLOAD_PATH / "projects" / project_id
-        result = commit_persona_avatar(UPLOAD_PATH, project_root, source_filename.strip())
+        result = commit_persona_avatar(UPLOAD_PATH, project_root, source_filename)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
