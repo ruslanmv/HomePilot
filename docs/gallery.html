@@ -23,6 +23,7 @@
       --bg:           #09090b;
       --bg-surface:   #111113;
       --bg-card:      #161618;
+      --bg-modal:     #1a1a2e;
       --border:       rgba(255,255,255,0.06);
       --border-hover: rgba(255,255,255,0.14);
       --text:         #e4e4e7;
@@ -30,6 +31,7 @@
       --accent-cyan:  #06b6d4;
       --accent-blue:  #3b82f6;
       --accent-purple:#8b5cf6;
+      --accent-pink:  #ec4899;
       --gradient:     linear-gradient(135deg, #06b6d4, #3b82f6, #8b5cf6);
       --green:        #22c55e;
       --amber:        #f59e0b;
@@ -63,30 +65,18 @@
       display: flex; align-items: center; justify-content: space-between;
       height: 64px; flex-wrap: wrap; gap: 12px;
     }
-    .header-left {
-      display: flex; align-items: center; gap: 12px;
-    }
-    .brand {
-      font-size: 18px; font-weight: 700; color: var(--text);
-    }
-    .brand-sub {
-      font-size: 14px; color: var(--text-muted); font-weight: 400;
-    }
-    .header-right {
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    }
+    .header-left { display: flex; align-items: center; gap: 12px; }
+    .brand { font-size: 18px; font-weight: 700; color: var(--text); }
+    .brand-sub { font-size: 14px; color: var(--text-muted); font-weight: 400; }
+    .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .header-right input[type="search"],
     .header-right select {
       padding: 8px 14px; border-radius: 8px;
       border: 1px solid var(--border);
       background: var(--bg); color: var(--text);
-      font-size: 14px; outline: none;
-      transition: border-color .2s;
+      font-size: 14px; outline: none; transition: border-color .2s;
     }
-    .header-right input:focus,
-    .header-right select:focus {
-      border-color: var(--accent-purple);
-    }
+    .header-right input:focus, .header-right select:focus { border-color: var(--accent-purple); }
     .header-right input[type="search"] { width: 220px; }
     .header-btn {
       padding: 8px 16px; border-radius: 8px;
@@ -97,162 +87,183 @@
       display: inline-flex; align-items: center; gap: 6px;
     }
     .header-btn:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
-    .header-btn--primary {
-      background: var(--gradient); color: #fff; border-color: transparent;
-    }
+    .header-btn--primary { background: var(--gradient); color: #fff; border-color: transparent; }
     .header-btn--primary:hover { opacity: .9; color: #fff; }
 
     /* ── Main ───────────────────────────────────────── */
-    main {
-      flex: 1; padding: 28px 24px;
-      max-width: 1200px; margin: 0 auto; width: 100%;
-    }
+    main { flex: 1; padding: 28px 24px; max-width: 1200px; margin: 0 auto; width: 100%; }
 
     /* ── Stats bar ──────────────────────────────────── */
-    .stats-bar {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
-    }
+    .stats-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
     .stats-text { color: var(--text-muted); font-size: 14px; }
     .stats-text strong { color: var(--text); }
-    .sort-select {
-      padding: 6px 12px; border-radius: 6px;
-      border: 1px solid var(--border);
-      background: var(--bg); color: var(--text-muted);
-      font-size: 13px; outline: none;
-    }
+    .sort-select { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text-muted); font-size: 13px; outline: none; }
 
     /* ── Card grid ──────────────────────────────────── */
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 20px;
-    }
-
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
     .card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
       transition: border-color .2s, transform .15s;
-      display: flex; flex-direction: column;
+      display: flex; flex-direction: column; cursor: pointer;
     }
     .card:hover { border-color: var(--border-hover); transform: translateY(-2px); }
-
     .card-preview {
-      position: relative;
-      width: 100%; aspect-ratio: 3/4;
+      position: relative; width: 100%; aspect-ratio: 3/4;
       background: linear-gradient(135deg, var(--bg-surface), var(--bg));
-      display: flex; align-items: center; justify-content: center;
-      overflow: hidden;
+      display: flex; align-items: center; justify-content: center; overflow: hidden;
     }
-    .card-preview img {
-      width: 100%; height: 100%; object-fit: cover;
-    }
-    .card-preview .placeholder {
-      font-size: 56px; color: var(--text-muted); opacity: .5;
-    }
+    .card-preview img { width: 100%; height: 100%; object-fit: cover; }
+    .card-preview .placeholder { font-size: 56px; color: var(--text-muted); opacity: .5; }
     .card-nsfw {
-      position: absolute; top: 8px; right: 8px;
-      padding: 3px 10px; border-radius: 999px;
-      background: rgba(239,68,68,.85); color: #fff;
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
-      backdrop-filter: blur(4px);
+      position: absolute; top: 8px; right: 8px; padding: 3px 10px; border-radius: 999px;
+      background: rgba(239,68,68,.85); color: #fff; font-size: 10px; font-weight: 700;
+      text-transform: uppercase; backdrop-filter: blur(4px);
     }
     .card-rating-sfw {
-      position: absolute; top: 8px; right: 8px;
-      padding: 3px 10px; border-radius: 999px;
-      background: rgba(34,197,94,.2); color: var(--green);
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
-      border: 1px solid rgba(34,197,94,.3);
+      position: absolute; top: 8px; right: 8px; padding: 3px 10px; border-radius: 999px;
+      background: rgba(34,197,94,.2); color: var(--green); font-size: 10px; font-weight: 700;
+      text-transform: uppercase; border: 1px solid rgba(34,197,94,.3);
     }
-
+    .card-level {
+      position: absolute; top: 8px; left: 8px; padding: 3px 10px; border-radius: 999px;
+      background: rgba(139,92,246,.85); color: #fff; font-size: 10px; font-weight: 700;
+      backdrop-filter: blur(4px);
+    }
     .card-body { padding: 16px; flex: 1; display: flex; flex-direction: column; }
-    .card-name {
-      font-size: 16px; font-weight: 700;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      margin-bottom: 4px;
-    }
-    .card-short {
-      font-size: 13px; color: var(--text-muted);
-      line-height: 1.5;
-      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-      overflow: hidden; margin-bottom: 12px; min-height: 39px;
-    }
-    .card-tags {
-      display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px;
-    }
-    .tag {
-      padding: 2px 10px; border-radius: 999px;
-      font-size: 11px; font-weight: 500;
-      background: rgba(139,92,246,.08); border: 1px solid rgba(139,92,246,.2);
-      color: #c084fc;
-    }
-    .card-meta {
-      display: flex; justify-content: space-between; align-items: center;
-      font-size: 12px; color: var(--text-muted); margin-bottom: 14px;
-    }
+    .card-name { font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+    .card-short { font-size: 13px; color: var(--text-muted); line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 12px; min-height: 39px; }
+    .card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+    .tag { padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; background: rgba(139,92,246,.08); border: 1px solid rgba(139,92,246,.2); color: #c084fc; }
+    .card-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
     .card-author { display: flex; align-items: center; gap: 4px; }
     .card-size { white-space: nowrap; }
-
     .card-actions { margin-top: auto; display: flex; gap: 8px; }
     .card-btn {
-      flex: 1; padding: 10px 14px; border-radius: 8px;
-      border: none; font-size: 13px; font-weight: 600;
-      text-align: center; cursor: pointer; transition: all .2s;
-      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      flex: 1; padding: 10px 14px; border-radius: 8px; border: none;
+      font-size: 13px; font-weight: 600; text-align: center; cursor: pointer;
+      transition: all .2s; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
       text-decoration: none;
     }
-    .card-btn--download {
-      background: var(--accent-purple); color: #fff;
-    }
+    .card-btn--download { background: var(--accent-purple); color: #fff; }
     .card-btn--download:hover { background: #7c3aed; color: #fff; }
-    .card-btn--details {
-      background: var(--bg); border: 1px solid var(--border); color: var(--text-muted);
-    }
+    .card-btn--details { background: var(--bg); border: 1px solid var(--border); color: var(--text-muted); }
     .card-btn--details:hover { border-color: var(--accent-cyan); color: var(--accent-cyan); }
 
-    /* ── Empty state ────────────────────────────────── */
-    .empty {
-      text-align: center; padding: 80px 24px; color: var(--text-muted);
+    /* ── MMORPG Character Sheet Modal ──────────────── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,.7); backdrop-filter: blur(6px);
+      align-items: center; justify-content: center; padding: 20px;
     }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: var(--bg-modal); border: 1px solid rgba(255,255,255,.1);
+      border-radius: 20px; max-width: 560px; width: 100%;
+      max-height: 90vh; overflow-y: auto; position: relative;
+      box-shadow: 0 25px 50px rgba(0,0,0,.5);
+      animation: modalIn .25s ease-out;
+    }
+    @keyframes modalIn { from { opacity: 0; transform: translateY(20px) scale(.97); } }
+    .modal-close {
+      position: absolute; top: 16px; right: 16px;
+      width: 32px; height: 32px; border-radius: 8px;
+      background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+      color: var(--text-muted); cursor: pointer; font-size: 18px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all .2s; z-index: 2;
+    }
+    .modal-close:hover { background: rgba(255,255,255,.12); color: var(--text); }
+    .modal-hero { position: relative; padding: 32px 28px 0; display: flex; align-items: flex-start; gap: 20px; }
+    .modal-avatar {
+      width: 100px; height: 100px; border-radius: 16px;
+      background: linear-gradient(135deg, rgba(139,92,246,.3), rgba(236,72,153,.3));
+      border: 2px solid rgba(139,92,246,.4);
+      display: flex; align-items: center; justify-content: center; overflow: hidden; flex-shrink: 0;
+    }
+    .modal-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .modal-avatar .placeholder { font-size: 40px; opacity: .6; }
+    .modal-identity { flex: 1; min-width: 0; }
+    .modal-class-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 700;
+      background: linear-gradient(135deg, rgba(236,72,153,.2), rgba(139,92,246,.2));
+      border: 1px solid rgba(236,72,153,.3); color: #f472b6; text-transform: uppercase; margin-bottom: 8px;
+    }
+    .modal-name { font-size: 24px; font-weight: 800; color: #fff; margin-bottom: 2px; }
+    .modal-role { font-size: 14px; color: var(--text-muted); }
+    .modal-section { padding: 0 28px; margin-top: 24px; }
+    .modal-section-title {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      color: var(--text-muted); letter-spacing: 1px; margin-bottom: 12px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .modal-section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+    .stat-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+    .stat-label { width: 80px; font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: capitalize; }
+    .stat-bar-bg { flex: 1; height: 8px; border-radius: 4px; background: rgba(255,255,255,.06); overflow: hidden; }
+    .stat-bar-fill { height: 100%; border-radius: 4px; transition: width .6s ease-out; }
+    .stat-bar-fill.charisma { background: linear-gradient(90deg, #ec4899, #f472b6); }
+    .stat-bar-fill.elegance { background: linear-gradient(90deg, #8b5cf6, #a78bfa); }
+    .stat-bar-fill.confidence { background: linear-gradient(90deg, #3b82f6, #60a5fa); }
+    .stat-bar-fill.warmth { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .stat-value { width: 28px; font-size: 12px; font-weight: 700; color: var(--text); text-align: right; }
+    .stat-level {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 4px 12px; border-radius: 8px;
+      background: rgba(139,92,246,.15); border: 1px solid rgba(139,92,246,.3);
+      font-size: 14px; font-weight: 800; color: #a78bfa;
+    }
+    .modal-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .modal-tag {
+      padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 600;
+      background: rgba(139,92,246,.1); border: 1px solid rgba(139,92,246,.2); color: #c084fc;
+    }
+    .modal-tag.style { background: rgba(236,72,153,.1); border-color: rgba(236,72,153,.2); color: #f472b6; }
+    .modal-tag.tone { background: rgba(6,182,212,.1); border-color: rgba(6,182,212,.2); color: #22d3ee; }
+    .modal-tag.tool { background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.2); color: #fbbf24; }
+    .modal-backstory {
+      font-size: 13px; line-height: 1.7; color: rgba(255,255,255,.6);
+      background: rgba(255,255,255,.02); border: 1px solid var(--border);
+      border-radius: 12px; padding: 14px 18px;
+    }
+    .modal-footer { padding: 20px 28px 28px; display: flex; gap: 10px; margin-top: 24px; }
+    .modal-btn {
+      flex: 1; padding: 12px; border-radius: 12px; border: none;
+      font-size: 14px; font-weight: 700; cursor: pointer; transition: all .2s;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none;
+    }
+    .modal-btn--download {
+      background: linear-gradient(135deg, #8b5cf6, #7c3aed); color: #fff;
+      box-shadow: 0 4px 12px rgba(139,92,246,.3);
+    }
+    .modal-btn--download:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(139,92,246,.4); color: #fff; }
+    .modal-btn--close { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); color: var(--text-muted); }
+    .modal-btn--close:hover { background: rgba(255,255,255,.1); color: var(--text); }
+
+    /* ── Empty / Loading / Error ────────────────────── */
+    .empty { text-align: center; padding: 80px 24px; color: var(--text-muted); }
     .empty-icon { font-size: 56px; margin-bottom: 16px; }
     .empty-title { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
     .empty-text { max-width: 420px; margin: 0 auto 24px; }
-
-    /* ── Loading ─────────────────────────────────────── */
     .loading { text-align: center; padding: 48px; color: var(--text-muted); }
-    .spinner {
-      width: 32px; height: 32px; margin: 0 auto 16px;
-      border: 3px solid var(--border); border-top-color: var(--accent-purple);
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-    }
+    .spinner { width: 32px; height: 32px; margin: 0 auto 16px; border: 3px solid var(--border); border-top-color: var(--accent-purple); border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-
-    /* ── Error ───────────────────────────────────────── */
-    .error-banner {
-      padding: 14px 20px; border-radius: 8px;
-      background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.2);
-      color: var(--red); font-size: 14px; margin-bottom: 24px;
-    }
+    .error-banner { padding: 14px 20px; border-radius: 8px; background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.2); color: var(--red); font-size: 14px; margin-bottom: 24px; }
 
     /* ── Footer ──────────────────────────────────────── */
-    footer {
-      border-top: 1px solid var(--border); padding: 24px;
-      text-align: center; color: var(--text-muted); font-size: 13px;
-    }
+    footer { border-top: 1px solid var(--border); padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
     footer a { color: var(--accent-cyan); }
-    footer code {
-      background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 4px;
-      font-size: 12px;
-    }
+    footer code { background: rgba(255,255,255,.06); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
 
     /* ── Responsive ──────────────────────────────────── */
     @media (max-width: 640px) {
       .header-inner { height: auto; padding: 12px 0; }
       .header-right input[type="search"] { width: 100%; }
       .grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+      .modal { margin: 10px; border-radius: 16px; }
+      .modal-hero { flex-direction: column; align-items: center; text-align: center; }
+      .modal-avatar { width: 80px; height: 80px; }
     }
   </style>
 </head>
@@ -275,14 +286,7 @@
           <option value="sfw" selected>SFW Only</option>
           <option value="nsfw">NSFW Only</option>
         </select>
-        <a
-          href="https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml"
-          class="header-btn header-btn--primary"
-          target="_blank" rel="noopener"
-          aria-label="Submit a persona"
-        >
-          + Submit Persona
-        </a>
+        <a href="https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml" class="header-btn header-btn--primary" target="_blank" rel="noopener" aria-label="Submit a persona">+ Submit Persona</a>
         <a href="https://github.com/ruslanmv/HomePilot" class="header-btn" target="_blank" rel="noopener">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 .25a.75.75 0 0 1 .673.418l1.882 3.815 4.21.612a.75.75 0 0 1 .416 1.279l-3.046 2.97.719 4.192a.75.75 0 0 1-1.088.791L8 12.347l-3.766 1.98a.75.75 0 0 1-1.088-.79l.72-4.194L.818 6.374a.75.75 0 0 1 .416-1.28l4.21-.611L7.327.668A.75.75 0 0 1 8 .25Z"/></svg>
           Star
@@ -295,9 +299,7 @@
   <main>
     <div id="status"></div>
     <div id="stats-bar" class="stats-bar" style="display:none">
-      <div class="stats-text">
-        Showing <strong id="showing-count">0</strong> of <strong id="total-count">0</strong> personas
-      </div>
+      <div class="stats-text">Showing <strong id="showing-count">0</strong> of <strong id="total-count">0</strong> personas</div>
       <select id="sort" class="sort-select" aria-label="Sort personas">
         <option value="name">Sort: Name A-Z</option>
         <option value="newest">Sort: Newest First</option>
@@ -306,6 +308,57 @@
     </div>
     <div id="grid" class="grid"></div>
   </main>
+
+  <!-- ── Character Sheet Modal ────────────────────── -->
+  <div id="modal-overlay" class="modal-overlay" role="dialog" aria-modal="true">
+    <div class="modal" id="modal">
+      <button class="modal-close" id="modal-close" aria-label="Close">&times;</button>
+      <div class="modal-hero">
+        <div class="modal-avatar" id="modal-avatar"><div class="placeholder">🎭</div></div>
+        <div class="modal-identity">
+          <div class="modal-class-badge" id="modal-class-badge">Secretary</div>
+          <div class="modal-name" id="modal-name">Scarlett</div>
+          <div class="modal-role" id="modal-role">Executive Secretary</div>
+        </div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Character Sheet</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+          <div class="stat-level" id="modal-level">LV 1</div>
+          <span style="font-size:12px;color:var(--text-muted);" id="modal-content-rating">SFW</span>
+        </div>
+        <div id="modal-stats"></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Style & Tone</div>
+        <div class="modal-tags" id="modal-style-tags"></div>
+      </div>
+      <div class="modal-section" id="modal-tools-section" style="display:none">
+        <div class="modal-section-title">Skills & Tools</div>
+        <div class="modal-tags" id="modal-tools"></div>
+      </div>
+      <div class="modal-section" id="modal-backstory-section" style="display:none">
+        <div class="modal-section-title">Backstory & Personality</div>
+        <div class="modal-backstory" id="modal-backstory"></div>
+      </div>
+      <div class="modal-section">
+        <div class="modal-section-title">Info</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-muted);">
+          <span id="modal-author">by @community</span>
+          <span id="modal-downloads">0 downloads</span>
+          <span id="modal-version">v1.0.0</span>
+          <span id="modal-size"></span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <a class="modal-btn modal-btn--download" id="modal-download" href="#" download>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download .hpersona
+        </a>
+        <button class="modal-btn modal-btn--close" id="modal-close-btn">Close</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ── Footer ───────────────────────────────────── -->
   <footer>
@@ -320,15 +373,8 @@
 
   <script>
     // ── Gallery source configuration ───────────────────────────────
-    // Primary — Cloudflare Worker (edge-cached, no rate limits):
     window.GALLERY_API  = "https://homepilot-persona-gallery.cloud-data.workers.dev";
     window.GALLERY_MODE = "worker";
-    //
-    // Fallback — R2 direct (rate-limited, uncomment to use instead):
-    // window.GALLERY_API  = "https://pub-0274961e62694c09bdb4c8f2822ca3f1.r2.dev";
-    // window.GALLERY_MODE = "r2";
-    //
-    // When both are commented out, gallery.js reads ./registry.json from GitHub Pages.
   </script>
   <script src="gallery.js"></script>
 </body>
