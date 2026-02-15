@@ -1,0 +1,16 @@
+{
+  "kind": "homepilot.persona",
+  "schema_version": 1,
+  "package_version": 1,
+  "content_rating": "sfw",
+  "created_at": "2026-02-15T12:00:00Z",
+  "contents": {
+    "has_avatar": false,
+    "has_outfits": false,
+    "outfit_count": 0,
+    "has_tool_dependencies": false,
+    "has_mcp_servers": false,
+    "has_a2a_agents": false,
+    "has_model_requirements": false
+  }
+}

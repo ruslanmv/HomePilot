@@ -83,6 +83,16 @@ function authHeaders(apiKey?: string): Record<string, string> {
 
 /**
  * Export a persona project — triggers a browser download of the .hpersona file.
+ *
+ * Uses mode='full' by default so avatar images are included as real files
+ * inside the ZIP's assets/ folder, making the package fully portable.
+ * The .hpersona ZIP structure:
+ *   manifest.json
+ *   blueprint/persona_agent.json
+ *   blueprint/persona_appearance.json
+ *   preview/card.json
+ *   assets/avatar.png          <- main portrait (real image, not base64)
+ *   assets/outfit_*.png        <- outfit images if any
  */
 export async function exportPersona(params: {
   backendUrl: string
@@ -90,7 +100,7 @@ export async function exportPersona(params: {
   projectId: string
   mode?: 'blueprint' | 'full'
 }): Promise<void> {
-  const mode = params.mode || 'blueprint'
+  const mode = params.mode || 'full'
   const url = `${params.backendUrl}/projects/${params.projectId}/persona/export?mode=${mode}`
 
   const res = await fetch(url, { headers: authHeaders(params.apiKey) })
