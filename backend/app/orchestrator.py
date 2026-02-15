@@ -1655,9 +1655,17 @@ async def orchestrate(
         # Backend personality agent — full framework
         personality_agent = personality_registry.get(personality_id)
 
-        # Get or create conversation memory
-        if cid not in _conversation_memories:
-            _conversation_memories[cid] = ConversationMemory()
+        # Get or create conversation memory — with identity-aware reset.
+        # A personality switch within the same conversation_id is treated as
+        # a session boundary: memory is reset so the new persona starts fresh
+        # (no stale topics/emotions/engagement from the previous identity).
+        if cid in _conversation_memories:
+            existing = _conversation_memories[cid]
+            if existing.personality_id and existing.personality_id != personality_id:
+                print(f"[PERSONALITY] Identity switch detected: '{existing.personality_id}' → '{personality_id}' — resetting conversation memory")
+                _conversation_memories[cid] = ConversationMemory(personality_id=personality_id)
+        else:
+            _conversation_memories[cid] = ConversationMemory(personality_id=personality_id)
         memory = _conversation_memories[cid]
 
         # Update memory with this turn
