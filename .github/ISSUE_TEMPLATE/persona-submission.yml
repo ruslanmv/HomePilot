@@ -1,28 +1,22 @@
 name: "Persona Submission"
-description: "Submit a persona to the HomePilot Community Gallery"
+description: "Share your AI persona with the HomePilot community"
 title: "[Persona] "
 labels: ["persona-submission"]
 body:
   - type: markdown
     attributes:
       value: |
-        ## Submit Your Persona to the Community Gallery
+        **How it works:** Fill in the details, attach your persona, and submit.
+        A maintainer will review it and publish it to the gallery.
 
-        Thank you for sharing your creation with the HomePilot community!
-
-        **How it works:**
-        1. Fill in the details below and attach your `.hpersona` file.
-        2. A maintainer will review your submission.
-        3. Once approved, the persona is automatically published to the gallery.
-        4. Every HomePilot user will see it in **Shared with me** within minutes.
-
-        > **Export your persona:** In HomePilot go to **My Projects** > find your persona card > click **Export**.
+        > **Export:** In HomePilot go to **My Projects** > find your persona > click **Export**.
+        > Then put the `.hpersona` file inside a `.zip` before uploading below.
 
   - type: input
     id: persona_name
     attributes:
       label: Persona Name
-      description: "The display name for your persona (e.g. 'Scarlett', 'Atlas')."
+      description: "Display name (e.g. 'Scarlett', 'Atlas')."
       placeholder: "Scarlett"
     validations:
       required: true
@@ -31,44 +25,8 @@ body:
     id: short_description
     attributes:
       label: Short Description
-      description: "One-line description (max 120 characters). This appears on the gallery card."
+      description: "One-line summary for the gallery card (max 120 characters)."
       placeholder: "Executive secretary — professional, proactive, and always two steps ahead."
-    validations:
-      required: true
-
-  - type: textarea
-    id: detailed_description
-    attributes:
-      label: Detailed Description
-      description: "A longer description of what makes this persona unique, its personality, and recommended use cases."
-      placeholder: |
-        Scarlett is a professional executive secretary persona designed for
-        productivity workflows. She excels at meeting preparation, email
-        drafting, calendar management, and executive briefings...
-    validations:
-      required: false
-
-  - type: dropdown
-    id: tags
-    attributes:
-      label: Tags
-      description: "Select all tags that apply to your persona."
-      multiple: true
-      options:
-        - professional
-        - creative
-        - educational
-        - entertainment
-        - productivity
-        - coding
-        - research
-        - storytelling
-        - roleplay
-        - lifestyle
-        - gaming
-        - science
-        - business
-        - health
     validations:
       required: true
 
@@ -83,46 +41,40 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: package_file
+  - type: dropdown
+    id: tags
     attributes:
-      label: Persona Package
-      description: |
-        **Drag and drop your `.hpersona` file here.** GitHub will upload it and create a download link.
-        You can also paste the URL if you've already uploaded it elsewhere.
-      placeholder: "Drag your .hpersona file into this box..."
+      label: Tags
+      description: "Select all that apply."
+      multiple: true
+      options:
+        - professional
+        - creative
+        - entertainment
+        - productivity
+        - coding
+        - research
+        - roleplay
+        - lifestyle
     validations:
       required: true
 
   - type: textarea
-    id: preview_image
+    id: package_file
     attributes:
-      label: Preview Image (optional)
+      label: Persona Package (.zip)
       description: |
-        **Drag and drop a preview image here** (PNG, JPG, or WebP, 3:4 aspect ratio recommended, 600x800px ideal).
-        If not provided, the avatar from the `.hpersona` package will be used.
-      placeholder: "Drag your preview image here..."
-    validations:
-      required: false
-
-  - type: input
-    id: version
-    attributes:
-      label: Version
-      description: "Semantic version for this persona (e.g. 1.0.0)."
-      placeholder: "1.0.0"
-      value: "1.0.0"
+        **Put your `.hpersona` file inside a `.zip` and drag it here.**
+        GitHub does not allow `.hpersona` uploads directly, so wrap it in a zip first.
+        (Right-click the file > Compress / Send to > Compressed folder)
+      placeholder: "Drag your .zip file here..."
     validations:
       required: true
 
   - type: checkboxes
     id: agreements
     attributes:
-      label: Agreements
+      label: Agreement
       options:
-        - label: "I created this persona or have permission to share it."
-          required: true
-        - label: "I understand this persona will be publicly available under the project's Apache 2.0 license."
-          required: true
-        - label: "The content rating above is accurate."
+        - label: "I have the right to share this persona and agree to publish it under the Apache 2.0 license. The content rating above is accurate."
           required: true
