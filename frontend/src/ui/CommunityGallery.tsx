@@ -17,6 +17,11 @@ import {
   Tag,
   User,
   Loader2,
+  Info,
+  X,
+  Sparkles,
+  BookOpen,
+  Wrench,
 } from 'lucide-react'
 
 import type { CommunityPersonaItem } from './communityApi'
@@ -24,6 +29,7 @@ import {
   communityStatus,
   communityRegistry,
   communityDownloadPackage,
+  communityCard,
 } from './communityApi'
 import { previewPersonaPackage, importPersonaPackage } from './personaPortability'
 import type { PersonaPreview } from './personaPortability'
@@ -66,10 +72,12 @@ function GalleryCard({
   item,
   installing,
   onInstall,
+  onDetail,
 }: {
   item: CommunityPersonaItem
   installing: boolean
   onInstall: () => void
+  onDetail: () => void
 }) {
   const size = item.latest?.size_bytes
   const sizeLabel = size
@@ -131,27 +139,39 @@ function GalleryCard({
           {sizeLabel && <span>{sizeLabel}</span>}
         </div>
 
-        {/* Install button */}
-        <button
-          onClick={onInstall}
-          disabled={installing}
-          className="w-full py-2 rounded-lg text-xs font-semibold transition-all
-            bg-purple-500/90 hover:bg-purple-500 text-white
-            disabled:opacity-50 disabled:cursor-not-allowed
-            flex items-center justify-center gap-2"
-        >
-          {installing ? (
-            <>
-              <Loader2 size={14} className="animate-spin" />
-              Installing...
-            </>
-          ) : (
-            <>
-              <Download size={14} />
-              Install
-            </>
-          )}
-        </button>
+        {/* Action buttons */}
+        <div className="flex gap-2">
+          <button
+            onClick={onDetail}
+            className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all
+              bg-white/[0.06] hover:bg-white/[0.12] text-white/70 hover:text-white
+              border border-white/[0.08]
+              flex items-center justify-center gap-1.5"
+          >
+            <Info size={13} />
+            Details
+          </button>
+          <button
+            onClick={onInstall}
+            disabled={installing}
+            className="flex-1 py-2 rounded-lg text-xs font-semibold transition-all
+              bg-purple-500/90 hover:bg-purple-500 text-white
+              disabled:opacity-50 disabled:cursor-not-allowed
+              flex items-center justify-center gap-1.5"
+          >
+            {installing ? (
+              <>
+                <Loader2 size={13} className="animate-spin" />
+                Installing...
+              </>
+            ) : (
+              <>
+                <Download size={13} />
+                Install
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -255,6 +275,170 @@ function InstallPreviewModal({
 }
 
 // ---------------------------------------------------------------------------
+// Detail Modal
+// ---------------------------------------------------------------------------
+
+function DetailModal({
+  card,
+  item,
+  previewUrl,
+  onClose,
+  onInstall,
+}: {
+  card: Record<string, any>
+  item: CommunityPersonaItem
+  previewUrl?: string
+  onClose: () => void
+  onInstall: () => void
+}) {
+  const stats = card.stats || {} as Record<string, number>
+  const statEntries = Object.entries(stats).filter(([k]) => k !== 'level') as [string, number][]
+  const level = stats.level ?? 0
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-[#1a1a1c] border border-white/10 rounded-2xl max-w-lg w-full mx-4 overflow-hidden shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header with preview */}
+        <div className="relative">
+          {previewUrl ? (
+            <img
+              src={previewUrl}
+              alt={card.name || item.name}
+              className="w-full h-48 object-cover"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+            />
+          ) : (
+            <div className="w-full h-32 bg-gradient-to-br from-purple-900/40 to-black/40 flex items-center justify-center">
+              <User size={48} className="text-white/20" />
+            </div>
+          )}
+          <button
+            onClick={onClose}
+            className="absolute top-3 right-3 p-1.5 rounded-full bg-black/50 text-white/70 hover:text-white backdrop-blur-sm transition-colors"
+          >
+            <X size={16} />
+          </button>
+          {level > 0 && (
+            <div className="absolute bottom-3 left-3 px-2.5 py-1 rounded-full bg-purple-500/80 text-white text-[10px] font-bold backdrop-blur-sm">
+              Lv. {level}
+            </div>
+          )}
+        </div>
+
+        {/* Body */}
+        <div className="p-5 space-y-4 max-h-[50vh] overflow-y-auto">
+          {/* Name & Role */}
+          <div>
+            <h2 className="text-lg font-bold text-white">{card.name || item.name}</h2>
+            <p className="text-sm text-white/50">{card.role || ''}</p>
+          </div>
+
+          {/* Short description */}
+          {card.short && (
+            <p className="text-sm text-white/60 leading-relaxed">{card.short}</p>
+          )}
+
+          {/* Backstory */}
+          {card.backstory && (
+            <div>
+              <div className="flex items-center gap-1.5 text-xs font-medium text-white/50 mb-1.5">
+                <BookOpen size={12} />
+                Backstory
+              </div>
+              <p className="text-xs text-white/50 bg-white/[0.03] border border-white/[0.06] rounded-lg p-3 leading-relaxed">
+                {card.backstory}
+              </p>
+            </div>
+          )}
+
+          {/* Stats bars */}
+          {statEntries.length > 0 && (
+            <div>
+              <div className="flex items-center gap-1.5 text-xs font-medium text-white/50 mb-2">
+                <Sparkles size={12} />
+                Stats
+              </div>
+              <div className="space-y-1.5">
+                {statEntries.map(([key, val]) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <span className="text-[10px] text-white/40 w-20 capitalize">{key}</span>
+                    <div className="flex-1 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-purple-500/70 rounded-full transition-all"
+                        style={{ width: `${Math.min(100, val)}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] text-white/30 w-6 text-right">{val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Style & Tone tags */}
+          {(card.style_tags?.length > 0 || card.tone_tags?.length > 0) && (
+            <div className="flex flex-wrap gap-1.5">
+              {(card.style_tags || []).map((t: string) => (
+                <span key={`s-${t}`} className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300">
+                  {t}
+                </span>
+              ))}
+              {(card.tone_tags || []).map((t: string) => (
+                <span key={`t-${t}`} className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Tools */}
+          {card.tools?.length > 0 && (
+            <div>
+              <div className="flex items-center gap-1.5 text-xs font-medium text-white/50 mb-1.5">
+                <Wrench size={12} />
+                Tools
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {card.tools.map((t: string) => (
+                  <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-white/[0.06] text-white/50">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-white/[0.06] flex items-center justify-between">
+          <div className="text-xs text-white/30">
+            {(item.downloads || 0).toLocaleString()} downloads
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-white/60 hover:text-white transition-colors"
+            >
+              Close
+            </button>
+            <button
+              onClick={() => { onClose(); onInstall() }}
+              className="px-5 py-2 rounded-lg text-sm font-semibold bg-purple-500 hover:bg-purple-600 text-white transition-colors flex items-center gap-2"
+            >
+              <Download size={14} />
+              Install
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Success / Error Toast
 // ---------------------------------------------------------------------------
 
@@ -301,6 +485,8 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
   const [search, setSearch] = useState('')
   const [tagFilter, setTagFilter] = useState('')
   const [install, setInstall] = useState<InstallState>({ kind: 'idle' })
+  const [detail, setDetail] = useState<{ item: CommunityPersonaItem; card: Record<string, any> } | null>(null)
+  const [detailLoading, setDetailLoading] = useState<string | null>(null)
 
   const cleanUrl = backendUrl.replace(/\/+$/, '')
 
@@ -400,6 +586,31 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
   const dismissInstall = useCallback(() => {
     setInstall({ kind: 'idle' })
   }, [])
+
+  // Detail flow
+  const handleDetail = useCallback(async (item: CommunityPersonaItem) => {
+    const version = item.latest?.version
+    if (!version) return
+
+    setDetailLoading(item.id)
+    try {
+      const card = await communityCard({
+        backendUrl: cleanUrl,
+        apiKey,
+        personaId: item.id,
+        version,
+      })
+      setDetail({ item, card })
+    } catch {
+      // Fallback: show what we have from the registry item
+      setDetail({
+        item,
+        card: { name: item.name, short: item.short, tags: item.tags },
+      })
+    } finally {
+      setDetailLoading(null)
+    }
+  }, [cleanUrl, apiKey])
 
   // ---------------------------------------------------------------------------
   // Render
@@ -544,9 +755,21 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
                 && install.personaId === item.id
               }
               onInstall={() => handleInstall(item)}
+              onDetail={() => handleDetail(item)}
             />
           ))}
         </div>
+      )}
+
+      {/* Detail modal */}
+      {detail && (
+        <DetailModal
+          card={detail.card}
+          item={detail.item}
+          previewUrl={detail.item.latest?.preview_url}
+          onClose={() => setDetail(null)}
+          onInstall={() => handleInstall(detail.item)}
+        />
       )}
 
       {/* Install preview modal */}
