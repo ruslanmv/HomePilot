@@ -31,6 +31,7 @@ import { AgentSettingsPanel } from './components/AgentSettingsPanel';
 import { PersonaSettingsPanel } from './components/PersonaSettingsPanel';
 import { PersonaWizard } from './PersonaWizard';
 import { PersonaImportModal, PersonaExportButton } from './PersonaImportExport';
+import { CommunityGallery } from './CommunityGallery';
 
 // --- Components ---
 
@@ -1869,25 +1870,26 @@ export default function ProjectsView({
     }
   };
 
-  React.useEffect(() => {
-    const loadProjects = async () => {
-      try {
-        const headers: Record<string, string> = {};
-        if (apiKey) {
-          headers['x-api-key'] = apiKey;
-        }
-
-        const response = await fetch(`${backendUrl}/projects`, { headers });
-        if (response.ok) {
-          const result = await response.json();
-          setProjects(result.projects || []);
-        }
-      } catch (error) {
-        console.error('Error loading projects:', error);
+  const loadProjects = React.useCallback(async () => {
+    try {
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        headers['x-api-key'] = apiKey;
       }
-    };
-    loadProjects();
+
+      const response = await fetch(`${backendUrl}/projects`, { headers });
+      if (response.ok) {
+        const result = await response.json();
+        setProjects(result.projects || []);
+      }
+    } catch (error) {
+      console.error('Error loading projects:', error);
+    }
   }, [backendUrl, apiKey]);
+
+  React.useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
 
   React.useEffect(() => {
     const loadExamples = async () => {
@@ -2115,9 +2117,11 @@ export default function ProjectsView({
         )}
 
         {activeTab === 'Shared with me' && (
-          <div className="flex flex-col items-center justify-center h-64 text-white/50">
-            <p className="text-sm">No projects have been shared with you yet.</p>
-          </div>
+          <CommunityGallery
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+            onInstalled={loadProjects}
+          />
         )}
 
         {activeTab === 'Examples' && <ExamplesGrid />}

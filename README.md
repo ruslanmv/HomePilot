@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/License-Apache_2.0-green?style=for-the-badge" alt="License" />
   <img src="https://img.shields.io/badge/Stack-Local_First-purple?style=for-the-badge" alt="Local First" />
   <img src="https://img.shields.io/badge/AI-Powered-cyan?style=for-the-badge" alt="AI Powered" />
-  <img src="https://img.shields.io/badge/Endpoints-150+-blue?style=for-the-badge" alt="150+ Endpoints" />
+  <img src="https://img.shields.io/badge/Endpoints-160+-blue?style=for-the-badge" alt="160+ Endpoints" />
   <img src="https://img.shields.io/badge/MCP-Context_Forge-orange?style=for-the-badge" alt="MCP Context Forge" />
 </p>
 
@@ -33,6 +33,17 @@ Create a persona in Tokyo, share it with someone in Brazil, and they get the exa
 - **Dependency awareness** — the package records which image models, personality tools, MCP servers, and A2A agents the persona relies on; the importer shows green/amber/red status for each so you know what's ready and what needs setup
 - **Schema versioned** (v2) with backward compatibility — today's exports will still import correctly in future versions
 - **Durable avatars** — persona images are committed into project-owned storage with top-crop face-anchored thumbnails, surviving host changes and container restarts
+
+### 🌐 Community Gallery — Browse, Download, Install
+A public persona registry where anyone can browse, download, and install community-created personas. HomePilot supports two gallery backends:
+- **Browse** — search by name, filter by tag, content rating; see preview cards
+- **One-click install** — download → preview (persona card + dependency check) → import, all without leaving the app
+- **Backend proxy** — the frontend never calls external URLs; a caching proxy at `/community/*` keeps CORS clean and keys private
+- **Cloudflare Worker** — production tier with R2 storage, immutable versioned assets, aggressive CDN caching
+- **GitHub-native pipeline** — zero-infrastructure tier using GitHub Issues for submission, Actions for validation, Releases for storage, and Pages for the gallery
+- **Submit a persona** — open a [GitHub Issue](https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml), attach your `.hpersona`, and a maintainer approves it with one label click
+- **Automated publish** — once approved, the pipeline validates, creates a Release, updates `registry.json`, and deploys to [GitHub Pages](https://ruslanmv.github.io/HomePilot/gallery.html)
+- See [docs/COMMUNITY_GALLERY.md](docs/COMMUNITY_GALLERY.md) for the full architecture and setup guide
 
 ### 🎬 Animate Studio Enhancements
 Professional video generation controls for image-to-video:
@@ -237,6 +248,8 @@ homepilot/
 │           ├── personaApi.ts        # Persona-specific API client
 │           ├── personaPortability.ts # Export/import types & API helpers
 │           ├── PersonaImportExport.tsx # Import modal + export button
+│           ├── CommunityGallery.tsx  # Community gallery browse + install
+│           ├── communityApi.ts       # Community gallery API client
 │           ├── components/          # Shared UI components
 │           ├── edit/                # Image editing UI (mask, outpaint, background)
 │           ├── enhance/             # Enhancement APIs (upscale, background, capabilities)
@@ -270,6 +283,7 @@ homepilot/
 │       ├── story_mode.py            # Story generation engine
 │       ├── game_mode.py             # Interactive game sessions
 │       ├── search.py                # Web search integration
+│       ├── community.py             # Community gallery proxy (/community/*)
 │       ├── agentic/                 # Agentic AI subsystem
 │       │   ├── routes.py            # /v1/agentic/* endpoints (11 routes)
 │       │   ├── capabilities.py      # Dynamic tool discovery
@@ -316,6 +330,19 @@ homepilot/
 │   ├── ops/compose/                 # Agentic Docker infrastructure
 │   └── specs/                       # Architecture & launch specifications
 │
+├── community/                       # Community Gallery infrastructure
+│   ├── worker/                      # Cloudflare Worker (R2 proxy + caching)
+│   │   ├── src/index.ts             # Worker source
+│   │   └── wrangler.toml            # Worker config (R2 binding)
+│   ├── scripts/                     # GitHub Actions pipeline scripts
+│   │   └── process_submission.py    # Validate, extract, registry management
+│   ├── pages/                       # Static gallery website (Cloudflare)
+│   │   ├── index.html               # Gallery page
+│   │   ├── app.js                   # Search + card rendering
+│   │   └── styles.css               # Dark theme
+│   ├── sample/                      # Bootstrap sample data
+│   └── bootstrap.sh                 # One-shot setup script
+│
 ├── comfyui/                         # ComfyUI integration
 │   ├── Dockerfile                   # ComfyUI container image
 │   └── workflows/                   # 20+ JSON workflow definitions
@@ -343,11 +370,17 @@ homepilot/
 │   ├── docker-compose.edit-session.yml
 │   └── ollama/Dockerfile            # Ollama LLM container
 │
-├── docs/                            # Documentation
+├── docs/                            # Documentation + GitHub Pages
 │   ├── PERSONA.md                   # Persona system specification
 │   ├── AGENTIC_SERVERS.md           # MCP & A2A server reference
 │   ├── CONNECTIONS.md               # Integration & connection guide
-│   └── TV_MODE_DESIGN.md            # TV mode architecture
+│   ├── TV_MODE_DESIGN.md            # TV mode architecture
+│   ├── COMMUNITY_GALLERY.md         # Community gallery architecture & setup
+│   ├── BLOG.md                      # Medium tutorial / feature overview
+│   ├── index.html                   # Landing page (GitHub Pages)
+│   ├── gallery.html                 # Community persona gallery browser
+│   ├── gallery.js                   # Gallery client-side logic
+│   └── registry.json                # Persona catalog (auto-updated by Actions)
 │
 ├── scripts/                         # Utility & automation scripts
 ├── tools/                           # Development tooling
@@ -485,7 +518,7 @@ Located in the bottom-left of the sidebar:
 
 ---
 
-## 🔌 API Reference — 150+ Endpoints
+## 🔌 API Reference — 160+ Endpoints
 
 Full interactive documentation is available at `http://localhost:8000/docs` after launch.
 
@@ -624,6 +657,16 @@ Full interactive documentation is available at `http://localhost:8000/docs` afte
 | `/v1/agentic/register/gateway` | POST | Register a new gateway |
 | `/v1/agentic/admin` | GET | Admin UI URL |
 
+### Community Gallery
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/community/status` | GET | Check if gallery is configured and reachable |
+| `/community/registry` | GET | Cached persona registry with search/filter support |
+| `/community/card/{id}/{ver}` | GET | Persona card metadata proxy |
+| `/community/preview/{id}/{ver}` | GET | Persona preview image proxy |
+| `/community/download/{id}/{ver}` | GET | `.hpersona` package download proxy |
+
 ### API Keys & Configuration
 
 | Endpoint | Method | Description |
@@ -685,6 +728,9 @@ HomePilot is **workflow-driven**. Instead of hardcoded pipelines, it loads JSON 
 | `make mcp-register-homepilot` | Register default tools with MCP Gateway |
 | `make dev` | Run frontend locally + backend in Docker |
 | `make clean` | Remove local artifacts and cache |
+| `make community-bootstrap` | Bootstrap Cloudflare R2 + Worker + Pages for Community Gallery |
+| `make community-deploy-worker` | Deploy the Community Gallery Worker |
+| `make community-deploy-pages` | Deploy the Community Gallery static site |
 
 ---
 
@@ -752,6 +798,11 @@ ProjectTemplate(
 - [x] Persona portability: `.hpersona` export/import with dependency manifests (tools, MCP, A2A, models)
 - [x] Durable avatar storage with face-anchored thumbnails
 - [x] First-time persona welcome screen (replaces empty "Continue Last Session")
+- [x] Community Gallery: Cloudflare R2 + Worker persona registry with MMORPG patcher pattern
+- [x] Community browse & one-click install from "Shared with me" tab
+- [x] GitHub-native persona submission pipeline (Issue template → Actions → Release → Pages gallery)
+- [x] Persona submission moderation workflow (admin-gated label approval)
+- [x] Community Gallery web page on GitHub Pages with search, filters, and download
 
 ### In Progress
 - [ ] Background music integration

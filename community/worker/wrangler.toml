@@ -1,0 +1,7 @@
+name = "homepilot-persona-gallery"
+main = "src/index.ts"
+compatibility_date = "2025-02-01"
+
+[[r2_buckets]]
+binding = "PERSONA_BUCKET"
+bucket_name = "homepilot"
