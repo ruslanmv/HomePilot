@@ -179,7 +179,9 @@ build_hpersona() {
   local out_file="$2"
   if [[ -d "$persona_dir" ]] && [[ -f "${persona_dir}/manifest.json" ]]; then
     log "  Building package: ${out_file}"
-    (cd "$persona_dir" && zip -r "${out_file}" manifest.json blueprint/ preview/ assets/ 2>/dev/null || \
+    # v2 packages include: manifest, blueprint, dependencies, preview, assets
+    (cd "$persona_dir" && zip -r "${out_file}" manifest.json blueprint/ dependencies/ preview/ assets/ 2>/dev/null || \
+     cd "$persona_dir" && zip -r "${out_file}" manifest.json blueprint/ preview/ assets/ 2>/dev/null || \
      cd "$persona_dir" && zip -r "${out_file}" manifest.json blueprint/ preview/ 2>/dev/null)
   fi
 }
@@ -208,7 +210,8 @@ fi
 
 # Scarlett preview image (optional, supports webp/png/jpg)
 for ext in webp png jpg jpeg; do
-  LOCAL_PREVIEW="${SAMPLE_DIR}/preview.${ext}"
+  LOCAL_PREVIEW="${SAMPLE_DIR}/scarlett/preview.${ext}"
+  [[ ! -f "$LOCAL_PREVIEW" ]] && LOCAL_PREVIEW="${SAMPLE_DIR}/preview.${ext}"
   if [[ -f "$LOCAL_PREVIEW" ]]; then
     case "$ext" in
       webp) ct="image/webp" ;;
@@ -236,6 +239,21 @@ if [[ -f "$ATLAS_PKG" ]]; then
 else
   warn "No Atlas package at ${ATLAS_PKG} — skipping."
 fi
+
+# Atlas preview image (optional, supports webp/png/jpg)
+for ext in webp png jpg jpeg; do
+  LOCAL_ATLAS_PREVIEW="${SAMPLE_DIR}/atlas/preview.${ext}"
+  if [[ -f "$LOCAL_ATLAS_PREVIEW" ]]; then
+    case "$ext" in
+      webp) ct="image/webp" ;;
+      png)  ct="image/png" ;;
+      *)    ct="image/jpeg" ;;
+    esac
+    log "Uploading Atlas preview (${ext})..."
+    r2_upload "${ATLAS_PREVIEW_KEY}" "${LOCAL_ATLAS_PREVIEW}" "${ct}" || true
+    break
+  fi
+done
 
 # Report upload results
 if (( UPLOAD_FAILURES > 0 )); then

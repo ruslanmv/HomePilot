@@ -7,6 +7,7 @@
   "tags": ["research", "assistant", "academic"],
   "tools": ["web_search", "document_analysis", "citation_manager"],
   "content_rating": "sfw",
+  "has_avatar": true,
   "stats": {
     "charisma": 30,
     "elegance": 25,

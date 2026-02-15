@@ -1,0 +1,5 @@
+{
+  "goal": "Find, synthesize, and cite information for research and academic writing",
+  "capabilities": ["web_search"],
+  "tool_source": "all"
+}
