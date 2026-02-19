@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-02-18T07:23:26Z",
+  "generated_at": "2026-02-19T22:18:33Z",
   "total": 12,
   "items": [
     {
@@ -22,8 +22,8 @@
         "package_url": "/p/atlas_research_assistant/1.0.0",
         "preview_url": "/v/atlas_research_assistant/1.0.0",
         "card_url": "/c/atlas_research_assistant/1.0.0",
-        "sha256": "",
-        "size_bytes": 525225
+        "sha256": "381a2e695bfab76d0df58e83225a751800783a542d463e52f928ca9cf0ac2cc8",
+        "size_bytes": 433438
       }
     },
     {
@@ -45,8 +45,8 @@
         "package_url": "/p/diana_office_navigator/1.0.0",
         "preview_url": "/v/diana_office_navigator/1.0.0",
         "card_url": "/c/diana_office_navigator/1.0.0",
-        "sha256": "92eb0125a805e03a640c8ffe44c44c36c268fa25d5163e6e212e41014a6ae604",
-        "size_bytes": 284022
+        "sha256": "5bd8a56dce9ac248d6cfd734710d2d0f7792b59db7cd09c96eb06f540ea2dfd5",
+        "size_bytes": 391851
       }
     },
     {
@@ -68,8 +68,8 @@
         "package_url": "/p/elena_knowledge_curator/1.0.0",
         "preview_url": "/v/elena_knowledge_curator/1.0.0",
         "card_url": "/c/elena_knowledge_curator/1.0.0",
-        "sha256": "11fb4d953c7aa248f0ac1680526f47c5910444d78ebfc80f0dded00d8d70d2cc",
-        "size_bytes": 292192
+        "sha256": "b03c19f159d689b335a0fe7aaf5dcb8a8234e4edbd9501f719c6b93deae085fa",
+        "size_bytes": 429684
       }
     },
     {
@@ -91,8 +91,8 @@
         "package_url": "/p/felix_project_navigator/1.0.0",
         "preview_url": "/v/felix_project_navigator/1.0.0",
         "card_url": "/c/felix_project_navigator/1.0.0",
-        "sha256": "b6f3f05fd8dc8fa322ea385d5b1ff0c98af9698dcf608641f721bef6cdd89b0f",
-        "size_bytes": 404357
+        "sha256": "9f36fb199a4f41344cffebaec0588dc6dd20359fd80c1e9611175804d0d016ed",
+        "size_bytes": 388040
       }
     },
     {
@@ -114,8 +114,8 @@
         "package_url": "/p/kai_channel_whisperer/1.0.0",
         "preview_url": "/v/kai_channel_whisperer/1.0.0",
         "card_url": "/c/kai_channel_whisperer/1.0.0",
-        "sha256": "c0c217ddd45d9f621a0b33de51b8107416e5e4ba9aff53e3ad73b26d224e955d",
-        "size_bytes": 299998
+        "sha256": "eb021d4f5b08b648e0e6dddb93b3b18dab6581f6ca85d83af7df1d0e7340c513",
+        "size_bytes": 421775
       }
     },
     {
@@ -137,8 +137,8 @@
         "package_url": "/p/luca_calendar_strategist/1.0.0",
         "preview_url": "/v/luca_calendar_strategist/1.0.0",
         "card_url": "/c/luca_calendar_strategist/1.0.0",
-        "sha256": "06abf5b086338ff6e1283f68d26c165400118147c8d3b46317cb359c4af7a7ba",
-        "size_bytes": 255113
+        "sha256": "2c282f2001cca0d54f00b71ea2306243c416d41062f90612b88f8882c420d038",
+        "size_bytes": 406794
       }
     },
     {
@@ -160,8 +160,8 @@
         "package_url": "/p/maya_web_researcher/1.0.0",
         "preview_url": "/v/maya_web_researcher/1.0.0",
         "card_url": "/c/maya_web_researcher/1.0.0",
-        "sha256": "bd378dabed140bc52a18a2f72ebc4e5e32f5f0cedc3cc34a171421b69f5257bd",
-        "size_bytes": 257220
+        "sha256": "60ddd5878cb4b4daffb9afd384c1bfa9095f75f270e464da900e878da0007c9c",
+        "size_bytes": 405486
       }
     },
     {
@@ -183,8 +183,8 @@
         "package_url": "/p/nora_memory_keeper/1.0.0",
         "preview_url": "/v/nora_memory_keeper/1.0.0",
         "card_url": "/c/nora_memory_keeper/1.0.0",
-        "sha256": "377ff852e8a33d582bf04391180e4243ae34269b8bd669b05e4144a187ed0ec2",
-        "size_bytes": 257261
+        "sha256": "3e79409b4d5f1603c51e0ba38c421ab39e5136205d76390c7f018a44aea72540",
+        "size_bytes": 432938
       }
     },
     {
@@ -206,8 +206,8 @@
         "package_url": "/p/priya_inbox_alchemist/1.0.0",
         "preview_url": "/v/priya_inbox_alchemist/1.0.0",
         "card_url": "/c/priya_inbox_alchemist/1.0.0",
-        "sha256": "5bc80ff8741a78f037e780955f77dff734bbfe26c6500531ca72833880e39147",
-        "size_bytes": 233002
+        "sha256": "8b0c57f9994ca7b43255bc5b9359be853e95a9cc7b47109c39375ed24f82d87d",
+        "size_bytes": 407328
       }
     },
     {
@@ -229,8 +229,8 @@
         "package_url": "/p/raven_code_reviewer/1.0.0",
         "preview_url": "/v/raven_code_reviewer/1.0.0",
         "card_url": "/c/raven_code_reviewer/1.0.0",
-        "sha256": "d2fb36c2031345b4aa58c692489b81ee04891eb9a12416ec69caaaf75f83fe1f",
-        "size_bytes": 218209
+        "sha256": "48e88ec100c44a28070fecb3f1bfd89a789750f15acbbf053ada7a356890eb53",
+        "size_bytes": 411025
       }
     },
     {
@@ -252,8 +252,8 @@
         "package_url": "/p/scarlett_exec_secretary/1.0.0",
         "preview_url": "/v/scarlett_exec_secretary/1.0.0",
         "card_url": "/c/scarlett_exec_secretary/1.0.0",
-        "sha256": "",
-        "size_bytes": 285802
+        "sha256": "4355e3b3c8adf69cdd26603db1ae6183b46807d40f781bcbb0545e4509c695ee",
+        "size_bytes": 421831
       }
     },
     {
@@ -275,8 +275,8 @@
         "package_url": "/p/soren_shell_operator/1.0.0",
         "preview_url": "/v/soren_shell_operator/1.0.0",
         "card_url": "/c/soren_shell_operator/1.0.0",
-        "sha256": "dd5058b1895a8c9ad7380f1aa23c715083c01c9ec7746f45ba2f03b1f03ce128",
-        "size_bytes": 169579
+        "sha256": "8022b3624b78b7d477cf87c30cad50bfa2dacee4a338a03d29138e0d98cba881",
+        "size_bytes": 421265
       }
     }
   ]
