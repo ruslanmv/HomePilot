@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Simple tool IDs from PersonalityAgent.allowed_tools",
+    "tools": [
+      "github_repos",
+      "github_issues",
+      "github_prs",
+      "github_pr_read",
+      "github_issue_create"
+    ]
+  },
+  "forge_tools": {
+    "description": "Tool references from Context Forge / MCP",
+    "tools": [
+      "hp.github.github.repos.list",
+      "hp.github.github.issues.search",
+      "hp.github.github.prs.list",
+      "hp.github.github.pr.read",
+      "hp.github.github.issue.create"
+    ]
+  },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": [
+      "github"
+    ],
+    "optional": []
+  }
+}

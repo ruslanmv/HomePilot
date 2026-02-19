@@ -1,13 +1,247 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-02-15T12:00:00Z",
-  "total": 2,
+  "generated_at": "2026-02-18T07:23:26Z",
+  "total": 12,
   "items": [
+    {
+      "id": "atlas_research_assistant",
+      "name": "Atlas",
+      "short": "Research assistant — analytical, thorough, citation-focused",
+      "tags": [
+        "research",
+        "assistant",
+        "academic"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "assistant",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/atlas_research_assistant/1.0.0",
+        "preview_url": "/v/atlas_research_assistant/1.0.0",
+        "card_url": "/c/atlas_research_assistant/1.0.0",
+        "sha256": "",
+        "size_bytes": 525225
+      }
+    },
+    {
+      "id": "diana_office_navigator",
+      "name": "Diana Brooks",
+      "short": "Office navigator — manages Outlook mail and calendar via Microsoft 365",
+      "tags": [
+        "outlook",
+        "microsoft",
+        "office365"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "secretary",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/diana_office_navigator/1.0.0",
+        "preview_url": "/v/diana_office_navigator/1.0.0",
+        "card_url": "/c/diana_office_navigator/1.0.0",
+        "sha256": "92eb0125a805e03a640c8ffe44c44c36c268fa25d5163e6e212e41014a6ae604",
+        "size_bytes": 284022
+      }
+    },
+    {
+      "id": "elena_knowledge_curator",
+      "name": "Elena Voss",
+      "short": "Knowledge curator — searches, reads, and updates your Notion workspace",
+      "tags": [
+        "notion",
+        "knowledge",
+        "documentation"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "assistant",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/elena_knowledge_curator/1.0.0",
+        "preview_url": "/v/elena_knowledge_curator/1.0.0",
+        "card_url": "/c/elena_knowledge_curator/1.0.0",
+        "sha256": "11fb4d953c7aa248f0ac1680526f47c5910444d78ebfc80f0dded00d8d70d2cc",
+        "size_bytes": 292192
+      }
+    },
+    {
+      "id": "felix_project_navigator",
+      "name": "Felix Navarro",
+      "short": "Project navigator — browses, searches, and safely edits your codebase",
+      "tags": [
+        "projects",
+        "code",
+        "files"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "assistant",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/felix_project_navigator/1.0.0",
+        "preview_url": "/v/felix_project_navigator/1.0.0",
+        "card_url": "/c/felix_project_navigator/1.0.0",
+        "sha256": "b6f3f05fd8dc8fa322ea385d5b1ff0c98af9698dcf608641f721bef6cdd89b0f",
+        "size_bytes": 404357
+      }
+    },
+    {
+      "id": "kai_channel_whisperer",
+      "name": "Kai Tanaka",
+      "short": "Comms specialist — reads, summarizes, and posts to Slack channels",
+      "tags": [
+        "slack",
+        "team",
+        "communication"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "assistant",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/kai_channel_whisperer/1.0.0",
+        "preview_url": "/v/kai_channel_whisperer/1.0.0",
+        "card_url": "/c/kai_channel_whisperer/1.0.0",
+        "sha256": "c0c217ddd45d9f621a0b33de51b8107416e5e4ba9aff53e3ad73b26d224e955d",
+        "size_bytes": 299998
+      }
+    },
+    {
+      "id": "luca_calendar_strategist",
+      "name": "Luca Moretti",
+      "short": "Calendar strategist — plans, searches, and manages Google Calendar events",
+      "tags": [
+        "calendar",
+        "schedule",
+        "planning"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "secretary",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/luca_calendar_strategist/1.0.0",
+        "preview_url": "/v/luca_calendar_strategist/1.0.0",
+        "card_url": "/c/luca_calendar_strategist/1.0.0",
+        "sha256": "06abf5b086338ff6e1283f68d26c165400118147c8d3b46317cb359c4af7a7ba",
+        "size_bytes": 255113
+      }
+    },
+    {
+      "id": "maya_web_researcher",
+      "name": "Maya Chen",
+      "short": "Web researcher — fetches, reads, and distills web content for you",
+      "tags": [
+        "web",
+        "research",
+        "sources"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "assistant",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/maya_web_researcher/1.0.0",
+        "preview_url": "/v/maya_web_researcher/1.0.0",
+        "card_url": "/c/maya_web_researcher/1.0.0",
+        "sha256": "bd378dabed140bc52a18a2f72ebc4e5e32f5f0cedc3cc34a171421b69f5257bd",
+        "size_bytes": 257220
+      }
+    },
+    {
+      "id": "nora_memory_keeper",
+      "name": "Nora Whitfield",
+      "short": "Memory keeper — captures, organizes, and recalls your notes instantly",
+      "tags": [
+        "notes",
+        "memory",
+        "productivity"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "assistant",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/nora_memory_keeper/1.0.0",
+        "preview_url": "/v/nora_memory_keeper/1.0.0",
+        "card_url": "/c/nora_memory_keeper/1.0.0",
+        "sha256": "377ff852e8a33d582bf04391180e4243ae34269b8bd669b05e4144a187ed0ec2",
+        "size_bytes": 257261
+      }
+    },
+    {
+      "id": "priya_inbox_alchemist",
+      "name": "Priya Sharma",
+      "short": "Email manager — searches, reads, drafts, and sends Gmail messages",
+      "tags": [
+        "email",
+        "gmail",
+        "inbox"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "secretary",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/priya_inbox_alchemist/1.0.0",
+        "preview_url": "/v/priya_inbox_alchemist/1.0.0",
+        "card_url": "/c/priya_inbox_alchemist/1.0.0",
+        "sha256": "5bc80ff8741a78f037e780955f77dff734bbfe26c6500531ca72833880e39147",
+        "size_bytes": 233002
+      }
+    },
+    {
+      "id": "raven_code_reviewer",
+      "name": "Raven Okafor",
+      "short": "Dev workflow assistant — reviews PRs, tracks issues, and manages GitHub",
+      "tags": [
+        "github",
+        "code-review",
+        "devops"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "assistant",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/raven_code_reviewer/1.0.0",
+        "preview_url": "/v/raven_code_reviewer/1.0.0",
+        "card_url": "/c/raven_code_reviewer/1.0.0",
+        "sha256": "d2fb36c2031345b4aa58c692489b81ee04891eb9a12416ec69caaaf75f83fe1f",
+        "size_bytes": 218209
+      }
+    },
     {
       "id": "scarlett_exec_secretary",
       "name": "Scarlett",
-      "short": "Executive secretary \u2014 professional, proactive, detail-oriented",
-      "tags": ["professional", "secretary", "productivity"],
+      "short": "Executive secretary — professional, proactive, detail-oriented",
+      "tags": [
+        "professional",
+        "secretary",
+        "productivity"
+      ],
       "nsfw": false,
       "author": "HomePilot Community",
       "downloads": 0,
@@ -23,10 +257,14 @@
       }
     },
     {
-      "id": "atlas_research_assistant",
-      "name": "Atlas",
-      "short": "Research assistant \u2014 analytical, thorough, citation-focused",
-      "tags": ["research", "assistant", "academic"],
+      "id": "soren_shell_operator",
+      "name": "Soren Lindqvist",
+      "short": "Automation operator — runs safe shell commands for diagnostics and tasks",
+      "tags": [
+        "shell",
+        "automation",
+        "devops"
+      ],
       "nsfw": false,
       "author": "HomePilot Community",
       "downloads": 0,
@@ -34,11 +272,11 @@
       "has_avatar": true,
       "latest": {
         "version": "1.0.0",
-        "package_url": "/p/atlas_research_assistant/1.0.0",
-        "preview_url": "/v/atlas_research_assistant/1.0.0",
-        "card_url": "/c/atlas_research_assistant/1.0.0",
-        "sha256": "",
-        "size_bytes": 525225
+        "package_url": "/p/soren_shell_operator/1.0.0",
+        "preview_url": "/v/soren_shell_operator/1.0.0",
+        "card_url": "/c/soren_shell_operator/1.0.0",
+        "sha256": "dd5058b1895a8c9ad7380f1aa23c715083c01c9ec7746f45ba2f03b1f03ce128",
+        "size_bytes": 169579
       }
     }
   ]

@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 280" fill="none">
+  <defs>
+    <linearGradient id="ie-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+    <filter id="ie-shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#94a3b8" flood-opacity="0.18"/>
+    </filter>
+    <clipPath id="ie-clip"><rect width="900" height="280" rx="16"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#ie-clip)">
+    <rect width="900" height="280" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="280" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
+
+    <!-- Grid -->
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
+      <line x1="0" y1="70" x2="900" y2="70"/><line x1="0" y1="140" x2="900" y2="140"/>
+      <line x1="0" y1="210" x2="900" y2="210"/>
+    </g>
+
+    <!-- Title -->
+    <text x="450" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#64748b" letter-spacing="3" text-anchor="middle">IMAGE EDITING PIPELINE — 5 TOOLS, ONE STUDIO</text>
+
+    <!-- Tool 1: Enhance -->
+    <g transform="translate(100, 150)" filter="url(#ie-shadow)">
+      <rect x="-62" y="-50" width="124" height="100" rx="12" fill="#fff" stroke="#06b6d4" stroke-width="1.5"/>
+      <text y="-18" font-family="system-ui, sans-serif" font-size="24" text-anchor="middle">✨</text>
+      <text y="8" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#0891b2" text-anchor="middle">Enhance</text>
+      <text y="22" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Real-ESRGAN</text>
+      <text y="33" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">SwinIR · GFPGAN</text>
+    </g>
+
+    <!-- Arrow -->
+    <g transform="translate(177, 150)">
+      <line x1="0" y1="0" x2="36" y2="0" stroke="#06b6d4" stroke-width="1.2" opacity="0.4"/>
+      <polygon points="34,-3 40,0 34,3" fill="#06b6d4" opacity="0.5"/>
+      <circle r="2" fill="#06b6d4" opacity="0">
+        <animateMotion dur="1.2s" repeatCount="indefinite" path="M0 0 L36 0"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="1.2s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Tool 2: Upscale -->
+    <g transform="translate(270, 150)" filter="url(#ie-shadow)">
+      <rect x="-62" y="-50" width="124" height="100" rx="12" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+      <text y="-18" font-family="system-ui, sans-serif" font-size="24" text-anchor="middle">🔍</text>
+      <text y="8" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#2563eb" text-anchor="middle">Upscale</text>
+      <text y="22" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">4x-UltraSharp</text>
+      <text y="33" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">2x or 4x resolution</text>
+    </g>
+
+    <!-- Arrow -->
+    <g transform="translate(347, 150)">
+      <line x1="0" y1="0" x2="36" y2="0" stroke="#2563eb" stroke-width="1.2" opacity="0.4"/>
+      <polygon points="34,-3 40,0 34,3" fill="#2563eb" opacity="0.5"/>
+      <circle r="2" fill="#2563eb" opacity="0">
+        <animateMotion dur="1.4s" repeatCount="indefinite" path="M0 0 L36 0"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="1.4s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Tool 3: Background -->
+    <g transform="translate(440, 150)" filter="url(#ie-shadow)">
+      <rect x="-62" y="-50" width="124" height="100" rx="12" fill="#fff" stroke="#6366f1" stroke-width="1.5"/>
+      <text y="-18" font-family="system-ui, sans-serif" font-size="24" text-anchor="middle">🖼️</text>
+      <text y="8" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#6366f1" text-anchor="middle">Background</text>
+      <text y="22" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Remove · Replace</text>
+      <text y="33" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Blur (U2Net)</text>
+    </g>
+
+    <!-- Arrow -->
+    <g transform="translate(517, 150)">
+      <line x1="0" y1="0" x2="36" y2="0" stroke="#6366f1" stroke-width="1.2" opacity="0.4"/>
+      <polygon points="34,-3 40,0 34,3" fill="#6366f1" opacity="0.5"/>
+      <circle r="2" fill="#6366f1" opacity="0">
+        <animateMotion dur="1.6s" repeatCount="indefinite" path="M0 0 L36 0"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="1.6s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Tool 4: Outpaint -->
+    <g transform="translate(610, 150)" filter="url(#ie-shadow)">
+      <rect x="-62" y="-50" width="124" height="100" rx="12" fill="#fff" stroke="#8b5cf6" stroke-width="1.5"/>
+      <text y="-18" font-family="system-ui, sans-serif" font-size="24" text-anchor="middle">🔲</text>
+      <text y="8" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#8b5cf6" text-anchor="middle">Outpaint</text>
+      <text y="22" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Extend canvas</text>
+      <text y="33" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">7 directions</text>
+    </g>
+
+    <!-- Arrow -->
+    <g transform="translate(687, 150)">
+      <line x1="0" y1="0" x2="36" y2="0" stroke="#8b5cf6" stroke-width="1.2" opacity="0.4"/>
+      <polygon points="34,-3 40,0 34,3" fill="#8b5cf6" opacity="0.5"/>
+      <circle r="2" fill="#8b5cf6" opacity="0">
+        <animateMotion dur="1.8s" repeatCount="indefinite" path="M0 0 L36 0"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="1.8s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Tool 5: Inpaint -->
+    <g transform="translate(780, 150)" filter="url(#ie-shadow)">
+      <rect x="-62" y="-50" width="124" height="100" rx="12" fill="#fff" stroke="#ec4899" stroke-width="1.5"/>
+      <text y="-18" font-family="system-ui, sans-serif" font-size="24" text-anchor="middle">🎯</text>
+      <text y="8" font-family="system-ui, sans-serif" font-size="11" font-weight="700" fill="#ec4899" text-anchor="middle">Inpaint</text>
+      <text y="22" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Mask + prompt</text>
+      <text y="33" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">ControlNet option</text>
+    </g>
+
+    <!-- Bottom description -->
+    <text x="450" y="240" font-family="system-ui, sans-serif" font-size="11" fill="#475569" text-anchor="middle">Click any generated image to enter the Edit Studio — every operation runs locally on your hardware</text>
+
+    <!-- Bottom accent -->
+    <rect x="250" y="258" width="400" height="2" rx="1" fill="url(#ie-grad)" opacity="0.2">
+      <animate attributeName="width" values="350;450;350" dur="5s" repeatCount="indefinite"/>
+      <animate attributeName="x" values="275;225;275" dur="5s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+</svg>

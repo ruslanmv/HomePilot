@@ -1,0 +1,32 @@
+{
+  "kind": "homepilot.persona",
+  "schema_version": 2,
+  "package_version": 2,
+  "project_type": "persona",
+  "source_homepilot_version": "2.1.0",
+  "content_rating": "sfw",
+  "created_at": "2026-02-18T07:23:26Z",
+  "contents": {
+    "has_avatar": true,
+    "has_outfits": false,
+    "outfit_count": 0,
+    "has_tool_dependencies": true,
+    "has_mcp_servers": true,
+    "has_a2a_agents": false,
+    "has_model_requirements": false
+  },
+  "capability_summary": {
+    "personality_tools": [
+      "project_list",
+      "file_read",
+      "text_search",
+      "file_write",
+      "diff"
+    ],
+    "capabilities": [
+      "local_projects"
+    ],
+    "mcp_servers_count": 1,
+    "a2a_agents_count": 0
+  }
+}

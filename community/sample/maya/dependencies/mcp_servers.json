@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "servers": [
+    {
+      "name": "mcp-web",
+      "description": "Web fetch + main-content extraction",
+      "default_port": 9112,
+      "source": {
+        "type": "external",
+        "git": "https://github.com/HomePilotAI/mcp-servers",
+        "ref": "v0.1.0",
+        "subdir": "servers/mcp-web"
+      },
+      "transport": "HTTP",
+      "protocol": "MCP",
+      "tools_provided": [
+        "hp.web.web.fetch",
+        "hp.web.web.extract_main"
+      ],
+      "health_check": {
+        "method": "POST",
+        "path": "/rpc",
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "id": 1
+        }
+      }
+    }
+  ]
+}

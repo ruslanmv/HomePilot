@@ -1,0 +1,266 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# HomePilot MCP Servers & A2A Agents — Docker Compose
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# One image, many containers. Each service is the same homepilot/mcp-server
+# image parameterized by SERVER_MODULE and PORT.
+#
+# Build the image once:
+#   docker compose -f docker-compose.mcp.yml build mcp-base
+#
+# Start servers:
+#   docker compose -f docker-compose.mcp.yml up                          # all default servers
+#   docker compose -f docker-compose.mcp.yml up personal-assistant gmail # cherry-pick
+#   docker compose -f docker-compose.mcp.yml --profile core up           # core servers only
+#   docker compose -f docker-compose.mcp.yml --profile comms up          # communication only
+#   docker compose -f docker-compose.mcp.yml --profile agents up         # A2A agents only
+#   docker compose -f docker-compose.mcp.yml --profile all up            # everything
+#
+# Persona-driven startup:
+#   ./scripts/persona-launch.sh diana                  # start Diana's servers
+#   ./scripts/persona-launch.sh kai --check            # dry-run: what would start
+#   ./scripts/persona-launch.sh --list                 # list all available personas
+#   make persona-launch PERSONA=diana                  # same via Makefile
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Shared service template ──────────────────────────────────────────────────
+x-mcp-server: &mcp-server
+  image: homepilot/mcp-server:latest
+  build:
+    context: .
+    dockerfile: agentic/integrations/Dockerfile
+  restart: unless-stopped
+  networks:
+    - mcp-net
+  environment: &mcp-env
+    WRITE_ENABLED: "false"
+    DRY_RUN: "true"
+
+services:
+
+  # ── Build-only target (use: docker compose build mcp-base) ─────────────────
+  mcp-base:
+    <<: *mcp-server
+    profiles: ["build-only"]
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CORE MCP TOOL SERVERS (ports 9101–9105)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  personal-assistant:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.personal_assistant_server:app
+      PORT: "9101"
+    ports: ["9101:9101"]
+    profiles: ["core", "all"]
+
+  knowledge:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.knowledge_server:app
+      PORT: "9102"
+    ports: ["9102:9102"]
+    profiles: ["core", "all"]
+
+  decision-copilot:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.decision_copilot_server:app
+      PORT: "9103"
+    ports: ["9103:9103"]
+    profiles: ["core", "all"]
+
+  executive-briefing:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.executive_briefing_server:app
+      PORT: "9104"
+    ports: ["9104:9104"]
+    profiles: ["core", "all"]
+
+  web-search:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.web_search_server:app
+      PORT: "9105"
+      WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-searxng}
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    ports: ["9105:9105"]
+    profiles: ["core", "all"]
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # LOCAL MCP SERVERS (ports 9110–9113)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  local-notes:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.local_notes_server:app
+      PORT: "9110"
+      WRITE_ENABLED: ${NOTES_WRITE_ENABLED:-false}
+      DRY_RUN: ${NOTES_DRY_RUN:-true}
+    ports: ["9110:9110"]
+    volumes:
+      - notes-data:/app/data/notes
+    profiles: ["local", "all"]
+
+  local-projects:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.local_projects_server:app
+      PORT: "9111"
+      WRITE_ENABLED: ${PROJECTS_WRITE_ENABLED:-false}
+      DRY_RUN: ${PROJECTS_DRY_RUN:-true}
+      ALLOWED_ROOTS: ${ALLOWED_ROOTS:-}
+    ports: ["9111:9111"]
+    volumes:
+      - ${PROJECTS_MOUNT_PATH:-./data/projects}:/workspace:ro
+    profiles: ["local", "all"]
+
+  web-fetch:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.web_mcp_server:app
+      PORT: "9112"
+    ports: ["9112:9112"]
+    profiles: ["local", "all"]
+
+  shell-safe:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.shell_safe_server:app
+      PORT: "9113"
+      WRITE_ENABLED: ${SHELL_WRITE_ENABLED:-false}
+      EXEC_TIMEOUT: ${SHELL_EXEC_TIMEOUT:-30}
+      ALLOW_NETWORK_COMMANDS: ${SHELL_ALLOW_NETWORK:-false}
+    ports: ["9113:9113"]
+    profiles: ["local", "all"]
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # COMMUNICATION MCP SERVERS (ports 9114–9117)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  gmail:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.gmail_server:app
+      PORT: "9114"
+      WRITE_ENABLED: ${GMAIL_WRITE_ENABLED:-false}
+      CONFIRM_SEND: ${GMAIL_CONFIRM_SEND:-true}
+    ports: ["9114:9114"]
+    volumes:
+      - gmail-credentials:/app/credentials
+    profiles: ["comms", "all"]
+
+  google-calendar:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.google_calendar_server:app
+      PORT: "9115"
+      WRITE_ENABLED: ${GCAL_WRITE_ENABLED:-false}
+    ports: ["9115:9115"]
+    volumes:
+      - gcal-credentials:/app/credentials
+    profiles: ["comms", "all"]
+
+  microsoft-graph:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.microsoft_graph_server:app
+      PORT: "9116"
+      WRITE_ENABLED: ${MSGRAPH_WRITE_ENABLED:-false}
+      MS_GRAPH_CLIENT_ID: ${MS_GRAPH_CLIENT_ID:-}
+      MS_GRAPH_CLIENT_SECRET: ${MS_GRAPH_CLIENT_SECRET:-}
+      MS_GRAPH_TENANT_ID: ${MS_GRAPH_TENANT_ID:-}
+    ports: ["9116:9116"]
+    profiles: ["comms", "all"]
+
+  slack:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.slack_server:app
+      PORT: "9117"
+      WRITE_ENABLED: ${SLACK_WRITE_ENABLED:-false}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+    ports: ["9117:9117"]
+    profiles: ["comms", "all"]
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DEV & KNOWLEDGE MCP SERVERS (ports 9118–9119)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  github:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.github_server:app
+      PORT: "9118"
+      WRITE_ENABLED: ${GITHUB_WRITE_ENABLED:-false}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_ORG: ${GITHUB_ORG:-}
+    ports: ["9118:9118"]
+    profiles: ["dev", "all"]
+
+  notion:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.notion_server:app
+      PORT: "9119"
+      WRITE_ENABLED: ${NOTION_WRITE_ENABLED:-false}
+      NOTION_TOKEN: ${NOTION_TOKEN:-}
+    ports: ["9119:9119"]
+    profiles: ["dev", "all"]
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # A2A AGENTS (ports 9201–9202)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  everyday-assistant:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.a2a.everyday_assistant_agent:app
+      PORT: "9201"
+    ports: ["9201:9201"]
+    profiles: ["agents", "all"]
+
+  chief-of-staff:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.a2a.chief_of_staff_agent:app
+      PORT: "9202"
+      MCPGATEWAY_URL: ${MCPGATEWAY_URL:-http://mcp-gateway:4444}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-admin}
+      BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD:-changeme}
+    ports: ["9202:9202"]
+    profiles: ["agents", "all"]
+
+# ═══════════════════════════════════════════════════════════════════════════
+# VOLUMES & NETWORKS
+# ═══════════════════════════════════════════════════════════════════════════
+
+volumes:
+  notes-data:
+  gmail-credentials:
+  gcal-credentials:
+
+networks:
+  mcp-net:
+    driver: bridge

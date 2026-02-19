@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Simple tool IDs from PersonalityAgent.allowed_tools",
+    "tools": [
+      "gcal_list",
+      "gcal_search",
+      "gcal_read",
+      "gcal_create"
+    ]
+  },
+  "forge_tools": {
+    "description": "Tool references from Context Forge / MCP",
+    "tools": [
+      "hp.google_calendar.gcal.list_events",
+      "hp.google_calendar.gcal.search",
+      "hp.google_calendar.gcal.read_event",
+      "hp.google_calendar.gcal.create_event"
+    ]
+  },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": [
+      "google_calendar"
+    ],
+    "optional": []
+  }
+}

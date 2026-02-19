@@ -1,0 +1,7 @@
+{
+  "goal": "Navigate Microsoft 365 — manage Outlook email and calendar via Graph API",
+  "capabilities": [
+    "microsoft_graph"
+  ],
+  "tool_source": "all"
+}

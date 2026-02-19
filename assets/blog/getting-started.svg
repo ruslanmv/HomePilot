@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 260" fill="none">
+  <defs>
+    <linearGradient id="gs-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+    <filter id="gs-glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="gs-shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#94a3b8" flood-opacity="0.18"/>
+    </filter>
+    <clipPath id="gs-clip"><rect width="900" height="260" rx="16"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#gs-clip)">
+    <rect width="900" height="260" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="260" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
+
+    <!-- Grid -->
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
+      <line x1="0" y1="65" x2="900" y2="65"/><line x1="0" y1="130" x2="900" y2="130"/>
+      <line x1="0" y1="195" x2="900" y2="195"/>
+    </g>
+
+    <!-- Title -->
+    <text x="450" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#64748b" letter-spacing="3" text-anchor="middle">FROM ZERO TO RUNNING — 4 COMMANDS</text>
+
+    <!-- Terminal window -->
+    <g transform="translate(450, 145)" filter="url(#gs-shadow)">
+      <rect x="-370" y="-65" width="740" height="145" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+
+      <!-- Terminal header dots -->
+      <circle cx="-350" cy="-50" r="5" fill="#ef4444" opacity="0.7"/>
+      <circle cx="-335" cy="-50" r="5" fill="#f59e0b" opacity="0.7"/>
+      <circle cx="-320" cy="-50" r="5" fill="#10b981" opacity="0.7"/>
+      <text x="-290" y="-46" font-family="system-ui, sans-serif" font-size="10" fill="#94a3b8">Terminal</text>
+
+      <!-- Command lines -->
+      <text x="-350" y="-22" font-family="'SF Mono', 'Fira Code', 'Courier New', monospace" font-size="12" fill="#06b6d4">$</text>
+      <text x="-335" y="-22" font-family="'SF Mono', 'Fira Code', 'Courier New', monospace" font-size="12" fill="#e2e8f0"> git clone https://github.com/ruslanmv/homepilot &amp;&amp; cd homepilot</text>
+
+      <text x="-350" y="0" font-family="'SF Mono', 'Fira Code', 'Courier New', monospace" font-size="12" fill="#06b6d4">$</text>
+      <text x="-335" y="0" font-family="'SF Mono', 'Fira Code', 'Courier New', monospace" font-size="12" fill="#e2e8f0"> cp .env.example .env</text>
+
+      <text x="-350" y="22" font-family="'SF Mono', 'Fira Code', 'Courier New', monospace" font-size="12" fill="#06b6d4">$</text>
+      <text x="-335" y="22" font-family="'SF Mono', 'Fira Code', 'Courier New', monospace" font-size="12" fill="#e2e8f0"> make download-recommended</text>
+      <text x="130" y="22" font-family="'SF Mono', 'Fira Code', 'Courier New', monospace" font-size="10" fill="#64748b"># ~14GB</text>
+
+      <text x="-350" y="44" font-family="'SF Mono', 'Fira Code', 'Courier New', monospace" font-size="12" fill="#06b6d4">$</text>
+      <text x="-335" y="44" font-family="'SF Mono', 'Fira Code', 'Courier New', monospace" font-size="12" fill="#e2e8f0"> make install &amp;&amp; make run</text>
+
+      <!-- Blinking cursor -->
+      <rect x="-335" y="56" width="8" height="14" fill="#06b6d4" opacity="0.7">
+        <animate attributeName="opacity" values="0.7;0;0.7" dur="1s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+
+    <!-- Access points -->
+    <g transform="translate(450, 235)">
+      <text x="-300" y="0" font-family="system-ui, sans-serif" font-size="9" fill="#475569">HomePilot UI</text>
+      <text x="-300" y="12" font-family="monospace" font-size="9" fill="#0891b2">localhost:3000</text>
+
+      <text x="-120" y="0" font-family="system-ui, sans-serif" font-size="9" fill="#475569">API Docs</text>
+      <text x="-120" y="12" font-family="monospace" font-size="9" fill="#2563eb">localhost:8000/docs</text>
+
+      <text x="60" y="0" font-family="system-ui, sans-serif" font-size="9" fill="#475569">ComfyUI</text>
+      <text x="60" y="12" font-family="monospace" font-size="9" fill="#6366f1">localhost:8188</text>
+
+      <text x="220" y="0" font-family="system-ui, sans-serif" font-size="9" fill="#475569">MCP Admin</text>
+      <text x="220" y="12" font-family="monospace" font-size="9" fill="#7c3aed">localhost:4444</text>
+    </g>
+  </g>
+</svg>

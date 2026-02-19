@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Simple tool IDs from PersonalityAgent.allowed_tools",
+    "tools": [
+      "note_search",
+      "note_read",
+      "note_create",
+      "note_append"
+    ]
+  },
+  "forge_tools": {
+    "description": "Tool references from Context Forge / MCP",
+    "tools": [
+      "hp.local_notes.notes.search",
+      "hp.local_notes.notes.read",
+      "hp.local_notes.notes.create",
+      "hp.local_notes.notes.append",
+      "hp.local_notes.notes.update",
+      "hp.local_notes.notes.delete"
+    ]
+  },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": [
+      "local_notes"
+    ],
+    "optional": []
+  }
+}
