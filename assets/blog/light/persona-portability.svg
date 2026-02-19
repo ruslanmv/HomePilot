@@ -5,43 +5,39 @@
       <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
     </linearGradient>
-    <linearGradient id="pp-bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#0f0f23;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#1a1a3e;stop-opacity:1" />
-    </linearGradient>
     <filter id="pp-glow">
       <feGaussianBlur stdDeviation="4" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <filter id="pp-shadow">
-      <feGaussianBlur stdDeviation="3" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#94a3b8" flood-opacity="0.18"/>
     </filter>
     <clipPath id="pp-clip"><rect width="900" height="280" rx="16"/></clipPath>
   </defs>
 
   <g clip-path="url(#pp-clip)">
-    <rect width="900" height="280" fill="url(#pp-bg-grad)" rx="16"/>
+    <rect width="900" height="280" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="280" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
 
     <!-- Grid -->
-    <g opacity="0.08" stroke="#334155" stroke-width="0.5">
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
       <line x1="0" y1="70" x2="900" y2="70"/><line x1="0" y1="140" x2="900" y2="140"/>
       <line x1="0" y1="210" x2="900" y2="210"/>
     </g>
 
     <!-- Title -->
-    <text x="450" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#94a3b8" letter-spacing="3" text-anchor="middle">PORTABLE AI IDENTITY — THE .hpersona FORMAT</text>
+    <text x="450" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#64748b" letter-spacing="3" text-anchor="middle">PORTABLE AI IDENTITY — THE .hpersona FORMAT</text>
 
     <!-- Step 1: Create -->
     <g transform="translate(130, 140)" filter="url(#pp-shadow)">
-      <rect x="-80" y="-50" width="160" height="100" rx="12" fill="#1e293b" stroke="#06b6d4" stroke-width="1.5"/>
+      <rect x="-80" y="-50" width="160" height="100" rx="12" fill="#fff" stroke="#06b6d4" stroke-width="1.5"/>
       <!-- Persona icon -->
-      <circle cy="-20" r="14" fill="#06b6d4" opacity="0.15"/>
+      <circle cy="-20" r="14" fill="#06b6d4" opacity="0.1"/>
       <circle cy="-26" r="5" fill="#06b6d4" opacity="0.6"/>
       <path d="M-8 -14 Q0 -19 8 -14" stroke="#06b6d4" stroke-width="1.5" fill="none" stroke-linecap="round"/>
       <text x="0" y="8" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#0891b2" text-anchor="middle">Create</text>
-      <text x="0" y="22" font-family="system-ui, sans-serif" font-size="8" fill="#94a3b8" text-anchor="middle">Identity + Memory</text>
-      <text x="0" y="34" font-family="system-ui, sans-serif" font-size="8" fill="#94a3b8" text-anchor="middle">+ Voice + Tools</text>
+      <text x="0" y="22" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Identity + Memory</text>
+      <text x="0" y="34" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">+ Voice + Tools</text>
       <!-- Step number -->
       <circle cx="-65" cy="-35" r="10" fill="url(#pp-grad)" opacity="0.8"/>
       <text x="-65" y="-31" font-family="system-ui, sans-serif" font-size="9" font-weight="700" fill="#fff" text-anchor="middle">1</text>
@@ -59,18 +55,18 @@
 
     <!-- Step 2: Export (.hpersona package) -->
     <g transform="translate(370, 140)" filter="url(#pp-glow)">
-      <rect x="-75" y="-50" width="150" height="100" rx="12" fill="#1e293b" stroke="url(#pp-grad)" stroke-width="2"/>
+      <rect x="-75" y="-50" width="150" height="100" rx="12" fill="#fff" stroke="url(#pp-grad)" stroke-width="2"/>
       <!-- File icon -->
       <g transform="translate(0, -18)">
-        <rect x="-12" y="-12" width="24" height="28" rx="3" fill="url(#pp-grad)" opacity="0.15" stroke="url(#pp-grad)" stroke-width="1"/>
+        <rect x="-12" y="-12" width="24" height="28" rx="3" fill="url(#pp-grad)" opacity="0.1" stroke="url(#pp-grad)" stroke-width="1"/>
         <path d="M5 -12 L12 -5" stroke="url(#pp-grad)" stroke-width="0.8"/>
         <line x1="-6" y1="0" x2="6" y2="0" stroke="url(#pp-grad)" stroke-width="0.8" opacity="0.5"/>
         <line x1="-6" y1="5" x2="6" y2="5" stroke="url(#pp-grad)" stroke-width="0.8" opacity="0.5"/>
         <line x1="-6" y1="10" x2="3" y2="10" stroke="url(#pp-grad)" stroke-width="0.8" opacity="0.5"/>
       </g>
       <text x="0" y="18" font-family="monospace" font-size="10" font-weight="700" fill="url(#pp-grad)" text-anchor="middle">.hpersona</text>
-      <text x="0" y="32" font-family="system-ui, sans-serif" font-size="7" fill="#94a3b8" text-anchor="middle">Personality · Avatar · Tools</text>
-      <text x="0" y="42" font-family="system-ui, sans-serif" font-size="7" fill="#94a3b8" text-anchor="middle">Dependencies · Preview</text>
+      <text x="0" y="32" font-family="system-ui, sans-serif" font-size="7" fill="#64748b" text-anchor="middle">Personality · Avatar · Tools</text>
+      <text x="0" y="42" font-family="system-ui, sans-serif" font-size="7" fill="#64748b" text-anchor="middle">Dependencies · Preview</text>
       <!-- Step number -->
       <circle cx="-60" cy="-35" r="10" fill="url(#pp-grad)" opacity="0.8"/>
       <text x="-60" y="-31" font-family="system-ui, sans-serif" font-size="9" font-weight="700" fill="#fff" text-anchor="middle">2</text>
@@ -88,11 +84,11 @@
 
     <!-- Step 3: Share (Gallery) -->
     <g transform="translate(600, 140)" filter="url(#pp-shadow)">
-      <rect x="-70" y="-50" width="140" height="100" rx="12" fill="#1e293b" stroke="#8b5cf6" stroke-width="1.5"/>
+      <rect x="-70" y="-50" width="140" height="100" rx="12" fill="#fff" stroke="#8b5cf6" stroke-width="1.5"/>
       <text x="0" y="-18" font-family="system-ui, sans-serif" font-size="20" text-anchor="middle">🌐</text>
       <text x="0" y="8" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#7c3aed" text-anchor="middle">Share</text>
-      <text x="0" y="22" font-family="system-ui, sans-serif" font-size="8" fill="#94a3b8" text-anchor="middle">Community Gallery</text>
-      <text x="0" y="34" font-family="system-ui, sans-serif" font-size="8" fill="#94a3b8" text-anchor="middle">GitHub · Cloudflare</text>
+      <text x="0" y="22" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Community Gallery</text>
+      <text x="0" y="34" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">GitHub · Cloudflare</text>
       <circle cx="-55" cy="-35" r="10" fill="url(#pp-grad)" opacity="0.8"/>
       <text x="-55" y="-31" font-family="system-ui, sans-serif" font-size="9" font-weight="700" fill="#fff" text-anchor="middle">3</text>
     </g>
@@ -109,16 +105,16 @@
 
     <!-- Step 4: Install -->
     <g transform="translate(810, 140)" filter="url(#pp-shadow)">
-      <rect x="-65" y="-50" width="130" height="100" rx="12" fill="#1e293b" stroke="url(#pp-grad)" stroke-width="1.5"/>
+      <rect x="-65" y="-50" width="130" height="100" rx="12" fill="#fff" stroke="url(#pp-grad)" stroke-width="1.5"/>
       <text x="0" y="-18" font-family="system-ui, sans-serif" font-size="20" text-anchor="middle">✅</text>
       <text x="0" y="8" font-family="system-ui, sans-serif" font-size="11" font-weight="600" fill="#0891b2" text-anchor="middle">Install</text>
-      <text x="0" y="22" font-family="system-ui, sans-serif" font-size="8" fill="#94a3b8" text-anchor="middle">Preview · Verify</text>
-      <text x="0" y="34" font-family="system-ui, sans-serif" font-size="8" fill="#94a3b8" text-anchor="middle">One-click setup</text>
+      <text x="0" y="22" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Preview · Verify</text>
+      <text x="0" y="34" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">One-click setup</text>
       <circle cx="-50" cy="-35" r="10" fill="url(#pp-grad)" opacity="0.8"/>
       <text x="-50" y="-31" font-family="system-ui, sans-serif" font-size="9" font-weight="700" fill="#fff" text-anchor="middle">4</text>
     </g>
 
     <!-- Bottom tagline -->
-    <text x="450" y="260" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Create in Tokyo. Share globally. Install anywhere. Same identity, same personality, same tools.</text>
+    <text x="450" y="260" font-family="system-ui, sans-serif" font-size="11" fill="#475569" text-anchor="middle">Create in Tokyo. Share globally. Install anywhere. Same identity, same personality, same tools.</text>
   </g>
 </svg>
