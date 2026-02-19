@@ -1,0 +1,416 @@
+##############################################################################
+# Persona Seed Pipeline — Auto-sync bundled sample personas to R2
+#
+# Complements persona-publish.yml (issue-based, one-at-a-time) by handling
+# the built-in personas that ship with HomePilot in community/sample/.
+#
+# Triggers:
+#   1. On every GitHub Release — ensures the gallery is always up-to-date
+#   2. On push to master/main when community/sample/ changes — CI/CD
+#   3. Manual dispatch — for ad-hoc re-syncs
+#
+# Third-party persona submissions still go through persona-publish.yml
+# (create a GitHub Issue → maintainer approves → auto-published).
+#
+# Flow:
+#   1. Scan community/sample/ for all .hpersona packages
+#   2. Validate each package via process_submission.py
+#   3. Extract preview image + card metadata
+#   4. Upload packages, previews, and cards to Cloudflare R2
+#   5. Merge into registry.json (preserving third-party entries)
+#   6. Upload registry.json to R2
+#   7. Purge Cloudflare Worker edge cache
+#
+# Required GitHub Secrets:
+#   R2_ACCESS_KEY_ID      — R2 API token Access Key ID
+#   R2_SECRET_ACCESS_KEY  — R2 API token Secret Access Key
+#   CLOUDFLARE_ACCOUNT_ID — Cloudflare account ID
+#   R2_BUCKET_NAME        — R2 bucket name (e.g. "homepilot")
+#   CLOUDFLARE_API_TOKEN  — (optional) Cloudflare API token for cache purge;
+#                           if not set, cache expires naturally (~60s).
+#
+# Data source priority (backend/app/community.py):
+#   1. Cloudflare Worker (production, edge-cached) — COMMUNITY_GALLERY_URL
+#   2. R2 direct (fallback, dev only)              — R2_PUBLIC_URL
+#   3. Local samples (always-on safety net)        — community/sample/
+##############################################################################
+name: Persona Seed (Release Sync)
+
+on:
+  # ── Auto-trigger on every GitHub release ──────────────────
+  release:
+    types: [published]
+
+  # ── Auto-trigger when bundled personas change on main ─────
+  push:
+    branches: [master, main]
+    paths:
+      - "community/sample/**"
+      - "community/scripts/**"
+
+  # ── Manual trigger from Actions tab ───────────────────────
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate only — do not upload to R2"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: persona-seed
+  cancel-in-progress: false          # let a running sync finish
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+
+    env:
+      R2_BUCKET: ${{ secrets.R2_BUCKET_NAME }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_ENDPOINT: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      HAS_CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── 2. Discover .hpersona packages ────────────────────────────
+      - name: Discover bundled personas
+        id: discover
+        run: |
+          SAMPLE_DIR="community/sample"
+          PACKAGES=$(find "$SAMPLE_DIR" -maxdepth 1 -name "*.hpersona" -type f | sort)
+          COUNT=$(echo "$PACKAGES" | grep -c . || true)
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::warning::No .hpersona packages found in $SAMPLE_DIR"
+            echo "count=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Found $COUNT .hpersona packages:"
+          echo "$PACKAGES"
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+          # Save list for later steps
+          echo "$PACKAGES" > /tmp/packages.txt
+
+      # ── 3. Check R2 credentials ─────────────────────────────────
+      - name: Verify R2 credentials
+        if: steps.discover.outputs.count != '0' && env.DRY_RUN != 'true'
+        run: |
+          if [ -z "$R2_BUCKET" ] || [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+            echo "::error::Missing R2 secrets. Configure R2_BUCKET_NAME, R2_ACCESS_KEY_ID, and R2_SECRET_ACCESS_KEY in GitHub Settings > Secrets."
+            exit 1
+          fi
+          echo "R2 credentials verified."
+
+      # ── 4. Fetch existing R2 registry ────────────────────────────
+      - name: Fetch current R2 registry
+        id: fetch_registry
+        if: steps.discover.outputs.count != '0' && env.DRY_RUN != 'true'
+        run: |
+          aws s3 cp "s3://${R2_BUCKET}/registry/registry.json" \
+            /tmp/existing-registry.json \
+            --endpoint-url "$R2_ENDPOINT" 2>/dev/null \
+            || echo '{"schema_version":1,"items":[]}' > /tmp/existing-registry.json
+
+          EXISTING=$(python -c "import json; d=json.load(open('/tmp/existing-registry.json')); print(len(d.get('items',[])))")
+          echo "Current R2 registry: $EXISTING personas"
+          echo "existing_count=$EXISTING" >> $GITHUB_OUTPUT
+
+      # ── 5. Validate all packages ─────────────────────────────────
+      - name: Validate all packages
+        id: validate
+        if: steps.discover.outputs.count != '0'
+        run: |
+          VALID=0
+          INVALID=0
+          VALIDATED_IDS=""
+
+          while IFS= read -r PKG; do
+            BASENAME=$(basename "$PKG" .hpersona)
+            RESULT=$(python community/scripts/process_submission.py validate "$PKG" 2>&1)
+            IS_VALID=$(echo "$RESULT" | python -c "import sys,json; print(json.load(sys.stdin)['valid'])" 2>/dev/null || echo "False")
+
+            if [ "$IS_VALID" = "True" ]; then
+              VALID=$((VALID + 1))
+              echo "  ✓ $BASENAME"
+            else
+              INVALID=$((INVALID + 1))
+              ERRORS=$(echo "$RESULT" | python -c "import sys,json; errs=json.load(sys.stdin).get('errors',[]); print('; '.join(errs))" 2>/dev/null || echo "unknown error")
+              echo "  ✗ $BASENAME — $ERRORS"
+              echo "::warning::Validation failed for $BASENAME: $ERRORS"
+            fi
+          done < /tmp/packages.txt
+
+          echo ""
+          echo "Validation: $VALID passed, $INVALID failed"
+          echo "valid_count=$VALID" >> $GITHUB_OUTPUT
+          echo "invalid_count=$INVALID" >> $GITHUB_OUTPUT
+
+      # ── 6. Upload each persona to R2 ─────────────────────────────
+      - name: Upload personas to R2
+        id: upload
+        if: steps.discover.outputs.count != '0' && env.DRY_RUN != 'true'
+        run: |
+          SAMPLE_DIR="community/sample"
+          REGISTRY_JSON="community/sample/registry.json"
+          WORK_DIR="/tmp/persona-seed"
+          UPLOADED=0
+          FAILED=0
+          SKIPPED=0
+
+          mkdir -p "$WORK_DIR"
+
+          while IFS= read -r PKG; do
+            BASENAME=$(basename "$PKG" .hpersona)
+            echo ""
+            echo "═══════════════════════════════════════"
+            echo "  Processing: $BASENAME"
+            echo "═══════════════════════════════════════"
+
+            # --- Validate ---
+            RESULT=$(python community/scripts/process_submission.py validate "$PKG" 2>&1)
+            VALID=$(echo "$RESULT" | python -c "import sys,json; print(json.load(sys.stdin)['valid'])" 2>/dev/null || echo "False")
+
+            if [ "$VALID" != "True" ]; then
+              echo "  Skipping (invalid)"
+              FAILED=$((FAILED + 1))
+              continue
+            fi
+
+            SHA=$(echo "$RESULT" | python -c "import sys,json; print(json.load(sys.stdin).get('sha256',''))")
+            SIZE=$(echo "$RESULT" | python -c "import sys,json; print(json.load(sys.stdin).get('size_bytes',0))")
+
+            # --- Look up persona ID + version from registry.json ---
+            PERSONA_ID=$(python -c "
+          import json
+          with open('$REGISTRY_JSON') as f:
+              reg = json.load(f)
+          for item in reg.get('items', []):
+              if item['id'].startswith('${BASENAME}'):
+                  print(item['id'])
+                  break
+          " 2>/dev/null || echo "")
+
+            if [ -z "$PERSONA_ID" ]; then
+              echo "  ::warning::No registry entry for $BASENAME — skipping"
+              SKIPPED=$((SKIPPED + 1))
+              continue
+            fi
+
+            VERSION=$(python -c "
+          import json
+          with open('$REGISTRY_JSON') as f:
+              reg = json.load(f)
+          for item in reg.get('items', []):
+              if item['id'] == '${PERSONA_ID}':
+                  print(item.get('latest', {}).get('version', '1.0.0'))
+                  break
+          " 2>/dev/null || echo "1.0.0")
+
+            echo "  ID:      $PERSONA_ID"
+            echo "  Version: $VERSION"
+            echo "  SHA-256: ${SHA:0:16}…"
+            echo "  Size:    $SIZE bytes"
+
+            # --- Extract preview assets ---
+            EXTRACT_DIR="$WORK_DIR/$BASENAME/extracted"
+            mkdir -p "$EXTRACT_DIR"
+            python community/scripts/process_submission.py extract \
+              "$PKG" "$EXTRACT_DIR" > /dev/null 2>&1 || true
+
+            # --- Upload .hpersona package ---
+            echo "  Uploading package…"
+            aws s3 cp "$PKG" \
+              "s3://${R2_BUCKET}/packages/${PERSONA_ID}/${VERSION}/persona.hpersona" \
+              --endpoint-url "$R2_ENDPOINT" \
+              --content-type "application/octet-stream" \
+              --quiet
+
+            # --- Upload preview image ---
+            PREVIEW_FILE=""
+            if [ -f "$EXTRACT_DIR/preview.webp" ]; then
+              PREVIEW_FILE="$EXTRACT_DIR/preview.webp"
+              PREVIEW_CT="image/webp"
+            elif [ -f "$EXTRACT_DIR/preview.png" ]; then
+              PREVIEW_FILE="$EXTRACT_DIR/preview.png"
+              PREVIEW_CT="image/png"
+            fi
+
+            # Fallback: use thumbnail from sample assets
+            if [ -z "$PREVIEW_FILE" ]; then
+              THUMB=$(find "$SAMPLE_DIR/$BASENAME/assets/" \
+                -name "thumb_avatar_*.webp" -type f 2>/dev/null | head -1)
+              if [ -n "$THUMB" ]; then
+                PREVIEW_FILE="$THUMB"
+                PREVIEW_CT="image/webp"
+              fi
+            fi
+
+            if [ -n "$PREVIEW_FILE" ]; then
+              echo "  Uploading preview: $(basename "$PREVIEW_FILE")"
+              aws s3 cp "$PREVIEW_FILE" \
+                "s3://${R2_BUCKET}/previews/${PERSONA_ID}/${VERSION}/preview.webp" \
+                --endpoint-url "$R2_ENDPOINT" \
+                --content-type "$PREVIEW_CT" \
+                --quiet
+            else
+              echo "  ::warning::No preview image for $BASENAME"
+            fi
+
+            # --- Upload card.json ---
+            CARD_FILE="$SAMPLE_DIR/$BASENAME/preview/card.json"
+            if [ ! -f "$CARD_FILE" ] && [ -f "$EXTRACT_DIR/card.json" ]; then
+              CARD_FILE="$EXTRACT_DIR/card.json"
+            fi
+
+            if [ -f "$CARD_FILE" ]; then
+              echo "  Uploading card.json"
+              aws s3 cp "$CARD_FILE" \
+                "s3://${R2_BUCKET}/previews/${PERSONA_ID}/${VERSION}/card.json" \
+                --endpoint-url "$R2_ENDPOINT" \
+                --content-type "application/json" \
+                --quiet
+            fi
+
+            UPLOADED=$((UPLOADED + 1))
+            echo "  Done."
+
+          done < /tmp/packages.txt
+
+          echo ""
+          echo "═══════════════════════════════════════"
+          echo "  Upload summary"
+          echo "  Uploaded: $UPLOADED  Failed: $FAILED  Skipped: $SKIPPED"
+          echo "═══════════════════════════════════════"
+          echo "uploaded=$UPLOADED" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "skipped=$SKIPPED" >> $GITHUB_OUTPUT
+
+      # ── 7. Merge + upload registry.json ──────────────────────────
+      - name: Merge and upload registry.json
+        if: steps.discover.outputs.count != '0' && env.DRY_RUN != 'true'
+        run: |
+          REGISTRY_SRC="community/sample/registry.json"
+
+          if [ ! -f "$REGISTRY_SRC" ]; then
+            echo "::error::Local registry.json not found at $REGISTRY_SRC"
+            exit 1
+          fi
+
+          # Merge: existing R2 registry + local sample entries.
+          # Third-party personas already in R2 (from persona-publish.yml)
+          # are preserved. Local samples are upserted.
+          python3 -c "
+          import json
+          from datetime import datetime, timezone
+
+          with open('/tmp/existing-registry.json') as f:
+              r2_reg = json.load(f)
+
+          with open('$REGISTRY_SRC') as f:
+              local_reg = json.load(f)
+
+          local_ids = {item['id'] for item in local_reg.get('items', []) if item.get('id')}
+
+          # Build map: start with R2, upsert local
+          r2_map = {item['id']: item for item in r2_reg.get('items', [])}
+
+          for item in local_reg.get('items', []):
+              pid = item.get('id', '')
+              if pid:
+                  r2_map[pid] = item
+
+          items = sorted(r2_map.values(), key=lambda x: x.get('name', '').lower())
+          registry = {
+              'schema_version': 1,
+              'generated_at': datetime.now(timezone.utc).isoformat(),
+              'total': len(items),
+              'items': items,
+          }
+
+          with open('/tmp/merged-registry.json', 'w') as f:
+              json.dump(registry, f, indent=2)
+              f.write('\n')
+
+          third_party = len([i for i in items if i.get('id') not in local_ids])
+          print(f'Merged registry: {len(items)} total ({len(local_ids)} bundled + {third_party} third-party)')
+          "
+
+          # Upload merged registry
+          aws s3 cp /tmp/merged-registry.json \
+            "s3://${R2_BUCKET}/registry/registry.json" \
+            --endpoint-url "$R2_ENDPOINT" \
+            --content-type "application/json"
+
+          echo "Registry uploaded to R2"
+
+      # ── 8. Purge Cloudflare Worker cache ─────────────────────────
+      - name: Purge Worker edge cache
+        if: steps.discover.outputs.count != '0' && env.DRY_RUN != 'true' && env.HAS_CF_TOKEN == 'true'
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WORKER_URL: https://homepilot-persona-gallery.cloud-data.workers.dev
+        run: |
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${CF_ACCOUNT_ID}/purge_cache" \
+            -H "Authorization: Bearer ${CF_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"files\": [\"${WORKER_URL}/registry.json\"]}" || true)
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "Edge cache purged — gallery will reflect changes immediately."
+          else
+            echo "::warning::Cache purge returned HTTP ${HTTP_CODE}. Registry cache will expire in ~60s."
+            echo "$BODY" | python -m json.tool 2>/dev/null || echo "$BODY"
+          fi
+
+      # ── Summary ──────────────────────────────────────────────────
+      - name: Summary
+        if: always()
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<'SUMMARY'
+          ### Persona Seed — Release Sync Results
+
+          | Metric | Value |
+          |--------|-------|
+          | Trigger | `${{ github.event_name }}` |
+          | Packages found | ${{ steps.discover.outputs.count || '0' }} |
+          | Valid | ${{ steps.validate.outputs.valid_count || '0' }} |
+          | Invalid | ${{ steps.validate.outputs.invalid_count || '0' }} |
+          | Uploaded | ${{ steps.upload.outputs.uploaded || '—' }} |
+          | Failed | ${{ steps.upload.outputs.failed || '—' }} |
+          | Skipped | ${{ steps.upload.outputs.skipped || '—' }} |
+          | Dry run | `${{ env.DRY_RUN }}` |
+
+          **Data source priority:**
+          1. Cloudflare Worker (edge-cached, global)
+          2. R2 direct (development fallback)
+          3. Local samples (always-on safety net)
+
+          All bundled personas in `community/sample/` are synced to R2 and
+          served by the Cloudflare Worker at the gallery URL.
+
+          > Third-party submissions use `persona-publish.yml` (GitHub Issue workflow).
+          SUMMARY

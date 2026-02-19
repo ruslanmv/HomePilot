@@ -5,10 +5,6 @@
       <stop offset="50%" style="stop-color:#2563eb;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:1" />
     </linearGradient>
-    <linearGradient id="sb-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#0f0f23;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#1a1a3e;stop-opacity:1" />
-    </linearGradient>
     <filter id="sb-glow">
       <feGaussianBlur stdDeviation="6" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
@@ -16,8 +12,9 @@
     <clipPath id="sb-clip"><rect width="900" height="200" rx="16"/></clipPath>
   </defs>
   <g clip-path="url(#sb-clip)">
-    <rect width="900" height="200" fill="url(#sb-bg)" rx="16"/>
-    <g opacity="0.08" stroke="#334155" stroke-width="0.5">
+    <rect width="900" height="200" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="200" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
+    <g opacity="0.06" stroke="#94a3b8" stroke-width="0.5">
       <line x1="0" y1="40" x2="900" y2="40"/><line x1="0" y1="80" x2="900" y2="80"/>
       <line x1="0" y1="120" x2="900" y2="120"/><line x1="0" y1="160" x2="900" y2="160"/>
     </g>
@@ -46,14 +43,14 @@
     </g>
     <text x="195" y="82" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0891b2" letter-spacing="4">SERIES</text>
     <text x="195" y="120" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="42" font-weight="800" letter-spacing="1">
-      <tspan fill="#e2e8f0">Beyond </tspan><tspan fill="url(#sb-grad)">Chatbots</tspan>
+      <tspan fill="#1e293b">Beyond </tspan><tspan fill="url(#sb-grad)">Chatbots</tspan>
     </text>
-    <text x="195" y="150" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" fill="#94a3b8" letter-spacing="0.5">Building a Local-First AI System That Remembers, Creates, and Acts</text>
+    <text x="195" y="150" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" fill="#475569" letter-spacing="0.5">Building a Local-First AI System That Remembers, Creates, and Acts</text>
     <rect x="195" y="160" width="120" height="2.5" rx="1.25" fill="url(#sb-grad)" opacity="0.5">
       <animate attributeName="width" values="120;160;120" dur="4s" repeatCount="indefinite"/>
     </rect>
     <g transform="translate(770, 90)">
-      <text x="0" y="0" font-family="system-ui, sans-serif" font-size="10" fill="#64748b" letter-spacing="2">4 PARTS</text>
+      <text x="0" y="0" font-family="system-ui, sans-serif" font-size="10" fill="#94a3b8" letter-spacing="2">4 PARTS</text>
       <circle cx="8" cy="18" r="5" fill="url(#sb-grad)" opacity="0.9"/>
       <circle cx="28" cy="18" r="5" fill="url(#sb-grad)" opacity="0.6"/>
       <circle cx="48" cy="18" r="5" fill="url(#sb-grad)" opacity="0.4"/>

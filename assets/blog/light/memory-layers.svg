@@ -5,52 +5,48 @@
       <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
     </linearGradient>
-    <linearGradient id="ml-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#0f0f23;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#1a1a3e;stop-opacity:1" />
-    </linearGradient>
     <linearGradient id="ml-cyan" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:0.15" />
-      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:0.05" />
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:0.12" />
+      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:0.03" />
     </linearGradient>
     <linearGradient id="ml-blue" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:0.15" />
-      <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:0.05" />
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:0.12" />
+      <stop offset="100%" style="stop-color:#3b82f6;stop-opacity:0.03" />
     </linearGradient>
     <linearGradient id="ml-purple" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#8b5cf6;stop-opacity:0.15" />
-      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:0.05" />
+      <stop offset="0%" style="stop-color:#8b5cf6;stop-opacity:0.12" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:0.03" />
     </linearGradient>
     <linearGradient id="ml-indigo" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:0.15" />
-      <stop offset="100%" style="stop-color:#6366f1;stop-opacity:0.05" />
+      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:0.12" />
+      <stop offset="100%" style="stop-color:#6366f1;stop-opacity:0.03" />
     </linearGradient>
     <filter id="ml-glow">
       <feGaussianBlur stdDeviation="5" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <filter id="ml-shadow">
-      <feGaussianBlur stdDeviation="4" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#94a3b8" flood-opacity="0.18"/>
     </filter>
     <clipPath id="ml-clip"><rect width="900" height="400" rx="16"/></clipPath>
   </defs>
 
   <g clip-path="url(#ml-clip)">
-    <rect width="900" height="400" fill="url(#ml-bg)" rx="16"/>
+    <rect width="900" height="400" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="400" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
 
     <!-- Grid -->
-    <g stroke="#334155" stroke-width="0.5" opacity="0.08">
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
       <line x1="0" y1="100" x2="900" y2="100"/><line x1="0" y1="200" x2="900" y2="200"/>
       <line x1="0" y1="300" x2="900" y2="300"/>
     </g>
 
     <!-- Title -->
-    <text x="450" y="38" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#94a3b8" letter-spacing="3" text-anchor="middle">HOW PERSONA MEMORY WORKS</text>
+    <text x="450" y="38" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#64748b" letter-spacing="3" text-anchor="middle">HOW PERSONA MEMORY WORKS</text>
 
     <!-- Central brain icon -->
     <g transform="translate(450, 200)" filter="url(#ml-glow)">
-      <circle r="35" fill="#1e293b" stroke="url(#ml-grad)" stroke-width="2"/>
+      <circle r="35" fill="#fff" stroke="url(#ml-grad)" stroke-width="2"/>
       <!-- Brain pattern -->
       <path d="M-8 -12 Q-15 -6 -8 0 Q-15 6 -8 12" stroke="url(#ml-grad)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
       <path d="M8 -12 Q15 -6 8 0 Q15 6 8 12" stroke="url(#ml-grad)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
@@ -67,11 +63,11 @@
     <!-- Layer 1: Facts (top-left) -->
     <g transform="translate(120, 120)" filter="url(#ml-shadow)">
       <rect x="-90" y="-45" width="180" height="90" rx="12" fill="url(#ml-cyan)" stroke="#06b6d4" stroke-width="1"/>
-      <circle cx="-60" cy="-15" r="14" fill="#06b6d4" opacity="0.15"/>
+      <circle cx="-60" cy="-15" r="14" fill="#06b6d4" opacity="0.12"/>
       <text x="-60" y="-11" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle" fill="#06b6d4">📋</text>
       <text x="-30" y="-15" font-family="system-ui, sans-serif" font-size="14" font-weight="700" fill="#0891b2">Facts</text>
-      <text x="-60" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#94a3b8">Name, preferences</text>
-      <text x="-60" y="24" font-family="system-ui, sans-serif" font-size="9" fill="#94a3b8">Schedule, work style</text>
+      <text x="-60" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#475569">Name, preferences</text>
+      <text x="-60" y="24" font-family="system-ui, sans-serif" font-size="9" fill="#475569">Schedule, work style</text>
       <!-- Connection line to center -->
       <line x1="90" y1="0" x2="280" y2="80" stroke="#06b6d4" stroke-width="1" opacity="0.3"/>
       <!-- Animated data dot -->
@@ -84,11 +80,11 @@
     <!-- Layer 2: Emotions (top-right) -->
     <g transform="translate(780, 120)" filter="url(#ml-shadow)">
       <rect x="-90" y="-45" width="180" height="90" rx="12" fill="url(#ml-blue)" stroke="#3b82f6" stroke-width="1"/>
-      <circle cx="-60" cy="-15" r="14" fill="#3b82f6" opacity="0.15"/>
+      <circle cx="-60" cy="-15" r="14" fill="#3b82f6" opacity="0.12"/>
       <text x="-60" y="-11" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle" fill="#3b82f6">💭</text>
       <text x="-30" y="-15" font-family="system-ui, sans-serif" font-size="14" font-weight="700" fill="#2563eb">Emotions</text>
-      <text x="-60" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#94a3b8">Communication style</text>
-      <text x="-60" y="24" font-family="system-ui, sans-serif" font-size="9" fill="#94a3b8">Stress, enthusiasm</text>
+      <text x="-60" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#475569">Communication style</text>
+      <text x="-60" y="24" font-family="system-ui, sans-serif" font-size="9" fill="#475569">Stress, enthusiasm</text>
       <line x1="-90" y1="0" x2="-280" y2="80" stroke="#3b82f6" stroke-width="1" opacity="0.3"/>
       <circle r="3" fill="#3b82f6">
         <animateMotion dur="3.5s" repeatCount="indefinite" path="M-90 0 L-280 80"/>
@@ -99,11 +95,11 @@
     <!-- Layer 3: Relationship (bottom-left) -->
     <g transform="translate(120, 290)" filter="url(#ml-shadow)">
       <rect x="-90" y="-45" width="180" height="90" rx="12" fill="url(#ml-indigo)" stroke="#6366f1" stroke-width="1"/>
-      <circle cx="-60" cy="-15" r="14" fill="#6366f1" opacity="0.15"/>
+      <circle cx="-60" cy="-15" r="14" fill="#6366f1" opacity="0.12"/>
       <text x="-60" y="-11" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle" fill="#6366f1">🤝</text>
       <text x="-30" y="-15" font-family="system-ui, sans-serif" font-size="14" font-weight="700" fill="#818cf8">Relationship</text>
-      <text x="-60" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#94a3b8">Interaction history</text>
-      <text x="-60" y="24" font-family="system-ui, sans-serif" font-size="9" fill="#94a3b8">Recurring topics</text>
+      <text x="-60" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#475569">Interaction history</text>
+      <text x="-60" y="24" font-family="system-ui, sans-serif" font-size="9" fill="#475569">Recurring topics</text>
       <line x1="90" y1="0" x2="280" y2="-90" stroke="#6366f1" stroke-width="1" opacity="0.3"/>
       <circle r="3" fill="#6366f1">
         <animateMotion dur="4s" repeatCount="indefinite" path="M90 0 L280 -90"/>
@@ -114,11 +110,11 @@
     <!-- Layer 4: Confidence (bottom-right) -->
     <g transform="translate(780, 290)" filter="url(#ml-shadow)">
       <rect x="-90" y="-45" width="180" height="90" rx="12" fill="url(#ml-purple)" stroke="#8b5cf6" stroke-width="1"/>
-      <circle cx="-60" cy="-15" r="14" fill="#8b5cf6" opacity="0.15"/>
+      <circle cx="-60" cy="-15" r="14" fill="#8b5cf6" opacity="0.12"/>
       <text x="-60" y="-11" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle" fill="#8b5cf6">📊</text>
       <text x="-30" y="-15" font-family="system-ui, sans-serif" font-size="14" font-weight="700" fill="#a78bfa">Confidence</text>
-      <text x="-60" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#94a3b8">Known vs uncertain</text>
-      <text x="-60" y="24" font-family="system-ui, sans-serif" font-size="9" fill="#94a3b8">Adaptive responses</text>
+      <text x="-60" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#475569">Known vs uncertain</text>
+      <text x="-60" y="24" font-family="system-ui, sans-serif" font-size="9" fill="#475569">Adaptive responses</text>
       <line x1="-90" y1="0" x2="-280" y2="-90" stroke="#8b5cf6" stroke-width="1" opacity="0.3"/>
       <circle r="3" fill="#8b5cf6">
         <animateMotion dur="4.5s" repeatCount="indefinite" path="M-90 0 L-280 -90"/>
@@ -127,6 +123,6 @@
     </g>
 
     <!-- Bottom tagline -->
-    <text x="450" y="385" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Memory compounds over time — the more you use a Persona, the more useful it becomes</text>
+    <text x="450" y="385" font-family="system-ui, sans-serif" font-size="11" fill="#475569" text-anchor="middle">Memory compounds over time — the more you use a Persona, the more useful it becomes</text>
   </g>
 </svg>
