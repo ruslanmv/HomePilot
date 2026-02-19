@@ -1,0 +1,7 @@
+{
+  "goal": "Fetch, extract, and synthesize web content for research and analysis",
+  "capabilities": [
+    "web_research"
+  ],
+  "tool_source": "all"
+}

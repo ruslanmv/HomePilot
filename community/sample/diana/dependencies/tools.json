@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Simple tool IDs from PersonalityAgent.allowed_tools",
+    "tools": [
+      "graph_mail_search",
+      "graph_mail_read",
+      "graph_mail_draft",
+      "graph_mail_send",
+      "graph_cal_list",
+      "graph_cal_read"
+    ]
+  },
+  "forge_tools": {
+    "description": "Tool references from Context Forge / MCP",
+    "tools": [
+      "hp.microsoft_graph.graph.mail.search",
+      "hp.microsoft_graph.graph.mail.read",
+      "hp.microsoft_graph.graph.mail.draft",
+      "hp.microsoft_graph.graph.mail.send",
+      "hp.microsoft_graph.graph.calendar.list_events",
+      "hp.microsoft_graph.graph.calendar.read_event"
+    ]
+  },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": [
+      "microsoft_graph"
+    ],
+    "optional": []
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "goal": "Capture, organize, and recall user notes and ideas with precision",
+  "capabilities": [
+    "local_notes"
+  ],
+  "tool_source": "all"
+}

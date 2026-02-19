@@ -1,0 +1,41 @@
+# HomePilot MCP Server — Docker build ignore
+# Build context is the repo root, so exclude everything except agentic/
+
+# Exclude non-agentic directories
+backend/
+frontend/
+comfyui/
+media/
+edit-session/
+infra/
+docs/
+assets/
+data/
+personas/
+workflows/
+node_modules/
+
+# Exclude dev/build artifacts
+**/__pycache__
+**/.pytest_cache
+**/.venv
+**/.mypy_cache
+**/.ruff_cache
+**/*.pyc
+**/*.pyo
+**/*.egg-info
+
+# Exclude git and CI
+.git
+.github
+.devcontainer
+
+# Exclude Docker files (prevent recursive copy)
+**/Dockerfile
+**/.dockerignore
+docker-compose*.yml
+
+# Exclude environment files (never bake secrets into images)
+**/.env
+**/.env.*
+!**/.env.example

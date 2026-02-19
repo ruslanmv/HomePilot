@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "servers": [
+    {
+      "name": "mcp-microsoft-graph",
+      "description": "Outlook Mail + Calendar via Microsoft Graph (OAuth device code)",
+      "default_port": 9116,
+      "source": {
+        "type": "external",
+        "git": "https://github.com/HomePilotAI/mcp-servers",
+        "ref": "v0.1.0",
+        "subdir": "servers/mcp-microsoft-graph"
+      },
+      "transport": "HTTP",
+      "protocol": "MCP",
+      "tools_provided": [
+        "hp.microsoft_graph.graph.mail.search",
+        "hp.microsoft_graph.graph.mail.read",
+        "hp.microsoft_graph.graph.mail.draft",
+        "hp.microsoft_graph.graph.mail.send",
+        "hp.microsoft_graph.graph.calendar.list_events",
+        "hp.microsoft_graph.graph.calendar.read_event"
+      ],
+      "health_check": {
+        "method": "POST",
+        "path": "/rpc",
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "id": 1
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "servers": [
+    {
+      "name": "mcp-github",
+      "description": "GitHub repo/issues/PRs tools (OAuth or PAT)",
+      "default_port": 9118,
+      "source": {
+        "type": "external",
+        "git": "https://github.com/HomePilotAI/mcp-servers",
+        "ref": "v0.1.0",
+        "subdir": "servers/mcp-github"
+      },
+      "transport": "HTTP",
+      "protocol": "MCP",
+      "tools_provided": [
+        "hp.github.github.repos.list",
+        "hp.github.github.issues.search",
+        "hp.github.github.prs.list",
+        "hp.github.github.pr.read",
+        "hp.github.github.issue.create"
+      ],
+      "health_check": {
+        "method": "POST",
+        "path": "/rpc",
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "id": 1
+        }
+      }
+    }
+  ]
+}

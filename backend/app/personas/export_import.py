@@ -154,6 +154,7 @@ def _build_mcp_servers_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
 
     # Map known prefixes to built-in servers
     _KNOWN_SERVERS = {
+        # Core (9101–9105)
         "hp.personal": {
             "name": "hp-personal-assistant",
             "description": "Personal notes search and day planning",
@@ -183,6 +184,87 @@ def _build_mcp_servers_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
             "description": "Web search via SearXNG or Tavily",
             "default_port": 9105,
             "source": {"type": "builtin", "builtin_id": "hp-web-search"},
+        },
+        # Local (9110–9113)
+        "hp.notes": {
+            "name": "hp-local-notes",
+            "description": "Local notes storage and retrieval",
+            "default_port": 9110,
+            "source": {"type": "builtin", "builtin_id": "hp-local-notes"},
+        },
+        "hp.local_notes": {
+            "name": "hp-local-notes",
+            "description": "Local notes storage and retrieval",
+            "default_port": 9110,
+            "source": {"type": "builtin", "builtin_id": "hp-local-notes"},
+        },
+        "hp.projects": {
+            "name": "hp-local-projects",
+            "description": "Local project filesystem tools",
+            "default_port": 9111,
+            "source": {"type": "builtin", "builtin_id": "hp-local-projects"},
+        },
+        "hp.local_projects": {
+            "name": "hp-local-projects",
+            "description": "Local project filesystem tools",
+            "default_port": 9111,
+            "source": {"type": "builtin", "builtin_id": "hp-local-projects"},
+        },
+        "hp.web_fetch": {
+            "name": "hp-web-fetch",
+            "description": "Web page fetching and content extraction",
+            "default_port": 9112,
+            "source": {"type": "builtin", "builtin_id": "hp-web-fetch"},
+        },
+        "hp.shell": {
+            "name": "hp-shell-safe",
+            "description": "Safe shell command execution",
+            "default_port": 9113,
+            "source": {"type": "builtin", "builtin_id": "hp-shell-safe"},
+        },
+        # Communication (9114–9117)
+        "hp.gmail": {
+            "name": "hp-gmail",
+            "description": "Gmail integration (search, read, draft, send)",
+            "default_port": 9114,
+            "source": {"type": "builtin", "builtin_id": "hp-gmail"},
+        },
+        "hp.gcal": {
+            "name": "hp-google-calendar",
+            "description": "Google Calendar integration",
+            "default_port": 9115,
+            "source": {"type": "builtin", "builtin_id": "hp-google-calendar"},
+        },
+        "hp.graph": {
+            "name": "hp-microsoft-graph",
+            "description": "Microsoft Graph (Outlook + Calendar)",
+            "default_port": 9116,
+            "source": {"type": "builtin", "builtin_id": "hp-microsoft-graph"},
+        },
+        "hp.microsoft_graph": {
+            "name": "hp-microsoft-graph",
+            "description": "Microsoft Graph (Outlook + Calendar)",
+            "default_port": 9116,
+            "source": {"type": "builtin", "builtin_id": "hp-microsoft-graph"},
+        },
+        "hp.slack": {
+            "name": "hp-slack",
+            "description": "Slack integration (channels, messages, search)",
+            "default_port": 9117,
+            "source": {"type": "builtin", "builtin_id": "hp-slack"},
+        },
+        # Dev & Knowledge (9118–9119)
+        "hp.github": {
+            "name": "hp-github",
+            "description": "GitHub integration (repos, issues, PRs)",
+            "default_port": 9118,
+            "source": {"type": "builtin", "builtin_id": "hp-github"},
+        },
+        "hp.notion": {
+            "name": "hp-notion",
+            "description": "Notion integration (search, read, append)",
+            "default_port": 9119,
+            "source": {"type": "builtin", "builtin_id": "hp-notion"},
         },
     }
 

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "servers": [
+    {
+      "name": "mcp-gmail",
+      "description": "Gmail tools via Google APIs (OAuth required)",
+      "default_port": 9114,
+      "source": {
+        "type": "external",
+        "git": "https://github.com/HomePilotAI/mcp-servers",
+        "ref": "v0.1.0",
+        "subdir": "servers/mcp-gmail"
+      },
+      "transport": "HTTP",
+      "protocol": "MCP",
+      "tools_provided": [
+        "hp.gmail.gmail.search",
+        "hp.gmail.gmail.read",
+        "hp.gmail.gmail.draft",
+        "hp.gmail.gmail.send"
+      ],
+      "health_check": {
+        "method": "POST",
+        "path": "/rpc",
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "id": 1
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "goal": "Manage Google Calendar — plan schedules, find free time, and organize events",
+  "capabilities": [
+    "google_calendar"
+  ],
+  "tool_source": "all"
+}

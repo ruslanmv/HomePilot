@@ -45,6 +45,18 @@ from agentic.integrations.mcp.web_search_server import app as web_search_app
 from agentic.integrations.a2a.everyday_assistant_agent import app as everyday_assistant_app
 from agentic.integrations.a2a.chief_of_staff_agent import app as chief_of_staff_app
 
+# ── New MCP servers (functional contract) ──────────────────────────────────
+from agentic.integrations.mcp.local_notes_server import app as local_notes_app
+from agentic.integrations.mcp.local_projects_server import app as local_projects_app
+from agentic.integrations.mcp.web_mcp_server import app as web_mcp_app
+from agentic.integrations.mcp.shell_safe_server import app as shell_safe_app
+from agentic.integrations.mcp.gmail_server import app as gmail_app
+from agentic.integrations.mcp.google_calendar_server import app as google_calendar_app
+from agentic.integrations.mcp.microsoft_graph_server import app as microsoft_graph_app
+from agentic.integrations.mcp.slack_server import app as slack_app
+from agentic.integrations.mcp.github_server import app as github_app
+from agentic.integrations.mcp.notion_server import app as notion_app
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -84,6 +96,17 @@ MCP_SERVERS = [
     ("decision-copilot", decision_copilot_app),
     ("executive-briefing", executive_briefing_app),
     ("web-search", web_search_app),
+    # New functional contract servers
+    ("local-notes", local_notes_app),
+    ("local-projects", local_projects_app),
+    ("web-mcp", web_mcp_app),
+    ("shell-safe", shell_safe_app),
+    ("gmail", gmail_app),
+    ("google-calendar", google_calendar_app),
+    ("microsoft-graph", microsoft_graph_app),
+    ("slack", slack_app),
+    ("github", github_app),
+    ("notion", notion_app),
 ]
 
 

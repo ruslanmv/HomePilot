@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "servers": [
+    {
+      "name": "mcp-google-calendar",
+      "description": "Google Calendar tools via Google APIs (OAuth required)",
+      "default_port": 9115,
+      "source": {
+        "type": "external",
+        "git": "https://github.com/HomePilotAI/mcp-servers",
+        "ref": "v0.1.0",
+        "subdir": "servers/mcp-google-calendar"
+      },
+      "transport": "HTTP",
+      "protocol": "MCP",
+      "tools_provided": [
+        "hp.google_calendar.gcal.list_events",
+        "hp.google_calendar.gcal.search",
+        "hp.google_calendar.gcal.read_event",
+        "hp.google_calendar.gcal.create_event"
+      ],
+      "health_check": {
+        "method": "POST",
+        "path": "/rpc",
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "id": 1
+        }
+      }
+    }
+  ]
+}

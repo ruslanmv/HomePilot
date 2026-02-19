@@ -471,6 +471,14 @@ git clone https://github.com/ruslanmv/homepilot && cd homepilot && make install 
 
 ---
 
+## Tutorial — The Definitive Guide
+
+For a comprehensive, step-by-step walkthrough of every HomePilot feature — from installation through Personas, content creation, image editing, video animation, and MCP agents — read the full guide:
+
+- **[HomePilot: The Definitive Guide — From Install to AI Agents](blog/tutorial-complete-guide.md)** — 22 sections, 18 illustrated figures, complete glossary, hardware recommendations, and troubleshooting reference
+
+---
+
 <p align="center">
   <img src="../assets/homepilot-logo.svg" alt="HomePilot" width="300" /><br><br>
   <b>HomePilot</b> — Your AI. Your data. Your rules.<br>
