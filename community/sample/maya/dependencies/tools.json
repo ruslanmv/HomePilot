@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Simple tool IDs from PersonalityAgent.allowed_tools",
+    "tools": [
+      "web_fetch",
+      "content_extract"
+    ]
+  },
+  "forge_tools": {
+    "description": "Tool references from Context Forge / MCP",
+    "tools": [
+      "hp.web.web.fetch",
+      "hp.web.web.extract_main"
+    ]
+  },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": [
+      "web_research"
+    ],
+    "optional": []
+  }
+}

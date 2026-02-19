@@ -30,28 +30,15 @@ A **Persona** is a persistent AI identity that represents *who the assistant is*
 
 It is the atomic unit that connects everything a modern AI assistant needs into a single, continuous entity:
 
-```
-Identity + Voice + Appearance + Memory + Sessions = Persona
-```
+<p align="center">
+  <img src="../assets/persona-equation.svg" alt="Identity + Voice + Appearance + Memory + Sessions = Persona" width="720" />
+</p>
 
 A Persona sits above individual conversations and below the user:
 
-```
-                   ┌─────────────┐
-                   │    User     │
-                   └──────┬──────┘
-                          │ owns
-                   ┌──────┴──────┐
-                   │   Persona   │   ← one consistent identity
-                   └──────┬──────┘
-                          │ hosts
-              ┌───────────┼───────────┐
-              │           │           │
-        ┌─────┴────┐ ┌───┴────┐ ┌────┴─────┐
-        │ Session 1 │ │Session 2│ │Session N │
-        │  (voice)  │ │ (text)  │ │ (voice)  │
-        └──────────┘ └────────┘ └──────────┘
-```
+<p align="center">
+  <img src="../assets/persona-hierarchy.svg" alt="User owns a Persona, which hosts many Sessions" width="560" />
+</p>
 
 Think of it as: **a named, visual, voice-enabled assistant with a defined personality, behavior, and memory scope that you can talk to over time.**
 
@@ -171,11 +158,9 @@ A Persona is not limited to conversation. Through HomePilot's MCP (Model Context
 
 ### How It Works
 
-```
-User  →  Persona  →  MCP Gateway  →  Tool Server  →  External Service
-                                                        (Email, WhatsApp,
-                                                         Calendar, Search...)
-```
+<p align="center">
+  <img src="../assets/persona-tools-flow.svg" alt="User → Persona → MCP Gateway → Tool Server → External Service" width="780" />
+</p>
 
 When a Persona is in **Linked mode**, it can discover and invoke tools at runtime. The Persona's identity and memory inform *how* it uses those tools — a "Personal Secretary" Persona sends emails with your preferred sign-off; a "Chief of Staff" Persona prioritizes your calendar based on what it knows about your week.
 

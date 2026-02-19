@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 420">
+  <defs>
+    <style>
+      /* ── entrance animations ── */
+      @keyframes dropIn {
+        from { opacity: 0; transform: translateY(-24px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes growLine {
+        from { stroke-dashoffset: 100; }
+        to   { stroke-dashoffset: 0; }
+      }
+      @keyframes fadeUp {
+        from { opacity: 0; transform: translateY(16px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes softPulse {
+        0%, 100% { opacity: .08; }
+        50%      { opacity: .18; }
+      }
+
+      /* ── User node ── */
+      .user-node { animation: dropIn .55s ease-out .2s both; }
+
+      /* ── Connector lines ── */
+      .line-main  { stroke-dasharray: 100; animation: growLine .5s ease-out .6s both; }
+      .line-left  { stroke-dasharray: 100; animation: growLine .45s ease-out 1.5s both; }
+      .line-mid   { stroke-dasharray: 100; animation: growLine .45s ease-out 1.6s both; }
+      .line-right { stroke-dasharray: 100; animation: growLine .45s ease-out 1.7s both; }
+
+      /* ── Persona node ── */
+      .persona-node { animation: fadeUp .5s ease-out .95s both; }
+      .persona-halo { animation: softPulse 3s ease-in-out 2.5s infinite; }
+
+      /* ── Session nodes ── */
+      .session-1 { animation: fadeUp .45s ease-out 1.9s both; }
+      .session-2 { animation: fadeUp .45s ease-out 2.1s both; }
+      .session-3 { animation: fadeUp .45s ease-out 2.3s both; }
+
+      /* ── Labels ── */
+      .label-owns  { animation: fadeUp .35s ease-out 1.15s both; }
+      .label-hosts { animation: fadeUp .35s ease-out 1.85s both; }
+    </style>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#0f0f23"/>
+      <stop offset="100%" stop-color="#1a1a3e"/>
+    </linearGradient>
+    <linearGradient id="personaFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="620" height="420" rx="16" fill="url(#bg)"/>
+
+  <!-- ══ CONNECTOR LINES ══ -->
+  <!-- User → Persona -->
+  <line class="line-main" x1="310" y1="82" x2="310" y2="168" stroke="#475569" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Persona → Sessions (fan out) -->
+  <line class="line-left"  x1="310" y1="248" x2="140" y2="316" stroke="#475569" stroke-width="1.5" stroke-linecap="round"/>
+  <line class="line-mid"   x1="310" y1="248" x2="310" y2="316" stroke="#475569" stroke-width="1.5" stroke-linecap="round"/>
+  <line class="line-right" x1="310" y1="248" x2="480" y2="316" stroke="#475569" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- ══ USER NODE ══ -->
+  <g class="user-node" opacity="0">
+    <circle cx="310" cy="56" r="32" fill="#1e293b" stroke="#38bdf8" stroke-width="2"/>
+    <text x="310" y="50" text-anchor="middle" fill="#38bdf8" font-family="system-ui,sans-serif" font-size="22">👤</text>
+    <text x="310" y="68" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="10" font-weight="600">You</text>
+  </g>
+
+  <!-- "owns" label -->
+  <g class="label-owns" opacity="0">
+    <rect x="322" y="112" width="50" height="22" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <text x="347" y="127" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="10" font-style="italic">owns</text>
+  </g>
+
+  <!-- ══ PERSONA NODE ══ -->
+  <!-- Halo glow -->
+  <circle class="persona-halo" cx="310" cy="208" r="52" fill="url(#personaFill)" opacity="0"/>
+
+  <g class="persona-node" opacity="0">
+    <rect x="240" y="168" width="140" height="80" rx="20" fill="url(#personaFill)" opacity=".12"/>
+    <rect x="240" y="168" width="140" height="80" rx="20" fill="none" stroke="url(#personaFill)" stroke-width="2"/>
+    <text x="310" y="200" text-anchor="middle" fill="#c4b5fd" font-family="system-ui,sans-serif" font-size="24">🎭</text>
+    <text x="310" y="224" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="13" font-weight="700">Persona</text>
+    <text x="310" y="240" text-anchor="middle" fill="#c4b5fd" font-family="system-ui,sans-serif" font-size="9">One consistent identity</text>
+  </g>
+
+  <!-- "hosts" label -->
+  <g class="label-hosts" opacity="0">
+    <rect x="322" y="268" width="52" height="22" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <text x="348" y="283" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="10" font-style="italic">hosts</text>
+  </g>
+
+  <!-- ══ SESSION NODES ══ -->
+  <!-- Session 1 (voice) -->
+  <g class="session-1" opacity="0">
+    <rect x="76" y="316" width="128" height="72" rx="14" fill="#1e293b" stroke="#f472b6" stroke-width="1.5"/>
+    <text x="140" y="344" text-anchor="middle" fill="#f472b6" font-family="system-ui,sans-serif" font-size="18">🎙️</text>
+    <text x="140" y="364" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Session 1</text>
+    <text x="140" y="378" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Voice chat</text>
+  </g>
+
+  <!-- Session 2 (text) -->
+  <g class="session-2" opacity="0">
+    <rect x="246" y="316" width="128" height="72" rx="14" fill="#1e293b" stroke="#34d399" stroke-width="1.5"/>
+    <text x="310" y="344" text-anchor="middle" fill="#34d399" font-family="system-ui,sans-serif" font-size="18">💬</text>
+    <text x="310" y="364" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Session 2</text>
+    <text x="310" y="378" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Text chat</text>
+  </g>
+
+  <!-- Session 3 (voice) -->
+  <g class="session-3" opacity="0">
+    <rect x="416" y="316" width="128" height="72" rx="14" fill="#1e293b" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="480" y="344" text-anchor="middle" fill="#fbbf24" font-family="system-ui,sans-serif" font-size="18">🎙️</text>
+    <text x="480" y="364" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Session N</text>
+    <text x="480" y="378" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Voice chat</text>
+  </g>
+
+  <!-- Subtitle -->
+  <text x="310" y="410" text-anchor="middle" fill="#64748b" font-family="system-ui,sans-serif" font-size="10.5" font-style="italic">A Persona sits above individual conversations — one identity, many sessions</text>
+</svg>

@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 260" fill="none">
+  <defs>
+    <style>
+      /* ── node entrance ── */
+      @keyframes nodeIn {
+        from { opacity: 0; transform: translateX(-20px); }
+        to   { opacity: 1; transform: translateX(0); }
+      }
+      /* ── arrow flight (left to right) ── */
+      @keyframes arrowSlide {
+        from { stroke-dashoffset: 60; opacity: 0; }
+        20%  { opacity: 1; }
+        to   { stroke-dashoffset: 0;  opacity: 1; }
+      }
+      /* ── pulsing dot travelling along arrow ── */
+      @keyframes dotTravel {
+        0%   { opacity: 0; }
+        10%  { opacity: 1; }
+        90%  { opacity: 1; }
+        100% { opacity: 0; }
+      }
+      /* ── service icons fade in ── */
+      @keyframes servicePop {
+        from { opacity: 0; transform: scale(.7); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+
+      .node-1 { animation: nodeIn .45s ease-out .15s both; }
+      .node-2 { animation: nodeIn .45s ease-out .55s both; }
+      .node-3 { animation: nodeIn .45s ease-out .95s both; }
+      .node-4 { animation: nodeIn .45s ease-out 1.35s both; }
+      .node-5 { animation: nodeIn .45s ease-out 1.75s both; }
+
+      .arrow { stroke-dasharray: 60; animation: arrowSlide .5s ease-out both; }
+      .arrow-1 { animation-delay: .4s; }
+      .arrow-2 { animation-delay: .8s; }
+      .arrow-3 { animation-delay: 1.2s; }
+      .arrow-4 { animation-delay: 1.6s; }
+
+      /* Travelling dots */
+      .dot     { animation: dotTravel 2s linear infinite; }
+      .dot-1   { animation-delay: 2.6s; }
+      .dot-2   { animation-delay: 2.8s; }
+      .dot-3   { animation-delay: 3.0s; }
+      .dot-4   { animation-delay: 3.2s; }
+
+      .svc     { animation: servicePop .35s ease-out both; }
+      .svc-1   { animation-delay: 2.2s; }
+      .svc-2   { animation-delay: 2.35s; }
+      .svc-3   { animation-delay: 2.5s; }
+      .svc-4   { animation-delay: 2.65s; }
+      .svc-5   { animation-delay: 2.8s; }
+      .svc-6   { animation-delay: 2.95s; }
+    </style>
+    <linearGradient id="pgrd" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <linearGradient id="gwGrd" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#f97316"/>
+    </linearGradient>
+    <marker id="ah" viewBox="0 0 10 8" refX="9" refY="4" markerWidth="8" markerHeight="6" orient="auto-start-auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#94a3b8"/>
+    </marker>
+    <filter id="tf-shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#94a3b8" flood-opacity="0.18"/>
+    </filter>
+    <clipPath id="tf-clip"><rect width="880" height="260" rx="16"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#tf-clip)">
+    <!-- Background -->
+    <rect width="880" height="260" rx="16" fill="#f8fafc"/>
+    <rect width="880" height="260" rx="16" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+
+    <!-- Grid -->
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
+      <line x1="0" y1="65" x2="880" y2="65"/><line x1="0" y1="130" x2="880" y2="130"/>
+      <line x1="0" y1="195" x2="880" y2="195"/>
+    </g>
+
+    <!-- ══ ARROWS (between nodes) ══ -->
+    <line class="arrow arrow-1" x1="108" y1="100" x2="183" y2="100" stroke="#94a3b8" stroke-width="2" marker-end="url(#ah)"/>
+    <line class="arrow arrow-2" x1="310" y1="100" x2="380" y2="100" stroke="#94a3b8" stroke-width="2" marker-end="url(#ah)"/>
+    <line class="arrow arrow-3" x1="510" y1="100" x2="578" y2="100" stroke="#94a3b8" stroke-width="2" marker-end="url(#ah)"/>
+    <line class="arrow arrow-4" x1="706" y1="100" x2="770" y2="100" stroke="#94a3b8" stroke-width="2" marker-end="url(#ah)"/>
+
+    <!-- Travelling dots on arrows -->
+    <circle class="dot dot-1" r="3" fill="#38bdf8">
+      <animateMotion dur="1.2s" repeatCount="indefinite" begin="2.6s" path="M108,100 L183,100"/>
+    </circle>
+    <circle class="dot dot-2" r="3" fill="#a855f7">
+      <animateMotion dur="1.2s" repeatCount="indefinite" begin="2.8s" path="M310,100 L380,100"/>
+    </circle>
+    <circle class="dot dot-3" r="3" fill="#f59e0b">
+      <animateMotion dur="1.2s" repeatCount="indefinite" begin="3.0s" path="M510,100 L578,100"/>
+    </circle>
+    <circle class="dot dot-4" r="3" fill="#34d399">
+      <animateMotion dur="1.2s" repeatCount="indefinite" begin="3.2s" path="M706,100 L770,100"/>
+    </circle>
+
+    <!-- ══ NODE 1 — USER ══ -->
+    <g class="node-1" opacity="0" filter="url(#tf-shadow)">
+      <rect x="22" y="64" width="82" height="72" rx="14" fill="#fff" stroke="#38bdf8" stroke-width="1.5"/>
+      <text x="63" y="94" text-anchor="middle" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="22">&#x1F464;</text>
+      <text x="63" y="118" text-anchor="middle" fill="#1e293b" font-family="system-ui, sans-serif" font-size="11" font-weight="600">You</text>
+    </g>
+
+    <!-- ══ NODE 2 — PERSONA ══ -->
+    <g class="node-2" opacity="0" filter="url(#tf-shadow)">
+      <rect x="188" y="60" width="118" height="80" rx="18" fill="url(#pgrd)" opacity=".08"/>
+      <rect x="188" y="60" width="118" height="80" rx="18" fill="none" stroke="url(#pgrd)" stroke-width="2"/>
+      <text x="247" y="92" text-anchor="middle" fill="#8b5cf6" font-family="system-ui, sans-serif" font-size="22">&#x1F3AD;</text>
+      <text x="247" y="116" text-anchor="middle" fill="#6366f1" font-family="system-ui, sans-serif" font-size="12" font-weight="700">Persona</text>
+      <text x="247" y="132" text-anchor="middle" fill="#8b5cf6" font-family="system-ui, sans-serif" font-size="8.5">Identity + Memory</text>
+    </g>
+
+    <!-- ══ NODE 3 — MCP GATEWAY ══ -->
+    <g class="node-3" opacity="0" filter="url(#tf-shadow)">
+      <rect x="385" y="60" width="120" height="80" rx="18" fill="url(#gwGrd)" opacity=".08"/>
+      <rect x="385" y="60" width="120" height="80" rx="18" fill="none" stroke="url(#gwGrd)" stroke-width="2"/>
+      <text x="445" y="92" text-anchor="middle" fill="#d97706" font-family="system-ui, sans-serif" font-size="22">&#x1F50C;</text>
+      <text x="445" y="114" text-anchor="middle" fill="#92400e" font-family="system-ui, sans-serif" font-size="11" font-weight="700">MCP Gateway</text>
+      <text x="445" y="130" text-anchor="middle" fill="#b45309" font-family="system-ui, sans-serif" font-size="8.5">Routes to tools</text>
+    </g>
+
+    <!-- ══ NODE 4 — TOOL SERVER ══ -->
+    <g class="node-4" opacity="0" filter="url(#tf-shadow)">
+      <rect x="583" y="60" width="118" height="80" rx="18" fill="#fff" stroke="#34d399" stroke-width="1.5"/>
+      <text x="642" y="92" text-anchor="middle" fill="#34d399" font-family="system-ui, sans-serif" font-size="22">&#x1F6E0;&#xFE0F;</text>
+      <text x="642" y="114" text-anchor="middle" fill="#1e293b" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Tool Server</text>
+      <text x="642" y="130" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="8.5">Executes action</text>
+    </g>
+
+    <!-- ══ NODE 5 — EXTERNAL SERVICE ══ -->
+    <g class="node-5" opacity="0" filter="url(#tf-shadow)">
+      <rect x="775" y="52" width="92" height="96" rx="18" fill="#fff" stroke="#f472b6" stroke-width="1.5"/>
+      <text x="821" y="88" text-anchor="middle" fill="#f472b6" font-family="system-ui, sans-serif" font-size="20">&#x1F310;</text>
+      <text x="821" y="108" text-anchor="middle" fill="#1e293b" font-family="system-ui, sans-serif" font-size="10" font-weight="600">External</text>
+      <text x="821" y="122" text-anchor="middle" fill="#1e293b" font-family="system-ui, sans-serif" font-size="10" font-weight="600">Service</text>
+      <text x="821" y="140" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="8">The real world</text>
+    </g>
+
+    <!-- ══ SERVICE EXAMPLES (bottom row) ══ -->
+    <g class="svc svc-1" opacity="0" filter="url(#tf-shadow)">
+      <rect x="80" y="180" width="100" height="48" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="130" y="200" text-anchor="middle" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="14">&#x1F4E7;</text>
+      <text x="130" y="218" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="10">Email</text>
+    </g>
+    <g class="svc svc-2" opacity="0" filter="url(#tf-shadow)">
+      <rect x="200" y="180" width="100" height="48" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="250" y="200" text-anchor="middle" fill="#a78bfa" font-family="system-ui, sans-serif" font-size="14">&#x1F4C5;</text>
+      <text x="250" y="218" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="10">Calendar</text>
+    </g>
+    <g class="svc svc-3" opacity="0" filter="url(#tf-shadow)">
+      <rect x="320" y="180" width="100" height="48" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="370" y="200" text-anchor="middle" fill="#f472b6" font-family="system-ui, sans-serif" font-size="14">&#x1F4AC;</text>
+      <text x="370" y="218" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="10">Slack</text>
+    </g>
+    <g class="svc svc-4" opacity="0" filter="url(#tf-shadow)">
+      <rect x="440" y="180" width="100" height="48" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="490" y="200" text-anchor="middle" fill="#34d399" font-family="system-ui, sans-serif" font-size="14">&#x1F419;</text>
+      <text x="490" y="218" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="10">GitHub</text>
+    </g>
+    <g class="svc svc-5" opacity="0" filter="url(#tf-shadow)">
+      <rect x="560" y="180" width="100" height="48" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="610" y="200" text-anchor="middle" fill="#fbbf24" font-family="system-ui, sans-serif" font-size="14">&#x1F50D;</text>
+      <text x="610" y="218" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="10">Web Search</text>
+    </g>
+    <g class="svc svc-6" opacity="0" filter="url(#tf-shadow)">
+      <rect x="680" y="180" width="100" height="48" rx="10" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="730" y="200" text-anchor="middle" fill="#fb923c" font-family="system-ui, sans-serif" font-size="14">&#x1F3E0;</text>
+      <text x="730" y="218" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="10">Smart Home</text>
+    </g>
+  </g>
+
+  <!-- Subtitle -->
+  <text x="440" y="250" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="10.5" font-style="italic">Your Persona talks to tools on your behalf — identity and memory inform every action</text>
+</svg>

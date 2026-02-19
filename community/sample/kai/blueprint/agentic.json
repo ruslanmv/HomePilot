@@ -1,0 +1,7 @@
+{
+  "goal": "Manage Slack communications — read, summarize, and post team messages",
+  "capabilities": [
+    "slack"
+  ],
+  "tool_source": "all"
+}

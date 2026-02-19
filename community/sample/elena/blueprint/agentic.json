@@ -1,0 +1,7 @@
+{
+  "goal": "Curate knowledge in Notion — search, read, and maintain documentation",
+  "capabilities": [
+    "notion"
+  ],
+  "tool_source": "all"
+}

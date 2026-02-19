@@ -5,6 +5,7 @@ version: 1
 # the seed script querying each server's /rpc endpoint for tools/list.
 
 gateways:
+  # ── Core (9101–9105) ──────────────────────────────────────────────────────
   - name: hp-personal-assistant
     url: "http://localhost:9101/rpc"
     transport: "SSE"
@@ -29,3 +30,56 @@ gateways:
     url: "http://localhost:9105/rpc"
     transport: "SSE"
     description: "HomePilot Web Search MCP (SearXNG home / Tavily enterprise)"
+
+  # ── Local (9110–9113) ─────────────────────────────────────────────────────
+  - name: hp-local-notes
+    url: "http://localhost:9110/rpc"
+    transport: "SSE"
+    description: "HomePilot Local Notes MCP server"
+
+  - name: hp-local-projects
+    url: "http://localhost:9111/rpc"
+    transport: "SSE"
+    description: "HomePilot Local Projects MCP server"
+
+  - name: hp-web-fetch
+    url: "http://localhost:9112/rpc"
+    transport: "SSE"
+    description: "HomePilot Web Fetch MCP server"
+
+  - name: hp-shell-safe
+    url: "http://localhost:9113/rpc"
+    transport: "SSE"
+    description: "HomePilot Shell Safe MCP server"
+
+  # ── Communication (9114–9117) ─────────────────────────────────────────────
+  - name: hp-gmail
+    url: "http://localhost:9114/rpc"
+    transport: "SSE"
+    description: "HomePilot Gmail MCP server"
+
+  - name: hp-google-calendar
+    url: "http://localhost:9115/rpc"
+    transport: "SSE"
+    description: "HomePilot Google Calendar MCP server"
+
+  - name: hp-microsoft-graph
+    url: "http://localhost:9116/rpc"
+    transport: "SSE"
+    description: "HomePilot Microsoft Graph MCP server"
+
+  - name: hp-slack
+    url: "http://localhost:9117/rpc"
+    transport: "SSE"
+    description: "HomePilot Slack MCP server"
+
+  # ── Dev & Knowledge (9118–9119) ───────────────────────────────────────────
+  - name: hp-github
+    url: "http://localhost:9118/rpc"
+    transport: "SSE"
+    description: "HomePilot GitHub MCP server"
+
+  - name: hp-notion
+    url: "http://localhost:9119/rpc"
+    transport: "SSE"
+    description: "HomePilot Notion MCP server"

@@ -12,6 +12,10 @@ MCP_REPO         ?= https://github.com/ruslanmv/mcp-context-forge.git
 MCP_GATEWAY_PORT ?= 4444
 MCP_GATEWAY_HOST ?= 127.0.0.1
 
+# New MCP server directories (functional contract servers)
+MCP_NEW_SERVERS := local_notes local_projects web shell_safe gmail google_calendar microsoft_graph slack github notion
+MCP_SERVERS_DIR := agentic/integrations/mcp
+
 .PHONY: help install setup run up down stop logs health dev build test test-local test-mcp-servers clean \
         download download-minimal download-minimum download-recommended download-full \
         download-edit download-enhance download-video download-verify download-health \
@@ -19,7 +23,9 @@ MCP_GATEWAY_HOST ?= 127.0.0.1
         install-mcp start-mcp stop-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
-        mcp-inventory
+        mcp-inventory \
+        install-mcp-servers test-mcp-new-servers \
+        persona-launch persona-check persona-stop persona-status persona-list
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -904,6 +910,108 @@ mcp-register-agent: ## Register an A2A agent (usage: make mcp-register-agent JSO
 		exit 1; \
 	fi
 	@bash scripts/mcp-register.sh agent '$(JSON)'
+
+# --- New MCP Servers (Functional Contract) ------------------------------------
+
+install-mcp-servers: ## Install all 10 new MCP servers (each in its own venv with uv)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Installing 10 MCP Servers (independent venvs)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@failed=""; \
+	for srv in $(MCP_NEW_SERVERS); do \
+		echo "─── Installing mcp-$$srv ───"; \
+		if $(MAKE) -C $(MCP_SERVERS_DIR)/$$srv install; then \
+			echo "  ✓ mcp-$$srv installed"; \
+		else \
+			echo "  ✗ mcp-$$srv FAILED"; \
+			failed="$$failed $$srv"; \
+		fi; \
+		echo ""; \
+	done; \
+	echo "════════════════════════════════════════════════════════════════════════════════"; \
+	if [ -z "$$failed" ]; then \
+		echo "  ✅ All 10 MCP servers installed successfully!"; \
+	else \
+		echo "  ⚠  Failed servers:$$failed"; \
+		exit 1; \
+	fi; \
+	echo "════════════════════════════════════════════════════════════════════════════════"
+
+test-mcp-new-servers: ## Run tests for all 10 new MCP servers
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Testing 10 MCP Servers"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
+		exit 1; \
+	fi
+	@passed=0; failed=0; fail_list=""; \
+	for srv in $(MCP_NEW_SERVERS); do \
+		echo "─── Testing mcp-$$srv ───"; \
+		if cd "$(MCP_SERVERS_DIR)/$$srv" && \
+		   PYTHONPATH="$(CURDIR):$$PYTHONPATH" \
+		   "$(CURDIR)/backend/.venv/bin/python" -m pytest tests/ -v --tb=short; then \
+			echo "  ✓ mcp-$$srv tests passed"; \
+			passed=$$((passed + 1)); \
+		else \
+			echo "  ✗ mcp-$$srv tests FAILED"; \
+			failed=$$((failed + 1)); \
+			fail_list="$$fail_list $$srv"; \
+		fi; \
+		cd "$(CURDIR)"; \
+		echo ""; \
+	done; \
+	echo "════════════════════════════════════════════════════════════════════════════════"; \
+	echo "  Results: $$passed passed, $$failed failed (out of 10)"; \
+	if [ $$failed -gt 0 ]; then \
+		echo "  Failed:$$fail_list"; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		exit 1; \
+	fi; \
+	echo "  ✅ All 10 MCP server tests passed!"; \
+	echo "════════════════════════════════════════════════════════════════════════════════"
+
+# --- Persona Launcher ----------------------------------------------------------
+
+persona-launch: ## Launch MCP servers for a persona (usage: make persona-launch PERSONA=diana)
+	@if [ -z "$(PERSONA)" ]; then \
+		echo "Usage: make persona-launch PERSONA=<slug-or-path>"; \
+		echo ""; \
+		echo "Examples:"; \
+		echo "  make persona-launch PERSONA=diana        # Start Diana's servers"; \
+		echo "  make persona-launch PERSONA=kai          # Start Kai's servers"; \
+		echo "  make persona-launch PERSONA=nora         # Start Nora's servers"; \
+		echo ""; \
+		bash scripts/persona-launch.sh --list; \
+		exit 0; \
+	fi
+	@bash scripts/persona-launch.sh "$(PERSONA)"
+
+persona-check: ## Dry-run: show what servers a persona needs (usage: make persona-check PERSONA=diana)
+	@if [ -z "$(PERSONA)" ]; then \
+		echo "Usage: make persona-check PERSONA=<slug>"; \
+		exit 1; \
+	fi
+	@bash scripts/persona-launch.sh "$(PERSONA)" --check
+
+persona-stop: ## Stop MCP servers for a persona (usage: make persona-stop PERSONA=diana)
+	@if [ -z "$(PERSONA)" ]; then \
+		echo "Usage: make persona-stop PERSONA=<slug>"; \
+		exit 1; \
+	fi
+	@bash scripts/persona-launch.sh "$(PERSONA)" --stop
+
+persona-status: ## Show health status of a persona's servers (usage: make persona-status PERSONA=diana)
+	@if [ -z "$(PERSONA)" ]; then \
+		echo "Usage: make persona-status PERSONA=<slug>"; \
+		exit 1; \
+	fi
+	@bash scripts/persona-launch.sh "$(PERSONA)" --status
+
+persona-list: ## List all available personas and their MCP server requirements
+	@bash scripts/persona-launch.sh --list
 
 # --- Community Gallery ---------------------------------------------------------
 

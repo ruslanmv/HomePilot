@@ -1,0 +1,7 @@
+{
+  "goal": "Navigate, search, and safely update local project files and codebases",
+  "capabilities": [
+    "local_projects"
+  ],
+  "tool_source": "all"
+}

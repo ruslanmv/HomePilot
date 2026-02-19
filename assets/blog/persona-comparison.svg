@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" fill="none">
+  <defs>
+    <linearGradient id="pc-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="pc-purple" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#6366f1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#a78bfa;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="pc-dim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#475569;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#64748b;stop-opacity:1" />
+    </linearGradient>
+    <filter id="pc-glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="pc-shadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#94a3b8" flood-opacity="0.18"/>
+    </filter>
+    <clipPath id="pc-clip"><rect width="900" height="500" rx="16"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#pc-clip)">
+    <rect width="900" height="500" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="500" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
+
+    <!-- Grid -->
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
+      <line x1="0" y1="80" x2="900" y2="80"/><line x1="0" y1="160" x2="900" y2="160"/>
+      <line x1="0" y1="240" x2="900" y2="240"/><line x1="0" y1="320" x2="900" y2="320"/>
+      <line x1="0" y1="400" x2="900" y2="400"/>
+    </g>
+
+    <!-- Title -->
+    <text x="450" y="42" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="700" fill="#64748b" letter-spacing="3" text-anchor="middle">CHATBOT vs PERSONA</text>
+
+    <!-- LEFT: Traditional Chatbot -->
+    <g transform="translate(225, 260)" filter="url(#pc-shadow)">
+      <!-- Card background -->
+      <rect x="-170" y="-175" width="340" height="360" rx="16" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+
+      <!-- Header -->
+      <text x="0" y="-145" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="2" text-anchor="middle">TRADITIONAL CHATBOT</text>
+
+      <!-- Anonymous icon -->
+      <circle cy="-100" r="28" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
+      <circle cy="-108" r="9" fill="#94a3b8"/>
+      <path d="M-15 -87 Q0 -95 15 -87" stroke="#94a3b8" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <text x="0" y="-65" font-family="system-ui, sans-serif" font-size="9" fill="#94a3b8" text-anchor="middle">Anonymous</text>
+
+      <!-- Feature rows - all dim/negative -->
+      <g transform="translate(0, -35)">
+        <!-- Identity -->
+        <g transform="translate(-140, 0)">
+          <circle r="4" fill="#cbd5e1" opacity="0.5"/>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8" dominant-baseline="central">Identity</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8" text-anchor="end" dominant-baseline="central">Generic text box</text>
+        </g>
+        <!-- Memory -->
+        <g transform="translate(-140, 35)">
+          <circle r="4" fill="#cbd5e1" opacity="0.5"/>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8" dominant-baseline="central">Memory</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8" text-anchor="end" dominant-baseline="central">Resets every session</text>
+        </g>
+        <!-- Sessions -->
+        <g transform="translate(-140, 70)">
+          <circle r="4" fill="#cbd5e1" opacity="0.5"/>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8" dominant-baseline="central">Sessions</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8" text-anchor="end" dominant-baseline="central">Disposable</text>
+        </g>
+        <!-- Appearance -->
+        <g transform="translate(-140, 105)">
+          <circle r="4" fill="#cbd5e1" opacity="0.5"/>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8" dominant-baseline="central">Appearance</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8" text-anchor="end" dominant-baseline="central">None</text>
+        </g>
+        <!-- Tools -->
+        <g transform="translate(-140, 140)">
+          <circle r="4" fill="#cbd5e1" opacity="0.5"/>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8" dominant-baseline="central">Tools</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8" text-anchor="end" dominant-baseline="central">None</text>
+        </g>
+        <!-- Relationship -->
+        <g transform="translate(-140, 175)">
+          <circle r="4" fill="#cbd5e1" opacity="0.5"/>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#94a3b8" dominant-baseline="central">Relationship</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8" text-anchor="end" dominant-baseline="central">Stranger every time</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- RIGHT: HomePilot Persona -->
+    <g transform="translate(675, 260)" filter="url(#pc-shadow)">
+      <!-- Card background with gradient border -->
+      <rect x="-170" y="-175" width="340" height="360" rx="16" fill="#fff" stroke="url(#pc-grad)" stroke-width="1.5"/>
+
+      <!-- Header -->
+      <text x="0" y="-145" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="url(#pc-grad)" letter-spacing="2" text-anchor="middle">HOMEPILOT PERSONA</text>
+
+      <!-- Persona icon with glow -->
+      <g filter="url(#pc-glow)">
+        <circle cy="-100" r="28" fill="#f5f3ff" stroke="url(#pc-purple)" stroke-width="2"/>
+        <circle cy="-108" r="9" fill="url(#pc-purple)"/>
+        <path d="M-15 -87 Q0 -95 15 -87" stroke="url(#pc-purple)" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        <!-- Memory rings -->
+        <path d="M-18 -80 Q0 -86 18 -80" stroke="url(#pc-purple)" stroke-width="1" fill="none" opacity="0.5">
+          <animate attributeName="opacity" values="0.3;0.7;0.3" dur="3s" repeatCount="indefinite"/>
+        </path>
+        <path d="M-14 -76 Q0 -80 14 -76" stroke="url(#pc-purple)" stroke-width="0.8" fill="none" opacity="0.3">
+          <animate attributeName="opacity" values="0.2;0.5;0.2" dur="3s" repeatCount="indefinite" begin="0.5s"/>
+        </path>
+        <!-- Connection dots -->
+        <circle cx="-32" cy="-105" r="2" fill="#818cf8" opacity="0.6">
+          <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="32" cy="-105" r="2" fill="#818cf8" opacity="0.6">
+          <animate attributeName="opacity" values="0.3;0.8;0.3" dur="2s" repeatCount="indefinite" begin="0.7s"/>
+        </circle>
+      </g>
+      <text x="0" y="-65" font-family="system-ui, sans-serif" font-size="9" fill="#7c3aed" text-anchor="middle">Named · Visual · Persistent</text>
+
+      <!-- Feature rows - all bright/positive -->
+      <g transform="translate(0, -35)">
+        <!-- Identity -->
+        <g transform="translate(-140, 0)">
+          <circle r="4" fill="url(#pc-grad)">
+            <animate attributeName="opacity" values="0.7;1;0.7" dur="3s" repeatCount="indefinite"/>
+          </circle>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#1e293b" dominant-baseline="central">Identity</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#0891b2" text-anchor="end" dominant-baseline="central">Name, face, voice, role</text>
+        </g>
+        <!-- Memory -->
+        <g transform="translate(-140, 35)">
+          <circle r="4" fill="url(#pc-grad)">
+            <animate attributeName="opacity" values="0.7;1;0.7" dur="3s" repeatCount="indefinite" begin="0.2s"/>
+          </circle>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#1e293b" dominant-baseline="central">Memory</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#0891b2" text-anchor="end" dominant-baseline="central">Persistent months/years</text>
+        </g>
+        <!-- Sessions -->
+        <g transform="translate(-140, 70)">
+          <circle r="4" fill="url(#pc-grad)">
+            <animate attributeName="opacity" values="0.7;1;0.7" dur="3s" repeatCount="indefinite" begin="0.4s"/>
+          </circle>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#1e293b" dominant-baseline="central">Sessions</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#0891b2" text-anchor="end" dominant-baseline="central">Resumable, browsable</text>
+        </g>
+        <!-- Appearance -->
+        <g transform="translate(-140, 105)">
+          <circle r="4" fill="url(#pc-grad)">
+            <animate attributeName="opacity" values="0.7;1;0.7" dur="3s" repeatCount="indefinite" begin="0.6s"/>
+          </circle>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#1e293b" dominant-baseline="central">Appearance</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#0891b2" text-anchor="end" dominant-baseline="central">Avatar, wardrobe system</text>
+        </g>
+        <!-- Tools -->
+        <g transform="translate(-140, 140)">
+          <circle r="4" fill="url(#pc-grad)">
+            <animate attributeName="opacity" values="0.7;1;0.7" dur="3s" repeatCount="indefinite" begin="0.8s"/>
+          </circle>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#1e293b" dominant-baseline="central">Tools</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#0891b2" text-anchor="end" dominant-baseline="central">MCP gateway + agents</text>
+        </g>
+        <!-- Relationship -->
+        <g transform="translate(-140, 175)">
+          <circle r="4" fill="url(#pc-grad)">
+            <animate attributeName="opacity" values="0.7;1;0.7" dur="3s" repeatCount="indefinite" begin="1s"/>
+          </circle>
+          <text x="14" font-family="system-ui, sans-serif" font-size="12" fill="#1e293b" dominant-baseline="central">Relationship</text>
+          <text x="270" font-family="system-ui, sans-serif" font-size="11" fill="#0891b2" text-anchor="end" dominant-baseline="central">Knows you, evolves</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- VS divider -->
+    <g transform="translate(450, 260)">
+      <circle r="20" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5"/>
+      <text y="5" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="#94a3b8" text-anchor="middle">vs</text>
+    </g>
+  </g>
+</svg>

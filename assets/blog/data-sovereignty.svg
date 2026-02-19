@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" fill="none">
+  <defs>
+    <linearGradient id="ds-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="ds-red" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ef4444;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f97316;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="ds-green" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" />
+    </linearGradient>
+    <filter id="ds-shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#94a3b8" flood-opacity="0.18"/>
+    </filter>
+    <filter id="ds-glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="ds-clip"><rect width="900" height="300" rx="16"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#ds-clip)">
+    <rect width="900" height="300" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="300" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
+
+    <!-- Grid -->
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
+      <line x1="0" y1="75" x2="900" y2="75"/><line x1="0" y1="150" x2="900" y2="150"/>
+      <line x1="0" y1="225" x2="900" y2="225"/>
+    </g>
+
+    <!-- Divider -->
+    <line x1="450" y1="50" x2="450" y2="260" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="6 4" opacity="0.6"/>
+
+    <!-- LEFT: Cloud AI (data leaving) -->
+    <text x="225" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#ef4444" letter-spacing="2" text-anchor="middle">CLOUD AI</text>
+
+    <!-- Your device -->
+    <g transform="translate(120, 155)" filter="url(#ds-shadow)">
+      <rect x="-50" y="-35" width="100" height="70" rx="8" fill="#fff" stroke="#cbd5e1" stroke-width="1"/>
+      <text x="0" y="-10" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle">💻</text>
+      <text x="0" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#475569" text-anchor="middle">Your device</text>
+      <text x="0" y="22" font-family="system-ui, sans-serif" font-size="8" fill="#94a3b8" text-anchor="middle">Your data</text>
+    </g>
+
+    <!-- Cloud servers -->
+    <g transform="translate(330, 110)" filter="url(#ds-shadow)">
+      <rect x="-40" y="-25" width="80" height="50" rx="8" fill="#fff" stroke="#ef4444" stroke-width="1" opacity="0.8"/>
+      <text x="0" y="-4" font-family="system-ui, sans-serif" font-size="12" text-anchor="middle">☁️</text>
+      <text x="0" y="12" font-family="system-ui, sans-serif" font-size="7" fill="#ef4444" text-anchor="middle">Vendor A</text>
+    </g>
+    <g transform="translate(330, 200)" filter="url(#ds-shadow)">
+      <rect x="-40" y="-25" width="80" height="50" rx="8" fill="#fff" stroke="#ef4444" stroke-width="1" opacity="0.8"/>
+      <text x="0" y="-4" font-family="system-ui, sans-serif" font-size="12" text-anchor="middle">☁️</text>
+      <text x="0" y="12" font-family="system-ui, sans-serif" font-size="7" fill="#ef4444" text-anchor="middle">Vendor B</text>
+    </g>
+
+    <!-- Data arrows leaving (animated, red) -->
+    <line x1="170" y1="140" x2="290" y2="110" stroke="#ef4444" stroke-width="1.5" opacity="0.4"/>
+    <line x1="170" y1="170" x2="290" y2="200" stroke="#ef4444" stroke-width="1.5" opacity="0.4"/>
+
+    <!-- Animated data packets leaving -->
+    <g opacity="0.7">
+      <rect width="12" height="8" rx="2" fill="#ef4444">
+        <animateMotion dur="2s" repeatCount="indefinite" path="M170 140 L290 110"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="2s" repeatCount="indefinite"/>
+      </rect>
+      <rect width="12" height="8" rx="2" fill="#ef4444">
+        <animateMotion dur="2.5s" repeatCount="indefinite" path="M170 170 L290 200"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="2.5s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+
+    <!-- Warning labels -->
+    <text x="225" y="255" font-family="system-ui, sans-serif" font-size="9" fill="#ef4444" text-anchor="middle" opacity="0.8">Data leaves your control</text>
+    <text x="225" y="270" font-family="system-ui, sans-serif" font-size="9" fill="#ef4444" text-anchor="middle" opacity="0.8">Multiple vendor dependencies</text>
+
+    <!-- RIGHT: HomePilot (data stays) -->
+    <text x="675" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#10b981" letter-spacing="2" text-anchor="middle">HOMEPILOT — LOCAL-FIRST</text>
+
+    <!-- Your hardware with shield -->
+    <g transform="translate(675, 155)" filter="url(#ds-glow)">
+      <!-- Shield shape -->
+      <path d="M0 -65 L55 -40 L55 10 Q55 55 0 70 Q-55 55 -55 10 L-55 -40 Z" fill="#10b981" opacity="0.05" stroke="#10b981" stroke-width="1.5" opacity="0.3"/>
+
+      <!-- Device -->
+      <rect x="-50" y="-35" width="100" height="70" rx="8" fill="#fff" stroke="url(#ds-green)" stroke-width="1.5"/>
+      <text x="0" y="-10" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle">🏠</text>
+      <text x="0" y="10" font-family="system-ui, sans-serif" font-size="9" fill="#059669" text-anchor="middle">Your hardware</text>
+      <text x="0" y="22" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Your data stays</text>
+
+      <!-- Lock icon -->
+      <g transform="translate(40, -30)">
+        <rect x="-6" y="-2" width="12" height="10" rx="2" fill="#10b981" opacity="0.8"/>
+        <path d="M-4 -2 L-4 -6 Q-4 -10 0 -10 Q4 -10 4 -6 L4 -2" stroke="#10b981" stroke-width="1.5" fill="none"/>
+      </g>
+
+      <!-- Services inside shield -->
+      <g transform="translate(-35, 48)">
+        <text font-family="system-ui, sans-serif" font-size="7" fill="#64748b">LLM</text>
+      </g>
+      <g transform="translate(-8, 48)">
+        <text font-family="system-ui, sans-serif" font-size="7" fill="#64748b">ComfyUI</text>
+      </g>
+      <g transform="translate(30, 48)">
+        <text font-family="system-ui, sans-serif" font-size="7" fill="#64748b">MCP</text>
+      </g>
+
+      <!-- Animated shield pulse -->
+      <path d="M0 -65 L55 -40 L55 10 Q55 55 0 70 Q-55 55 -55 10 L-55 -40 Z" fill="none" stroke="#10b981" stroke-width="1" opacity="0">
+        <animate attributeName="opacity" values="0;0.3;0" dur="3s" repeatCount="indefinite"/>
+      </path>
+
+      <!-- Circular data flow (stays local) -->
+      <circle r="52" stroke="#10b981" stroke-width="0.8" fill="none" stroke-dasharray="4 6" opacity="0.2">
+        <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="20s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <text x="675" y="255" font-family="system-ui, sans-serif" font-size="9" fill="#059669" text-anchor="middle">Zero data exfiltration</text>
+    <text x="675" y="270" font-family="system-ui, sans-serif" font-size="9" fill="#059669" text-anchor="middle">EU AI Act ready · 127.0.0.1 only</text>
+
+    <!-- VS -->
+    <g transform="translate(450, 155)">
+      <circle r="16" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+      <text y="4" font-family="system-ui, sans-serif" font-size="10" font-weight="700" fill="#94a3b8" text-anchor="middle">vs</text>
+    </g>
+  </g>
+</svg>
