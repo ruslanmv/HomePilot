@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 320" fill="none">
+  <defs>
+    <linearGradient id="cp-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#06b6d4;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+    <filter id="cp-glow">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="cp-shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#94a3b8" flood-opacity="0.18"/>
+    </filter>
+    <clipPath id="cp-clip"><rect width="900" height="320" rx="16"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#cp-clip)">
+    <rect width="900" height="320" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="320" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
+
+    <!-- Grid -->
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
+      <line x1="0" y1="80" x2="900" y2="80"/><line x1="0" y1="160" x2="900" y2="160"/>
+      <line x1="0" y1="240" x2="900" y2="240"/>
+    </g>
+
+    <!-- Title -->
+    <text x="450" y="38" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#64748b" letter-spacing="3" text-anchor="middle">ONE CONVERSATION, EVERY MODALITY</text>
+
+    <!-- Step 1: Conversation (Text) -->
+    <g transform="translate(95, 155)" filter="url(#cp-shadow)">
+      <rect x="-65" y="-50" width="130" height="100" rx="14" fill="#fff" stroke="#06b6d4" stroke-width="1.5"/>
+      <circle cy="-18" r="18" fill="#06b6d4" opacity="0.1"/>
+      <text y="-14" font-family="system-ui, sans-serif" font-size="22" text-anchor="middle">💬</text>
+      <text y="12" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="#0891b2" text-anchor="middle">Converse</text>
+      <text y="28" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Multi-turn reasoning</text>
+      <text y="40" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">5 LLM providers</text>
+    </g>
+
+    <!-- Arrow 1→2 -->
+    <g transform="translate(175, 155)">
+      <line x1="0" y1="0" x2="50" y2="0" stroke="#06b6d4" stroke-width="1.5" opacity="0.4"/>
+      <polygon points="48,-4 56,0 48,4" fill="#06b6d4" opacity="0.6"/>
+      <!-- Animated dot -->
+      <circle r="3" fill="#06b6d4" opacity="0">
+        <animateMotion dur="1.5s" repeatCount="indefinite" path="M0 0 L50 0"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="1.5s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Step 2: Generate (Image) -->
+    <g transform="translate(285, 155)" filter="url(#cp-shadow)">
+      <rect x="-65" y="-50" width="130" height="100" rx="14" fill="#fff" stroke="#3b82f6" stroke-width="1.5"/>
+      <circle cy="-18" r="18" fill="#3b82f6" opacity="0.1"/>
+      <text y="-14" font-family="system-ui, sans-serif" font-size="22" text-anchor="middle">🎨</text>
+      <text y="12" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="#2563eb" text-anchor="middle">Generate</text>
+      <text y="28" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">6+ image models</text>
+      <text y="40" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">FLUX · SDXL · Civitai</text>
+    </g>
+
+    <!-- Arrow 2→3 -->
+    <g transform="translate(365, 155)">
+      <line x1="0" y1="0" x2="50" y2="0" stroke="#3b82f6" stroke-width="1.5" opacity="0.4"/>
+      <polygon points="48,-4 56,0 48,4" fill="#3b82f6" opacity="0.6"/>
+      <circle r="3" fill="#3b82f6" opacity="0">
+        <animateMotion dur="1.8s" repeatCount="indefinite" path="M0 0 L50 0"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="1.8s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Step 3: Edit (Processing) -->
+    <g transform="translate(475, 155)" filter="url(#cp-shadow)">
+      <rect x="-65" y="-50" width="130" height="100" rx="14" fill="#fff" stroke="#6366f1" stroke-width="1.5"/>
+      <circle cy="-18" r="18" fill="#6366f1" opacity="0.1"/>
+      <text y="-14" font-family="system-ui, sans-serif" font-size="22" text-anchor="middle">✨</text>
+      <text y="12" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="#818cf8" text-anchor="middle">Edit</text>
+      <text y="28" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Enhance · Upscale</text>
+      <text y="40" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">Inpaint · Background</text>
+    </g>
+
+    <!-- Arrow 3→4 -->
+    <g transform="translate(555, 155)">
+      <line x1="0" y1="0" x2="50" y2="0" stroke="#6366f1" stroke-width="1.5" opacity="0.4"/>
+      <polygon points="48,-4 56,0 48,4" fill="#6366f1" opacity="0.6"/>
+      <circle r="3" fill="#6366f1" opacity="0">
+        <animateMotion dur="2s" repeatCount="indefinite" path="M0 0 L50 0"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="2s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Step 4: Animate (Video) -->
+    <g transform="translate(665, 155)" filter="url(#cp-shadow)">
+      <rect x="-65" y="-50" width="130" height="100" rx="14" fill="#fff" stroke="#8b5cf6" stroke-width="1.5"/>
+      <circle cy="-18" r="18" fill="#8b5cf6" opacity="0.1"/>
+      <text y="-14" font-family="system-ui, sans-serif" font-size="22" text-anchor="middle">🎬</text>
+      <text y="12" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="#a78bfa" text-anchor="middle">Animate</text>
+      <text y="28" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">7 video models</text>
+      <text y="40" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">LTX · Wan · Hunyuan</text>
+    </g>
+
+    <!-- Arrow 4→5 -->
+    <g transform="translate(745, 155)">
+      <line x1="0" y1="0" x2="50" y2="0" stroke="#8b5cf6" stroke-width="1.5" opacity="0.4"/>
+      <polygon points="48,-4 56,0 48,4" fill="#8b5cf6" opacity="0.6"/>
+      <circle r="3" fill="#8b5cf6" opacity="0">
+        <animateMotion dur="2.2s" repeatCount="indefinite" path="M0 0 L50 0"/>
+        <animate attributeName="opacity" values="0;0.8;0" dur="2.2s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Step 5: Export -->
+    <g transform="translate(835, 155)" filter="url(#cp-glow)">
+      <rect x="-45" y="-50" width="90" height="100" rx="14" fill="#fff" stroke="url(#cp-grad)" stroke-width="2"/>
+      <circle cy="-18" r="18" fill="url(#cp-grad)" opacity="0.1"/>
+      <text y="-14" font-family="system-ui, sans-serif" font-size="22" text-anchor="middle">📦</text>
+      <text y="12" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="url(#cp-grad)" text-anchor="middle">Export</text>
+      <text y="28" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">PDF · PPTX</text>
+      <text y="40" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">ZIP · Share</text>
+    </g>
+
+    <!-- Bottom description -->
+    <text x="450" y="260" font-family="system-ui, sans-serif" font-size="12" fill="#475569" text-anchor="middle">All powered by 20+ ComfyUI workflows — swappable JSON files you control</text>
+
+    <!-- Gradient bottom accent -->
+    <rect x="200" y="280" width="500" height="2" rx="1" fill="url(#cp-grad)" opacity="0.2">
+      <animate attributeName="width" values="400;500;400" dur="5s" repeatCount="indefinite"/>
+      <animate attributeName="x" values="250;200;250" dur="5s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+</svg>

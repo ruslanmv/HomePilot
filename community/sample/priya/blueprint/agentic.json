@@ -1,0 +1,7 @@
+{
+  "goal": "Manage Gmail inbox — search, read, draft, and send messages efficiently",
+  "capabilities": [
+    "gmail"
+  ],
+  "tool_source": "all"
+}

@@ -1,0 +1,7 @@
+{
+  "goal": "Execute safe shell commands for automation, monitoring, and diagnostics",
+  "capabilities": [
+    "shell_safe"
+  ],
+  "tool_source": "all"
+}

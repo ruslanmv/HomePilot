@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 200" fill="none">
+  <defs>
+    <linearGradient id="sb-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0891b2;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#2563eb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:1" />
+    </linearGradient>
+    <filter id="sb-glow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="sb-clip"><rect width="900" height="200" rx="16"/></clipPath>
+  </defs>
+  <g clip-path="url(#sb-clip)">
+    <rect width="900" height="200" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="200" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
+    <g opacity="0.06" stroke="#94a3b8" stroke-width="0.5">
+      <line x1="0" y1="40" x2="900" y2="40"/><line x1="0" y1="80" x2="900" y2="80"/>
+      <line x1="0" y1="120" x2="900" y2="120"/><line x1="0" y1="160" x2="900" y2="160"/>
+    </g>
+    <circle cx="120" cy="50" r="2" fill="#0891b2" opacity="0.25">
+      <animate attributeName="cy" values="50;30;50" dur="4s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="750" cy="40" r="2.5" fill="#2563eb" opacity="0.2">
+      <animate attributeName="cy" values="40;25;40" dur="3.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="820" cy="150" r="1.8" fill="#7c3aed" opacity="0.15">
+      <animate attributeName="cy" values="150;135;150" dur="4.5s" repeatCount="indefinite"/>
+    </circle>
+    <path d="M0 100 Q150 60 300 100 Q450 140 600 100 Q750 60 900 100" stroke="url(#sb-grad)" stroke-width="1" fill="none" opacity="0.08"/>
+    <g transform="translate(65, 55)" filter="url(#sb-glow)" opacity="0.9">
+      <path d="M35 8 L60 27 L60 62 L10 62 L10 27 Z" stroke="url(#sb-grad)" stroke-width="2.5" fill="none" stroke-linejoin="round"/>
+      <rect x="25" y="42" width="20" height="20" rx="2" stroke="url(#sb-grad)" stroke-width="1.5" fill="url(#sb-grad)" fill-opacity="0.08"/>
+      <circle cx="35" cy="34" r="7" fill="url(#sb-grad)" opacity="0.15"/>
+      <circle cx="35" cy="34" r="4" fill="url(#sb-grad)" opacity="0.35"/>
+      <circle cx="35" cy="34" r="1.8" fill="url(#sb-grad)"/>
+      <path d="M44 30 Q48 34 44 38" stroke="#0891b2" stroke-width="1.2" fill="none" opacity="0.4">
+        <animate attributeName="opacity" values="0.2;0.6;0.2" dur="2s" repeatCount="indefinite"/>
+      </path>
+      <path d="M26 30 Q22 34 26 38" stroke="#0891b2" stroke-width="1.2" fill="none" opacity="0.4">
+        <animate attributeName="opacity" values="0.2;0.6;0.2" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+      </path>
+    </g>
+    <text x="195" y="82" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0891b2" letter-spacing="4">SERIES</text>
+    <text x="195" y="120" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="42" font-weight="800" letter-spacing="1">
+      <tspan fill="#1e293b">Beyond </tspan><tspan fill="url(#sb-grad)">Chatbots</tspan>
+    </text>
+    <text x="195" y="150" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="16" fill="#475569" letter-spacing="0.5">Building a Local-First AI System That Remembers, Creates, and Acts</text>
+    <rect x="195" y="160" width="120" height="2.5" rx="1.25" fill="url(#sb-grad)" opacity="0.5">
+      <animate attributeName="width" values="120;160;120" dur="4s" repeatCount="indefinite"/>
+    </rect>
+    <g transform="translate(770, 90)">
+      <text x="0" y="0" font-family="system-ui, sans-serif" font-size="10" fill="#94a3b8" letter-spacing="2">4 PARTS</text>
+      <circle cx="8" cy="18" r="5" fill="url(#sb-grad)" opacity="0.9"/>
+      <circle cx="28" cy="18" r="5" fill="url(#sb-grad)" opacity="0.6"/>
+      <circle cx="48" cy="18" r="5" fill="url(#sb-grad)" opacity="0.4"/>
+      <circle cx="68" cy="18" r="5" fill="url(#sb-grad)" opacity="0.2"/>
+    </g>
+  </g>
+</svg>

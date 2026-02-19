@@ -1,0 +1,7 @@
+{
+  "goal": "Manage GitHub workflows — review PRs, track issues, and maintain repositories",
+  "capabilities": [
+    "github"
+  ],
+  "tool_source": "all"
+}

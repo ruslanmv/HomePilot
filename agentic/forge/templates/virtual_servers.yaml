@@ -34,3 +34,58 @@ servers:
     description: "Web search + fetch for research (SearXNG home / Tavily enterprise)"
     include_tool_prefixes:
       - "hp.web."
+
+  # ── Local tool bundles ──────────────────────────────────────────────────
+  - name: "hp-local-tools"
+    description: "Local tools: notes, projects, web fetch, shell (read-first)"
+    include_tool_prefixes:
+      - "hp.notes."
+      - "hp.local_notes."
+      - "hp.projects."
+      - "hp.local_projects."
+      - "hp.web_fetch."
+      - "hp.shell."
+
+  - name: "hp-notes-only"
+    description: "Local notes: search, read, create, append, update, delete"
+    include_tool_prefixes:
+      - "hp.notes."
+      - "hp.local_notes."
+
+  - name: "hp-projects-only"
+    description: "Local projects: list, read, search, write, diff"
+    include_tool_prefixes:
+      - "hp.projects."
+      - "hp.local_projects."
+
+  # ── Communication tool bundles ──────────────────────────────────────────
+  - name: "hp-comms-all"
+    description: "All communication tools: Gmail, Calendar, Graph, Slack"
+    include_tool_prefixes:
+      - "hp.gmail."
+      - "hp.gcal."
+      - "hp.graph."
+      - "hp.microsoft_graph."
+      - "hp.slack."
+
+  - name: "hp-email"
+    description: "Email tools: Gmail + Microsoft Graph mail"
+    include_tool_prefixes:
+      - "hp.gmail."
+      - "hp.graph.mail."
+
+  - name: "hp-calendar"
+    description: "Calendar tools: Google Calendar + Microsoft Graph calendar"
+    include_tool_prefixes:
+      - "hp.gcal."
+      - "hp.graph.calendar."
+
+  # ── Dev tool bundles ────────────────────────────────────────────────────
+  - name: "hp-dev-tools"
+    description: "Developer tools: GitHub, Notion, shell, projects"
+    include_tool_prefixes:
+      - "hp.github."
+      - "hp.notion."
+      - "hp.shell."
+      - "hp.projects."
+      - "hp.local_projects."

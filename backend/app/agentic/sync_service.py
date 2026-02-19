@@ -22,11 +22,25 @@ logger = logging.getLogger("homepilot.agentic.sync")
 
 # HomePilot MCP server definitions: (name, port, description)
 MCP_SERVERS = [
+    # Core (9101–9105)
     ("hp-personal-assistant", 9101, "HomePilot Personal Assistant MCP server"),
     ("hp-knowledge", 9102, "HomePilot Knowledge MCP server"),
     ("hp-decision-copilot", 9103, "HomePilot Decision Copilot MCP server"),
     ("hp-executive-briefing", 9104, "HomePilot Executive Briefing MCP server"),
     ("hp-web-search", 9105, "HomePilot Web Search MCP server"),
+    # Local (9110–9113)
+    ("hp-local-notes", 9110, "HomePilot Local Notes MCP server"),
+    ("hp-local-projects", 9111, "HomePilot Local Projects MCP server"),
+    ("hp-web-fetch", 9112, "HomePilot Web Fetch MCP server"),
+    ("hp-shell-safe", 9113, "HomePilot Shell Safe MCP server"),
+    # Communication (9114–9117)
+    ("hp-gmail", 9114, "HomePilot Gmail MCP server"),
+    ("hp-google-calendar", 9115, "HomePilot Google Calendar MCP server"),
+    ("hp-microsoft-graph", 9116, "HomePilot Microsoft Graph MCP server"),
+    ("hp-slack", 9117, "HomePilot Slack MCP server"),
+    # Dev & Knowledge (9118–9119)
+    ("hp-github", 9118, "HomePilot GitHub MCP server"),
+    ("hp-notion", 9119, "HomePilot Notion MCP server"),
 ]
 
 

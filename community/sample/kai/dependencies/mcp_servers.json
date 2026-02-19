@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "servers": [
+    {
+      "name": "mcp-slack",
+      "description": "Slack tools (OAuth or token)",
+      "default_port": 9117,
+      "source": {
+        "type": "external",
+        "git": "https://github.com/HomePilotAI/mcp-servers",
+        "ref": "v0.1.0",
+        "subdir": "servers/mcp-slack"
+      },
+      "transport": "HTTP",
+      "protocol": "MCP",
+      "tools_provided": [
+        "hp.slack.slack.channels.list",
+        "hp.slack.slack.channel.history",
+        "hp.slack.slack.messages.search",
+        "hp.slack.slack.message.post"
+      ],
+      "health_check": {
+        "method": "POST",
+        "path": "/rpc",
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "id": 1
+        }
+      }
+    }
+  ]
+}

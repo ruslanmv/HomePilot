@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Simple tool IDs from PersonalityAgent.allowed_tools",
+    "tools": [
+      "project_list",
+      "file_read",
+      "text_search",
+      "file_write",
+      "diff"
+    ]
+  },
+  "forge_tools": {
+    "description": "Tool references from Context Forge / MCP",
+    "tools": [
+      "hp.local_projects.projects.list",
+      "hp.local_projects.projects.read_file",
+      "hp.local_projects.projects.search_text",
+      "hp.local_projects.projects.write_file",
+      "hp.local_projects.projects.diff"
+    ]
+  },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": [
+      "local_projects"
+    ],
+    "optional": []
+  }
+}
