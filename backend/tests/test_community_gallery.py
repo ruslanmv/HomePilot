@@ -160,8 +160,11 @@ class TestGalleryConfigured:
         monkeypatch.setenv("R2_PUBLIC_URL", "")
         # Re-import to pick up env change
         import importlib
+        from pathlib import Path
         from app import community
         importlib.reload(community)
+        # Disable local samples so gallery is truly not configured
+        community._SAMPLE_REGISTRY = Path("/nonexistent/registry.json")
         assert community._gallery_configured() is False
 
     def test_configured_with_worker_url(self, monkeypatch):
@@ -231,8 +234,11 @@ class TestUpstreamUrls:
         monkeypatch.setenv("COMMUNITY_GALLERY_URL", "")
         monkeypatch.setenv("R2_PUBLIC_URL", "")
         import importlib
+        from pathlib import Path
         from app import community
         importlib.reload(community)
+        # Disable local samples so gallery is truly not configured
+        community._SAMPLE_REGISTRY = Path("/nonexistent/registry.json")
 
         assert community._upstream_url("registry") == ""
 
@@ -328,19 +334,26 @@ class TestRegistryCache:
     def test_cache_expired_refetches(self, monkeypatch):
         from app import community
         import importlib
+        from pathlib import Path
 
         monkeypatch.setenv("COMMUNITY_GALLERY_URL", "https://example.workers.dev")
         monkeypatch.setenv("R2_PUBLIC_URL", "")
         importlib.reload(community)
+        # Disable local samples so fallback doesn't mask the refetch
+        community._SAMPLE_REGISTRY = Path("/nonexistent/registry.json")
+        community._local_registry_cache["data"] = None
 
         # Set cache as expired
         community._registry_cache["data"] = {"old": True}
         community._registry_cache["fetched_at"] = time.time() - 999
 
-        # Should refetch — will fail since no real server, but validates cache logic
+        # Should refetch — remote fails, but _fetch_registry now degrades
+        # gracefully (returns empty items instead of raising).
         import asyncio
-        with pytest.raises(Exception):
-            asyncio.get_event_loop().run_until_complete(community._fetch_registry())
+        data = asyncio.get_event_loop().run_until_complete(community._fetch_registry())
+        # Expired cache was replaced with fresh (empty) data
+        assert data is not community._registry_cache.get("_old_sentinel", object())
+        assert "items" in data
 
 
 # ---------------------------------------------------------------------------
@@ -355,8 +368,11 @@ class TestCommunityStatusEndpoint:
         monkeypatch.setenv("COMMUNITY_GALLERY_URL", "")
         monkeypatch.setenv("R2_PUBLIC_URL", "")
         import importlib
+        from pathlib import Path
         from app import community
         importlib.reload(community)
+        # Disable local samples so gallery is truly not configured
+        community._SAMPLE_REGISTRY = Path("/nonexistent/registry.json")
 
         from fastapi.testclient import TestClient
         from app.main import app
@@ -411,8 +427,11 @@ class TestCommunityRegistryEndpoint:
         monkeypatch.setenv("COMMUNITY_GALLERY_URL", "")
         monkeypatch.setenv("R2_PUBLIC_URL", "")
         import importlib
+        from pathlib import Path
         from app import community
         importlib.reload(community)
+        # Disable local samples so gallery is truly not configured
+        community._SAMPLE_REGISTRY = Path("/nonexistent/registry.json")
 
         from fastapi.testclient import TestClient
         from app.main import app
@@ -593,8 +612,11 @@ class TestCommunityDownloadEndpoint:
         monkeypatch.setenv("COMMUNITY_GALLERY_URL", "")
         monkeypatch.setenv("R2_PUBLIC_URL", "")
         import importlib
+        from pathlib import Path
         from app import community
         importlib.reload(community)
+        # Disable local samples so gallery is truly not configured
+        community._SAMPLE_REGISTRY = Path("/nonexistent/registry.json")
 
         from fastapi.testclient import TestClient
         from app.main import app
@@ -611,8 +633,11 @@ class TestCommunityCardEndpoint:
         monkeypatch.setenv("COMMUNITY_GALLERY_URL", "")
         monkeypatch.setenv("R2_PUBLIC_URL", "")
         import importlib
+        from pathlib import Path
         from app import community
         importlib.reload(community)
+        # Disable local samples so gallery is truly not configured
+        community._SAMPLE_REGISTRY = Path("/nonexistent/registry.json")
 
         from fastapi.testclient import TestClient
         from app.main import app
@@ -629,8 +654,11 @@ class TestCommunityPreviewEndpoint:
         monkeypatch.setenv("COMMUNITY_GALLERY_URL", "")
         monkeypatch.setenv("R2_PUBLIC_URL", "")
         import importlib
+        from pathlib import Path
         from app import community
         importlib.reload(community)
+        # Disable local samples so gallery is truly not configured
+        community._SAMPLE_REGISTRY = Path("/nonexistent/registry.json")
 
         from fastapi.testclient import TestClient
         from app.main import app
