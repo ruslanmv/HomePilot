@@ -3,7 +3,7 @@
 Community Gallery — backend proxy for the remote persona registry.
 
 Provides a thin caching proxy so the frontend never calls external URLs
-directly.  Supports two upstream backends:
+directly.  Supports three data sources:
 
   1. **Worker mode** (production) — a Cloudflare Worker serves clean URLs
      with edge caching and no rate limits (set ``COMMUNITY_GALLERY_URL``).
@@ -11,24 +11,29 @@ directly.  Supports two upstream backends:
      and the backend reads objects at their raw R2 key paths
      (set ``R2_PUBLIC_URL``).  Rate-limited by Cloudflare — use for
      development only.
+  3. **Local samples** (always-on) — bundled personas in
+     ``community/sample/`` are always available regardless of network
+     connectivity.  They are merged into the registry, and local card /
+     preview / package endpoints serve directly from disk.
 
 Priority: ``COMMUNITY_GALLERY_URL`` > ``R2_PUBLIC_URL``.  If neither
-variable is configured, all endpoints return graceful "gallery not
-configured" responses.
+variable is configured, the gallery still works with local samples.
 
 Endpoints (mounted on the FastAPI app from main.py):
   GET /community/status              — gallery availability check
-  GET /community/registry            — cached proxy for registry.json
-  GET /community/card/{id}/{ver}     — proxy for card.json
-  GET /community/preview/{id}/{ver}  — proxy for preview image
-  GET /community/download/{id}/{ver} — proxy for .hpersona package
+  GET /community/registry            — merged remote + local registry
+  GET /community/card/{id}/{ver}     — proxy for card.json (local or remote)
+  GET /community/preview/{id}/{ver}  — proxy for preview image (local or remote)
+  GET /community/download/{id}/{ver} — proxy for .hpersona package (local or remote)
 """
 from __future__ import annotations
 
 import copy
+import json
 import os
 import sqlite3
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
@@ -52,6 +57,71 @@ R2_PUBLIC_URL = os.getenv("R2_PUBLIC_URL", "").strip().rstrip("/")
 # Simple in-memory cache for the registry (avoids hammering upstream)
 _registry_cache: Dict[str, Any] = {"data": None, "fetched_at": 0.0}
 _REGISTRY_TTL = 120  # seconds
+
+# ---------------------------------------------------------------------------
+# Local samples — bundled personas shipped with HomePilot
+# ---------------------------------------------------------------------------
+
+# Resolve path to community/sample/ relative to the project root.
+# The backend runs from backend/, so community/ is one level up.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent  # backend/app/ → backend/ → project root
+_SAMPLE_DIR = _PROJECT_ROOT / "community" / "sample"
+_SAMPLE_REGISTRY = _SAMPLE_DIR / "registry.json"
+
+# Short-name mapping: registry id → sample directory name
+# (e.g. "nora_memory_keeper" → "nora")
+_SAMPLE_DIR_MAP: Dict[str, str] = {}
+
+_local_registry_cache: Dict[str, Any] = {"data": None}
+
+
+def _load_local_registry() -> dict:
+    """Load and cache the local sample registry.json."""
+    if _local_registry_cache["data"] is not None:
+        return _local_registry_cache["data"]
+
+    if not _SAMPLE_REGISTRY.is_file():
+        _local_registry_cache["data"] = {"items": [], "schema_version": 1}
+        return _local_registry_cache["data"]
+
+    with open(_SAMPLE_REGISTRY, "r") as f:
+        data = json.load(f)
+
+    # Build the id → dirname mapping from existing subdirectories
+    if _SAMPLE_DIR.is_dir():
+        for sub in _SAMPLE_DIR.iterdir():
+            if sub.is_dir() and (sub / "manifest.json").exists():
+                # The dirname is the short name (e.g. "nora")
+                # Match it to registry items whose id starts with the dirname
+                for item in data.get("items", []):
+                    pid = item.get("id", "")
+                    if pid.startswith(sub.name):
+                        _SAMPLE_DIR_MAP[pid] = sub.name
+
+    _local_registry_cache["data"] = data
+    return data
+
+
+def _local_sample_path(persona_id: str) -> Optional[Path]:
+    """Return the local sample directory for a persona_id, or None."""
+    _load_local_registry()  # ensure map is built
+    dirname = _SAMPLE_DIR_MAP.get(persona_id)
+    if dirname:
+        p = _SAMPLE_DIR / dirname
+        if p.is_dir():
+            return p
+    return None
+
+
+def _local_hpersona_path(persona_id: str) -> Optional[Path]:
+    """Return the path to the local .hpersona file, or None."""
+    _load_local_registry()
+    dirname = _SAMPLE_DIR_MAP.get(persona_id)
+    if dirname:
+        pkg = _SAMPLE_DIR / f"{dirname}.hpersona"
+        if pkg.is_file():
+            return pkg
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +202,12 @@ def _get_all_download_counts() -> Dict[str, int]:
 
 
 def _gallery_configured() -> bool:
-    """True when at least one upstream is configured."""
+    """True when at least one source is available (remote or local)."""
+    return bool(GALLERY_URL) or bool(R2_PUBLIC_URL) or _SAMPLE_REGISTRY.is_file()
+
+
+def _remote_configured() -> bool:
+    """True when a remote upstream (Worker or R2) is configured."""
     return bool(GALLERY_URL) or bool(R2_PUBLIC_URL)
 
 
@@ -205,13 +280,32 @@ def _resolve_item_urls(item: dict) -> None:
                 latest[key] = f"{base}/{url}"
 
 
+def _resolve_local_urls(item: dict) -> None:
+    """Point local-sample URLs to the backend's own /community/* proxy routes.
+
+    The frontend uses ``preview_url`` directly as ``<img src>``, so local
+    items must serve through the backend (not the remote Worker).
+    """
+    pid = item.get("id", "")
+    latest = item.get("latest", {})
+    ver = latest.get("version", "1.0.0")
+    latest["preview_url"] = f"/community/preview/{pid}/{ver}"
+    latest["card_url"] = f"/community/card/{pid}/{ver}"
+    latest["package_url"] = f"/community/download/{pid}/{ver}"
+
+
 # ---------------------------------------------------------------------------
 # Registry fetch + cache
 # ---------------------------------------------------------------------------
 
 
 async def _fetch_registry() -> dict:
-    """Fetch registry.json from upstream with caching."""
+    """Fetch registry from upstream + merge local samples.
+
+    Remote items take precedence over local duplicates (by id).
+    Local-only items are marked with ``_source: "local"`` so the
+    card/preview/download endpoints know to serve from disk.
+    """
     now = time.time()
     if (
         _registry_cache["data"] is not None
@@ -219,11 +313,37 @@ async def _fetch_registry() -> dict:
     ):
         return _registry_cache["data"]
 
-    url = _upstream_url("registry")
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        data = resp.json()
+    remote_data: Optional[dict] = None
+    if _remote_configured():
+        url = _upstream_url("registry")
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                remote_data = resp.json()
+        except Exception:
+            remote_data = None  # remote unavailable, fall back to local
+
+    # Start with remote items (if available)
+    remote_items = remote_data.get("items", []) if remote_data else []
+    remote_ids = {item.get("id") for item in remote_items}
+
+    # Load local samples and merge any not already in remote
+    local_data = _load_local_registry()
+    local_items = local_data.get("items", [])
+
+    merged_items = list(remote_items)
+    for item in local_items:
+        if item.get("id") not in remote_ids:
+            local_item = copy.deepcopy(item)
+            local_item["_source"] = "local"
+            merged_items.append(local_item)
+
+    data = {
+        "schema_version": (remote_data or local_data).get("schema_version", 1),
+        "generated_at": (remote_data or local_data).get("generated_at", ""),
+        "items": merged_items,
+    }
 
     _registry_cache["data"] = data
     _registry_cache["fetched_at"] = now
@@ -248,22 +368,30 @@ async def community_status():
             }
         )
 
-    mode = "r2" if _is_r2_mode() else "worker"
-    health_url = _upstream_url("health")
+    # Determine mode
+    if _remote_configured():
+        mode = "r2" if _is_r2_mode() else "worker"
+        health_url = _upstream_url("health")
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(health_url)
+                reachable = resp.status_code == 200
+        except Exception:
+            reachable = False
+    else:
+        mode = "local"
+        reachable = True  # local samples are always reachable
 
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(health_url)
-            reachable = resp.status_code == 200
-    except Exception:
-        reachable = False
+    local_data = _load_local_registry()
+    local_count = len(local_data.get("items", []))
 
     return JSONResponse(
         content={
             "configured": True,
-            "url": _base_url(),
+            "url": _base_url() or None,
             "mode": mode,
             "reachable": reachable,
+            "local_samples": local_count,
         }
     )
 
@@ -313,9 +441,13 @@ async def community_registry(
             or any(q in t.lower() for t in i.get("tags", []))
         ]
 
-    # Resolve relative URLs to absolute upstream URLs
+    # Resolve URLs: remote items → absolute upstream, local items → backend proxy
     for item in items:
-        _resolve_item_urls(item)
+        if item.get("_source") == "local":
+            _resolve_local_urls(item)
+        else:
+            _resolve_item_urls(item)
+        item.pop("_source", None)  # strip internal field
 
     # Merge real download counts from local DB (overrides static registry values)
     try:
@@ -345,6 +477,21 @@ async def community_card(persona_id: str, version: str):
     if not _gallery_configured():
         raise HTTPException(status_code=404, detail="Gallery not configured")
 
+    # Try local sample first
+    sample_dir = _local_sample_path(persona_id)
+    if sample_dir:
+        card_file = sample_dir / "preview" / "card.json"
+        if card_file.is_file():
+            return Response(
+                content=card_file.read_bytes(),
+                media_type="application/json",
+                headers={"cache-control": "public, max-age=3600"},
+            )
+
+    # Fall back to remote proxy
+    if not _remote_configured():
+        raise HTTPException(status_code=404, detail="Card not found")
+
     url = _upstream_url("card", persona_id, version)
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -365,6 +512,31 @@ async def community_preview(persona_id: str, version: str):
     """Proxy for a persona preview image."""
     if not _gallery_configured():
         raise HTTPException(status_code=404, detail="Gallery not configured")
+
+    # Try local sample first — look for thumb_avatar_*.webp in assets/
+    sample_dir = _local_sample_path(persona_id)
+    if sample_dir:
+        assets = sample_dir / "assets"
+        if assets.is_dir():
+            for f in assets.iterdir():
+                if f.name.startswith("thumb_avatar_") and f.name.endswith(".webp"):
+                    return Response(
+                        content=f.read_bytes(),
+                        media_type="image/webp",
+                        headers={"cache-control": "public, max-age=3600, immutable"},
+                    )
+            # Fallback: serve any .png avatar if no .webp found
+            for f in assets.iterdir():
+                if f.name.startswith("avatar_") and f.name.endswith(".png"):
+                    return Response(
+                        content=f.read_bytes(),
+                        media_type="image/png",
+                        headers={"cache-control": "public, max-age=3600, immutable"},
+                    )
+
+    # Fall back to remote proxy
+    if not _remote_configured():
+        raise HTTPException(status_code=404, detail="Preview not found")
 
     url = _upstream_url("preview", persona_id, version)
     try:
@@ -391,6 +563,28 @@ async def community_download(persona_id: str, version: str):
     """
     if not _gallery_configured():
         raise HTTPException(status_code=404, detail="Gallery not configured")
+
+    # Try local sample first
+    pkg_path = _local_hpersona_path(persona_id)
+    if pkg_path:
+        # Track download
+        try:
+            _increment_download(persona_id, version)
+        except Exception:
+            pass
+
+        return Response(
+            content=pkg_path.read_bytes(),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": f'attachment; filename="{persona_id}.hpersona"',
+                "cache-control": "public, max-age=86400, immutable",
+            },
+        )
+
+    # Fall back to remote proxy
+    if not _remote_configured():
+        raise HTTPException(status_code=404, detail="Package not found")
 
     url = _upstream_url("package", persona_id, version)
     try:

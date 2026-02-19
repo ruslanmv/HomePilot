@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 420" fill="none">
+  <defs>
+    <style>
+      /* ── entrance animations ── */
+      @keyframes dropIn {
+        from { opacity: 0; transform: translateY(-24px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes growLine {
+        from { stroke-dashoffset: 100; }
+        to   { stroke-dashoffset: 0; }
+      }
+      @keyframes fadeUp {
+        from { opacity: 0; transform: translateY(16px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes softPulse {
+        0%, 100% { opacity: .06; }
+        50%      { opacity: .14; }
+      }
+
+      /* ── User node ── */
+      .user-node { animation: dropIn .55s ease-out .2s both; }
+
+      /* ── Connector lines ── */
+      .line-main  { stroke-dasharray: 100; animation: growLine .5s ease-out .6s both; }
+      .line-left  { stroke-dasharray: 100; animation: growLine .45s ease-out 1.5s both; }
+      .line-mid   { stroke-dasharray: 100; animation: growLine .45s ease-out 1.6s both; }
+      .line-right { stroke-dasharray: 100; animation: growLine .45s ease-out 1.7s both; }
+
+      /* ── Persona node ── */
+      .persona-node { animation: fadeUp .5s ease-out .95s both; }
+      .persona-halo { animation: softPulse 3s ease-in-out 2.5s infinite; }
+
+      /* ── Session nodes ── */
+      .session-1 { animation: fadeUp .45s ease-out 1.9s both; }
+      .session-2 { animation: fadeUp .45s ease-out 2.1s both; }
+      .session-3 { animation: fadeUp .45s ease-out 2.3s both; }
+
+      /* ── Labels ── */
+      .label-owns  { animation: fadeUp .35s ease-out 1.15s both; }
+      .label-hosts { animation: fadeUp .35s ease-out 1.85s both; }
+    </style>
+    <linearGradient id="personaFill" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <filter id="ph-shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#94a3b8" flood-opacity="0.18"/>
+    </filter>
+    <clipPath id="ph-clip"><rect width="620" height="420" rx="16"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#ph-clip)">
+    <!-- Background -->
+    <rect width="620" height="420" rx="16" fill="#f8fafc"/>
+    <rect width="620" height="420" rx="16" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+
+    <!-- Grid -->
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
+      <line x1="0" y1="80" x2="620" y2="80"/><line x1="0" y1="160" x2="620" y2="160"/>
+      <line x1="0" y1="240" x2="620" y2="240"/><line x1="0" y1="320" x2="620" y2="320"/>
+    </g>
+
+    <!-- ══ CONNECTOR LINES ══ -->
+    <line class="line-main" x1="310" y1="82" x2="310" y2="168" stroke="#cbd5e1" stroke-width="2" stroke-linecap="round"/>
+    <line class="line-left"  x1="310" y1="248" x2="140" y2="316" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+    <line class="line-mid"   x1="310" y1="248" x2="310" y2="316" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+    <line class="line-right" x1="310" y1="248" x2="480" y2="316" stroke="#cbd5e1" stroke-width="1.5" stroke-linecap="round"/>
+
+    <!-- ══ USER NODE ══ -->
+    <g class="user-node" opacity="0" filter="url(#ph-shadow)">
+      <circle cx="310" cy="56" r="32" fill="#fff" stroke="#38bdf8" stroke-width="2"/>
+      <text x="310" y="50" text-anchor="middle" fill="#38bdf8" font-family="system-ui, sans-serif" font-size="22">&#x1F464;</text>
+      <text x="310" y="68" text-anchor="middle" fill="#1e293b" font-family="system-ui, sans-serif" font-size="10" font-weight="600">You</text>
+    </g>
+
+    <!-- "owns" label -->
+    <g class="label-owns" opacity="0">
+      <rect x="322" y="112" width="50" height="22" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="347" y="127" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="10" font-style="italic">owns</text>
+    </g>
+
+    <!-- ══ PERSONA NODE ══ -->
+    <circle class="persona-halo" cx="310" cy="208" r="52" fill="url(#personaFill)" opacity="0"/>
+
+    <g class="persona-node" opacity="0" filter="url(#ph-shadow)">
+      <rect x="240" y="168" width="140" height="80" rx="20" fill="url(#personaFill)" opacity=".08"/>
+      <rect x="240" y="168" width="140" height="80" rx="20" fill="none" stroke="url(#personaFill)" stroke-width="2"/>
+      <text x="310" y="200" text-anchor="middle" fill="#8b5cf6" font-family="system-ui, sans-serif" font-size="24">&#x1F3AD;</text>
+      <text x="310" y="224" text-anchor="middle" fill="#6366f1" font-family="system-ui, sans-serif" font-size="13" font-weight="700">Persona</text>
+      <text x="310" y="240" text-anchor="middle" fill="#8b5cf6" font-family="system-ui, sans-serif" font-size="9">One consistent identity</text>
+    </g>
+
+    <!-- "hosts" label -->
+    <g class="label-hosts" opacity="0">
+      <rect x="322" y="268" width="52" height="22" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="348" y="283" text-anchor="middle" fill="#64748b" font-family="system-ui, sans-serif" font-size="10" font-style="italic">hosts</text>
+    </g>
+
+    <!-- ══ SESSION NODES ══ -->
+    <g class="session-1" opacity="0" filter="url(#ph-shadow)">
+      <rect x="76" y="316" width="128" height="72" rx="14" fill="#fff" stroke="#f472b6" stroke-width="1.5"/>
+      <text x="140" y="344" text-anchor="middle" fill="#f472b6" font-family="system-ui, sans-serif" font-size="18">&#x1F399;&#xFE0F;</text>
+      <text x="140" y="364" text-anchor="middle" fill="#1e293b" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Session 1</text>
+      <text x="140" y="378" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="9">Voice chat</text>
+    </g>
+
+    <g class="session-2" opacity="0" filter="url(#ph-shadow)">
+      <rect x="246" y="316" width="128" height="72" rx="14" fill="#fff" stroke="#34d399" stroke-width="1.5"/>
+      <text x="310" y="344" text-anchor="middle" fill="#34d399" font-family="system-ui, sans-serif" font-size="18">&#x1F4AC;</text>
+      <text x="310" y="364" text-anchor="middle" fill="#1e293b" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Session 2</text>
+      <text x="310" y="378" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="9">Text chat</text>
+    </g>
+
+    <g class="session-3" opacity="0" filter="url(#ph-shadow)">
+      <rect x="416" y="316" width="128" height="72" rx="14" fill="#fff" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="480" y="344" text-anchor="middle" fill="#fbbf24" font-family="system-ui, sans-serif" font-size="18">&#x1F399;&#xFE0F;</text>
+      <text x="480" y="364" text-anchor="middle" fill="#1e293b" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Session N</text>
+      <text x="480" y="378" text-anchor="middle" fill="#475569" font-family="system-ui, sans-serif" font-size="9">Voice chat</text>
+    </g>
+  </g>
+
+  <!-- Subtitle -->
+  <text x="310" y="410" text-anchor="middle" fill="#94a3b8" font-family="system-ui, sans-serif" font-size="10.5" font-style="italic">A Persona sits above individual conversations — one identity, many sessions</text>
+</svg>

@@ -5,44 +5,40 @@
       <stop offset="50%" style="stop-color:#3b82f6;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
     </linearGradient>
-    <linearGradient id="sm-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#0f0f23;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#1a1a3e;stop-opacity:1" />
-    </linearGradient>
     <filter id="sm-glow">
       <feGaussianBlur stdDeviation="4" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <filter id="sm-shadow">
-      <feGaussianBlur stdDeviation="6" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#94a3b8" flood-opacity="0.18"/>
     </filter>
     <clipPath id="sm-clip"><rect width="900" height="300" rx="16"/></clipPath>
   </defs>
 
   <g clip-path="url(#sm-clip)">
-    <rect width="900" height="300" fill="url(#sm-bg)" rx="16"/>
+    <rect width="900" height="300" fill="#f8fafc" rx="16"/>
+    <rect width="900" height="300" fill="none" stroke="#e2e8f0" stroke-width="1" rx="16"/>
 
     <!-- Grid -->
-    <g opacity="0.08" stroke="#334155" stroke-width="0.5">
+    <g opacity="0.05" stroke="#94a3b8" stroke-width="0.5">
       <line x1="0" y1="75" x2="900" y2="75"/><line x1="0" y1="150" x2="900" y2="150"/>
       <line x1="0" y1="225" x2="900" y2="225"/>
     </g>
 
     <!-- Title -->
-    <text x="450" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#94a3b8" letter-spacing="3" text-anchor="middle">THREE-LEVEL SAFETY MODEL — YOU CONTROL EVERY ACTION</text>
+    <text x="450" y="35" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="700" fill="#64748b" letter-spacing="3" text-anchor="middle">THREE-LEVEL SAFETY MODEL — YOU CONTROL EVERY ACTION</text>
 
     <!-- Level 0: Read-only -->
     <g transform="translate(165, 160)" filter="url(#sm-shadow)">
-      <rect x="-125" y="-65" width="250" height="130" rx="14" fill="#1e293b" stroke="#10b981" stroke-width="2"/>
+      <rect x="-125" y="-65" width="250" height="130" rx="14" fill="#fff" stroke="#10b981" stroke-width="2"/>
       <!-- Shield icon -->
       <g transform="translate(0, -30)">
         <path d="M0,-18 L14,-10 L14,6 C14,14 7,20 0,24 C-7,20 -14,14 -14,6 L-14,-10 Z" fill="#10b981" opacity="0.12" stroke="#10b981" stroke-width="1.5"/>
         <text y="4" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle" fill="#10b981" font-weight="700">0</text>
       </g>
       <text y="20" font-family="system-ui, sans-serif" font-size="14" font-weight="700" fill="#059669" text-anchor="middle">Read-Only</text>
-      <text y="38" font-family="system-ui, sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">Search, query, read</text>
-      <text y="52" font-family="system-ui, sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">No confirmation needed</text>
+      <text y="38" font-family="system-ui, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Search, query, read</text>
+      <text y="52" font-family="system-ui, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">No confirmation needed</text>
       <!-- Green pulse -->
       <circle cx="105" cy="-50" r="4" fill="#10b981" opacity="0.6">
         <animate attributeName="opacity" values="0.6;0.2;0.6" dur="2s" repeatCount="indefinite"/>
@@ -51,9 +47,9 @@
 
     <!-- Arrow 0→1 -->
     <g transform="translate(310, 160)">
-      <line x1="0" y1="0" x2="60" y2="0" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.4"/>
-      <polygon points="58,-4 66,0 58,4" fill="#64748b" opacity="0.5"/>
-      <text x="30" y="-10" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">trust</text>
+      <line x1="0" y1="0" x2="60" y2="0" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.4"/>
+      <polygon points="58,-4 66,0 58,4" fill="#94a3b8" opacity="0.5"/>
+      <text x="30" y="-10" font-family="system-ui, sans-serif" font-size="8" fill="#94a3b8" text-anchor="middle">trust</text>
       <circle r="2.5" fill="#3b82f6" opacity="0">
         <animateMotion dur="2s" repeatCount="indefinite" path="M0 0 L60 0"/>
         <animate attributeName="opacity" values="0;0.7;0" dur="2s" repeatCount="indefinite"/>
@@ -62,15 +58,15 @@
 
     <!-- Level 1: Confirm -->
     <g transform="translate(450, 160)" filter="url(#sm-shadow)">
-      <rect x="-125" y="-65" width="250" height="130" rx="14" fill="#1e293b" stroke="#f59e0b" stroke-width="2"/>
+      <rect x="-125" y="-65" width="250" height="130" rx="14" fill="#fff" stroke="#f59e0b" stroke-width="2"/>
       <!-- Shield icon -->
       <g transform="translate(0, -30)">
         <path d="M0,-18 L14,-10 L14,6 C14,14 7,20 0,24 C-7,20 -14,14 -14,6 L-14,-10 Z" fill="#f59e0b" opacity="0.12" stroke="#f59e0b" stroke-width="1.5"/>
         <text y="4" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle" fill="#f59e0b" font-weight="700">1</text>
       </g>
       <text y="20" font-family="system-ui, sans-serif" font-size="14" font-weight="700" fill="#d97706" text-anchor="middle">Confirm</text>
-      <text y="38" font-family="system-ui, sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">"Send this email? [Approve / Edit]"</text>
-      <text y="52" font-family="system-ui, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Default for all actions</text>
+      <text y="38" font-family="system-ui, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">"Send this email? [Approve / Edit]"</text>
+      <text y="52" font-family="system-ui, sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">Default for all actions</text>
       <!-- Amber pulse -->
       <circle cx="105" cy="-50" r="4" fill="#f59e0b" opacity="0.6">
         <animate attributeName="opacity" values="0.6;0.2;0.6" dur="2.5s" repeatCount="indefinite"/>
@@ -79,9 +75,9 @@
 
     <!-- Arrow 1→2 -->
     <g transform="translate(595, 160)">
-      <line x1="0" y1="0" x2="60" y2="0" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.4"/>
-      <polygon points="58,-4 66,0 58,4" fill="#64748b" opacity="0.5"/>
-      <text x="30" y="-10" font-family="system-ui, sans-serif" font-size="8" fill="#64748b" text-anchor="middle">trust</text>
+      <line x1="0" y1="0" x2="60" y2="0" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.4"/>
+      <polygon points="58,-4 66,0 58,4" fill="#94a3b8" opacity="0.5"/>
+      <text x="30" y="-10" font-family="system-ui, sans-serif" font-size="8" fill="#94a3b8" text-anchor="middle">trust</text>
       <circle r="2.5" fill="#8b5cf6" opacity="0">
         <animateMotion dur="2.5s" repeatCount="indefinite" path="M0 0 L60 0"/>
         <animate attributeName="opacity" values="0;0.7;0" dur="2.5s" repeatCount="indefinite"/>
@@ -90,15 +86,15 @@
 
     <!-- Level 2: Autonomous -->
     <g transform="translate(735, 160)" filter="url(#sm-shadow)">
-      <rect x="-125" y="-65" width="250" height="130" rx="14" fill="#1e293b" stroke="#8b5cf6" stroke-width="2"/>
+      <rect x="-125" y="-65" width="250" height="130" rx="14" fill="#fff" stroke="#8b5cf6" stroke-width="2"/>
       <!-- Shield icon -->
       <g transform="translate(0, -30)">
         <path d="M0,-18 L14,-10 L14,6 C14,14 7,20 0,24 C-7,20 -14,14 -14,6 L-14,-10 Z" fill="#8b5cf6" opacity="0.12" stroke="#8b5cf6" stroke-width="1.5"/>
         <text y="4" font-family="system-ui, sans-serif" font-size="14" text-anchor="middle" fill="#8b5cf6" font-weight="700">2</text>
       </g>
       <text y="20" font-family="system-ui, sans-serif" font-size="14" font-weight="700" fill="#7c3aed" text-anchor="middle">Autonomous</text>
-      <text y="38" font-family="system-ui, sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">Acts within configured boundaries</text>
-      <text y="52" font-family="system-ui, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Earned after trust is built</text>
+      <text y="38" font-family="system-ui, sans-serif" font-size="10" fill="#64748b" text-anchor="middle">Acts within configured boundaries</text>
+      <text y="52" font-family="system-ui, sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">Earned after trust is built</text>
       <!-- Purple pulse -->
       <circle cx="105" cy="-50" r="4" fill="#8b5cf6" opacity="0.6">
         <animate attributeName="opacity" values="0.6;0.2;0.6" dur="3s" repeatCount="indefinite"/>
@@ -106,7 +102,7 @@
     </g>
 
     <!-- Bottom label -->
-    <text x="450" y="265" font-family="system-ui, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">Configurable per tool, per Persona, or globally — start safe, promote trust over time</text>
+    <text x="450" y="265" font-family="system-ui, sans-serif" font-size="11" fill="#475569" text-anchor="middle">Configurable per tool, per Persona, or globally — start safe, promote trust over time</text>
 
     <!-- Bottom accent -->
     <rect x="250" y="282" width="400" height="2" rx="1" fill="url(#sm-grad)" opacity="0.2">
