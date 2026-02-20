@@ -156,7 +156,10 @@ show_preset_info() {
             echo "   • SwinIR 4x (150MB) - Restoration"
             echo "   • Real-ESRGAN General (80MB) - Mixed content"
             echo "   • GFPGAN v1.4 (350MB) - Face restoration"
-            echo "   • Total: ~25GB"
+            echo "   Avatar Generation Models:"
+            echo "   • InsightFace AntelopeV2 (180MB) - Face detection & embeddings"
+            echo "   • InstantID Adapter + ControlNet (1.7GB) - Identity-preserving avatars"
+            echo "   • Total: ~27GB"
             echo "   • VRAM Required: 12-16GB"
             ;;
         full)
@@ -463,6 +466,58 @@ download_edit_extras() {
     download_u2net
 }
 
+# ---------------------------------------------------------------------------
+# Avatar Generation Models (Additive — industry standard for enterprise use)
+# ---------------------------------------------------------------------------
+
+# Download InsightFace AntelopeV2 (face detection + embeddings — required by InstantID)
+download_insightface() {
+    log_info "=== Downloading InsightFace AntelopeV2 (Face Detection & Embeddings) ==="
+
+    download_file \
+        "https://huggingface.co/MonsterMMORPG/tools/resolve/main/antelopev2.zip" \
+        "${COMFY_MODELS_DIR}/insightface/models/antelopev2.zip" \
+        "InsightFace AntelopeV2 (face analysis pack)"
+
+    # Auto-extract if unzip is available (ComfyUI nodes expect extracted files)
+    if [[ -f "${COMFY_MODELS_DIR}/insightface/models/antelopev2.zip" ]] && command -v unzip &>/dev/null; then
+        if [[ ! -d "${COMFY_MODELS_DIR}/insightface/models/antelopev2" ]]; then
+            log_info "Extracting AntelopeV2..."
+            unzip -qo "${COMFY_MODELS_DIR}/insightface/models/antelopev2.zip" \
+                -d "${COMFY_MODELS_DIR}/insightface/models/" 2>/dev/null || true
+        fi
+    fi
+
+    echo ""
+}
+
+# Download InstantID adapter + ControlNet (identity-preserving generation, Apache 2.0)
+download_instantid() {
+    log_info "=== Downloading InstantID (Identity-Preserving Avatar Generation) ==="
+
+    download_file \
+        "https://huggingface.co/InstantX/InstantID/resolve/main/ip-adapter.bin" \
+        "${COMFY_MODELS_DIR}/instantid/ip-adapter.bin" \
+        "InstantID IP-Adapter (identity encoder)"
+
+    download_file \
+        "https://huggingface.co/InstantX/InstantID/resolve/main/ControlNetModel/diffusion_pytorch_model.safetensors" \
+        "${COMFY_MODELS_DIR}/controlnet/InstantID/diffusion_pytorch_model.safetensors" \
+        "InstantID ControlNet (facial keypoint guidance)"
+
+    echo ""
+}
+
+# Core avatar models — InsightFace + InstantID (enterprise-grade, Apache 2.0)
+download_avatar_core() {
+    log_info "=== Downloading Core Avatar Models (Enterprise-Grade) ==="
+    echo "   These enable identity-preserving avatar generation in the PersonaWizard."
+    echo "   License: Apache 2.0 (commercial OK) + MIT (InsightFace code)"
+    echo ""
+    download_insightface
+    download_instantid
+}
+
 # Display download summary
 show_summary() {
     echo ""
@@ -516,6 +571,11 @@ show_summary() {
         echo "  • Real-ESRGAN Gen  - Mixed content [recommended/full preset]"
         echo "  • GFPGAN v1.4      - Face restoration [recommended/full preset]"
         echo ""
+        log_info "Available avatar models: [recommended/full preset]"
+        echo "  • InsightFace AntelopeV2 - Face detection & embedding"
+        echo "  • InstantID             - Identity-preserving avatar generation"
+        echo "  • More avatar models:     make download-avatar-models-full"
+        echo ""
         log_info "Set IMAGE_MODEL in .env to change the default model"
     fi
     echo ""
@@ -537,7 +597,7 @@ main() {
     fi
 
     # Create base directories
-    mkdir -p "$COMFY_MODELS_DIR"/{checkpoints,unet,clip,vae,controlnet,sams,rembg,upscale_models,gfpgan}
+    mkdir -p "$COMFY_MODELS_DIR"/{checkpoints,unet,clip,vae,controlnet,sams,rembg,upscale_models,gfpgan,insightface/models,instantid,controlnet/InstantID,photomaker,pulid,avatar,ipadapter}
     mkdir -p "$LLM_MODELS_DIR"
 
     log_info "Models directory: $MODELS_DIR"
@@ -564,6 +624,7 @@ main() {
             download_edit_models
             download_u2net  # Background removal for Edit mode
             download_upscale_models  # All upscale/enhance models
+            download_avatar_core  # InsightFace + InstantID for avatar generation
             ;;
         full)
             download_shared_encoders
@@ -575,6 +636,7 @@ main() {
             download_edit_models
             download_edit_extras
             download_upscale_models  # All upscale/enhance models
+            download_avatar_core  # InsightFace + InstantID for avatar generation
             ;;
     esac
 

@@ -26,8 +26,6 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 ### 🎭 Personas — Persistent AI Identities
 A **Persona** in HomePilot is not a chatbot, not a voice skin, and not a prompt template. It is a **persistent AI identity** — a named, visual, voice-enabled entity with its own personality, appearance, long-term memory, and session history that evolves with you over time. Where traditional assistants forget you between conversations, a Persona remembers. Where traditional UIs give you a text box, a Persona gives you a face, a voice, and a relationship. One identity, many sessions, continuous context — this is the foundation for AI that actually knows who it's talking to. See [docs/PERSONA.md](docs/PERSONA.md) for the full specification.
 
-
-
 ### 📦 Persona Portability — Share & Install Anywhere
 Create a persona in Tokyo, share it with someone in Brazil, and they get the exact same identity — personality, tools, and all. HomePilot now packages personas into a portable **`.hpersona`** file that carries everything needed to reproduce the experience on any machine:
 - **Export** any persona project as a single `.hpersona` package with one click
@@ -35,9 +33,6 @@ Create a persona in Tokyo, share it with someone in Brazil, and they get the exa
 - **Dependency awareness** — the package records which image models, personality tools, MCP servers, and A2A agents the persona relies on; the importer shows green/amber/red status for each so you know what's ready and what needs setup
 - **Schema versioned** (v2) with backward compatibility — today's exports will still import correctly in future versions
 - **Durable avatars** — persona images are committed into project-owned storage with top-crop face-anchored thumbnails, surviving host changes and container restarts
-
-![](assets/2026-02-19-23-42-48.png)
-
 
 ### 🌐 Community Gallery — Browse, Download, Install
 A public persona registry where anyone can browse, download, and install community-created personas. HomePilot supports two gallery backends:
@@ -49,6 +44,31 @@ A public persona registry where anyone can browse, download, and install communi
 - **Submit a persona** — open a [GitHub Issue](https://github.com/ruslanmv/HomePilot/issues/new?template=persona-submission.yml), attach your `.hpersona`, and a maintainer approves it with one label click
 - **Automated publish** — once approved, the pipeline validates, creates a Release, updates `registry.json`, and deploys to [GitHub Pages](https://ruslanmv.github.io/HomePilot/gallery.html)
 - See [docs/COMMUNITY_GALLERY.md](docs/COMMUNITY_GALLERY.md) for the full architecture and setup guide
+
+### 🧠 Persona Memory — Adaptive & Basic Engines
+
+Every persona has persistent memory that survives across sessions. Two engines let you choose the right behavior for each persona:
+
+<p align="center">
+  <img src="assets/memory-adaptive-vs-basic.svg" alt="Adaptive vs Basic Memory" width="820" /><br>
+  <em>Adaptive Memory learns and forgets like a human brain. Basic Memory is deterministic and fully auditable.</em>
+</p>
+
+<p align="center">
+  <img src="assets/memory-hierarchy.svg" alt="Memory Hierarchy" width="720" /><br>
+  <em>Adaptive Memory organizes knowledge into three tiers — Working (short-lived), Semantic (stable), and Pinned (permanent) — with exponential decay and reinforcement.</em>
+</p>
+
+<p align="center">
+  <img src="assets/memory-decay-reinforcement.svg" alt="Decay and Reinforcement" width="820" /><br>
+  <em>Unused memories fade over time; accessed memories grow stronger. The system stays lean and relevant automatically.</em>
+</p>
+
+- **Adaptive Memory** — brain-inspired engine with decay, reinforcement, consolidation, and pruning; ideal for companion and assistant personas
+- **Basic Memory** — deterministic flat store with TTL, per-category caps, near-duplicate detection, and pin-to-keep; ideal for secretary and enterprise personas
+- Switch between engines at any time from Settings or during `.hpersona` import — no data loss
+
+For the full technical deep dive (math, configuration, architecture), see **[docs/MEMORY.md](docs/MEMORY.md)**.
 
 ### 🎬 Animate Studio Enhancements
 Professional video generation controls for image-to-video:

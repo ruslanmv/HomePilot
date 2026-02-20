@@ -37,3 +37,9 @@ make uv-test
 - The backend is **local-first**: it stores state (SQLite) and media on disk.
 - Provider selection is controlled by request fields and/or environment defaults.
 - ComfyUI integration is workflow-based, so models can be swapped without changing code.
+
+## Persona Memory
+
+- **Adaptive Memory** (V2) — brain-inspired engine with exponential decay, reinforcement, consolidation, and automatic pruning; ideal for companion and assistant personas that feel human.
+- **Basic Memory** (V1) — deterministic, auditable flat store with TTL expiry, per-category caps, near-duplicate detection, and pin-to-keep; ideal for secretary and enterprise personas.
+- Both engines share one SQLite table and can be switched at any time from Settings or during `.hpersona` import — see [`docs/MEMORY.md`](../docs/MEMORY.md) for the full guide.

@@ -711,9 +711,9 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
             onChange={(e) => { setTagFilter(e.target.value); setVisibleCount(PAGE_SIZE) }}
             className="px-3 py-2 rounded-lg bg-white/[0.06] border border-white/[0.08] text-sm text-white/70 outline-none focus:border-purple-500/50 transition-colors"
           >
-            <option value="">All Tags</option>
+            <option value="" className="bg-white text-gray-900">All Tags</option>
             {allTags.map((t) => (
-              <option key={t} value={t}>{t}</option>
+              <option key={t} value={t} className="bg-white text-gray-900">{t}</option>
             ))}
           </select>
         )}

@@ -11,6 +11,7 @@ Key design:
   - Safety fields: source_type, visibility, confidence
   - Compact injection: generates a small (~200-500 token) context block
     for system prompt injection
+  - V1 hardening: dedup on upsert, access metadata tracking
 
 Golden rule: ADDITIVE ONLY — this module only adds new tables/features.
 """
@@ -20,6 +21,8 @@ import json
 import sqlite3
 import time
 from typing import Any, Dict, List, Optional
+
+from .ltm_v1_policy import is_duplicate, get_cap
 
 
 def _get_db_path() -> str:
@@ -58,25 +61,73 @@ def upsert_memory(
     """
     Insert or update a memory entry. Uses UPSERT on (project_id, category, key).
     "Latest wins" — if the same key exists, value/confidence are updated.
+
+    V1 hardening additions:
+      - Dedup: skip if an existing entry in the same category has near-identical value
+      - Access metadata: updates access_count and last_access_at on upsert
     """
     now = time.strftime("%Y-%m-%d %H:%M:%S")
+    now_ts = time.time()
     path = _get_db_path()
     con = sqlite3.connect(path)
+    con.row_factory = sqlite3.Row
     cur = con.cursor()
 
+    # --- V1 hardening: near-duplicate detection ---
+    # Check if any existing entry in the same (project_id, category) has
+    # a near-identical value. If so, reinforce that entry instead of inserting.
+    cur.execute(
+        """
+        SELECT id, key, value FROM persona_memory
+        WHERE project_id = ? AND category = ?
+        """,
+        (project_id, category),
+    )
+    for existing in cur.fetchall():
+        if existing["key"] == key:
+            continue  # Same key = normal upsert, not a dup
+        if is_duplicate(existing["value"], value):
+            # Near-duplicate found — reinforce existing instead of inserting
+            cur.execute(
+                """
+                UPDATE persona_memory
+                SET access_count = COALESCE(access_count, 0) + 1,
+                    last_access_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now_ts, now, existing["id"]),
+            )
+            con.commit()
+            con.close()
+            return {
+                "project_id": project_id,
+                "category": category,
+                "key": existing["key"],
+                "value": existing["value"],
+                "confidence": confidence,
+                "source_type": source_type,
+                "updated_at": now,
+                "deduplicated": True,
+            }
+
+    # --- Standard UPSERT with access metadata ---
     cur.execute(
         """
         INSERT INTO persona_memory(project_id, category, key, value, confidence,
-                                    source_session, source_type, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    source_session, source_type, created_at, updated_at,
+                                    access_count, last_access_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
         ON CONFLICT(project_id, category, key) DO UPDATE SET
             value = excluded.value,
             confidence = excluded.confidence,
             source_session = excluded.source_session,
             source_type = excluded.source_type,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            access_count = COALESCE(access_count, 0) + 1,
+            last_access_at = excluded.last_access_at
         """,
-        (project_id, category, key, value, confidence, source_session, source_type, now, now),
+        (project_id, category, key, value, confidence, source_session, source_type, now, now, now_ts),
     )
     con.commit()
     con.close()

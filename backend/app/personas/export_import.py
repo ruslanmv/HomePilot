@@ -392,8 +392,16 @@ def _build_preview_card(project: Dict[str, Any]) -> Dict[str, Any]:
     persona_appearance = project.get("persona_appearance") or {}
     agentic = project.get("agentic") or {}
 
+    short = (
+        persona_agent.get("role")
+        or project.get("description")
+        or persona_agent.get("category")
+        or ""
+    )
+
     return {
         "name": persona_agent.get("label") or project.get("name") or "Persona",
+        "short": short,
         "role": persona_agent.get("role") or "",
         "category": persona_agent.get("category") or "general",
         "tone": (persona_agent.get("response_style") or {}).get("tone", "warm"),
@@ -402,6 +410,7 @@ def _build_preview_card(project: Dict[str, Any]) -> Dict[str, Any]:
         "tools_count": len(persona_agent.get("allowed_tools") or []),
         "has_avatar": bool(persona_appearance.get("selected_filename")),
         "content_rating": "nsfw" if persona_appearance.get("nsfwMode") else "sfw",
+        "memory_mode": persona_agent.get("memory_mode") or "adaptive",
     }
 
 
@@ -423,6 +432,7 @@ def _manifest(project: Dict[str, Any]) -> Dict[str, Any]:
         "source_homepilot_version": "2.1.0",
         "created_at": project.get("updated_at") or project.get("created_at"),
         "content_rating": "nsfw" if persona_appearance.get("nsfwMode") else "sfw",
+        "memory_mode": persona_agent.get("memory_mode") or "adaptive",
         "contents": {
             "has_avatar": bool(persona_appearance.get("selected_filename")),
             "has_outfits": bool(persona_appearance.get("outfits")),
@@ -711,10 +721,26 @@ def import_persona_package(
         except KeyError:
             pass
 
+        # Read preview card for richer description (v2 packages)
+        preview_card: Dict[str, Any] = {}
+        try:
+            preview_card = json.loads(z.read("preview/card.json").decode("utf-8"))
+        except KeyError:
+            pass
+
+        # Build a human-friendly description from persona metadata.
+        # Priority: card short → role → category → generic fallback.
+        description = (
+            preview_card.get("short")
+            or persona_agent.get("role")
+            or persona_agent.get("category")
+            or "Persona"
+        )
+
         # Create new project
         create_data: Dict[str, Any] = {
             "name": persona_agent.get("label") or "Imported Persona",
-            "description": f"Imported persona package (v{manifest.get('package_version', 1)})",
+            "description": str(description),
             "project_type": "persona",
             "is_public": bool(make_public),
             "persona_agent": persona_agent,
@@ -782,6 +808,43 @@ def import_persona_package(
                         f.relative_to(upload_root)
                     )
                     break
+
+        # Clear stale `sets` URLs from the exporting system.  The frontend
+        # will synthesise a display set from selected_filename / thumb on
+        # the fly, so removing the stale URLs avoids broken-image rendering
+        # for personas imported from another machine or the community gallery.
+        if persona_appearance.get("sets"):
+            updated.setdefault("persona_appearance", dict(persona_appearance))
+            updated["persona_appearance"]["sets"] = []
+            # Also clear `selected` ref that pointed into the old sets
+            updated["persona_appearance"].pop("selected", None)
+
+        # Auto-seed avatar_settings so imported personas can generate
+        # outfit variations immediately — the frontend gates outfit
+        # generation on avatar_settings.character_prompt existing.
+        if not persona_appearance.get("avatar_settings"):
+            label = persona_agent.get("label") or "character"
+            role = persona_agent.get("role") or ""
+            style = persona_appearance.get("style_preset") or "elegant"
+            gender = persona_appearance.get("gender") or "female"
+
+            char_desc = f"{label}"
+            if role:
+                char_desc += f", {role}"
+            char_desc += f", {style} style portrait, {gender}"
+
+            updated.setdefault("persona_appearance", dict(persona_appearance))
+            updated["persona_appearance"]["avatar_settings"] = {
+                "character_prompt": char_desc,
+                "outfit_prompt": f"{style} outfit variation",
+                "full_prompt": f"{char_desc}, {style} outfit, elegant lighting, realistic, sharp focus",
+                "style_preset": style,
+                "gender": gender,
+                "img_model": persona_appearance.get("img_model", "dreamshaper_8.safetensors"),
+                "img_preset": persona_appearance.get("img_preset", "med"),
+                "aspect_ratio": persona_appearance.get("aspect_ratio", "2:3"),
+                "nsfw_mode": bool(persona_appearance.get("nsfwMode")),
+            }
 
         if updated:
             created = projects.update_project(project_id, updated)

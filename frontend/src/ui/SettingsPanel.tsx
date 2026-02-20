@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
+import ProfileSettingsModal from "./ProfileSettingsModal";
 import {
   getModelSettings,
   getPresetDescription,
@@ -48,6 +49,9 @@ export type SettingsModelV2 = {
 
   // NSFW/Spice mode
   nsfwMode?: boolean;
+
+  // Memory Engine (off | v1 | v2)
+  memoryEngine?: 'off' | 'v1' | 'v2';
 
   // Experimental features
   experimentalCivitai?: boolean;
@@ -189,6 +193,9 @@ export default function SettingsPanel({
   // Video presets state (fetched from backend based on selected model)
   const [videoPresets, setVideoPresets] = useState<Record<string, { width: number; height: number; fps: number; frames: number; steps: number; cfg: number; denoise: number }>>({});
   const [videoPresetsLoading, setVideoPresetsLoading] = useState(false);
+
+  // Profile & Integrations modal (additive)
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
 
   async function fetchHealth() {
     setHealthErr(null);
@@ -641,6 +648,27 @@ export default function SettingsPanel({
           )}
         </div>
 
+        {/* Memory Mode Selector */}
+        <div className="border-t border-white/5 pt-3">
+          <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">Memory Mode</div>
+          <select
+            className="w-full bg-black border border-white/10 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-white/20"
+            value={value.memoryEngine || 'v2'}
+            onChange={(e) => onChangeDraft({ ...value, memoryEngine: e.target.value as any })}
+          >
+            <option value="off">Off</option>
+            <option value="v1">Basic Memory</option>
+            <option value="v2">Adaptive Memory</option>
+          </select>
+          <div className="text-[10px] text-white/35 mt-2">
+            {(value.memoryEngine || 'v2') === 'v2'
+              ? 'Adaptive Memory learns over time and forgets what\u2019s no longer relevant. Best for companions and personal assistants.'
+              : (value.memoryEngine || 'v2') === 'v1'
+                ? 'Basic Memory only remembers what is explicitly saved. Best for deterministic enterprise workflows.'
+                : 'Memory is disabled. No facts or preferences will be remembered across sessions.'}
+          </div>
+        </div>
+
         {/* Experimental Civitai Toggle */}
         <div className="border-t border-white/5 pt-3">
           <div className="flex items-center justify-between">
@@ -1008,17 +1036,36 @@ export default function SettingsPanel({
         </div>
 
         {/* Bottom actions */}
-        <div className="border-t border-white/5 pt-3 flex items-center justify-between">
+        <div className="border-t border-white/5 pt-4 mt-2 space-y-3">
           <div className="text-[11px] text-white/40">Changes apply after Save.</div>
-          <button
-            type="button"
-            onClick={onSave}
-            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold"
-          >
-            Save Settings
-          </button>
+          <div className="flex items-center justify-between gap-4">
+            <button
+              type="button"
+              onClick={() => setShowProfileSettings(true)}
+              className="text-[11px] px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white/70 hover:text-white transition-all"
+            >
+              Profile &amp; Integrations
+            </button>
+            <button
+              type="button"
+              onClick={onSave}
+              className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-colors"
+            >
+              Save Settings
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Profile & Integrations modal (additive) */}
+      {showProfileSettings ? (
+        <ProfileSettingsModal
+          backendUrl={value.backendUrl}
+          apiKey={value.apiKey}
+          nsfwMode={!!value.nsfwMode}
+          onClose={() => setShowProfileSettings(false)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -16,9 +16,10 @@ MCP_GATEWAY_HOST ?= 127.0.0.1
 MCP_NEW_SERVERS := local_notes local_projects web shell_safe gmail google_calendar microsoft_graph slack github notion
 MCP_SERVERS_DIR := agentic/integrations/mcp
 
-.PHONY: help install setup run up down stop logs health dev build test test-local test-mcp-servers clean \
+.PHONY: help install setup run up down stop logs health dev build test test-local test-edit-session test-frontend test-mcp-servers test-docker clean \
         download download-minimal download-minimum download-recommended download-full \
         download-edit download-enhance download-video download-verify download-health \
+        download-avatar-models-basic download-avatar-models-full \
         start start-backend start-frontend start-no-agentic start-agentic-servers \
         install-mcp start-mcp stop-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
@@ -103,7 +104,7 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	fi
 	@echo ""
 	@echo "✓ Setting up model directories..."
-	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae models/comfy/controlnet models/comfy/sams models/comfy/rembg models/comfy/upscale_models models/comfy/gfpgan
+	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae models/comfy/controlnet models/comfy/sams models/comfy/rembg models/comfy/upscale_models models/comfy/gfpgan models/comfy/insightface/models models/comfy/instantid models/comfy/photomaker models/comfy/pulid models/comfy/avatar models/comfy/ipadapter models/comfy/controlnet/InstantID
 	@echo "  Linking ComfyUI models to ./models/comfy..."
 	@rm -rf ComfyUI/models
 	@ln -s $$(pwd)/models/comfy ComfyUI/models
@@ -361,7 +362,11 @@ start-comfyui: ## Start ComfyUI locally (required for image/video generation)
 
 # --- Testing & Development ----------------------------------------------------
 
-test: test-local test-mcp-servers  ## Run all tests (backend + MCP servers)
+test: test-local test-edit-session test-frontend test-mcp-servers  ## Run all tests (backend + edit-session + frontend + MCP)
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ All tests passed!"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
 
 test-local: ## Run backend API tests locally with pytest
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -378,6 +383,34 @@ test-local: ## Run backend API tests locally with pytest
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Backend tests passed!"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+test-edit-session: ## Run edit-session sidecar tests
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Running Edit-Session Sidecar Tests"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@if [ ! -d "edit-session/.venv" ]; then \
+		echo "⚠️  Edit-session not installed — skipping (run: make install)"; \
+	else \
+		cd edit-session && .venv/bin/pytest app/tests/ -v --tb=short; \
+		echo ""; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo "  ✅ Edit-session tests passed!"; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+	fi
+
+test-frontend: ## Run frontend TypeScript type-check
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Running Frontend TypeScript Check"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@if [ ! -d "frontend/node_modules" ]; then \
+		echo "⚠️  Frontend not installed — skipping (run: cd frontend && npm install)"; \
+	else \
+		cd frontend && npx tsc --noEmit; \
+		echo ""; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo "  ✅ Frontend TypeScript check passed!"; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+	fi
 
 test-mcp-servers: ## Run MCP server & A2A agent integration tests
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -492,7 +525,7 @@ dev: ## Frontend dev locally; backend stack in docker
 build: ## Build production frontend bundle
 	cd frontend && npm run build
 
-test: ## Run backend tests (pytest) inside backend container
+test-docker: ## Run backend tests (pytest) inside backend container
 	docker compose -f infra/docker-compose.yml run --rm backend pytest -q
 
 download: download-recommended ## Download models (alias for download-recommended)
@@ -569,6 +602,76 @@ download-enhance: ## Download upscale/enhance models (4x-UltraSharp, RealESRGAN,
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
 	@du -sh models/comfy/upscale_models/* models/comfy/gfpgan/* 2>/dev/null || true
+
+download-avatar-models-basic: ## Download basic avatar models (~1.8GB — InsightFace + InstantID adapter + ControlNet)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Downloading Avatar Models (Basic)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@mkdir -p models/comfy/insightface/models models/comfy/instantid models/comfy/controlnet/InstantID
+	@echo ""
+	@echo "[1/3] Downloading InsightFace AntelopeV2 (face detection + embeddings)..."
+	@wget -c --progress=bar:force -O models/comfy/insightface/models/antelopev2.zip \
+		"https://huggingface.co/MonsterMMORPG/tools/resolve/main/antelopev2.zip" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[2/3] Downloading InstantID ip-adapter.bin..."
+	@wget -c --progress=bar:force -O models/comfy/instantid/ip-adapter.bin \
+		"https://huggingface.co/InstantX/InstantID/resolve/main/ip-adapter.bin" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[3/3] Downloading InstantID ControlNet..."
+	@wget -c --progress=bar:force -O models/comfy/controlnet/InstantID/diffusion_pytorch_model.safetensors \
+		"https://huggingface.co/InstantX/InstantID/resolve/main/ControlNetModel/diffusion_pytorch_model.safetensors" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ Basic avatar models downloaded."
+	@echo ""
+	@echo "  Note: AntelopeV2 is a zip. Some ComfyUI nodes expect it extracted:"
+	@echo "    unzip -o models/comfy/insightface/models/antelopev2.zip \\"
+	@echo "      -d models/comfy/insightface/models/"
+	@echo ""
+	@echo "  These models enable: InstantID face-identity generation in PersonaWizard."
+	@echo "  For more models: make download-avatar-models-full"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+download-avatar-models-full: download-avatar-models-basic ## Download full avatar model stack (adds PhotoMaker/PuLID/FaceSwap/StyleGAN2)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Downloading Avatar Models (Full — additive to Basic)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@mkdir -p models/comfy/photomaker models/comfy/pulid models/comfy/avatar models/comfy/insightface models/comfy/ipadapter
+	@echo ""
+	@echo "[1/6] Downloading PhotoMaker V2 (Apache 2.0)..."
+	@wget -c --progress=bar:force -O models/comfy/photomaker/photomaker-v2.bin \
+		"https://huggingface.co/TencentARC/PhotoMaker-V2/resolve/main/photomaker-v2.bin" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[2/6] Downloading PuLID for FLUX (Apache 2.0)..."
+	@wget -c --progress=bar:force -O models/comfy/pulid/pulid_flux_v0.9.0.safetensors \
+		"https://huggingface.co/guozinan/PuLID/resolve/main/pulid_flux_v0.9.0.safetensors" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[3/6] Downloading InsightFace InSwapper 128 (ONNX)..."
+	@wget -c --progress=bar:force -O models/comfy/insightface/inswapper_128.onnx \
+		"https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[4/6] Downloading IP-Adapter FaceID PlusV2 SDXL (Non-Commercial)..."
+	@wget -c --progress=bar:force -O models/comfy/ipadapter/ip-adapter-faceid-plusv2_sdxl.bin \
+		"https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid-plusv2_sdxl.bin" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[5/6] Downloading StyleGAN2 FFHQ 256 (NON-COMMERCIAL — NVIDIA)..."
+	@wget -c --progress=bar:force -O models/comfy/avatar/stylegan2-ffhq-256x256.pkl \
+		"https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan2/versions/1/files/stylegan2-ffhq-256x256.pkl" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[6/6] Downloading StyleGAN2 FFHQ 1024 (NON-COMMERCIAL — NVIDIA)..."
+	@wget -c --progress=bar:force -O models/comfy/avatar/stylegan2-ffhq-1024x1024.pkl \
+		"https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan2/versions/1/files/stylegan2-ffhq-1024x1024.pkl" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ Full avatar model download complete."
+	@echo ""
+	@echo "  License summary:"
+	@echo "    Apache 2.0 (commercial OK): InstantID, PhotoMaker V2, PuLID"
+	@echo "    Non-commercial:             StyleGAN2 FFHQ (NVIDIA), IP-Adapter FaceID"
+	@echo "    MIT (code):                 InsightFace"
+	@echo ""
+	@echo "  For commercial deployments use the Apache 2.0 stack only."
+	@echo "════════════════════════════════════════════════════════════════════════════════"
 
 download-video: ## Download video generation models (LTX-Video + T5 encoder, ~11GB for RTX 4080 12GB)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -655,6 +758,9 @@ download-verify: ## Verify downloaded models and show disk usage
 		echo ""; \
 		echo "  GFPGAN Models (face restoration):"; \
 		ls -lh models/comfy/gfpgan/*.pth 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		echo ""; \
+		echo "  Avatar Models (identity-preserving generation):"; \
+		ls -lh models/comfy/instantid/* models/comfy/insightface/models/*.zip models/comfy/insightface/*.onnx models/comfy/photomaker/* models/comfy/pulid/* models/comfy/ipadapter/* models/comfy/avatar/* models/comfy/controlnet/InstantID/* 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
 		echo ""; \
 		echo "  Total ComfyUI storage: $$(du -sh models/comfy 2>/dev/null | cut -f1)"; \
 		echo ""; \
