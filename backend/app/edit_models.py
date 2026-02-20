@@ -29,6 +29,8 @@ class ModelCategory(str, Enum):
     UPSCALE = "upscale"
     FACE_RESTORE = "face_restore"
     BACKGROUND = "background"
+    # Additive: Avatar/Persona wizard specialized models
+    AVATAR_GENERATION = "avatar_generation"
 
 
 @dataclass
@@ -41,6 +43,13 @@ class ModelInfo:
     subdir: str  # Directory under models/ (e.g., "upscale_models", "gfpgan")
     description: str = ""
     is_default: bool = False
+    # Additive metadata (backwards-safe — all have defaults)
+    license: str = ""
+    commercial_use_ok: Optional[bool] = None
+    homepage: str = ""
+    download_url: str = ""
+    sha256: str = ""
+    requires: List[str] = field(default_factory=list)  # model IDs this depends on
 
     @property
     def path(self) -> Path:
@@ -135,11 +144,167 @@ BACKGROUND_MODELS: Dict[str, ModelInfo] = {
     ),
 }
 
+# =============================================================================
+# AVATAR GENERATION MODELS (Additive — Golden Rule 1.0)
+# These models extend the registry for the PersonaWizard "Portrait Studio".
+# They do NOT replace or affect existing text-to-image, edit, or enhance models.
+# =============================================================================
+
+AVATAR_GENERATION_MODELS: Dict[str, ModelInfo] = {
+    # ── Face analysis / embeddings (commonly used by InstantID & face-swap) ──
+    "insightface-antelopev2": ModelInfo(
+        id="insightface-antelopev2",
+        name="InsightFace AntelopeV2",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="antelopev2.zip",
+        subdir="insightface/models",
+        description="Face detection & embedding pack used by InstantID and face-swap workflows.",
+        license="InsightFace model zoo (code MIT, models vary)",
+        commercial_use_ok=True,
+        homepage="https://github.com/deepinsight/insightface",
+        download_url="https://huggingface.co/MonsterMMORPG/tools/resolve/main/antelopev2.zip",
+        sha256="",
+        requires=[],
+        is_default=True,
+    ),
+
+    # ── Face swap model (optional) ──
+    "insightface-inswapper-128": ModelInfo(
+        id="insightface-inswapper-128",
+        name="InsightFace InSwapper 128 (ONNX)",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="inswapper_128.onnx",
+        subdir="insightface",
+        description="Face swap ONNX model for consistent identity transfer onto generated images.",
+        license="Model distribution varies (see source)",
+        commercial_use_ok=True,
+        homepage="https://github.com/deepinsight/insightface",
+        download_url="https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx",
+        sha256="",
+        requires=["insightface-antelopev2"],
+    ),
+
+    # ── InstantID (identity-preserving adapter, Apache 2.0) ──
+    "instantid-ip-adapter": ModelInfo(
+        id="instantid-ip-adapter",
+        name="InstantID IP-Adapter",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="ip-adapter.bin",
+        subdir="instantid",
+        description="InstantID adapter checkpoint for identity-preserving diffusion generation.",
+        license="Apache 2.0",
+        commercial_use_ok=True,
+        homepage="https://huggingface.co/InstantX/InstantID",
+        download_url="https://huggingface.co/InstantX/InstantID/resolve/main/ip-adapter.bin",
+        sha256="",
+        requires=["insightface-antelopev2"],
+    ),
+
+    # ── InstantID ControlNet ──
+    "instantid-controlnet": ModelInfo(
+        id="instantid-controlnet",
+        name="InstantID ControlNet",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="diffusion_pytorch_model.safetensors",
+        subdir="controlnet/InstantID",
+        description="InstantID ControlNet for facial keypoint guidance during generation.",
+        license="Apache 2.0",
+        commercial_use_ok=True,
+        homepage="https://huggingface.co/InstantX/InstantID",
+        download_url="https://huggingface.co/InstantX/InstantID/resolve/main/ControlNetModel/diffusion_pytorch_model.safetensors",
+        sha256="",
+        requires=["instantid-ip-adapter"],
+    ),
+
+    # ── PhotoMaker V2 (identity-preserving, Apache 2.0) ──
+    "photomaker-v2": ModelInfo(
+        id="photomaker-v2",
+        name="PhotoMaker V2",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="photomaker-v2.bin",
+        subdir="photomaker",
+        description="PhotoMaker V2 identity-preserving encoder for SDXL-compatible workflows.",
+        license="Apache 2.0",
+        commercial_use_ok=True,
+        homepage="https://huggingface.co/TencentARC/PhotoMaker-V2",
+        download_url="https://huggingface.co/TencentARC/PhotoMaker-V2/resolve/main/photomaker-v2.bin",
+        sha256="",
+        requires=[],
+    ),
+
+    # ── PuLID (Flux adapter, advanced) ──
+    "pulid-flux": ModelInfo(
+        id="pulid-flux",
+        name="PuLID for FLUX",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="pulid_flux_v0.9.0.safetensors",
+        subdir="pulid",
+        description="PuLID adapter for FLUX identity customization with minimal disruption.",
+        license="Apache 2.0",
+        commercial_use_ok=True,
+        homepage="https://huggingface.co/guozinan/PuLID",
+        download_url="https://huggingface.co/guozinan/PuLID/resolve/main/pulid_flux_v0.9.0.safetensors",
+        sha256="",
+        requires=["insightface-antelopev2"],
+    ),
+
+    # ── IP-Adapter FaceID Plus V2 (face-conditioned generation) ──
+    "ip-adapter-faceid-plusv2": ModelInfo(
+        id="ip-adapter-faceid-plusv2",
+        name="IP-Adapter FaceID Plus V2 (SDXL)",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="ip-adapter-faceid-plusv2_sdxl.bin",
+        subdir="ipadapter",
+        description="Face-conditioned generation adapter for SDXL. Non-commercial license.",
+        license="Non-Commercial (h94)",
+        commercial_use_ok=False,
+        homepage="https://huggingface.co/h94/IP-Adapter-FaceID",
+        download_url="https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid-plusv2_sdxl.bin",
+        sha256="",
+        requires=["insightface-antelopev2"],
+    ),
+
+    # ── StyleGAN2 FFHQ 256 (fast random faces, non-commercial) ──
+    "stylegan2-ffhq-256": ModelInfo(
+        id="stylegan2-ffhq-256",
+        name="StyleGAN2 FFHQ 256",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="stylegan2-ffhq-256x256.pkl",
+        subdir="avatar",
+        description="Fast random-face generator (FFHQ 256). Non-commercial (NVIDIA).",
+        license="NVIDIA Source Code License (Non-commercial)",
+        commercial_use_ok=False,
+        homepage="https://github.com/NVlabs/stylegan2",
+        download_url="https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan2/versions/1/files/stylegan2-ffhq-256x256.pkl",
+        sha256="",
+        requires=[],
+    ),
+
+    # ── StyleGAN2 FFHQ 1024 (high-quality random faces, non-commercial) ──
+    "stylegan2-ffhq-1024": ModelInfo(
+        id="stylegan2-ffhq-1024",
+        name="StyleGAN2 FFHQ 1024",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="stylegan2-ffhq-1024x1024.pkl",
+        subdir="avatar",
+        description="High-quality random-face generator (FFHQ 1024). Non-commercial (NVIDIA).",
+        license="NVIDIA Source Code License (Non-commercial)",
+        commercial_use_ok=False,
+        homepage="https://github.com/NVlabs/stylegan2",
+        download_url="https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan2/versions/1/files/stylegan2-ffhq-1024x1024.pkl",
+        sha256="",
+        requires=[],
+    ),
+}
+
+
 # All models by category
 ALL_MODELS: Dict[ModelCategory, Dict[str, ModelInfo]] = {
     ModelCategory.UPSCALE: UPSCALE_MODELS,
     ModelCategory.FACE_RESTORE: FACE_RESTORE_MODELS,
     ModelCategory.BACKGROUND: BACKGROUND_MODELS,
+    # Additive: used by PersonaWizard "Portrait Studio" (future)
+    ModelCategory.AVATAR_GENERATION: AVATAR_GENERATION_MODELS,
 }
 
 
@@ -486,3 +651,48 @@ def set_model_preference(mode: str, model_id: str) -> tuple[bool, Optional[str]]
     prefs.set_model_for_mode(mode, model_id)
 
     return True, None
+
+
+# =============================================================================
+# AVATAR MODEL STATUS (Additive — does NOT affect edit/enhance behavior)
+# =============================================================================
+
+def get_avatar_models_status() -> Dict[str, Any]:
+    """
+    Return installed/available status for Avatar Generator models.
+
+    Intended for the PersonaWizard UI to gate avatar generation modes
+    (enable/disable based on which models are downloaded).
+    This does NOT alter existing edit/enhance behavior.
+    """
+    models = get_all_models(ModelCategory.AVATAR_GENERATION)
+
+    available = []
+    installed_ids = []
+
+    for m in models:
+        info = {
+            "id": m.id,
+            "name": m.name,
+            "description": m.description,
+            "filename": m.filename,
+            "subdir": m.subdir,
+            "installed": m.installed,
+            "license": m.license,
+            "commercial_use_ok": m.commercial_use_ok,
+            "homepage": m.homepage,
+            "download_url": m.download_url,
+            "sha256": m.sha256,
+            "requires": m.requires,
+            "is_default": m.is_default,
+        }
+        available.append(info)
+        if m.installed:
+            installed_ids.append(m.id)
+
+    return {
+        "category": ModelCategory.AVATAR_GENERATION.value,
+        "installed": installed_ids,
+        "available": available,
+        "defaults": [m.id for m in models if m.is_default],
+    }

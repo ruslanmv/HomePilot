@@ -295,6 +295,74 @@ It will recall React Native, Firebase, and your formatting preferences without b
 
 Navigate to the Persona's **Memory Panel** to view all stored facts, edit individual entries, delete outdated information, and see confidence scores for each memory.
 
+### Two memory engines
+
+HomePilot offers two distinct memory engines. Each persona can use either one — choose the engine that fits the persona's purpose, and switch anytime from **Settings → Memory Mode** or during `.hpersona` import.
+
+<p align="center">
+  <img src="../../assets/memory-adaptive-vs-basic.svg" alt="Figure 9b: Adaptive Memory vs Basic Memory — side-by-side comparison of both memory engines." width="820" /><br>
+  <em>Figure 9b — Adaptive Memory vs Basic Memory. Choose brain-inspired learning for human-feeling personas, or deterministic storage for enterprise workflows.</em>
+</p>
+
+| | Adaptive Memory | Basic Memory |
+|---|---|---|
+| **Philosophy** | Brain-inspired — learns, forgets, evolves | Deterministic — explicit, auditable, strict |
+| **Memory structure** | Three-tier hierarchy (Working → Semantic → Pinned) | Flat key-value store |
+| **Decay** | Exponential: unused memories fade naturally | No decay (TTL-based expiry only) |
+| **Reinforcement** | Accessed memories grow stronger over time | Access count tracked, no strength change |
+| **Best for** | Companion, Assistant, Partner, Custom | Secretary, Enterprise, Finance, Compliance |
+
+### Adaptive Memory — brain-inspired hierarchy
+
+Adaptive Memory mimics how human memory works. Important things stick, unused things fade, and a consolidation cycle promotes short-term context into long-term knowledge.
+
+<p align="center">
+  <img src="../../assets/memory-hierarchy.svg" alt="Figure 9c: Three-tier memory hierarchy — Pinned, Semantic, and Working layers with consolidation flow." width="720" /><br>
+  <em>Figure 9c — The three-tier memory hierarchy. Working memories (τ = 6 h) are short-lived context traces. Semantic memories (τ = 30 d) are stable facts that fade slowly. Pinned memories never decay.</em>
+</p>
+
+| Tier | Decay τ | Description |
+|------|---------|-------------|
+| **Pinned** | ∞ (never) | User-approved core memories — name, birthday, boundaries. Never auto-pruned. |
+| **Semantic** | ~30 days | Stable facts and preferences. Slow decay, prunable when stale. |
+| **Working** | ~6 hours | Short-lived context from the current conversation. Fast decay. |
+
+**How memories evolve:**
+
+1. **Decay** — Every memory's activation fades over time: `A(t) = strength · e^(-t/τ)`. Working memories vanish within a day; semantic memories last a month.
+2. **Reinforcement** — When a memory is accessed or confirmed by the user, its strength increases. User confirmations produce a strong boost (η = 0.25); AI inferences produce a gentle one (η = 0.05).
+3. **Consolidation** — A background "sleep cycle" promotes repeated, important working memories into the semantic tier automatically.
+4. **Pruning** — Semantic memories that fall below both the activation threshold (0.05) and importance threshold (0.25) are forgotten, keeping the store lean and relevant.
+
+### Decay curves and reinforcement
+
+<p align="center">
+  <img src="../../assets/memory-decay-reinforcement.svg" alt="Figure 9d: Exponential decay curves for each memory tier and a reinforcement staircase showing how accessed memories grow stronger." width="820" /><br>
+  <em>Figure 9d — Left: exponential decay curves. Working memories fade in hours, semantic in weeks, pinned never. Right: each time a memory is accessed, its strength jumps — user confirmations (η = 0.25) produce larger boosts than AI inferences (η = 0.05).</em>
+</p>
+
+Each conversation turn injects at most **13 memories** into the system prompt (4 pinned + 8 semantic + 1 working), keeping the context footprint at ~200–500 tokens while surfacing the most relevant knowledge.
+
+### Basic Memory — deterministic and auditable
+
+Basic Memory is a flat, explicit key-value store designed for personas that need predictability over personality: executive secretaries, finance assistants, and compliance bots.
+
+- **Explicit save only** — nothing is stored unless the AI or the user explicitly triggers a save.
+- **TTL expiry** — each category has a time-to-live: facts persist forever, emotion patterns expire after 90 days, working traces after 24 hours.
+- **Per-category caps** — facts: 50, preferences: 40, dates: 20, emotions: 15, boundaries: 10. Total hard cap: 200 entries.
+- **Near-duplicate detection** — Jaccard similarity (threshold 0.85) on every upsert prevents redundant entries without needing an LLM call.
+- **Pin-to-keep** — critical entries survive both TTL expiry and cap eviction.
+
+### Switching between engines
+
+You can switch between Adaptive Memory and Basic Memory at any time:
+
+- **Settings panel** → Memory Mode dropdown
+- **Persona Wizard** → Review step (recommended mode is pre-selected based on persona class)
+- **`.hpersona` import** → the import preview shows the persona's original memory mode and lets you override it before installing
+
+Both engines share the same `persona_memory` SQLite table. No data is lost when switching — see [`docs/MEMORY.md`](../MEMORY.md) for the full technical reference.
+
 ---
 
 ## 9. Voice Integration
@@ -812,6 +880,9 @@ This walkthrough verifies your entire stack by running a realistic multi-step sc
 | Figure 7 | Persona equation — five components | [Section 7](#7-personas-persistent-ai-identities) |
 | Figure 8 | Persona ownership hierarchy | [Section 7](#7-personas-persistent-ai-identities) |
 | Figure 9 | Four-layer memory system | [Section 8](#8-the-memory-system) |
+| Figure 9b | Adaptive vs Basic memory engines | [Section 8](#8-the-memory-system) |
+| Figure 9c | Three-tier memory hierarchy | [Section 8](#8-the-memory-system) |
+| Figure 9d | Decay curves and reinforcement | [Section 8](#8-the-memory-system) |
 | Figure 10 | Voice personas and speed control | [Section 9](#9-voice-integration) |
 | Figure 11 | Creative pipeline stages | [Section 11](#11-image-generation) |
 | Figure 12 | Image editing pipeline | [Section 12](#12-the-image-editing-studio) |

@@ -115,6 +115,7 @@ export function PersonaImportModal({
   const [preview, setPreview] = useState<PersonaPreview | null>(null)
   const [importing, setImporting] = useState(false)
   const [importedProject, setImportedProject] = useState<Record<string, any> | null>(null)
+  const [memoryMode, setMemoryMode] = useState<'adaptive' | 'basic'>('adaptive')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // --- Drag & drop ---
@@ -151,6 +152,9 @@ export function PersonaImportModal({
     try {
       const result = await previewPersonaPackage({ backendUrl, apiKey, file: f })
       setPreview(result)
+      // Read memory mode from manifest or persona_agent
+      const mm = result.manifest?.memory_mode || result.persona_agent?.memory_mode || 'adaptive'
+      setMemoryMode(mm === 'basic' ? 'basic' : 'adaptive')
       setStep(1)
     } catch (err: any) {
       setError(err.message || 'Failed to parse package')
@@ -168,6 +172,11 @@ export function PersonaImportModal({
       const result = await importPersonaPackage({ backendUrl, apiKey, file })
       setImportedProject(result.project)
       setStep(2)
+      // Apply the user's memory mode choice to settings
+      try {
+        const engineValue = memoryMode === 'basic' ? 'v1' : 'v2'
+        localStorage.setItem('homepilot_memory_engine', engineValue)
+      } catch { /* non-critical */ }
       onImported(result.project)
     } catch (err: any) {
       setError(err.message || 'Import failed')
@@ -308,6 +317,36 @@ export function PersonaImportModal({
                 </div>
               </div>
 
+              {/* Memory Mode */}
+              <div className="flex items-center justify-between p-3 rounded-xl bg-white/[0.04] border border-white/[0.08]">
+                <div>
+                  <div className="text-xs font-semibold text-white/50 mb-0.5">Memory Mode</div>
+                  <div className="text-[10px] text-white/30">
+                    {memoryMode === 'adaptive'
+                      ? 'Learns over time, forgets irrelevant details.'
+                      : 'Only remembers what is explicitly saved.'}
+                  </div>
+                </div>
+                <div className="flex gap-1.5">
+                  {(['adaptive', 'basic'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setMemoryMode(mode)}
+                      className={`text-[11px] px-3 py-1 rounded-full border transition-all ${
+                        memoryMode === mode
+                          ? mode === 'adaptive'
+                            ? 'bg-purple-500/15 border-purple-500/30 text-purple-300'
+                            : 'bg-blue-500/15 border-blue-500/30 text-blue-300'
+                          : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/8'
+                      }`}
+                    >
+                      {mode === 'adaptive' ? 'Adaptive' : 'Basic'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* System prompt preview */}
               {preview.persona_agent?.system_prompt && (
                 <div>
@@ -436,6 +475,10 @@ export function PersonaImportModal({
                     {preview!.dependency_check.mcp_servers.length} MCP server(s) referenced
                   </div>
                 )}
+                <div className="flex items-center gap-2">
+                  <Check size={14} className="text-emerald-400" />
+                  Memory: {memoryMode === 'adaptive' ? 'Adaptive Memory' : 'Basic Memory'}
+                </div>
               </div>
             </div>
           )}

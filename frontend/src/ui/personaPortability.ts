@@ -44,6 +44,7 @@ export type PersonaPreview = {
     schema_version: number
     kind: string
     content_rating: string
+    memory_mode?: string
     source_homepilot_version?: string
     created_at?: string
     contents?: {
