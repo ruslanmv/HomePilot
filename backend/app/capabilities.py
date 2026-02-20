@@ -243,6 +243,21 @@ async def get_edit_models():
     return get_edit_models_status()
 
 
+@router.get("/v1/avatar-models")
+async def get_avatar_models():
+    """
+    Get Avatar Generator model registry status (additive, read-only).
+
+    Returns installed/available status for avatar generation models.
+    Use this in the PersonaWizard to:
+      - show which avatar generation modes are available
+      - grey-out unavailable options when models are missing
+      - provide download URLs and license info to the user
+    """
+    from .edit_models import get_avatar_models_status
+    return get_avatar_models_status()
+
+
 @router.post("/v1/edit-models/preference")
 async def set_edit_model_preference(mode: str, model_id: str):
     """
