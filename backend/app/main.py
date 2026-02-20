@@ -206,6 +206,11 @@ class ChatIn(BaseModel):
     memoryEngine: Optional[str] = Field(None, description="Memory engine: off | v1 | v2 (brain-inspired)")
     promptRefinement: Optional[bool] = Field(True, description="Enable AI prompt refinement for image generation (default: True)")
     # ----------------------------
+    # Generation Mode (identity-preserving avatar generation)
+    # ----------------------------
+    generation_mode: Optional[str] = Field(None, description="Generation mode: 'standard' (default) or 'identity' (face-preserving via InstantID)")
+    reference_image_url: Optional[str] = Field(None, description="Reference image URL for identity-preserving generation (face to preserve)")
+    # ----------------------------
     # Game Mode (Infinite Variations)
     # ----------------------------
     gameMode: Optional[bool] = Field(False, description="Enable game mode (prompt variations)")
@@ -375,6 +380,20 @@ def _ensure_static_mount() -> None:
 
 @app.on_event("startup")
 def _startup() -> None:
+    # Quieten noisy polling endpoints in uvicorn access logs
+    import logging
+
+    class _QuietPollFilter(logging.Filter):
+        """Suppress access-log lines for high-frequency polling endpoints."""
+        _quiet_paths = ("/v1/avatar-models/download/status",)
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = record.getMessage()
+            return not any(p in msg for p in self._quiet_paths)
+
+    uv_access = logging.getLogger("uvicorn.access")
+    uv_access.addFilter(_QuietPollFilter())
+
     # Ensure DB path is valid before initializing
     _ensure_db_path_is_writable()
     # Database
@@ -1854,8 +1873,12 @@ def _resolve_selected_image_url(persona_appearance: Dict[str, Any]) -> Optional[
     Resolve the selected avatar image URL from persona_appearance.
 
     The wizard stores a selection reference (set_id + image_id) and the
-    generated image URLs in sets[].images[].  Walk the sets to find the
-    matching URL so we can download it for durable storage.
+    generated image URLs live in two places:
+      - sets[].images[]      (base avatar generation sets)
+      - outfits[].images[]   (outfit-specific images)
+
+    Walk both collections to find the matching URL so we can download it
+    for durable storage.
     """
     if not isinstance(persona_appearance, dict):
         return None
@@ -1866,8 +1889,14 @@ def _resolve_selected_image_url(persona_appearance: Dict[str, Any]) -> Optional[
     if not target_set_id or not target_image_id:
         return None
 
-    for s in (persona_appearance.get("sets") or []):
-        if s.get("set_id") != target_set_id:
+    # Search both sets and outfits — they share the same image schema
+    collections = list(persona_appearance.get("sets") or []) + \
+                  list(persona_appearance.get("outfits") or [])
+
+    for s in collections:
+        # sets use "set_id", outfits use "id" as their identifier
+        entry_id = s.get("set_id") or s.get("id")
+        if entry_id != target_set_id:
             continue
         for img in (s.get("images") or []):
             if img.get("id") == target_image_id:
@@ -2572,6 +2601,9 @@ async def chat(inp: ChatIn) -> JSONResponse:
         # Reference image for img2img similar generation
         "imgReference": inp.imgReference,
         "imgRefStrength": inp.imgRefStrength,
+        # Identity-preserving generation mode (persona avatar)
+        "generation_mode": inp.generation_mode,
+        "reference_image_url": inp.reference_image_url,
         # Voice mode personality
         "voiceSystemPrompt": inp.voiceSystemPrompt,
         # Backend personality agent

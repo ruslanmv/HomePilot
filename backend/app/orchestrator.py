@@ -733,6 +733,8 @@ async def orchestrate(
     prompt_refinement: Optional[bool] = True,
     img_reference: Optional[str] = None,  # Reference image URL for img2img
     img_ref_strength: Optional[float] = None,  # Reference strength 0..1 (0=similar, 1=creative)
+    generation_mode: Optional[str] = None,  # 'standard' (default) or 'identity' (face-preserving)
+    reference_image_url: Optional[str] = None,  # Reference face image for identity mode
     voice_system_prompt: Optional[str] = None,  # Custom system prompt for voice personalities
     chat_model: Optional[str] = None,  # User's global chat model (for prompt refinement)
     personality_id: Optional[str] = None,  # Backend personality agent id (e.g. 'therapist')
@@ -1554,6 +1556,23 @@ async def orchestrate(
                 print(f"[IMAGE] Mapped denoise: {refined['denoise']:.2f}")
                 print(f"[IMAGE] Using edit workflow for img2img reference generation")
 
+            # =================================================================
+            # IDENTITY-PRESERVING MODE (InstantID / face-preserving generation)
+            # =================================================================
+            # When generation_mode == 'identity', route to an InstantID workflow
+            # that preserves facial identity from a reference image.
+            # This is additive — standard mode remains the default.
+            if generation_mode == "identity":
+                print(f"[IMAGE] === IDENTITY-PRESERVING MODE ===")
+                if reference_image_url:
+                    print(f"[IMAGE] Reference face URL: {reference_image_url}")
+                    refined["reference_face_url"] = reference_image_url
+                refined["generation_mode"] = "identity"
+                # TODO: When InstantID ComfyUI workflows are created, route here:
+                # workflow_name = "txt2img-instantid" (or similar)
+                # For now, log the intent and use the standard workflow as fallback
+                print(f"[IMAGE] Identity mode requested — using standard workflow as fallback until InstantID workflow is integrated")
+
             # Debug: Log final workflow decision
             print(f"[IMAGE] === FINAL WORKFLOW DECISION ===")
             print(f"[IMAGE] Workflow to run: {workflow_name}")
@@ -1962,6 +1981,8 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 prompt_refinement=payload.get("promptRefinement", True),
                 img_reference=payload.get("imgReference"),
                 img_ref_strength=payload.get("imgRefStrength"),
+                generation_mode=payload.get("generation_mode"),
+                reference_image_url=payload.get("reference_image_url"),
                 chat_model=_chat_model,
                 personality_id=payload.get("personalityId"),
             )
@@ -2040,6 +2061,8 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             prompt_refinement=payload.get("promptRefinement", True),
             img_reference=payload.get("imgReference"),
             img_ref_strength=payload.get("imgRefStrength"),
+            generation_mode=payload.get("generation_mode"),
+            reference_image_url=payload.get("reference_image_url"),
             voice_system_prompt=payload.get("voiceSystemPrompt"),
             chat_model=_chat_model,
             personality_id=payload.get("personalityId"),

@@ -25,6 +25,18 @@ export type PersonaImageRef = {
 }
 
 // ---------------------------------------------------------------------------
+// Generation Mode — standard (text-to-image) vs identity-preserving (InstantID)
+// ---------------------------------------------------------------------------
+
+/**
+ * Controls how avatar / outfit images are generated:
+ *   standard — current text-to-image pipeline (default, always available)
+ *   identity — uses InstantID / identity models to preserve the person's face
+ *              across generations (requires Avatar & Identity models installed)
+ */
+export type GenerationMode = 'standard' | 'identity'
+
+// ---------------------------------------------------------------------------
 // Avatar Generation Settings — stored so the look can be reproduced / edited
 // ---------------------------------------------------------------------------
 
@@ -41,6 +53,8 @@ export type AvatarGenerationSettings = {
   img_preset: 'low' | 'med' | 'high'
   aspect_ratio: string
   nsfw_mode: boolean
+  /** Generation mode — 'standard' (default) or 'identity' (face-preserving) */
+  generation_mode?: GenerationMode
 }
 
 // ---------------------------------------------------------------------------

@@ -670,6 +670,44 @@ def get_avatar_models_status() -> Dict[str, Any]:
     available = []
     installed_ids = []
 
+    # Feature-to-model mapping: which models each feature needs
+    FEATURE_MODELS: Dict[str, Dict[str, Any]] = {
+        "photo_variations": {
+            "label": "Same-Person Photo Variations",
+            "description": "Generate new photos preserving the persona's identity",
+            "required": ["insightface-antelopev2", "instantid-ip-adapter"],
+            "recommended": ["instantid-controlnet"],
+        },
+        "outfit_generation": {
+            "label": "Outfit / Wardrobe Generation",
+            "description": "Generate outfit variations with identity preservation",
+            "required": ["insightface-antelopev2", "instantid-ip-adapter", "instantid-controlnet"],
+            "recommended": ["photomaker-v2", "pulid-flux"],
+            "recommended_note": "PhotoMaker V2 for SDXL models, PuLID for FLUX models",
+        },
+        "face_swap": {
+            "label": "Face Swap",
+            "description": "Transfer identity onto generated or existing images",
+            "required": ["insightface-antelopev2", "insightface-inswapper-128"],
+            "recommended": [],
+        },
+        "random_faces": {
+            "label": "Random Face Generator",
+            "description": "Generate random realistic faces (non-commercial)",
+            "required": ["stylegan2-ffhq-256"],
+            "recommended": ["stylegan2-ffhq-1024"],
+            "recommended_note": "1024px version for higher quality output",
+        },
+    }
+
+    # Build model→features reverse index
+    model_features: Dict[str, list] = {}
+    for feat_id, feat in FEATURE_MODELS.items():
+        for mid in feat["required"]:
+            model_features.setdefault(mid, []).append({"feature": feat_id, "role": "required"})
+        for mid in feat.get("recommended", []):
+            model_features.setdefault(mid, []).append({"feature": feat_id, "role": "recommended"})
+
     for m in models:
         info = {
             "id": m.id,
@@ -685,14 +723,32 @@ def get_avatar_models_status() -> Dict[str, Any]:
             "sha256": m.sha256,
             "requires": m.requires,
             "is_default": m.is_default,
+            "used_by": model_features.get(m.id, []),
         }
         available.append(info)
         if m.installed:
             installed_ids.append(m.id)
+
+    # Compute feature readiness
+    installed_set = set(installed_ids)
+    features = {}
+    for feat_id, feat in FEATURE_MODELS.items():
+        required_ok = all(mid in installed_set for mid in feat["required"])
+        required_missing = [mid for mid in feat["required"] if mid not in installed_set]
+        recommended_ok = all(mid in installed_set for mid in feat.get("recommended", []))
+        features[feat_id] = {
+            "label": feat["label"],
+            "description": feat["description"],
+            "ready": required_ok,
+            "required_missing": required_missing,
+            "recommended_installed": recommended_ok,
+            "recommended_note": feat.get("recommended_note"),
+        }
 
     return {
         "category": ModelCategory.AVATAR_GENERATION.value,
         "installed": installed_ids,
         "available": available,
         "defaults": [m.id for m in models if m.is_default],
+        "features": features,
     }
