@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2 } from 'lucide-react'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import { Download, RefreshCw, Copy, CheckCircle2, AlertTriangle, XCircle, Settings2, Key, X, Trash2, Shield, ExternalLink } from 'lucide-react'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -93,6 +93,79 @@ export type ModelsParams = {
 
   // NSFW/Spice Mode - shows additional adult content models
   nsfwMode?: boolean
+}
+
+// Avatar model types (from /v1/avatar-models endpoint)
+type AvatarModelUsedBy = {
+  feature: string
+  role: 'required' | 'recommended'
+}
+
+type AvatarModelInfo = {
+  id: string
+  name: string
+  description: string
+  filename: string
+  subdir: string
+  installed: boolean
+  license: string | null
+  commercial_use_ok: boolean | null
+  homepage: string | null
+  download_url: string | null
+  sha256: string | null
+  requires: string[] | null
+  is_default: boolean
+  used_by: AvatarModelUsedBy[]
+}
+
+type AvatarFeatureStatus = {
+  label: string
+  description: string
+  ready: boolean
+  required_missing: string[]
+  recommended_installed: boolean
+  recommended_note: string | null
+}
+
+type AvatarModelsResponse = {
+  category: string
+  installed: string[]
+  available: AvatarModelInfo[]
+  defaults: string[]
+  features: Record<string, AvatarFeatureStatus>
+}
+
+type AvatarDownloadResult = {
+  id: string
+  name?: string
+  status: 'installed' | 'already_installed' | 'failed' | 'timeout' | 'error' | 'not_registered' | 'no_download_url'
+  error?: string
+  size?: number
+  elapsed?: number
+}
+
+type AvatarDownloadStartResponse = {
+  ok: boolean
+  message?: string
+  error?: string
+  preset?: string
+  total_models?: number
+  model_ids?: string[]
+}
+
+type AvatarDownloadStatus = {
+  running: boolean
+  preset: string | null
+  current_model: string | null
+  current_index: number
+  total_models: number
+  results: AvatarDownloadResult[]
+  finished: boolean
+  error: string | null
+  elapsed: number
+  installed_count: number
+  failed_count: number
+  downloaded_bytes: number
 }
 
 // Civitai search result types
@@ -474,6 +547,13 @@ function safeLabel(id: string, label?: string) {
   return label?.trim() ? label.trim() : id
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
 // -----------------------------------------------------------------------------
 // Component
 // -----------------------------------------------------------------------------
@@ -532,6 +612,16 @@ export default function ModelsView(props: ModelsParams) {
   const [apiKeyInput, setApiKeyInput] = useState<{ huggingface: string; civitai: string }>({ huggingface: '', civitai: '' })
   const [apiKeyTesting, setApiKeyTesting] = useState<string | null>(null)
   const [apiKeySaving, setApiKeySaving] = useState<string | null>(null)
+
+  // Avatar & Identity models state (shown in Add-ons tab)
+  const [avatarModels, setAvatarModels] = useState<AvatarModelInfo[]>([])
+  const [avatarFeatures, setAvatarFeatures] = useState<Record<string, AvatarFeatureStatus>>({})
+  const [avatarModelsLoading, setAvatarModelsLoading] = useState(false)
+  const [avatarModelsError, setAvatarModelsError] = useState<string | null>(null)
+  const [avatarDownloadBusy, setAvatarDownloadBusy] = useState<string | null>(null) // 'basic' | 'full' | null
+  const [avatarDownloadStatus, setAvatarDownloadStatus] = useState<AvatarDownloadStatus | null>(null)
+  const [avatarDeleteConfirm, setAvatarDeleteConfirm] = useState<string | null>(null)
+  const [avatarDeleteBusy, setAvatarDeleteBusy] = useState<string | null>(null)
 
   // Filter providers based on model type
   const availableProviders = useMemo(() => {
@@ -637,6 +727,7 @@ export default function ModelsView(props: ModelsParams) {
 
     setInstalledLoading(true)
     setInstalledError(null)
+    setInstalled([])  // Clear stale list immediately so old type models don't flash
     try {
       const q = new URLSearchParams()
       q.set('provider', provider)
@@ -746,10 +837,22 @@ export default function ModelsView(props: ModelsParams) {
       }
     }
 
+    // Heuristic: filter out "custom" models that clearly belong to the wrong type.
+    // Checkpoint files (.safetensors, .ckpt) should never appear in the chat tab;
+    // Ollama-style models (name:tag) should never appear in image/video/edit tabs.
+    const isCheckpointFile = (id: string) =>
+      /\.(safetensors|ckpt|pth|onnx|gguf|pt|bin)$/i.test(id)
+    const isLlmModel = (id: string) =>
+      id.includes(':') || /^(llama|mistral|gemma|qwen|phi|deepseek|codellama|vicuna|samantha)/i.test(id)
+
     for (const m of installed) {
       if (!supportedMap.has(m)) {
         // Skip models that belong to another type's catalog
         if (otherTypeIds.has(m)) continue
+        // Skip checkpoint files on the chat tab
+        if (modelType === 'chat' && isCheckpointFile(m)) continue
+        // Skip LLM models on ComfyUI tabs (image/video/edit/enhance)
+        if (modelType !== 'chat' && provider === 'comfyui' && isLlmModel(m)) continue
         rows.push({
           id: m,
           label: m,
@@ -772,7 +875,7 @@ export default function ModelsView(props: ModelsParams) {
     })
 
     return rows
-  }, [supportedForSelection, installed, installedSet, props.nsfwMode])
+  }, [supportedForSelection, installed, installedSet, props.nsfwMode, modelType, provider])
 
   const tryInstall = async (modelId: string, install?: ModelCatalogEntry['install']) => {
     setInstallBusy(modelId)
@@ -1035,6 +1138,121 @@ export default function ModelsView(props: ModelsParams) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKeysExpanded])
+
+  // Fetch avatar models when Add-ons tab is active
+  const refreshAvatarModels = useCallback(async () => {
+    setAvatarModelsLoading(true)
+    setAvatarModelsError(null)
+    try {
+      const data = await getJson<AvatarModelsResponse>(backendUrl, '/v1/avatar-models', authKey)
+      setAvatarModels(data.available || [])
+      setAvatarFeatures(data.features || {})
+    } catch (e: any) {
+      setAvatarModelsError(e?.message || String(e))
+      setAvatarModels([])
+      setAvatarFeatures({})
+    } finally {
+      setAvatarModelsLoading(false)
+    }
+  }, [backendUrl, authKey])
+
+  useEffect(() => {
+    if (modelType === 'addons') {
+      refreshAvatarModels()
+    }
+  }, [modelType, refreshAvatarModels])
+
+  const downloadAvatarPreset = async (preset: 'basic' | 'full') => {
+    setAvatarDownloadBusy(preset)
+    setAvatarDownloadStatus(null)
+    setToast(`Starting ${preset === 'basic' ? 'Basic' : 'Full'} avatar model download...`)
+    try {
+      const res = await fetch(`${backendUrl}/v1/avatar-models/download?preset=${preset}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authKey ? { 'x-api-key': authKey } : {}),
+        },
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(`HTTP ${res.status}${text ? `: ${text}` : ''}`)
+      }
+      const data: AvatarDownloadStartResponse = await res.json()
+      if (!data.ok) {
+        setToast(data.error || 'Download failed to start.')
+        setAvatarDownloadBusy(null)
+        return
+      }
+      setToast(data.message || 'Download started — monitoring progress...')
+      // Start polling
+    } catch (e: any) {
+      setToast(`Download error: ${e?.message || String(e)}`)
+      setAvatarDownloadBusy(null)
+    }
+  }
+
+  // Poll download status while a download is active
+  useEffect(() => {
+    if (!avatarDownloadBusy) return
+
+    let cancelled = false
+    const poll = async () => {
+      while (!cancelled) {
+        await new Promise((r) => setTimeout(r, 4000))
+        if (cancelled) break
+        try {
+          const res = await fetch(`${backendUrl}/v1/avatar-models/download/status`, {
+            headers: authKey ? { 'x-api-key': authKey } : {},
+          })
+          if (!res.ok) continue
+          const status: AvatarDownloadStatus = await res.json()
+          if (cancelled) break
+
+          setAvatarDownloadStatus(status)
+
+          if (status.finished || !status.running) {
+            // Done — show final summary toast only once
+            const msg = `Download complete: ${status.installed_count}/${status.total_models} installed`
+              + (status.failed_count > 0 ? ` (${status.failed_count} failed)` : '')
+              + ` — ${formatBytes(status.downloaded_bytes)} in ${Math.round(status.elapsed)}s`
+            setToast(msg)
+            setAvatarDownloadBusy(null)
+            // Refresh model list
+            setTimeout(() => refreshAvatarModels(), 500)
+            break
+          }
+        } catch {
+          // Network hiccup — keep polling
+        }
+      }
+    }
+    poll()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [avatarDownloadBusy, backendUrl, authKey])
+
+  const deleteAvatarModel = async (modelId: string) => {
+    setAvatarDeleteBusy(modelId)
+    setAvatarDeleteConfirm(null)
+    try {
+      const res = await fetch(`${backendUrl}/v1/avatar-models/${modelId}`, {
+        method: 'DELETE',
+        headers: authKey ? { 'x-api-key': authKey } : {},
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setToast(`Uninstalled ${data.name || modelId} — freed ${data.freed_human || ''}`)
+        setTimeout(() => refreshAvatarModels(), 500)
+      } else {
+        setToast(`Delete failed: ${data.error || 'unknown error'}`)
+      }
+    } catch (e: any) {
+      setToast(`Delete error: ${e?.message || String(e)}`)
+    } finally {
+      setAvatarDeleteBusy(null)
+    }
+  }
 
   // Auto-dismiss toast
   useEffect(() => {
@@ -1879,6 +2097,400 @@ export default function ModelsView(props: ModelsParams) {
               )}
             </div>
           </div>
+
+          {/* Avatar & Identity Section (Add-ons tab only) */}
+          {modelType === 'addons' && (
+            <div className="rounded-2xl border border-purple-500/20 overflow-hidden bg-gradient-to-b from-purple-500/[0.03] to-transparent">
+              <div className="bg-purple-500/5 px-6 py-4 flex items-center justify-between border-b border-purple-500/20">
+                <div className="flex items-center gap-3">
+                  <div className="text-xs font-bold text-purple-200 uppercase tracking-wider">Avatar & Identity Models</div>
+                  <div className="px-2.5 py-1 rounded-md bg-purple-500/10 border border-purple-500/20 text-[10px] font-bold text-purple-300 uppercase tracking-wider">
+                    Persona
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {avatarModelsLoading ? (
+                    <div className="text-xs text-purple-300/50 font-semibold">Loading...</div>
+                  ) : (
+                    <div className="text-xs text-purple-300/50 font-semibold">
+                      {avatarModels.filter(m => m.installed).length} / {avatarModels.length} Installed
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => refreshAvatarModels()}
+                    disabled={avatarModelsLoading}
+                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                    title="Refresh avatar models"
+                  >
+                    <RefreshCw size={13} className={avatarModelsLoading ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+              </div>
+
+              {avatarModelsError ? (
+                <div className="p-5 text-xs text-purple-300/60">
+                  Could not load avatar models: {avatarModelsError}
+                </div>
+              ) : (
+                <>
+                  {/* Feature readiness dashboard */}
+                  {Object.keys(avatarFeatures).length > 0 && (
+                    <div className="px-6 py-4 border-b border-purple-500/10">
+                      <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-3">Feature Readiness</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        {Object.entries(avatarFeatures).map(([featId, feat]) => (
+                          <div
+                            key={featId}
+                            className={`rounded-xl border p-3 transition-all ${
+                              feat.ready
+                                ? 'border-emerald-500/20 bg-emerald-500/5'
+                                : 'border-white/10 bg-white/[0.02]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 mb-1.5">
+                              {feat.ready ? (
+                                <CheckCircle2 size={13} className="text-emerald-400 flex-shrink-0" />
+                              ) : (
+                                <XCircle size={13} className="text-white/30 flex-shrink-0" />
+                              )}
+                              <div className={`text-[11px] font-bold ${feat.ready ? 'text-emerald-200' : 'text-white/50'}`}>
+                                {feat.label}
+                              </div>
+                            </div>
+                            <div className="text-[10px] text-white/30 leading-relaxed">
+                              {feat.description}
+                            </div>
+                            {!feat.ready && feat.required_missing.length > 0 && (
+                              <div className="mt-2 text-[10px] text-amber-400/70">
+                                Missing: {feat.required_missing.join(', ')}
+                              </div>
+                            )}
+                            {feat.ready && !feat.recommended_installed && feat.recommended_note && (
+                              <div className="mt-2 text-[10px] text-blue-300/60">
+                                Tip: {feat.recommended_note}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-3 text-[10px] text-white/20">
+                        Existing personas and avatars work without any of these models. These enable optional enhanced features only.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quick-install preset buttons */}
+                  <div className="px-6 py-4 border-b border-purple-500/10 flex flex-wrap items-center gap-3">
+                    <span className="text-[10px] text-white/40 font-bold uppercase tracking-wider mr-1">Quick Install:</span>
+                    <button
+                      type="button"
+                      onClick={() => downloadAvatarPreset('basic')}
+                      disabled={avatarDownloadBusy !== null}
+                      className={[
+                        "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wide flex items-center gap-2.5 transition-all shadow-lg relative overflow-hidden",
+                        avatarDownloadBusy === 'basic'
+                          ? "bg-purple-700 text-white cursor-wait shadow-purple-700/30"
+                          : "bg-purple-600 text-white hover:bg-purple-500 shadow-purple-600/20 hover:shadow-purple-600/30 hover:scale-105 active:scale-95"
+                      ].join(" ")}
+                    >
+                      {avatarDownloadBusy === 'basic' ? (
+                        <>
+                          <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <span>Downloading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Download size={14} strokeWidth={2.5} />
+                          <span>Basic Pack (~4.3 GB)</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => downloadAvatarPreset('full')}
+                      disabled={avatarDownloadBusy !== null}
+                      className={[
+                        "px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wide flex items-center gap-2.5 transition-all shadow-lg relative overflow-hidden",
+                        avatarDownloadBusy === 'full'
+                          ? "bg-purple-700 text-white cursor-wait shadow-purple-700/30"
+                          : "bg-white/5 text-white/70 hover:bg-white/10 border border-white/10 hover:border-purple-500/30 hover:text-white shadow-none hover:shadow-purple-600/10 hover:scale-105 active:scale-95"
+                      ].join(" ")}
+                    >
+                      {avatarDownloadBusy === 'full' ? (
+                        <>
+                          <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <span>Downloading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Download size={14} strokeWidth={2.5} />
+                          <span>Full Pack (~9.5 GB)</span>
+                        </>
+                      )}
+                    </button>
+                    <span className="text-[10px] text-white/25 ml-2">
+                      Basic = InsightFace + InstantID (portraits + outfits, ~4.3 GB). Full = all 9 models (~9.5 GB, + face swap, random faces).
+                    </span>
+                  </div>
+
+                  {/* Download progress panel (visible during active download) */}
+                  {avatarDownloadStatus && (avatarDownloadStatus.running || avatarDownloadStatus.finished) && (
+                    <div className="px-6 py-4 border-b border-purple-500/10 bg-gradient-to-r from-purple-500/[0.03] to-transparent">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2.5">
+                          {avatarDownloadStatus.running && (
+                            <svg className="animate-spin h-4 w-4 text-purple-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          )}
+                          {avatarDownloadStatus.finished && (
+                            <CheckCircle2 size={16} className="text-emerald-400" />
+                          )}
+                          <span className="text-xs font-bold text-white">
+                            {avatarDownloadStatus.finished
+                              ? `Download Complete — ${avatarDownloadStatus.installed_count}/${avatarDownloadStatus.total_models} installed`
+                              : `Downloading ${avatarDownloadStatus.preset?.toUpperCase()} preset — ${avatarDownloadStatus.current_index}/${avatarDownloadStatus.total_models}`
+                            }
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-white/40 font-mono">
+                          {Math.round(avatarDownloadStatus.elapsed)}s
+                          {avatarDownloadStatus.downloaded_bytes > 0 && (
+                            <> | {formatBytes(avatarDownloadStatus.downloaded_bytes)}</>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Progress bar */}
+                      {avatarDownloadStatus.total_models > 0 && (
+                        <div className="h-2 bg-white/10 rounded-full overflow-hidden mb-3">
+                          <div
+                            className={`h-full rounded-full transition-all duration-700 ${
+                              avatarDownloadStatus.finished ? 'bg-emerald-500' : 'bg-purple-500'
+                            }`}
+                            style={{
+                              width: `${Math.round(
+                                ((avatarDownloadStatus.results?.length || 0) / avatarDownloadStatus.total_models) * 100
+                              )}%`,
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Per-model status rows */}
+                      <div className="space-y-1">
+                        {(avatarDownloadStatus.results || []).map((r) => (
+                          <div key={r.id} className="flex items-center gap-2 text-[11px]">
+                            {r.status === 'installed' ? (
+                              <CheckCircle2 size={11} className="text-emerald-400 shrink-0" />
+                            ) : r.status === 'already_installed' ? (
+                              <CheckCircle2 size={11} className="text-white/30 shrink-0" />
+                            ) : (
+                              <XCircle size={11} className="text-red-400 shrink-0" />
+                            )}
+                            <span className={r.status === 'already_installed' ? 'text-white/30' : 'text-white/60'}>
+                              {r.name || r.id}
+                            </span>
+                            <span className="text-white/20 ml-auto">
+                              {r.status === 'installed' && r.size ? formatBytes(r.size) : ''}
+                              {r.status === 'installed' && r.elapsed ? ` (${r.elapsed}s)` : ''}
+                              {r.status === 'already_installed' ? 'already installed' : ''}
+                              {r.status === 'failed' ? 'failed' : ''}
+                              {r.status === 'timeout' ? 'timeout' : ''}
+                              {r.status === 'error' ? r.error || 'error' : ''}
+                            </span>
+                          </div>
+                        ))}
+
+                        {/* Currently downloading indicator */}
+                        {avatarDownloadStatus.running && avatarDownloadStatus.current_model && (
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <svg className="animate-spin h-3 w-3 text-purple-400 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span className="text-purple-300">
+                              {avatarModels.find(m => m.id === avatarDownloadStatus.current_model)?.name || avatarDownloadStatus.current_model}
+                            </span>
+                            <span className="text-white/20 ml-auto">downloading...</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Dismiss when finished */}
+                      {avatarDownloadStatus.finished && (
+                        <button
+                          type="button"
+                          onClick={() => setAvatarDownloadStatus(null)}
+                          className="mt-3 text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                        >
+                          Dismiss
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Model list */}
+                  <div className="divide-y divide-purple-500/10">
+                    {avatarModels.map((m) => {
+                      const statusKind = m.installed ? 'ok' : 'warn'
+                      const statusLabel = m.installed ? 'Installed' : 'Not Installed'
+
+                      // Feature labels from used_by
+                      const FEATURE_LABELS: Record<string, { label: string; color: string }> = {
+                        photo_variations: { label: 'Portraits', color: 'purple' },
+                        outfit_generation: { label: 'Outfits', color: 'indigo' },
+                        face_swap: { label: 'Face Swap', color: 'cyan' },
+                        random_faces: { label: 'Random Faces', color: 'pink' },
+                      }
+
+                      return (
+                        <div key={m.id} className="p-5 flex items-center justify-between gap-4 hover:bg-white/[0.02] transition-all group">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2.5 mb-2 flex-wrap">
+                              <div className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${chipClass(statusKind)}`}>
+                                <IconStatus kind={statusKind} />
+                                <span>{statusLabel}</span>
+                              </div>
+                              {m.is_default && (
+                                <div className="px-3 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-[10px] font-bold uppercase tracking-wider text-blue-200">
+                                  Core
+                                </div>
+                              )}
+                              {m.license && (
+                                <div className="px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 text-[10px] font-medium text-white/40 flex items-center gap-1">
+                                  <Shield size={10} />
+                                  {m.license}
+                                </div>
+                              )}
+                              {m.commercial_use_ok === true && (
+                                <div className="px-2.5 py-1 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-[10px] font-medium text-emerald-300/70">
+                                  Commercial OK
+                                </div>
+                              )}
+                              {m.commercial_use_ok === false && (
+                                <div className="px-2.5 py-1 rounded-lg border border-amber-500/20 bg-amber-500/5 text-[10px] font-medium text-amber-300/70">
+                                  Non-Commercial
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="font-bold text-base text-white truncate group-hover:text-white transition-colors">{m.name}</div>
+                            <div className="text-[11px] text-white/40 font-mono truncate mt-1">{m.id}</div>
+                            {m.description && (
+                              <div className="text-[11px] text-white/30 mt-1">{m.description}</div>
+                            )}
+                            {m.requires && m.requires.length > 0 && (
+                              <div className="text-[11px] text-amber-400/70 mt-1 truncate">
+                                Requires: <span className="font-semibold">{m.requires.join(', ')}</span>
+                              </div>
+                            )}
+
+                            {/* Feature tags: which features this model enables */}
+                            {m.used_by && m.used_by.length > 0 && (
+                              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                                <span className="text-[10px] text-white/25">Enables:</span>
+                                {m.used_by.map((ub) => {
+                                  const fl = FEATURE_LABELS[ub.feature]
+                                  if (!fl) return null
+                                  const isRequired = ub.role === 'required'
+                                  return (
+                                    <span
+                                      key={`${ub.feature}-${ub.role}`}
+                                      className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider border ${
+                                        isRequired
+                                          ? `border-${fl.color}-500/30 bg-${fl.color}-500/10 text-${fl.color}-300`
+                                          : 'border-white/10 bg-white/5 text-white/40'
+                                      }`}
+                                      title={isRequired ? `Required for ${fl.label}` : `Recommended for ${fl.label}`}
+                                    >
+                                      {fl.label}{!isRequired ? ' (opt)' : ''}
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-3 flex-shrink-0">
+                            {m.homepage && (
+                              <a
+                                href={m.homepage}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold flex items-center gap-2 transition-all text-white/50 hover:text-white/70"
+                                title="View project page"
+                              >
+                                <ExternalLink size={13} />
+                                <span>Info</span>
+                              </a>
+                            )}
+
+                            {/* Uninstall button — only for installed models */}
+                            {m.installed && (
+                              avatarDeleteConfirm === m.id ? (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-bold text-white flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                    disabled={avatarDeleteBusy === m.id}
+                                    onClick={() => deleteAvatarModel(m.id)}
+                                  >
+                                    {avatarDeleteBusy === m.id ? (
+                                      <>
+                                        <svg className="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        <span>Deleting...</span>
+                                      </>
+                                    ) : (
+                                      <span>Confirm</span>
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold transition-all"
+                                    onClick={() => setAvatarDeleteConfirm(null)}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-red-600/20 border border-white/10 hover:border-red-500/30 text-xs font-bold flex items-center gap-2 transition-all hover:scale-105 active:scale-95 text-white/60 hover:text-red-400"
+                                  onClick={() => setAvatarDeleteConfirm(m.id)}
+                                  title="Uninstall this model to free disk space"
+                                >
+                                  <Trash2 size={13} />
+                                  <span>Uninstall</span>
+                                </button>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+
+                    {avatarModels.length === 0 && !avatarModelsLoading && (
+                      <div className="p-8 text-center text-white/40 text-sm">
+                        No avatar models registered. Check backend configuration.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

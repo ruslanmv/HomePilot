@@ -2093,7 +2093,13 @@ export default function ProjectsView({
                     ? (() => {
                         const pap = project.persona_appearance || {}
                         const rel = pap.selected_thumb_filename || pap.selected_filename
-                        return rel ? `${backendUrl}/files/${String(rel).replace(/^\/+/, '')}` : null
+                        if (!rel) return null
+                        // Cache-buster: use updated_at so the browser refetches
+                        // when the avatar file is overwritten after commit.
+                        const v = project.updated_at
+                          ? Math.floor(Number(project.updated_at) * 1000)
+                          : 0
+                        return `${backendUrl}/files/${String(rel).replace(/^\/+/, '')}?v=${v}`
                       })()
                     : null
                   return (

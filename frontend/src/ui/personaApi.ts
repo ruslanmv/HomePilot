@@ -48,6 +48,10 @@ export async function generatePersonaImages(params: {
   imgPreset?: string
   promptRefinement?: boolean
   nsfwMode?: boolean
+  /** 'standard' (default) or 'identity' (face-preserving via InstantID) */
+  generationMode?: 'standard' | 'identity'
+  /** Reference image URL for identity mode (face to preserve) */
+  referenceImageUrl?: string
 }): Promise<{ urls: string[]; final_prompt?: string; model?: string; seeds?: number[] }> {
   const body: Record<string, unknown> = {
     message: `imagine ${params.prompt}`,
@@ -59,6 +63,12 @@ export async function generatePersonaImages(params: {
     imgPreset: params.imgPreset ?? 'med',
     promptRefinement: params.promptRefinement ?? true,
     nsfwMode: params.nsfwMode ?? false,
+  }
+
+  // Identity-preserving mode: pass generation_mode + reference image to backend
+  if (params.generationMode === 'identity') {
+    body.generation_mode = 'identity'
+    if (params.referenceImageUrl) body.reference_image_url = params.referenceImageUrl
   }
 
   const res = await fetch(`${params.backendUrl}/chat`, {
@@ -124,6 +134,10 @@ export async function generateOutfitImages(params: {
   imgPreset?: string
   imgAspectRatio?: string
   nsfwMode?: boolean
+  /** 'standard' (default) or 'identity' (face-preserving via InstantID) */
+  generationMode?: 'standard' | 'identity'
+  /** Reference image URL for identity mode (face to preserve) */
+  referenceImageUrl?: string
 }): Promise<{ urls: string[]; final_prompt?: string; model?: string; seeds?: number[] }> {
   const combinedPrompt = `${params.characterPrompt}, ${params.outfitPrompt}, elegant lighting, realistic, sharp focus`
 
@@ -137,5 +151,7 @@ export async function generateOutfitImages(params: {
     imgPreset: params.imgPreset ?? 'med',
     promptRefinement: true,
     nsfwMode: params.nsfwMode ?? false,
+    generationMode: params.generationMode,
+    referenceImageUrl: params.referenceImageUrl,
   })
 }

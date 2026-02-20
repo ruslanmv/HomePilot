@@ -41,10 +41,11 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { ImageViewer } from '../ImageViewer'
-import type { PersonaImageRef, PersonaOutfit, AvatarGenerationSettings } from '../personaTypes'
+import type { PersonaImageRef, PersonaOutfit, AvatarGenerationSettings, GenerationMode } from '../personaTypes'
 import { OUTFIT_PRESETS, PERSONA_BLUEPRINTS } from '../personaTypes'
 import { generateOutfitImages, generatePersonaImages } from '../personaApi'
 import { commitPersonaAvatar } from '../personaPortability'
+import { useAvatarCapabilities } from '../useAvatarCapabilities'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -209,6 +210,9 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   const ag = project.agentic || {}
   const isSpicy = readNsfwMode()
 
+  // Avatar model capabilities — purely informational, never blocks existing flows
+  const { capabilities: avatarCaps } = useAvatarCapabilities(backendUrl, apiKey)
+
   // --- Persona identity state ---
   const [name, setName] = useState(pa.label || project.name || '')
   const [role, setRole] = useState(pa.role || project.description || '')
@@ -267,6 +271,19 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   const [selectedOutfitPreset, setSelectedOutfitPreset] = useState<string>('')
   const [customOutfitPrompt, setCustomOutfitPrompt] = useState('')
   const [customOutfitLabel, setCustomOutfitLabel] = useState('')
+
+  // Generation mode: 'standard' (default text-to-image) or 'identity' (face-preserving)
+  const [generationMode, setGenerationModeRaw] = useState<GenerationMode>(
+    (pap.avatar_settings?.generation_mode as GenerationMode) || 'standard'
+  )
+  const setGenerationMode = (mode: GenerationMode) => {
+    setGenerationModeRaw(mode)
+    // Persist into avatar_settings so it survives save
+    if (avatarSettingsLocal) {
+      setAvatarSettingsLocal({ ...avatarSettingsLocal, generation_mode: mode })
+    }
+    markDirty()
+  }
 
   // Avatar settings (stored for reproducibility)
   const avatarSettings = pap.avatar_settings || null
@@ -458,20 +475,32 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
       if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`)
       const { url } = await uploadRes.json()
 
-      // Commit the uploaded file as the project's avatar
+      // Extract the bare filename from the upload URL (e.g. "abc123.png")
+      // The upload endpoint returns /files/<uuid>.<ext>
+      const uploadedFilename = url.split('/files/').pop()?.split('?')[0]
+
+      // Commit the uploaded file as the project's durable avatar
       const commitResult = await commitPersonaAvatar({
         backendUrl,
         apiKey,
         projectId: project.id,
-        sourceUrl: url,
+        sourceFilename: uploadedFilename,
       })
+
+      // Use the committed file URL for display
+      const committedProject = commitResult.project || {}
+      const committedPap = committedProject.persona_appearance || {}
+      const committedRel = committedPap.selected_thumb_filename || committedPap.selected_filename
+      const displayUrl = committedRel
+        ? `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}`
+        : url
 
       // Add to gallery sets and select
       const imgId = nextImageId()
       const setId = `set_upload_${Date.now()}`
       const newImage: PersonaImageRef = {
         id: imgId,
-        url: commitResult.avatar_url || url,
+        url: displayUrl,
         created_at: new Date().toISOString(),
         set_id: setId,
       }
@@ -502,6 +531,8 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
         imgPreset: avatarSettingsLocal?.img_preset ?? 'med',
         promptRefinement: true,
         nsfwMode: avatarSettingsLocal?.nsfw_mode ?? false,
+        generationMode,
+        referenceImageUrl: generationMode === 'identity' ? selectedUrl ?? undefined : undefined,
       })
 
       if (out.urls.length === 0) {
@@ -509,10 +540,29 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
         return
       }
 
+      // Commit the first generated image as the durable avatar
+      // (ComfyUI URL — commit endpoint downloads and stores it)
+      let displayUrl = out.urls[0]
+      try {
+        const commitResult = await commitPersonaAvatar({
+          backendUrl,
+          apiKey,
+          projectId: project.id,
+          sourceUrl: out.urls[0],
+        })
+        const committedPap = commitResult.project?.persona_appearance || {}
+        const committedRel = committedPap.selected_thumb_filename || committedPap.selected_filename
+        if (committedRel) {
+          displayUrl = `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}`
+        }
+      } catch {
+        // Non-fatal — avatar still works from ComfyUI URL, just not committed
+      }
+
       const setId = `set_gen_${Date.now()}`
       const newImages: PersonaImageRef[] = out.urls.map((url, i) => ({
         id: nextImageId(),
-        url,
+        url: i === 0 ? displayUrl : url,
         created_at: new Date().toISOString(),
         set_id: setId,
         seed: out.seeds?.[i],
@@ -531,6 +581,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
         img_preset: avatarSettingsLocal?.img_preset ?? 'med',
         aspect_ratio: avatarSettingsLocal?.aspect_ratio ?? '2:3',
         nsfw_mode: avatarSettingsLocal?.nsfw_mode ?? false,
+        generation_mode: generationMode,
       }
       setAvatarSettingsLocal(newSettings)
       setShowChangePhoto(false)
@@ -540,7 +591,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
     } finally {
       setGeneratingPhoto(false)
     }
-  }, [avatarSettingsLocal, backendUrl, apiKey, name, stylePreset, pap.gender])
+  }, [avatarSettingsLocal, backendUrl, apiKey, name, stylePreset, pap.gender, generationMode, selectedUrl])
 
   // --- Enable outfit variations for imported personas ---
   const handleEnableOutfitVariations = useCallback((charDescription: string) => {
@@ -598,6 +649,8 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
         imgPreset: effectiveAvatarSettings.img_preset,
         imgAspectRatio: effectiveAvatarSettings.aspect_ratio,
         nsfwMode: effectiveAvatarSettings.nsfw_mode,
+        generationMode,
+        referenceImageUrl: generationMode === 'identity' ? selectedUrl ?? undefined : undefined,
       })
 
       if (out.urls.length === 0) {
@@ -638,7 +691,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
     } finally {
       setGeneratingOutfit(false)
     }
-  }, [effectiveAvatarSettings, customOutfitPrompt, customOutfitLabel, selectedOutfitPreset, backendUrl, apiKey])
+  }, [effectiveAvatarSettings, customOutfitPrompt, customOutfitLabel, selectedOutfitPreset, backendUrl, apiKey, generationMode, selectedUrl])
 
   // --- Delete outfit ---
   const handleDeleteOutfit = (outfitId: string) => {
@@ -728,8 +781,27 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
 
       if (res.ok) {
         const data = await res.json()
+
+        // Auto-commit the currently selected avatar so the durable
+        // selected_filename / selected_thumb_filename stay in sync.
+        // This ensures the mini thumbnail in the projects list updates.
+        let finalProject = data.project
+        try {
+          const commitRes = await commitPersonaAvatar({
+            backendUrl,
+            apiKey,
+            projectId: project.id,
+            auto: true,
+          })
+          if (commitRes.project) {
+            finalProject = commitRes.project
+          }
+        } catch {
+          // Non-fatal — avatar may already be committed or ComfyUI offline
+        }
+
         setDirty(false)
-        onSaved(data.project)
+        onSaved(finalProject)
       } else {
         alert('Failed to save persona settings')
       }
@@ -884,6 +956,55 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                       </span>
                       {generatingPhoto && <Loader2 size={12} className="animate-spin text-white/40 ml-auto" />}
                     </button>
+
+                    {/* Generation mode toggle — Standard vs Same Person */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 px-2 py-1">
+                        <span className="text-[10px] text-white/40 font-medium">Generation mode</span>
+                      </div>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setGenerationMode('standard')}
+                          className={`flex-1 px-2 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                            generationMode === 'standard'
+                              ? 'bg-purple-500/15 border-purple-500/30 text-purple-300'
+                              : 'bg-white/[0.03] border-white/10 text-white/40 hover:bg-white/[0.06]'
+                          }`}
+                        >
+                          Standard
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => avatarCaps.canIdentityPortrait && setGenerationMode('identity')}
+                          disabled={!avatarCaps.canIdentityPortrait}
+                          title={avatarCaps.canIdentityPortrait
+                            ? 'Keeps the same face consistent across generations'
+                            : 'Install Avatar Models (Add-ons) to enable'}
+                          className={`flex-1 px-2 py-1.5 rounded-lg border text-[10px] font-medium transition-all ${
+                            generationMode === 'identity'
+                              ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                              : avatarCaps.canIdentityPortrait
+                                ? 'bg-white/[0.03] border-white/10 text-white/40 hover:bg-white/[0.06]'
+                                : 'bg-white/[0.02] border-white/5 text-white/15 cursor-not-allowed'
+                          }`}
+                        >
+                          Same Person
+                        </button>
+                      </div>
+                      {generationMode === 'identity' && (
+                        <div className="flex items-center gap-1 px-1.5">
+                          <Check size={8} className="text-emerald-400 shrink-0" />
+                          <span className="text-[9px] text-emerald-300/60">Face preservation active</span>
+                        </div>
+                      )}
+                      {!avatarCaps.canIdentityPortrait && generationMode === 'standard' && (
+                        <div className="flex items-center gap-1 px-1.5">
+                          <Sparkles size={8} className="text-white/15 shrink-0" />
+                          <span className="text-[9px] text-white/20">Install Avatar Models for same-person mode</span>
+                        </div>
+                      )}
+                    </div>
 
                     {changePhotoError && (
                       <div className="text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1.5">
@@ -1182,6 +1303,63 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                   ))}
                 </div>
               )}
+
+              {/* Outfit generation mode selector */}
+              <div className="mb-3 space-y-2">
+                <div className="flex items-center gap-2 px-1">
+                  <span className="text-[10px] text-white/50 font-medium">Outfit generation</span>
+                </div>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setGenerationMode('standard')}
+                    className={`flex-1 px-3 py-2 rounded-lg border text-[11px] font-medium transition-all ${
+                      generationMode === 'standard'
+                        ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                        : 'bg-white/[0.03] border-white/10 text-white/40 hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <div>Standard</div>
+                    <div className="text-[9px] font-normal mt-0.5 opacity-60">Fast, flexible</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => (avatarCaps.canOutfits || avatarCaps.canIdentityPortrait) && setGenerationMode('identity')}
+                    disabled={!avatarCaps.canOutfits && !avatarCaps.canIdentityPortrait}
+                    title={(avatarCaps.canOutfits || avatarCaps.canIdentityPortrait)
+                      ? 'Keeps the same face consistent across outfit variations'
+                      : 'Install Avatar Models (Add-ons) to enable'}
+                    className={`flex-1 px-3 py-2 rounded-lg border text-[11px] font-medium transition-all ${
+                      generationMode === 'identity'
+                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                        : (avatarCaps.canOutfits || avatarCaps.canIdentityPortrait)
+                          ? 'bg-white/[0.03] border-white/10 text-white/40 hover:bg-white/[0.06]'
+                          : 'bg-white/[0.02] border-white/5 text-white/15 cursor-not-allowed'
+                    }`}
+                  >
+                    <div>Same Person</div>
+                    <div className="text-[9px] font-normal mt-0.5 opacity-60">Face consistency</div>
+                  </button>
+                </div>
+                {generationMode === 'identity' && avatarCaps.canOutfits && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/5 border border-emerald-500/10 rounded-lg">
+                    <Check size={9} className="text-emerald-400 shrink-0" />
+                    <span className="text-[9px] text-emerald-300/60">Identity models ready — face preservation active for outfits</span>
+                  </div>
+                )}
+                {generationMode === 'identity' && avatarCaps.canIdentityPortrait && !avatarCaps.canOutfits && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-500/5 border border-amber-500/10 rounded-lg">
+                    <Sparkles size={9} className="text-amber-300/60 shrink-0" />
+                    <span className="text-[9px] text-amber-300/50">Basic identity models installed. Add PhotoMaker V2 or PuLID for best outfit results.</span>
+                  </div>
+                )}
+                {!avatarCaps.canOutfits && !avatarCaps.canIdentityPortrait && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-white/[0.02] border border-white/5 rounded-lg">
+                    <Shirt size={9} className="text-white/15 shrink-0" />
+                    <span className="text-[9px] text-white/20">Install Avatar Models (Add-ons) to enable same-person mode</span>
+                  </div>
+                )}
+              </div>
 
               {/* Generate new outfit */}
               <button
@@ -1655,6 +1833,12 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                   <span className="text-white/50">Wardrobe</span>
                   <span className="text-white/80 font-medium">
                     {outfits.length} outfit{outfits.length !== 1 ? 's' : ''} ({outfits.reduce((n, o) => n + o.images.length, 0)} images)
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-white/50">Generation</span>
+                  <span className={`font-medium ${generationMode === 'identity' ? 'text-emerald-300' : 'text-white/80'}`}>
+                    {generationMode === 'identity' ? 'Same Person' : 'Standard'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-xs">

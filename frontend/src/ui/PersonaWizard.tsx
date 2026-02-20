@@ -26,10 +26,12 @@ import type {
   PersonaBlueprint,
   AvatarGenerationSettings,
   MemoryMode,
+  GenerationMode,
 } from './personaTypes'
 import { PERSONA_BLUEPRINTS } from './personaTypes'
 import { createPersonaProject, generatePersonaImages } from './personaApi'
 import { commitPersonaAvatar } from './personaPortability'
+import { useAvatarCapabilities } from './useAvatarCapabilities'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -212,6 +214,10 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
   // Character description (for outfit system — editable in step 2)
   const [characterDesc, setCharacterDesc] = useState('')
 
+  // Generation mode toggle — standard (default) or identity-preserving
+  const [generationMode, setGenerationMode] = useState<GenerationMode>('standard')
+  const { capabilities: avatarCaps } = useAvatarCapabilities(backendUrl, apiKey)
+
   const [draft, setDraft] = useState<PersonaWizardDraft>(() => ({
     persona_class: 'custom',
     persona_agent: defaultPersonaAgent(),
@@ -341,6 +347,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
         imgPreset: draft.persona_appearance.img_preset,
         promptRefinement: true,
         nsfwMode: isNsfw,
+        generationMode,
       })
 
       if (out.urls.length === 0) {
@@ -375,6 +382,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
         img_preset: draft.persona_appearance.img_preset,
         aspect_ratio: draft.persona_appearance.aspect_ratio,
         nsfw_mode: !!isNsfw,
+        generation_mode: generationMode,
       }
 
       // Auto-fill character description for user to see / edit
@@ -944,6 +952,52 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
                     </div>
                   </div>
 
+                  {/* Generation mode toggle */}
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-white/80">Generation mode</label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setGenerationMode('standard')}
+                        className={`flex-1 px-4 py-2.5 rounded-xl border text-sm transition-all text-left ${
+                          generationMode === 'standard'
+                            ? 'bg-purple-500/15 border-purple-500/40 text-purple-300'
+                            : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+                        }`}
+                      >
+                        <div className="font-medium">Standard</div>
+                        <div className="text-[10px] opacity-60 mt-0.5">Fast, flexible text-to-image</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => (avatarCaps.canIdentityPortrait) && setGenerationMode('identity')}
+                        disabled={!avatarCaps.canIdentityPortrait}
+                        title={avatarCaps.canIdentityPortrait
+                          ? 'Uses InstantID to keep the same face across all generations'
+                          : 'Install Avatar & Identity Models (Add-ons tab) to enable'}
+                        className={`flex-1 px-4 py-2.5 rounded-xl border text-sm transition-all text-left ${
+                          generationMode === 'identity'
+                            ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                            : avatarCaps.canIdentityPortrait
+                              ? 'bg-white/5 border-white/10 text-white/50 hover:bg-white/10'
+                              : 'bg-white/[0.02] border-white/5 text-white/20 cursor-not-allowed'
+                        }`}
+                      >
+                        <div className="font-medium">Same Person</div>
+                        <div className="text-[10px] opacity-60 mt-0.5">
+                          {avatarCaps.canIdentityPortrait
+                            ? 'Face-preserving (InstantID)'
+                            : 'Requires Avatar Models'}
+                        </div>
+                      </button>
+                    </div>
+                    {generationMode === 'identity' && (
+                      <p className="text-[10px] text-emerald-300/50 px-1">
+                        Face preservation active. The same identity will be maintained across outfit variations.
+                      </p>
+                    )}
+                  </div>
+
                   <button
                     type="button"
                     onClick={onGenerateSet}
@@ -1159,7 +1213,10 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
 
                     <div className="text-xs text-white/40 mt-2">
                       {allImages.length} image{allImages.length !== 1 ? 's' : ''} generated &middot;
-                      Quality: {draft.persona_appearance.img_preset}
+                      Quality: {draft.persona_appearance.img_preset} &middot;
+                      Mode: {generationMode === 'identity' ? (
+                        <span className="text-emerald-300/70">Same Person</span>
+                      ) : 'Standard'}
                     </div>
 
                     {/* Avatar settings note */}
