@@ -118,6 +118,14 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_memory_project ON persona_memory(project_id)"
     )
 
+    # Additive: extend persona_memory schema for Memory V2 (safe ALTER TABLEs)
+    from .memory_v2 import ensure_v2_columns
+    ensure_v2_columns()
+
+    # Additive: extend persona_memory schema for V1 hardening (is_pinned, expires_at)
+    from .ltm_v1_maintenance import ensure_v1_hardening_columns
+    ensure_v1_hardening_columns()
+
     # Durable async jobs: survives restarts, processes lazily
     cur.execute(
         """

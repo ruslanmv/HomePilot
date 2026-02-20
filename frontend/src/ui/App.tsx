@@ -1970,6 +1970,7 @@ export default function App() {
     localStorage.setItem('homepilot_tts_enabled', String(settingsDraft.ttsEnabled ?? true))
     localStorage.setItem('homepilot_voice_uri', settingsDraft.selectedVoice ?? '')
     localStorage.setItem('homepilot_nsfw_mode', String(!!settingsDraft.nsfwMode))
+    localStorage.setItem('homepilot_memory_engine', settingsDraft.memoryEngine || 'v2')
     localStorage.setItem('homepilot_experimental_civitai', String(!!settingsDraft.experimentalCivitai))
     localStorage.setItem('homepilot_civitai_api_key', settingsDraft.civitaiApiKey || '')
     localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
@@ -2035,6 +2036,7 @@ export default function App() {
         modelVideo: localStorage.getItem('homepilot_model_video') || '',
         preset: (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med',
         nsfwMode: localStorage.getItem('homepilot_nsfw_mode') === 'true',
+        memoryEngine: (localStorage.getItem('homepilot_memory_engine') as any) || 'v2',
         experimentalCivitai: localStorage.getItem('homepilot_experimental_civitai') === 'true',
         civitaiApiKey: localStorage.getItem('homepilot_civitai_api_key') || '',
         promptRefinement: localStorage.getItem('homepilot_prompt_refinement') !== 'false',
@@ -2601,6 +2603,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             vidModel: settingsDraft.modelVideo,
             vidPreset: settingsDraft.vidPreset,
             nsfwMode: settingsDraft.nsfwMode,
+            memoryEngine: settingsDraft.memoryEngine || 'v2',
             promptRefinement: settingsDraft.promptRefinement ?? true,
             // Voice mode personality system prompt
             voiceSystemPrompt,

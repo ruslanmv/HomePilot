@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" fill="none">
+  <defs>
+    <style>
+      @keyframes pulse-adaptive { 0%,100%{opacity:0.6} 50%{opacity:1} }
+      @keyframes pulse-basic { 0%,100%{opacity:0.6} 50%{opacity:1} }
+      @keyframes flow-down { 0%{transform:translateY(-8px);opacity:0} 50%{opacity:1} 100%{transform:translateY(8px);opacity:0} }
+      @keyframes grow-bar { 0%{transform:scaleX(0)} 100%{transform:scaleX(1)} }
+      @keyframes check-pop { 0%,80%{opacity:0;transform:scale(0.5)} 100%{opacity:1;transform:scale(1)} }
+      .pulse-a { animation: pulse-adaptive 3s ease-in-out infinite; }
+      .pulse-b { animation: pulse-basic 3s ease-in-out infinite 1.5s; }
+    </style>
+    <linearGradient id="ab-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f0f23"/><stop offset="100%" style="stop-color:#1a1a3e"/>
+    </linearGradient>
+    <filter id="ab-glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="ab-clip"><rect width="900" height="500" rx="16"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#ab-clip)">
+    <rect width="900" height="500" fill="url(#ab-bg)" rx="16"/>
+    <g stroke="#334155" stroke-width="0.5" opacity="0.06">
+      <line x1="450" y1="0" x2="450" y2="500"/>
+      <line x1="0" y1="125" x2="900" y2="125"/><line x1="0" y1="250" x2="900" y2="250"/><line x1="0" y1="375" x2="900" y2="375"/>
+    </g>
+
+    <!-- Title -->
+    <text x="450" y="36" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="3" text-anchor="middle">ADAPTIVE vs BASIC MEMORY</text>
+    <text x="450" y="56" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Choose the engine that fits your persona's purpose</text>
+
+    <!-- Divider -->
+    <line x1="450" y1="70" x2="450" y2="480" stroke="#334155" stroke-width="1" stroke-dasharray="6,4" opacity="0.3"/>
+
+    <!-- ===== LEFT: ADAPTIVE MEMORY ===== -->
+    <g transform="translate(30,75)">
+      <!-- Header -->
+      <rect x="0" y="0" width="390" height="50" rx="12" fill="#8b5cf6" fill-opacity="0.08" stroke="#8b5cf6" stroke-width="1"/>
+      <circle cx="28" cy="25" r="14" fill="#8b5cf6" fill-opacity="0.15" stroke="#8b5cf6" stroke-width="1" class="pulse-a"/>
+      <text x="28" y="30" font-family="system-ui,sans-serif" font-size="14" fill="#8b5cf6" text-anchor="middle">&#x1F9E0;</text>
+      <text x="55" y="22" font-family="system-ui,sans-serif" font-size="14" font-weight="700" fill="#c4b5fd">Adaptive Memory</text>
+      <text x="55" y="38" font-family="system-ui,sans-serif" font-size="10" fill="#64748b">Brain-inspired &#x2022; Learns over time</text>
+
+      <!-- Features list -->
+      <g transform="translate(20,70)">
+        <!-- Feature 1 -->
+        <circle cx="8" cy="8" r="7" fill="#8b5cf6" fill-opacity="0.12" stroke="#8b5cf6" stroke-width="0.8"/>
+        <text x="8" y="11" font-family="system-ui,sans-serif" font-size="8" fill="#8b5cf6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="12" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">Three-tier hierarchy</text>
+        <text x="22" y="24" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Working &#x2192; Consolidation &#x2192; Semantic</text>
+
+        <!-- Feature 2 -->
+        <circle cx="8" cy="48" r="7" fill="#8b5cf6" fill-opacity="0.12" stroke="#8b5cf6" stroke-width="0.8"/>
+        <text x="8" y="51" font-family="system-ui,sans-serif" font-size="8" fill="#8b5cf6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="52" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">Exponential decay</text>
+        <text x="22" y="64" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Unused memories fade naturally: A(t) = s &#x00B7; e&#x207B;&#x1D57;/&#x03C4;</text>
+
+        <!-- Feature 3 -->
+        <circle cx="8" cy="88" r="7" fill="#8b5cf6" fill-opacity="0.12" stroke="#8b5cf6" stroke-width="0.8"/>
+        <text x="8" y="91" font-family="system-ui,sans-serif" font-size="8" fill="#8b5cf6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="92" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">Reinforcement on use</text>
+        <text x="22" y="104" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Accessed memories grow stronger over time</text>
+
+        <!-- Feature 4 -->
+        <circle cx="8" cy="128" r="7" fill="#8b5cf6" fill-opacity="0.12" stroke="#8b5cf6" stroke-width="0.8"/>
+        <text x="8" y="131" font-family="system-ui,sans-serif" font-size="8" fill="#8b5cf6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="132" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">Sleep-cycle consolidation</text>
+        <text x="22" y="144" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Important short-term memories become long-term</text>
+
+        <!-- Feature 5 -->
+        <circle cx="8" cy="168" r="7" fill="#8b5cf6" fill-opacity="0.12" stroke="#8b5cf6" stroke-width="0.8"/>
+        <text x="8" y="171" font-family="system-ui,sans-serif" font-size="8" fill="#8b5cf6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="172" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">Automatic pruning</text>
+        <text x="22" y="184" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Stale memories removed below threshold</text>
+      </g>
+
+      <!-- Best for box -->
+      <rect x="15" y="280" width="360" height="56" rx="10" fill="#8b5cf6" fill-opacity="0.05" stroke="#8b5cf6" stroke-width="0.6" stroke-dasharray="4,3"/>
+      <text x="195" y="300" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#a78bfa" text-anchor="middle">BEST FOR</text>
+      <text x="195" y="316" font-family="system-ui,sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">Companion &#x2022; Assistant &#x2022; Partner &#x2022; Girlfriend &#x2022; Custom</text>
+      <text x="195" y="330" font-family="system-ui,sans-serif" font-size="9" fill="#64748b" text-anchor="middle">Personas that feel human &#x2014; natural, evolving, empathetic</text>
+
+      <!-- Animated flow dots -->
+      <g opacity="0.5">
+        <circle cx="195" cy="58" r="2" fill="#8b5cf6">
+          <animate attributeName="cy" values="58;68" dur="2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0;1;0" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="195" cy="58" r="2" fill="#8b5cf6">
+          <animate attributeName="cy" values="58;68" dur="2s" begin="0.6s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0;1;0" dur="2s" begin="0.6s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="195" cy="58" r="2" fill="#8b5cf6">
+          <animate attributeName="cy" values="58;68" dur="2s" begin="1.2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0;1;0" dur="2s" begin="1.2s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+    </g>
+
+    <!-- ===== RIGHT: BASIC MEMORY ===== -->
+    <g transform="translate(480,75)">
+      <!-- Header -->
+      <rect x="0" y="0" width="390" height="50" rx="12" fill="#3b82f6" fill-opacity="0.08" stroke="#3b82f6" stroke-width="1"/>
+      <circle cx="28" cy="25" r="14" fill="#3b82f6" fill-opacity="0.15" stroke="#3b82f6" stroke-width="1" class="pulse-b"/>
+      <text x="28" y="30" font-family="system-ui,sans-serif" font-size="14" fill="#3b82f6" text-anchor="middle">&#x1F4CB;</text>
+      <text x="55" y="22" font-family="system-ui,sans-serif" font-size="14" font-weight="700" fill="#93c5fd">Basic Memory</text>
+      <text x="55" y="38" font-family="system-ui,sans-serif" font-size="10" fill="#64748b">Deterministic &#x2022; Fully auditable</text>
+
+      <!-- Features list -->
+      <g transform="translate(20,70)">
+        <!-- Feature 1 -->
+        <circle cx="8" cy="8" r="7" fill="#3b82f6" fill-opacity="0.12" stroke="#3b82f6" stroke-width="0.8"/>
+        <text x="8" y="11" font-family="system-ui,sans-serif" font-size="8" fill="#3b82f6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="12" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">Flat memory store</text>
+        <text x="22" y="24" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Simple key-value entries, no hidden layers</text>
+
+        <!-- Feature 2 -->
+        <circle cx="8" cy="48" r="7" fill="#3b82f6" fill-opacity="0.12" stroke="#3b82f6" stroke-width="0.8"/>
+        <text x="8" y="51" font-family="system-ui,sans-serif" font-size="8" fill="#3b82f6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="52" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">Explicit save only</text>
+        <text x="22" y="64" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Nothing stored unless confirmed or triggered by rules</text>
+
+        <!-- Feature 3 -->
+        <circle cx="8" cy="88" r="7" fill="#3b82f6" fill-opacity="0.12" stroke="#3b82f6" stroke-width="0.8"/>
+        <text x="8" y="91" font-family="system-ui,sans-serif" font-size="8" fill="#3b82f6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="92" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">TTL + cap enforcement</text>
+        <text x="22" y="104" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Per-category limits and time-to-live expiry</text>
+
+        <!-- Feature 4 -->
+        <circle cx="8" cy="128" r="7" fill="#3b82f6" fill-opacity="0.12" stroke="#3b82f6" stroke-width="0.8"/>
+        <text x="8" y="131" font-family="system-ui,sans-serif" font-size="8" fill="#3b82f6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="132" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">Near-duplicate detection</text>
+        <text x="22" y="144" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Jaccard similarity prevents redundant entries</text>
+
+        <!-- Feature 5 -->
+        <circle cx="8" cy="168" r="7" fill="#3b82f6" fill-opacity="0.12" stroke="#3b82f6" stroke-width="0.8"/>
+        <text x="8" y="171" font-family="system-ui,sans-serif" font-size="8" fill="#3b82f6" text-anchor="middle">&#x2713;</text>
+        <text x="22" y="172" font-family="system-ui,sans-serif" font-size="11" fill="#e2e8f0">Pin-to-keep</text>
+        <text x="22" y="184" font-family="system-ui,sans-serif" font-size="9" fill="#64748b">Critical entries survive TTL and cap eviction</text>
+      </g>
+
+      <!-- Best for box -->
+      <rect x="15" y="280" width="360" height="56" rx="10" fill="#3b82f6" fill-opacity="0.05" stroke="#3b82f6" stroke-width="0.6" stroke-dasharray="4,3"/>
+      <text x="195" y="300" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#60a5fa" text-anchor="middle">BEST FOR</text>
+      <text x="195" y="316" font-family="system-ui,sans-serif" font-size="10" fill="#94a3b8" text-anchor="middle">Secretary &#x2022; Enterprise &#x2022; Finance &#x2022; Compliance</text>
+      <text x="195" y="330" font-family="system-ui,sans-serif" font-size="9" fill="#64748b" text-anchor="middle">Personas that must be predictable &#x2014; auditable, deterministic, strict</text>
+
+      <!-- Animated flow dots -->
+      <g opacity="0.5">
+        <circle cx="195" cy="58" r="2" fill="#3b82f6">
+          <animate attributeName="cy" values="58;68" dur="2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0;1;0" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="195" cy="58" r="2" fill="#3b82f6">
+          <animate attributeName="cy" values="58;68" dur="2s" begin="0.6s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0;1;0" dur="2s" begin="0.6s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="195" cy="58" r="2" fill="#3b82f6">
+          <animate attributeName="cy" values="58;68" dur="2s" begin="1.2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0;1;0" dur="2s" begin="1.2s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+    </g>
+
+    <!-- Bottom comparison bar -->
+    <g transform="translate(30,440)">
+      <rect x="0" y="0" width="840" height="44" rx="10" fill="#1e293b" stroke="#334155" stroke-width="0.8"/>
+
+      <!-- Adaptive side -->
+      <text x="60" y="18" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#a78bfa">Feels human</text>
+      <rect x="60" y="24" width="140" height="6" rx="3" fill="#8b5cf6" fill-opacity="0.15"/>
+      <rect x="60" y="24" width="130" height="6" rx="3" fill="#8b5cf6" fill-opacity="0.5">
+        <animate attributeName="width" from="0" to="130" dur="2s" fill="freeze"/>
+      </rect>
+
+      <!-- VS -->
+      <text x="420" y="28" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#475569" text-anchor="middle">vs</text>
+
+      <!-- Basic side -->
+      <text x="580" y="18" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#60a5fa">Fully auditable</text>
+      <rect x="580" y="24" width="140" height="6" rx="3" fill="#3b82f6" fill-opacity="0.15"/>
+      <rect x="580" y="24" width="130" height="6" rx="3" fill="#3b82f6" fill-opacity="0.5">
+        <animate attributeName="width" from="0" to="130" dur="2s" begin="0.5s" fill="freeze"/>
+      </rect>
+    </g>
+
+    <!-- Footer -->
+    <text x="450" y="498" font-family="system-ui,sans-serif" font-size="10" fill="#475569" text-anchor="middle">Both engines share the same persona_memory table &#x2014; switch anytime from Settings or during import.</text>
+  </g>
+</svg>

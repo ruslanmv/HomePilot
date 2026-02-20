@@ -89,6 +89,10 @@ from .personas.dependency_checker import check_dependencies
 # Community gallery proxy (Phase 3 — additive)
 from .community import router as community_router
 
+# User Profile & Memory (additive)
+from .profile import router as profile_router
+from .user_memory import router as memory_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -122,6 +126,12 @@ app.include_router(agentic_router)
 
 # Include Community Gallery proxy routes (/community/*)
 app.include_router(community_router)
+
+# Include User Profile routes (/v1/profile/*)
+app.include_router(profile_router)
+
+# Include User Memory routes (/v1/memory/*)
+app.include_router(memory_router)
 
 # ----------------------------
 # Models
@@ -193,6 +203,7 @@ class ChatIn(BaseModel):
     vidWidth: Optional[int] = Field(None, description="Override video width (must be divisible by 32)")
     vidHeight: Optional[int] = Field(None, description="Override video height (must be divisible by 32)")
     nsfwMode: Optional[bool] = Field(None, description="Enable NSFW/uncensored mode")
+    memoryEngine: Optional[str] = Field(None, description="Memory engine: off | v1 | v2 (brain-inspired)")
     promptRefinement: Optional[bool] = Field(True, description="Enable AI prompt refinement for image generation (default: True)")
     # ----------------------------
     # Game Mode (Infinite Variations)
@@ -2455,6 +2466,52 @@ async def delete_persona_memory(request: Request) -> JSONResponse:
         )
 
 
+# --- Memory Maintenance (V1 hardening) ---
+
+@app.post("/persona/memory/maintenance", dependencies=[Depends(require_api_key)])
+async def run_memory_maintenance(request: Request) -> JSONResponse:
+    """
+    Run maintenance routines: TTL expiry, per-category cap, total cap.
+    POST body: { "project_id": "..." }
+    """
+    try:
+        from .ltm_v1_maintenance import run_maintenance, get_memory_stats
+        body = await request.json()
+        project_id = body.get("project_id")
+        if not project_id:
+            return JSONResponse(
+                status_code=400,
+                content=_safe_err("project_id is required", code="missing_project_id"),
+            )
+        result = run_maintenance(project_id)
+        stats = get_memory_stats(project_id)
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "maintenance": result, "stats": stats},
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Memory maintenance failed: {e}", code="maintenance_error"),
+        )
+
+
+@app.get("/persona/memory/stats", dependencies=[Depends(require_api_key)])
+async def get_persona_memory_stats(
+    project_id: str = Query(..., description="Persona project ID"),
+) -> JSONResponse:
+    """Get memory usage statistics for a persona."""
+    try:
+        from .ltm_v1_maintenance import get_memory_stats
+        stats = get_memory_stats(project_id)
+        return JSONResponse(status_code=200, content={"ok": True, "stats": stats})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=_safe_err(f"Failed to get memory stats: {e}", code="stats_error"),
+        )
+
+
 # ----------------------------
 # Chat & Upload
 # ----------------------------
@@ -2510,6 +2567,7 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "vidWidth": inp.vidWidth,
         "vidHeight": inp.vidHeight,
         "nsfwMode": inp.nsfwMode,
+        "memoryEngine": inp.memoryEngine,
         "promptRefinement": inp.promptRefinement,
         # Reference image for img2img similar generation
         "imgReference": inp.imgReference,

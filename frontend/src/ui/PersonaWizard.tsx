@@ -25,6 +25,7 @@ import type {
   PersonaClassId,
   PersonaBlueprint,
   AvatarGenerationSettings,
+  MemoryMode,
 } from './personaTypes'
 import { PERSONA_BLUEPRINTS } from './personaTypes'
 import { createPersonaProject, generatePersonaImages } from './personaApi'
@@ -215,6 +216,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
     persona_class: 'custom',
     persona_agent: defaultPersonaAgent(),
     persona_appearance: { ...defaultAppearance(), nsfwMode: readNsfwMode() },
+    memory_mode: 'adaptive',
     agentic: { goal: '', capabilities: [] },
   }))
 
@@ -264,6 +266,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
         style_preset: stylePreset,
         nsfwMode: isNsfw || isSpicy,
       },
+      memory_mode: bp.defaults.memory_mode,
       agentic: {
         goal: bp.defaults.goal,
         capabilities: [...bp.defaults.capabilities],
@@ -412,7 +415,11 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
         apiKey,
         name,
         description,
-        persona_agent: { ...draft.persona_agent, persona_class: draft.persona_class },
+        persona_agent: {
+          ...draft.persona_agent,
+          persona_class: draft.persona_class,
+          memory_mode: draft.memory_mode,
+        },
         persona_appearance: draft.persona_appearance,
         agentic: {
           goal: draft.agentic.goal,
@@ -1112,6 +1119,34 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
                         </div>
                       </div>
                     )}
+
+                    {/* Memory Mode */}
+                    <div>
+                      <span className="text-xs text-white/50">Memory Mode</span>
+                      <div className="flex items-center gap-2 mt-1">
+                        {(['adaptive', 'basic'] as const).map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => setDraft({ ...draft, memory_mode: mode })}
+                            className={`text-xs px-3 py-1.5 rounded-full border transition-all ${
+                              draft.memory_mode === mode
+                                ? mode === 'adaptive'
+                                  ? 'bg-purple-500/15 border-purple-500/30 text-purple-300'
+                                  : 'bg-blue-500/15 border-blue-500/30 text-blue-300'
+                                : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/8'
+                            }`}
+                          >
+                            {mode === 'adaptive' ? 'Adaptive Memory' : 'Basic Memory'}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="text-[10px] text-white/30 mt-1">
+                        {draft.memory_mode === 'adaptive'
+                          ? 'Learns over time, forgets irrelevant details. Best for companions and personal assistants.'
+                          : 'Only remembers what is explicitly saved. Best for deterministic enterprise workflows.'}
+                      </div>
+                    </div>
 
                     {draft.persona_agent.system_prompt && (
                       <div>

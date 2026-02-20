@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" fill="none">
+  <defs>
+    <style>
+      @keyframes trace-decay { 0%{stroke-dashoffset:400} 100%{stroke-dashoffset:0} }
+      @keyframes trace-reinforce { 0%{stroke-dashoffset:300} 100%{stroke-dashoffset:0} }
+      @keyframes dot-travel { 0%{opacity:0} 15%{opacity:1} 85%{opacity:1} 100%{opacity:0} }
+      @keyframes boost-flash { 0%,100%{opacity:0} 40%{opacity:0.8} 60%{opacity:0.8} }
+      .decay-line { stroke-dasharray: 400; animation: trace-decay 5s linear infinite; }
+      .reinforce-line { stroke-dasharray: 300; animation: trace-reinforce 4s linear infinite; }
+    </style>
+    <linearGradient id="dr-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f0f23"/><stop offset="100%" style="stop-color:#1a1a3e"/>
+    </linearGradient>
+    <filter id="dr-glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="dr-clip"><rect width="900" height="420" rx="16"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#dr-clip)">
+    <rect width="900" height="420" fill="url(#dr-bg)" rx="16"/>
+    <g stroke="#334155" stroke-width="0.5" opacity="0.06">
+      <line x1="0" y1="105" x2="900" y2="105"/><line x1="0" y1="210" x2="900" y2="210"/><line x1="0" y1="315" x2="900" y2="315"/>
+    </g>
+
+    <!-- Title -->
+    <text x="450" y="36" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="3" text-anchor="middle">DECAY &amp; REINFORCEMENT</text>
+    <text x="450" y="56" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Memories weaken over time unless reinforced by use</text>
+
+    <!-- ===== LEFT: DECAY CURVE ===== -->
+    <g transform="translate(30,80)">
+      <text x="190" y="0" font-family="system-ui,sans-serif" font-size="12" font-weight="700" fill="#e2e8f0" text-anchor="middle">Exponential Decay</text>
+      <text x="190" y="16" font-family="system-ui,sans-serif" font-size="10" fill="#64748b" text-anchor="middle">A(t) = s &#x00B7; e&#x207B;&#x1D57;/&#x03C4;</text>
+
+      <!-- Axes -->
+      <line x1="40" y1="50" x2="40" y2="260" stroke="#475569" stroke-width="1"/>
+      <line x1="40" y1="260" x2="370" y2="260" stroke="#475569" stroke-width="1"/>
+      <text x="20" y="60" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">1.0</text>
+      <text x="20" y="155" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">0.5</text>
+      <text x="20" y="260" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">0.0</text>
+      <text x="200" y="280" font-family="system-ui,sans-serif" font-size="9" fill="#64748b" text-anchor="middle">Time &#x2192;</text>
+
+      <!-- Working decay (fast, cyan) -->
+      <path d="M40 55 Q100 60 140 120 Q180 180 240 230 Q300 250 370 258" stroke="#06b6d4" stroke-width="2" fill="none" class="decay-line"/>
+      <text x="145" y="100" font-family="system-ui,sans-serif" font-size="9" fill="#06b6d4" font-weight="600">Working (6h)</text>
+
+      <!-- Semantic decay (slow, purple) -->
+      <path d="M40 55 Q120 58 200 70 Q280 90 340 140 Q365 170 370 200" stroke="#8b5cf6" stroke-width="2" fill="none" class="decay-line" style="animation-duration:8s"/>
+      <text x="300" y="110" font-family="system-ui,sans-serif" font-size="9" fill="#8b5cf6" font-weight="600">Semantic (30d)</text>
+
+      <!-- Pinned (flat, gold) -->
+      <line x1="40" y1="55" x2="370" y2="55" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6,3"/>
+      <text x="320" y="48" font-family="system-ui,sans-serif" font-size="9" fill="#f59e0b" font-weight="600">Pinned (&#x221E;)</text>
+
+      <!-- Prune threshold -->
+      <line x1="40" y1="248" x2="370" y2="248" stroke="#ef4444" stroke-width="1" stroke-dasharray="4,4" opacity="0.5"/>
+      <text x="375" y="252" font-family="system-ui,sans-serif" font-size="8" fill="#ef4444">prune</text>
+    </g>
+
+    <!-- ===== RIGHT: REINFORCEMENT ===== -->
+    <g transform="translate(480,80)">
+      <text x="190" y="0" font-family="system-ui,sans-serif" font-size="12" font-weight="700" fill="#e2e8f0" text-anchor="middle">Reinforcement</text>
+      <text x="190" y="16" font-family="system-ui,sans-serif" font-size="10" fill="#64748b" text-anchor="middle">s &#x2190; 1 &#x2212; (1&#x2212;s) &#x00B7; e&#x207B;&#x03B7;</text>
+
+      <!-- Axes -->
+      <line x1="40" y1="50" x2="40" y2="260" stroke="#475569" stroke-width="1"/>
+      <line x1="40" y1="260" x2="370" y2="260" stroke="#475569" stroke-width="1"/>
+      <text x="20" y="60" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">1.0</text>
+      <text x="20" y="155" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">0.5</text>
+      <text x="20" y="260" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">0.0</text>
+      <text x="200" y="280" font-family="system-ui,sans-serif" font-size="9" fill="#64748b" text-anchor="middle">Access events &#x2192;</text>
+
+      <!-- Reinforcement curve (steps up) -->
+      <path d="M40 210 L80 210 L80 175 L140 175 L140 140 L200 140 L200 110 L260 110 L260 85 L320 85 L320 68 L370 68" stroke="#10b981" stroke-width="2.5" fill="none" class="reinforce-line"/>
+
+      <!-- Boost flash markers -->
+      <g>
+        <circle cx="80" cy="175" r="5" fill="#10b981" opacity="0">
+          <animate attributeName="opacity" values="0;0.8;0" dur="4s" begin="0.5s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="140" cy="140" r="5" fill="#10b981" opacity="0">
+          <animate attributeName="opacity" values="0;0.8;0" dur="4s" begin="1s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="200" cy="110" r="5" fill="#10b981" opacity="0">
+          <animate attributeName="opacity" values="0;0.8;0" dur="4s" begin="1.5s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="260" cy="85" r="5" fill="#10b981" opacity="0">
+          <animate attributeName="opacity" values="0;0.8;0" dur="4s" begin="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="320" cy="68" r="5" fill="#10b981" opacity="0">
+          <animate attributeName="opacity" values="0;0.8;0" dur="4s" begin="2.5s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+
+      <!-- Labels -->
+      <text x="90" y="205" font-family="system-ui,sans-serif" font-size="8" fill="#10b981">&#x03B7;=0.25</text>
+      <text x="330" y="60" font-family="system-ui,sans-serif" font-size="9" fill="#10b981" font-weight="600">Saturates &#x2192; 1.0</text>
+
+      <!-- Explanation boxes -->
+      <rect x="60" y="295" width="130" height="40" rx="8" fill="#10b981" fill-opacity="0.08" stroke="#10b981" stroke-width="0.8"/>
+      <text x="125" y="312" font-family="system-ui,sans-serif" font-size="9" font-weight="600" fill="#10b981" text-anchor="middle">User confirms</text>
+      <text x="125" y="326" font-family="system-ui,sans-serif" font-size="8" fill="#64748b" text-anchor="middle">&#x03B7; = 0.25 (strong)</text>
+
+      <rect x="210" y="295" width="130" height="40" rx="8" fill="#3b82f6" fill-opacity="0.08" stroke="#3b82f6" stroke-width="0.8"/>
+      <text x="275" y="312" font-family="system-ui,sans-serif" font-size="9" font-weight="600" fill="#3b82f6" text-anchor="middle">AI infers</text>
+      <text x="275" y="326" font-family="system-ui,sans-serif" font-size="8" fill="#64748b" text-anchor="middle">&#x03B7; = 0.05 (gentle)</text>
+    </g>
+
+    <!-- Footer -->
+    <text x="450" y="402" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Memories you use grow stronger. Memories you ignore fade &#x2014; mimicking how human memory works.</text>
+  </g>
+</svg>
