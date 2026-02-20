@@ -28,6 +28,18 @@ dependencies = [
   "scikit-image>=0.21.0",
 ]
 
+[project.optional-dependencies]
+# Additive: opt-in via `pip install .[avatar]` or `uv pip install -e ".[avatar]"`
+# These are NOT required for normal HomePilot operation; only for the Avatar
+# Generator pipeline (StyleGAN2 inference, InsightFace face analysis).
+avatar = [
+    "torch>=2.0",
+    "torchvision>=0.15",
+    "insightface>=0.7.3",
+    # Use onnxruntime-gpu for GPU acceleration if your platform supports it:
+    # "onnxruntime-gpu>=1.16",
+]
+
 [dependency-groups]
 dev = [
   "pytest==8.2.2",

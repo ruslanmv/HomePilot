@@ -29,6 +29,7 @@ from .personalities import registry as personality_registry, build_system_prompt
 from . import sessions as persona_sessions_mod
 from . import ltm as persona_ltm_mod
 from . import jobs as persona_jobs_mod
+from .memory_v2 import get_memory_v2
 
 # Per-conversation memory store (lives in-process, per session)
 _conversation_memories: Dict[str, ConversationMemory] = {}
@@ -735,6 +736,7 @@ async def orchestrate(
     voice_system_prompt: Optional[str] = None,  # Custom system prompt for voice personalities
     chat_model: Optional[str] = None,  # User's global chat model (for prompt refinement)
     personality_id: Optional[str] = None,  # Backend personality agent id (e.g. 'therapist')
+    memory_engine: Optional[str] = None,  # Memory engine: off | v1 | v2 (brain-inspired)
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -1696,14 +1698,33 @@ async def orchestrate(
         _project_id_for_session = _session.get("project_id")
         active_persona_session = _session
 
-    if _project_id_for_session:
-        try:
-            # Inject LTM (long-term memory about the user)
-            ltm_context = persona_ltm_mod.build_ltm_context(_project_id_for_session)
-            if ltm_context:
-                system = system + "\n\n" + ltm_context
+    # Memory Engine switch: off | v1/basic | v2/adaptive (additive — V1 untouched)
+    _mem_engine = (memory_engine or "v2").lower().strip()
+    # Map user-facing names to internal engine names
+    if _mem_engine == "adaptive":
+        _mem_engine = "v2"
+    elif _mem_engine == "basic":
+        _mem_engine = "v1"
+    if _mem_engine not in ("off", "v1", "v2"):
+        _mem_engine = "v2"
 
-            # Inject recent session summaries (cross-session continuity)
+    if _project_id_for_session and _mem_engine != "off":
+        try:
+            ltm_context = ""
+            if _mem_engine == "v1":
+                # V1 Legacy: unchanged behavior
+                ltm_context = persona_ltm_mod.build_ltm_context(_project_id_for_session)
+                if ltm_context:
+                    system = system + "\n\n" + ltm_context
+            elif _mem_engine == "v2":
+                # V2 Brain-inspired: decay + reinforcement + consolidation
+                v2 = get_memory_v2()
+                v2_context = v2.build_context(str(_project_id_for_session), query=(user_text or ""))
+                if v2_context and v2_context.strip():
+                    system = system + "\n\n" + v2_context
+                ltm_context = v2_context or ""
+
+            # Session summaries: injected for BOTH V1 and V2 (cross-session continuity)
             session_summaries_context = persona_ltm_mod.build_session_summaries_context(
                 _project_id_for_session, max_sessions=3
             )
@@ -1716,7 +1737,7 @@ async def orchestrate(
                     active_persona_session["id"], delta=1
                 )
 
-            print(f"[COMPANION] LTM injected: {len(ltm_context)} chars, "
+            print(f"[COMPANION] Memory engine={_mem_engine}, context: {len(ltm_context)} chars, "
                   f"summaries: {len(session_summaries_context)} chars")
         except Exception as e:
             print(f"[COMPANION] Warning: LTM/session injection failed (non-fatal): {e}")
@@ -1810,6 +1831,14 @@ async def orchestrate(
                 text = "I'm here. What's on your mind?"
 
     add_message(cid, "assistant", text)
+
+    # Additive: Memory V2 ingestion after response (persona projects only)
+    try:
+        if _mem_engine == "v2" and _project_id_for_session:
+            v2 = get_memory_v2()
+            v2.ingest_user_text(str(_project_id_for_session), user_text or "")
+    except Exception:
+        pass  # Never break the response on memory errors
 
     # Companion-grade: update session message count for assistant + process pending jobs
     if active_persona_session:
@@ -2014,4 +2043,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             voice_system_prompt=payload.get("voiceSystemPrompt"),
             chat_model=_chat_model,
             personality_id=payload.get("personalityId"),
+            memory_engine=payload.get("memoryEngine"),
         )

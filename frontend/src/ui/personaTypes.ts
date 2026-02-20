@@ -95,6 +95,14 @@ export type PersonaClassId =
   | 'partner'
   | 'custom'
 
+/**
+ * Memory mode — user-facing labels for the underlying V1/V2 engines.
+ *   adaptive = V2 (brain-inspired: decay, reinforcement, consolidation)
+ *   basic    = V1 (explicit, deterministic, auditable)
+ *   off      = no memory
+ */
+export type MemoryMode = 'adaptive' | 'basic' | 'off'
+
 export type PersonaBlueprint = {
   id: PersonaClassId
   label: string
@@ -110,6 +118,7 @@ export type PersonaBlueprint = {
     image_style_hint: string
     goal: string
     capabilities: string[]
+    memory_mode: MemoryMode
     safety: {
       requires_adult_gate: boolean
       allow_explicit: boolean
@@ -136,6 +145,7 @@ export const PERSONA_BLUEPRINTS: PersonaBlueprint[] = [
       image_style_hint: 'professional business attire, office setting, composed',
       goal: 'Manage schedules, draft emails, organize tasks, and keep everything running smoothly',
       capabilities: ['analyze_documents', 'automate_external'],
+      memory_mode: 'basic',
       safety: { requires_adult_gate: false, allow_explicit: false, content_warning: false },
     },
   },
@@ -155,6 +165,7 @@ export const PERSONA_BLUEPRINTS: PersonaBlueprint[] = [
       image_style_hint: 'smart casual, friendly expression, approachable',
       goal: 'Help with daily tasks, answer questions, do research, and provide useful recommendations',
       capabilities: ['analyze_documents', 'generate_images'],
+      memory_mode: 'adaptive',
       safety: { requires_adult_gate: false, allow_explicit: false, content_warning: false },
     },
   },
@@ -174,6 +185,7 @@ export const PERSONA_BLUEPRINTS: PersonaBlueprint[] = [
       image_style_hint: 'relaxed casual outfit, warm smile, friendly setting',
       goal: 'Be a great conversational companion — chat, entertain, support, and have fun together',
       capabilities: ['generate_images'],
+      memory_mode: 'adaptive',
       safety: { requires_adult_gate: false, allow_explicit: false, content_warning: false },
     },
   },
@@ -194,6 +206,7 @@ export const PERSONA_BLUEPRINTS: PersonaBlueprint[] = [
       image_style_hint: 'alluring, confident, intimate setting, beautiful',
       goal: 'Be a romantic and affectionate partner — flirt, roleplay, and build an intimate connection',
       capabilities: ['generate_images'],
+      memory_mode: 'adaptive',
       safety: { requires_adult_gate: true, allow_explicit: true, content_warning: true },
     },
   },
@@ -213,6 +226,7 @@ export const PERSONA_BLUEPRINTS: PersonaBlueprint[] = [
       image_style_hint: 'romantic, warm lighting, intimate, elegant and beautiful',
       goal: 'Build a deep emotional connection through romance, meaningful conversations, and intimacy',
       capabilities: ['generate_images'],
+      memory_mode: 'adaptive',
       safety: { requires_adult_gate: true, allow_explicit: true, content_warning: true },
     },
   },
@@ -232,6 +246,7 @@ export const PERSONA_BLUEPRINTS: PersonaBlueprint[] = [
       image_style_hint: 'studio portrait, realistic',
       goal: '',
       capabilities: [],
+      memory_mode: 'adaptive',
       safety: { requires_adult_gate: false, allow_explicit: false, content_warning: false },
     },
   },
@@ -267,6 +282,7 @@ export type PersonaWizardDraft = {
   persona_class: PersonaClassId
   persona_agent: any
   persona_appearance: PersonaAppearance
+  memory_mode: MemoryMode
   agentic: {
     goal: string
     capabilities: string[]

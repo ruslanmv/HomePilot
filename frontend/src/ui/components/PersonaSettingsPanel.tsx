@@ -37,11 +37,14 @@ import {
   Shirt,
   Plus,
   Copy,
+  Upload,
+  RefreshCw,
 } from 'lucide-react'
 import { ImageViewer } from '../ImageViewer'
-import type { PersonaImageRef, PersonaOutfit } from '../personaTypes'
+import type { PersonaImageRef, PersonaOutfit, AvatarGenerationSettings } from '../personaTypes'
 import { OUTFIT_PRESETS, PERSONA_BLUEPRINTS } from '../personaTypes'
-import { generateOutfitImages } from '../personaApi'
+import { generateOutfitImages, generatePersonaImages } from '../personaApi'
+import { commitPersonaAvatar } from '../personaPortability'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -282,6 +285,15 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   const [showAgents, setShowAgents] = useState(false)
   const [showWardrobe, setShowWardrobe] = useState(false)
   const [showAvatarSettings, setShowAvatarSettings] = useState(false)
+  const [showChangePhoto, setShowChangePhoto] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [generatingPhoto, setGeneratingPhoto] = useState(false)
+  const [changePhotoError, setChangePhotoError] = useState<string | null>(null)
+  const [avatarSettingsLocal, setAvatarSettingsLocal] = useState<AvatarGenerationSettings | null>(
+    avatarSettings ?? null,
+  )
+  const [showEnableOutfits, setShowEnableOutfits] = useState(false)
+  const [enableOutfitCharDesc, setEnableOutfitCharDesc] = useState('')
 
   // Class info
   const personaClass = pa.persona_class || pa.category || 'custom'
@@ -428,10 +440,135 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
     markDirty()
   }
 
+  // --- Upload a new photo ---
+  const handleUploadPhoto = useCallback(async (file: File) => {
+    setUploadingPhoto(true)
+    setChangePhotoError(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const headers: Record<string, string> = {}
+      if (apiKey) headers['x-api-key'] = apiKey
+
+      const uploadRes = await fetch(`${backendUrl}/upload`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      })
+      if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`)
+      const { url } = await uploadRes.json()
+
+      // Commit the uploaded file as the project's avatar
+      const commitResult = await commitPersonaAvatar({
+        backendUrl,
+        apiKey,
+        projectId: project.id,
+        sourceUrl: url,
+      })
+
+      // Add to gallery sets and select
+      const imgId = nextImageId()
+      const setId = `set_upload_${Date.now()}`
+      const newImage: PersonaImageRef = {
+        id: imgId,
+        url: commitResult.avatar_url || url,
+        created_at: new Date().toISOString(),
+        set_id: setId,
+      }
+      setSets((prev) => [...prev, { set_id: setId, images: [newImage] }])
+      setSelectedImage({ set_id: setId, image_id: imgId })
+      setShowChangePhoto(false)
+      markDirty()
+    } catch (err: any) {
+      setChangePhotoError(err?.message || 'Upload failed')
+    } finally {
+      setUploadingPhoto(false)
+    }
+  }, [backendUrl, apiKey, project.id])
+
+  // --- Generate a new portrait photo ---
+  const handleGenerateNewPhoto = useCallback(async () => {
+    const charPrompt = avatarSettingsLocal?.character_prompt || `${name}, portrait`
+    setGeneratingPhoto(true)
+    setChangePhotoError(null)
+    try {
+      const out = await generatePersonaImages({
+        backendUrl,
+        apiKey,
+        prompt: charPrompt,
+        imgModel: avatarSettingsLocal?.img_model,
+        imgBatchSize: 4,
+        imgAspectRatio: avatarSettingsLocal?.aspect_ratio ?? '2:3',
+        imgPreset: avatarSettingsLocal?.img_preset ?? 'med',
+        promptRefinement: true,
+        nsfwMode: avatarSettingsLocal?.nsfw_mode ?? false,
+      })
+
+      if (out.urls.length === 0) {
+        setChangePhotoError('No images returned. Check your image backend (ComfyUI).')
+        return
+      }
+
+      const setId = `set_gen_${Date.now()}`
+      const newImages: PersonaImageRef[] = out.urls.map((url, i) => ({
+        id: nextImageId(),
+        url,
+        created_at: new Date().toISOString(),
+        set_id: setId,
+        seed: out.seeds?.[i],
+      }))
+      setSets((prev) => [...prev, { set_id: setId, images: newImages }])
+      setSelectedImage({ set_id: setId, image_id: newImages[0].id })
+
+      // Update avatar_settings with the generation params
+      const newSettings: AvatarGenerationSettings = {
+        character_prompt: charPrompt,
+        outfit_prompt: avatarSettingsLocal?.outfit_prompt || 'default outfit',
+        full_prompt: out.final_prompt ?? charPrompt,
+        style_preset: stylePreset,
+        gender: (pap.gender as 'female' | 'male' | 'neutral') ?? 'female',
+        img_model: out.model ?? avatarSettingsLocal?.img_model ?? 'dreamshaper_8.safetensors',
+        img_preset: avatarSettingsLocal?.img_preset ?? 'med',
+        aspect_ratio: avatarSettingsLocal?.aspect_ratio ?? '2:3',
+        nsfw_mode: avatarSettingsLocal?.nsfw_mode ?? false,
+      }
+      setAvatarSettingsLocal(newSettings)
+      setShowChangePhoto(false)
+      markDirty()
+    } catch (err: any) {
+      setChangePhotoError(err?.message || 'Generation failed')
+    } finally {
+      setGeneratingPhoto(false)
+    }
+  }, [avatarSettingsLocal, backendUrl, apiKey, name, stylePreset, pap.gender])
+
+  // --- Enable outfit variations for imported personas ---
+  const handleEnableOutfitVariations = useCallback((charDescription: string) => {
+    if (!charDescription.trim()) return
+    const style = stylePreset || 'elegant'
+    const newSettings: AvatarGenerationSettings = {
+      character_prompt: charDescription.trim(),
+      outfit_prompt: `${style} outfit variation`,
+      full_prompt: `${charDescription.trim()}, ${style} outfit, elegant lighting, realistic, sharp focus`,
+      style_preset: style,
+      gender: (pap.gender as 'female' | 'male' | 'neutral') ?? 'female',
+      img_model: pap.img_model ?? 'dreamshaper_8.safetensors',
+      img_preset: pap.img_preset ?? 'med',
+      aspect_ratio: pap.aspect_ratio ?? '2:3',
+      nsfw_mode: !!pap.nsfwMode,
+    }
+    setAvatarSettingsLocal(newSettings)
+    setShowEnableOutfits(false)
+    markDirty()
+  }, [stylePreset, pap])
+
   // --- Generate outfit variation ---
+  // Uses avatarSettingsLocal which includes both original DB settings
+  // and user-enabled settings (for imported personas that set it inline).
+  const effectiveAvatarSettings = avatarSettingsLocal ?? avatarSettings ?? null
   const handleGenerateOutfit = useCallback(async () => {
-    if (!avatarSettings?.character_prompt) {
-      setOutfitGenError('No stored character description. Re-generate the base avatar first to enable outfit variations.')
+    if (!effectiveAvatarSettings?.character_prompt) {
+      setOutfitGenError('No character description set. Enable outfit variations first.')
       return
     }
 
@@ -455,12 +592,12 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
       const out = await generateOutfitImages({
         backendUrl,
         apiKey,
-        characterPrompt: avatarSettings.character_prompt,
+        characterPrompt: effectiveAvatarSettings.character_prompt,
         outfitPrompt,
-        imgModel: avatarSettings.img_model,
-        imgPreset: avatarSettings.img_preset,
-        imgAspectRatio: avatarSettings.aspect_ratio,
-        nsfwMode: avatarSettings.nsfw_mode,
+        imgModel: effectiveAvatarSettings.img_model,
+        imgPreset: effectiveAvatarSettings.img_preset,
+        imgAspectRatio: effectiveAvatarSettings.aspect_ratio,
+        nsfwMode: effectiveAvatarSettings.nsfw_mode,
       })
 
       if (out.urls.length === 0) {
@@ -484,9 +621,9 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
         images,
         selected_image_id: images[0]?.id,
         generation_settings: {
-          ...avatarSettings,
+          ...effectiveAvatarSettings,
           outfit_prompt: outfitPrompt,
-          full_prompt: out.final_prompt ?? `${avatarSettings.character_prompt}, ${outfitPrompt}`,
+          full_prompt: out.final_prompt ?? `${effectiveAvatarSettings.character_prompt}, ${outfitPrompt}`,
         },
         created_at,
       }
@@ -501,7 +638,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
     } finally {
       setGeneratingOutfit(false)
     }
-  }, [avatarSettings, customOutfitPrompt, customOutfitLabel, selectedOutfitPreset, backendUrl, apiKey])
+  }, [effectiveAvatarSettings, customOutfitPrompt, customOutfitLabel, selectedOutfitPreset, backendUrl, apiKey])
 
   // --- Delete outfit ---
   const handleDeleteOutfit = (outfitId: string) => {
@@ -568,6 +705,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
           style_preset: stylePreset,
           selected: selectedImage,
           outfits,
+          ...(avatarSettingsLocal ? { avatar_settings: avatarSettingsLocal } : {}),
         },
         agentic: {
           goal,
@@ -604,7 +742,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
     name, role, systemPrompt, tone, stylePreset, selectedImage, sets, outfits,
     goal, capabilities, profile, askFirst, toolIds, agentIds, toolSource,
     pa, pap, ag.tool_details, ag.agent_details, backendUrl, apiKey,
-    project.id, onSaved, catalogTools, catalogAgents,
+    project.id, onSaved, catalogTools, catalogAgents, avatarSettingsLocal,
   ])
 
   // --- Document delete ---
@@ -678,10 +816,25 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                       className="w-40 h-52 object-cover object-top rounded-xl border-2 border-pink-500/30 shadow-lg shadow-pink-500/10 cursor-zoom-in"
                     />
                   ) : (
-                    <div className="w-40 h-52 bg-white/5 border-2 border-dashed border-white/20 rounded-xl flex items-center justify-center">
-                      <User size={48} className="text-white/20" />
+                    <div
+                      className="w-40 h-52 bg-white/5 border-2 border-dashed border-white/20 rounded-xl flex items-center justify-center cursor-pointer hover:border-pink-500/40 transition-colors"
+                      onClick={() => setShowChangePhoto(true)}
+                    >
+                      <div className="text-center">
+                        <Camera size={32} className="text-white/20 mx-auto mb-1" />
+                        <span className="text-[10px] text-white/30">Add photo</span>
+                      </div>
                     </div>
                   )}
+                  {/* Change Photo button (hover) */}
+                  <button
+                    type="button"
+                    onClick={() => setShowChangePhoto(!showChangePhoto)}
+                    className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-black/80 rounded-lg border border-white/20 transition-all opacity-0 group-hover:opacity-100"
+                    title="Change photo"
+                  >
+                    <RefreshCw size={12} className="text-white" />
+                  </button>
                   {allImages.length > 1 && (
                     <button
                       type="button"
@@ -695,6 +848,50 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                     LV {totalImageCount}
                   </div>
                 </div>
+
+                {/* Change Photo panel */}
+                {showChangePhoto && (
+                  <div className="mt-2 w-40 space-y-2">
+                    {/* Upload option */}
+                    <label className="flex items-center gap-2 px-3 py-2 bg-white/[0.06] hover:bg-white/10 border border-white/10 rounded-lg cursor-pointer transition-colors">
+                      <Upload size={14} className="text-pink-400 shrink-0" />
+                      <span className="text-[11px] text-white/70">
+                        {uploadingPhoto ? 'Uploading...' : 'Upload image'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        disabled={uploadingPhoto}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0]
+                          if (f) handleUploadPhoto(f)
+                          e.target.value = ''
+                        }}
+                      />
+                    </label>
+
+                    {/* Generate option */}
+                    <button
+                      type="button"
+                      disabled={generatingPhoto}
+                      onClick={handleGenerateNewPhoto}
+                      className="w-full flex items-center gap-2 px-3 py-2 bg-white/[0.06] hover:bg-white/10 border border-white/10 rounded-lg transition-colors"
+                    >
+                      <Sparkles size={14} className="text-purple-400 shrink-0" />
+                      <span className="text-[11px] text-white/70">
+                        {generatingPhoto ? 'Generating...' : 'Generate new (4)'}
+                      </span>
+                      {generatingPhoto && <Loader2 size={12} className="animate-spin text-white/40 ml-auto" />}
+                    </button>
+
+                    {changePhotoError && (
+                      <div className="text-[10px] text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-2 py-1.5">
+                        {changePhotoError}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Stats panel */}
@@ -998,10 +1195,56 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
 
               {showWardrobe && (
                 <div className="space-y-3 bg-white/[0.02] border border-white/10 rounded-xl p-4">
-                  {!avatarSettings?.character_prompt ? (
-                    <div className="text-xs text-white/40 py-2">
-                      Outfit variations require stored character settings. Re-generate the base avatar
-                      from the wizard to enable this feature.
+                  {!effectiveAvatarSettings?.character_prompt ? (
+                    /* Enable outfit variations — inline form */
+                    <div className="space-y-3">
+                      <div className="text-xs text-white/50">
+                        Describe your character to enable outfit variations.
+                        This description stays constant across all outfits.
+                      </div>
+                      {showEnableOutfits ? (
+                        <div className="space-y-2">
+                          <textarea
+                            value={enableOutfitCharDesc}
+                            onChange={(e) => setEnableOutfitCharDesc(e.target.value)}
+                            rows={3}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-amber-500/50 resize-none"
+                            placeholder="e.g., young woman with long dark hair, green eyes, athletic build, elegant features..."
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleEnableOutfitVariations(enableOutfitCharDesc)}
+                              disabled={!enableOutfitCharDesc.trim()}
+                              className="flex-1 px-3 py-2 bg-amber-500/80 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5"
+                            >
+                              <Check size={12} />
+                              Enable Outfits
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setShowEnableOutfits(false); setEnableOutfitCharDesc('') }}
+                              className="px-3 py-2 bg-white/5 hover:bg-white/10 text-white/50 text-xs rounded-lg transition-colors"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Pre-fill with name + role if available
+                            const hint = [name, role].filter(Boolean).join(', ')
+                            setEnableOutfitCharDesc(hint ? `${hint}, portrait` : '')
+                            setShowEnableOutfits(true)
+                          }}
+                          className="w-full px-4 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-300 text-xs font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
+                        >
+                          <Sparkles size={14} />
+                          Set up outfit variations
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <>
@@ -1012,7 +1255,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                           Stored character description (constant across outfits)
                         </label>
                         <div className="text-[11px] text-white/40 bg-white/5 border border-white/5 rounded-lg p-2 max-h-16 overflow-y-auto">
-                          {avatarSettings.character_prompt}
+                          {effectiveAvatarSettings.character_prompt}
                         </div>
                       </div>
 
@@ -1101,7 +1344,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
             </section>
 
             {/* --- Avatar Generation Settings (expandable) --- */}
-            {avatarSettings && (
+            {effectiveAvatarSettings && (
               <section>
                 <button
                   type="button"
@@ -1122,30 +1365,30 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                   <div className="rounded-xl bg-white/[0.03] border border-white/10 p-4 space-y-2 text-xs">
                     <div className="flex justify-between">
                       <span className="text-white/50">Model</span>
-                      <span className="text-white/80 font-mono">{avatarSettings.img_model}</span>
+                      <span className="text-white/80 font-mono">{effectiveAvatarSettings.img_model}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-white/50">Quality</span>
-                      <span className="text-white/80">{avatarSettings.img_preset}</span>
+                      <span className="text-white/80">{effectiveAvatarSettings.img_preset}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-white/50">Aspect ratio</span>
-                      <span className="text-white/80">{avatarSettings.aspect_ratio}</span>
+                      <span className="text-white/80">{effectiveAvatarSettings.aspect_ratio}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-white/50">Style</span>
-                      <span className="text-white/80">{avatarSettings.style_preset}</span>
+                      <span className="text-white/80">{effectiveAvatarSettings.style_preset}</span>
                     </div>
-                    {avatarSettings.body_type && (
+                    {effectiveAvatarSettings.body_type && (
                       <div className="flex justify-between">
                         <span className="text-white/50">Body type</span>
-                        <span className="text-white/80">{avatarSettings.body_type}</span>
+                        <span className="text-white/80">{effectiveAvatarSettings.body_type}</span>
                       </div>
                     )}
                     <div className="mt-2 pt-2 border-t border-white/5">
                       <span className="text-white/40">Full prompt</span>
                       <div className="text-[10px] text-white/30 mt-1 bg-white/5 rounded-lg p-2 max-h-20 overflow-y-auto font-mono break-all">
-                        {avatarSettings.full_prompt}
+                        {effectiveAvatarSettings.full_prompt}
                       </div>
                     </div>
                   </div>
@@ -1558,13 +1801,11 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
         </div>
       </div>
 
-      {/* Lightbox for full-screen avatar viewing */}
+      {/* Lightbox for full-screen avatar viewing (view-only, no edit/video) */}
       {lightbox ? (
         <ImageViewer
           imageUrl={lightbox}
           onClose={() => setLightbox(null)}
-          onEdit={() => {}}
-          onGenerateVideo={() => {}}
         />
       ) : null}
     </div>
