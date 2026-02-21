@@ -32,6 +32,11 @@ class AvatarGenerateRequest(BaseModel):
     prompt: Optional[str] = None
     reference_image_url: Optional[str] = None
     persona_id: Optional[str] = None
+    checkpoint_override: Optional[str] = Field(
+        default=None,
+        description="Override the workflow checkpoint (model filename). "
+        "Injects a CheckpointLoaderSimple node into the ComfyUI workflow.",
+    )
 
 
 class AvatarResult(BaseModel):

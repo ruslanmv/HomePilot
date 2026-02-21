@@ -19,6 +19,7 @@ export interface OutfitGenerateParams {
   count?: number
   seed?: number
   generationMode?: 'identity' | 'standard'
+  checkpointOverride?: string
 }
 
 export interface OutfitGenerateResult {
@@ -59,6 +60,7 @@ export function useOutfitGeneration(backendUrl: string, apiKey?: string) {
             count: params.count ?? 4,
             seed: params.seed,
             generation_mode: params.generationMode ?? 'identity',
+            checkpoint_override: params.checkpointOverride,
           }),
         })
 

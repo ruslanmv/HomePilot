@@ -42,7 +42,8 @@ import { useGenerateAvatars } from './useGenerateAvatars'
 import { useAvatarGallery } from './useAvatarGallery'
 import { AvatarGallery } from './AvatarGallery'
 import { OutfitPanel } from './OutfitPanel'
-import type { AvatarMode, AvatarResult } from './types'
+import { AvatarSettingsPanel, loadAvatarSettings, resolveCheckpoint } from './AvatarSettingsPanel'
+import type { AvatarMode, AvatarResult, AvatarSettings } from './types'
 import type { GalleryItem } from './galleryTypes'
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,8 @@ import type { GalleryItem } from './galleryTypes'
 export interface AvatarStudioProps {
   backendUrl: string
   apiKey?: string
+  /** Global image model from Settings (settingsDraft.modelImages) */
+  globalModelImages?: string
   /** Navigate to Edit mode with a given image URL */
   onSendToEdit?: (imageUrl: string) => void
   /** Open full-screen lightbox */
@@ -91,10 +94,13 @@ const MODE_OPTIONS: { label: string; value: AvatarMode; icon: React.ReactNode; d
 // Component
 // ---------------------------------------------------------------------------
 
-export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenLightbox, onSaveAsPersonaAvatar, onGenerateOutfits }: AvatarStudioProps) {
+export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, onSendToEdit, onOpenLightbox, onSaveAsPersonaAvatar, onGenerateOutfits }: AvatarStudioProps) {
   const packs = useAvatarPacks(backendUrl, apiKey)
   const gen = useGenerateAvatars(backendUrl, apiKey)
   const gallery = useAvatarGallery()
+
+  // Avatar-specific model settings (persisted in localStorage)
+  const [avatarSettings, setAvatarSettings] = useState<AvatarSettings>(loadAvatarSettings)
 
   const enabledModes = packs.data?.enabled_modes ?? []
   const [mode, setMode] = useState<AvatarMode>('studio_reference')
@@ -167,6 +173,7 @@ export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenL
 
   // ---- Generate ----
   const onGenerate = useCallback(async () => {
+    const checkpoint = resolveCheckpoint(avatarSettings, globalModelImages)
     const result = await gen.run({
       mode,
       count,
@@ -176,6 +183,7 @@ export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenL
           ? referenceUrl || undefined
           : undefined,
       truncation: 0.7,
+      checkpoint_override: checkpoint,
     })
     // Auto-save results to persistent gallery
     if (result?.results?.length) {
@@ -186,7 +194,7 @@ export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenL
         referenceUrl || undefined,
       )
     }
-  }, [gen, mode, count, prompt, referenceUrl, gallery])
+  }, [gen, mode, count, prompt, referenceUrl, gallery, avatarSettings, globalModelImages])
 
   // ---- Keyboard shortcut: Enter to generate ----
   useEffect(() => {
@@ -233,11 +241,18 @@ export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenL
               </p>
             </div>
           </div>
-          {gen.result?.results?.length ? (
-            <div className="text-xs text-white/30">
-              {gen.result.results.length} result{gen.result.results.length !== 1 ? 's' : ''}
-            </div>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {gen.result?.results?.length ? (
+              <div className="text-xs text-white/30">
+                {gen.result.results.length} result{gen.result.results.length !== 1 ? 's' : ''}
+              </div>
+            ) : null}
+            <AvatarSettingsPanel
+              globalModelImages={globalModelImages}
+              settings={avatarSettings}
+              onChange={setAvatarSettings}
+            />
+          </div>
         </div>
       </div>
 
@@ -583,6 +598,7 @@ export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenL
               backendUrl={backendUrl}
               apiKey={apiKey}
               nsfwMode={(() => { try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false } })()}
+              checkpointOverride={resolveCheckpoint(avatarSettings, globalModelImages)}
               onResults={(results) => gallery.addBatch(results, mode, outfitAnchor.prompt, outfitAnchor.url)}
               onSendToEdit={onSendToEdit}
               onOpenLightbox={onOpenLightbox}

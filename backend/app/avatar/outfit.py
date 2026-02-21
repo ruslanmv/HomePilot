@@ -50,6 +50,10 @@ class OutfitRequest(BaseModel):
         "identity",
         description="'identity' (face-preserving) or 'standard' (text-only fallback)",
     )
+    checkpoint_override: Optional[str] = Field(
+        default=None,
+        description="Override the workflow checkpoint (model filename).",
+    )
 
 
 class OutfitResponse(BaseModel):
@@ -115,6 +119,7 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
             reference_image_url=req.reference_image_url,
             count=req.count,
             seed=seeds[0] if seeds else None,
+            checkpoint_override=req.checkpoint_override,
         )
         return OutfitResponse(results=results, warnings=warnings)
     except ComfyUIUnavailable as exc:

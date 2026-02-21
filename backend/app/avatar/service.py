@@ -87,6 +87,7 @@ async def generate(req: AvatarGenerateRequest) -> AvatarGenerateResponse:
                 reference_image_url=req.reference_image_url,
                 count=req.count,
                 seed=req.seed,
+                checkpoint_override=req.checkpoint_override,
             )
             return AvatarGenerateResponse(
                 mode=req.mode,

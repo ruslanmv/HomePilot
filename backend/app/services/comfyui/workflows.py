@@ -25,6 +25,7 @@ async def run_avatar_workflow(
     reference_image_url: Optional[str],
     count: int,
     seed: Optional[int],
+    checkpoint_override: Optional[str] = None,
 ) -> List[AvatarResult]:
     """Load a workflow template, inject inputs, submit, and collect results."""
     if not comfyui_healthy(comfyui_base_url):
@@ -37,6 +38,7 @@ async def run_avatar_workflow(
     _inject_seed(wf, seed)
     _inject_batch_size(wf, count)
     _inject_reference(wf, reference_image_url)
+    _inject_checkpoint(wf, checkpoint_override)
 
     prompt_id = await submit_prompt(comfyui_base_url, wf)
     images = await wait_for_images(comfyui_base_url, prompt_id)
@@ -109,3 +111,35 @@ def _inject_reference(wf: Dict[str, Any], ref: Optional[str]) -> None:
             "ImageLoad",
         ):
             node.setdefault("inputs", {})["image"] = ref
+
+
+def _inject_checkpoint(wf: Dict[str, Any], ckpt: Optional[str]) -> None:
+    """Override the checkpoint in any CheckpointLoaderSimple / CheckpointLoader node.
+
+    If the workflow already has a checkpoint loader, update its ``ckpt_name``.
+    Otherwise, add a new CheckpointLoaderSimple node so the workflow uses the
+    requested model.
+    """
+    if not ckpt:
+        return
+
+    # First: try to update an existing checkpoint loader node
+    found = False
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") in (
+            "CheckpointLoaderSimple",
+            "CheckpointLoader",
+        ):
+            node.setdefault("inputs", {})["ckpt_name"] = ckpt
+            found = True
+
+    if found:
+        return
+
+    # No checkpoint loader in the workflow — add one with a unique node id
+    existing_ids = {int(k) for k in wf if k.isdigit()}
+    new_id = str(max(existing_ids, default=100) + 10)
+    wf[new_id] = {
+        "class_type": "CheckpointLoaderSimple",
+        "inputs": {"ckpt_name": ckpt},
+    }

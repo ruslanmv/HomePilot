@@ -40,6 +40,8 @@ export interface OutfitPanelProps {
   backendUrl: string
   apiKey?: string
   nsfwMode: boolean
+  /** Checkpoint override from Avatar Settings (passed to outfit generation) */
+  checkpointOverride?: string
   /** Called with generated results so the parent can save to gallery */
   onResults?: (results: AvatarResult[]) => void
   onSendToEdit?: (imageUrl: string) => void
@@ -65,6 +67,7 @@ export function OutfitPanel({
   backendUrl,
   apiKey,
   nsfwMode,
+  checkpointOverride,
   onResults,
   onSendToEdit,
   onOpenLightbox,
@@ -105,6 +108,7 @@ export function OutfitPanel({
         outfitPrompt: effectivePrompt,
         characterPrompt: anchor.prompt,
         count,
+        checkpointOverride,
       })
       if (result?.results?.length) {
         onResults?.(result.results)

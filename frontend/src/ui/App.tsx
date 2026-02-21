@@ -3567,6 +3567,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           <AvatarStudio
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
+            globalModelImages={settingsDraft.modelImages}
             onSendToEdit={(imageUrl) => {
               // Navigate to Edit mode — the EditTab will pick up the image
               // via upload flow similar to handleEditFromViewer
