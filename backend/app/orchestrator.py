@@ -8,7 +8,7 @@ import time
 import uuid
 from typing import Any, Dict, Optional, Literal
 
-from .comfy import run_workflow
+from .comfy import check_nodes_available, run_workflow
 from .llm import chat as llm_chat, is_thinking_model, strip_think_tags, _is_reasoning_text, recover_from_reasoning
 from .prompts import BASE_SYSTEM, FUN_SYSTEM
 from .storage import add_message, get_recent
@@ -1559,19 +1559,45 @@ async def orchestrate(
             # =================================================================
             # IDENTITY-PRESERVING MODE (InstantID / face-preserving generation)
             # =================================================================
-            # When generation_mode == 'identity', route to an InstantID workflow
-            # that preserves facial identity from a reference image.
-            # This is additive — standard mode remains the default.
+            # When generation_mode == 'identity' AND a reference face image is
+            # provided, route to an InstantID workflow that preserves facial
+            # identity.  This is additive — standard mode remains the default.
             if generation_mode == "identity":
                 print(f"[IMAGE] === IDENTITY-PRESERVING MODE ===")
+                refined["generation_mode"] = "identity"
+
                 if reference_image_url:
                     print(f"[IMAGE] Reference face URL: {reference_image_url}")
-                    refined["reference_face_url"] = reference_image_url
-                refined["generation_mode"] = "identity"
-                # TODO: When InstantID ComfyUI workflows are created, route here:
-                # workflow_name = "txt2img-instantid" (or similar)
-                # For now, log the intent and use the standard workflow as fallback
-                print(f"[IMAGE] Identity mode requested — using standard workflow as fallback until InstantID workflow is integrated")
+                    refined["reference_image_url"] = reference_image_url
+                    refined.setdefault("identity_strength", 0.85)
+                    refined.setdefault("batch_size", 1)
+
+                    # Route to architecture-specific InstantID workflow.
+                    # NOTE: InstantID ControlNet is SDXL-only architecture.
+                    # SD1.5 models cannot use InstantID (causes "y is None"
+                    # ControlNet mismatch error).  Only SDXL is supported.
+                    _identity_workflow_map = {
+                        "sdxl": "txt2img-sdxl-instantid",
+                    }
+                    identity_wf = _identity_workflow_map.get(architecture)
+                    if architecture == "sd15":
+                        print(f"[IMAGE] InstantID is not compatible with SD1.5 models (ControlNet is SDXL-only)")
+                        print(f"[IMAGE] Falling back to standard workflow")
+                    elif identity_wf:
+                        # Pre-flight: verify InstantID nodes are registered in ComfyUI
+                        _instantid_nodes = ["InstantIDFaceAnalysis", "InstantIDModelLoader", "ApplyInstantID"]
+                        ok, missing = check_nodes_available(_instantid_nodes)
+                        if ok:
+                            workflow_name = identity_wf
+                            print(f"[IMAGE] Routed to InstantID workflow: {workflow_name}")
+                        else:
+                            print(f"[IMAGE] InstantID nodes not available in ComfyUI: {missing}")
+                            print(f"[IMAGE] Install: ComfyUI_InstantID custom nodes + insightface + onnxruntime")
+                            print(f"[IMAGE] Falling back to standard workflow")
+                    else:
+                        print(f"[IMAGE] No InstantID workflow for architecture '{architecture}' — using standard workflow as fallback")
+                else:
+                    print(f"[IMAGE] Identity mode requested but no reference_image_url — using standard workflow (first batch)")
 
             # Debug: Log final workflow decision
             print(f"[IMAGE] === FINAL WORKFLOW DECISION ===")

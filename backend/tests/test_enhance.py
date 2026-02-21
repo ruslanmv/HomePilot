@@ -145,7 +145,7 @@ class TestEnhanceEndpoint:
         assert data["model_used"] == "4x-UltraSharp.pth"
 
     def test_enhance_accepts_valid_faces_request(self, client, mock_outbound, monkeypatch):
-        """Test that valid faces request is accepted."""
+        """Test that valid faces request is accepted (via ComfyUI)."""
         def mock_get_image_size(url):
             return (512, 512)
 
@@ -154,16 +154,14 @@ class TestEnhanceEndpoint:
                 mode="faces",
                 name="Face Restoration",
                 description="Restore faces",
-                workflow="fix_faces_gfpgan",
+                workflow="fix_faces_facedetailer",
                 model_category="face_restore",
                 default_model_id="GFPGANv1.4",
                 param_name="model_name",
             )
             return ("GFPGANv1.4.pth", None, config)
 
-        def mock_run_workflow(name, variables):
-            assert name == "fix_faces_gfpgan"
-            assert variables.get("model_name") == "GFPGANv1.4.pth"
+        def mock_restore(image_url, model_filename="GFPGANv1.4.pth"):
             return {
                 "images": ["http://localhost:8000/files/faces_test.png"],
                 "videos": []
@@ -171,7 +169,7 @@ class TestEnhanceEndpoint:
 
         monkeypatch.setattr("app.enhance._get_image_size", mock_get_image_size)
         monkeypatch.setattr("app.enhance.get_enhance_model", mock_get_enhance_model)
-        monkeypatch.setattr("app.enhance.run_workflow", mock_run_workflow)
+        monkeypatch.setattr("app.enhance.restore_faces_via_comfyui", mock_restore)
 
         response = client.post("/v1/enhance", json={
             "image_url": "http://localhost:8000/files/test.png",
@@ -259,13 +257,13 @@ class TestEnhanceWorkflows:
 
         assert workflow_path.exists(), f"Workflow not found at {workflow_path}"
 
-    def test_fix_faces_gfpgan_workflow_exists(self):
-        """Test that fix_faces_gfpgan.json workflow file exists."""
+    def test_fix_faces_facedetailer_workflow_exists(self):
+        """Test that fix_faces_facedetailer.json workflow file exists."""
         from pathlib import Path
 
         current_file = Path(__file__).resolve()
         repo_root = current_file.parent.parent.parent
-        workflow_path = repo_root / "comfyui" / "workflows" / "fix_faces_gfpgan.json"
+        workflow_path = repo_root / "comfyui" / "workflows" / "fix_faces_facedetailer.json"
 
         assert workflow_path.exists(), f"Workflow not found at {workflow_path}"
 
@@ -304,14 +302,15 @@ class TestEnhanceWorkflows:
         current_file = Path(__file__).resolve()
         repo_root = current_file.parent.parent.parent
 
-        workflow_path = repo_root / "comfyui" / "workflows" / "fix_faces_gfpgan.json"
+        workflow_path = repo_root / "comfyui" / "workflows" / "fix_faces_facedetailer.json"
 
         with open(workflow_path) as f:
             workflow = json.load(f)
 
         node_types = {node.get("class_type") for node in workflow.values() if isinstance(node, dict)}
 
-        assert "LoadImage" in node_types, "Missing LoadImage node in fix_faces_gfpgan.json"
-        assert "FaceRestoreModelLoader" in node_types, "Missing FaceRestoreModelLoader node in fix_faces_gfpgan.json"
-        assert "FaceRestoreWithModel" in node_types, "Missing FaceRestoreWithModel node in fix_faces_gfpgan.json"
-        assert "SaveImage" in node_types, "Missing SaveImage node in fix_faces_gfpgan.json"
+        assert "LoadImage" in node_types, "Missing LoadImage node in fix_faces_facedetailer.json"
+        assert "FaceDetailer" in node_types, "Missing FaceDetailer node in fix_faces_facedetailer.json"
+        assert "UltralyticsDetectorProvider" in node_types, "Missing UltralyticsDetectorProvider node in fix_faces_facedetailer.json"
+        assert "CheckpointLoaderSimple" in node_types, "Missing CheckpointLoaderSimple node in fix_faces_facedetailer.json"
+        assert "SaveImage" in node_types, "Missing SaveImage node in fix_faces_facedetailer.json"
