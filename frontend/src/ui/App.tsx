@@ -1202,6 +1202,7 @@ function ChatState({
   canSend,
   onSend,
   onUpload,
+  backendUrl,
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -1217,6 +1218,7 @@ function ChatState({
   canSend: boolean
   onSend: () => void
   onUpload: (file: File) => void
+  backendUrl: string
 }) {
   const { copied, copy } = useCopyMessage()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
@@ -1279,7 +1281,7 @@ function ChatState({
                     <AssistantSkeleton label={m.text?.trim() ? m.text : undefined} />
                   ) : (
                     <div className="animate-fadeIn">
-                      <MessageMarkdown text={m.text} onImageClick={setLightbox} />
+                      <MessageMarkdown text={m.text} onImageClick={setLightbox} backendUrl={backendUrl} />
                     </div>
                   )}
                 </div>
@@ -1348,15 +1350,20 @@ function ChatState({
 
                 {m.media?.images?.length ? (
                   <div className="flex gap-2 overflow-x-auto pt-2">
-                    {m.media.images.map((src: string, i: number) => (
-                      <img
-                        key={i}
-                        src={src}
-                        onClick={() => setLightbox(src)}
-                        className="h-56 w-56 object-cover rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
-                        alt={`generated ${i}`}
-                      />
-                    ))}
+                    {m.media.images.map((src: string, i: number) => {
+                      const resolved = (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:'))
+                        ? src
+                        : `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+                      return (
+                        <img
+                          key={i}
+                          src={resolved}
+                          onClick={() => setLightbox(resolved)}
+                          className="h-56 w-56 object-cover rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                          alt={`generated ${i}`}
+                        />
+                      )
+                    })}
                   </div>
                 ) : null}
 
@@ -2507,13 +2514,19 @@ export default function App() {
               const persona = personas.find((p) => p.id === projId)
               if (persona) {
                 // Build photo catalog text (de-duplicated by label)
+                // Resolve backend-relative URLs (/comfy/view/...) to full URLs
+                const _burl = settings.backendUrl.replace(/\/+$/, '')
+                const _resolvePhotoUrl = (url: string) => {
+                  if (!url || url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) return url
+                  return `${_burl}${url.startsWith('/') ? url : `/${url}`}`
+                }
                 const seenLabels = new Set<string>()
                 const catalogLines: string[] = []
                 for (const photo of (persona.photos || [])) {
                   if (seenLabels.has(photo.label)) continue
                   seenLabels.add(photo.label)
                   const tag = photo.isDefault ? ' (currently wearing)' : ''
-                  catalogLines.push(`  - ${photo.label}${tag}: ${photo.outfit} → ![${persona.label}](${photo.url})`)
+                  catalogLines.push(`  - ${photo.label}${tag}: ${photo.outfit} → ![${persona.label}](${_resolvePhotoUrl(photo.url)})`)
                 }
                 const catalogText = catalogLines.length > 0
                   ? catalogLines.join('\n')
@@ -3548,7 +3561,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               canSend={canSend}
               onSend={onSend}
               onUpload={uploadAndSend}
-
+              backendUrl={settings.backendUrl}
             />
           )
         ) : messages.length === 0 && currentProject ? (
@@ -3617,6 +3630,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             canSend={canSend}
             onSend={onSend}
             onUpload={uploadAndSend}
+            backendUrl={settings.backendUrl}
           />
         )}
       </main>

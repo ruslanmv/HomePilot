@@ -22,20 +22,6 @@
       .final  { animation: fadeSlideIn .6s ease-out both; }
       .glow   { animation: pulseGlow 2.5s ease-in-out 3.2s infinite; }
       .selglow { animation: selectGlow 2s ease-in-out 2.4s infinite; }
-
-      .step:nth-child(2) { animation-delay: .2s; }
-      .step:nth-child(4) { animation-delay: .6s; }
-      .step:nth-child(6) { animation-delay: 1.0s; }
-      .step:nth-child(8) { animation-delay: 1.4s; }
-      .step:nth-child(10) { animation-delay: 1.8s; }
-
-      .arrow:nth-child(3) { animation-delay: .45s; }
-      .arrow:nth-child(5) { animation-delay: .85s; }
-      .arrow:nth-child(7) { animation-delay: 1.25s; }
-      .arrow:nth-child(9) { animation-delay: 1.65s; }
-      .arrow:nth-child(11) { animation-delay: 2.05s; }
-
-      .final { animation-delay: 2.3s; }
     </style>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#0f0f23"/>
@@ -44,10 +30,6 @@
     <linearGradient id="purpleGrad" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#a855f7"/>
       <stop offset="100%" stop-color="#ec4899"/>
-    </linearGradient>
-    <linearGradient id="cyanGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#22d3ee"/>
-      <stop offset="100%" stop-color="#3b82f6"/>
     </linearGradient>
     <marker id="arrowHead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
       <polygon points="0 0, 8 3, 0 6" fill="#64748b"/>
@@ -60,7 +42,7 @@
   <text x="460" y="36" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="12" font-weight="600" letter-spacing="2">AVATAR STUDIO PIPELINE</text>
 
   <!-- Step 1: Design -->
-  <g class="step" opacity="0">
+  <g class="step" style="animation-delay:.2s">
     <rect x="16" y="60" width="128" height="140" rx="14" fill="#1e293b" stroke="#a78bfa" stroke-width="1.5"/>
     <text x="80" y="98" text-anchor="middle" fill="#a78bfa" font-family="system-ui,sans-serif" font-size="24">&#x1F3A8;</text>
     <text x="80" y="120" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Design</text>
@@ -70,10 +52,10 @@
   </g>
 
   <!-- Arrow 1 -->
-  <line class="arrow" opacity="0" x1="148" y1="130" x2="172" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
+  <line class="arrow" style="animation-delay:.45s" x1="148" y1="130" x2="172" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
 
   <!-- Step 2: Choose Avatar (Immersive Select) -->
-  <g class="step selglow" opacity="0">
+  <g class="step selglow" style="animation-delay:.6s">
     <rect x="176" y="60" width="128" height="140" rx="14" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
     <text x="240" y="96" text-anchor="middle" fill="#22d3ee" font-family="system-ui,sans-serif" font-size="24">&#x1F451;</text>
     <text x="240" y="118" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Choose Avatar</text>
@@ -88,10 +70,10 @@
   </g>
 
   <!-- Arrow 2 -->
-  <line class="arrow" opacity="0" x1="308" y1="130" x2="332" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
+  <line class="arrow" style="animation-delay:.85s" x1="308" y1="130" x2="332" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
 
   <!-- Step 3: Character Sheet -->
-  <g class="step" opacity="0">
+  <g class="step" style="animation-delay:1.0s">
     <rect x="336" y="60" width="128" height="140" rx="14" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
     <text x="400" y="98" text-anchor="middle" fill="#38bdf8" font-family="system-ui,sans-serif" font-size="24">&#x1F9E9;</text>
     <text x="400" y="120" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Character Sheet</text>
@@ -100,10 +82,10 @@
   </g>
 
   <!-- Arrow 3 -->
-  <line class="arrow" opacity="0" x1="468" y1="130" x2="492" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
+  <line class="arrow" style="animation-delay:1.25s" x1="468" y1="130" x2="492" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
 
   <!-- Step 4: Wardrobe -->
-  <g class="step" opacity="0">
+  <g class="step" style="animation-delay:1.4s">
     <rect x="496" y="60" width="128" height="140" rx="14" fill="#1e293b" stroke="#f472b6" stroke-width="1.5"/>
     <text x="560" y="98" text-anchor="middle" fill="#f472b6" font-family="system-ui,sans-serif" font-size="24">&#x1F455;</text>
     <text x="560" y="120" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Wardrobe</text>
@@ -112,10 +94,10 @@
   </g>
 
   <!-- Arrow 4 -->
-  <line class="arrow" opacity="0" x1="628" y1="130" x2="652" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
+  <line class="arrow" style="animation-delay:1.65s" x1="628" y1="130" x2="652" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
 
   <!-- Step 5: Save to Persona -->
-  <g class="step" opacity="0">
+  <g class="step" style="animation-delay:1.8s">
     <rect x="656" y="60" width="128" height="140" rx="14" fill="#1e293b" stroke="#34d399" stroke-width="1.5"/>
     <text x="720" y="98" text-anchor="middle" fill="#34d399" font-family="system-ui,sans-serif" font-size="24">&#x1F4E6;</text>
     <text x="720" y="120" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Save to Persona</text>
@@ -124,10 +106,10 @@
   </g>
 
   <!-- Arrow 5 -->
-  <line class="arrow" opacity="0" x1="788" y1="130" x2="812" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
+  <line class="arrow" style="animation-delay:2.05s" x1="788" y1="130" x2="812" y2="130" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
 
   <!-- Final: .hpersona -->
-  <g class="final glow" opacity="0">
+  <g class="final glow" style="animation-delay:2.3s">
     <rect x="816" y="54" width="88" height="152" rx="18" fill="url(#purpleGrad)" opacity=".15"/>
     <rect x="816" y="54" width="88" height="152" rx="18" fill="none" stroke="url(#purpleGrad)" stroke-width="2"/>
     <text x="860" y="100" text-anchor="middle" fill="#c4b5fd" font-family="system-ui,sans-serif" font-size="26">&#x1F3AD;</text>
@@ -138,5 +120,5 @@
 
   <!-- Subtitle -->
   <text x="460" y="238" text-anchor="middle" fill="#64748b" font-family="system-ui,sans-serif" font-size="11" font-style="italic">Immersive character creation: design, choose your avatar, build a wardrobe, export as persona</text>
-  <text x="460" y="256" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="10">Defaults pre-selected &mdash; click Generate and it works immediately</text>
+  <text x="460" y="256" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="10">Defaults pre-selected &#x2014; click Generate and it works immediately</text>
 </svg>
