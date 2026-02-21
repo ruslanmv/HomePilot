@@ -84,6 +84,7 @@ One-click image editing tools integrated into the Edit page:
 - **Upscale** - 2x/4x resolution increase with UltraSharp AI
 - **Background Tools** - Remove, replace, or blur backgrounds
 - **Outpaint** - Extend canvas in any direction (7 options)
+- **Identity Tools** - Optional face-preserving edits and Same Person generation via InstantID (`make download-avatar-models-basic`)
 - **Capabilities API** - Runtime feature availability checking (`/v1/capabilities`)
 
 ### 🎬 Creator Studio

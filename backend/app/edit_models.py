@@ -546,6 +546,13 @@ def get_edit_models_status() -> Dict[str, Any]:
 
     Returns a dict suitable for API response with installed/available models.
     """
+    # Check ComfyUI face restoration readiness
+    try:
+        from .face_restore import face_restore_ready
+        comfyui_ok, comfyui_reason = face_restore_ready()
+    except Exception:
+        comfyui_ok, comfyui_reason = False, "Import error"
+
     status: Dict[str, Any] = {
         "upscale": {
             "installed": [],
@@ -568,6 +575,8 @@ def get_edit_models_status() -> Dict[str, Any]:
                 "installed": [],
                 "available": [],
                 "selected": get_preferences().faces_model,
+                "comfyui_ready": comfyui_ok,
+                "comfyui_status": comfyui_reason,
             },
         },
     }

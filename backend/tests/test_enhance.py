@@ -145,7 +145,7 @@ class TestEnhanceEndpoint:
         assert data["model_used"] == "4x-UltraSharp.pth"
 
     def test_enhance_accepts_valid_faces_request(self, client, mock_outbound, monkeypatch):
-        """Test that valid faces request is accepted."""
+        """Test that valid faces request is accepted (via ComfyUI)."""
         def mock_get_image_size(url):
             return (512, 512)
 
@@ -161,9 +161,7 @@ class TestEnhanceEndpoint:
             )
             return ("GFPGANv1.4.pth", None, config)
 
-        def mock_run_workflow(name, variables):
-            assert name == "fix_faces_gfpgan"
-            assert variables.get("model_name") == "GFPGANv1.4.pth"
+        def mock_restore(image_url, model_filename="GFPGANv1.4.pth"):
             return {
                 "images": ["http://localhost:8000/files/faces_test.png"],
                 "videos": []
@@ -171,7 +169,7 @@ class TestEnhanceEndpoint:
 
         monkeypatch.setattr("app.enhance._get_image_size", mock_get_image_size)
         monkeypatch.setattr("app.enhance.get_enhance_model", mock_get_enhance_model)
-        monkeypatch.setattr("app.enhance.run_workflow", mock_run_workflow)
+        monkeypatch.setattr("app.enhance.restore_faces_via_comfyui", mock_restore)
 
         response = client.post("/v1/enhance", json={
             "image_url": "http://localhost:8000/files/test.png",

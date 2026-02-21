@@ -337,6 +337,12 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
       const { characterPrompt, outfitPrompt, fullPrompt } = buildPrompt()
       const isNsfw = isSpicy && draft.persona_appearance.nsfwMode
 
+      // In identity mode, pass the selected avatar as reference face so
+      // InstantID can preserve the same person across "Generate 4 more".
+      // First batch (no selection yet) falls through to standard generation.
+      const identityRef =
+        generationMode === 'identity' && selectedImageUrl ? selectedImageUrl : undefined
+
       const out = await generatePersonaImages({
         backendUrl,
         apiKey,
@@ -348,6 +354,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
         promptRefinement: true,
         nsfwMode: isNsfw,
         generationMode,
+        referenceImageUrl: identityRef,
       })
 
       if (out.urls.length === 0) {
@@ -993,7 +1000,9 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
                     </div>
                     {generationMode === 'identity' && (
                       <p className="text-[10px] text-emerald-300/50 px-1">
-                        Face preservation active. The same identity will be maintained across outfit variations.
+                        {selectedImageUrl
+                          ? 'Face preservation active. "Generate 4 more" will keep the same identity.'
+                          : 'Pick an avatar below to lock identity. First batch uses standard generation.'}
                       </p>
                     )}
                   </div>
