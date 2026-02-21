@@ -2955,83 +2955,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     [authHeaders, conversationId, settings, settingsDraft]
   )
 
-  // Handle video generation from image viewer
-  const handleGenerateVideoFromViewer = useCallback(
-    async (imageUrl: string, videoPrompt: string) => {
-      setLightbox(null)
-      setMode('animate')
-
-      const tmpId = uuid()
-      const userMsg: Msg = {
-        id: uuid(),
-        role: 'user',
-        text: `Generate video: ${videoPrompt}`,
-      }
-      const pendingMsg: Msg = {
-        id: tmpId,
-        role: 'assistant',
-        text: 'Creating animation...',
-        pending: true,
-      }
-      setMessages((prev) => [...prev, userMsg, pendingMsg])
-
-      try {
-        // Fetch the image and convert to File
-        const response = await fetch(imageUrl)
-        const blob = await response.blob()
-        const filename = imageUrl.split('/').pop() || 'image.png'
-        const file = new File([blob], filename, { type: blob.type })
-
-        // Upload the file
-        const fd = new FormData()
-        fd.append('file', file)
-        const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
-        const uploadedUrl = up.url as string
-
-        // Trigger animate workflow
-        const data = await postJson<any>(
-          settings.backendUrl,
-          '/chat',
-          {
-            message: `animate ${uploadedUrl} ${videoPrompt}`,
-            conversation_id: conversationId,
-            fun_mode: settings.funMode,
-            mode: 'animate',
-            provider: settingsDraft.providerChat,
-            provider_base_url: settingsDraft.baseUrlChat || undefined,
-            provider_model: settingsDraft.modelChat,
-            vidModel: settingsDraft.modelVideo,
-            vidSeconds: settingsDraft.vidSeconds,
-            vidFps: settingsDraft.vidFps,
-            nsfwMode: settingsDraft.nsfwMode,
-          },
-          authHeaders
-        )
-
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tmpId
-              ? { ...msg, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null }
-              : msg
-          )
-        )
-      } catch (error: any) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tmpId
-              ? {
-                  ...msg,
-                  pending: false,
-                  text: `Video generation failed: ${error.message || 'Unknown error'}`,
-                }
-              : msg
-          )
-        )
-      }
-    },
-    [authHeaders, conversationId, settings, settingsDraft]
-  )
-
   return (
     <div className="flex h-screen bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
       <Sidebar
@@ -3698,13 +3621,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         )}
       </main>
 
-      {/* Image Viewer with Edit and Video Generation */}
+      {/* Image Viewer */}
       {lightbox ? (
         <ImageViewer
           imageUrl={lightbox}
           onClose={() => setLightbox(null)}
           onEdit={handleEditFromViewer}
-          onGenerateVideo={handleGenerateVideoFromViewer}
         />
       ) : null}
 
