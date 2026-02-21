@@ -49,6 +49,9 @@ export interface AvatarSettings {
   checkpointSource: AvatarCheckpointSource
   /** Which recommended checkpoint id is selected (only when source = 'recommended'). */
   recommendedCheckpointId: string
+  /** Show the Character Description (Identity Anchor) textarea in the designer.
+   *  Hidden by default to reduce prompt clutter for most users. */
+  showCharacterDescription: boolean
 }
 
 export interface AvatarPackInfo {

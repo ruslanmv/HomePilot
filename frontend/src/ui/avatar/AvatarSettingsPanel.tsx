@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react'
-import { Settings, X, Check, Globe, Sparkles, Info } from 'lucide-react'
+import { Settings, X, Check, Globe, Sparkles, Info, FileText } from 'lucide-react'
 import type { AvatarSettings, AvatarCheckpointSource } from './types'
 import { RECOMMENDED_CHECKPOINTS } from './types'
 
@@ -22,6 +22,7 @@ const STORAGE_KEY = 'homepilot_avatar_settings'
 const DEFAULT_SETTINGS: AvatarSettings = {
   checkpointSource: 'recommended',
   recommendedCheckpointId: 'dreamshaper8',
+  showCharacterDescription: false,
 }
 
 export function loadAvatarSettings(): AvatarSettings {
@@ -279,6 +280,51 @@ export function AvatarSettingsPanel({
                     </p>
                   </div>
                 )}
+              </div>
+
+              {/* Character Description toggle */}
+              <div className="border-t border-white/8 pt-5">
+                <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">
+                  Designer Options
+                </div>
+                <p className="text-[11px] text-white/30 mb-4">
+                  Show or hide advanced sections in the wizard
+                </p>
+
+                <button
+                  onClick={() => {
+                    const next = { ...settings, showCharacterDescription: !settings.showCharacterDescription }
+                    onChange(next)
+                    saveAvatarSettings(next)
+                  }}
+                  className={[
+                    'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all',
+                    settings.showCharacterDescription
+                      ? 'bg-purple-500/10 border border-purple-500/30'
+                      : 'border border-white/8 hover:bg-white/[0.03] hover:border-white/15',
+                  ].join(' ')}
+                >
+                  <FileText
+                    size={16}
+                    className={settings.showCharacterDescription ? 'text-purple-400' : 'text-white/25'}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-white/80">Character Description</div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      Show the editable prompt textarea in the designer
+                    </p>
+                  </div>
+                  {/* Toggle switch */}
+                  <div className={[
+                    'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                    settings.showCharacterDescription ? 'bg-purple-500' : 'bg-white/15',
+                  ].join(' ')}>
+                    <div className={[
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                      settings.showCharacterDescription ? 'translate-x-4' : 'translate-x-0.5',
+                    ].join(' ')} />
+                  </div>
+                </button>
               </div>
             </div>
 

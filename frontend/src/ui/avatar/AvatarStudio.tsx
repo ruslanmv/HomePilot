@@ -495,34 +495,36 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                 </div>
               </div>
 
-              {/* Step 3: Character Description (Identity Anchor) */}
-              <div className="mb-6">
-                <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
-                  3. Character Description
-                  <span className="text-white/20 normal-case tracking-normal font-normal ml-1.5">(Your Identity Anchor)</span>
+              {/* Step 3: Character Description (Identity Anchor) — hidden by default, toggle in Settings */}
+              {avatarSettings.showCharacterDescription && (
+                <div className="mb-6">
+                  <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                    3. Character Description
+                    <span className="text-white/20 normal-case tracking-normal font-normal ml-1.5">(Your Identity Anchor)</span>
+                  </div>
+                  <div className={[
+                    'rounded-2xl border transition-all',
+                    'bg-white/[0.04] focus-within:bg-white/[0.06]',
+                    characterDescription
+                      ? 'border-purple-500/20 focus-within:border-purple-500/40 focus-within:ring-1 focus-within:ring-purple-500/20'
+                      : 'border-white/10 focus-within:border-purple-500/40 focus-within:ring-1 focus-within:ring-purple-500/20',
+                  ].join(' ')}>
+                    <textarea
+                      value={characterDescription}
+                      onChange={(e) => setCharacterDescription(e.target.value)}
+                      onKeyDown={(e) => {
+                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canGenerate) { e.preventDefault(); onGenerate() }
+                      }}
+                      placeholder="Select a gender and style above to auto-generate your character description, or type your own..."
+                      className="w-full bg-transparent text-white text-sm p-4 resize-none placeholder:text-white/20 focus:outline-none leading-relaxed"
+                      rows={3}
+                    />
+                  </div>
+                  <p className="text-[10px] text-white/20 mt-1.5 italic">
+                    Auto-filled based on your choices. Edit to lock in exact details!
+                  </p>
                 </div>
-                <div className={[
-                  'rounded-2xl border transition-all',
-                  'bg-white/[0.04] focus-within:bg-white/[0.06]',
-                  characterDescription
-                    ? 'border-purple-500/20 focus-within:border-purple-500/40 focus-within:ring-1 focus-within:ring-purple-500/20'
-                    : 'border-white/10 focus-within:border-purple-500/40 focus-within:ring-1 focus-within:ring-purple-500/20',
-                ].join(' ')}>
-                  <textarea
-                    value={characterDescription}
-                    onChange={(e) => setCharacterDescription(e.target.value)}
-                    onKeyDown={(e) => {
-                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canGenerate) { e.preventDefault(); onGenerate() }
-                    }}
-                    placeholder="Select a gender and style above to auto-generate your character description, or type your own..."
-                    className="w-full bg-transparent text-white text-sm p-4 resize-none placeholder:text-white/20 focus:outline-none leading-relaxed"
-                    rows={3}
-                  />
-                </div>
-                <p className="text-[10px] text-white/20 mt-1.5 italic">
-                  Auto-filled based on your choices. Edit to lock in exact details!
-                </p>
-              </div>
+              )}
             </>
           ) : (
             /* ═══════════ UPLOAD + VIBES (Reference / Face+Style modes) ═══════════ */
