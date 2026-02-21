@@ -236,23 +236,38 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
 
   if (viewMode === 'gallery') {
     return (
-      <AvatarLandingPage
-        items={gallery.items}
-        backendUrl={backendUrl}
-        onNewAvatar={() => setViewMode('designer')}
-        onOpenItem={(item) => {
-          // Open the lightbox for the selected item
-          const imgUrl = item.url.startsWith('http')
-            ? item.url
-            : `${backendUrl.replace(/\/+$/, '')}${item.url}`
-          onOpenLightbox?.(imgUrl)
-        }}
-        onDeleteItem={gallery.removeItem}
-        onOpenLightbox={onOpenLightbox}
-        onSendToEdit={onSendToEdit}
-        onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
-        onGenerateOutfits={(item) => setOutfitAnchor(item)}
-      />
+      <>
+        <AvatarLandingPage
+          items={gallery.items}
+          backendUrl={backendUrl}
+          onNewAvatar={() => setViewMode('designer')}
+          onOpenItem={(item) => {
+            // Open the lightbox for the selected item
+            const imgUrl = item.url.startsWith('http')
+              ? item.url
+              : `${backendUrl.replace(/\/+$/, '')}${item.url}`
+            onOpenLightbox?.(imgUrl)
+          }}
+          onDeleteItem={gallery.removeItem}
+          onOpenLightbox={onOpenLightbox}
+          onSendToEdit={onSendToEdit}
+          onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
+          onGenerateOutfits={(item) => setOutfitAnchor(item)}
+        />
+        {outfitAnchor && (
+          <OutfitPanel
+            anchor={outfitAnchor}
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+            nsfwMode={(() => { try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false } })()}
+            checkpointOverride={resolveCheckpoint(avatarSettings, globalModelImages)}
+            onResults={(results) => gallery.addBatch(results, mode, outfitAnchor.prompt, outfitAnchor.url)}
+            onSendToEdit={onSendToEdit}
+            onOpenLightbox={onOpenLightbox}
+            onClose={() => setOutfitAnchor(null)}
+          />
+        )}
+      </>
     )
   }
 

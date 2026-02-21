@@ -34,6 +34,7 @@ async def run_avatar_workflow(
     count: int,
     seed: Optional[int],
     checkpoint_override: Optional[str] = None,
+    denoise_override: Optional[float] = None,
 ) -> List[AvatarResult]:
     """Load a workflow template, inject inputs, submit, and collect results."""
     if not comfyui_healthy(comfyui_base_url):
@@ -64,6 +65,7 @@ async def run_avatar_workflow(
             _inject_seed(wf, base_seed + i)
             _inject_reference(wf, reference_image_url)
             _inject_checkpoint(wf, checkpoint_override)
+            _inject_denoise(wf, denoise_override)
 
             prompt_id = await submit_prompt(comfyui_base_url, wf)
             images = await wait_for_images(comfyui_base_url, prompt_id)
@@ -206,6 +208,24 @@ def _inject_reference(wf: Dict[str, Any], ref: Optional[str]) -> None:
             "ImageLoad",
         ):
             node.setdefault("inputs", {})["image"] = local_name
+
+
+def _inject_denoise(wf: Dict[str, Any], denoise: Optional[float]) -> None:
+    """Override the denoise strength on KSampler nodes.
+
+    Higher values (0.85+) allow more prompt-guided changes — useful for
+    outfit variations where we want to change clothing/scene while the
+    reference image only anchors the face structure.
+    """
+    if denoise is None:
+        return
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") in (
+            "KSampler",
+            "SamplerCustom",
+            "KSamplerAdvanced",
+        ):
+            node.setdefault("inputs", {})["denoise"] = denoise
 
 
 def _inject_checkpoint(wf: Dict[str, Any], ckpt: Optional[str]) -> None:

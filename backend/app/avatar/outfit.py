@@ -84,11 +84,11 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     allowed = enabled_modes()
     warnings: List[str] = []
 
-    # Build the combined prompt
+    # Build the combined prompt — outfit description first for maximum influence
     parts = []
+    parts.append(req.outfit_prompt)
     if req.character_prompt:
         parts.append(req.character_prompt)
-    parts.append(req.outfit_prompt)
     parts.append("elegant lighting, realistic, sharp focus")
     combined_prompt = ", ".join(parts)
 
@@ -111,6 +111,11 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
 
     seeds = _make_seeds(req.seed, req.count)
 
+    # Use high denoise (0.85) so the sampler can actually change the outfit
+    # instead of reproducing the reference image structure.
+    # Default img2img denoise (0.65) is too conservative for outfit changes.
+    outfit_denoise = 0.85
+
     try:
         results = await run_avatar_workflow(
             comfyui_base_url=CFG.comfyui_url,
@@ -120,6 +125,7 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
             count=req.count,
             seed=seeds[0] if seeds else None,
             checkpoint_override=req.checkpoint_override,
+            denoise_override=outfit_denoise,
         )
         return OutfitResponse(results=results, warnings=warnings)
     except ComfyUIUnavailable as exc:
