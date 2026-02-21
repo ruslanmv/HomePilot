@@ -55,7 +55,7 @@ export interface AvatarStudioProps {
   globalModelImages?: string
   onSendToEdit?: (imageUrl: string) => void
   onOpenLightbox?: (imageUrl: string) => void
-  onSaveAsPersonaAvatar?: (item: GalleryItem) => void
+  onSaveAsPersonaAvatar?: (item: GalleryItem, outfitItems: GalleryItem[]) => void
   onGenerateOutfits?: (item: GalleryItem) => void
 }
 
@@ -107,6 +107,14 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const [showCustomPrompt, setShowCustomPrompt] = useState(false)
   const [customPrompt, setCustomPrompt] = useState('')
   const nsfwMode = readNsfwMode()
+
+  // Wrap onSaveAsPersonaAvatar to auto-compute outfit items from the gallery
+  const handleSaveAsPersona = useCallback((item: GalleryItem) => {
+    if (!onSaveAsPersonaAvatar) return
+    const rootId = item.parentId || item.id
+    const outfits = gallery.items.filter((g) => g.parentId === rootId && g.id !== item.id)
+    onSaveAsPersonaAvatar(item, outfits)
+  }, [gallery.items, onSaveAsPersonaAvatar])
 
   // Character Builder state (used for studio_random / Design Character mode)
   const [selectedGender, setSelectedGender] = useState<CharacterGender | null>(null)
@@ -278,7 +286,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           onDeleteItem={gallery.removeItem}
           onOpenLightbox={onOpenLightbox}
           onSendToEdit={onSendToEdit}
-          onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
+          onSaveAsPersonaAvatar={handleSaveAsPersona}
           onGenerateOutfits={(item) => { setViewerItem(item); setViewMode('viewer') }}
         />
         {outfitAnchor && (
@@ -308,7 +316,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
         apiKey={apiKey} globalModelImages={globalModelImages}
         onBack={() => { setViewerItem(null); setViewMode('gallery') }}
         onOpenLightbox={onOpenLightbox} onSendToEdit={onSendToEdit}
-        onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
+        onSaveAsPersonaAvatar={handleSaveAsPersona}
         onDeleteItem={(id) => {
           gallery.removeItem(id)
           if (id === viewerItem.id) { setViewerItem(null); setViewMode('gallery') }
@@ -863,7 +871,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                 onClearAll={gallery.clearAll}
                 onOpenLightbox={onOpenLightbox}
                 onSendToEdit={onSendToEdit}
-                onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
+                onSaveAsPersonaAvatar={handleSaveAsPersona}
                 onGenerateOutfits={(item) => { setViewerItem(item); setViewMode('viewer') }}
                 showNsfw={showNsfw}
               />

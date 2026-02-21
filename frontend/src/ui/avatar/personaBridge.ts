@@ -9,11 +9,13 @@ import type {
   PersonaWizardDraft,
   PersonaAppearance,
   PersonaImageRef,
+  PersonaOutfit,
   PersonaClassId,
   PersonaBlueprint,
 } from '../personaTypes'
 import { PERSONA_BLUEPRINTS } from '../personaTypes'
 import type { GalleryItem } from './galleryTypes'
+import { SCENARIO_TAG_META } from './galleryTypes'
 
 // ---------------------------------------------------------------------------
 // Default builders (mirror PersonaWizard helpers, but importable)
@@ -52,13 +54,30 @@ function defaultPersonaAgent() {
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve a human-readable label for an outfit's scenario tag.
+ */
+function outfitLabel(item: GalleryItem): string {
+  if (item.scenarioTag) {
+    const meta = SCENARIO_TAG_META.find((m) => m.id === item.scenarioTag)
+    if (meta) return meta.label
+  }
+  return 'Outfit'
+}
+
+/**
  * Build a PersonaWizardDraft pre-populated with an existing avatar image.
  * The wizard can then skip straight to Step 1 (Identity & Skills).
+ *
+ * When `outfitItems` is provided (gallery items with `parentId` pointing
+ * to this character), they are converted to `PersonaOutfit[]` and included
+ * in the persona appearance so that exporting to .hpersona preserves the
+ * full wardrobe.
  */
 export function draftFromGalleryItem(
   item: GalleryItem,
   personaName: string,
   classId: PersonaClassId = 'custom',
+  outfitItems?: GalleryItem[],
 ): PersonaWizardDraft {
   const imageRef: PersonaImageRef = {
     id: item.id,
@@ -86,6 +105,37 @@ export function draftFromGalleryItem(
     agent.image_style_hint = blueprint.defaults.image_style_hint
     agent.safety = { ...blueprint.defaults.safety }
     appearance.style_preset = blueprint.defaults.style_preset
+  }
+
+  // Convert outfit gallery items to PersonaOutfit entries
+  if (outfitItems && outfitItems.length > 0) {
+    appearance.outfits = outfitItems.map((oi): PersonaOutfit => {
+      const oiRef: PersonaImageRef = {
+        id: oi.id,
+        url: oi.url,
+        created_at: new Date(oi.createdAt).toISOString(),
+        set_id: 'avatar_studio',
+        seed: oi.seed,
+      }
+      return {
+        id: `outfit_${oi.id}`,
+        label: outfitLabel(oi),
+        outfit_prompt: oi.prompt || '',
+        images: [oiRef],
+        selected_image_id: oi.id,
+        generation_settings: {
+          character_prompt: item.prompt || '',
+          outfit_prompt: oi.prompt || '',
+          full_prompt: oi.prompt || '',
+          style_preset: appearance.style_preset,
+          img_model: appearance.img_model || 'dreamshaper_8.safetensors',
+          img_preset: appearance.img_preset || 'med',
+          aspect_ratio: appearance.aspect_ratio,
+          nsfw_mode: oi.nsfw || false,
+        },
+        created_at: new Date(oi.createdAt).toISOString(),
+      }
+    })
   }
 
   return {

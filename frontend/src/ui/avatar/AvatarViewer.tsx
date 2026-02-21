@@ -351,13 +351,14 @@ export function AvatarViewer({
                     <div className="relative group">
                       <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-purple-500/20 via-transparent to-cyan-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
                       <div
-                        className="relative aspect-square rounded-2xl overflow-hidden border border-white/10 cursor-pointer bg-white/[0.02]"
+                        className="relative rounded-2xl overflow-hidden border border-white/10 cursor-pointer bg-black/40"
+                        style={{ maxHeight: '75vh' }}
                         onClick={() => onOpenLightbox?.(heroUrl)}
                       >
                         <img
                           src={heroUrl}
                           alt={item.prompt || 'Avatar portrait'}
-                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                          className="w-full h-auto max-h-[75vh] object-contain transition-transform duration-500 group-hover:scale-[1.02]"
                         />
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                           <Maximize2 size={28} className="text-white/80" />
@@ -373,13 +374,14 @@ export function AvatarViewer({
                     <div className="relative group animate-fadeSlideIn">
                       <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-amber-500/25 via-transparent to-orange-500/25 opacity-60 group-hover:opacity-100 transition-opacity" />
                       <div
-                        className="relative aspect-square rounded-2xl overflow-hidden border border-amber-500/20 cursor-pointer bg-white/[0.02]"
+                        className="relative rounded-2xl overflow-hidden border border-amber-500/20 cursor-pointer bg-black/40"
+                        style={{ maxHeight: '75vh' }}
                         onClick={() => onOpenLightbox?.(equippedUrl)}
                       >
                         <img
                           src={equippedUrl}
                           alt={equippedItem!.prompt || 'Equipped outfit'}
-                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                          className="w-full h-auto max-h-[75vh] object-contain transition-transform duration-500 group-hover:scale-[1.02]"
                         />
                         {/* Equipped badge */}
                         {equippedTagMeta && (
@@ -407,7 +409,7 @@ export function AvatarViewer({
                 if (outfit.loading && outfit.results.length === 0) {
                   return (
                     /* ─── Loading skeleton ─── */
-                    <div className="aspect-square rounded-2xl bg-white/[0.03] border border-white/[0.06] animate-pulse flex items-center justify-center">
+                    <div className="aspect-[2/3] rounded-2xl bg-white/[0.03] border border-white/[0.06] animate-pulse flex items-center justify-center">
                       <Loader2 size={32} className="animate-spin text-white/15" />
                     </div>
                   )
@@ -419,13 +421,14 @@ export function AvatarViewer({
                     <div className="relative group animate-fadeSlideIn">
                       <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-cyan-500/20 via-transparent to-blue-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
                       <div
-                        className="relative aspect-square rounded-2xl overflow-hidden border border-cyan-500/15 cursor-pointer bg-white/[0.02]"
+                        className="relative rounded-2xl overflow-hidden border border-cyan-500/15 cursor-pointer bg-black/40"
+                        style={{ maxHeight: '75vh' }}
                         onClick={() => onOpenLightbox?.(resolveUrl(outfit.results[selectedResultIdx].url, backendUrl))}
                       >
                         <img
                           src={resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)}
                           alt={`Outfit result ${selectedResultIdx + 1}`}
-                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                          className="w-full h-auto max-h-[75vh] object-contain transition-transform duration-500 group-hover:scale-[1.02]"
                         />
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                           <Maximize2 size={28} className="text-white/80" />
@@ -437,7 +440,7 @@ export function AvatarViewer({
 
                 return (
                   /* ─── Empty outfit state ─── */
-                  <div className="aspect-square rounded-2xl border-2 border-dashed border-white/[0.08] bg-white/[0.01] flex flex-col items-center justify-center gap-2">
+                  <div className="aspect-[2/3] rounded-2xl border-2 border-dashed border-white/[0.08] bg-white/[0.01] flex flex-col items-center justify-center gap-2">
                     <Shirt size={32} className="text-white/15" />
                     <span className="text-xs text-white/25">Click a wardrobe item to equip it, or generate a new outfit</span>
                   </div>

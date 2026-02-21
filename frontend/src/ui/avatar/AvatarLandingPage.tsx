@@ -92,7 +92,7 @@ export function AvatarLandingPage({
   onSaveAsPersonaAvatar,
   onGenerateOutfits,
 }: AvatarLandingPageProps) {
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [deleteCandidate, setDeleteCandidate] = useState<GalleryItem | null>(null)
   // Auto-show NSFW content when Spice Mode is enabled globally
   const [showNsfw, setShowNsfw] = useState(() => {
     try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false }
@@ -114,19 +114,20 @@ export function AvatarLandingPage({
 
   const hasNsfwItems = rootCharacters.some((i) => i.nsfw)
 
-  const handleDelete = useCallback(
+  const handleDeleteClick = useCallback(
     (item: GalleryItem, e: React.MouseEvent) => {
       e.stopPropagation()
-      if (confirmDeleteId === item.id) {
-        onDeleteItem(item.id)
-        setConfirmDeleteId(null)
-      } else {
-        setConfirmDeleteId(item.id)
-        setTimeout(() => setConfirmDeleteId(null), 3000)
-      }
+      setDeleteCandidate(item)
     },
-    [confirmDeleteId, onDeleteItem],
+    [],
   )
+
+  const confirmDelete = useCallback(() => {
+    if (deleteCandidate) {
+      onDeleteItem(deleteCandidate.id)
+      setDeleteCandidate(null)
+    }
+  }, [deleteCandidate, onDeleteItem])
 
   return (
     <div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col relative">
@@ -320,14 +321,10 @@ export function AvatarLandingPage({
                       </button>
                     )}
                     <button
-                      className={`backdrop-blur-md p-2 rounded-lg transition-colors ${
-                        confirmDeleteId === item.id
-                          ? 'bg-red-500/40 text-red-300'
-                          : 'bg-red-500/20 text-red-400 hover:bg-red-500/40 hover:text-red-300'
-                      }`}
+                      className="backdrop-blur-md p-2 rounded-lg transition-colors bg-red-500/20 text-red-400 hover:bg-red-500/40 hover:text-red-300"
                       type="button"
-                      title={confirmDeleteId === item.id ? 'Confirm delete' : 'Delete'}
-                      onClick={(e) => handleDelete(item, e)}
+                      title="Delete"
+                      onClick={(e) => handleDeleteClick(item, e)}
                     >
                       <Trash2 size={14} />
                     </button>
@@ -370,6 +367,49 @@ export function AvatarLandingPage({
           >
             <Plus size={24} />
           </button>
+        </div>
+      )}
+
+      {/* ═══════════════ DELETE CONFIRMATION MODAL ═══════════════ */}
+      {deleteCandidate && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => setDeleteCandidate(null)}
+        >
+          <div
+            className="w-full max-w-sm mx-4 rounded-2xl border border-white/10 bg-[#0a0a0a] shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl overflow-hidden border border-white/10 flex-shrink-0 bg-white/5">
+                  <img
+                    src={resolveUrl(deleteCandidate.url, backendUrl)}
+                    alt="Delete preview"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Delete this image?</h3>
+                  <p className="text-xs text-white/40 mt-0.5">This will remove it from your gallery and database.</p>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-white/5 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setDeleteCandidate(null)}
+                className="px-4 py-2 rounded-xl text-sm text-white/60 hover:text-white/80 bg-white/5 hover:bg-white/10 border border-white/[0.08] transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="px-4 py-2 rounded-xl text-sm font-semibold text-red-200 bg-red-500/20 hover:bg-red-500/40 border border-red-500/20 transition-all"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

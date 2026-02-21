@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useCallback, useMemo } from 'react'
-import { X, Sparkles, User, Loader2, ChevronRight } from 'lucide-react'
+import { X, Sparkles, User, Loader2, ChevronRight, Shirt } from 'lucide-react'
 import type { GalleryItem } from './galleryTypes'
 import type { PersonaClassId, PersonaWizardDraft } from '../personaTypes'
 import { PERSONA_BLUEPRINTS } from '../personaTypes'
@@ -22,6 +22,8 @@ import { createPersonaProject } from '../personaApi'
 
 export interface SaveAsPersonaModalProps {
   item: GalleryItem
+  /** Outfit gallery items belonging to this character (parentId match) */
+  outfitItems?: GalleryItem[]
   backendUrl: string
   apiKey?: string
   onClose: () => void
@@ -54,6 +56,7 @@ function readNsfwMode(): boolean {
 
 export function SaveAsPersonaModal({
   item,
+  outfitItems,
   backendUrl,
   apiKey,
   onClose,
@@ -71,9 +74,9 @@ export function SaveAsPersonaModal({
   const imgUrl = resolveUrl(item.url, backendUrl)
 
   const handleOpenWizard = useCallback(() => {
-    const draft = draftFromGalleryItem(item, name.trim() || 'My Persona', classId)
+    const draft = draftFromGalleryItem(item, name.trim() || 'My Persona', classId, outfitItems)
     onOpenWizard(draft)
-  }, [item, name, classId, onOpenWizard])
+  }, [item, name, classId, outfitItems, onOpenWizard])
 
   const handleQuickCreate = useCallback(async () => {
     if (!name.trim()) return
@@ -81,7 +84,7 @@ export function SaveAsPersonaModal({
     setError(null)
 
     try {
-      const draft = draftFromGalleryItem(item, name.trim(), classId)
+      const draft = draftFromGalleryItem(item, name.trim(), classId, outfitItems)
       const result = await createPersonaProject({
         backendUrl,
         apiKey,
@@ -97,7 +100,7 @@ export function SaveAsPersonaModal({
     } finally {
       setSaving(false)
     }
-  }, [item, name, classId, backendUrl, apiKey, onCreated, onClose])
+  }, [item, name, classId, outfitItems, backendUrl, apiKey, onCreated, onClose])
 
   return (
     <div
@@ -135,6 +138,12 @@ export function SaveAsPersonaModal({
               {item.seed !== undefined && <div className="font-mono">Seed: {item.seed}</div>}
               {item.prompt && <div className="truncate max-w-[200px]">{item.prompt}</div>}
               <div className="text-white/20">Mode: {item.mode}</div>
+              {outfitItems && outfitItems.length > 0 && (
+                <div className="flex items-center gap-1 text-cyan-400/70">
+                  <Shirt size={11} />
+                  {outfitItems.length} outfit{outfitItems.length !== 1 ? 's' : ''} included
+                </div>
+              )}
             </div>
           </div>
 

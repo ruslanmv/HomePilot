@@ -1519,7 +1519,7 @@ export default function App() {
   const [lightbox, setLightbox] = useState<string | null>(null)
 
   // Persona Integration — "Save as Persona Avatar" from AvatarStudio (additive)
-  const [saveAsPersonaItem, setSaveAsPersonaItem] = useState<GalleryItem | null>(null)
+  const [saveAsPersonaData, setSaveAsPersonaData] = useState<{ item: GalleryItem; outfits: GalleryItem[] } | null>(null)
   const [personaWizardDraft, setPersonaWizardDraft] = useState<Partial<PersonaWizardDraft> | null>(null)
 
   // Phase 2 (additive): per-chat settings stored by conversation id.
@@ -3500,7 +3500,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               sessionStorage.setItem('homepilot_edit_from_avatar', imageUrl)
             }}
             onOpenLightbox={(url) => setLightbox(url)}
-            onSaveAsPersonaAvatar={(item) => setSaveAsPersonaItem(item)}
+            onSaveAsPersonaAvatar={(item, outfits) => setSaveAsPersonaData({ item, outfits })}
           />
         ) : mode === 'animate' ? (
           // Animate mode: Grok-style video generation gallery
@@ -3631,18 +3631,19 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       ) : null}
 
       {/* Save as Persona Avatar modal (from AvatarStudio gallery) */}
-      {saveAsPersonaItem && (
+      {saveAsPersonaData && (
         <SaveAsPersonaModal
-          item={saveAsPersonaItem}
+          item={saveAsPersonaData.item}
+          outfitItems={saveAsPersonaData.outfits}
           backendUrl={settingsDraft.backendUrl}
           apiKey={settingsDraft.apiKey}
-          onClose={() => setSaveAsPersonaItem(null)}
+          onClose={() => setSaveAsPersonaData(null)}
           onOpenWizard={(draft) => {
-            setSaveAsPersonaItem(null)
+            setSaveAsPersonaData(null)
             setPersonaWizardDraft(draft)
           }}
           onCreated={(project) => {
-            setSaveAsPersonaItem(null)
+            setSaveAsPersonaData(null)
             if (project?.id) {
               localStorage.setItem('homepilot_current_project', project.id)
               setMode('project')
