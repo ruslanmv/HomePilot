@@ -79,6 +79,165 @@ export const AVATAR_VIBE_PRESETS: AvatarVibePreset[] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Character Builder — RPG-style character creator for Design mode
+// ---------------------------------------------------------------------------
+
+export type CharacterGender = 'female' | 'male' | 'neutral'
+
+export interface GenderOption {
+  id: CharacterGender
+  label: string
+  icon: string
+}
+
+export const GENDER_OPTIONS: GenderOption[] = [
+  { id: 'female',  label: 'Female',  icon: '\uD83D\uDC69' },
+  { id: 'male',    label: 'Male',    icon: '\uD83D\uDC68' },
+  { id: 'neutral', label: 'Neutral', icon: '\uD83E\uDDD1' },
+]
+
+export interface CharacterStylePreset {
+  id: string
+  label: string
+  icon: string
+  category: VibeCategory
+  /** Prompt template — use {gender}, {noun}, {possessive} placeholders */
+  promptTemplate: string
+}
+
+const GENDER_DICT: Record<CharacterGender, { gender: string; noun: string; possessive: string }> = {
+  female:  { gender: 'female',      noun: 'woman',  possessive: 'her' },
+  male:    { gender: 'male',        noun: 'man',    possessive: 'his' },
+  neutral: { gender: 'androgynous', noun: 'person', possessive: 'their' },
+}
+
+/** Build a full character description from gender + style preset. */
+export function buildCharacterPrompt(gender: CharacterGender, preset: CharacterStylePreset): string {
+  const g = GENDER_DICT[gender]
+  return preset.promptTemplate
+    .replace(/\{gender\}/g, g.gender)
+    .replace(/\{noun\}/g, g.noun)
+    .replace(/\{possessive\}/g, g.possessive)
+}
+
+export const CHARACTER_STYLE_PRESETS: CharacterStylePreset[] = [
+  // ── Standard ──
+  {
+    id: 'executive',
+    label: 'Executive',
+    icon: '\uD83D\uDCBC',
+    category: 'standard',
+    promptTemplate: 'A sophisticated {gender} executive with sharp facial features, professional attire, confident expression, impeccable grooming, clean studio lighting, highly detailed portrait, 8k resolution',
+  },
+  {
+    id: 'elegant',
+    label: 'Elegant',
+    icon: '\uD83C\uDF77',
+    category: 'standard',
+    promptTemplate: 'An elegant {gender} {noun} with refined graceful features, luxurious evening attire, soft golden lighting, haute couture aesthetic, poised expression, cinematic portrait',
+  },
+  {
+    id: 'romantic',
+    label: 'Romantic',
+    icon: '\uD83C\uDF39',
+    category: 'standard',
+    promptTemplate: 'A {gender} {noun} with a warm romantic aesthetic, soft delicate features, dreamy expression, gentle warm lighting, natural beauty, intimate close-up portrait',
+  },
+  {
+    id: 'casual_char',
+    label: 'Casual',
+    icon: '\u2615',
+    category: 'standard',
+    promptTemplate: 'A relaxed {gender} {noun} in casual everyday style, natural candid expression, comfortable modern outfit, warm natural lighting, authentic portrait feel',
+  },
+  {
+    id: 'fantasy_char',
+    label: 'Fantasy',
+    icon: '\u2694\uFE0F',
+    category: 'standard',
+    promptTemplate: 'A {gender} fantasy character with striking mystical features, elaborate ornate armor or costume, ethereal magical lighting, enchanted atmosphere, epic detailed portrait',
+  },
+  {
+    id: 'scifi',
+    label: 'Sci-Fi',
+    icon: '\uD83D\uDE80',
+    category: 'standard',
+    promptTemplate: 'A {gender} character in a futuristic sci-fi setting, sleek cybernetic enhancements, neon accent lighting, advanced technology backdrop, cinematic detailed portrait',
+  },
+  {
+    id: 'edgy',
+    label: 'Edgy',
+    icon: '\uD83D\uDD76\uFE0F',
+    category: 'standard',
+    promptTemplate: 'A {gender} {noun} with an edgy rebellious aesthetic, dark alternative clothing, sharp angular features, dramatic shadows, urban backdrop, moody cinematic lighting',
+  },
+  {
+    id: 'soft',
+    label: 'Soft',
+    icon: '\uD83C\uDF38',
+    category: 'standard',
+    promptTemplate: 'A {gender} {noun} with soft delicate features, gentle ethereal expression, pastel tones, dreamy atmosphere, natural beauty, soft diffused lighting, studio portrait',
+  },
+  // ── Spicy (18+) ──
+  {
+    id: 'cb_girlfriend',
+    label: 'Girlfriend',
+    icon: '\uD83D\uDC96',
+    category: 'spicy',
+    promptTemplate: 'A captivating {gender} {noun} in a girlfriend POV, intimate eye contact, casual home setting, warm soft lighting, romantic mood, loving playful smile, close-up portrait',
+  },
+  {
+    id: 'cb_spouse',
+    label: 'Spouse',
+    icon: '\uD83D\uDC8D',
+    category: 'spicy',
+    promptTemplate: 'A {gender} {noun} in an intimate spouse perspective, loving tender gaze, cozy home setting, natural soft light, romantic vulnerable expression, close-up portrait',
+  },
+  {
+    id: 'cb_companion',
+    label: 'Companion',
+    icon: '\uD83E\uDD1D',
+    category: 'spicy',
+    promptTemplate: 'A {gender} companion with a soft inviting smile, cozy intimate setting, warm ambient atmosphere, gentle expression, comfortable casual attire, close-up portrait',
+  },
+  {
+    id: 'cb_boudoir',
+    label: 'Boudoir',
+    icon: '\uD83D\uDC8B',
+    category: 'spicy',
+    promptTemplate: 'A captivating {gender} {noun} in an intimate boudoir setting, soft romantic lighting, wearing delicate lace, sensual elegant pose, tasteful and artistic, portrait',
+  },
+  {
+    id: 'cb_therapist',
+    label: 'Therapist',
+    icon: '\uD83E\uDE7A',
+    category: 'spicy',
+    promptTemplate: 'A {gender} {noun} in a professional yet intimate setting, empathetic caring expression, soft warm lighting, approachable comforting presence, close-up portrait',
+  },
+  {
+    id: 'cb_dominant',
+    label: 'Dominant',
+    icon: '\u26D3\uFE0F',
+    category: 'spicy',
+    promptTemplate: 'A {gender} {noun} with a commanding dominant presence, intense piercing gaze, cinematic moody lighting, dark aesthetic, leather accents, powerful confident expression, portrait',
+  },
+  {
+    id: 'cb_fan_service',
+    label: 'Fan Service',
+    icon: '\uD83C\uDF36\uFE0F',
+    category: 'spicy',
+    promptTemplate: 'A {gender} {noun} in a playful fan service pose, flirtatious expression, fashionable revealing outfit, studio lighting, alluring confident energy, portrait',
+  },
+  {
+    id: 'cb_fantasy_plus',
+    label: 'Fantasy+',
+    icon: '\uD83C\uDFB2',
+    category: 'spicy',
+    promptTemplate: 'A {gender} {noun} in an exotic daring fantasy costume, mystical enchanted setting, alluring seductive pose, magical ethereal lighting, detailed portrait',
+  },
+]
+
+// ---------------------------------------------------------------------------
 // Gallery Item
 // ---------------------------------------------------------------------------
 

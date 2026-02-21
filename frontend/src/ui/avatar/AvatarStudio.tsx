@@ -42,8 +42,8 @@ import { AvatarViewer } from './AvatarViewer'
 import { OutfitPanel } from './OutfitPanel'
 import { AvatarSettingsPanel, loadAvatarSettings, resolveCheckpoint } from './AvatarSettingsPanel'
 import type { AvatarMode, AvatarSettings } from './types'
-import type { GalleryItem, AvatarVibePreset } from './galleryTypes'
-import { AVATAR_VIBE_PRESETS } from './galleryTypes'
+import type { GalleryItem, AvatarVibePreset, CharacterGender } from './galleryTypes'
+import { AVATAR_VIBE_PRESETS, GENDER_OPTIONS, CHARACTER_STYLE_PRESETS, buildCharacterPrompt } from './galleryTypes'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -64,7 +64,7 @@ export interface AvatarStudioProps {
 // ---------------------------------------------------------------------------
 
 const MODE_OPTIONS: { label: string; value: AvatarMode; icon: React.ReactNode; description: string }[] = [
-  { label: 'Random',         value: 'studio_random',    icon: <Shuffle size={14} />, description: 'Generate a completely new face from scratch' },
+  { label: 'Design Character', value: 'studio_random',    icon: <Sparkles size={14} />, description: 'Build a character from gender, style, and personality' },
   { label: 'From Reference', value: 'studio_reference', icon: <User size={14} />,    description: 'Upload a photo to generate identity-consistent portraits' },
   { label: 'Face + Style',   value: 'studio_faceswap',  icon: <Palette size={14} />, description: 'Combine your face with a styled body and scene' },
 ]
@@ -100,12 +100,17 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const [packInstallBusy, setPackInstallBusy] = useState(false)
   const [packInstallError, setPackInstallError] = useState<string | null>(null)
 
-  // Wizard state
+  // Wizard state (vibes — used for reference/faceswap modes)
   const [selectedVibe, setSelectedVibe] = useState<string | null>(null)
   const [vibeTab, setVibeTab] = useState<'standard' | 'spicy'>('standard')
   const [showCustomPrompt, setShowCustomPrompt] = useState(false)
   const [customPrompt, setCustomPrompt] = useState('')
   const nsfwMode = readNsfwMode()
+
+  // Character Builder state (used for studio_random / Design Character mode)
+  const [selectedGender, setSelectedGender] = useState<CharacterGender | null>(null)
+  const [selectedStyle, setSelectedStyle] = useState<string | null>(null)
+  const [characterDescription, setCharacterDescription] = useState('')
 
   // Toast
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' | 'info' } | null>(null)
@@ -116,13 +121,41 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Filtered vibes based on active tab
+  // Filtered vibes based on active tab (for reference/faceswap modes)
   const vibes = AVATAR_VIBE_PRESETS.filter((v) =>
     vibeTab === 'standard' ? v.category === 'standard' : v.category === 'spicy',
   )
 
-  // Resolve the effective prompt: vibe prompt + optional custom text
+  // Filtered character styles based on active tab (for Design Character mode)
+  const charStyles = CHARACTER_STYLE_PRESETS.filter((s) =>
+    vibeTab === 'standard' ? s.category === 'standard' : s.category === 'spicy',
+  )
+
+  // Auto-fill character description when gender or style changes
+  useEffect(() => {
+    if (mode !== 'studio_random') return
+    const style = CHARACTER_STYLE_PRESETS.find((s) => s.id === selectedStyle)
+    if (selectedGender && style) {
+      setCharacterDescription(buildCharacterPrompt(selectedGender, style))
+    } else if (selectedGender) {
+      const word = selectedGender === 'neutral' ? 'An androgynous' : `A ${selectedGender}`
+      setCharacterDescription(`${word} character, highly detailed portrait, studio lighting, 8k resolution`)
+    }
+  }, [mode, selectedGender, selectedStyle])
+
+  // Reset style selection when switching tabs (if selected style doesn't match new tab)
+  useEffect(() => {
+    if (selectedStyle) {
+      const style = CHARACTER_STYLE_PRESETS.find((s) => s.id === selectedStyle)
+      if (style && style.category !== vibeTab) setSelectedStyle(null)
+    }
+  }, [vibeTab, selectedStyle])
+
+  // Resolve the effective prompt based on active mode
   const effectivePrompt = (() => {
+    if (mode === 'studio_random') {
+      return characterDescription.trim()
+    }
     const vibePreset = AVATAR_VIBE_PRESETS.find((v) => v.id === selectedVibe)
     const base = vibePreset?.prompt || ''
     const custom = customPrompt.trim()
@@ -131,8 +164,18 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
     return base
   })()
 
-  const selectedVibeData = AVATAR_VIBE_PRESETS.find((v) => v.id === selectedVibe)
-  const isSpicyVibe = selectedVibeData?.category === 'spicy'
+  // Determine if current generation is spicy/NSFW content
+  const isSpicyContent = (() => {
+    if (mode === 'studio_random') {
+      const style = CHARACTER_STYLE_PRESETS.find((s) => s.id === selectedStyle)
+      return style?.category === 'spicy'
+    }
+    const selectedVibeData = AVATAR_VIBE_PRESETS.find((v) => v.id === selectedVibe)
+    return selectedVibeData?.category === 'spicy'
+  })()
+
+  // Tag for gallery storage
+  const vibeTagForGallery = mode === 'studio_random' ? selectedStyle : selectedVibe
 
   // ---- Toast helper ----
   const showToast = useCallback((message: string, type: 'error' | 'success' | 'info' = 'error') => {
@@ -193,14 +236,14 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           effectivePrompt || undefined,
           referenceUrl || undefined,
           undefined,
-          { vibeTag: selectedVibe || undefined, nsfw: isSpicyVibe || undefined },
+          { vibeTag: vibeTagForGallery || undefined, nsfw: isSpicyContent || undefined },
         )
         showToast(`${result.results.length} avatar${result.results.length > 1 ? 's' : ''} created`, 'success')
       }
     } catch {
       showToast('Oops, the servers are a bit busy. Click Generate to try again.', 'error')
     }
-  }, [gen, mode, count, effectivePrompt, referenceUrl, gallery, avatarSettings, globalModelImages, showToast, selectedVibe, isSpicyVibe])
+  }, [gen, mode, count, effectivePrompt, referenceUrl, gallery, avatarSettings, globalModelImages, showToast, vibeTagForGallery, isSpicyContent])
 
   // ---- Keyboard shortcut ----
   const needsReference = mode === 'studio_reference'
@@ -356,159 +399,285 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
             })}
           </div>
 
-          {/* ═══ STEP 1: Upload a face ═══ */}
-          <div className="mb-6">
-            <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
-              1. Upload a face
-            </div>
-            <div className={[
-              'flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all',
-              'bg-white/[0.04] border-white/10',
-              referencePreview ? 'border-purple-500/30' : 'hover:border-white/15',
-            ].join(' ')}>
-              {referencePreview ? (
-                <div className="relative flex-shrink-0">
-                  <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-purple-500/40">
-                    <img src={referencePreview} alt="Reference" className="w-full h-full object-cover" />
-                  </div>
-                  <button
-                    onClick={handleRemoveReference}
-                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500/80 flex items-center justify-center text-white hover:bg-red-500 transition-colors"
-                    aria-label="Remove reference"
-                  >
-                    <X size={8} />
-                  </button>
+          {mode === 'studio_random' ? (
+            /* ═══════════ CHARACTER BUILDER (Design Character mode) ═══════════ */
+            <>
+              {/* Step 1: Core Identity — Gender */}
+              <div className="mb-6">
+                <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                  1. Core Identity
                 </div>
-              ) : (
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-white/20 hover:text-white/50 hover:bg-white/5 transition-all border border-dashed border-white/10"
-                  title="Upload a reference photo"
-                >
-                  <Camera size={18} />
-                </button>
-              )}
-              <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = '' }}
-              />
-              <div className="flex-1 min-w-0">
-                {referencePreview ? (
-                  <span className="text-sm text-white/60">Reference photo attached</span>
-                ) : (
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-sm text-white/25 hover:text-white/40 transition-colors cursor-pointer text-left"
-                  >
-                    Click to upload a photo (optional for Random mode)
-                  </button>
-                )}
+                <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
+                  {GENDER_OPTIONS.map((g) => {
+                    const active = selectedGender === g.id
+                    return (
+                      <button
+                        key={g.id}
+                        onClick={() => setSelectedGender(g.id)}
+                        className={[
+                          'flex-1 flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium transition-all',
+                          active
+                            ? 'bg-white/10 text-white border border-white/15 shadow-sm'
+                            : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04] border border-transparent',
+                        ].join(' ')}
+                      >
+                        <span className="text-lg">{g.icon}</span>
+                        <span>{g.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          </div>
 
-          {/* ═══ STEP 2: Choose a vibe ═══ */}
-          <div className="mb-6">
-            <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
-              2. Choose a vibe
-            </div>
+              {/* Step 2: Style & Role Preset */}
+              <div className="mb-6">
+                <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                  2. Style &amp; Role Preset
+                </div>
 
-            {/* Tabs: Standard / Spicy */}
-            <div className="flex items-center gap-1 mb-3 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06] w-fit">
-              <button
-                onClick={() => setVibeTab('standard')}
-                className={[
-                  'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all',
-                  vibeTab === 'standard'
-                    ? 'bg-white/10 text-white shadow-sm'
-                    : 'text-white/40 hover:text-white/60',
-                ].join(' ')}
-              >
-                <Star size={12} />
-                Standard
-              </button>
-              {nsfwMode && (
-                <button
-                  onClick={() => setVibeTab('spicy')}
-                  className={[
-                    'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all',
-                    vibeTab === 'spicy'
-                      ? 'bg-gradient-to-r from-rose-500/20 to-orange-500/20 text-rose-300 border border-rose-500/20 shadow-sm'
-                      : 'text-white/40 hover:text-rose-300/60',
-                  ].join(' ')}
-                >
-                  <Flame size={12} />
-                  Romance &amp; Roleplay
-                  <span className="text-[8px] px-1 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">18+</span>
-                </button>
-              )}
-            </div>
-
-            {/* Vibe badge grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {vibes.map((v) => {
-                const active = selectedVibe === v.id
-                return (
+                {/* Tabs: Standard / Spicy */}
+                <div className="flex items-center gap-1 mb-3 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06] w-fit">
                   <button
-                    key={v.id}
-                    onClick={() => setSelectedVibe(active ? null : v.id)}
+                    onClick={() => setVibeTab('standard')}
                     className={[
-                      'flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-left transition-all border',
-                      active
-                        ? vibeTab === 'spicy'
-                          ? 'border-rose-500/30 bg-rose-500/10 text-rose-200 shadow-[0_0_10px_rgba(244,63,94,0.08)]'
-                          : 'border-purple-500/30 bg-purple-500/10 text-purple-200 shadow-[0_0_10px_rgba(168,85,247,0.08)]'
-                        : 'border-white/[0.06] bg-white/[0.02] text-white/50 hover:bg-white/[0.04] hover:border-white/10 hover:text-white/70',
+                      'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all',
+                      vibeTab === 'standard'
+                        ? 'bg-white/10 text-white shadow-sm'
+                        : 'text-white/40 hover:text-white/60',
                     ].join(' ')}
                   >
-                    <span className="text-base leading-none">{v.icon}</span>
-                    <span className="text-xs font-medium">{v.label}</span>
+                    <Star size={12} />
+                    Standard
                   </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* ═══ Optional custom prompt (progressive disclosure) ═══ */}
-          <div className="mb-6">
-            {!showCustomPrompt ? (
-              <button
-                onClick={() => setShowCustomPrompt(true)}
-                className="flex items-center gap-2 text-white/25 hover:text-white/50 text-xs font-medium transition-colors"
-              >
-                <Plus size={14} />
-                Add custom text prompt (Optional)
-              </button>
-            ) : (
-              <div className="animate-fadeSlideIn">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-[10px] text-white/40 font-semibold uppercase tracking-wider">
-                    Custom prompt (optional)
-                  </div>
-                  <button
-                    onClick={() => { setShowCustomPrompt(false); setCustomPrompt('') }}
-                    className="text-white/25 hover:text-white/50 transition-colors"
-                  >
-                    <X size={12} />
-                  </button>
+                  {nsfwMode && (
+                    <button
+                      onClick={() => setVibeTab('spicy')}
+                      className={[
+                        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all',
+                        vibeTab === 'spicy'
+                          ? 'bg-gradient-to-r from-rose-500/20 to-orange-500/20 text-rose-300 border border-rose-500/20 shadow-sm'
+                          : 'text-white/40 hover:text-rose-300/60',
+                      ].join(' ')}
+                    >
+                      <Flame size={12} />
+                      Romance &amp; Roleplay
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">18+</span>
+                    </button>
+                  )}
                 </div>
-                <div className={[
-                  'flex items-center gap-2 px-4 py-3 rounded-2xl border transition-all',
-                  'bg-white/[0.04] focus-within:bg-white/[0.06]',
-                  'border-white/10 focus-within:border-purple-500/40 focus-within:ring-1 focus-within:ring-purple-500/20',
-                ].join(' ')}>
-                  <input
-                    value={customPrompt}
-                    onChange={(e) => setCustomPrompt(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && canGenerate) { e.preventDefault(); onGenerate() }
-                    }}
-                    placeholder='Add details: "wearing a red scarf, outdoor setting"...'
-                    className="flex-1 bg-transparent text-white text-sm placeholder:text-white/20 focus:outline-none"
-                  />
+
+                {/* Style badge grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {charStyles.map((s) => {
+                    const active = selectedStyle === s.id
+                    return (
+                      <button
+                        key={s.id}
+                        onClick={() => setSelectedStyle(active ? null : s.id)}
+                        className={[
+                          'flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-left transition-all border',
+                          active
+                            ? vibeTab === 'spicy'
+                              ? 'border-rose-500/30 bg-rose-500/10 text-rose-200 shadow-[0_0_10px_rgba(244,63,94,0.08)]'
+                              : 'border-purple-500/30 bg-purple-500/10 text-purple-200 shadow-[0_0_10px_rgba(168,85,247,0.08)]'
+                            : 'border-white/[0.06] bg-white/[0.02] text-white/50 hover:bg-white/[0.04] hover:border-white/10 hover:text-white/70',
+                        ].join(' ')}
+                      >
+                        <span className="text-base leading-none">{s.icon}</span>
+                        <span className="text-xs font-medium">{s.label}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
-            )}
-          </div>
+
+              {/* Step 3: Character Description (Identity Anchor) */}
+              <div className="mb-6">
+                <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                  3. Character Description
+                  <span className="text-white/20 normal-case tracking-normal font-normal ml-1.5">(Your Identity Anchor)</span>
+                </div>
+                <div className={[
+                  'rounded-2xl border transition-all',
+                  'bg-white/[0.04] focus-within:bg-white/[0.06]',
+                  characterDescription
+                    ? 'border-purple-500/20 focus-within:border-purple-500/40 focus-within:ring-1 focus-within:ring-purple-500/20'
+                    : 'border-white/10 focus-within:border-purple-500/40 focus-within:ring-1 focus-within:ring-purple-500/20',
+                ].join(' ')}>
+                  <textarea
+                    value={characterDescription}
+                    onChange={(e) => setCharacterDescription(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canGenerate) { e.preventDefault(); onGenerate() }
+                    }}
+                    placeholder="Select a gender and style above to auto-generate your character description, or type your own..."
+                    className="w-full bg-transparent text-white text-sm p-4 resize-none placeholder:text-white/20 focus:outline-none leading-relaxed"
+                    rows={3}
+                  />
+                </div>
+                <p className="text-[10px] text-white/20 mt-1.5 italic">
+                  Auto-filled based on your choices. Edit to lock in exact details!
+                </p>
+              </div>
+            </>
+          ) : (
+            /* ═══════════ UPLOAD + VIBES (Reference / Face+Style modes) ═══════════ */
+            <>
+              {/* Step 1: Upload a face */}
+              <div className="mb-6">
+                <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                  1. Upload a face
+                </div>
+                <div className={[
+                  'flex items-center gap-3 px-4 py-3 rounded-2xl border transition-all',
+                  'bg-white/[0.04] border-white/10',
+                  referencePreview ? 'border-purple-500/30' : 'hover:border-white/15',
+                ].join(' ')}>
+                  {referencePreview ? (
+                    <div className="relative flex-shrink-0">
+                      <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-purple-500/40">
+                        <img src={referencePreview} alt="Reference" className="w-full h-full object-cover" />
+                      </div>
+                      <button
+                        onClick={handleRemoveReference}
+                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500/80 flex items-center justify-center text-white hover:bg-red-500 transition-colors"
+                        aria-label="Remove reference"
+                      >
+                        <X size={8} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-white/20 hover:text-white/50 hover:bg-white/5 transition-all border border-dashed border-white/10"
+                      title="Upload a reference photo"
+                    >
+                      <Camera size={18} />
+                    </button>
+                  )}
+                  <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileUpload(f); e.target.value = '' }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    {referencePreview ? (
+                      <span className="text-sm text-white/60">Reference photo attached</span>
+                    ) : (
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-sm text-white/25 hover:text-white/40 transition-colors cursor-pointer text-left"
+                      >
+                        Click to upload a reference photo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 2: Choose a vibe */}
+              <div className="mb-6">
+                <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                  2. Choose a vibe
+                </div>
+
+                {/* Tabs: Standard / Spicy */}
+                <div className="flex items-center gap-1 mb-3 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06] w-fit">
+                  <button
+                    onClick={() => setVibeTab('standard')}
+                    className={[
+                      'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all',
+                      vibeTab === 'standard'
+                        ? 'bg-white/10 text-white shadow-sm'
+                        : 'text-white/40 hover:text-white/60',
+                    ].join(' ')}
+                  >
+                    <Star size={12} />
+                    Standard
+                  </button>
+                  {nsfwMode && (
+                    <button
+                      onClick={() => setVibeTab('spicy')}
+                      className={[
+                        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all',
+                        vibeTab === 'spicy'
+                          ? 'bg-gradient-to-r from-rose-500/20 to-orange-500/20 text-rose-300 border border-rose-500/20 shadow-sm'
+                          : 'text-white/40 hover:text-rose-300/60',
+                      ].join(' ')}
+                    >
+                      <Flame size={12} />
+                      Romance &amp; Roleplay
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">18+</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Vibe badge grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {vibes.map((v) => {
+                    const active = selectedVibe === v.id
+                    return (
+                      <button
+                        key={v.id}
+                        onClick={() => setSelectedVibe(active ? null : v.id)}
+                        className={[
+                          'flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-left transition-all border',
+                          active
+                            ? vibeTab === 'spicy'
+                              ? 'border-rose-500/30 bg-rose-500/10 text-rose-200 shadow-[0_0_10px_rgba(244,63,94,0.08)]'
+                              : 'border-purple-500/30 bg-purple-500/10 text-purple-200 shadow-[0_0_10px_rgba(168,85,247,0.08)]'
+                            : 'border-white/[0.06] bg-white/[0.02] text-white/50 hover:bg-white/[0.04] hover:border-white/10 hover:text-white/70',
+                        ].join(' ')}
+                      >
+                        <span className="text-base leading-none">{v.icon}</span>
+                        <span className="text-xs font-medium">{v.label}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Optional custom prompt (progressive disclosure) */}
+              <div className="mb-6">
+                {!showCustomPrompt ? (
+                  <button
+                    onClick={() => setShowCustomPrompt(true)}
+                    className="flex items-center gap-2 text-white/25 hover:text-white/50 text-xs font-medium transition-colors"
+                  >
+                    <Plus size={14} />
+                    Add custom text prompt (Optional)
+                  </button>
+                ) : (
+                  <div className="animate-fadeSlideIn">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[10px] text-white/40 font-semibold uppercase tracking-wider">
+                        Custom prompt (optional)
+                      </div>
+                      <button
+                        onClick={() => { setShowCustomPrompt(false); setCustomPrompt('') }}
+                        className="text-white/25 hover:text-white/50 transition-colors"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                    <div className={[
+                      'flex items-center gap-2 px-4 py-3 rounded-2xl border transition-all',
+                      'bg-white/[0.04] focus-within:bg-white/[0.06]',
+                      'border-white/10 focus-within:border-purple-500/40 focus-within:ring-1 focus-within:ring-purple-500/20',
+                    ].join(' ')}>
+                      <input
+                        value={customPrompt}
+                        onChange={(e) => setCustomPrompt(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && canGenerate) { e.preventDefault(); onGenerate() }
+                        }}
+                        placeholder='Add details: "wearing a red scarf, outdoor setting"...'
+                        className="flex-1 bg-transparent text-white text-sm placeholder:text-white/20 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           {/* ═══ Generate Button + Count ═══ */}
           <div className="flex items-center justify-center gap-3 mb-8">
@@ -600,7 +769,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
               <div className={`grid gap-3 ${gen.result.results.length === 1 ? 'grid-cols-1 max-w-xs mx-auto' : 'grid-cols-2 sm:grid-cols-4'}`}>
                 {gen.result.results.map((item, i) => {
                   const imgUrl = item.url?.startsWith('http') ? item.url : `${(backendUrl || '').replace(/\/+$/, '')}${item.url}`
-                  const blurred = isSpicyVibe && !showNsfw
+                  const blurred = isSpicyContent && !showNsfw
                   return (
                     <div key={i}
                       className="group relative rounded-xl overflow-hidden border border-white/[0.06] bg-white/[0.02] hover:border-white/15 transition-all cursor-pointer"
@@ -649,7 +818,11 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
             <div className="flex flex-col items-center justify-center py-16 text-white/15">
               <ImageIcon size={48} strokeWidth={1} />
               <p className="mt-4 text-sm text-white/30">Your avatars will appear here</p>
-              <p className="mt-1 text-[11px] text-white/15">Pick a vibe and click Generate to get started</p>
+              <p className="mt-1 text-[11px] text-white/15">
+                {mode === 'studio_random'
+                  ? 'Choose a gender and style, then click Generate'
+                  : 'Pick a vibe and click Generate to get started'}
+              </p>
             </div>
           )}
 
