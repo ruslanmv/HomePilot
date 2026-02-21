@@ -302,8 +302,8 @@ export function AvatarViewer({
       {/* Middle section: flex-grow to fill between header and wardrobe */}
       <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
 
-        {/* ──────── LEFT PANEL: The Stage ──────── */}
-        <div className="flex-1 min-h-0 flex flex-col px-5 py-3 gap-3 overflow-hidden">
+        {/* ──────── LEFT PANEL: The Stage (constrained ~48% for RPG feel) ──────── */}
+        <div className="w-full md:w-[48%] md:flex-shrink-0 min-h-0 flex flex-col px-5 py-3 gap-3 overflow-hidden">
               {/* Toggle tabs: Anchor Face ↔ Latest Outfit */}
               <div className="flex items-center p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                 <button
@@ -590,8 +590,9 @@ export function AvatarViewer({
               </div>
             </div>
 
-            {/* ──────── RIGHT PANEL: Outfit Studio (Controls Only) ──────── */}
-            <div className="w-full md:w-[380px] flex-shrink-0 overflow-y-auto scrollbar-hide px-5 py-3 border-l border-white/[0.06] space-y-4">
+            {/* ──────── RIGHT PANEL: Outfit Studio (expands to fill) ──────── */}
+            <div className="w-full md:flex-1 overflow-y-auto scrollbar-hide px-5 py-3 border-l border-white/[0.06]">
+              <div className="max-w-md space-y-4">
               {/* Panel header */}
               <div>
                 <div className="flex items-center justify-between">
@@ -734,6 +735,7 @@ export function AvatarViewer({
                   <span>Oops, something went wrong. Please try again.</span>
                 </div>
               )}
+              </div>{/* /max-w-md */}
             </div>
           </div>
 
