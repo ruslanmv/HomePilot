@@ -93,7 +93,10 @@ export function AvatarLandingPage({
   onGenerateOutfits,
 }: AvatarLandingPageProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
-  const [showNsfw, setShowNsfw] = useState(false)
+  // Auto-show NSFW content when Spice Mode is enabled globally
+  const [showNsfw, setShowNsfw] = useState(() => {
+    try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false }
+  })
 
   // Only show root characters (no parentId) — outfits live inside the Character Sheet
   const rootCharacters = useMemo(() => items.filter((i) => !i.parentId), [items])

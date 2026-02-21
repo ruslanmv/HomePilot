@@ -56,26 +56,27 @@ export interface AvatarVibePreset {
   category: VibeCategory
 }
 
-/** Standard vibes — safe for any audience */
+/** Standard vibes — safe for any audience.
+ *  All prompts enforce: front-facing, looking at camera, single person, portrait framing. */
 export const AVATAR_VIBE_PRESETS: AvatarVibePreset[] = [
   // Standard
-  { id: 'headshot',  label: 'Headshot',  icon: '\uD83D\uDC54', prompt: 'professional studio headshot, highly detailed, 8k resolution, soft lighting, clean background', category: 'standard' },
-  { id: 'cinematic', label: 'Cinematic', icon: '\uD83C\uDFAC', prompt: 'cinematic portrait, dramatic lighting, movie still, shallow depth of field, moody atmosphere', category: 'standard' },
-  { id: 'artistic',  label: 'Artistic',  icon: '\uD83C\uDFA8', prompt: 'artistic portrait, oil painting style, creative lighting, fine art, gallery quality', category: 'standard' },
-  { id: 'cyberpunk', label: 'Cyberpunk', icon: '\uD83D\uDE80', prompt: 'cyberpunk portrait, neon lights, futuristic, sci-fi, dark city background, glowing accents', category: 'standard' },
-  { id: 'anime',     label: 'Anime',     icon: '\uD83C\uDF38', prompt: 'anime style portrait, clean lines, vibrant colors, manga aesthetic, cel shading', category: 'standard' },
-  { id: 'polaroid',  label: 'Polaroid',  icon: '\uD83D\uDCF8', prompt: 'polaroid photo, vintage filter, candid shot, natural lighting, nostalgic warm tones', category: 'standard' },
-  { id: 'sketch',    label: 'Sketch',    icon: '\u270F\uFE0F', prompt: 'detailed pencil sketch portrait, artistic hatching, monochrome, fine graphite drawing', category: 'standard' },
-  { id: 'fantasy',   label: 'Fantasy',   icon: '\uD83C\uDFB2', prompt: 'fantasy portrait, magical, ethereal lighting, mystical background, enchanted atmosphere', category: 'standard' },
+  { id: 'headshot',  label: 'Headshot',  icon: '\uD83D\uDC54', prompt: 'professional studio headshot, single person, front-facing, looking at camera, highly detailed, 8k resolution, soft lighting, clean background', category: 'standard' },
+  { id: 'cinematic', label: 'Cinematic', icon: '\uD83C\uDFAC', prompt: 'cinematic portrait of a single person, front-facing, looking at camera, dramatic lighting, movie still, shallow depth of field, moody atmosphere', category: 'standard' },
+  { id: 'artistic',  label: 'Artistic',  icon: '\uD83C\uDFA8', prompt: 'artistic portrait of a single person, front-facing, looking at camera, oil painting style, creative lighting, fine art, gallery quality', category: 'standard' },
+  { id: 'cyberpunk', label: 'Cyberpunk', icon: '\uD83D\uDE80', prompt: 'cyberpunk portrait of a single person, front-facing, looking at camera, neon lights, futuristic, sci-fi, dark city background, glowing accents', category: 'standard' },
+  { id: 'anime',     label: 'Anime',     icon: '\uD83C\uDF38', prompt: 'anime style portrait of a single person, front-facing, looking at viewer, clean lines, vibrant colors, manga aesthetic, cel shading', category: 'standard' },
+  { id: 'polaroid',  label: 'Polaroid',  icon: '\uD83D\uDCF8', prompt: 'polaroid photo portrait of a single person, front-facing, looking at camera, vintage filter, natural lighting, nostalgic warm tones', category: 'standard' },
+  { id: 'sketch',    label: 'Sketch',    icon: '\u270F\uFE0F', prompt: 'detailed pencil sketch portrait of a single person, front-facing, looking at viewer, artistic hatching, monochrome, fine graphite drawing', category: 'standard' },
+  { id: 'fantasy',   label: 'Fantasy',   icon: '\uD83C\uDFB2', prompt: 'fantasy portrait of a single person, front-facing, looking at camera, magical, ethereal lighting, mystical background, enchanted atmosphere', category: 'standard' },
   // Spicy (18+) — only shown when NSFW mode is on
-  { id: 'girlfriend',   label: 'Girlfriend',   icon: '\uD83D\uDC96', prompt: 'girlfriend POV, intimate eye contact, casual home setting, warm lighting, romantic mood, loving smile', category: 'spicy' },
-  { id: 'spouse',       label: 'Spouse',       icon: '\uD83D\uDC8D', prompt: 'intimate couple POV, loving gaze, home setting, natural light, romantic and tender', category: 'spicy' },
-  { id: 'companion',    label: 'Companion',    icon: '\uD83E\uDD1D', prompt: 'close companion portrait, soft smile, cozy setting, warm atmosphere, gentle expression', category: 'spicy' },
-  { id: 'fan_service',  label: 'Fan Service',  icon: '\uD83C\uDF36\uFE0F', prompt: 'fan service pose, playful expression, fashionable revealing outfit, studio lighting, alluring', category: 'spicy' },
-  { id: 'boudoir',      label: 'Boudoir',      icon: '\uD83D\uDC8B', prompt: 'boudoir portrait, elegant lingerie, soft studio lighting, sensual pose, intimate setting', category: 'spicy' },
-  { id: 'dominant',     label: 'Dominant',     icon: '\u26D3\uFE0F', prompt: 'confident dominant pose, dark aesthetic, dramatic lighting, leather accents, powerful expression', category: 'spicy' },
-  { id: 'therapist',    label: 'Therapist',    icon: '\uD83E\uDE7A', prompt: 'professional yet intimate setting, empathetic expression, soft lighting, warm and approachable', category: 'spicy' },
-  { id: 'fantasy_plus', label: 'Fantasy+',     icon: '\u2728',       prompt: 'fantasy costume, exotic and daring, mystical setting, alluring pose, magical lighting', category: 'spicy' },
+  { id: 'girlfriend',   label: 'Girlfriend',   icon: '\uD83D\uDC96', prompt: 'solo portrait, girlfriend POV, single person, front-facing, intimate eye contact, casual home setting, warm lighting, romantic mood, loving smile', category: 'spicy' },
+  { id: 'spouse',       label: 'Spouse',       icon: '\uD83D\uDC8D', prompt: 'solo intimate portrait, single person, front-facing, loving gaze at camera, home setting, natural light, romantic and tender expression', category: 'spicy' },
+  { id: 'companion',    label: 'Companion',    icon: '\uD83E\uDD1D', prompt: 'solo close-up portrait, single person, front-facing, soft smile, looking at camera, cozy setting, warm atmosphere, gentle expression', category: 'spicy' },
+  { id: 'fan_service',  label: 'Fan Service',  icon: '\uD83C\uDF36\uFE0F', prompt: 'solo portrait, single person, front-facing, fan service pose, playful expression, looking at camera, fashionable revealing outfit, studio lighting, alluring', category: 'spicy' },
+  { id: 'boudoir',      label: 'Boudoir',      icon: '\uD83D\uDC8B', prompt: 'solo boudoir portrait, single person, front-facing, looking at camera, elegant lingerie, soft studio lighting, sensual pose, intimate setting', category: 'spicy' },
+  { id: 'dominant',     label: 'Dominant',     icon: '\u26D3\uFE0F', prompt: 'solo portrait, single person, front-facing, confident dominant pose, looking at camera, dark aesthetic, dramatic lighting, leather accents, powerful expression', category: 'spicy' },
+  { id: 'therapist',    label: 'Therapist',    icon: '\uD83E\uDE7A', prompt: 'solo portrait, single person, front-facing, looking at camera, professional yet intimate setting, empathetic expression, soft lighting, warm and approachable', category: 'spicy' },
+  { id: 'fantasy_plus', label: 'Fantasy+',     icon: '\u2728',       prompt: 'solo fantasy portrait, single person, front-facing, looking at camera, exotic daring costume, mystical setting, alluring pose, magical lighting', category: 'spicy' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -122,61 +123,62 @@ export function buildCharacterPrompt(gender: CharacterGender, preset: CharacterS
 
 export const CHARACTER_STYLE_PRESETS: CharacterStylePreset[] = [
   // ── Standard ──
+  // All templates enforce: single person, front-facing, looking at camera
   {
     id: 'executive',
     label: 'Executive',
     icon: '\uD83D\uDCBC',
     category: 'standard',
-    promptTemplate: 'A sophisticated {gender} executive with sharp facial features, professional attire, confident expression, impeccable grooming, clean studio lighting, highly detailed portrait, 8k resolution',
+    promptTemplate: 'Solo portrait of a single {gender} executive, front-facing, looking at camera, sharp facial features, professional attire, confident expression, impeccable grooming, clean studio lighting, highly detailed, 8k resolution',
   },
   {
     id: 'elegant',
     label: 'Elegant',
     icon: '\uD83C\uDF77',
     category: 'standard',
-    promptTemplate: 'An elegant {gender} {noun} with refined graceful features, luxurious evening attire, soft golden lighting, haute couture aesthetic, poised expression, cinematic portrait',
+    promptTemplate: 'Solo portrait of a single elegant {gender} {noun}, front-facing, looking at camera, refined graceful features, luxurious evening attire, soft golden lighting, haute couture aesthetic, poised expression, cinematic portrait',
   },
   {
     id: 'romantic',
     label: 'Romantic',
     icon: '\uD83C\uDF39',
     category: 'standard',
-    promptTemplate: 'A {gender} {noun} with a warm romantic aesthetic, soft delicate features, dreamy expression, gentle warm lighting, natural beauty, intimate close-up portrait',
+    promptTemplate: 'Solo close-up portrait of a single {gender} {noun}, front-facing, looking at camera, warm romantic aesthetic, soft delicate features, dreamy expression, gentle warm lighting, natural beauty',
   },
   {
     id: 'casual_char',
     label: 'Casual',
     icon: '\u2615',
     category: 'standard',
-    promptTemplate: 'A relaxed {gender} {noun} in casual everyday style, natural candid expression, comfortable modern outfit, warm natural lighting, authentic portrait feel',
+    promptTemplate: 'Solo portrait of a single relaxed {gender} {noun}, front-facing, looking at camera, casual everyday style, natural candid expression, comfortable modern outfit, warm natural lighting',
   },
   {
     id: 'fantasy_char',
     label: 'Fantasy',
     icon: '\u2694\uFE0F',
     category: 'standard',
-    promptTemplate: 'A {gender} fantasy character with striking mystical features, elaborate ornate armor or costume, ethereal magical lighting, enchanted atmosphere, epic detailed portrait',
+    promptTemplate: 'Solo portrait of a single {gender} fantasy character, front-facing, looking at camera, striking mystical features, elaborate ornate armor or costume, ethereal magical lighting, enchanted atmosphere, epic detailed',
   },
   {
     id: 'scifi',
     label: 'Sci-Fi',
     icon: '\uD83D\uDE80',
     category: 'standard',
-    promptTemplate: 'A {gender} character in a futuristic sci-fi setting, sleek cybernetic enhancements, neon accent lighting, advanced technology backdrop, cinematic detailed portrait',
+    promptTemplate: 'Solo portrait of a single {gender} character, front-facing, looking at camera, futuristic sci-fi setting, sleek cybernetic enhancements, neon accent lighting, advanced technology backdrop, cinematic detailed',
   },
   {
     id: 'edgy',
     label: 'Edgy',
     icon: '\uD83D\uDD76\uFE0F',
     category: 'standard',
-    promptTemplate: 'A {gender} {noun} with an edgy rebellious aesthetic, dark alternative clothing, sharp angular features, dramatic shadows, urban backdrop, moody cinematic lighting',
+    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, edgy rebellious aesthetic, dark alternative clothing, sharp angular features, dramatic shadows, urban backdrop, moody cinematic lighting',
   },
   {
     id: 'soft',
     label: 'Soft',
     icon: '\uD83C\uDF38',
     category: 'standard',
-    promptTemplate: 'A {gender} {noun} with soft delicate features, gentle ethereal expression, pastel tones, dreamy atmosphere, natural beauty, soft diffused lighting, studio portrait',
+    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, soft delicate features, gentle ethereal expression, pastel tones, dreamy atmosphere, natural beauty, soft diffused lighting',
   },
   // ── Spicy (18+) ──
   {
@@ -184,56 +186,56 @@ export const CHARACTER_STYLE_PRESETS: CharacterStylePreset[] = [
     label: 'Girlfriend',
     icon: '\uD83D\uDC96',
     category: 'spicy',
-    promptTemplate: 'A captivating {gender} {noun} in a girlfriend POV, intimate eye contact, casual home setting, warm soft lighting, romantic mood, loving playful smile, close-up portrait',
+    promptTemplate: 'Solo portrait of a single captivating {gender} {noun}, front-facing, intimate eye contact with camera, girlfriend POV, casual home setting, warm soft lighting, romantic mood, loving playful smile, close-up',
   },
   {
     id: 'cb_spouse',
     label: 'Spouse',
     icon: '\uD83D\uDC8D',
     category: 'spicy',
-    promptTemplate: 'A {gender} {noun} in an intimate spouse perspective, loving tender gaze, cozy home setting, natural soft light, romantic vulnerable expression, close-up portrait',
+    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera with loving tender gaze, intimate setting, cozy home, natural soft light, romantic vulnerable expression, close-up',
   },
   {
     id: 'cb_companion',
     label: 'Companion',
     icon: '\uD83E\uDD1D',
     category: 'spicy',
-    promptTemplate: 'A {gender} companion with a soft inviting smile, cozy intimate setting, warm ambient atmosphere, gentle expression, comfortable casual attire, close-up portrait',
+    promptTemplate: 'Solo portrait of a single {gender} companion, front-facing, looking at camera, soft inviting smile, cozy intimate setting, warm ambient atmosphere, gentle expression, comfortable casual attire, close-up',
   },
   {
     id: 'cb_boudoir',
     label: 'Boudoir',
     icon: '\uD83D\uDC8B',
     category: 'spicy',
-    promptTemplate: 'A captivating {gender} {noun} in an intimate boudoir setting, soft romantic lighting, wearing delicate lace, sensual elegant pose, tasteful and artistic, portrait',
+    promptTemplate: 'Solo portrait of a single captivating {gender} {noun}, front-facing, looking at camera, intimate boudoir setting, soft romantic lighting, wearing delicate lace, sensual elegant pose, tasteful and artistic',
   },
   {
     id: 'cb_therapist',
     label: 'Therapist',
     icon: '\uD83E\uDE7A',
     category: 'spicy',
-    promptTemplate: 'A {gender} {noun} in a professional yet intimate setting, empathetic caring expression, soft warm lighting, approachable comforting presence, close-up portrait',
+    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, professional yet intimate setting, empathetic caring expression, soft warm lighting, approachable comforting presence, close-up',
   },
   {
     id: 'cb_dominant',
     label: 'Dominant',
     icon: '\u26D3\uFE0F',
     category: 'spicy',
-    promptTemplate: 'A {gender} {noun} with a commanding dominant presence, intense piercing gaze, cinematic moody lighting, dark aesthetic, leather accents, powerful confident expression, portrait',
+    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, commanding dominant presence, intense piercing gaze, cinematic moody lighting, dark aesthetic, leather accents, powerful confident expression',
   },
   {
     id: 'cb_fan_service',
     label: 'Fan Service',
     icon: '\uD83C\uDF36\uFE0F',
     category: 'spicy',
-    promptTemplate: 'A {gender} {noun} in a playful fan service pose, flirtatious expression, fashionable revealing outfit, studio lighting, alluring confident energy, portrait',
+    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, playful fan service pose, flirtatious expression, fashionable revealing outfit, studio lighting, alluring confident energy',
   },
   {
     id: 'cb_fantasy_plus',
     label: 'Fantasy+',
     icon: '\uD83C\uDFB2',
     category: 'spicy',
-    promptTemplate: 'A {gender} {noun} in an exotic daring fantasy costume, mystical enchanted setting, alluring seductive pose, magical ethereal lighting, detailed portrait',
+    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, exotic daring fantasy costume, mystical enchanted setting, alluring pose, magical ethereal lighting, detailed',
   },
 ]
 

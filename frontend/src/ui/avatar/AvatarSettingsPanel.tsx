@@ -140,7 +140,7 @@ export function AvatarSettingsPanel({
           {/* Slide-out drawer from right */}
           <div className="fixed top-0 right-0 bottom-0 w-full max-w-sm bg-[#111111] border-l border-white/10 z-50 flex flex-col animate-slideInRight">
             {/* Drawer header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
               <div>
                 <h3 className="text-sm font-semibold text-white">Advanced Settings</h3>
                 <p className="text-[10px] text-white/35 mt-0.5">
@@ -173,7 +173,7 @@ export function AvatarSettingsPanel({
                     'w-full flex items-start gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
                     settings.checkpointSource === 'recommended'
                       ? 'bg-purple-500/10 border border-purple-500/30 ring-1 ring-purple-500/10'
-                      : 'border border-white/8 hover:bg-white/[0.03] hover:border-white/15',
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
                   ].join(' ')}
                 >
                   <div className="mt-0.5">
@@ -214,7 +214,7 @@ export function AvatarSettingsPanel({
                         className={[
                           'w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-all',
                           settings.recommendedCheckpointId === ckpt.id
-                            ? 'bg-white/8 border border-white/15'
+                            ? 'bg-white/[0.06] border border-white/[0.10]'
                             : 'border border-transparent hover:bg-white/[0.04]',
                         ].join(' ')}
                       >
@@ -241,7 +241,7 @@ export function AvatarSettingsPanel({
                     'w-full flex items-start gap-3 px-4 py-3.5 rounded-xl text-left transition-all',
                     settings.checkpointSource === 'global'
                       ? 'bg-blue-500/10 border border-blue-500/30 ring-1 ring-blue-500/10'
-                      : 'border border-white/8 hover:bg-white/[0.03] hover:border-white/15',
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
                   ].join(' ')}
                 >
                   <div className="mt-0.5">
@@ -283,7 +283,7 @@ export function AvatarSettingsPanel({
               </div>
 
               {/* Character Description toggle */}
-              <div className="border-t border-white/8 pt-5">
+              <div className="border-t border-white/[0.06] pt-5">
                 <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">
                   Designer Options
                 </div>
@@ -301,7 +301,7 @@ export function AvatarSettingsPanel({
                     'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all',
                     settings.showCharacterDescription
                       ? 'bg-purple-500/10 border border-purple-500/30'
-                      : 'border border-white/8 hover:bg-white/[0.03] hover:border-white/15',
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
                   ].join(' ')}
                 >
                   <FileText
@@ -329,7 +329,7 @@ export function AvatarSettingsPanel({
             </div>
 
             {/* Drawer footer */}
-            <div className="px-5 py-4 border-t border-white/8">
+            <div className="px-5 py-4 border-t border-white/[0.06]">
               <button
                 onClick={() => setOpen(false)}
                 className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-sm font-medium text-white/80 transition-colors"

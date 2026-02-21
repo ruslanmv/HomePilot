@@ -101,7 +101,8 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const [packInstallError, setPackInstallError] = useState<string | null>(null)
 
   // Wizard state (vibes — used for reference/faceswap modes)
-  const [selectedVibe, setSelectedVibe] = useState<string | null>(null)
+  // Default to 'headshot' so users always get a portrait (not castles/landscapes)
+  const [selectedVibe, setSelectedVibe] = useState<string | null>('headshot')
   const [vibeTab, setVibeTab] = useState<'standard' | 'spicy'>('standard')
   const [showCustomPrompt, setShowCustomPrompt] = useState(false)
   const [customPrompt, setCustomPrompt] = useState('')
@@ -116,8 +117,8 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' | 'info' } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
 
-  // Gallery NSFW reveal
-  const [showNsfw, setShowNsfw] = useState(false)
+  // Gallery NSFW reveal — auto-show when Spice Mode is enabled globally
+  const [showNsfw, setShowNsfw] = useState(nsfwMode)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -139,7 +140,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
       setCharacterDescription(buildCharacterPrompt(selectedGender, style))
     } else if (selectedGender) {
       const word = selectedGender === 'neutral' ? 'An androgynous' : `A ${selectedGender}`
-      setCharacterDescription(`${word} character, highly detailed portrait, studio lighting, 8k resolution`)
+      setCharacterDescription(`Solo portrait of a single ${word} character, front-facing, looking at camera, highly detailed, studio lighting, 8k resolution`)
     }
   }, [mode, selectedGender, selectedStyle])
 
@@ -217,9 +218,12 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   // ---- Generate ----
   const onGenerate = useCallback(async () => {
     const checkpoint = resolveCheckpoint(avatarSettings, globalModelImages)
+    // Design Character builds a text prompt → use ComfyUI txt2img ('creative')
+    // instead of 'studio_random' (StyleGAN microservice that ignores prompts)
+    const apiMode = mode === 'studio_random' && effectivePrompt ? 'creative' : mode
     try {
       const result = await gen.run({
-        mode,
+        mode: apiMode,
         count,
         prompt: effectivePrompt || undefined,
         reference_image_url:
