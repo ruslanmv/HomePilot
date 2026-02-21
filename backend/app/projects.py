@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 # Imports from your existing structure
 from .llm import chat as llm_chat
 from .storage import add_message, get_recent
-from .config import UPLOAD_DIR
+from .config import UPLOAD_DIR, PUBLIC_BASE_URL
 
 # Import vectordb for RAG functionality
 try:
@@ -570,20 +570,30 @@ When the user asks you to perform an action that matches your capabilities, DO I
             char_desc = avatar_settings.get("character_prompt", "")
             base_outfit_desc = avatar_settings.get("outfit_prompt", p_style)
 
+            # Resolve backend-relative URLs (e.g. /comfy/view/...) to full
+            # absolute URLs so the LLM can output them and the chat renderer
+            # can display them.  Uses PUBLIC_BASE_URL or localhost fallback.
+            _img_base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
+            def _abs_img_url(url: str) -> str:
+                if not url or url.startswith("http://") or url.startswith("https://"):
+                    return url
+                return f"{_img_base}{url if url.startswith('/') else '/' + url}"
+
             # Base portraits
             for s in (pap.get("sets") or []):
                 for img in (s.get("images") or []):
                     url = img.get("url", "")
                     if not url:
                         continue
+                    full_url = _abs_img_url(url)
                     is_default = (img.get("id") == sel_image_id and
                                   (img.get("set_id", s.get("set_id", "")) == sel_set_id))
                     if is_default:
-                        default_photo_url = url
+                        default_photo_url = full_url
                     photo_catalog.append({
                         "label": "Default Look" if is_default else "Portrait",
                         "outfit": base_outfit_desc,
-                        "url": url,
+                        "url": full_url,
                         "default": is_default,
                     })
 
@@ -595,14 +605,15 @@ When the user asks you to perform an action that matches your capabilities, DO I
                     url = img.get("url", "")
                     if not url:
                         continue
+                    full_url = _abs_img_url(url)
                     is_default = (img.get("id") == sel_image_id and
                                   img.get("set_id", "") == sel_set_id)
                     if is_default:
-                        default_photo_url = url
+                        default_photo_url = full_url
                     photo_catalog.append({
                         "label": o_label,
                         "outfit": o_desc,
-                        "url": url,
+                        "url": full_url,
                         "default": is_default,
                     })
 

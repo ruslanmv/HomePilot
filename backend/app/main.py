@@ -82,7 +82,7 @@ from .capabilities import router as capabilities_router
 from .agentic.routes import router as agentic_router
 
 # Persona Phase 3 — production hardening (avatar durability, export/import)
-from .personas.avatar_assets import commit_persona_avatar
+from .personas.avatar_assets import commit_persona_avatar, commit_persona_image
 from .personas.export_import import export_persona_project, import_persona_package, preview_persona_package
 from .personas.dependency_checker import check_dependencies
 
@@ -2028,6 +2028,8 @@ async def create_project(data: ProjectCreateIn) -> JSONResponse:
         if result.get("project_type") == "persona":
             try:
                 appearance = dict(result.get("persona_appearance") or {})
+                project_root = UPLOAD_PATH / "projects" / result["id"]
+                dirty = False
 
                 # Skip if avatar already committed (idempotency guard)
                 if not appearance.get("selected_filename"):
@@ -2040,7 +2042,6 @@ async def create_project(data: ProjectCreateIn) -> JSONResponse:
                         )
 
                         # Commit: copy into project dir + generate thumbnail
-                        project_root = UPLOAD_PATH / "projects" / result["id"]
                         commit_result = commit_persona_avatar(
                             UPLOAD_PATH, project_root, source_filename,
                         )
@@ -2048,9 +2049,46 @@ async def create_project(data: ProjectCreateIn) -> JSONResponse:
                         # Persist the committed paths on the project
                         appearance["selected_filename"] = commit_result.selected_filename
                         appearance["selected_thumb_filename"] = commit_result.thumb_filename
-                        result = projects.update_project(
-                            result["id"], {"persona_appearance": appearance},
-                        )
+                        dirty = True
+
+                # ----- Commit ALL remaining /comfy/view/ images -----
+                # Walk sets[] and outfits[] and download/commit every
+                # /comfy/view/ image so they survive ComfyUI cleanup and
+                # are included in .hpersona exports.
+                for s in list(appearance.get("sets") or []):
+                    for img in (s.get("images") or []):
+                        url = img.get("url", "")
+                        if not url or not url.startswith("/comfy/view/"):
+                            continue
+                        try:
+                            fname = await _download_comfy_image(url, UPLOAD_PATH)
+                            rel = commit_persona_image(
+                                UPLOAD_PATH, project_root, fname, prefix="avatar",
+                            )
+                            img["url"] = f"/files/{rel}"
+                            dirty = True
+                        except Exception as img_err:
+                            print(f"[PERSONA] Commit set image skipped ({url}): {img_err}")
+
+                for outfit in list(appearance.get("outfits") or []):
+                    for img in (outfit.get("images") or []):
+                        url = img.get("url", "")
+                        if not url or not url.startswith("/comfy/view/"):
+                            continue
+                        try:
+                            fname = await _download_comfy_image(url, UPLOAD_PATH)
+                            rel = commit_persona_image(
+                                UPLOAD_PATH, project_root, fname, prefix="outfit",
+                            )
+                            img["url"] = f"/files/{rel}"
+                            dirty = True
+                        except Exception as img_err:
+                            print(f"[PERSONA] Commit outfit image skipped ({url}): {img_err}")
+
+                if dirty:
+                    result = projects.update_project(
+                        result["id"], {"persona_appearance": appearance},
+                    )
             except Exception as commit_err:
                 # Non-fatal — project creation succeeded, avatar commit
                 # can be retried later via POST /projects/{id}/persona/avatar/commit

@@ -56,8 +56,16 @@ function CodeBlock({ lang, raw }: { lang: string; raw: string }) {
  * - Safe by default (no raw HTML).
  * - Code blocks have header + language + copy button.
  */
-export function MessageMarkdown({ text, onImageClick }: { text: string; onImageClick?: (src: string) => void }) {
+export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: string; onImageClick?: (src: string) => void; backendUrl?: string }) {
   const normalized = useMemo(() => (text ?? '').replace(/\r\n/g, '\n'), [text])
+
+  /** Resolve backend-relative image paths (e.g. /comfy/view/...) to full URLs */
+  const resolveImgSrc = (src?: string): string | undefined => {
+    if (!src) return src
+    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:') || src.startsWith('blob:')) return src
+    if (backendUrl) return `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+    return src
+  }
 
   return (
     <div className="prose prose-invert max-w-none prose-p:my-2 prose-pre:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-hr:my-4 prose-blockquote:my-3">
@@ -106,15 +114,18 @@ export function MessageMarkdown({ text, onImageClick }: { text: string; onImageC
           thead: ({ children }) => <thead className="bg-white/5">{children}</thead>,
           th: ({ children }) => <th className="text-left px-3 py-2 font-semibold">{children}</th>,
           td: ({ children }) => <td className="px-3 py-2 border-t border-white/10">{children}</td>,
-          img: ({ src, alt }) => (
-            <img
-              src={src}
-              alt={alt || 'Photo'}
-              onClick={src ? () => onImageClick?.(src) : undefined}
-              className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
-              loading="lazy"
-            />
-          ),
+          img: ({ src, alt }) => {
+            const resolved = resolveImgSrc(src)
+            return (
+              <img
+                src={resolved}
+                alt={alt || 'Photo'}
+                onClick={resolved ? () => onImageClick?.(resolved) : undefined}
+                className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
+                loading="lazy"
+              />
+            )
+          },
           p: ({ children }) => <p className="leading-relaxed">{children}</p>,
         }}
       >

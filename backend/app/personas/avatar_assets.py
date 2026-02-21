@@ -99,3 +99,35 @@ def commit_persona_avatar(
     rel_avatar = str(avatar_path.relative_to(upload_root))
     rel_thumb = str(thumb_path.relative_to(upload_root))
     return AvatarCommitResult(selected_filename=rel_avatar, thumb_filename=rel_thumb)
+
+
+def commit_persona_image(
+    upload_root: Path,
+    project_root: Path,
+    source_filename: str,
+    prefix: str = "img",
+) -> str:
+    """
+    Copy a single generated image into the persona project's appearance folder.
+
+    Unlike ``commit_persona_avatar`` this does **not** generate a thumbnail —
+    it is used for batch siblings and outfit images that live alongside the
+    main avatar.
+
+    Returns the path relative to ``upload_root`` so ``/files/<path>`` serves it.
+    """
+    src_base = _safe_basename(source_filename)
+    src_path = upload_root / src_base
+    if not src_path.exists():
+        raise FileNotFoundError(f"Source image not found: {src_base}")
+
+    appearance_dir = project_root / "persona" / "appearance"
+    _ensure_dir(appearance_dir)
+
+    ext = src_path.suffix.lower() or ".png"
+    dest_name = f"{prefix}_{src_path.stem}{ext}"
+    dest_path = appearance_dir / dest_name
+
+    shutil.copy2(src_path, dest_path)
+
+    return str(dest_path.relative_to(upload_root))
