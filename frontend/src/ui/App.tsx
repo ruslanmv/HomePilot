@@ -884,7 +884,7 @@ function Sidebar({
           <NavItem icon={Mic} label="Voice" active={mode === 'voice'} shortcut="Ctrl+V" onClick={() => setMode('voice')} />
           <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} />
           <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} />
-          <NavItem icon={ImageIcon} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
+          <NavItem icon={PenLine} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
           <NavItem icon={Users} label="Avatar" active={mode === 'avatar'} onClick={() => setMode('avatar')} />
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} />
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} />
@@ -3558,6 +3558,15 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           <AvatarStudio
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
+            onSendToEdit={(imageUrl) => {
+              // Navigate to Edit mode — the EditTab will pick up the image
+              // via upload flow similar to handleEditFromViewer
+              setLightbox(null)
+              setMode('edit')
+              // Store the URL so EditTab can auto-load it
+              sessionStorage.setItem('homepilot_edit_from_avatar', imageUrl)
+            }}
+            onOpenLightbox={(url) => setLightbox(url)}
           />
         ) : mode === 'animate' ? (
           // Animate mode: Grok-style video generation gallery

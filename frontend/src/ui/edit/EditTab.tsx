@@ -229,6 +229,32 @@ export function EditTab({
     }
   }, [results])
 
+  // Auto-import image from Avatar Studio (via sessionStorage handoff)
+  useEffect(() => {
+    const avatarUrl = sessionStorage.getItem('homepilot_edit_from_avatar')
+    if (!avatarUrl || viewMode !== 'gallery') return
+
+    // Clear immediately to prevent re-processing
+    sessionStorage.removeItem('homepilot_edit_from_avatar')
+
+    // Fetch the image and upload it into an edit session
+    const importAvatar = async () => {
+      setBusy(true)
+      try {
+        const response = await fetch(avatarUrl)
+        const blob = await response.blob()
+        const filename = avatarUrl.split('/').pop() || 'avatar.png'
+        const file = new File([blob], filename, { type: blob.type || 'image/png' })
+        await handleUploadNew(file)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to import avatar from Avatar Studio')
+        setBusy(false)
+      }
+    }
+
+    importAvatar()
+  }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ==========================================================================
   // HELPERS
   // ==========================================================================
