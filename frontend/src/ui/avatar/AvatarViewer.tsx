@@ -13,7 +13,7 @@
  *   - Each outfit is tagged with its scenario for future filtering
  */
 
-import React, { useState, useMemo, useCallback } from 'react'
+import React, { useState, useMemo, useCallback, useEffect } from 'react'
 import {
   ChevronLeft,
   Shirt,
@@ -21,7 +21,6 @@ import {
   Download,
   UserPlus,
   Maximize2,
-  Wand2,
   Trash2,
   Clock,
   Copy,
@@ -34,7 +33,6 @@ import {
   Lock,
   Loader2,
   AlertTriangle,
-  X,
   Filter,
 } from 'lucide-react'
 
@@ -126,6 +124,18 @@ export function AvatarViewer({
   const [customPrompt, setCustomPrompt] = useState('')
   const [outfitCount, setOutfitCount] = useState(1)
   const [outfitCopiedSeed, setOutfitCopiedSeed] = useState<number | null>(null)
+
+  // Stage toggle: flip between anchor face and latest outfit
+  const [stageTab, setStageTab] = useState<'anchor' | 'outfit'>('anchor')
+  const [selectedResultIdx, setSelectedResultIdx] = useState(0)
+
+  // Auto-switch to Latest Outfit tab when new results arrive
+  useEffect(() => {
+    if (outfit.results.length > 0) {
+      setStageTab('outfit')
+      setSelectedResultIdx(0)
+    }
+  }, [outfit.results])
 
   const heroUrl = resolveUrl(item.url, backendUrl)
 
@@ -277,120 +287,261 @@ export function AvatarViewer({
       <div className="flex-1 overflow-y-auto min-h-0 scrollbar-hide">
         <div className="max-w-6xl mx-auto px-5 py-6">
 
-          {/* ═══ SPLIT PANEL: Left (Identity) + Right (Outfit Studio) ═══ */}
+          {/* ═══ SPLIT PANEL: The Stage (left) + Outfit Studio Controls (right) ═══ */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
 
-            {/* ──────── LEFT PANEL: Identity Anchor ──────── */}
+            {/* ──────── LEFT PANEL: The Stage ──────── */}
             <div className="space-y-4">
-              {/* Portrait frame */}
-              <div className="relative group">
-                <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-purple-500/20 via-transparent to-cyan-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
-                <div
-                  className="relative aspect-square rounded-2xl overflow-hidden border border-white/10 cursor-pointer bg-white/[0.02]"
-                  onClick={() => onOpenLightbox?.(heroUrl)}
+              {/* Toggle tabs: Anchor Face ↔ Latest Outfit */}
+              <div className="flex items-center p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                <button
+                  onClick={() => setStageTab('anchor')}
+                  className={[
+                    'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all',
+                    stageTab === 'anchor'
+                      ? 'bg-white/10 text-white shadow-sm'
+                      : 'text-white/35 hover:text-white/60',
+                  ].join(' ')}
                 >
-                  <img
-                    src={heroUrl}
-                    alt={item.prompt || 'Avatar portrait'}
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-                  />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <Maximize2 size={28} className="text-white/80" />
-                  </div>
-                </div>
+                  <Lock size={12} />
+                  Anchor Face
+                </button>
+                <button
+                  onClick={() => setStageTab('outfit')}
+                  className={[
+                    'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all',
+                    stageTab === 'outfit'
+                      ? 'bg-gradient-to-r from-cyan-600/80 to-blue-600/80 text-white shadow-sm'
+                      : 'text-white/35 hover:text-white/60',
+                  ].join(' ')}
+                >
+                  <Sparkles size={12} />
+                  Latest Outfit
+                  {outfit.results.length > 0 && (
+                    <span className="text-[9px] opacity-60">({outfit.results.length})</span>
+                  )}
+                </button>
               </div>
 
-              {/* Character info */}
+              {/* Stage display — one big image at a time */}
+              {stageTab === 'anchor' ? (
+                /* ─── Anchor Face ─── */
+                <div className="relative group">
+                  <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-purple-500/20 via-transparent to-cyan-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
+                  <div
+                    className="relative aspect-square rounded-2xl overflow-hidden border border-white/10 cursor-pointer bg-white/[0.02]"
+                    onClick={() => onOpenLightbox?.(heroUrl)}
+                  >
+                    <img
+                      src={heroUrl}
+                      alt={item.prompt || 'Avatar portrait'}
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <Maximize2 size={28} className="text-white/80" />
+                    </div>
+                  </div>
+                </div>
+              ) : outfit.loading && outfit.results.length === 0 ? (
+                /* ─── Loading skeleton ─── */
+                <div className="aspect-square rounded-2xl bg-white/[0.03] border border-white/[0.06] animate-pulse flex items-center justify-center">
+                  <Loader2 size={32} className="animate-spin text-white/15" />
+                </div>
+              ) : outfit.results.length > 0 ? (
+                /* ─── Latest outfit result (full size) ─── */
+                <div className="relative group animate-fadeSlideIn">
+                  <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-cyan-500/20 via-transparent to-blue-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
+                  <div
+                    className="relative aspect-square rounded-2xl overflow-hidden border border-cyan-500/15 cursor-pointer bg-white/[0.02]"
+                    onClick={() => onOpenLightbox?.(resolveUrl(outfit.results[selectedResultIdx].url, backendUrl))}
+                  >
+                    <img
+                      src={resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)}
+                      alt={`Outfit result ${selectedResultIdx + 1}`}
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <Maximize2 size={28} className="text-white/80" />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* ─── Empty outfit state ─── */
+                <div className="aspect-square rounded-2xl border-2 border-dashed border-white/[0.08] bg-white/[0.01] flex flex-col items-center justify-center gap-2">
+                  <Shirt size={32} className="text-white/15" />
+                  <span className="text-xs text-white/25">Generate an outfit to see it here</span>
+                </div>
+              )}
+
+              {/* Result thumbnail filmstrip (when multiple results) */}
+              {stageTab === 'outfit' && outfit.results.length > 1 && (
+                <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
+                  {outfit.results.map((r, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setSelectedResultIdx(i)}
+                      className={[
+                        'flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden border-2 transition-all',
+                        selectedResultIdx === i
+                          ? 'border-cyan-500/60 ring-1 ring-cyan-500/20'
+                          : 'border-white/10 hover:border-white/25',
+                      ].join(' ')}
+                    >
+                      <img src={resolveUrl(r.url, backendUrl)} alt={`Result ${i + 1}`} className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Metadata (context-sensitive) */}
               <div className="space-y-2">
-                {item.prompt && (
+                {stageTab === 'anchor' && item.prompt && (
                   <p className="text-sm text-white/60 leading-relaxed">
                     &ldquo;{item.prompt}&rdquo;
                   </p>
                 )}
                 <div className="flex items-center gap-3 text-[11px] text-white/35">
-                  <span className="flex items-center gap-1">
-                    <Clock size={11} />
-                    {formatTimeAgo(item.createdAt)}
-                  </span>
-                  {item.seed !== undefined && (
-                    <button
-                      onClick={handleCopySeed}
-                      className="flex items-center gap-1 font-mono hover:text-white/60 transition-colors"
-                      title="Copy seed"
-                    >
-                      {copiedSeed ? (
-                        <span className="flex items-center gap-1 text-green-400">
-                          <Check size={10} /> copied
-                        </span>
-                      ) : (
-                        <>
-                          Seed: {item.seed}
-                          <Copy size={9} />
-                        </>
+                  {stageTab === 'anchor' ? (
+                    <>
+                      <span className="flex items-center gap-1">
+                        <Clock size={11} />
+                        {formatTimeAgo(item.createdAt)}
+                      </span>
+                      {item.seed !== undefined && (
+                        <button
+                          onClick={handleCopySeed}
+                          className="flex items-center gap-1 font-mono hover:text-white/60 transition-colors"
+                          title="Copy seed"
+                        >
+                          {copiedSeed ? (
+                            <span className="flex items-center gap-1 text-green-400">
+                              <Check size={10} /> copied
+                            </span>
+                          ) : (
+                            <>
+                              Seed: {item.seed}
+                              <Copy size={9} />
+                            </>
+                          )}
+                        </button>
                       )}
-                    </button>
-                  )}
+                    </>
+                  ) : outfit.results.length > 0 ? (
+                    <>
+                      <span className="flex items-center gap-1">
+                        <Clock size={11} />
+                        Just now
+                      </span>
+                      {outfit.results[selectedResultIdx]?.seed !== undefined && (
+                        <button
+                          onClick={() => handleOutfitCopySeed(outfit.results[selectedResultIdx].seed!)}
+                          className="flex items-center gap-1 font-mono hover:text-white/60 transition-colors"
+                          title="Copy seed"
+                        >
+                          {outfitCopiedSeed === outfit.results[selectedResultIdx].seed ? (
+                            <span className="flex items-center gap-1 text-green-400">
+                              <Check size={10} /> copied
+                            </span>
+                          ) : (
+                            <>
+                              Seed: {outfit.results[selectedResultIdx].seed}
+                              <Copy size={9} />
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </>
+                  ) : null}
                 </div>
               </div>
 
-              {/* Persona badge */}
-              {item.personaProjectId && (
+              {/* Persona badge (anchor tab only) */}
+              {stageTab === 'anchor' && item.personaProjectId && (
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-purple-500/[0.08] border border-purple-500/15 text-purple-300 text-xs font-medium w-fit">
                   <UserPlus size={12} />
                   Linked to Persona
                 </div>
               )}
 
-              {/* File action buttons */}
+              {/* Action buttons (context-sensitive) */}
               <div className="flex flex-wrap gap-2 pt-1">
-                {onSaveAsPersonaAvatar && !item.personaProjectId && (
-                  <button
-                    onClick={() => onSaveAsPersonaAvatar(item)}
-                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-emerald-500/15 bg-emerald-500/[0.06] text-emerald-300 hover:bg-emerald-500/10 transition-all"
-                  >
-                    <UserPlus size={14} />
-                    Save Persona
-                  </button>
-                )}
-                {onSendToEdit && (
-                  <button
-                    onClick={() => onSendToEdit(heroUrl)}
-                    className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-purple-500/15 bg-purple-500/[0.06] text-purple-300 hover:bg-purple-500/10 transition-all"
-                  >
-                    <PenLine size={14} />
-                    Edit
-                  </button>
-                )}
-                <button
-                  onClick={() => {
-                    const a = document.createElement('a')
-                    a.href = heroUrl
-                    a.download = `avatar_${item.seed ?? item.id}.png`
-                    a.click()
-                  }}
-                  className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-white/[0.08] bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white/70 transition-all"
-                >
-                  <Download size={14} />
-                  Download
-                </button>
-                {onDeleteItem && (
-                  <button
-                    onClick={handleDelete}
-                    className={[
-                      'flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border transition-all',
-                      confirmDelete
-                        ? 'border-red-500/30 bg-red-500/15 text-red-300'
-                        : 'border-red-500/[0.08] bg-red-500/[0.04] text-red-400/50 hover:bg-red-500/[0.08] hover:text-red-400',
-                    ].join(' ')}
-                  >
-                    <Trash2 size={13} />
-                    {confirmDelete ? 'Confirm' : 'Delete'}
-                  </button>
-                )}
+                {stageTab === 'anchor' ? (
+                  <>
+                    {onSaveAsPersonaAvatar && !item.personaProjectId && (
+                      <button
+                        onClick={() => onSaveAsPersonaAvatar(item)}
+                        className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-emerald-500/15 bg-emerald-500/[0.06] text-emerald-300 hover:bg-emerald-500/10 transition-all"
+                      >
+                        <UserPlus size={14} />
+                        Save Persona
+                      </button>
+                    )}
+                    {onSendToEdit && (
+                      <button
+                        onClick={() => onSendToEdit(heroUrl)}
+                        className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-purple-500/15 bg-purple-500/[0.06] text-purple-300 hover:bg-purple-500/10 transition-all"
+                      >
+                        <PenLine size={14} />
+                        Edit
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        const a = document.createElement('a')
+                        a.href = heroUrl
+                        a.download = `avatar_${item.seed ?? item.id}.png`
+                        a.click()
+                      }}
+                      className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-white/[0.08] bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white/70 transition-all"
+                    >
+                      <Download size={14} />
+                      Download
+                    </button>
+                    {onDeleteItem && (
+                      <button
+                        onClick={handleDelete}
+                        className={[
+                          'flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border transition-all',
+                          confirmDelete
+                            ? 'border-red-500/30 bg-red-500/15 text-red-300'
+                            : 'border-red-500/[0.08] bg-red-500/[0.04] text-red-400/50 hover:bg-red-500/[0.08] hover:text-red-400',
+                        ].join(' ')}
+                      >
+                        <Trash2 size={13} />
+                        {confirmDelete ? 'Confirm' : 'Delete'}
+                      </button>
+                    )}
+                  </>
+                ) : outfit.results.length > 0 ? (
+                  <>
+                    {onSendToEdit && (
+                      <button
+                        onClick={() => onSendToEdit(resolveUrl(outfit.results[selectedResultIdx].url, backendUrl))}
+                        className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-purple-500/15 bg-purple-500/[0.06] text-purple-300 hover:bg-purple-500/10 transition-all"
+                      >
+                        <PenLine size={14} />
+                        Edit
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        const url = resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = `outfit_${outfit.results[selectedResultIdx].seed ?? selectedResultIdx}.png`
+                        a.click()
+                      }}
+                      className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-white/[0.08] bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white/70 transition-all"
+                    >
+                      <Download size={14} />
+                      Download
+                    </button>
+                  </>
+                ) : null}
               </div>
             </div>
 
-            {/* ──────── RIGHT PANEL: Outfit Studio ──────── */}
+            {/* ──────── RIGHT PANEL: Outfit Studio (Controls Only) ──────── */}
             <div className="space-y-5">
               {/* Panel header */}
               <div>
@@ -403,12 +554,20 @@ export function AvatarViewer({
                   </div>
                   <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.08] text-[10px] text-white/40 font-medium">
                     <Lock size={10} />
-                    Face locked to anchor
+                    Face locked
                   </div>
                 </div>
-                <p className="text-[11px] text-white/30 mt-2 ml-[42px]">
-                  Generate outfit variations — your face stays consistent
-                </p>
+              </div>
+
+              {/* Anchor Face mini-preview (always visible as context) */}
+              <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                <div className="w-10 h-10 rounded-lg overflow-hidden border border-white/10 flex-shrink-0">
+                  <img src={heroUrl} alt="Anchor face" className="w-full h-full object-cover" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[10px] text-white/40 font-medium">Identity Anchor</div>
+                  <div className="text-[11px] text-white/60 truncate">{item.prompt || 'Your character'}</div>
+                </div>
               </div>
 
               {/* 1. Choose a Scenario — Badge Grid */}
@@ -524,68 +683,6 @@ export function AvatarViewer({
                 <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-500/[0.08] border border-red-500/15 text-red-300 text-xs">
                   <AlertTriangle size={14} />
                   <span>Oops, something went wrong. Please try again.</span>
-                </div>
-              )}
-
-              {/* Outfit loading skeleton */}
-              {outfit.loading && outfit.results.length === 0 && (
-                <div className="grid grid-cols-2 gap-2">
-                  {Array.from({ length: outfitCount }).map((_, i) => (
-                    <div key={i} className="rounded-xl overflow-hidden border border-white/[0.06] bg-white/[0.02]">
-                      <div className="aspect-[2/3] bg-white/[0.03] animate-pulse flex items-center justify-center">
-                        <Loader2 size={18} className="animate-spin text-white/10" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Latest outfit results */}
-              {outfit.results.length > 0 && (
-                <div className="animate-fadeSlideIn">
-                  <div className="text-[10px] text-white/30 mb-2 font-semibold uppercase tracking-wider">
-                    Latest Results
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {outfit.results.map((r, i) => {
-                      const imgUrl = resolveUrl(r.url, backendUrl)
-                      return (
-                        <div
-                          key={i}
-                          className="group relative rounded-xl overflow-hidden border border-white/[0.06] hover:border-white/15 transition-all cursor-pointer"
-                          onClick={() => onOpenLightbox?.(imgUrl)}
-                        >
-                          <div className="aspect-[2/3] bg-white/[0.03] relative">
-                            <img src={imgUrl} alt={`Outfit ${i + 1}`} className="w-full h-full object-cover" loading="lazy" />
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5">
-                              {onSendToEdit && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); onSendToEdit(imgUrl) }}
-                                  className="p-1.5 bg-purple-500/30 backdrop-blur-sm rounded-lg text-purple-200 hover:bg-purple-500/50 transition-colors"
-                                  title="Edit"
-                                >
-                                  <PenLine size={13} />
-                                </button>
-                              )}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  const a = document.createElement('a')
-                                  a.href = imgUrl
-                                  a.download = `outfit_${r.seed ?? i}.png`
-                                  a.click()
-                                }}
-                                className="p-1.5 bg-white/10 backdrop-blur-sm rounded-lg text-white/80 hover:bg-white/20 transition-colors"
-                                title="Download"
-                              >
-                                <Download size={13} />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
                 </div>
               )}
             </div>
