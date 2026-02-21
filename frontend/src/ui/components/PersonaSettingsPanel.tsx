@@ -126,6 +126,14 @@ function fileUrl(backendUrl: string, rel?: string | null): string | null {
   return `${backendUrl}/files/${clean}`
 }
 
+/** Resolve an image URL — prepend backendUrl for backend-relative paths
+ *  like `/comfy/view/...` that come from Avatar Studio exports. */
+function resolveImgUrl(url: string, backendUrl: string): string {
+  if (!url) return url
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) return url
+  return `${backendUrl.replace(/\/+$/, '')}${url.startsWith('/') ? url : `/${url}`}`
+}
+
 let _imgCounter = 0
 function nextImageId(): string {
   return `pimg_${Date.now()}_${++_imgCounter}`
@@ -319,23 +327,30 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   // Total image count across base portraits + all outfits (for LV badge)
   const totalImageCount = allImages.length + outfits.reduce((n, o) => n + o.images.length, 0)
 
-  // Find selected image URL — must search base portraits AND outfit images
+  // Find selected image URL — must search base portraits AND outfit images.
+  // Resolve relative backend paths (e.g. /comfy/view/...) to full URLs.
   const selectedUrl = (() => {
+    let raw: string | null = null
     if (selectedImage) {
       // Check base portraits
       for (const img of allImages) {
-        if (img.id === selectedImage.image_id && img.set_id === selectedImage.set_id) return img.url
+        if (img.id === selectedImage.image_id && img.set_id === selectedImage.set_id) { raw = img.url; break }
       }
       // Check outfit images
-      for (const outfit of outfits) {
-        for (const img of outfit.images) {
-          if (img.id === selectedImage.image_id && img.set_id === selectedImage.set_id) return img.url
+      if (!raw) {
+        for (const outfit of outfits) {
+          for (const img of outfit.images) {
+            if (img.id === selectedImage.image_id && img.set_id === selectedImage.set_id) { raw = img.url; break }
+          }
+          if (raw) break
         }
       }
     }
+    if (raw) return resolveImgUrl(raw, backendUrl)
     // Fallback: first image in gallery, or resolve from imported filename fields
-    return allImages[0]?.url
-      || fileUrl(backendUrl, pap.selected_thumb_filename as string | undefined)
+    const fallback = allImages[0]?.url
+    if (fallback) return resolveImgUrl(fallback, backendUrl)
+    return fileUrl(backendUrl, pap.selected_thumb_filename as string | undefined)
       || fileUrl(backendUrl, pap.selected_filename as string | undefined)
   })()
 
@@ -1104,7 +1119,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                             : 'border-white/10 hover:border-white/30 hover:scale-[1.01]'
                         }`}
                       >
-                        <img src={img.url} className="w-full h-28 object-cover object-top" alt="" loading="lazy" />
+                        <img src={resolveImgUrl(img.url, backendUrl)} className="w-full h-28 object-cover object-top" alt="" loading="lazy" />
                         {isSel && (
                           <div className="absolute bottom-1 left-1 text-[8px] bg-pink-500 px-1.5 py-0.5 rounded-full font-bold shadow">
                             Active
@@ -1266,7 +1281,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                                     : 'border-white/10 hover:border-white/25'
                                 }`}
                               >
-                                <img src={img.url} className="w-full h-20 object-cover object-top" alt="" loading="lazy" />
+                                <img src={resolveImgUrl(img.url, backendUrl)} className="w-full h-20 object-cover object-top" alt="" loading="lazy" />
                                 {isActive && (
                                   <div className="absolute bottom-0.5 left-0.5 text-[8px] bg-amber-500 px-1 py-0.5 rounded-full font-bold">
                                     Active
