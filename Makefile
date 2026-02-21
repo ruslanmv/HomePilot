@@ -706,6 +706,8 @@ download-avatar-models-basic: ## Download basic avatar models (~1.8GB — Insigh
 	@wget -c --progress=bar:force -O models/comfy/controlnet/InstantID/diffusion_pytorch_model.safetensors \
 		"https://huggingface.co/InstantX/InstantID/resolve/main/ControlNetModel/diffusion_pytorch_model.safetensors" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
+	@mkdir -p models/packs
+	@touch models/packs/avatar-basic.installed
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Basic avatar models downloaded."
 	@echo ""
@@ -747,6 +749,9 @@ download-avatar-models-full: download-avatar-models-basic ## Download full avata
 	@wget -c --progress=bar:force -O models/comfy/avatar/stylegan2-ffhq-1024x1024.pkl \
 		"https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan2/versions/1/files/stylegan2-ffhq-1024x1024.pkl" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
+	@mkdir -p models/packs
+	@touch models/packs/avatar-full.installed
+	@touch models/packs/avatar-stylegan2.installed
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Full avatar model download complete."
 	@echo ""

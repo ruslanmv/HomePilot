@@ -41,6 +41,7 @@ import {
 import { useAvatarPacks } from './useAvatarPacks'
 import { useGenerateAvatars } from './useGenerateAvatars'
 import { useAvatarGallery } from './useAvatarGallery'
+import { installAvatarPack } from './avatarApi'
 import { AvatarGallery } from './AvatarGallery'
 import { AvatarLandingPage } from './AvatarLandingPage'
 import { OutfitPanel } from './OutfitPanel'
@@ -116,6 +117,8 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const [outfitAnchor, setOutfitAnchor] = useState<GalleryItem | null>(null)
   const [copiedSeed, setCopiedSeed] = useState<number | null>(null)
   const [isDraggingRef, setIsDraggingRef] = useState(false)
+  const [packInstallBusy, setPackInstallBusy] = useState(false)
+  const [packInstallError, setPackInstallError] = useState<string | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const promptInputRef = useRef<HTMLInputElement>(null)
@@ -315,13 +318,36 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           )}
 
           {packs.data && enabledModes.length === 0 && !packs.loading && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs" role="alert">
-              <AlertTriangle size={14} />
-              <span>
-                No avatar packs installed. Run{' '}
-                <code className="bg-white/10 px-1 rounded">make download-avatar-models-basic</code>{' '}
-                and ensure ComfyUI is running.
-              </span>
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 flex items-center justify-between gap-3" role="alert">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle size={14} className="text-amber-400 flex-shrink-0" />
+                <div>
+                  <span className="text-xs text-amber-200">
+                    No avatar packs installed. Install the Basic Pack to enable identity avatars.
+                  </span>
+                  {packInstallError && (
+                    <div className="text-[10px] text-red-300 mt-1">{packInstallError}</div>
+                  )}
+                </div>
+              </div>
+              <button
+                className="px-3 py-1.5 rounded-md bg-amber-400/20 hover:bg-amber-400/30 text-amber-100 text-xs font-semibold whitespace-nowrap transition-colors disabled:opacity-50"
+                disabled={packInstallBusy}
+                onClick={async () => {
+                  try {
+                    setPackInstallError(null)
+                    setPackInstallBusy(true)
+                    await installAvatarPack(backendUrl, 'avatar-basic', apiKey)
+                    await packs.refresh()
+                  } catch (e: any) {
+                    setPackInstallError(e?.message ?? String(e))
+                  } finally {
+                    setPackInstallBusy(false)
+                  }
+                }}
+              >
+                {packInstallBusy ? 'Installing...' : 'Install Basic Pack'}
+              </button>
             </div>
           )}
 

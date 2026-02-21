@@ -459,6 +459,11 @@ def _run_download_batch(preset: str, target_ids: list, all_models: dict):
         + "#" * 60
     )
 
+    # Write pack marker files so the UI recognises the packs as installed.
+    # The availability system checks for these markers via pack_installed().
+    if installed > 0:
+        _write_pack_markers(preset, target_ids, results)
+
     with _avatar_download_lock:
         _avatar_download_state["results"] = results
         _avatar_download_state["finished"] = True
@@ -479,6 +484,41 @@ AVATAR_FULL_IDS = AVATAR_BASIC_IDS + [
     "stylegan2-ffhq-256",
     "stylegan2-ffhq-1024",
 ]
+
+# Mapping from preset name to the pack marker IDs that should be written
+_PRESET_PACK_MARKERS: _Dict[str, list[str]] = {
+    "basic": ["avatar-basic"],
+    "full": ["avatar-basic", "avatar-full", "avatar-stylegan2"],
+}
+
+
+def _write_pack_markers(preset: str, target_ids: list, results: list) -> None:
+    """Write marker files for the pack so availability checks succeed."""
+    from pathlib import Path
+
+    marker_dir = Path("models") / "packs"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+
+    ok_ids = {r["id"] for r in results if r.get("status") in ("installed", "already_installed")}
+
+    for pack_id in _PRESET_PACK_MARKERS.get(preset, []):
+        marker = marker_dir / f"{pack_id}.installed"
+        if not marker.exists():
+            marker.touch()
+            _avatar_dl_logger.info(f"  Pack marker written: {marker}")
+
+
+def ensure_pack_marker(pack_id: str) -> bool:
+    """Write a pack marker file. Returns True if marker was created or already existed."""
+    from pathlib import Path
+
+    marker_dir = Path("models") / "packs"
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    marker = marker_dir / f"{pack_id}.installed"
+    if marker.exists():
+        return True
+    marker.touch()
+    return True
 
 
 @router.post("/v1/avatar-models/download")
@@ -543,6 +583,71 @@ async def download_avatar_models(preset: str = "basic"):
         "preset": preset,
         "total_models": len(target_ids),
         "model_ids": target_ids,
+    }
+
+
+@router.post("/v1/avatar-models/{model_id}/install")
+async def install_single_avatar_model(model_id: str):
+    """
+    Download and install a single avatar model by ID.
+
+    Starts download in a background thread (reuses the same progress tracking).
+    Poll GET /v1/avatar-models/download/status for progress.
+    """
+    global _avatar_download_state
+
+    # Prevent concurrent downloads
+    with _avatar_download_lock:
+        if _avatar_download_state["running"]:
+            return {
+                "ok": False,
+                "error": "A download is already in progress. Check /v1/avatar-models/download/status",
+                "status": _avatar_download_state,
+            }
+
+    from .edit_models import get_all_models, ModelCategory
+
+    all_models = {m.id: m for m in get_all_models(ModelCategory.AVATAR_GENERATION)}
+    if model_id not in all_models:
+        return {"ok": False, "error": f"Unknown avatar model: {model_id}"}
+
+    m = all_models[model_id]
+    if m.installed:
+        return {"ok": True, "message": f"{m.name} is already installed", "already_installed": True}
+
+    if not m.download_url:
+        return {"ok": False, "error": f"No download URL configured for {m.name}"}
+
+    target_ids = [model_id]
+
+    # Reset state
+    with _avatar_download_lock:
+        _avatar_download_state = {
+            "running": True,
+            "preset": f"single:{model_id}",
+            "started_at": _time.time(),
+            "current_model": None,
+            "current_index": 0,
+            "total_models": 1,
+            "results": [],
+            "finished": False,
+            "error": None,
+        }
+
+    thread = threading.Thread(
+        target=_run_download_batch,
+        args=(f"single:{model_id}", target_ids, all_models),
+        daemon=True,
+        name=f"avatar-dl-{model_id}",
+    )
+    thread.start()
+
+    _avatar_dl_logger.info(f"Single model download started: {model_id}")
+
+    return {
+        "ok": True,
+        "message": f"Download started for {m.name}. Poll /v1/avatar-models/download/status for progress.",
+        "model_id": model_id,
     }
 
 
@@ -640,6 +745,35 @@ async def delete_avatar_model(model_id: str):
     except Exception as e:
         _avatar_dl_logger.error(f"Failed to delete {model_id}: {e}")
         return {"ok": False, "error": str(e)}
+
+
+@router.post("/v1/avatars/packs/install")
+async def install_avatar_pack(body: dict):
+    """
+    Mark an avatar pack as installed (creates the marker file).
+
+    Use this after models have been downloaded via ``make download-avatar-models-basic``
+    or through the UI download flow. The marker file is what the availability system
+    checks to determine pack status.
+
+    Body: { "pack_id": "avatar-basic" | "avatar-full" | "avatar-stylegan2" }
+    """
+    from .models.packs.registry import pack_installed
+
+    pack_id = body.get("pack_id", "")
+    allowed = {"avatar-basic", "avatar-full", "avatar-stylegan2"}
+
+    if pack_id not in allowed:
+        return {"ok": False, "error": f"Unknown pack: {pack_id}. Allowed: {', '.join(sorted(allowed))}"}
+
+    already = pack_installed(pack_id)
+    ensure_pack_marker(pack_id)
+
+    return {
+        "ok": True,
+        "pack_id": pack_id,
+        "was_already_installed": already,
+    }
 
 
 @router.post("/v1/edit-models/preference")
