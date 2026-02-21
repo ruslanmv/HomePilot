@@ -71,6 +71,16 @@ _NODE_PACKAGE_HINTS: Dict[str, str] = {
         "  Fix: git clone https://github.com/cubiq/ComfyUI_InstantID.git ComfyUI/custom_nodes/ComfyUI-InstantID\n"
         "  Then restart ComfyUI."
     ),
+    "FaceDetailer": (
+        "ltdrdata/ComfyUI-Impact-Pack.\n"
+        "  Fix: git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack\n"
+        "  Then restart ComfyUI."
+    ),
+    "UltralyticsDetectorProvider": (
+        "ltdrdata/ComfyUI-Impact-Pack.\n"
+        "  Fix: git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack\n"
+        "  Then restart ComfyUI."
+    ),
     "FaceRestoreModelLoader": (
         "ltdrdata/ComfyUI-Impact-Pack + facexlib/gfpgan.\n"
         "  Fix: git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack\n"

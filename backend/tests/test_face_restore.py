@@ -2,7 +2,8 @@
 Tests for the face restoration service (face_restore.py).
 
 Architecture: ComfyUI-only.  The backend never imports torch/gfpgan/ML libs.
-All face restoration runs through ComfyUI's fix_faces_gfpgan workflow.
+All face restoration runs through ComfyUI's fix_faces_facedetailer workflow
+(FaceDetailer node from Impact-Pack).
 
 These tests verify:
 1. ComfyUI health check logic
@@ -92,11 +93,11 @@ class TestFaceRestoreReady:
 
         monkeypatch.setattr(fr, "comfyui_healthy", lambda: True)
         monkeypatch.setattr("app.comfy.check_nodes_available",
-                            lambda nodes: (False, ["FaceRestoreModelLoader"]))
+                            lambda nodes: (False, ["FaceDetailer"]))
 
         ok, msg = fr.face_restore_ready()
         assert ok is False
-        assert "FaceRestoreModelLoader" in msg
+        assert "FaceDetailer" in msg
         assert "Impact-Pack" in msg
 
 
@@ -108,6 +109,8 @@ class TestRestoreFacesViaComfyUI:
         import app.face_restore as fr
 
         monkeypatch.setattr(fr, "comfyui_healthy", lambda: True)
+        monkeypatch.setattr(fr, "_find_checkpoint",
+                            lambda: "sd_xl_base_1.0.safetensors")
         monkeypatch.setattr("app.comfy.check_nodes_available",
                             lambda nodes: (True, []))
         monkeypatch.setattr("app.comfy.run_workflow", lambda name, vars: {
@@ -138,7 +141,7 @@ class TestRestoreFacesViaComfyUI:
 
         monkeypatch.setattr(fr, "comfyui_healthy", lambda: True)
         monkeypatch.setattr("app.comfy.check_nodes_available",
-                            lambda nodes: (False, ["FaceRestoreModelLoader"]))
+                            lambda nodes: (False, ["FaceDetailer"]))
 
         with pytest.raises(fr.FaceRestoreNodesNotInstalled, match="Impact-Pack"):
             fr.restore_faces_via_comfyui("http://localhost:8000/files/test.png")
@@ -148,6 +151,8 @@ class TestRestoreFacesViaComfyUI:
         import app.face_restore as fr
 
         monkeypatch.setattr(fr, "comfyui_healthy", lambda: True)
+        monkeypatch.setattr(fr, "_find_checkpoint",
+                            lambda: "sd_xl_base_1.0.safetensors")
         monkeypatch.setattr("app.comfy.check_nodes_available",
                             lambda nodes: (True, []))
 
@@ -175,7 +180,7 @@ class TestEnhanceFacesMode:
             mode: str = "faces"
             name: str = "Face Restoration"
             description: str = "Restore faces"
-            workflow: str = "fix_faces_gfpgan"
+            workflow: str = "fix_faces_facedetailer"
             model_category: str = "face_restore"
             default_model_id: str = "GFPGANv1.4"
             param_name: str = "model_name"
@@ -214,7 +219,7 @@ class TestEnhanceFacesMode:
             mode: str = "faces"
             name: str = "Face Restoration"
             description: str = "Restore faces"
-            workflow: str = "fix_faces_gfpgan"
+            workflow: str = "fix_faces_facedetailer"
             model_category: str = "face_restore"
             default_model_id: str = "GFPGANv1.4"
             param_name: str = "model_name"
@@ -250,7 +255,7 @@ class TestEnhanceFacesMode:
             mode: str = "faces"
             name: str = "Face Restoration"
             description: str = "Restore faces"
-            workflow: str = "fix_faces_gfpgan"
+            workflow: str = "fix_faces_facedetailer"
             model_category: str = "face_restore"
             default_model_id: str = "GFPGANv1.4"
             param_name: str = "model_name"
@@ -265,7 +270,7 @@ class TestEnhanceFacesMode:
 
         def mock_restore(image_url, model_filename="GFPGANv1.4.pth"):
             raise FaceRestoreNodesNotInstalled(
-                "Missing nodes: FaceRestoreModelLoader.\n"
+                "Missing nodes: FaceDetailer.\n"
                 "Fix: install ComfyUI-Impact-Pack"
             )
 

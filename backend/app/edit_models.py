@@ -347,8 +347,8 @@ ENHANCE_MODES: Dict[str, EnhanceModeConfig] = {
     "faces": EnhanceModeConfig(
         mode="faces",
         name="Face Restoration",
-        description="Restore and enhance faces",
-        workflow="fix_faces_gfpgan",
+        description="Restore and enhance faces using FaceDetailer",
+        workflow="fix_faces_facedetailer",
         model_category=ModelCategory.FACE_RESTORE,
         default_model_id="GFPGANv1.4",
         param_name="model_name",

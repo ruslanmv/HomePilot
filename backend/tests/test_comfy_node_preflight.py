@@ -512,53 +512,49 @@ class TestInstantIDWorkflowIntegrity:
 
 
 # =====================================================================
-# 8. FaceRestore (GFPGAN) workflow JSON integrity
+# 8. FaceDetailer workflow JSON integrity
 # =====================================================================
 
 class TestFaceRestoreWorkflowIntegrity:
-    """Verify the fix_faces_gfpgan workflow JSON structure."""
+    """Verify the fix_faces_facedetailer workflow JSON structure."""
 
     def test_workflow_file_exists(self):
+        path = WORKFLOWS_DIR / "fix_faces_facedetailer.json"
+        assert path.exists()
+
+    def test_legacy_gfpgan_workflow_still_exists(self):
+        """Old fix_faces_gfpgan.json kept for backwards compatibility."""
         path = WORKFLOWS_DIR / "fix_faces_gfpgan.json"
         assert path.exists()
 
     def test_has_required_nodes(self):
-        wf = _load_workflow("fix_faces_gfpgan")
+        wf = _load_workflow("fix_faces_facedetailer")
         types = _extract_class_types(wf)
         assert "LoadImage" in types
-        assert "FaceRestoreModelLoader" in types
-        assert "FaceRestoreWithModel" in types
+        assert "FaceDetailer" in types
+        assert "UltralyticsDetectorProvider" in types
+        assert "CheckpointLoaderSimple" in types
         assert "SaveImage" in types
 
     def test_has_template_variables(self):
-        raw = (WORKFLOWS_DIR / "fix_faces_gfpgan.json").read_text()
+        raw = (WORKFLOWS_DIR / "fix_faces_facedetailer.json").read_text()
         assert "{{image_path}}" in raw
-        assert "{{model_name}}" in raw
+        assert "{{ckpt_name}}" in raw
+        assert "{{detector_model}}" in raw
         assert "{{filename_prefix}}" in raw
 
-    def test_face_restore_feeds_into_save(self):
-        """FaceRestoreWithModel output feeds into SaveImage."""
-        wf = _load_workflow("fix_faces_gfpgan")
+    def test_face_detailer_feeds_into_save(self):
+        """FaceDetailer output feeds into SaveImage."""
+        wf = _load_workflow("fix_faces_facedetailer")
         save_node = None
         for _id, node in wf.items():
             if isinstance(node, dict) and node.get("class_type") == "SaveImage":
                 save_node = node
                 break
         assert save_node is not None
-        # images input references the face restore node
+        # images input references the FaceDetailer node
         images_ref = save_node["inputs"]["images"]
-        assert images_ref[0] == "3", "SaveImage should reference node 3 (FaceRestoreWithModel)"
-
-    def test_face_restore_aliases_cover_gfpgan_workflow(self):
-        """All face-restore node types in the workflow are covered by the alias table."""
-        from app.comfy_utils.node_aliases import NODE_ALIAS_CANDIDATES
-        wf = _load_workflow("fix_faces_gfpgan")
-        types = _extract_class_types(wf)
-        face_types = types - {"LoadImage", "SaveImage"}  # standard nodes
-        for ft in face_types:
-            assert ft in NODE_ALIAS_CANDIDATES, (
-                f"Face restore node '{ft}' is not in the alias table"
-            )
+        assert images_ref[0] == "6", "SaveImage should reference node 6 (FaceDetailer)"
 
 
 # =====================================================================
@@ -591,7 +587,7 @@ class TestEnhanceFacePreflightSkip:
                             lambda: ("GFPGANv1.4.pth", None))
         # Nodes NOT available
         monkeypatch.setattr("app.enhance.check_nodes_available",
-                            lambda nodes: (False, ["FaceRestoreModelLoader"]))
+                            lambda nodes: (False, ["FaceDetailer"]))
 
         response = client.post("/v1/enhance", json={
             "image_url": "http://localhost:8000/files/test.png",
@@ -620,8 +616,8 @@ class TestIdentityEdit503Hints:
                             lambda: ("GFPGANv1.4.pth", None))
         monkeypatch.setattr("app.enhance.restore_faces_via_comfyui",
                             MagicMock(side_effect=FaceRestoreNodesNotInstalled(
-                                "Missing nodes: FaceRestoreModelLoader.\n"
-                                "Fix: install ComfyUI-Impact-Pack + pip install facexlib gfpgan"
+                                "Missing nodes: FaceDetailer.\n"
+                                "Fix: install ComfyUI-Impact-Pack"
                             )))
 
         response = client.post("/v1/edit/identity", json={
@@ -630,7 +626,7 @@ class TestIdentityEdit503Hints:
         })
         assert response.status_code == 503
         body = response.json()["detail"]
-        assert "facexlib" in body.lower() or "gfpgan" in body.lower()
+        assert "impact-pack" in body.lower() or "facedetailer" in body.lower()
 
     def test_inpaint_identity_requires_mask(self, client, mock_outbound):
         """inpaint_identity requires a mask_data_url — should return 400 without it."""
@@ -770,7 +766,8 @@ class TestNodePackageHints:
 
     def test_face_restore_nodes_have_hints(self):
         from app.comfy import _NODE_PACKAGE_HINTS
-        for node in ["FaceRestoreModelLoader", "FaceRestoreWithModel"]:
+        for node in ["FaceDetailer", "UltralyticsDetectorProvider",
+                      "FaceRestoreModelLoader", "FaceRestoreWithModel"]:
             assert node in _NODE_PACKAGE_HINTS, f"Missing hint for {node}"
 
     def test_hints_contain_install_instructions(self):

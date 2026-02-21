@@ -5,7 +5,7 @@ All GPU/ML work runs inside ComfyUI.  The backend is a thin HTTP
 orchestrator that:
   1. Checks if ComfyUI is healthy (GET /system_stats)
   2. Checks if required nodes are registered (GET /object_info)
-  3. Submits the fix_faces_gfpgan workflow
+  3. Submits a FaceDetailer workflow (Impact-Pack)
   4. Returns the result
 
 The backend NEVER imports torch, gfpgan, facexlib, or basicsr.
@@ -14,12 +14,18 @@ One failure mode, one error message, one fix path.
 Required ComfyUI setup (once):
   cd ComfyUI/custom_nodes
   git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git
-  pip install facexlib gfpgan   # in ComfyUI's Python env
   # restart ComfyUI
+
+The FaceDetailer node (from Impact-Pack) detects faces, crops them,
+re-generates/enhances each face region using a diffusion checkpoint,
+and composites the result back.  It requires a checkpoint model,
+a face bbox detector (e.g. face_yolov8m.pt), and conditioning.
 """
 
 from __future__ import annotations
 
+import random
+from pathlib import Path
 from typing import Optional, Tuple
 
 import httpx
@@ -27,19 +33,37 @@ import httpx
 from .config import COMFY_BASE_URL
 
 # ---------------------------------------------------------------------------
-# Required ComfyUI nodes for face restoration
+# Required ComfyUI nodes for face restoration (FaceDetailer pipeline)
 # ---------------------------------------------------------------------------
-FACE_RESTORE_NODES = ["FaceRestoreModelLoader", "FaceRestoreWithModel"]
+FACE_RESTORE_NODES = ["FaceDetailer", "UltralyticsDetectorProvider"]
 
 _INSTALL_HINT = (
     "Face restoration requires ComfyUI-Impact-Pack.\n\n"
-    "Fix (run once, in ComfyUI's Python env):\n"
+    "Fix (run once):\n"
     "  cd ComfyUI/custom_nodes\n"
     "  git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git\n"
-    "  pip install facexlib gfpgan\n"
     "  # then restart ComfyUI\n\n"
-    "Verify: curl http://localhost:8188/object_info | grep FaceRestoreModelLoader"
+    "Verify: curl http://localhost:8188/object_info | python3 -c \"\n"
+    "  import sys,json; d=json.load(sys.stdin)\n"
+    "  print('FaceDetailer' in d, 'UltralyticsDetectorProvider' in d)\""
 )
+
+# ---------------------------------------------------------------------------
+# Face detector model (ships with Impact-Pack)
+# ---------------------------------------------------------------------------
+_DETECTOR_MODELS = [
+    "bbox/face_yolov8m.pt",
+    "bbox/face_yolov8n.pt",
+    "bbox/face_yolov8s.pt",
+]
+
+# Checkpoint fallback order for FaceDetailer (needs a full diffusion model)
+_CHECKPOINT_FALLBACKS = [
+    "sd_xl_base_1.0_inpainting_0.1.safetensors",
+    "sd_xl_base_1.0.safetensors",
+    "v1-5-pruned-emaonly.safetensors",
+    "v1-5-pruned.safetensors",
+]
 
 
 class ComfyUIUnavailable(Exception):
@@ -105,16 +129,56 @@ def face_restore_ready() -> Tuple[bool, str]:
 # Public API — used by enhance.py
 # ---------------------------------------------------------------------------
 
+def _find_checkpoint() -> str:
+    """
+    Find an available checkpoint for FaceDetailer.
+
+    FaceDetailer needs a full diffusion checkpoint (unlike GFPGAN which was
+    a standalone model).  We try common checkpoints in order of preference.
+
+    Returns the checkpoint filename, or the first fallback if none are found
+    (the workflow will fail with a clear ComfyUI error in that case).
+    """
+    from .providers import get_comfy_models_path
+
+    models_path = get_comfy_models_path()
+    for ckpt in _CHECKPOINT_FALLBACKS:
+        ckpt_path = models_path / "checkpoints" / ckpt
+        if ckpt_path.exists() and ckpt_path.stat().st_size > 0:
+            return ckpt
+    # No checkpoint found — return default, ComfyUI will give a clear error
+    return _CHECKPOINT_FALLBACKS[0]
+
+
+def _find_detector_model() -> str:
+    """
+    Find an available face detector model for UltralyticsDetectorProvider.
+
+    Impact-Pack ships with bbox/face_yolov8m.pt by default.
+    Returns the detector model name.
+    """
+    # Impact-Pack stores detector models under its own directory,
+    # not under ComfyUI/models.  Just return the most common default.
+    return _DETECTOR_MODELS[0]
+
+
 def restore_faces_via_comfyui(
     image_url: str,
     model_filename: str = "GFPGANv1.4.pth",
 ) -> dict:
     """
-    Restore faces by submitting the fix_faces_gfpgan workflow to ComfyUI.
+    Restore faces by submitting a FaceDetailer workflow to ComfyUI.
+
+    Uses the Impact-Pack FaceDetailer node which:
+      1. Detects faces with UltralyticsDetectorProvider (bbox)
+      2. Crops each face region
+      3. Re-generates/enhances the face using a diffusion checkpoint
+      4. Composites the result back into the original image
 
     Args:
         image_url: Image URL or /files/... path
-        model_filename: Face restore model (e.g. GFPGANv1.4.pth)
+        model_filename: Face restore model hint (used for logging; the
+            actual model used is the checkpoint found by _find_checkpoint)
 
     Returns:
         {"images": [...], "videos": [...]} from ComfyUI
@@ -139,13 +203,21 @@ def restore_faces_via_comfyui(
             f"Missing ComfyUI nodes: {', '.join(missing)}.\n{_INSTALL_HINT}"
         )
 
-    # ── Submit workflow ────────────────────────────────────────────
-    print(f"[FACE_RESTORE] Submitting fix_faces_gfpgan to ComfyUI")
-    print(f"[FACE_RESTORE]   image={image_url}, model={model_filename}")
+    # ── Resolve checkpoint and detector model ─────────────────────
+    ckpt_name = _find_checkpoint()
+    detector_model = _find_detector_model()
 
-    result = run_workflow("fix_faces_gfpgan", {
+    # ── Submit workflow ────────────────────────────────────────────
+    print(f"[FACE_RESTORE] Submitting fix_faces_facedetailer to ComfyUI")
+    print(f"[FACE_RESTORE]   image={image_url}")
+    print(f"[FACE_RESTORE]   checkpoint={ckpt_name}, detector={detector_model}")
+
+    result = run_workflow("fix_faces_facedetailer", {
         "image_path": image_url,
-        "model_name": model_filename,
+        "ckpt_name": ckpt_name,
+        "detector_model": detector_model,
+        "denoise": 0.4,
+        "seed": random.randint(1, 2**31),
         "filename_prefix": "homepilot_face_restore",
     })
 
