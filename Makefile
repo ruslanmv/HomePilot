@@ -87,6 +87,13 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "  Installing face restoration dependencies (GFPGAN/CodeFormer)..."
 	@if ComfyUI/.venv/bin/pip install facexlib gfpgan >/dev/null 2>&1; then \
 		echo "  ✓ Face restoration dependencies installed"; \
+		echo "  Patching basicsr for torchvision >= 0.18 compatibility..."; \
+		SITE_PKG=$$(ComfyUI/.venv/bin/python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null); \
+		if [ -f "$$SITE_PKG/basicsr/data/degradations.py" ]; then \
+			sed -i 's/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/' \
+				"$$SITE_PKG/basicsr/data/degradations.py" && \
+			echo "  ✓ basicsr patched (functional_tensor → functional)"; \
+		fi; \
 	else \
 		echo "    (optional: facexlib/gfpgan install skipped)"; \
 	fi
@@ -101,6 +108,52 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 		fi; \
 	else \
 		echo "  ✓ ComfyUI-Impact-Pack already installed"; \
+	fi
+	@echo "  Installing Ultralytics (needed for UltralyticsDetectorProvider)..."
+	@if ComfyUI/.venv/bin/pip install -U ultralytics >/dev/null 2>&1; then \
+		echo "  ✓ ultralytics installed"; \
+	else \
+		echo "  ⚠ ultralytics install failed (UltralyticsDetectorProvider may not register)"; \
+	fi
+	@echo "  Installing ComfyUI-InstantID for identity-preserving generation..."
+	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-InstantID" ]; then \
+		mkdir -p ComfyUI/custom_nodes && \
+		if git clone https://github.com/cubiq/ComfyUI_InstantID.git ComfyUI/custom_nodes/ComfyUI-InstantID 2>/dev/null; then \
+			if [ -f "ComfyUI/custom_nodes/ComfyUI-InstantID/requirements.txt" ]; then \
+				ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-InstantID/requirements.txt >/dev/null 2>&1 || true; \
+			fi; \
+			echo "  ✓ ComfyUI-InstantID installed"; \
+		else \
+			echo "    (optional: ComfyUI-InstantID install skipped)"; \
+		fi; \
+	else \
+		echo "  ✓ ComfyUI-InstantID already installed"; \
+	fi
+	@echo "  Installing Python dev headers + build tools (needed by InsightFace C++ extensions)..."
+	@if [ -f /etc/os-release ] && grep -qi 'ubuntu\|debian' /etc/os-release 2>/dev/null; then \
+		PY_VER=$$(ComfyUI/.venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.11"); \
+		if dpkg -s "python$${PY_VER}-dev" >/dev/null 2>&1 && dpkg -s build-essential >/dev/null 2>&1; then \
+			echo "  ✓ python$${PY_VER}-dev and build-essential already installed"; \
+		else \
+			echo "  Installing python$${PY_VER}-dev and build-essential (may require sudo)..."; \
+			if sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq "python$${PY_VER}-dev" build-essential >/dev/null 2>&1; then \
+				echo "  ✓ Build dependencies installed"; \
+			else \
+				echo "    (optional: could not install python$${PY_VER}-dev / build-essential — insightface may fail)"; \
+				echo "    Run manually: sudo apt-get install -y python$${PY_VER}-dev build-essential"; \
+			fi; \
+		fi; \
+	else \
+		echo "  (non-Debian system — skipping apt-get; ensure Python dev headers are available)"; \
+	fi
+	@echo "  Installing InsightFace + ONNX Runtime in ComfyUI venv (needed by InstantID)..."
+	@if ComfyUI/.venv/bin/pip install insightface onnxruntime >/dev/null 2>&1; then \
+		echo "  ✓ InsightFace + ONNX Runtime installed in ComfyUI venv"; \
+	else \
+		echo "    (optional: insightface/onnxruntime install skipped)"; \
+		echo "    If this failed with 'Python.h not found', run:"; \
+		echo "      sudo apt-get install -y python3-dev build-essential"; \
+		echo "    Then retry: make install"; \
 	fi
 	@echo ""
 	@echo "✓ Setting up model directories..."
@@ -161,6 +214,27 @@ verify-install: ## Verify that all components are properly installed
 	@echo "  ✓ ComfyUI models linked"
 	@test -d models/comfy/checkpoints || (echo "❌ model directories missing"; exit 1)
 	@echo "  ✓ Model directories created"
+	@if [ -d "ComfyUI/custom_nodes/ComfyUI-Impact-Pack" ]; then \
+		echo "  ✓ ComfyUI-Impact-Pack installed (face restore nodes)"; \
+	else \
+		echo "  ⚠  ComfyUI-Impact-Pack not installed (optional - Fix Faces needs it)"; \
+	fi
+	@if [ -d "ComfyUI/custom_nodes/ComfyUI-InstantID" ]; then \
+		echo "  ✓ ComfyUI-InstantID installed (Same Person generation)"; \
+	else \
+		echo "  ⚠  ComfyUI-InstantID not installed (optional - Same Person mode needs it)"; \
+	fi
+	@if ComfyUI/.venv/bin/python -c "import gfpgan" 2>/dev/null; then \
+		echo "  ✓ GFPGAN importable in ComfyUI venv (face restoration ready)"; \
+	else \
+		echo "  ⚠  GFPGAN not importable in ComfyUI venv (Fix Faces needs it)"; \
+		echo "     Fix: ComfyUI/.venv/bin/pip install facexlib gfpgan && make install"; \
+	fi
+	@if ComfyUI/.venv/bin/python -c "import insightface" 2>/dev/null; then \
+		echo "  ✓ InsightFace available in ComfyUI venv"; \
+	else \
+		echo "  ⚠  InsightFace not in ComfyUI venv (optional - identity features need it)"; \
+	fi
 	@if [ -d "$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1; then \
 		echo "  ✓ MCP Context Forge installed"; \
 	else \
@@ -398,7 +472,7 @@ test-edit-session: ## Run edit-session sidecar tests
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
 	fi
 
-test-frontend: ## Run frontend TypeScript type-check
+test-frontend: ## Run frontend TypeScript type-check and unit tests
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Running Frontend TypeScript Check"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -409,6 +483,17 @@ test-frontend: ## Run frontend TypeScript type-check
 		echo ""; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
 		echo "  ✅ Frontend TypeScript check passed!"; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+	fi
+	@if [ -d "frontend/node_modules" ]; then \
+		echo ""; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo "  Running Frontend Unit Tests (Vitest)"; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		cd frontend && npx vitest run; \
+		echo ""; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo "  ✅ Frontend unit tests passed!"; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
 	fi
 
@@ -621,6 +706,8 @@ download-avatar-models-basic: ## Download basic avatar models (~1.8GB — Insigh
 	@wget -c --progress=bar:force -O models/comfy/controlnet/InstantID/diffusion_pytorch_model.safetensors \
 		"https://huggingface.co/InstantX/InstantID/resolve/main/ControlNetModel/diffusion_pytorch_model.safetensors" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
+	@mkdir -p models/packs
+	@touch models/packs/avatar-basic.installed
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Basic avatar models downloaded."
 	@echo ""
@@ -662,6 +749,9 @@ download-avatar-models-full: download-avatar-models-basic ## Download full avata
 	@wget -c --progress=bar:force -O models/comfy/avatar/stylegan2-ffhq-1024x1024.pkl \
 		"https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan2/versions/1/files/stylegan2-ffhq-1024x1024.pkl" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
+	@mkdir -p models/packs
+	@touch models/packs/avatar-full.installed
+	@touch models/packs/avatar-stylegan2.installed
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Full avatar model download complete."
 	@echo ""
@@ -775,6 +865,46 @@ download-verify: ## Verify downloaded models and show disk usage
 		echo ""; \
 	fi
 	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+start-avatar-service: ## Start the optional Avatar Service microservice (StyleGAN random faces, port 8020)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Starting Avatar Service (port 8020)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@cd avatar-service && bash scripts/run_dev.sh
+
+verify-avatar: ## Verify Avatar Studio installation (packs, workflows, service)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Avatar Studio Verification"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "1. Checking workflow templates..."
+	@ls workflows/avatar/*.json 2>/dev/null && echo "   ✅ Workflow templates found" || echo "   ❌ No workflow templates in workflows/avatar/"
+	@echo ""
+	@echo "2. Checking model pack markers..."
+	@if [ -f "models/packs/avatar-basic.installed" ]; then \
+		echo "   ✅ avatar-basic pack: installed"; \
+	else \
+		echo "   ⚠️  avatar-basic pack: not installed (run: make download-avatar-models-basic)"; \
+	fi
+	@if [ -f "models/packs/avatar-stylegan2.installed" ]; then \
+		echo "   ✅ avatar-stylegan2 pack: installed"; \
+	else \
+		echo "   ℹ️  avatar-stylegan2 pack: not installed (optional — run: make download-avatar-models-full)"; \
+	fi
+	@echo ""
+	@echo "3. Checking backend avatar module..."
+	@python3 -c "from backend.app.avatar import router; print('   ✅ Avatar router importable')" 2>/dev/null || echo "   ❌ Avatar module import failed"
+	@echo ""
+	@echo "4. Checking avatar-service (optional)..."
+	@curl -fsS http://localhost:8020/docs 2>/dev/null >/dev/null && echo "   ✅ Avatar service running on port 8020" || echo "   ℹ️  Avatar service not running (optional — run: make start-avatar-service)"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+mark-avatar-packs: ## Create marker files to indicate avatar packs are installed (dev shortcut)
+	@mkdir -p models/packs
+	@touch models/packs/avatar-basic.installed
+	@echo "✅ Marked avatar-basic as installed"
+	@echo "ℹ️  To also enable StyleGAN random faces, run: touch models/packs/avatar-stylegan2.installed"
 
 clean: ## Remove local artifacts
 	rm -rf frontend/node_modules frontend/dist

@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 220">
+  <defs>
+    <style>
+      @keyframes fadeSlideIn {
+        from { opacity: 0; transform: translateY(14px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes packZip {
+        0%   { opacity: 0; transform: scale(.6) rotate(-5deg); }
+        60%  { opacity: 1; transform: scale(1.05) rotate(1deg); }
+        100% { opacity: 1; transform: scale(1) rotate(0); }
+      }
+      @keyframes shine {
+        0%, 100% { filter: drop-shadow(0 0 0px rgba(52,211,153,0)); }
+        50%      { filter: drop-shadow(0 0 12px rgba(52,211,153,.5)); }
+      }
+      .item   { animation: fadeSlideIn .45s ease-out both; }
+      .pack   { animation: packZip .5s ease-out both; }
+      .result { animation: fadeSlideIn .5s ease-out both; }
+      .glow   { animation: shine 2.5s ease-in-out 2.8s infinite; }
+
+      .item:nth-child(2) { animation-delay: .15s; }
+      .item:nth-child(3) { animation-delay: .35s; }
+      .item:nth-child(4) { animation-delay: .55s; }
+      .pack  { animation-delay: 1.2s; }
+      .result { animation-delay: 1.8s; }
+    </style>
+    <linearGradient id="bgE" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f0f23"/>
+      <stop offset="100%" stop-color="#1a1a3e"/>
+    </linearGradient>
+    <linearGradient id="greenGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="820" height="220" rx="16" fill="url(#bgE)"/>
+
+  <!-- Title -->
+  <text x="410" y="32" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="12" font-weight="600" letter-spacing="2">AVATAR TO PERSONA EXPORT</text>
+
+  <!-- Avatar main image -->
+  <g class="item" opacity="0">
+    <rect x="30" y="52" width="90" height="120" rx="12" fill="#1e293b" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="75" y="100" text-anchor="middle" fill="#a78bfa" font-family="system-ui,sans-serif" font-size="28">&#x1F464;</text>
+    <text x="75" y="126" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="10" font-weight="600">Main Avatar</text>
+    <text x="75" y="142" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="8">Anchor face</text>
+    <text x="75" y="154" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="8">+ seed data</text>
+  </g>
+
+  <!-- Outfit 1 -->
+  <g class="item" opacity="0">
+    <rect x="140" y="52" width="70" height="120" rx="10" fill="#1e293b" stroke="#f472b6" stroke-width="1"/>
+    <text x="175" y="96" text-anchor="middle" fill="#f472b6" font-family="system-ui,sans-serif" font-size="20">&#x1F4BC;</text>
+    <text x="175" y="116" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="9">Business</text>
+    <text x="175" y="130" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="7.5">outfit #1</text>
+  </g>
+
+  <!-- Outfit 2 -->
+  <g class="item" opacity="0">
+    <rect x="220" y="52" width="70" height="120" rx="10" fill="#1e293b" stroke="#38bdf8" stroke-width="1"/>
+    <text x="255" y="96" text-anchor="middle" fill="#38bdf8" font-family="system-ui,sans-serif" font-size="20">&#x1F942;</text>
+    <text x="255" y="116" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="9">Evening</text>
+    <text x="255" y="130" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="7.5">outfit #2</text>
+  </g>
+
+  <!-- Outfit 3 -->
+  <g class="item" opacity="0">
+    <rect x="300" y="52" width="70" height="120" rx="10" fill="#1e293b" stroke="#fbbf24" stroke-width="1"/>
+    <text x="335" y="96" text-anchor="middle" fill="#fbbf24" font-family="system-ui,sans-serif" font-size="20">&#x1F3C3;</text>
+    <text x="335" y="116" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="9">Active</text>
+    <text x="335" y="130" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="7.5">outfit #3</text>
+  </g>
+
+  <!-- Arrow -->
+  <text class="pack" opacity="0" x="410" y="120" text-anchor="middle" fill="#64748b" font-family="system-ui,sans-serif" font-size="28">&#x27A1;&#xFE0F;</text>
+
+  <!-- .hpersona package -->
+  <g class="result glow" opacity="0">
+    <rect x="460" y="48" width="340" height="130" rx="16" fill="url(#greenGrad)" opacity=".1"/>
+    <rect x="460" y="48" width="340" height="130" rx="16" fill="none" stroke="url(#greenGrad)" stroke-width="2"/>
+
+    <text x="630" y="78" text-anchor="middle" fill="#6ee7b7" font-family="system-ui,sans-serif" font-size="12" font-weight="700">persona_name.hpersona</text>
+
+    <!-- Contents list -->
+    <text x="490" y="100" fill="#34d399" font-family="system-ui,sans-serif" font-size="10">&#x2705;</text>
+    <text x="506" y="100" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="10">assets/avatar_main.png</text>
+    <text x="490" y="116" fill="#34d399" font-family="system-ui,sans-serif" font-size="10">&#x2705;</text>
+    <text x="506" y="116" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="10">assets/outfit_business.png</text>
+    <text x="490" y="132" fill="#34d399" font-family="system-ui,sans-serif" font-size="10">&#x2705;</text>
+    <text x="506" y="132" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="10">assets/outfit_evening.png</text>
+    <text x="490" y="148" fill="#34d399" font-family="system-ui,sans-serif" font-size="10">&#x2705;</text>
+    <text x="506" y="148" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="10">assets/outfit_active.png</text>
+
+    <text x="700" y="100" fill="#475569" font-family="system-ui,sans-serif" font-size="9">blueprint/</text>
+    <text x="700" y="116" fill="#475569" font-family="system-ui,sans-serif" font-size="9">dependencies/</text>
+    <text x="700" y="132" fill="#475569" font-family="system-ui,sans-serif" font-size="9">preview/</text>
+    <text x="700" y="148" fill="#475569" font-family="system-ui,sans-serif" font-size="9">manifest.json</text>
+  </g>
+
+  <!-- Subtitle -->
+  <text x="410" y="200" text-anchor="middle" fill="#64748b" font-family="system-ui,sans-serif" font-size="11" font-style="italic">Main avatar + all wardrobe outfits are packaged as real image files inside the ZIP</text>
+  <text x="410" y="216" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="10">Fully portable &mdash; import on any HomePilot instance and get the exact same character</text>
+</svg>
