@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 260">
+  <defs>
+    <style>
+      @keyframes fadeSlideIn {
+        from { opacity: 0; transform: translateY(18px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes arrowDraw {
+        from { stroke-dashoffset: 40; opacity: 0; }
+        to   { stroke-dashoffset: 0; opacity: 1; }
+      }
+      @keyframes pulseGlow {
+        0%, 100% { filter: drop-shadow(0 0 0px rgba(168,85,247,0)); }
+        50%      { filter: drop-shadow(0 0 14px rgba(168,85,247,.5)); }
+      }
+      .step   { animation: fadeSlideIn .5s ease-out both; }
+      .arrow  { animation: arrowDraw .4s ease-out both; stroke-dasharray: 40; }
+      .final  { animation: fadeSlideIn .6s ease-out both; }
+      .glow   { animation: pulseGlow 2.5s ease-in-out 3.2s infinite; }
+
+      .step:nth-child(2) { animation-delay: .2s; }
+      .step:nth-child(4) { animation-delay: .6s; }
+      .step:nth-child(6) { animation-delay: 1.0s; }
+      .step:nth-child(8) { animation-delay: 1.4s; }
+
+      .arrow:nth-child(3) { animation-delay: .45s; }
+      .arrow:nth-child(5) { animation-delay: .85s; }
+      .arrow:nth-child(7) { animation-delay: 1.25s; }
+      .arrow:nth-child(9) { animation-delay: 1.65s; }
+
+      .final { animation-delay: 1.9s; }
+    </style>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f0f23"/>
+      <stop offset="100%" stop-color="#1a1a3e"/>
+    </linearGradient>
+    <linearGradient id="purpleGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="860" height="260" rx="16" fill="url(#bg)"/>
+
+  <!-- Title -->
+  <text x="430" y="36" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="12" font-weight="600" letter-spacing="2">AVATAR STUDIO PIPELINE</text>
+
+  <!-- Step 1: Create -->
+  <g class="step" opacity="0">
+    <rect x="20" y="60" width="140" height="130" rx="14" fill="#1e293b" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="90" y="100" text-anchor="middle" fill="#a78bfa" font-family="system-ui,sans-serif" font-size="26">&#x1F3A8;</text>
+    <text x="90" y="126" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="12" font-weight="600">Create</text>
+    <text x="90" y="144" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Reference, Random</text>
+    <text x="90" y="157" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">or Face+Style</text>
+  </g>
+
+  <!-- Arrow 1 -->
+  <line class="arrow" opacity="0" x1="165" y1="125" x2="195" y2="125" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
+
+  <!-- Step 2: Character Sheet -->
+  <g class="step" opacity="0">
+    <rect x="200" y="60" width="140" height="130" rx="14" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="270" y="100" text-anchor="middle" fill="#38bdf8" font-family="system-ui,sans-serif" font-size="26">&#x1F9E9;</text>
+    <text x="270" y="126" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="12" font-weight="600">Character Sheet</text>
+    <text x="270" y="144" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Stage + Wardrobe</text>
+    <text x="270" y="157" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">RPG-style equip</text>
+  </g>
+
+  <!-- Arrow 2 -->
+  <line class="arrow" opacity="0" x1="345" y1="125" x2="375" y2="125" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
+
+  <!-- Step 3: Outfits -->
+  <g class="step" opacity="0">
+    <rect x="380" y="60" width="140" height="130" rx="14" fill="#1e293b" stroke="#f472b6" stroke-width="1.5"/>
+    <text x="450" y="100" text-anchor="middle" fill="#f472b6" font-family="system-ui,sans-serif" font-size="26">&#x1F455;</text>
+    <text x="450" y="126" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="12" font-weight="600">Wardrobe</text>
+    <text x="450" y="144" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Generate outfits</text>
+    <text x="450" y="157" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Equip &amp; preview</text>
+  </g>
+
+  <!-- Arrow 3 -->
+  <line class="arrow" opacity="0" x1="525" y1="125" x2="555" y2="125" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
+
+  <!-- Step 4: Export -->
+  <g class="step" opacity="0">
+    <rect x="560" y="60" width="140" height="130" rx="14" fill="#1e293b" stroke="#34d399" stroke-width="1.5"/>
+    <text x="630" y="100" text-anchor="middle" fill="#34d399" font-family="system-ui,sans-serif" font-size="26">&#x1F4E6;</text>
+    <text x="630" y="126" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="12" font-weight="600">Save to Persona</text>
+    <text x="630" y="144" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Avatar + all outfits</text>
+    <text x="630" y="157" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Quick or Wizard</text>
+  </g>
+
+  <!-- Arrow 4 -->
+  <line class="arrow" opacity="0" x1="705" y1="125" x2="735" y2="125" stroke="#64748b" stroke-width="2" marker-end="url(#arrowHead)"/>
+
+  <!-- Final: .hpersona -->
+  <g class="final glow" opacity="0">
+    <rect x="740" y="52" width="100" height="146" rx="18" fill="url(#purpleGrad)" opacity=".15"/>
+    <rect x="740" y="52" width="100" height="146" rx="18" fill="none" stroke="url(#purpleGrad)" stroke-width="2"/>
+    <text x="790" y="100" text-anchor="middle" fill="#c4b5fd" font-family="system-ui,sans-serif" font-size="28">&#x1F3AD;</text>
+    <text x="790" y="126" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="12" font-weight="700">.hpersona</text>
+    <text x="790" y="144" text-anchor="middle" fill="#c4b5fd" font-family="system-ui,sans-serif" font-size="9">Portable package</text>
+    <text x="790" y="157" text-anchor="middle" fill="#c4b5fd" font-family="system-ui,sans-serif" font-size="9">Share anywhere</text>
+  </g>
+
+  <!-- Subtitle -->
+  <text x="430" y="230" text-anchor="middle" fill="#64748b" font-family="system-ui,sans-serif" font-size="11" font-style="italic">Create avatars, build a wardrobe, and export everything as a portable persona package</text>
+  <text x="430" y="248" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="10">Zero prompts required &mdash; visual presets handle everything</text>
+
+  <!-- Arrow marker -->
+  <defs>
+    <marker id="arrowHead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#64748b"/>
+    </marker>
+  </defs>
+</svg>

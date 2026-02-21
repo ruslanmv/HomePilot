@@ -492,9 +492,12 @@ def export_persona_project(
                         url = img.get("url") or ""
                         # Extract filename from URL:
                         #   /files/ComfyUI_00042_.png → ComfyUI_00042_.png
+                        #   /comfy/view/X.png → X.png
                         #   http://…/view?filename=X.png → X.png
                         if "/files/" in url:
                             selected = url.rsplit("/files/", 1)[-1].split("?")[0]
+                        elif "/comfy/view/" in url:
+                            selected = url.rsplit("/comfy/view/", 1)[-1].split("?")[0]
                         elif "filename=" in url:
                             selected = url.split("filename=")[-1].split("&")[0]
                         break
@@ -550,6 +553,19 @@ def export_persona_project(
                 z.write(abs_path, arcname=arcname)
                 _added_assets.add(arcname)
 
+        def _filename_from_url(url: str) -> Optional[str]:
+            """Extract a filename from a ComfyUI, /files/, or /comfy/view/ URL."""
+            if not url:
+                return None
+            if "/files/" in url:
+                return url.rsplit("/files/", 1)[-1].split("?")[0]
+            # Avatar Studio stores URLs as /comfy/view/<filename>
+            if "/comfy/view/" in url:
+                return url.rsplit("/comfy/view/", 1)[-1].split("?")[0]
+            if "filename=" in url:
+                return url.split("filename=")[-1].split("&")[0]
+            return None
+
         def add_asset_by_relpath(rel_path: Optional[str]) -> None:
             """Resolve a DB-stored relative path and add to ZIP."""
             if not rel_path:
@@ -566,6 +582,14 @@ def export_persona_project(
                     abs_path = upload_root / basename
             arcname = f"assets/{_safe_basename(abs_path.name)}"
             _add_file(abs_path, arcname)
+
+        def add_asset_by_url(url: Optional[str]) -> None:
+            """Extract filename from a URL and try to add the file."""
+            if not url:
+                return
+            fname = _filename_from_url(url)
+            if fname:
+                add_asset_by_relpath(fname)
 
         # Locate the project's appearance directory
         project_id = project.get("id") or ""
@@ -587,6 +611,16 @@ def export_persona_project(
         for outfit in (persona_appearance.get("outfits") or []):
             add_asset_by_relpath(outfit.get("filename"))
             add_asset_by_relpath(outfit.get("thumb_filename"))
+            # Also handle images stored as PersonaImageRef[] with url fields
+            # (created by Avatar Studio → Save as Persona flow)
+            for img in (outfit.get("images") or []):
+                add_asset_by_url(img.get("url"))
+
+        # Strategy 4: main avatar images from sets[].images[].url
+        # (Avatar Studio stores images as full URLs, not committed filenames)
+        for s in (persona_appearance.get("sets") or []):
+            for img in (s.get("images") or []):
+                add_asset_by_url(img.get("url"))
 
     name = project.get("name") or persona_agent.get("label") or "persona"
     safe_name = "".join(c for c in name if c.isalnum() or c in ("-", "_")).strip() or "persona"

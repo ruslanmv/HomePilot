@@ -1,0 +1,8 @@
+{
+  "id": "avatar-full",
+  "title": "Avatar Studio (Full)",
+  "license": "Mixed",
+  "commercial_ok": false,
+  "modes_enabled": ["studio_random", "studio_reference", "studio_faceswap", "creative"],
+  "notes": "Includes all avatar adapters and mixed licenses. Use with caution in commercial deployments."
+}

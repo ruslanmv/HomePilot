@@ -42,6 +42,9 @@ type Props = {
   apiKey?: string
   onClose: () => void
   onCreated?: (project: any) => void
+  /** Optional pre-filled draft (e.g. from "Save as Persona Avatar" in AvatarStudio).
+   *  When provided with a selected avatar, the wizard auto-skips to Step 1 (Identity). */
+  initialDraft?: Partial<PersonaWizardDraft>
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +161,7 @@ function autoDescription(g: PersonaGender, stylePreset?: string, current?: strin
     !current ||
     current.includes('beautiful woman') ||
     current.includes('handsome man') ||
+    current.includes('solo portrait') ||
     current.trim().toLowerCase() === 'person' ||
     current.trim() === ''
 
@@ -165,7 +169,7 @@ function autoDescription(g: PersonaGender, stylePreset?: string, current?: strin
 
   const base = baseByGender(g)
   const hint = styleHint(stylePreset)
-  return [base, 'portrait', hint, 'high detail'].filter(Boolean).join(', ')
+  return ['solo portrait of a single', base, 'front-facing, looking at camera', hint, 'high detail'].filter(Boolean).join(', ')
 }
 
 // ---------------------------------------------------------------------------
@@ -196,8 +200,12 @@ const CLASS_COLORS: Record<string, { bg: string; border: string; text: string; r
 // Component
 // ---------------------------------------------------------------------------
 
-export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props) {
-  const [step, setStep] = useState<0 | 1 | 2 | 3>(0)
+export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialDraft }: Props) {
+  // If an initialDraft with a selected avatar is provided, skip to Step 1 (Identity)
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(() => {
+    if (initialDraft?.persona_appearance?.selected) return 1
+    return 0
+  })
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState<string | null>(null)
@@ -218,13 +226,26 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
   const [generationMode, setGenerationMode] = useState<GenerationMode>('standard')
   const { capabilities: avatarCaps } = useAvatarCapabilities(backendUrl, apiKey)
 
-  const [draft, setDraft] = useState<PersonaWizardDraft>(() => ({
-    persona_class: 'custom',
-    persona_agent: defaultPersonaAgent(),
-    persona_appearance: { ...defaultAppearance(), nsfwMode: readNsfwMode() },
-    memory_mode: 'adaptive',
-    agentic: { goal: '', capabilities: [] },
-  }))
+  const [draft, setDraft] = useState<PersonaWizardDraft>(() => {
+    const base: PersonaWizardDraft = {
+      persona_class: 'custom',
+      persona_agent: defaultPersonaAgent(),
+      persona_appearance: { ...defaultAppearance(), nsfwMode: readNsfwMode() },
+      memory_mode: 'adaptive',
+      agentic: { goal: '', capabilities: [] },
+    }
+    // Merge initialDraft (from "Save as Persona Avatar") if provided
+    if (initialDraft) {
+      return {
+        ...base,
+        ...initialDraft,
+        persona_agent: { ...base.persona_agent, ...(initialDraft.persona_agent || {}) },
+        persona_appearance: { ...base.persona_appearance, ...(initialDraft.persona_appearance || {}) },
+        agentic: { ...base.agentic, ...(initialDraft.agentic || {}) },
+      }
+    }
+    return base
+  })
 
   // -------------------------------------------------------------------------
   // Available blueprints: SFW always + NSFW only when enabled + Custom always
@@ -303,19 +324,27 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
     const gender = draft.persona_appearance.gender ?? 'female'
     const genderBase = baseByGender(gender)
 
+    // Deduplicate name & role — e.g. "Girlfriend" class has both set to "Girlfriend"
+    const nameAndRole =
+      role && role.toLowerCase() !== personaName.toLowerCase()
+        ? `${personaName}, ${role}`
+        : personaName
+
     if (characterDesc.trim()) {
       // User-edited character description
       characterPrompt = characterDesc.trim()
     } else {
-      characterPrompt = `high quality studio portrait, ${genderBase}, ${personaName}${role ? `, ${role}` : ''}`
+      characterPrompt = `solo portrait of a single ${genderBase}, front-facing, looking at camera, ${nameAndRole}`
     }
 
     if (isNsfw) {
+      // NSFW_STYLE_HINTS already include the style descriptor (e.g. "seductive pose"),
+      // so we don't prepend "${style} style, " — that caused "seductive style, seductive pose" duplication
       const nsfwHint = NSFW_STYLE_HINTS[nsfwStylePreset] ?? ''
       const bodyHint = bodyType && bodyType !== 'Slim' ? `, ${bodyType.toLowerCase()} body type` : ''
       const outfitHint = OUTFIT_HINTS[outfit] ?? ''
       const customHint = customPromptExtra ? `, ${customPromptExtra}` : ''
-      outfitPrompt = `${nsfwStylePreset.toLowerCase()} style, ${nsfwHint}${bodyHint}${outfitHint ? `, ${outfitHint}` : ''}${customHint}`
+      outfitPrompt = `${nsfwHint}${bodyHint}${outfitHint ? `, ${outfitHint}` : ''}${customHint}`
     } else {
       const preset = draft.persona_appearance.style_preset
       const hint = STYLE_HINTS[preset] ?? ''
@@ -337,6 +366,12 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
       const { characterPrompt, outfitPrompt, fullPrompt } = buildPrompt()
       const isNsfw = isSpicy && draft.persona_appearance.nsfwMode
 
+      // In identity mode, pass the selected avatar as reference face so
+      // InstantID can preserve the same person across "Generate 4 more".
+      // First batch (no selection yet) falls through to standard generation.
+      const identityRef =
+        generationMode === 'identity' && selectedImageUrl ? selectedImageUrl : undefined
+
       const out = await generatePersonaImages({
         backendUrl,
         apiKey,
@@ -348,6 +383,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
         promptRefinement: true,
         nsfwMode: isNsfw,
         generationMode,
+        referenceImageUrl: identityRef,
       })
 
       if (out.urls.length === 0) {
@@ -993,7 +1029,9 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
                     </div>
                     {generationMode === 'identity' && (
                       <p className="text-[10px] text-emerald-300/50 px-1">
-                        Face preservation active. The same identity will be maintained across outfit variations.
+                        {selectedImageUrl
+                          ? 'Face preservation active. "Generate 4 more" will keep the same identity.'
+                          : 'Pick an avatar below to lock identity. First batch uses standard generation.'}
                       </p>
                     )}
                   </div>

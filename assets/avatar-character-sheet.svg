@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 340">
+  <defs>
+    <style>
+      @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(12px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes slideRight {
+        from { opacity: 0; transform: translateX(-10px); }
+        to   { opacity: 1; transform: translateX(0); }
+      }
+      @keyframes equipGlow {
+        0%, 100% { stroke: #f59e0b; stroke-opacity: .3; }
+        50%      { stroke: #f59e0b; stroke-opacity: .8; }
+      }
+      .panel { animation: fadeIn .5s ease-out both; }
+      .slot  { animation: slideRight .4s ease-out both; }
+      .equip { animation: equipGlow 2s ease-in-out infinite; }
+
+      .panel:nth-child(2) { animation-delay: .1s; }
+      .panel:nth-child(3) { animation-delay: .3s; }
+      .slot:nth-child(1) { animation-delay: .5s; }
+      .slot:nth-child(2) { animation-delay: .65s; }
+      .slot:nth-child(3) { animation-delay: .8s; }
+      .slot:nth-child(4) { animation-delay: .95s; }
+      .slot:nth-child(5) { animation-delay: 1.1s; }
+    </style>
+    <linearGradient id="bgG" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f0f23"/>
+      <stop offset="100%" stop-color="#1a1a3e"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="820" height="340" rx="16" fill="url(#bgG)"/>
+
+  <!-- Title -->
+  <text x="410" y="30" text-anchor="middle" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="12" font-weight="600" letter-spacing="2">RPG CHARACTER SHEET LAYOUT</text>
+
+  <!-- LEFT: The Stage -->
+  <g class="panel" opacity="0">
+    <rect x="20" y="48" width="340" height="240" rx="14" fill="#1e293b" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="190" y="72" text-anchor="middle" fill="#a78bfa" font-family="system-ui,sans-serif" font-size="11" font-weight="600">THE STAGE</text>
+
+    <!-- Toggle tabs -->
+    <rect x="40" y="82" width="130" height="24" rx="6" fill="#334155"/>
+    <text x="105" y="99" text-anchor="middle" fill="#e2e8f0" font-family="system-ui,sans-serif" font-size="9" font-weight="600">&#x1F512; Anchor Face</text>
+    <rect x="180" y="82" width="130" height="24" rx="6" fill="#0e7490" opacity=".4"/>
+    <text x="245" y="99" text-anchor="middle" fill="#67e8f9" font-family="system-ui,sans-serif" font-size="9" font-weight="600">&#x2728; Latest Outfit</text>
+
+    <!-- Stage image area (portrait ratio) -->
+    <rect x="60" y="116" width="140" height="155" rx="10" fill="#0f172a" stroke="#475569" stroke-width="1"/>
+    <text x="130" y="185" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="28">&#x1F464;</text>
+    <text x="130" y="210" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="9">Full portrait</text>
+    <text x="130" y="222" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="8">object-contain</text>
+
+    <!-- Metadata -->
+    <text x="220" y="136" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Mode: Face+Style</text>
+    <text x="220" y="152" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Seed: 42918</text>
+    <text x="220" y="168" fill="#94a3b8" font-family="system-ui,sans-serif" font-size="9">Created: 2m ago</text>
+
+    <!-- Action buttons -->
+    <rect x="220" y="190" width="60" height="20" rx="6" fill="#7c3aed" opacity=".3"/>
+    <text x="250" y="204" text-anchor="middle" fill="#c4b5fd" font-family="system-ui,sans-serif" font-size="8">&#x1F50D; Full size</text>
+    <rect x="220" y="216" width="60" height="20" rx="6" fill="#0891b2" opacity=".3"/>
+    <text x="250" y="230" text-anchor="middle" fill="#67e8f9" font-family="system-ui,sans-serif" font-size="8">&#x270F;&#xFE0F; Edit</text>
+    <rect x="220" y="242" width="60" height="20" rx="6" fill="#059669" opacity=".3"/>
+    <text x="250" y="256" text-anchor="middle" fill="#6ee7b7" font-family="system-ui,sans-serif" font-size="8">&#x1F464; Persona</text>
+  </g>
+
+  <!-- RIGHT: Outfit Studio -->
+  <g class="panel" opacity="0">
+    <rect x="380" y="48" width="420" height="140" rx="14" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5"/>
+    <text x="590" y="72" text-anchor="middle" fill="#38bdf8" font-family="system-ui,sans-serif" font-size="11" font-weight="600">OUTFIT STUDIO (CONTROLS)</text>
+
+    <!-- Scenario badges -->
+    <rect x="400" y="86" width="56" height="22" rx="6" fill="#1e3a5f"/>
+    <text x="428" y="101" text-anchor="middle" fill="#7dd3fc" font-family="system-ui,sans-serif" font-size="8">&#x1F4BC; Business</text>
+    <rect x="462" y="86" width="50" height="22" rx="6" fill="#1e3a5f"/>
+    <text x="487" y="101" text-anchor="middle" fill="#7dd3fc" font-family="system-ui,sans-serif" font-size="8">&#x2615; Casual</text>
+    <rect x="518" y="86" width="54" height="22" rx="6" fill="#1e3a5f"/>
+    <text x="545" y="101" text-anchor="middle" fill="#7dd3fc" font-family="system-ui,sans-serif" font-size="8">&#x1F942; Evening</text>
+    <rect x="578" y="86" width="48" height="22" rx="6" fill="#1e3a5f"/>
+    <text x="602" y="101" text-anchor="middle" fill="#7dd3fc" font-family="system-ui,sans-serif" font-size="8">&#x1F3C3; Active</text>
+
+    <!-- Custom prompt -->
+    <rect x="400" y="118" width="380" height="24" rx="6" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+    <text x="412" y="134" fill="#64748b" font-family="system-ui,sans-serif" font-size="9">Custom outfit description...</text>
+
+    <!-- Generate button -->
+    <rect x="400" y="152" width="100" height="26" rx="8" fill="#7c3aed"/>
+    <text x="450" y="169" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="10" font-weight="600">&#x2728; Generate</text>
+  </g>
+
+  <!-- BOTTOM: Wardrobe Inventory -->
+  <g class="panel" opacity="0">
+    <rect x="380" y="200" width="420" height="88" rx="14" fill="#1e293b" stroke="#f59e0b" stroke-width="1"/>
+    <text x="590" y="220" text-anchor="middle" fill="#f59e0b" font-family="system-ui,sans-serif" font-size="11" font-weight="600">WARDROBE INVENTORY</text>
+
+    <!-- Wardrobe slots -->
+    <g class="slot" opacity="0">
+      <rect x="400" y="230" width="48" height="48" rx="8" fill="#0f172a" class="equip" stroke-width="2"/>
+      <text x="424" y="260" text-anchor="middle" fill="#f59e0b" font-family="system-ui,sans-serif" font-size="7">EQUIPPED</text>
+    </g>
+    <g class="slot" opacity="0">
+      <rect x="456" y="230" width="48" height="48" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+      <text x="480" y="258" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="14">&#x1F4BC;</text>
+    </g>
+    <g class="slot" opacity="0">
+      <rect x="512" y="230" width="48" height="48" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+      <text x="536" y="258" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="14">&#x1F942;</text>
+    </g>
+    <g class="slot" opacity="0">
+      <rect x="568" y="230" width="48" height="48" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+      <text x="592" y="258" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="14">&#x1F3C3;</text>
+    </g>
+    <g class="slot" opacity="0">
+      <rect x="624" y="230" width="48" height="48" rx="8" fill="#0f172a" stroke="#334155" stroke-width="1" stroke-dasharray="4 3"/>
+      <text x="648" y="260" text-anchor="middle" fill="#334155" font-family="system-ui,sans-serif" font-size="16">+</text>
+    </g>
+  </g>
+
+  <!-- Bottom label -->
+  <text x="410" y="316" text-anchor="middle" fill="#64748b" font-family="system-ui,sans-serif" font-size="11" font-style="italic">Click a wardrobe slot to equip it on the stage &mdash; MMORPG-style character management</text>
+  <text x="410" y="334" text-anchor="middle" fill="#475569" font-family="system-ui,sans-serif" font-size="10">Full portrait display &mdash; no more cropped heads</text>
+</svg>
