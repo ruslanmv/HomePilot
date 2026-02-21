@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...avatar.schemas import AvatarResult
+from ...comfy import _download_image_for_comfyui
 from .client import ComfyUIUnavailable, comfyui_healthy, submit_prompt, wait_for_images
 
 WORKFLOW_DIR = Path(__file__).resolve().parents[4] / "workflows" / "avatar"
@@ -165,15 +166,27 @@ def _inject_batch_size(wf: Dict[str, Any], count: int) -> None:
 
 
 def _inject_reference(wf: Dict[str, Any], ref: Optional[str]) -> None:
+    """Inject reference image into LoadImage nodes.
+
+    ComfyUI's LoadImage expects a **local filename** inside its input/
+    directory, not an HTTP URL.  If *ref* looks like a URL we download it
+    first via the shared helper in ``comfy.py``.
+    """
     if not ref:
         return
+
+    # Convert URL → local filename in ComfyUI's input directory
+    local_name = ref
+    if ref.startswith("http://") or ref.startswith("https://"):
+        local_name = _download_image_for_comfyui(ref)
+
     for node in wf.values():
         if isinstance(node, dict) and node.get("class_type") in (
             "LoadImage",
             "LoadImageFromURL",
             "ImageLoad",
         ):
-            node.setdefault("inputs", {})["image"] = ref
+            node.setdefault("inputs", {})["image"] = local_name
 
 
 def _inject_checkpoint(wf: Dict[str, Any], ckpt: Optional[str]) -> None:
