@@ -34,6 +34,7 @@ import {
   Loader2,
   AlertTriangle,
   Filter,
+  X,
 } from 'lucide-react'
 
 import type { GalleryItem, OutfitScenarioTag, ScenarioTagMeta } from './galleryTypes'
@@ -125,17 +126,31 @@ export function AvatarViewer({
   const [outfitCount, setOutfitCount] = useState(1)
   const [outfitCopiedSeed, setOutfitCopiedSeed] = useState<number | null>(null)
 
-  // Stage toggle: flip between anchor face and latest outfit
+  // Stage toggle: flip between anchor face, latest outfit, or equipped wardrobe item
   const [stageTab, setStageTab] = useState<'anchor' | 'outfit'>('anchor')
   const [selectedResultIdx, setSelectedResultIdx] = useState(0)
+  // MMORPG "equip" — clicking a wardrobe item shows it on the stage
+  const [equippedItem, setEquippedItem] = useState<GalleryItem | null>(null)
 
   // Auto-switch to Latest Outfit tab when new results arrive
   useEffect(() => {
     if (outfit.results.length > 0) {
       setStageTab('outfit')
       setSelectedResultIdx(0)
+      setEquippedItem(null) // new generation overrides equipped
     }
   }, [outfit.results])
+
+  // Equip handler — like clicking armor in an MMO inventory
+  const handleEquip = useCallback((wardrobeItem: GalleryItem) => {
+    setEquippedItem(wardrobeItem)
+    setStageTab('outfit')
+  }, [])
+
+  const handleUnequip = useCallback(() => {
+    setEquippedItem(null)
+    setStageTab('anchor')
+  }, [])
 
   const heroUrl = resolveUrl(item.url, backendUrl)
 
@@ -324,57 +339,113 @@ export function AvatarViewer({
               </div>
 
               {/* Stage display — one big image at a time */}
-              {stageTab === 'anchor' ? (
-                /* ─── Anchor Face ─── */
-                <div className="relative group">
-                  <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-purple-500/20 via-transparent to-cyan-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
-                  <div
-                    className="relative aspect-square rounded-2xl overflow-hidden border border-white/10 cursor-pointer bg-white/[0.02]"
-                    onClick={() => onOpenLightbox?.(heroUrl)}
-                  >
-                    <img
-                      src={heroUrl}
-                      alt={item.prompt || 'Avatar portrait'}
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-                    />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <Maximize2 size={28} className="text-white/80" />
-                    </div>
-                  </div>
-                </div>
-              ) : outfit.loading && outfit.results.length === 0 ? (
-                /* ─── Loading skeleton ─── */
-                <div className="aspect-square rounded-2xl bg-white/[0.03] border border-white/[0.06] animate-pulse flex items-center justify-center">
-                  <Loader2 size={32} className="animate-spin text-white/15" />
-                </div>
-              ) : outfit.results.length > 0 ? (
-                /* ─── Latest outfit result (full size) ─── */
-                <div className="relative group animate-fadeSlideIn">
-                  <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-cyan-500/20 via-transparent to-blue-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
-                  <div
-                    className="relative aspect-square rounded-2xl overflow-hidden border border-cyan-500/15 cursor-pointer bg-white/[0.02]"
-                    onClick={() => onOpenLightbox?.(resolveUrl(outfit.results[selectedResultIdx].url, backendUrl))}
-                  >
-                    <img
-                      src={resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)}
-                      alt={`Outfit result ${selectedResultIdx + 1}`}
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
-                    />
-                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <Maximize2 size={28} className="text-white/80" />
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                /* ─── Empty outfit state ─── */
-                <div className="aspect-square rounded-2xl border-2 border-dashed border-white/[0.08] bg-white/[0.01] flex flex-col items-center justify-center gap-2">
-                  <Shirt size={32} className="text-white/15" />
-                  <span className="text-xs text-white/25">Generate an outfit to see it here</span>
-                </div>
-              )}
+              {(() => {
+                // Resolve what to show on the stage
+                const showEquipped = stageTab === 'outfit' && equippedItem
+                const equippedUrl = showEquipped ? resolveUrl(equippedItem!.url, backendUrl) : ''
+                const equippedTagMeta = showEquipped ? getTagMeta(equippedItem!.scenarioTag) : undefined
 
-              {/* Result thumbnail filmstrip (when multiple results) */}
-              {stageTab === 'outfit' && outfit.results.length > 1 && (
+                if (stageTab === 'anchor') {
+                  return (
+                    /* ─── Anchor Face ─── */
+                    <div className="relative group">
+                      <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-purple-500/20 via-transparent to-cyan-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
+                      <div
+                        className="relative aspect-square rounded-2xl overflow-hidden border border-white/10 cursor-pointer bg-white/[0.02]"
+                        onClick={() => onOpenLightbox?.(heroUrl)}
+                      >
+                        <img
+                          src={heroUrl}
+                          alt={item.prompt || 'Avatar portrait'}
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <Maximize2 size={28} className="text-white/80" />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
+
+                if (showEquipped) {
+                  return (
+                    /* ─── Equipped wardrobe item (MMORPG-style) ─── */
+                    <div className="relative group animate-fadeSlideIn">
+                      <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-amber-500/25 via-transparent to-orange-500/25 opacity-60 group-hover:opacity-100 transition-opacity" />
+                      <div
+                        className="relative aspect-square rounded-2xl overflow-hidden border border-amber-500/20 cursor-pointer bg-white/[0.02]"
+                        onClick={() => onOpenLightbox?.(equippedUrl)}
+                      >
+                        <img
+                          src={equippedUrl}
+                          alt={equippedItem!.prompt || 'Equipped outfit'}
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                        />
+                        {/* Equipped badge */}
+                        {equippedTagMeta && (
+                          <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-amber-500/20 text-[10px] text-amber-200 font-medium">
+                            <span>{equippedTagMeta.icon}</span>
+                            <span>{equippedTagMeta.label}</span>
+                          </div>
+                        )}
+                        {/* Unequip button — return to base */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleUnequip() }}
+                          className="absolute top-3 right-3 w-8 h-8 rounded-lg bg-black/60 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 hover:text-white hover:bg-red-500/40 hover:border-red-500/30 transition-all"
+                          title="Unequip — return to base"
+                        >
+                          <X size={14} />
+                        </button>
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+                          <Maximize2 size={28} className="text-white/80" />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
+
+                if (outfit.loading && outfit.results.length === 0) {
+                  return (
+                    /* ─── Loading skeleton ─── */
+                    <div className="aspect-square rounded-2xl bg-white/[0.03] border border-white/[0.06] animate-pulse flex items-center justify-center">
+                      <Loader2 size={32} className="animate-spin text-white/15" />
+                    </div>
+                  )
+                }
+
+                if (outfit.results.length > 0) {
+                  return (
+                    /* ─── Latest outfit result (full size) ─── */
+                    <div className="relative group animate-fadeSlideIn">
+                      <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-cyan-500/20 via-transparent to-blue-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
+                      <div
+                        className="relative aspect-square rounded-2xl overflow-hidden border border-cyan-500/15 cursor-pointer bg-white/[0.02]"
+                        onClick={() => onOpenLightbox?.(resolveUrl(outfit.results[selectedResultIdx].url, backendUrl))}
+                      >
+                        <img
+                          src={resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)}
+                          alt={`Outfit result ${selectedResultIdx + 1}`}
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
+                        />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <Maximize2 size={28} className="text-white/80" />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
+
+                return (
+                  /* ─── Empty outfit state ─── */
+                  <div className="aspect-square rounded-2xl border-2 border-dashed border-white/[0.08] bg-white/[0.01] flex flex-col items-center justify-center gap-2">
+                    <Shirt size={32} className="text-white/15" />
+                    <span className="text-xs text-white/25">Click a wardrobe item to equip it, or generate a new outfit</span>
+                  </div>
+                )
+              })()}
+
+              {/* Result thumbnail filmstrip (when multiple results and no equipped item) */}
+              {stageTab === 'outfit' && !equippedItem && outfit.results.length > 1 && (
                 <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
                   {outfit.results.map((r, i) => (
                     <button
@@ -398,6 +469,11 @@ export function AvatarViewer({
                 {stageTab === 'anchor' && item.prompt && (
                   <p className="text-sm text-white/60 leading-relaxed">
                     &ldquo;{item.prompt}&rdquo;
+                  </p>
+                )}
+                {stageTab === 'outfit' && equippedItem?.prompt && (
+                  <p className="text-sm text-white/60 leading-relaxed">
+                    &ldquo;{equippedItem.prompt}&rdquo;
                   </p>
                 )}
                 <div className="flex items-center gap-3 text-[11px] text-white/35">
@@ -424,6 +500,22 @@ export function AvatarViewer({
                             </>
                           )}
                         </button>
+                      )}
+                    </>
+                  ) : equippedItem ? (
+                    <>
+                      <span className="flex items-center gap-1 text-amber-400/60">
+                        <Shirt size={11} />
+                        Equipped
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock size={11} />
+                        {formatTimeAgo(equippedItem.createdAt)}
+                      </span>
+                      {equippedItem.seed !== undefined && (
+                        <span className="font-mono">
+                          Seed: {equippedItem.seed}
+                        </span>
                       )}
                     </>
                   ) : outfit.results.length > 0 ? (
@@ -511,6 +603,39 @@ export function AvatarViewer({
                         {confirmDelete ? 'Confirm' : 'Delete'}
                       </button>
                     )}
+                  </>
+                ) : equippedItem ? (
+                  /* Equipped wardrobe item actions */
+                  <>
+                    <button
+                      onClick={handleUnequip}
+                      className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-amber-500/15 bg-amber-500/[0.06] text-amber-300 hover:bg-amber-500/10 transition-all"
+                    >
+                      <X size={14} />
+                      Unequip
+                    </button>
+                    {onSendToEdit && (
+                      <button
+                        onClick={() => onSendToEdit(resolveUrl(equippedItem.url, backendUrl))}
+                        className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-purple-500/15 bg-purple-500/[0.06] text-purple-300 hover:bg-purple-500/10 transition-all"
+                      >
+                        <PenLine size={14} />
+                        Edit
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        const url = resolveUrl(equippedItem.url, backendUrl)
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = `outfit_${equippedItem.seed ?? equippedItem.id}.png`
+                        a.click()
+                      }}
+                      className="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-medium border border-white/[0.08] bg-white/[0.03] text-white/50 hover:bg-white/[0.06] hover:text-white/70 transition-all"
+                    >
+                      <Download size={14} />
+                      Download
+                    </button>
                   </>
                 ) : outfit.results.length > 0 ? (
                   <>
@@ -706,7 +831,7 @@ export function AvatarViewer({
                   <p className="text-[10px] text-white/30 mt-0.5">
                     {outfits.length === 0
                       ? 'Generate outfits to fill your inventory'
-                      : 'Your collection of outfit variations'}
+                      : 'Click to equip — like swapping gear in an RPG'}
                   </p>
                 </div>
               </div>
@@ -743,6 +868,8 @@ export function AvatarViewer({
                     item={o}
                     imageUrl={outfitUrl}
                     tagMeta={tagMeta}
+                    isEquipped={equippedItem?.id === o.id}
+                    onEquip={handleEquip}
                     onOpenLightbox={onOpenLightbox}
                     onSendToEdit={onSendToEdit}
                     onDelete={onDeleteItem}
@@ -796,6 +923,8 @@ function WardrobeSlot({
   item,
   imageUrl,
   tagMeta,
+  isEquipped,
+  onEquip,
   onOpenLightbox,
   onSendToEdit,
   onDelete,
@@ -803,15 +932,22 @@ function WardrobeSlot({
   item: GalleryItem
   imageUrl: string
   tagMeta?: ScenarioTagMeta
+  isEquipped?: boolean
+  onEquip?: (item: GalleryItem) => void
   onOpenLightbox?: (url: string) => void
   onSendToEdit?: (url: string) => void
   onDelete?: (id: string) => void
 }) {
   return (
-    <div className="group relative rounded-xl overflow-hidden border border-white/[0.06] bg-white/[0.02] hover:border-white/15 transition-all">
+    <div className={[
+      'group relative rounded-xl overflow-hidden transition-all',
+      isEquipped
+        ? 'border-2 border-amber-500/50 ring-2 ring-amber-500/20 shadow-[0_0_12px_rgba(245,158,11,0.15)]'
+        : 'border border-white/[0.06] bg-white/[0.02] hover:border-white/15',
+    ].join(' ')}>
       <div
         className="aspect-[2/3] bg-white/[0.03] cursor-pointer relative"
-        onClick={() => onOpenLightbox?.(imageUrl)}
+        onClick={() => onEquip?.(item)}
       >
         <img
           src={imageUrl}
@@ -819,6 +955,13 @@ function WardrobeSlot({
           className="w-full h-full object-cover"
           loading="lazy"
         />
+
+        {/* Equipped indicator */}
+        {isEquipped && (
+          <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-amber-500/80 text-[7px] text-white font-bold uppercase tracking-wider z-10">
+            Equipped
+          </div>
+        )}
 
         {/* Scenario tag badge */}
         {tagMeta && (
@@ -831,6 +974,15 @@ function WardrobeSlot({
         {/* Hover overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-between p-2">
           <div className="flex justify-end gap-1">
+            {onOpenLightbox && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onOpenLightbox(imageUrl) }}
+                className="p-1.5 bg-white/10 backdrop-blur-sm rounded-lg text-white/80 hover:bg-white/20 transition-colors"
+                title="View full size"
+              >
+                <Maximize2 size={11} />
+              </button>
+            )}
             {onSendToEdit && (
               <button
                 onClick={(e) => { e.stopPropagation(); onSendToEdit(imageUrl) }}

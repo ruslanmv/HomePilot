@@ -161,6 +161,7 @@ function autoDescription(g: PersonaGender, stylePreset?: string, current?: strin
     !current ||
     current.includes('beautiful woman') ||
     current.includes('handsome man') ||
+    current.includes('solo portrait') ||
     current.trim().toLowerCase() === 'person' ||
     current.trim() === ''
 
@@ -168,7 +169,7 @@ function autoDescription(g: PersonaGender, stylePreset?: string, current?: strin
 
   const base = baseByGender(g)
   const hint = styleHint(stylePreset)
-  return [base, 'portrait', hint, 'high detail'].filter(Boolean).join(', ')
+  return ['solo portrait of a single', base, 'front-facing, looking at camera', hint, 'high detail'].filter(Boolean).join(', ')
 }
 
 // ---------------------------------------------------------------------------
@@ -323,19 +324,27 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
     const gender = draft.persona_appearance.gender ?? 'female'
     const genderBase = baseByGender(gender)
 
+    // Deduplicate name & role — e.g. "Girlfriend" class has both set to "Girlfriend"
+    const nameAndRole =
+      role && role.toLowerCase() !== personaName.toLowerCase()
+        ? `${personaName}, ${role}`
+        : personaName
+
     if (characterDesc.trim()) {
       // User-edited character description
       characterPrompt = characterDesc.trim()
     } else {
-      characterPrompt = `high quality studio portrait, ${genderBase}, ${personaName}${role ? `, ${role}` : ''}`
+      characterPrompt = `solo portrait of a single ${genderBase}, front-facing, looking at camera, ${nameAndRole}`
     }
 
     if (isNsfw) {
+      // NSFW_STYLE_HINTS already include the style descriptor (e.g. "seductive pose"),
+      // so we don't prepend "${style} style, " — that caused "seductive style, seductive pose" duplication
       const nsfwHint = NSFW_STYLE_HINTS[nsfwStylePreset] ?? ''
       const bodyHint = bodyType && bodyType !== 'Slim' ? `, ${bodyType.toLowerCase()} body type` : ''
       const outfitHint = OUTFIT_HINTS[outfit] ?? ''
       const customHint = customPromptExtra ? `, ${customPromptExtra}` : ''
-      outfitPrompt = `${nsfwStylePreset.toLowerCase()} style, ${nsfwHint}${bodyHint}${outfitHint ? `, ${outfitHint}` : ''}${customHint}`
+      outfitPrompt = `${nsfwHint}${bodyHint}${outfitHint ? `, ${outfitHint}` : ''}${customHint}`
     } else {
       const preset = draft.persona_appearance.style_preset
       const hint = STYLE_HINTS[preset] ?? ''
