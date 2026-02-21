@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from ..services.comfyui.errors import ComfyUITimeout, ComfyUIWorkflowError
 from .availability import enabled_modes, packs_status
 from .licensing import LicenseDenied
 from .schemas import (
@@ -51,6 +52,10 @@ async def generate_avatars(req: AvatarGenerateRequest) -> AvatarGenerateResponse
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except LicenseDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ComfyUIWorkflowError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except ComfyUITimeout as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=500,

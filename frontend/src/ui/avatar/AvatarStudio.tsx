@@ -44,6 +44,7 @@ import { useAvatarGallery } from './useAvatarGallery'
 import { installAvatarPack } from './avatarApi'
 import { AvatarGallery } from './AvatarGallery'
 import { AvatarLandingPage } from './AvatarLandingPage'
+import { AvatarViewer } from './AvatarViewer'
 import { OutfitPanel } from './OutfitPanel'
 import { AvatarSettingsPanel, loadAvatarSettings, resolveCheckpoint } from './AvatarSettingsPanel'
 import type { AvatarMode, AvatarResult, AvatarSettings } from './types'
@@ -102,8 +103,9 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const gen = useGenerateAvatars(backendUrl, apiKey)
   const gallery = useAvatarGallery()
 
-  // TWO-VIEW ARCHITECTURE: gallery (landing) vs designer (creation workspace)
-  const [viewMode, setViewMode] = useState<'gallery' | 'designer'>('gallery')
+  // THREE-VIEW ARCHITECTURE: gallery (landing) → viewer (character sheet) → designer (creation)
+  const [viewMode, setViewMode] = useState<'gallery' | 'designer' | 'viewer'>('gallery')
+  const [viewerItem, setViewerItem] = useState<GalleryItem | null>(null)
 
   // Avatar-specific model settings (persisted in localStorage)
   const [avatarSettings, setAvatarSettings] = useState<AvatarSettings>(loadAvatarSettings)
@@ -242,17 +244,18 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           backendUrl={backendUrl}
           onNewAvatar={() => setViewMode('designer')}
           onOpenItem={(item) => {
-            // Open the lightbox for the selected item
-            const imgUrl = item.url.startsWith('http')
-              ? item.url
-              : `${backendUrl.replace(/\/+$/, '')}${item.url}`
-            onOpenLightbox?.(imgUrl)
+            // Open MMORPG-style character sheet viewer
+            setViewerItem(item)
+            setViewMode('viewer')
           }}
           onDeleteItem={gallery.removeItem}
           onOpenLightbox={onOpenLightbox}
           onSendToEdit={onSendToEdit}
           onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
-          onGenerateOutfits={(item) => setOutfitAnchor(item)}
+          onGenerateOutfits={(item) => {
+            setViewerItem(item)
+            setViewMode('viewer')
+          }}
         />
         {outfitAnchor && (
           <OutfitPanel
@@ -268,6 +271,40 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           />
         )}
       </>
+    )
+  }
+
+  // ==========================================================================
+  // RENDER — Viewer (MMORPG-style Character Sheet)
+  // ==========================================================================
+
+  if (viewMode === 'viewer' && viewerItem) {
+    return (
+      <AvatarViewer
+        item={viewerItem}
+        allItems={gallery.items}
+        backendUrl={backendUrl}
+        apiKey={apiKey}
+        globalModelImages={globalModelImages}
+        onBack={() => {
+          setViewerItem(null)
+          setViewMode('gallery')
+        }}
+        onOpenLightbox={onOpenLightbox}
+        onSendToEdit={onSendToEdit}
+        onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
+        onDeleteItem={(id) => {
+          gallery.removeItem(id)
+          // If the deleted item is the one being viewed, go back
+          if (id === viewerItem.id) {
+            setViewerItem(null)
+            setViewMode('gallery')
+          }
+        }}
+        onOutfitResults={(results, anchor) => {
+          gallery.addBatch(results, anchor.mode, anchor.prompt, anchor.url)
+        }}
+      />
     )
   }
 
@@ -548,6 +585,17 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                 </>
               )}
             </button>
+
+            {gen.loading && (
+              <button
+                onClick={gen.cancel}
+                className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-medium border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all"
+                aria-label="Cancel generation"
+              >
+                <X size={14} />
+                Cancel
+              </button>
+            )}
 
             {/* Count selector */}
             <div className="flex items-center gap-1" role="radiogroup" aria-label="Number of avatars to generate">

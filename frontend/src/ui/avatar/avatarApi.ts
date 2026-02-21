@@ -43,6 +43,7 @@ export async function generateAvatars(
   backendUrl: string,
   body: AvatarGenerateRequest,
   apiKey?: string,
+  signal?: AbortSignal,
 ): Promise<AvatarGenerateResponse> {
   const base = (backendUrl || '').replace(/\/+$/, '')
   const headers: Record<string, string> = {
@@ -54,6 +55,7 @@ export async function generateAvatars(
     method: 'POST',
     headers,
     body: JSON.stringify(body),
+    signal,
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()

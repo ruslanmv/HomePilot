@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 
 import httpx
 
-from .errors import ComfyUITimeout, ComfyUIUnavailable
+from .errors import ComfyUITimeout, ComfyUIUnavailable, ComfyUIWorkflowError
 
 
 def comfyui_healthy(base_url: str) -> bool:
@@ -44,10 +44,17 @@ async def submit_prompt(base_url: str, workflow: Dict[str, Any]) -> str:
 async def wait_for_images(
     base_url: str,
     prompt_id: str,
-    timeout_s: int = 600,
+    timeout_s: int = 300,
     poll_interval_s: float = 1.0,
 ) -> List[Dict[str, Any]]:
-    """Poll ``/history/{prompt_id}`` until images appear or timeout."""
+    """Poll ``/history/{prompt_id}`` until images appear or timeout.
+
+    ComfyUI history entries contain a ``status`` object with
+    ``status_str`` ("success" / "error") and ``completed`` (bool).
+    We use these to break out of the polling loop early when the
+    workflow finishes but produces no images (e.g. missing model,
+    cached empty run, or node error).
+    """
     elapsed = 0.0
     async with httpx.AsyncClient(timeout=10) as client:
         while elapsed < timeout_s:
@@ -63,11 +70,37 @@ async def wait_for_images(
             if prompt_id not in hist:
                 continue
 
-            outputs = hist[prompt_id].get("outputs", {})
+            entry = hist[prompt_id]
+            outputs = entry.get("outputs", {})
             images: list[dict[str, Any]] = []
             for node_out in outputs.values():
                 images.extend(node_out.get("images", []))
             if images:
                 return images
 
-    raise ComfyUITimeout("ComfyUI workflow timed out")
+            # -- Early exit when ComfyUI marks the prompt as done ----------
+            status = entry.get("status", {})
+            status_str = status.get("status_str", "")
+            completed = status.get("completed", False)
+
+            if status_str == "error":
+                msgs = status.get("messages", [])
+                detail = msgs[-1] if msgs else "unknown error"
+                raise ComfyUIWorkflowError(
+                    f"ComfyUI workflow failed: {detail}"
+                )
+
+            if completed and not images:
+                # Workflow finished successfully but produced no images.
+                # This happens when nodes are fully cached with 0 outputs,
+                # the SaveImage node is missing, or the model checkpoint
+                # could not be loaded.
+                raise ComfyUIWorkflowError(
+                    "ComfyUI workflow completed but produced no images. "
+                    "Check that the selected model checkpoint exists and "
+                    "the workflow contains a SaveImage node."
+                )
+
+    raise ComfyUITimeout(
+        f"ComfyUI workflow timed out after {timeout_s}s"
+    )
