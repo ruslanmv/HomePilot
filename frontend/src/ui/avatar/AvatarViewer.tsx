@@ -117,6 +117,7 @@ export function AvatarViewer({
   const [copiedSeed, setCopiedSeed] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [wardrobeFilter, setWardrobeFilter] = useState<OutfitScenarioTag | 'all'>('all')
+  const [wardrobeFilterOpen, setWardrobeFilterOpen] = useState(false)
   const [avatarSettingsState, setAvatarSettingsState] = useState<AvatarSettings>(loadAvatarSettings)
 
   // Outfit generation state
@@ -760,24 +761,56 @@ export function AvatarViewer({
                 </span>
               </div>
 
-              {/* Filter dropdown (only when tags exist) */}
-              {availableTags.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <Filter size={11} className="text-white/25" />
-                  <select
-                    value={wardrobeFilter}
-                    onChange={(e) => setWardrobeFilter(e.target.value as OutfitScenarioTag | 'all')}
-                    className="bg-white/[0.04] border border-white/[0.08] rounded-lg px-2 py-1 text-[10px] text-white/50 focus:outline-none focus:border-white/15 appearance-none cursor-pointer"
-                  >
-                    <option value="all">All</option>
-                    {availableTags.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.icon} {t.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              {/* Filter button + popover */}
+              <div className="relative">
+                <button
+                  onClick={() => setWardrobeFilterOpen((v) => !v)}
+                  className={[
+                    'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-medium transition-all',
+                    wardrobeFilter !== 'all'
+                      ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
+                      : 'border-white/[0.08] bg-white/[0.04] text-white/40 hover:text-white/60 hover:border-white/15',
+                  ].join(' ')}
+                >
+                  <Filter size={11} />
+                  {wardrobeFilter === 'all'
+                    ? 'Filter'
+                    : SCENARIO_TAG_META.find((t) => t.id === wardrobeFilter)?.label ?? 'Filter'}
+                </button>
+
+                {wardrobeFilterOpen && (
+                  <>
+                    {/* Backdrop to close */}
+                    <div className="fixed inset-0 z-40" onClick={() => setWardrobeFilterOpen(false)} />
+                    {/* Popover */}
+                    <div className="absolute right-0 bottom-full mb-1 z-50 w-44 py-1 rounded-xl bg-[#1a1a1a] border border-white/[0.1] shadow-xl shadow-black/40 overflow-hidden">
+                      <button
+                        onClick={() => { setWardrobeFilter('all'); setWardrobeFilterOpen(false) }}
+                        className={[
+                          'w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors',
+                          wardrobeFilter === 'all' ? 'bg-white/[0.08] text-white' : 'text-white/50 hover:bg-white/[0.05] hover:text-white/80',
+                        ].join(' ')}
+                      >
+                        <span className="w-5 text-center text-sm">🎒</span>
+                        All Outfits
+                      </button>
+                      {SCENARIO_TAG_META.map((t) => (
+                        <button
+                          key={t.id}
+                          onClick={() => { setWardrobeFilter(t.id); setWardrobeFilterOpen(false) }}
+                          className={[
+                            'w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors',
+                            wardrobeFilter === t.id ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/[0.05] hover:text-white/80',
+                          ].join(' ')}
+                        >
+                          <span className="w-5 text-center text-sm">{t.icon}</span>
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Wardrobe strip — RPG inventory, horizontal scroll */}
