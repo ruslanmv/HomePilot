@@ -87,6 +87,13 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "  Installing face restoration dependencies (GFPGAN/CodeFormer)..."
 	@if ComfyUI/.venv/bin/pip install facexlib gfpgan >/dev/null 2>&1; then \
 		echo "  ✓ Face restoration dependencies installed"; \
+		echo "  Patching basicsr for torchvision >= 0.18 compatibility..."; \
+		SITE_PKG=$$(ComfyUI/.venv/bin/python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null); \
+		if [ -f "$$SITE_PKG/basicsr/data/degradations.py" ]; then \
+			sed -i 's/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/' \
+				"$$SITE_PKG/basicsr/data/degradations.py" && \
+			echo "  ✓ basicsr patched (functional_tensor → functional)"; \
+		fi; \
 	else \
 		echo "    (optional: facexlib/gfpgan install skipped)"; \
 	fi
@@ -101,6 +108,46 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 		fi; \
 	else \
 		echo "  ✓ ComfyUI-Impact-Pack already installed"; \
+	fi
+	@echo "  Installing ComfyUI-InstantID for identity-preserving generation..."
+	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-InstantID" ]; then \
+		mkdir -p ComfyUI/custom_nodes && \
+		if git clone https://github.com/cubiq/ComfyUI_InstantID.git ComfyUI/custom_nodes/ComfyUI-InstantID 2>/dev/null; then \
+			if [ -f "ComfyUI/custom_nodes/ComfyUI-InstantID/requirements.txt" ]; then \
+				ComfyUI/.venv/bin/pip install -r ComfyUI/custom_nodes/ComfyUI-InstantID/requirements.txt >/dev/null 2>&1 || true; \
+			fi; \
+			echo "  ✓ ComfyUI-InstantID installed"; \
+		else \
+			echo "    (optional: ComfyUI-InstantID install skipped)"; \
+		fi; \
+	else \
+		echo "  ✓ ComfyUI-InstantID already installed"; \
+	fi
+	@echo "  Installing Python dev headers + build tools (needed by InsightFace C++ extensions)..."
+	@if [ -f /etc/os-release ] && grep -qi 'ubuntu\|debian' /etc/os-release 2>/dev/null; then \
+		PY_VER=$$(ComfyUI/.venv/bin/python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "3.11"); \
+		if dpkg -s "python$${PY_VER}-dev" >/dev/null 2>&1 && dpkg -s build-essential >/dev/null 2>&1; then \
+			echo "  ✓ python$${PY_VER}-dev and build-essential already installed"; \
+		else \
+			echo "  Installing python$${PY_VER}-dev and build-essential (may require sudo)..."; \
+			if sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq "python$${PY_VER}-dev" build-essential >/dev/null 2>&1; then \
+				echo "  ✓ Build dependencies installed"; \
+			else \
+				echo "    (optional: could not install python$${PY_VER}-dev / build-essential — insightface may fail)"; \
+				echo "    Run manually: sudo apt-get install -y python$${PY_VER}-dev build-essential"; \
+			fi; \
+		fi; \
+	else \
+		echo "  (non-Debian system — skipping apt-get; ensure Python dev headers are available)"; \
+	fi
+	@echo "  Installing InsightFace + ONNX Runtime in ComfyUI venv (needed by InstantID)..."
+	@if ComfyUI/.venv/bin/pip install insightface onnxruntime >/dev/null 2>&1; then \
+		echo "  ✓ InsightFace + ONNX Runtime installed in ComfyUI venv"; \
+	else \
+		echo "    (optional: insightface/onnxruntime install skipped)"; \
+		echo "    If this failed with 'Python.h not found', run:"; \
+		echo "      sudo apt-get install -y python3-dev build-essential"; \
+		echo "    Then retry: make install"; \
 	fi
 	@echo ""
 	@echo "✓ Setting up model directories..."
@@ -161,6 +208,27 @@ verify-install: ## Verify that all components are properly installed
 	@echo "  ✓ ComfyUI models linked"
 	@test -d models/comfy/checkpoints || (echo "❌ model directories missing"; exit 1)
 	@echo "  ✓ Model directories created"
+	@if [ -d "ComfyUI/custom_nodes/ComfyUI-Impact-Pack" ]; then \
+		echo "  ✓ ComfyUI-Impact-Pack installed (face restore nodes)"; \
+	else \
+		echo "  ⚠  ComfyUI-Impact-Pack not installed (optional - Fix Faces needs it)"; \
+	fi
+	@if [ -d "ComfyUI/custom_nodes/ComfyUI-InstantID" ]; then \
+		echo "  ✓ ComfyUI-InstantID installed (Same Person generation)"; \
+	else \
+		echo "  ⚠  ComfyUI-InstantID not installed (optional - Same Person mode needs it)"; \
+	fi
+	@if ComfyUI/.venv/bin/python -c "import gfpgan" 2>/dev/null; then \
+		echo "  ✓ GFPGAN importable in ComfyUI venv (face restoration ready)"; \
+	else \
+		echo "  ⚠  GFPGAN not importable in ComfyUI venv (Fix Faces needs it)"; \
+		echo "     Fix: ComfyUI/.venv/bin/pip install facexlib gfpgan && make install"; \
+	fi
+	@if ComfyUI/.venv/bin/python -c "import insightface" 2>/dev/null; then \
+		echo "  ✓ InsightFace available in ComfyUI venv"; \
+	else \
+		echo "  ⚠  InsightFace not in ComfyUI venv (optional - identity features need it)"; \
+	fi
 	@if [ -d "$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1; then \
 		echo "  ✓ MCP Context Forge installed"; \
 	else \
