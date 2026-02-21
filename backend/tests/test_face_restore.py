@@ -100,6 +100,13 @@ class TestFaceRestoreReady:
         assert "FaceDetailer" in msg
         assert "Impact-Pack" in msg
 
+    def test_install_hint_mentions_ultralytics(self):
+        """Install hint should mention pip install ultralytics."""
+        import app.face_restore as fr
+        assert "pip install ultralytics" in fr._INSTALL_HINT, (
+            "Install hint should mention ultralytics for UltralyticsDetectorProvider"
+        )
+
 
 class TestRestoreFacesViaComfyUI:
     """Test restore_faces_via_comfyui() workflow submission."""

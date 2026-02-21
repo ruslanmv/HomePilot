@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import httpx
 
 from .config import COMFY_BASE_URL, COMFY_POLL_INTERVAL_S, COMFY_POLL_MAX_S, UPLOAD_DIR
-from .comfy_utils import ComfyObjectInfoCache, remap_workflow_nodes, find_missing_class_types
+from .comfy_utils import ComfyObjectInfoCache, remap_workflow_nodes, find_missing_class_types, NODE_ALIAS_CANDIDATES
 from .model_config import get_architecture
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,19 @@ def check_nodes_available(node_classes: list[str]) -> tuple[bool, list[str]]:
         # Can't reach ComfyUI — let the workflow attempt proceed and fail naturally
         return True, []
 
-    missing = [cls for cls in node_classes if cls not in available]
+    missing: list[str] = []
+    for cls in node_classes:
+        if cls in available:
+            continue
+
+        # Alias-aware: treat node as available if any known alias exists.
+        # This keeps preflight behavior consistent with validate_workflow_nodes()
+        # which already does alias remapping.
+        candidates = NODE_ALIAS_CANDIDATES.get(cls, ())
+        if candidates and any(alt in available for alt in candidates):
+            continue
+
+        missing.append(cls)
     return len(missing) == 0, missing
 
 
@@ -77,8 +89,9 @@ _NODE_PACKAGE_HINTS: Dict[str, str] = {
         "  Then restart ComfyUI."
     ),
     "UltralyticsDetectorProvider": (
-        "ltdrdata/ComfyUI-Impact-Pack.\n"
+        "ltdrdata/ComfyUI-Impact-Pack + ultralytics.\n"
         "  Fix: git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack\n"
+        "       pip install ultralytics   (in ComfyUI's Python env)\n"
         "  Then restart ComfyUI."
     ),
     "FaceRestoreModelLoader": (

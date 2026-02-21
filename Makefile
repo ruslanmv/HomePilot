@@ -109,6 +109,12 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	else \
 		echo "  ✓ ComfyUI-Impact-Pack already installed"; \
 	fi
+	@echo "  Installing Ultralytics (needed for UltralyticsDetectorProvider)..."
+	@if ComfyUI/.venv/bin/pip install -U ultralytics >/dev/null 2>&1; then \
+		echo "  ✓ ultralytics installed"; \
+	else \
+		echo "  ⚠ ultralytics install failed (UltralyticsDetectorProvider may not register)"; \
+	fi
 	@echo "  Installing ComfyUI-InstantID for identity-preserving generation..."
 	@if [ ! -d "ComfyUI/custom_nodes/ComfyUI-InstantID" ]; then \
 		mkdir -p ComfyUI/custom_nodes && \

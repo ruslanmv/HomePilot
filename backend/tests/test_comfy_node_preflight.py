@@ -104,6 +104,20 @@ class TestNodeAliasTables:
         from app.comfy_utils.node_aliases import NODE_ALIAS_CANDIDATES
         assert "InstantIDModelLoader" in NODE_ALIAS_CANDIDATES
 
+    def test_ultralytics_detector_provider_has_aliases(self):
+        from app.comfy_utils.node_aliases import NODE_ALIAS_CANDIDATES
+        assert "UltralyticsDetectorProvider" in NODE_ALIAS_CANDIDATES
+        aliases = NODE_ALIAS_CANDIDATES["UltralyticsDetectorProvider"]
+        assert aliases[0] == "UltralyticsDetectorProvider"
+        assert "UltralyticsDetector" in aliases
+        assert "YOLODetectorProvider" in aliases
+
+    def test_face_detailer_has_aliases(self):
+        from app.comfy_utils.node_aliases import NODE_ALIAS_CANDIDATES
+        assert "FaceDetailer" in NODE_ALIAS_CANDIDATES
+        aliases = NODE_ALIAS_CANDIDATES["FaceDetailer"]
+        assert aliases[0] == "FaceDetailer"
+
     def test_all_canonical_names_are_first_in_tuple(self):
         """The canonical name should be the first alternative (for self-match)."""
         from app.comfy_utils.node_aliases import NODE_ALIAS_CANDIDATES
@@ -354,6 +368,36 @@ class TestCheckNodesAvailable:
         from app.comfy import check_nodes_available
         with patch("app.comfy.get_available_node_names", return_value=[]):
             ok, missing = check_nodes_available(["AnyNode"])
+            assert ok is True
+            assert missing == []
+
+    def test_alias_aware_passes_when_alternative_exists(self):
+        """check_nodes_available() should pass if an alias for the node exists."""
+        from app.comfy import check_nodes_available
+        # UltralyticsDetectorProvider is not present, but UltralyticsDetector (alias) is
+        available = ["LoadImage", "FaceDetailer", "UltralyticsDetector"]
+        with patch("app.comfy.get_available_node_names", return_value=available):
+            ok, missing = check_nodes_available(["FaceDetailer", "UltralyticsDetectorProvider"])
+            assert ok is True
+            assert missing == []
+
+    def test_alias_aware_still_fails_when_no_alias_exists(self):
+        """check_nodes_available() should still fail if no alias matches either."""
+        from app.comfy import check_nodes_available
+        available = ["LoadImage", "SaveImage"]
+        with patch("app.comfy.get_available_node_names", return_value=available):
+            ok, missing = check_nodes_available(["FaceDetailer", "UltralyticsDetectorProvider"])
+            assert ok is False
+            assert "FaceDetailer" in missing
+            assert "UltralyticsDetectorProvider" in missing
+
+    def test_alias_aware_face_restore_nodes(self):
+        """check_nodes_available() should pass if GFPGAN aliases exist."""
+        from app.comfy import check_nodes_available
+        # ComfyUI has GFPGANLoader and GFPGAN instead of canonical names
+        available = ["LoadImage", "GFPGANLoader", "GFPGAN", "SaveImage"]
+        with patch("app.comfy.get_available_node_names", return_value=available):
+            ok, missing = check_nodes_available(["FaceRestoreModelLoader", "FaceRestoreWithModel"])
             assert ok is True
             assert missing == []
 
@@ -776,6 +820,14 @@ class TestNodePackageHints:
             assert "restart ComfyUI" in hint.lower() or "restart" in hint.lower(), (
                 f"Hint for '{node}' should mention restarting ComfyUI"
             )
+
+    def test_ultralytics_hint_mentions_pip_install(self):
+        """UltralyticsDetectorProvider hint should mention pip install ultralytics."""
+        from app.comfy import _NODE_PACKAGE_HINTS
+        hint = _NODE_PACKAGE_HINTS["UltralyticsDetectorProvider"]
+        assert "pip install ultralytics" in hint, (
+            "UltralyticsDetectorProvider hint should tell users to pip install ultralytics"
+        )
 
 
 # =====================================================================

@@ -19,7 +19,7 @@ Required ComfyUI setup (once):
 The FaceDetailer node (from Impact-Pack) detects faces, crops them,
 re-generates/enhances each face region using a diffusion checkpoint,
 and composites the result back.  It requires a checkpoint model,
-a face bbox detector (e.g. face_yolov8m.pt), and conditioning.
+a face bbox detector provider (Ultralytics), and conditioning.
 """
 
 from __future__ import annotations
@@ -38,10 +38,12 @@ from .config import COMFY_BASE_URL
 FACE_RESTORE_NODES = ["FaceDetailer", "UltralyticsDetectorProvider"]
 
 _INSTALL_HINT = (
-    "Face restoration requires ComfyUI-Impact-Pack.\n\n"
+    "Face restoration requires ComfyUI-Impact-Pack + ultralytics.\n\n"
     "Fix (run once):\n"
     "  cd ComfyUI/custom_nodes\n"
     "  git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git\n"
+    "  # Ultralytics detector provider typically requires:\n"
+    "  pip install ultralytics   (in ComfyUI's Python env)\n"
     "  # then restart ComfyUI\n\n"
     "Verify: curl http://localhost:8188/object_info | python3 -c \"\n"
     "  import sys,json; d=json.load(sys.stdin)\n"

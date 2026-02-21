@@ -70,6 +70,24 @@ NODE_ALIAS_CANDIDATES: Dict[str, Tuple[str, ...]] = {
         "ApplyGFPGAN",
         "FaceRestore",
     ),
+
+    # --- Impact-Pack detectors (names may vary across versions) ---
+    "UltralyticsDetectorProvider": (
+        "UltralyticsDetectorProvider",
+        # Some Impact-Pack versions / forks have slightly different naming.
+        # Keeping these here makes workflows portable across ecosystems.
+        "UltralyticsDetector",
+        "UltralyticsDetectorLoader",
+        "YOLODetectorProvider",
+        "YoloDetectorProvider",
+    ),
+
+    # --- FaceDetailer (Impact-Pack core, names stable but aliased for safety) ---
+    "FaceDetailer": (
+        "FaceDetailer",
+        "FaceDetailerV2",
+        "FaceDetailerAdvanced",
+    ),
 }
 
 
