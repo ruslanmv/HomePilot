@@ -44,7 +44,10 @@ import { upscaleImage } from '../enhance/upscaleApi'
 import { QuickActions } from './QuickActions'
 import { BackgroundTools } from './BackgroundTools'
 import { OutpaintTools } from './OutpaintTools'
+import { IdentityTools } from './IdentityTools'
 import type { ExtendDirection } from '../enhance/outpaintApi'
+import type { IdentityToolType } from '../enhance/identityApi'
+import { useAvatarCapabilities } from '../useAvatarCapabilities'
 import {
   uploadToEditSession,
   sendEditMessage,
@@ -97,11 +100,15 @@ export function EditTab({
   provider,
   providerBaseUrl,
   providerModel,
+  onNavigateToAvatar,
 }: EditTabProps) {
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null)
   const resultsEndRef = useRef<HTMLDivElement>(null)
   const gridStartRef = useRef<HTMLDivElement>(null)
+
+  // Avatar identity capabilities (for optional Identity Tools section)
+  const { capabilities: avatarCaps } = useAvatarCapabilities(backendUrl, apiKey)
 
   // ==========================================================================
   // STATE - Gallery (persisted to localStorage)
@@ -222,6 +229,32 @@ export function EditTab({
       resultsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
   }, [results])
+
+  // Auto-import image from Avatar Studio (via sessionStorage handoff)
+  useEffect(() => {
+    const avatarUrl = sessionStorage.getItem('homepilot_edit_from_avatar')
+    if (!avatarUrl || viewMode !== 'gallery') return
+
+    // Clear immediately to prevent re-processing
+    sessionStorage.removeItem('homepilot_edit_from_avatar')
+
+    // Fetch the image and upload it into an edit session
+    const importAvatar = async () => {
+      setBusy(true)
+      try {
+        const response = await fetch(avatarUrl)
+        const blob = await response.blob()
+        const filename = avatarUrl.split('/').pop() || 'avatar.png'
+        const file = new File([blob], filename, { type: blob.type || 'image/png' })
+        await handleUploadNew(file)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to import avatar from Avatar Studio')
+        setBusy(false)
+      }
+    }
+
+    importAvatar()
+  }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ==========================================================================
   // HELPERS
@@ -763,6 +796,54 @@ export function EditTab({
       created_at: now / 1000,
       parent_url: active,
       settings: { direction, newSize },
+    }
+
+    setVersions((prev) => [newVersion, ...prev])
+    setActive(resultUrl)
+
+    // Update gallery
+    setGalleryItems((prev) => {
+      const filtered = prev.filter(item => item.conversationId !== currentEditItem.conversationId)
+      const updatedItem: EditItem = {
+        id: currentEditItem.id,
+        url: resultUrl,
+        createdAt: now,
+        originalUrl: currentEditItem.originalUrl,
+        instruction,
+        conversationId: currentEditItem.conversationId,
+      }
+      return [updatedItem, ...filtered].slice(0, 100)
+    })
+
+    setCurrentEditItem(prev => prev ? { ...prev, url: resultUrl, createdAt: now, instruction } : prev)
+
+    selectActiveImage({
+      backendUrl,
+      apiKey,
+      conversationId: currentEditItem.conversationId,
+      image_url: resultUrl,
+    }).catch(err => console.warn('Failed to persist active image:', err))
+  }, [currentEditItem, active, backendUrl, apiKey])
+
+  // Handler for IdentityTools (Fix Faces+, Inpaint Preserve, Change BG Preserve, Face Swap)
+  const handleIdentityToolResult = useCallback((resultUrl: string, toolType: IdentityToolType) => {
+    if (!currentEditItem) return
+
+    const now = Date.now()
+    const toolLabels: Record<string, string> = {
+      fix_faces_identity: 'Faces Fixed+',
+      inpaint_identity: 'Inpaint (ID)',
+      change_bg_identity: 'BG Changed (ID)',
+      face_swap: 'Face Swapped',
+    }
+    const instruction = `[${toolLabels[toolType] || toolType}]`
+
+    const newVersion = {
+      url: resultUrl,
+      instruction,
+      created_at: now / 1000,
+      parent_url: active,
+      settings: { mode: toolType },
     }
 
     setVersions((prev) => [newVersion, ...prev])
@@ -1385,6 +1466,22 @@ export function EditTab({
               onError={(err) => setError(err)}
               disabled={busy}
             />
+
+            {/* Identity Tools — hidden until ComfyUI custom nodes (Impact-Pack,
+               InstantID, gfpgan, facexlib) are reliably installed across environments.
+               Re-enable in a future release once the dependency story is solid.
+               See: backend/app/comfy_utils/node_aliases.py for the node alias table. */}
+            {/* <IdentityTools
+              backendUrl={backendUrl}
+              apiKey={apiKey}
+              imageUrl={active}
+              onResult={handleIdentityToolResult}
+              onError={(err) => setError(err)}
+              disabled={busy}
+              hasBasicIdentity={avatarCaps.canIdentityPortrait}
+              hasFaceSwap={avatarCaps.canFaceSwap}
+              maskDataUrl={maskDataUrl}
+            /> */}
 
             {/* Inpainting Mask Section */}
             <div className="space-y-3">

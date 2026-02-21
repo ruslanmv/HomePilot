@@ -70,6 +70,32 @@ Every persona has persistent memory that survives across sessions. Two engines l
 
 For the full technical deep dive (math, configuration, architecture), see **[docs/MEMORY.md](docs/MEMORY.md)**.
 
+### 🎨 Avatar Studio — Zero-Prompt Character Creation
+Create AI portrait avatars from reference photos, random faces, or face+style combinations — all without writing a single text prompt. A complete character management system inspired by RPG mechanics:
+
+<p align="center">
+  <img src="assets/avatar-studio-flow.svg" alt="Avatar Studio Pipeline" width="820" /><br>
+  <em>Create avatars, build a wardrobe of outfits, and export everything as a portable persona package.</em>
+</p>
+
+<p align="center">
+  <img src="assets/avatar-character-sheet.svg" alt="RPG Character Sheet" width="820" /><br>
+  <em>MMORPG-style Character Sheet — equip outfits on the stage, manage your wardrobe inventory.</em>
+</p>
+
+<p align="center">
+  <img src="assets/avatar-export-persona.svg" alt="Avatar to Persona Export" width="820" /><br>
+  <em>Save any character as a Persona — main avatar and all outfit variations are exported as real image files.</em>
+</p>
+
+- **3 Creation Modes** — From Reference (InstantID face preservation), Design Character (gender + style + vibe presets), and Face + Style (face swap onto styled bodies)
+- **Zero-Prompt Wizard** — 16 standard + 8 spicy vibe presets with one-click generation; no text prompt required
+- **RPG Character Sheet** — split-panel layout with toggle stage (Anchor Face / Latest Outfit), outfit studio controls, and MMORPG wardrobe inventory
+- **Wardrobe Equip System** — click any outfit to equip it on the stage instantly, like equipping armor in an MMO; amber glow highlights the equipped item
+- **Full Portrait Display** — dynamic height with `object-contain` ensures full-body portraits are never cropped (no more chopped heads)
+- **Persona Export** — save any avatar + all outfits as a persona; images are packaged as real files inside the `.hpersona` ZIP for full portability
+- See [docs/AVATAR.md](docs/AVATAR.md) for the full specification
+
 ### 🎬 Animate Studio Enhancements
 Professional video generation controls for image-to-video:
 - **Video Settings Panel** - Aspect Ratio, Quality Preset, and Motion controls
@@ -84,6 +110,7 @@ One-click image editing tools integrated into the Edit page:
 - **Upscale** - 2x/4x resolution increase with UltraSharp AI
 - **Background Tools** - Remove, replace, or blur backgrounds
 - **Outpaint** - Extend canvas in any direction (7 options)
+- **Identity Tools** - Optional face-preserving edits and Same Person generation via InstantID (`make download-avatar-models-basic`)
 - **Capabilities API** - Runtime feature availability checking (`/v1/capabilities`)
 
 ### 🎬 Creator Studio

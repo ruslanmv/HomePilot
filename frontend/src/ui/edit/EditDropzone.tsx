@@ -1,8 +1,8 @@
 /**
  * EditDropzone - Initial upload area for the Edit tab.
  *
- * Displays a styled dropzone for users to upload their first image.
- * Supports drag-and-drop and click-to-upload interactions.
+ * Single primary action: upload an image to start editing.
+ * Avatar creation has moved to the dedicated Avatar tab.
  */
 
 import React, { useCallback, useState } from 'react'
@@ -81,27 +81,28 @@ export function EditDropzone({ onPickFile, disabled }: EditDropzoneProps) {
 
       {/* Title */}
       <h2 className="mt-5 text-lg font-bold text-white">
-        Upload an image to start editing
+        Start editing
       </h2>
 
       {/* Description */}
-      <p className="mt-2 text-sm text-white/50 max-w-sm mx-auto">
-        Then describe what you want to change — we'll keep the image selected
-        so you can iterate naturally.
+      <p className="mt-2 text-sm text-white/50 max-w-md mx-auto">
+        Upload an image to start editing with AI-powered tools.
       </p>
 
-      {/* Actions */}
-      <div className="mt-6 flex items-center justify-center gap-3">
+      {/* Upload action */}
+      <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
         <label
           className={[
             'cursor-pointer inline-flex items-center gap-2',
-            'px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15',
-            'border border-white/10 transition-colors',
+            'px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15',
+            'border border-white/10 hover:border-white/20 transition-all',
+            'text-sm font-semibold text-white',
             disabled ? 'pointer-events-none opacity-50' : '',
           ].join(' ')}
+          aria-label="Upload an image to edit"
         >
           <Upload size={16} />
-          <span className="text-sm font-semibold">Upload image</span>
+          <span>Upload Image</span>
           <input
             type="file"
             accept="image/png,image/jpeg,image/webp"
@@ -110,13 +111,11 @@ export function EditDropzone({ onPickFile, disabled }: EditDropzoneProps) {
             disabled={disabled}
           />
         </label>
-
-        <div className="text-xs text-white/40">or drag & drop</div>
       </div>
 
-      {/* Supported formats hint */}
+      {/* Drag hint */}
       <p className="mt-4 text-xs text-white/30">
-        Supports PNG, JPEG, and WebP images up to 20MB
+        Supports PNG, JPEG, and WebP — drag & drop or click Upload
       </p>
     </div>
   )
