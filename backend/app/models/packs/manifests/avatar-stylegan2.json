@@ -1,0 +1,8 @@
+{
+  "id": "avatar-stylegan2",
+  "title": "Avatar Studio (StyleGAN2 Random Face)",
+  "license": "NVIDIA (Non-commercial)",
+  "commercial_ok": false,
+  "modes_enabled": ["studio_random"],
+  "notes": "Optional add-on. Requires avatar-service + StyleGAN2 weights. Non-commercial by default."
+}
