@@ -225,12 +225,10 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   }, [])
 
   // ---- UI State ----
-  const needsReference = mode === 'studio_reference' || mode === 'studio_faceswap'
-  const canGenerate = !gen.loading && (
-    mode === 'studio_random' ||
-    (needsReference && referenceUrl) ||
-    mode === 'creative'
-  )
+  // Only "From Reference" strictly requires a photo; Face+Style accepts optional ref
+  const needsReference = mode === 'studio_reference'
+  const showsReference = mode === 'studio_reference' || mode === 'studio_faceswap'
+  const canGenerate = !gen.loading && (needsReference ? !!referenceUrl : true)
 
   // ==========================================================================
   // RENDER - Gallery View (Landing)
@@ -435,10 +433,10 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           </div>
 
           {/* Reference upload (conditional) */}
-          {needsReference && (
+          {showsReference && (
             <div>
               <div className="text-xs text-white/40 mb-2 font-medium uppercase tracking-wider">
-                Reference Image
+                Reference Image{!needsReference && <span className="normal-case text-white/25 ml-1.5">(optional)</span>}
               </div>
               <div className="flex items-start gap-4">
                 {/* Upload zone with drag & drop */}
@@ -647,9 +645,11 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
             <div className="flex flex-col items-center justify-center py-16 text-white/20">
               <ImageIcon size={48} strokeWidth={1} />
               <div className="mt-4 text-sm">
-                {needsReference
-                  ? 'Upload a reference photo and click Generate'
-                  : 'Choose a mode and click Generate'}
+                {needsReference && !referenceUrl
+                  ? 'Upload a reference photo to preserve identity'
+                  : showsReference && !referenceUrl
+                    ? 'Upload a photo (optional) or click Generate to create a new avatar'
+                    : 'Click Generate to create a new avatar'}
               </div>
               <div className="mt-2 text-[11px] text-white/15">
                 Tip: Generated avatars can be sent to Edit Studio for touch-ups

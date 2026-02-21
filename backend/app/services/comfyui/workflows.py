@@ -4,11 +4,18 @@ ComfyUI workflow loader — load JSON templates and inject runtime inputs.
 Workflow templates live in ``workflows/avatar/`` at the project root.
 The backend injects prompt text, seed, batch size, and reference images
 into well-known ComfyUI node class_types.
+
+Workflow selection:
+  - When a reference image is provided, use the mode-specific workflow
+    (img2img via VAEEncode of the reference).
+  - When no reference image is provided, fall back to txt2img workflow.
+  - ``studio_reference`` always requires a reference image.
 """
 
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -31,55 +38,111 @@ async def run_avatar_workflow(
     if not comfyui_healthy(comfyui_base_url):
         raise ComfyUIUnavailable("Face/avatar service (ComfyUI) is offline")
 
-    wf_path = _workflow_path(mode)
-    wf: Dict[str, Any] = json.loads(wf_path.read_text())
+    has_ref = bool(reference_image_url)
 
-    _inject_prompt(wf, prompt)
-    _inject_seed(wf, seed)
-    _inject_batch_size(wf, count)
-    _inject_reference(wf, reference_image_url)
-    _inject_checkpoint(wf, checkpoint_override)
-
-    prompt_id = await submit_prompt(comfyui_base_url, wf)
-    images = await wait_for_images(comfyui_base_url, prompt_id)
-
-    results: list[AvatarResult] = []
-    for i, img in enumerate(images[:count]):
-        filename = img.get("filename", "")
-        results.append(
-            AvatarResult(
-                url=f"/comfy/view/{filename}",
-                seed=(seed + i) if seed is not None else None,
-                metadata={"source": "comfyui", "workflow": wf_path.name},
-            )
+    # studio_reference MUST have a reference image
+    if mode == "studio_reference" and not has_ref:
+        raise ComfyUIUnavailable(
+            "From Reference mode requires a reference image. "
+            "Upload a photo or switch to Face + Style mode."
         )
-    return results
+
+    wf_path = _workflow_path(mode, has_reference=has_ref)
+    wf_template: Dict[str, Any] = json.loads(wf_path.read_text())
+
+    if has_ref:
+        # ----- Reference-based (img2img): submit once per image -----
+        # The reference latent is a single image, so KSampler produces 1 output.
+        # We submit the workflow count times with different seeds.
+        results: list[AvatarResult] = []
+        base_seed = seed if seed is not None else random.randint(0, 2**31 - 1)
+
+        for i in range(count):
+            wf = json.loads(json.dumps(wf_template))  # deep copy
+            _inject_prompt(wf, prompt)
+            _inject_seed(wf, base_seed + i)
+            _inject_reference(wf, reference_image_url)
+            _inject_checkpoint(wf, checkpoint_override)
+
+            prompt_id = await submit_prompt(comfyui_base_url, wf)
+            images = await wait_for_images(comfyui_base_url, prompt_id)
+            if images:
+                filename = images[0].get("filename", "")
+                results.append(
+                    AvatarResult(
+                        url=f"/comfy/view/{filename}",
+                        seed=base_seed + i,
+                        metadata={"source": "comfyui", "workflow": wf_path.name},
+                    )
+                )
+        return results
+    else:
+        # ----- Text-to-image: single batch submission -----
+        wf = wf_template
+        _inject_prompt(wf, prompt)
+        _inject_seed(wf, seed)
+        _inject_batch_size(wf, count)
+        _inject_checkpoint(wf, checkpoint_override)
+
+        prompt_id = await submit_prompt(comfyui_base_url, wf)
+        images = await wait_for_images(comfyui_base_url, prompt_id)
+
+        results = []
+        for i, img in enumerate(images[:count]):
+            filename = img.get("filename", "")
+            results.append(
+                AvatarResult(
+                    url=f"/comfy/view/{filename}",
+                    seed=(seed + i) if seed is not None else None,
+                    metadata={"source": "comfyui", "workflow": wf_path.name},
+                )
+            )
+        return results
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Workflow mapping: reference-based → mode-specific, no-reference → txt2img
+_REF_WORKFLOWS = {
+    "studio_reference": "avatar_instantid.json",
+    "studio_faceswap": "avatar_faceswap.json",
+    "creative": "avatar_photomaker.json",
+}
 
-def _workflow_path(mode: str) -> Path:
-    mapping = {
-        "studio_reference": "avatar_instantid.json",
-        "studio_faceswap": "avatar_faceswap.json",
-        "creative": "avatar_photomaker.json",
-    }
-    name = mapping.get(mode)
+_NOREF_WORKFLOWS = {
+    "studio_faceswap": "avatar_txt2img.json",
+    "creative": "avatar_txt2img.json",
+}
+
+
+def _workflow_path(mode: str, has_reference: bool = False) -> Path:
+    if has_reference:
+        name = _REF_WORKFLOWS.get(mode)
+    else:
+        name = _NOREF_WORKFLOWS.get(mode)
     if not name:
         raise ValueError(f"Unsupported ComfyUI avatar mode: {mode}")
     return WORKFLOW_DIR / name
 
 
 def _inject_prompt(wf: Dict[str, Any], prompt: str) -> None:
+    """Inject user prompt into the positive CLIP text-encode node only.
+
+    Nodes tagged with ``_meta.title`` containing "Negative" are skipped
+    so the negative prompt template is preserved.
+    """
     for node in wf.values():
         if isinstance(node, dict) and node.get("class_type") in (
             "CLIPTextEncode",
             "TextEncode",
             "Text Encode",
         ):
+            meta = node.get("_meta", {})
+            title = (meta.get("title", "") or "").lower()
+            if "negative" in title:
+                continue
             node.setdefault("inputs", {})["text"] = prompt
 
 

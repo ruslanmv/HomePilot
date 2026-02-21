@@ -78,6 +78,12 @@ async def generate(req: AvatarGenerateRequest) -> AvatarGenerateResponse:
     # ------------------------------------------------------------------
     # ComfyUI-based modes
     # ------------------------------------------------------------------
+    if req.mode == "studio_reference" and not req.reference_image_url:
+        raise FeatureUnavailable(
+            "From Reference mode requires a reference image. "
+            "Upload a photo or switch to Face + Style mode."
+        )
+
     if req.mode in ("studio_reference", "studio_faceswap", "creative"):
         try:
             results = await run_avatar_workflow(

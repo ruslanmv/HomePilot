@@ -176,7 +176,7 @@ describe('AvatarStudio — Designer View', () => {
     // Switch to Random Face to see the non-reference empty state
     fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
     expect(
-      screen.getByText('Choose a mode and click Generate'),
+      screen.getByText('Click Generate to create a new avatar'),
     ).toBeInTheDocument()
   })
 
