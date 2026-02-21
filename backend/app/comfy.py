@@ -13,6 +13,201 @@ from urllib.parse import urlparse
 import httpx
 
 from .config import COMFY_BASE_URL, COMFY_POLL_INTERVAL_S, COMFY_POLL_MAX_S, UPLOAD_DIR
+from .comfy_utils import ComfyObjectInfoCache, remap_workflow_nodes, find_missing_class_types, NODE_ALIAS_CANDIDATES
+from .model_config import get_architecture
+
+# ---------------------------------------------------------------------------
+# ComfyUI node availability cache (populated from /object_info)
+# ---------------------------------------------------------------------------
+_object_info_cache = ComfyObjectInfoCache(COMFY_BASE_URL, ttl_seconds=300.0)
+
+
+def _fetch_object_info(force: bool = False) -> Dict[str, Any]:
+    """
+    Fetch ComfyUI /object_info (all registered node classes) with caching.
+    Returns a dict mapping node class names to their definitions.
+    """
+    raw = _object_info_cache.get_raw(force=force)
+    return raw or {}
+
+
+def get_available_node_names(*, force: bool = False) -> list[str]:
+    """Return list of node class names registered in ComfyUI."""
+    return _object_info_cache.get_available_nodes(force=force)
+
+
+def check_nodes_available(node_classes: list[str]) -> tuple[bool, list[str]]:
+    """
+    Check if the given node class names are registered in ComfyUI.
+
+    Returns:
+        (all_ok, missing_list) — True if all nodes exist, otherwise False
+        with a list of missing node class names.
+    """
+    available = set(get_available_node_names())
+    if not available:
+        # Can't reach ComfyUI — let the workflow attempt proceed and fail naturally
+        return True, []
+
+    missing: list[str] = []
+    for cls in node_classes:
+        if cls in available:
+            continue
+
+        # Alias-aware: treat node as available if any known alias exists.
+        # This keeps preflight behavior consistent with validate_workflow_nodes()
+        # which already does alias remapping.
+        candidates = NODE_ALIAS_CANDIDATES.get(cls, ())
+        if candidates and any(alt in available for alt in candidates):
+            continue
+
+        missing.append(cls)
+    return len(missing) == 0, missing
+
+
+# Known node→package mapping for actionable error messages
+_NODE_PACKAGE_HINTS: Dict[str, str] = {
+    "InstantIDFaceAnalysis": (
+        "cubiq/ComfyUI_InstantID custom nodes + insightface.\n"
+        "  Fix: git clone https://github.com/cubiq/ComfyUI_InstantID.git ComfyUI/custom_nodes/ComfyUI-InstantID\n"
+        "       pip install insightface onnxruntime   (in ComfyUI's Python env)\n"
+        "  Then restart ComfyUI."
+    ),
+    "InstantIDModelLoader": (
+        "cubiq/ComfyUI_InstantID custom nodes.\n"
+        "  Fix: git clone https://github.com/cubiq/ComfyUI_InstantID.git ComfyUI/custom_nodes/ComfyUI-InstantID\n"
+        "  Then restart ComfyUI."
+    ),
+    "ApplyInstantID": (
+        "cubiq/ComfyUI_InstantID custom nodes.\n"
+        "  Fix: git clone https://github.com/cubiq/ComfyUI_InstantID.git ComfyUI/custom_nodes/ComfyUI-InstantID\n"
+        "  Then restart ComfyUI."
+    ),
+    "FaceDetailer": (
+        "ltdrdata/ComfyUI-Impact-Pack.\n"
+        "  Fix: git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack\n"
+        "  Then restart ComfyUI."
+    ),
+    "UltralyticsDetectorProvider": (
+        "ltdrdata/ComfyUI-Impact-Pack + ultralytics.\n"
+        "  Fix: git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack\n"
+        "       pip install ultralytics   (in ComfyUI's Python env)\n"
+        "  Then restart ComfyUI."
+    ),
+    "FaceRestoreModelLoader": (
+        "ltdrdata/ComfyUI-Impact-Pack + facexlib/gfpgan.\n"
+        "  Fix: git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git ComfyUI/custom_nodes/ComfyUI-Impact-Pack\n"
+        "       pip install facexlib gfpgan   (in ComfyUI's Python env)\n"
+        "  Then restart ComfyUI."
+    ),
+    "FaceRestoreWithModel": (
+        "ltdrdata/ComfyUI-Impact-Pack + facexlib/gfpgan.\n"
+        "  Fix: pip install facexlib gfpgan   (in ComfyUI's Python env)\n"
+        "  Then restart ComfyUI."
+    ),
+}
+
+
+def _check_controlnet_architecture(workflow_name: str, prompt_graph: Dict[str, Any]) -> None:
+    """
+    Detect SDXL-only ControlNet models paired with SD1.5 checkpoints.
+
+    The InstantID ControlNet (``diffusion_pytorch_model.safetensors``) is
+    SDXL-only.  When used with an SD1.5 checkpoint, ComfyUI crashes with
+    ``ValueError: y is None`` because the cross-attention dimensions don't
+    match.  This guard catches the mismatch early with a clear message.
+    """
+    # ControlNet model filenames that are SDXL-only
+    _SDXL_ONLY_CONTROLNETS = {
+        "InstantID/diffusion_pytorch_model.safetensors",
+        "diffusion_pytorch_model.safetensors",  # InstantID default
+    }
+
+    # Collect checkpoint and ControlNet model names from the graph
+    ckpt_name = None
+    controlnet_names: list[str] = []
+
+    for _node_id, node in prompt_graph.items():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type", "")
+        inputs = node.get("inputs", {})
+
+        if ct == "CheckpointLoaderSimple":
+            ckpt_name = inputs.get("ckpt_name")
+        elif ct == "ControlNetLoader":
+            cn = inputs.get("control_net_name")
+            if cn:
+                controlnet_names.append(cn)
+
+    if not ckpt_name or not controlnet_names:
+        return
+
+    # Determine checkpoint architecture
+    arch = get_architecture(ckpt_name)
+
+    # Check for SDXL-only ControlNets with non-SDXL checkpoints
+    for cn in controlnet_names:
+        if cn in _SDXL_ONLY_CONTROLNETS and arch == "sd15":
+            raise RuntimeError(
+                f"Architecture mismatch in workflow '{workflow_name}': "
+                f"ControlNet '{cn}' is SDXL-only but checkpoint "
+                f"'{ckpt_name}' is SD1.5 architecture.\n\n"
+                "The InstantID ControlNet requires an SDXL checkpoint. "
+                "SD1.5 models cause 'y is None' errors because the cross-attention "
+                "dimensions are incompatible (768 vs 2048).\n\n"
+                "Fix: Use an SDXL checkpoint (e.g. sd_xl_base_1.0.safetensors) "
+                "or switch to a non-identity workflow for SD1.5 models."
+            )
+
+
+def validate_workflow_nodes(workflow_name: str, prompt_graph: Dict[str, Any]) -> None:
+    """
+    Pre-flight check with automatic node alias remapping and architecture guard.
+
+    1. Fetches the list of available nodes from ComfyUI /object_info.
+    2. Runs the alias remapper — if a workflow references ``InstantIDFaceAnalysis``
+       but ComfyUI only has ``InstantIDFaceEmbedder``, the graph is rewritten
+       in-place (non-destructive to the JSON on disk).
+    3. After remapping, any still-missing nodes trigger a RuntimeError with
+       actionable install instructions.
+    4. Checks for ControlNet/checkpoint architecture mismatches (e.g. SDXL
+       ControlNet with SD1.5 checkpoint).
+    """
+    # Step 0: architecture mismatch guard (always runs, even without /object_info)
+    _check_controlnet_architecture(workflow_name, prompt_graph)
+
+    available = get_available_node_names()
+    if not available:
+        # Can't reach ComfyUI — let the workflow attempt proceed and fail naturally
+        return
+
+    # Step 1: try alias remapping
+    replacements = remap_workflow_nodes(prompt_graph, available)
+    if replacements:
+        print(f"[COMFY] Node alias remap applied for '{workflow_name}': {replacements}")
+
+    # Step 2: check for anything still missing after remapping
+    missing = find_missing_class_types(prompt_graph, available)
+    if not missing:
+        return
+
+    # Build a helpful error message
+    parts = [
+        f"ComfyUI cannot run workflow '{workflow_name}' because the following "
+        f"node class(es) are not registered:\n"
+    ]
+    for cls in missing:
+        hint = _NODE_PACKAGE_HINTS.get(cls, "Unknown package — check ComfyUI custom_nodes.")
+        parts.append(f"  • {cls}  →  Requires: {hint}\n")
+
+    parts.append(
+        "\nThis usually means a custom node package is not installed or its Python "
+        "dependencies failed to import (check ComfyUI startup logs for import errors).\n"
+        "After installing, restart ComfyUI and verify the node appears at "
+        f"{COMFY_BASE_URL}/object_info"
+    )
+    raise RuntimeError("".join(parts))
 
 
 def _get_comfyui_input_dir() -> Path:
@@ -184,7 +379,7 @@ def _preprocess_image_paths(variables: Dict[str, Any]) -> Dict[str, Any]:
     processed = dict(variables)
 
     # Keys that might contain image URLs
-    image_keys = ['image_path', 'image', 'input_image', 'source_image', 'original_image_path']
+    image_keys = ['image_path', 'image', 'input_image', 'source_image', 'original_image_path', 'reference_image_url']
 
     for key in image_keys:
         if key in processed and isinstance(processed[key], str):
@@ -390,6 +585,30 @@ def _parse_comfy_error(body: str) -> str:
     """Parse ComfyUI error body and provide helpful suggestions."""
     error_msg = f"ComfyUI /prompt failed. "
 
+    # Check for missing node classes ("does not exist")
+    # This is the error ComfyUI returns when a custom node package is not installed
+    # or its Python dependencies failed to import.
+    if "does not exist" in body and "invalid_prompt" in body:
+        # Extract the node class name from the error message
+        import re
+        node_match = re.search(r"node (\w+) does not exist", body)
+        node_name = node_match.group(1) if node_match else "Unknown"
+        hint = _NODE_PACKAGE_HINTS.get(node_name, "")
+        error_msg += (
+            f"\n\n[MISSING NODE] {node_name} does not exist in ComfyUI.\n"
+            "This means the custom node package is not installed or its Python "
+            "dependencies failed to import (check ComfyUI startup logs).\n"
+        )
+        if hint:
+            error_msg += f"  Requires: {hint}\n"
+        error_msg += (
+            "\nCommon fixes:\n"
+            "  Face restore: pip install facexlib gfpgan + install ComfyUI-Impact-Pack\n"
+            "  InstantID: pip install insightface onnxruntime + install ComfyUI_InstantID\n"
+            "Then restart ComfyUI."
+        )
+        return error_msg
+
     # Check for common missing model patterns
     if "not in list" in body.lower() or "value not in list" in body.lower():
         error_msg += "A required model file is missing. "
@@ -557,6 +776,12 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
 
     workflow = _load_workflow(name)
     prompt_graph = _deep_replace(workflow, processed_vars)
+
+    # ── Pre-flight node availability check ───────────────────────
+    # Query ComfyUI /object_info to verify all required node classes
+    # are registered BEFORE submitting the prompt.  This turns cryptic
+    # "invalid_prompt" errors into actionable install instructions.
+    validate_workflow_nodes(name, prompt_graph)
 
     # ── Unresolved variable detection ────────────────────────────
     # Scan for any remaining {{var}} placeholders that weren't substituted.
