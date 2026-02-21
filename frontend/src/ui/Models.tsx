@@ -1867,12 +1867,26 @@ export default function ModelsView(props: ModelsParams) {
         <div className="flex flex-col gap-4 max-w-7xl mx-auto">
           {/* Error messages - hide for Civitai since it's download-only */}
           {installedError && provider !== 'civitai' ? (
-            <div className="rounded-xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-amber-500/5 p-5 text-amber-200">
-              <div className="font-bold text-sm text-amber-100">Configuration Required</div>
-              <div className="text-xs mt-2 text-amber-200/70 font-medium">
-                {installedError.includes('LLM_BASE_URL')
-                  ? 'Configure LLM_BASE_URL environment variable to use OpenAI-compatible (vLLM) provider. Or switch to a different provider.'
-                  : installedError}
+            <div className={`rounded-xl border p-5 ${
+              installedError.includes('Ollama') || installedError.includes('11434')
+                ? 'border-white/10 bg-white/[0.03] text-white/60'
+                : 'border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-amber-500/5 text-amber-200'
+            }`}>
+              <div className={`font-bold text-sm ${
+                installedError.includes('Ollama') || installedError.includes('11434')
+                  ? 'text-white/70'
+                  : 'text-amber-100'
+              }`}>
+                {installedError.includes('Ollama') || installedError.includes('11434')
+                  ? 'Ollama Not Running'
+                  : 'Configuration Required'}
+              </div>
+              <div className="text-xs mt-2 font-medium opacity-70">
+                {installedError.includes('Ollama') || installedError.includes('11434')
+                  ? 'Ollama is not reachable. Start Ollama or switch to a different provider tab. ComfyUI models and Add-ons still work normally.'
+                  : installedError.includes('LLM_BASE_URL')
+                    ? 'Configure LLM_BASE_URL environment variable to use OpenAI-compatible (vLLM) provider. Or switch to a different provider.'
+                    : installedError}
               </div>
             </div>
           ) : null}
