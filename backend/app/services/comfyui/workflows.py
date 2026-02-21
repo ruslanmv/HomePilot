@@ -171,9 +171,28 @@ def _inject_reference(wf: Dict[str, Any], ref: Optional[str]) -> None:
     ComfyUI's LoadImage expects a **local filename** inside its input/
     directory, not an HTTP URL.  If *ref* looks like a URL we download it
     first via the shared helper in ``comfy.py``.
+
+    Also handles backend-relative URLs such as ``/comfy/view/filename.png``
+    (returned by avatar generation) by fetching the image from ComfyUI
+    directly.
     """
     if not ref:
         return
+
+    # Handle backend-relative URLs that are not local filenames.
+    if ref.startswith("/comfy/view/"):
+        # This is a proxy URL produced by run_avatar_workflow().
+        # Fetch the image directly from ComfyUI's /view endpoint.
+        from ...config import COMFY_BASE_URL
+
+        filename = ref[len("/comfy/view/"):]
+        ref = f"{COMFY_BASE_URL.rstrip('/')}/view?filename={filename}&type=output"
+    elif ref.startswith("/"):
+        # Other backend-relative paths (e.g. /files/...).
+        from ...config import PUBLIC_BASE_URL
+
+        base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
+        ref = f"{base}{ref}"
 
     # Convert URL → local filename in ComfyUI's input directory
     local_name = ref

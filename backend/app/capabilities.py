@@ -493,7 +493,12 @@ _PRESET_PACK_MARKERS: _Dict[str, list[str]] = {
 
 
 def _write_pack_markers(preset: str, target_ids: list, results: list) -> None:
-    """Write marker files for the pack so availability checks succeed."""
+    """Write marker files for the pack so availability checks succeed.
+
+    For preset downloads ("basic"/"full") the mapping is straightforward.
+    For single-model installs we check whether all models for a pack are
+    now present on disk and write the marker if so.
+    """
     from pathlib import Path
 
     marker_dir = Path("models") / "packs"
@@ -501,7 +506,33 @@ def _write_pack_markers(preset: str, target_ids: list, results: list) -> None:
 
     ok_ids = {r["id"] for r in results if r.get("status") in ("installed", "already_installed")}
 
-    for pack_id in _PRESET_PACK_MARKERS.get(preset, []):
+    markers_to_write: list[str] = _PRESET_PACK_MARKERS.get(preset, [])
+
+    # For single-model installs, auto-detect completed packs
+    if not markers_to_write:
+        try:
+            from .edit_models import get_all_models, ModelCategory
+
+            installed = {
+                m.id for m in get_all_models(ModelCategory.AVATAR_GENERATION) if m.installed
+            }
+            # Include models we just installed in this batch
+            installed |= ok_ids
+
+            _PACK_REQUIRED_MODELS: _Dict[str, set[str]] = {
+                "avatar-basic": {"insightface-antelopev2", "instantid-ip-adapter", "instantid-controlnet"},
+                "avatar-stylegan2": {"stylegan2-ffhq-256"},
+            }
+            for pack_id, required in _PACK_REQUIRED_MODELS.items():
+                if required.issubset(installed):
+                    markers_to_write.append(pack_id)
+            # avatar-full requires all of basic + stylegan2 + extras
+            if "avatar-basic" in markers_to_write and "avatar-stylegan2" in markers_to_write:
+                markers_to_write.append("avatar-full")
+        except Exception as e:
+            _avatar_dl_logger.warning(f"  Could not auto-detect pack markers: {e}")
+
+    for pack_id in markers_to_write:
         marker = marker_dir / f"{pack_id}.installed"
         if not marker.exists():
             marker.touch()
