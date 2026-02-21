@@ -1,13 +1,13 @@
 /**
- * EditDropzone component tests — validates dual primary action pattern.
+ * EditDropzone component tests — validates upload area for Edit tab.
  *
  * Tests:
  * - Upload Image button renders
- * - Create Avatar button renders when callback provided
- * - Create Avatar button is hidden when no callback
- * - Click behavior on both buttons
+ * - Click behavior
  * - Drag & drop zone
  * - Disabled state
+ *
+ * Note: "Create Avatar" button has moved to the Avatar tab landing page.
  */
 
 import { describe, it, expect, vi } from 'vitest'
@@ -29,37 +29,7 @@ describe('EditDropzone', () => {
   it('renders description text', () => {
     render(<EditDropzone onPickFile={vi.fn()} />)
     expect(
-      screen.getByText(/Upload an existing image to edit/),
-    ).toBeInTheDocument()
-  })
-
-  it('shows Create Avatar button when onCreateAvatar is provided', () => {
-    render(
-      <EditDropzone onPickFile={vi.fn()} onCreateAvatar={vi.fn()} />,
-    )
-    expect(screen.getByText('Create Avatar')).toBeInTheDocument()
-  })
-
-  it('hides Create Avatar button when onCreateAvatar is not provided', () => {
-    render(<EditDropzone onPickFile={vi.fn()} />)
-    expect(screen.queryByText('Create Avatar')).not.toBeInTheDocument()
-  })
-
-  it('clicking Create Avatar calls the callback', () => {
-    const onCreateAvatar = vi.fn()
-    render(
-      <EditDropzone onPickFile={vi.fn()} onCreateAvatar={onCreateAvatar} />,
-    )
-    fireEvent.click(screen.getByText('Create Avatar'))
-    expect(onCreateAvatar).toHaveBeenCalledOnce()
-  })
-
-  it('shows avatar subtext when onCreateAvatar is provided', () => {
-    render(
-      <EditDropzone onPickFile={vi.fn()} onCreateAvatar={vi.fn()} />,
-    )
-    expect(
-      screen.getByText('Create a reusable character from photos'),
+      screen.getByText(/Upload an image to start editing/),
     ).toBeInTheDocument()
   })
 
@@ -79,15 +49,6 @@ describe('EditDropzone', () => {
     expect(dropzone.className).toContain('opacity-50')
   })
 
-  it('Create Avatar button has correct ARIA label', () => {
-    render(
-      <EditDropzone onPickFile={vi.fn()} onCreateAvatar={vi.fn()} />,
-    )
-    const btn = screen.getByLabelText('Create a reusable avatar character')
-    expect(btn).toBeInTheDocument()
-    expect(btn.tagName).toBe('BUTTON')
-  })
-
   it('Upload Image label has correct ARIA label', () => {
     render(<EditDropzone onPickFile={vi.fn()} />)
     const label = screen.getByLabelText('Upload an image to edit')
@@ -103,18 +64,5 @@ describe('EditDropzone', () => {
 
     fireEvent.dragLeave(dropzone, { dataTransfer: { files: [] } })
     expect(dropzone.className).not.toContain('border-blue-500')
-  })
-
-  it('both buttons have equal visual hierarchy', () => {
-    render(
-      <EditDropzone onPickFile={vi.fn()} onCreateAvatar={vi.fn()} />,
-    )
-    // Both buttons should be in the same container
-    const uploadBtn = screen.getByText('Upload Image')
-    const avatarBtn = screen.getByText('Create Avatar')
-
-    // Both should have the same font-semibold class (equal hierarchy)
-    expect(uploadBtn.closest('label, button')?.className).toContain('font-semibold')
-    expect(avatarBtn.closest('button')?.className).toContain('font-semibold')
   })
 })

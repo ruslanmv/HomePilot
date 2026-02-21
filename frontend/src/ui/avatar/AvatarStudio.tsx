@@ -35,12 +35,14 @@ import {
   PenLine,
   Maximize2,
   Copy,
+  ChevronLeft,
 } from 'lucide-react'
 
 import { useAvatarPacks } from './useAvatarPacks'
 import { useGenerateAvatars } from './useGenerateAvatars'
 import { useAvatarGallery } from './useAvatarGallery'
 import { AvatarGallery } from './AvatarGallery'
+import { AvatarLandingPage } from './AvatarLandingPage'
 import { OutfitPanel } from './OutfitPanel'
 import { AvatarSettingsPanel, loadAvatarSettings, resolveCheckpoint } from './AvatarSettingsPanel'
 import type { AvatarMode, AvatarResult, AvatarSettings } from './types'
@@ -98,6 +100,9 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const packs = useAvatarPacks(backendUrl, apiKey)
   const gen = useGenerateAvatars(backendUrl, apiKey)
   const gallery = useAvatarGallery()
+
+  // TWO-VIEW ARCHITECTURE: gallery (landing) vs designer (creation workspace)
+  const [viewMode, setViewMode] = useState<'gallery' | 'designer'>('gallery')
 
   // Avatar-specific model settings (persisted in localStorage)
   const [avatarSettings, setAvatarSettings] = useState<AvatarSettings>(loadAvatarSettings)
@@ -224,16 +229,51 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
     mode === 'creative'
   )
 
-  // ---- Render ----
+  // ==========================================================================
+  // RENDER - Gallery View (Landing)
+  // ==========================================================================
+
+  if (viewMode === 'gallery') {
+    return (
+      <AvatarLandingPage
+        items={gallery.items}
+        backendUrl={backendUrl}
+        onNewAvatar={() => setViewMode('designer')}
+        onOpenItem={(item) => {
+          // Open the lightbox for the selected item
+          const imgUrl = item.url.startsWith('http')
+            ? item.url
+            : `${backendUrl.replace(/\/+$/, '')}${item.url}`
+          onOpenLightbox?.(imgUrl)
+        }}
+        onDeleteItem={gallery.removeItem}
+        onOpenLightbox={onOpenLightbox}
+        onSendToEdit={onSendToEdit}
+        onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
+        onGenerateOutfits={(item) => setOutfitAnchor(item)}
+      />
+    )
+  }
+
+  // ==========================================================================
+  // RENDER - Designer View (Avatar Studio workspace)
+  // ==========================================================================
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-black text-white">
       {/* Header */}
       <div className="px-5 pt-5 pb-3 border-b border-white/5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
-              <Sparkles size={18} />
-            </div>
+            {/* Back to Gallery */}
+            <button
+              onClick={() => setViewMode('gallery')}
+              className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center backdrop-blur-md transition-colors"
+              title="Back to Gallery"
+              aria-label="Back to Avatar Gallery"
+            >
+              <ChevronLeft size={18} className="text-white" />
+            </button>
             <div>
               <h2 className="text-lg font-semibold tracking-tight">Avatar Studio</h2>
               <p className="text-xs text-white/50 mt-0.5">

@@ -1,21 +1,15 @@
 /**
  * EditDropzone - Initial upload area for the Edit tab.
  *
- * Dual primary action pattern (industry best practice):
- *   [ Upload Image ]   [ Create Avatar ]
- *
- * - Upload Image: standard file upload (drag & drop + click)
- * - Create Avatar: navigates to Avatar Studio to generate a character
- *
- * The two buttons are equal hierarchy, with Create Avatar using a purple
- * gradient to signal "creative / identity-related" intent.
+ * Single primary action: upload an image to start editing.
+ * Avatar creation has moved to the dedicated Avatar tab.
  */
 
 import React, { useCallback, useState } from 'react'
-import { Image as ImageIcon, Upload, Sparkles } from 'lucide-react'
+import { Image as ImageIcon, Upload } from 'lucide-react'
 import type { EditDropzoneProps } from './types'
 
-export function EditDropzone({ onPickFile, disabled, onCreateAvatar }: EditDropzoneProps) {
+export function EditDropzone({ onPickFile, disabled }: EditDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -92,13 +86,11 @@ export function EditDropzone({ onPickFile, disabled, onCreateAvatar }: EditDropz
 
       {/* Description */}
       <p className="mt-2 text-sm text-white/50 max-w-md mx-auto">
-        Upload an existing image to edit, or create a new avatar character
-        from scratch.
+        Upload an image to start editing with AI-powered tools.
       </p>
 
-      {/* Dual primary actions */}
+      {/* Upload action */}
       <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
-        {/* Upload Image — primary action */}
         <label
           className={[
             'cursor-pointer inline-flex items-center gap-2',
@@ -119,38 +111,7 @@ export function EditDropzone({ onPickFile, disabled, onCreateAvatar }: EditDropz
             disabled={disabled}
           />
         </label>
-
-        {/* Create Avatar — secondary creative action */}
-        {onCreateAvatar && (
-          <button
-            type="button"
-            onClick={onCreateAvatar}
-            disabled={disabled}
-            className={[
-              'inline-flex items-center gap-2',
-              'px-5 py-2.5 rounded-xl',
-              'bg-gradient-to-r from-purple-600/80 to-pink-600/80',
-              'hover:from-purple-500 hover:to-pink-500',
-              'border border-purple-500/30 hover:border-purple-400/50',
-              'text-sm font-semibold text-white',
-              'shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20',
-              'transition-all',
-              disabled ? 'pointer-events-none opacity-50' : '',
-            ].join(' ')}
-            aria-label="Create a reusable avatar character"
-          >
-            <Sparkles size={16} />
-            <span>Create Avatar</span>
-          </button>
-        )}
       </div>
-
-      {/* Subtext for Create Avatar */}
-      {onCreateAvatar && (
-        <p className="mt-3 text-[11px] text-white/30">
-          Create a reusable character from photos
-        </p>
-      )}
 
       {/* Drag hint */}
       <p className="mt-4 text-xs text-white/30">

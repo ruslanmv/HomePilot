@@ -1,7 +1,11 @@
 /**
  * AvatarStudio component tests — lightweight, CI-friendly.
  *
- * Tests rendering, mode selection, generate button states,
+ * Tests the two-view architecture:
+ *   1. Gallery view (landing) — default, shows avatar library
+ *   2. Designer view — accessible via "New Avatar" button
+ *
+ * Also tests mode selection, generate button states,
  * and action callbacks without real API calls.
  */
 
@@ -54,36 +58,80 @@ vi.mock('./useGenerateAvatars', () => ({
 }))
 
 // ---------------------------------------------------------------------------
-// Tests
+// Helpers
 // ---------------------------------------------------------------------------
 
-describe('AvatarStudio', () => {
+/** Render AvatarStudio and click "New Avatar" to enter designer view. */
+function renderDesignerView(props?: Partial<React.ComponentProps<typeof AvatarStudio>>) {
+  const result = render(
+    <AvatarStudio backendUrl="http://localhost:8000" {...props} />,
+  )
+  // Navigate to designer view
+  fireEvent.click(screen.getByText('New Avatar'))
+  return result
+}
+
+// ---------------------------------------------------------------------------
+// Tests — Gallery View (Landing)
+// ---------------------------------------------------------------------------
+
+describe('AvatarStudio — Gallery View', () => {
+  it('renders the landing page header', () => {
+    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+    expect(screen.getByText('Avatar Studio')).toBeInTheDocument()
+  })
+
+  it('shows "New Avatar" button in header', () => {
+    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+    expect(screen.getByText('New Avatar')).toBeInTheDocument()
+  })
+
+  it('shows empty state with create CTAs when no avatars exist', () => {
+    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+    expect(screen.getByText('Create your first avatar')).toBeInTheDocument()
+    expect(screen.getByText('From Reference Photo')).toBeInTheDocument()
+    expect(screen.getByText('Random Face')).toBeInTheDocument()
+  })
+
+  it('clicking "New Avatar" navigates to designer view', () => {
+    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+    fireEvent.click(screen.getByText('New Avatar'))
+    // Should now see designer header
+    expect(screen.getByText('Avatar Studio')).toBeInTheDocument()
+    expect(screen.getByLabelText('Back to Avatar Gallery')).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Tests — Designer View
+// ---------------------------------------------------------------------------
+
+describe('AvatarStudio — Designer View', () => {
   beforeEach(() => {
     mockRun.mockClear()
   })
 
-  it('renders the header', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+  it('renders the designer header with back button', () => {
+    renderDesignerView()
+    expect(screen.getByLabelText('Back to Avatar Gallery')).toBeInTheDocument()
     expect(screen.getByText('Avatar Studio')).toBeInTheDocument()
-    expect(
-      screen.getByText('Generate reusable portrait avatars for your personas'),
-    ).toBeInTheDocument()
   })
 
   it('renders all three mode pills', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
-    expect(screen.getByText('From Reference')).toBeInTheDocument()
-    expect(screen.getByText('Random Face')).toBeInTheDocument()
-    expect(screen.getByText('Face + Style')).toBeInTheDocument()
+    renderDesignerView()
+    // In designer view: mode pills as radio buttons
+    expect(screen.getByRole('radio', { name: /From Reference/ })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Random Face/ })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Face \+ Style/ })).toBeInTheDocument()
   })
 
   it('renders pack badges', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+    renderDesignerView()
     expect(screen.getByText('Basic')).toBeInTheDocument()
   })
 
   it('renders the prompt input with default value', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+    renderDesignerView()
     const input = screen.getByLabelText('Avatar generation prompt')
     expect(input).toBeInTheDocument()
     expect((input as HTMLInputElement).value).toBe(
@@ -92,57 +140,49 @@ describe('AvatarStudio', () => {
   })
 
   it('renders count selector buttons (1, 4, 8)', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+    renderDesignerView()
     expect(screen.getByText('1')).toBeInTheDocument()
     expect(screen.getByText('4')).toBeInTheDocument()
     expect(screen.getByText('8')).toBeInTheDocument()
   })
 
   it('shows generate button with count', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
-    // Default mode is studio_reference which requires a reference image
+    renderDesignerView()
     // Switch to studio_random first
-    fireEvent.click(screen.getByText('Random Face'))
+    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
     expect(screen.getByText('Generate 4')).toBeInTheDocument()
   })
 
   it('switching mode changes active pill', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
-    const randomBtn = screen.getByText('Random Face')
+    renderDesignerView()
+    const randomBtn = screen.getByRole('radio', { name: /Random Face/ })
     fireEvent.click(randomBtn)
-
-    // Random Face should now be aria-checked
-    expect(randomBtn.closest('button')).toHaveAttribute('aria-checked', 'true')
+    expect(randomBtn).toHaveAttribute('aria-checked', 'true')
   })
 
   it('shows reference upload when mode requires it', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
-
+    renderDesignerView()
     // Default mode is studio_reference — should show upload
     expect(screen.getByText('Reference Image')).toBeInTheDocument()
     expect(screen.getByLabelText('Upload reference photo')).toBeInTheDocument()
 
     // Switch to Random Face — should hide upload
-    fireEvent.click(screen.getByText('Random Face'))
+    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
     expect(screen.queryByText('Reference Image')).not.toBeInTheDocument()
   })
 
   it('shows empty state hint', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+    renderDesignerView()
     // Switch to Random Face to see the non-reference empty state
-    fireEvent.click(screen.getByText('Random Face'))
+    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
     expect(
       screen.getByText('Choose a mode and click Generate'),
     ).toBeInTheDocument()
   })
 
   it('clicking generate calls gen.run with correct params', async () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
-
-    // Switch to Random Face (doesn't need reference)
-    fireEvent.click(screen.getByText('Random Face'))
-
-    // Click Generate
+    renderDesignerView()
+    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
     fireEvent.click(screen.getByText('Generate 4'))
 
     await waitFor(() => {
@@ -157,10 +197,8 @@ describe('AvatarStudio', () => {
   })
 
   it('count selector updates the count', async () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
-    fireEvent.click(screen.getByText('Random Face'))
-
-    // Change count to 8
+    renderDesignerView()
+    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
     fireEvent.click(screen.getByText('8'))
     fireEvent.click(screen.getByText('Generate 8'))
 
@@ -171,43 +209,27 @@ describe('AvatarStudio', () => {
     })
   })
 
+  it('back button returns to gallery view', () => {
+    renderDesignerView()
+    fireEvent.click(screen.getByLabelText('Back to Avatar Gallery'))
+    // Should see gallery landing again
+    expect(screen.getByText('New Avatar')).toBeInTheDocument()
+  })
+
   it('onSendToEdit callback is passed to AvatarStudio', () => {
     const onSendToEdit = vi.fn()
-    render(
-      <AvatarStudio
-        backendUrl="http://localhost:8000"
-        onSendToEdit={onSendToEdit}
-      />,
-    )
-    // The callback exists — it will be used on avatar cards once results render
+    renderDesignerView({ onSendToEdit })
     expect(onSendToEdit).not.toHaveBeenCalled()
   })
 
   it('onOpenLightbox callback is passed to AvatarStudio', () => {
     const onOpenLightbox = vi.fn()
-    render(
-      <AvatarStudio
-        backendUrl="http://localhost:8000"
-        onOpenLightbox={onOpenLightbox}
-      />,
-    )
+    renderDesignerView({ onOpenLightbox })
     expect(onOpenLightbox).not.toHaveBeenCalled()
   })
 
-  it('Enter key in prompt field triggers generation', async () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
-    fireEvent.click(screen.getByText('Random Face'))
-
-    const input = screen.getByLabelText('Avatar generation prompt')
-    fireEvent.keyDown(input, { key: 'Enter' })
-
-    await waitFor(() => {
-      expect(mockRun).toHaveBeenCalled()
-    })
-  })
-
   it('prompt input updates on user typing', () => {
-    render(<AvatarStudio backendUrl="http://localhost:8000" />)
+    renderDesignerView()
     const input = screen.getByLabelText('Avatar generation prompt') as HTMLInputElement
     fireEvent.change(input, { target: { value: 'cyberpunk portrait' } })
     expect(input.value).toBe('cyberpunk portrait')

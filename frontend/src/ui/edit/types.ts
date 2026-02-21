@@ -53,8 +53,6 @@ export type EditTabProps = {
 export type EditDropzoneProps = {
   onPickFile: (file: File) => void
   disabled?: boolean
-  /** Navigate to Avatar Studio to create a new avatar */
-  onCreateAvatar?: () => void
 }
 
 /**

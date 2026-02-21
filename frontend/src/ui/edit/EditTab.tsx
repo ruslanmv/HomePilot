@@ -945,18 +945,6 @@ export function EditTab({
               <Upload size={16} className="text-white/70" />
               <span>Upload Image</span>
             </button>
-            {onNavigateToAvatar && (
-              <button
-                className="flex items-center gap-2 bg-gradient-to-r from-purple-600/70 to-pink-600/70 hover:from-purple-500 hover:to-pink-500 border border-purple-500/30 hover:border-purple-400/50 px-4 py-2 rounded-full text-sm font-semibold shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20 transition-all"
-                type="button"
-                onClick={onNavigateToAvatar}
-                disabled={busy}
-                aria-label="Create a reusable avatar character"
-              >
-                <Sparkles size={16} />
-                <span>Create Avatar</span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -968,7 +956,7 @@ export function EditTab({
             {/* Empty state */}
             {galleryItems.length === 0 && !busy ? (
               <div className="col-span-full">
-                <EditDropzone onPickFile={handleUploadNew} disabled={busy} onCreateAvatar={onNavigateToAvatar} />
+                <EditDropzone onPickFile={handleUploadNew} disabled={busy} />
               </div>
             ) : null}
 
@@ -1144,7 +1132,7 @@ export function EditTab({
         <div className="flex-1 relative flex items-center justify-center bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-white/5 to-black">
           {!hasImage ? (
             <div className="w-full max-w-xl px-6 relative z-10">
-              <EditDropzone onPickFile={handlePickFile} disabled={busy} onCreateAvatar={onNavigateToAvatar} />
+              <EditDropzone onPickFile={handlePickFile} disabled={busy} />
             </div>
           ) : (
             <div className="relative w-full h-full p-8 pb-32 flex items-center justify-center">
