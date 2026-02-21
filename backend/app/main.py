@@ -93,6 +93,12 @@ from .community import router as community_router
 from .profile import router as profile_router
 from .user_memory import router as memory_router
 
+# Avatar Studio (additive — persona avatar generation)
+from .avatar import router as avatar_router
+
+# Outfit Variations (additive — wardrobe changes for existing avatars)
+from .avatar.outfit import router as outfit_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -132,6 +138,32 @@ app.include_router(profile_router)
 
 # Include User Memory routes (/v1/memory/*)
 app.include_router(memory_router)
+
+# Include Avatar Studio routes (/v1/avatars/*)
+app.include_router(avatar_router)
+
+# Include Outfit Variation routes (/v1/avatars/outfits)
+app.include_router(outfit_router)
+
+
+# ----------------------------
+# ComfyUI image proxy
+# ----------------------------
+@app.get("/comfy/view/{filename:path}")
+async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "output"):
+    """Proxy ComfyUI /view requests so the frontend can load generated images."""
+    params = {"filename": filename, "type": type}
+    if subfolder:
+        params["subfolder"] = subfolder
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(f"{COMFY_BASE_URL}/view", params=params)
+            r.raise_for_status()
+            content_type = r.headers.get("content-type", "image/png")
+            return Response(content=r.content, media_type=content_type)
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"detail": f"ComfyUI view failed: {exc}"})
+
 
 # ----------------------------
 # Models

@@ -95,7 +95,7 @@ export const ENHANCE_MODES = [
   {
     id: 'faces' as const,
     label: 'Fix Faces',
-    description: 'Restore and enhance faces in photos',
+    description: 'Restore and enhance faces via ComfyUI',
     icon: '👤',
     model: 'GFPGANv1.4.pth',
   },

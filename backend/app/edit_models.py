@@ -347,8 +347,8 @@ ENHANCE_MODES: Dict[str, EnhanceModeConfig] = {
     "faces": EnhanceModeConfig(
         mode="faces",
         name="Face Restoration",
-        description="Restore and enhance faces",
-        workflow="fix_faces_gfpgan",
+        description="Restore and enhance faces using FaceDetailer",
+        workflow="fix_faces_facedetailer",
         model_category=ModelCategory.FACE_RESTORE,
         default_model_id="GFPGANv1.4",
         param_name="model_name",
@@ -546,6 +546,13 @@ def get_edit_models_status() -> Dict[str, Any]:
 
     Returns a dict suitable for API response with installed/available models.
     """
+    # Check ComfyUI face restoration readiness
+    try:
+        from .face_restore import face_restore_ready
+        comfyui_ok, comfyui_reason = face_restore_ready()
+    except Exception:
+        comfyui_ok, comfyui_reason = False, "Import error"
+
     status: Dict[str, Any] = {
         "upscale": {
             "installed": [],
@@ -568,6 +575,8 @@ def get_edit_models_status() -> Dict[str, Any]:
                 "installed": [],
                 "available": [],
                 "selected": get_preferences().faces_model,
+                "comfyui_ready": comfyui_ok,
+                "comfyui_status": comfyui_reason,
             },
         },
     }
