@@ -1,0 +1,8 @@
+{
+  "id": "avatar-basic",
+  "title": "Avatar Studio (Basic)",
+  "license": "Apache-2.0/MIT",
+  "commercial_ok": true,
+  "modes_enabled": ["studio_reference", "studio_faceswap", "creative"],
+  "notes": "Reference-based identity adapters via ComfyUI (InstantID / PhotoMaker / PuLID depending on what you install)."
+}

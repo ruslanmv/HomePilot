@@ -21,6 +21,7 @@ import {
   Copy,
   RotateCw,
   PenLine,
+  Users,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
@@ -44,6 +45,11 @@ import { PersonaSettingsPanel } from './components/PersonaSettingsPanel'
 import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
+import { AvatarStudio } from './avatar'
+import type { GalleryItem } from './avatar/galleryTypes'
+import { SaveAsPersonaModal } from './avatar/SaveAsPersonaModal'
+import { PersonaWizard } from './PersonaWizard'
+import type { PersonaWizardDraft } from './personaTypes'
 import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
 import {
   getVoiceLinkedProjectId,
@@ -92,7 +98,7 @@ export type Msg = {
   }
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio' | 'avatar'
 type Provider = 'backend' | 'ollama'
 
 type HardwarePreset = '4060' | '4080' | 'a100' | 'custom'
@@ -882,7 +888,8 @@ function Sidebar({
           <NavItem icon={Mic} label="Voice" active={mode === 'voice'} shortcut="Ctrl+V" onClick={() => setMode('voice')} />
           <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} />
           <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} />
-          <NavItem icon={ImageIcon} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
+          <NavItem icon={PenLine} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
+          <NavItem icon={Users} label="Avatar" active={mode === 'avatar'} onClick={() => setMode('avatar')} />
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} />
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} />
@@ -1510,6 +1517,10 @@ export default function App() {
   })
   const [voiceConversationId, setVoiceConversationId] = useState<string>(() => uuid())
   const [lightbox, setLightbox] = useState<string | null>(null)
+
+  // Persona Integration — "Save as Persona Avatar" from AvatarStudio (additive)
+  const [saveAsPersonaItem, setSaveAsPersonaItem] = useState<GalleryItem | null>(null)
+  const [personaWizardDraft, setPersonaWizardDraft] = useState<Partial<PersonaWizardDraft> | null>(null)
 
   // Phase 2 (additive): per-chat settings stored by conversation id.
   const chatSettingsStorageKey = useMemo(
@@ -2944,83 +2955,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     [authHeaders, conversationId, settings, settingsDraft]
   )
 
-  // Handle video generation from image viewer
-  const handleGenerateVideoFromViewer = useCallback(
-    async (imageUrl: string, videoPrompt: string) => {
-      setLightbox(null)
-      setMode('animate')
-
-      const tmpId = uuid()
-      const userMsg: Msg = {
-        id: uuid(),
-        role: 'user',
-        text: `Generate video: ${videoPrompt}`,
-      }
-      const pendingMsg: Msg = {
-        id: tmpId,
-        role: 'assistant',
-        text: 'Creating animation...',
-        pending: true,
-      }
-      setMessages((prev) => [...prev, userMsg, pendingMsg])
-
-      try {
-        // Fetch the image and convert to File
-        const response = await fetch(imageUrl)
-        const blob = await response.blob()
-        const filename = imageUrl.split('/').pop() || 'image.png'
-        const file = new File([blob], filename, { type: blob.type })
-
-        // Upload the file
-        const fd = new FormData()
-        fd.append('file', file)
-        const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
-        const uploadedUrl = up.url as string
-
-        // Trigger animate workflow
-        const data = await postJson<any>(
-          settings.backendUrl,
-          '/chat',
-          {
-            message: `animate ${uploadedUrl} ${videoPrompt}`,
-            conversation_id: conversationId,
-            fun_mode: settings.funMode,
-            mode: 'animate',
-            provider: settingsDraft.providerChat,
-            provider_base_url: settingsDraft.baseUrlChat || undefined,
-            provider_model: settingsDraft.modelChat,
-            vidModel: settingsDraft.modelVideo,
-            vidSeconds: settingsDraft.vidSeconds,
-            vidFps: settingsDraft.vidFps,
-            nsfwMode: settingsDraft.nsfwMode,
-          },
-          authHeaders
-        )
-
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tmpId
-              ? { ...msg, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null }
-              : msg
-          )
-        )
-      } catch (error: any) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tmpId
-              ? {
-                  ...msg,
-                  pending: false,
-                  text: `Video generation failed: ${error.message || 'Unknown error'}`,
-                }
-              : msg
-          )
-        )
-      }
-    },
-    [authHeaders, conversationId, settings, settingsDraft]
-  )
-
   return (
     <div className="flex h-screen bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
       <Sidebar
@@ -3549,6 +3483,24 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             provider={settingsDraft.providerImages}
             providerBaseUrl={settingsDraft.baseUrlImages}
             providerModel={settingsDraft.modelImages}
+            onNavigateToAvatar={() => setMode('avatar')}
+          />
+        ) : mode === 'avatar' ? (
+          // Avatar Studio: persona avatar generation workspace
+          <AvatarStudio
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            globalModelImages={settingsDraft.modelImages}
+            onSendToEdit={(imageUrl) => {
+              // Navigate to Edit mode — the EditTab will pick up the image
+              // via upload flow similar to handleEditFromViewer
+              setLightbox(null)
+              setMode('edit')
+              // Store the URL so EditTab can auto-load it
+              sessionStorage.setItem('homepilot_edit_from_avatar', imageUrl)
+            }}
+            onOpenLightbox={(url) => setLightbox(url)}
+            onSaveAsPersonaAvatar={(item) => setSaveAsPersonaItem(item)}
           />
         ) : mode === 'animate' ? (
           // Animate mode: Grok-style video generation gallery
@@ -3669,15 +3621,52 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         )}
       </main>
 
-      {/* Image Viewer with Edit and Video Generation */}
+      {/* Image Viewer */}
       {lightbox ? (
         <ImageViewer
           imageUrl={lightbox}
           onClose={() => setLightbox(null)}
           onEdit={handleEditFromViewer}
-          onGenerateVideo={handleGenerateVideoFromViewer}
         />
       ) : null}
+
+      {/* Save as Persona Avatar modal (from AvatarStudio gallery) */}
+      {saveAsPersonaItem && (
+        <SaveAsPersonaModal
+          item={saveAsPersonaItem}
+          backendUrl={settingsDraft.backendUrl}
+          apiKey={settingsDraft.apiKey}
+          onClose={() => setSaveAsPersonaItem(null)}
+          onOpenWizard={(draft) => {
+            setSaveAsPersonaItem(null)
+            setPersonaWizardDraft(draft)
+          }}
+          onCreated={(project) => {
+            setSaveAsPersonaItem(null)
+            if (project?.id) {
+              localStorage.setItem('homepilot_current_project', project.id)
+              setMode('project')
+            }
+          }}
+        />
+      )}
+
+      {/* PersonaWizard opened from "Save as Persona Avatar" → "Open in Wizard" */}
+      {personaWizardDraft && (
+        <PersonaWizard
+          backendUrl={settingsDraft.backendUrl}
+          apiKey={settingsDraft.apiKey}
+          initialDraft={personaWizardDraft}
+          onClose={() => setPersonaWizardDraft(null)}
+          onCreated={(project) => {
+            setPersonaWizardDraft(null)
+            if (project?.id) {
+              localStorage.setItem('homepilot_current_project', project.id)
+              setMode('project')
+            }
+          }}
+        />
+      )}
     </div>
   )
 }
