@@ -5,21 +5,24 @@ All GPU/ML work runs inside ComfyUI.  The backend is a thin HTTP
 orchestrator that:
   1. Checks if ComfyUI is healthy (GET /system_stats)
   2. Checks if required nodes are registered (GET /object_info)
-  3. Submits a FaceDetailer workflow (Impact-Pack)
+  3. Submits FaceDetailer or GFPGAN workflow
   4. Returns the result
 
 The backend NEVER imports torch, gfpgan, facexlib, or basicsr.
-One failure mode, one error message, one fix path.
+
+Two workflow tiers:
+  - **FaceDetailer** (preferred): Uses UltralyticsDetectorProvider to detect
+    faces, crops them, re-generates each face region with a diffusion
+    checkpoint, then composites back.  Best quality but requires ultralytics.
+  - **GFPGAN** (fallback): Uses FaceRestoreModelLoader + FaceRestoreWithModel
+    to apply GFPGAN/CodeFormer directly.  Simpler, fewer dependencies, and
+    works even when UltralyticsDetectorProvider fails to load.
 
 Required ComfyUI setup (once):
   cd ComfyUI/custom_nodes
   git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git
+  pip install facexlib gfpgan   (in ComfyUI's Python env)
   # restart ComfyUI
-
-The FaceDetailer node (from Impact-Pack) detects faces, crops them,
-re-generates/enhances each face region using a diffusion checkpoint,
-and composites the result back.  It requires a checkpoint model,
-a face bbox detector provider (Ultralytics), and conditioning.
 """
 
 from __future__ import annotations
@@ -33,21 +36,25 @@ import httpx
 from .config import COMFY_BASE_URL
 
 # ---------------------------------------------------------------------------
-# Required ComfyUI nodes for face restoration (FaceDetailer pipeline)
+# Required ComfyUI nodes — two tiers
 # ---------------------------------------------------------------------------
-FACE_RESTORE_NODES = ["FaceDetailer", "UltralyticsDetectorProvider"]
+
+# Tier 1 (preferred): Full FaceDetailer pipeline — best quality
+FACEDETAILER_NODES = ["FaceDetailer", "UltralyticsDetectorProvider"]
+
+# Tier 2 (fallback): Simple GFPGAN pipeline — fewer deps, always works
+GFPGAN_NODES = ["FaceRestoreModelLoader", "FaceRestoreWithModel"]
+
+# Legacy alias kept for any external code that imports it
+FACE_RESTORE_NODES = FACEDETAILER_NODES
 
 _INSTALL_HINT = (
-    "Face restoration requires ComfyUI-Impact-Pack + ultralytics.\n\n"
+    "Face restoration requires ComfyUI-Impact-Pack.\n\n"
     "Fix (run once):\n"
     "  cd ComfyUI/custom_nodes\n"
     "  git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git\n"
-    "  # Ultralytics detector provider typically requires:\n"
-    "  pip install ultralytics   (in ComfyUI's Python env)\n"
-    "  # then restart ComfyUI\n\n"
-    "Verify: curl http://localhost:8188/object_info | python3 -c \"\n"
-    "  import sys,json; d=json.load(sys.stdin)\n"
-    "  print('FaceDetailer' in d, 'UltralyticsDetectorProvider' in d)\""
+    "  pip install facexlib gfpgan   (in ComfyUI's Python env)\n"
+    "  # then restart ComfyUI"
 )
 
 # ---------------------------------------------------------------------------
@@ -105,7 +112,7 @@ def face_restore_ready() -> Tuple[bool, str]:
 
     Returns:
         (ready, message)
-        - (True, "ready") if ComfyUI is up AND the required nodes exist
+        - (True, "ready") if ComfyUI is up AND at least one tier of nodes exists
         - (False, human-readable reason) otherwise
     """
     if not comfyui_healthy():
@@ -114,17 +121,22 @@ def face_restore_ready() -> Tuple[bool, str]:
             f"{COMFY_BASE_URL}. Start ComfyUI first."
         )
 
-    # Check if the required nodes are registered
     from .comfy import check_nodes_available
-    ok, missing = check_nodes_available(FACE_RESTORE_NODES)
 
-    if not ok:
-        return False, (
-            f"ComfyUI is running but missing node(s): {', '.join(missing)}.\n"
-            f"{_INSTALL_HINT}"
-        )
+    # Check tier 1 (FaceDetailer)
+    ok_t1, _ = check_nodes_available(FACEDETAILER_NODES)
+    if ok_t1:
+        return True, "Face restoration ready (FaceDetailer)"
 
-    return True, "Face restoration ready (ComfyUI)"
+    # Check tier 2 (GFPGAN fallback)
+    ok_t2, _ = check_nodes_available(GFPGAN_NODES)
+    if ok_t2:
+        return True, "Face restoration ready (GFPGAN)"
+
+    return False, (
+        "ComfyUI is running but face restoration nodes are not available.\n"
+        f"{_INSTALL_HINT}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -169,25 +181,24 @@ def restore_faces_via_comfyui(
     model_filename: str = "GFPGANv1.4.pth",
 ) -> dict:
     """
-    Restore faces by submitting a FaceDetailer workflow to ComfyUI.
+    Restore faces via ComfyUI with automatic fallback.
 
-    Uses the Impact-Pack FaceDetailer node which:
-      1. Detects faces with UltralyticsDetectorProvider (bbox)
-      2. Crops each face region
-      3. Re-generates/enhances the face using a diffusion checkpoint
-      4. Composites the result back into the original image
+    Strategy:
+      1. Try the full FaceDetailer pipeline (best quality, needs ultralytics).
+      2. If UltralyticsDetectorProvider is unavailable, fall back to the
+         simpler GFPGAN workflow (FaceRestoreModelLoader + FaceRestoreWithModel).
+      3. Raise only when neither tier is available.
 
     Args:
         image_url: Image URL or /files/... path
-        model_filename: Face restore model hint (used for logging; the
-            actual model used is the checkpoint found by _find_checkpoint)
+        model_filename: Face restore model name (e.g. "GFPGANv1.4.pth")
 
     Returns:
         {"images": [...], "videos": [...]} from ComfyUI
 
     Raises:
         ComfyUIUnavailable: ComfyUI is offline
-        FaceRestoreNodesNotInstalled: Impact-Pack not installed
+        FaceRestoreNodesNotInstalled: Neither tier of nodes is available
         RuntimeError: Workflow execution failed
     """
     from .comfy import check_nodes_available, run_workflow
@@ -199,30 +210,50 @@ def restore_faces_via_comfyui(
             "Start ComfyUI and try again."
         )
 
-    ok, missing = check_nodes_available(FACE_RESTORE_NODES)
-    if not ok:
-        raise FaceRestoreNodesNotInstalled(
-            f"Missing ComfyUI nodes: {', '.join(missing)}.\n{_INSTALL_HINT}"
-        )
+    # ── Tier 1: FaceDetailer (preferred) ──────────────────────────
+    ok_t1, missing_t1 = check_nodes_available(FACEDETAILER_NODES)
+    if ok_t1:
+        ckpt_name = _find_checkpoint()
+        detector_model = _find_detector_model()
 
-    # ── Resolve checkpoint and detector model ─────────────────────
-    ckpt_name = _find_checkpoint()
-    detector_model = _find_detector_model()
+        print(f"[FACE_RESTORE] Using FaceDetailer pipeline")
+        print(f"[FACE_RESTORE]   image={image_url}")
+        print(f"[FACE_RESTORE]   checkpoint={ckpt_name}, detector={detector_model}")
 
-    # ── Submit workflow ────────────────────────────────────────────
-    print(f"[FACE_RESTORE] Submitting fix_faces_facedetailer to ComfyUI")
-    print(f"[FACE_RESTORE]   image={image_url}")
-    print(f"[FACE_RESTORE]   checkpoint={ckpt_name}, detector={detector_model}")
+        result = run_workflow("fix_faces_facedetailer", {
+            "image_path": image_url,
+            "ckpt_name": ckpt_name,
+            "detector_model": detector_model,
+            "denoise": 0.4,
+            "seed": random.randint(1, 2**31),
+            "filename_prefix": "homepilot_face_restore",
+        })
 
-    result = run_workflow("fix_faces_facedetailer", {
-        "image_path": image_url,
-        "ckpt_name": ckpt_name,
-        "detector_model": detector_model,
-        "denoise": 0.4,
-        "seed": random.randint(1, 2**31),
-        "filename_prefix": "homepilot_face_restore",
-    })
+        images = result.get("images", [])
+        print(f"[FACE_RESTORE] FaceDetailer completed — {len(images)} image(s)")
+        return result
 
-    images = result.get("images", [])
-    print(f"[FACE_RESTORE] Completed — {len(images)} image(s) returned")
-    return result
+    # ── Tier 2: GFPGAN fallback ───────────────────────────────────
+    ok_t2, missing_t2 = check_nodes_available(GFPGAN_NODES)
+    if ok_t2:
+        print(f"[FACE_RESTORE] FaceDetailer unavailable (missing: {', '.join(missing_t1)})")
+        print(f"[FACE_RESTORE] Falling back to GFPGAN workflow")
+        print(f"[FACE_RESTORE]   image={image_url}, model={model_filename}")
+
+        result = run_workflow("fix_faces_gfpgan", {
+            "image_path": image_url,
+            "model_name": model_filename,
+            "filename_prefix": "homepilot_face_restore",
+        })
+
+        images = result.get("images", [])
+        print(f"[FACE_RESTORE] GFPGAN completed — {len(images)} image(s)")
+        return result
+
+    # ── Neither tier available ────────────────────────────────────
+    raise FaceRestoreNodesNotInstalled(
+        f"No face restoration nodes available in ComfyUI.\n"
+        f"  FaceDetailer missing: {', '.join(missing_t1)}\n"
+        f"  GFPGAN missing: {', '.join(missing_t2)}\n\n"
+        f"{_INSTALL_HINT}"
+    )
