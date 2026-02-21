@@ -844,6 +844,46 @@ download-verify: ## Verify downloaded models and show disk usage
 	fi
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 
+start-avatar-service: ## Start the optional Avatar Service microservice (StyleGAN random faces, port 8020)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Starting Avatar Service (port 8020)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@cd avatar-service && bash scripts/run_dev.sh
+
+verify-avatar: ## Verify Avatar Studio installation (packs, workflows, service)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Avatar Studio Verification"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "1. Checking workflow templates..."
+	@ls workflows/avatar/*.json 2>/dev/null && echo "   ✅ Workflow templates found" || echo "   ❌ No workflow templates in workflows/avatar/"
+	@echo ""
+	@echo "2. Checking model pack markers..."
+	@if [ -f "models/packs/avatar-basic.installed" ]; then \
+		echo "   ✅ avatar-basic pack: installed"; \
+	else \
+		echo "   ⚠️  avatar-basic pack: not installed (run: make download-avatar-models-basic)"; \
+	fi
+	@if [ -f "models/packs/avatar-stylegan2.installed" ]; then \
+		echo "   ✅ avatar-stylegan2 pack: installed"; \
+	else \
+		echo "   ℹ️  avatar-stylegan2 pack: not installed (optional — run: make download-avatar-models-full)"; \
+	fi
+	@echo ""
+	@echo "3. Checking backend avatar module..."
+	@python3 -c "from backend.app.avatar import router; print('   ✅ Avatar router importable')" 2>/dev/null || echo "   ❌ Avatar module import failed"
+	@echo ""
+	@echo "4. Checking avatar-service (optional)..."
+	@curl -fsS http://localhost:8020/docs 2>/dev/null >/dev/null && echo "   ✅ Avatar service running on port 8020" || echo "   ℹ️  Avatar service not running (optional — run: make start-avatar-service)"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+mark-avatar-packs: ## Create marker files to indicate avatar packs are installed (dev shortcut)
+	@mkdir -p models/packs
+	@touch models/packs/avatar-basic.installed
+	@echo "✅ Marked avatar-basic as installed"
+	@echo "ℹ️  To also enable StyleGAN random faces, run: touch models/packs/avatar-stylegan2.installed"
+
 clean: ## Remove local artifacts
 	rm -rf frontend/node_modules frontend/dist
 	rm -rf backend/data/*.db || true

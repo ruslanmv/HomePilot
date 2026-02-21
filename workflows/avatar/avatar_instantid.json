@@ -1,0 +1,38 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": ""
+    }
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "studio portrait, soft light, photorealistic"
+    }
+  },
+  "3": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "batch_size": 4,
+      "width": 1024,
+      "height": 1024
+    }
+  },
+  "4": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 123,
+      "steps": 25,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal"
+    }
+  },
+  "5": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "avatar_instantid"
+    }
+  }
+}

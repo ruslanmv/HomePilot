@@ -1,0 +1,470 @@
+/**
+ * AvatarStudio — Main Avatar Studio view component.
+ *
+ * Matches the existing HomePilot Mode-based architecture:
+ *   - Rendered when mode === 'avatar' in App.tsx
+ *   - Uses Tailwind CSS + Lucide icons (same as Imagine/Edit/Animate)
+ *   - Cyber-Noir aesthetic (True Black backgrounds)
+ *
+ * Features:
+ *   - Mode pills: From Reference / Random Face / Face + Style
+ *   - 4-up results grid
+ *   - Seed display + regenerate
+ *   - Reference image upload
+ *   - Pack availability badges
+ */
+
+import React, { useState, useCallback, useRef } from 'react'
+import {
+  Loader2,
+  Upload,
+  Wand2,
+  RefreshCw,
+  Download,
+  User,
+  Shuffle,
+  Palette,
+  AlertTriangle,
+  Image as ImageIcon,
+  X,
+  Check,
+  Sparkles,
+} from 'lucide-react'
+
+import { useAvatarPacks } from './useAvatarPacks'
+import { useGenerateAvatars } from './useGenerateAvatars'
+import type { AvatarMode, AvatarResult } from './types'
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
+export interface AvatarStudioProps {
+  backendUrl: string
+  apiKey?: string
+}
+
+// ---------------------------------------------------------------------------
+// Mode config
+// ---------------------------------------------------------------------------
+
+const MODE_OPTIONS: { label: string; value: AvatarMode; icon: React.ReactNode; description: string }[] = [
+  {
+    label: 'From Reference',
+    value: 'studio_reference',
+    icon: <User size={16} />,
+    description: 'Upload a photo to generate identity-consistent portraits',
+  },
+  {
+    label: 'Random Face',
+    value: 'studio_random',
+    icon: <Shuffle size={16} />,
+    description: 'Generate a completely new face from scratch',
+  },
+  {
+    label: 'Face + Style',
+    value: 'studio_faceswap',
+    icon: <Palette size={16} />,
+    description: 'Combine your face with a styled body and scene',
+  },
+]
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+export default function AvatarStudio({ backendUrl, apiKey }: AvatarStudioProps) {
+  const packs = useAvatarPacks(backendUrl, apiKey)
+  const gen = useGenerateAvatars(backendUrl, apiKey)
+
+  const enabledModes = packs.data?.enabled_modes ?? []
+  const [mode, setMode] = useState<AvatarMode>('studio_reference')
+  const [prompt, setPrompt] = useState('studio headshot, soft light, photorealistic')
+  const [referenceUrl, setReferenceUrl] = useState('')
+  const [referencePreview, setReferencePreview] = useState<string | null>(null)
+  const [count, setCount] = useState(4)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ---- Reference image upload ----
+  const handleFileUpload = useCallback(
+    async (file: File) => {
+      const preview = URL.createObjectURL(file)
+      setReferencePreview(preview)
+
+      // Upload to backend
+      const formData = new FormData()
+      formData.append('file', file)
+      const base = (backendUrl || '').replace(/\/+$/, '')
+      const headers: Record<string, string> = {}
+      if (apiKey) headers['x-api-key'] = apiKey
+
+      try {
+        const res = await fetch(`${base}/upload`, {
+          method: 'POST',
+          headers,
+          body: formData,
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setReferenceUrl(data.url || data.file_url || '')
+        }
+      } catch {
+        // Fallback: just use the local preview
+      }
+    },
+    [backendUrl, apiKey],
+  )
+
+  // ---- Generate ----
+  const onGenerate = useCallback(async () => {
+    await gen.run({
+      mode,
+      count,
+      prompt: prompt.trim() || undefined,
+      reference_image_url:
+        mode === 'studio_reference' || mode === 'studio_faceswap'
+          ? referenceUrl || undefined
+          : undefined,
+      truncation: 0.7,
+    })
+  }, [gen, mode, count, prompt, referenceUrl])
+
+  // ---- UI State ----
+  const needsReference = mode === 'studio_reference' || mode === 'studio_faceswap'
+  const canGenerate = !gen.loading && (
+    mode === 'studio_random' ||
+    (needsReference && referenceUrl) ||
+    mode === 'creative'
+  )
+
+  // ---- Render ----
+  return (
+    <div className="flex-1 flex flex-col min-h-0 bg-black text-white">
+      {/* Header */}
+      <div className="px-5 pt-5 pb-3 border-b border-white/5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+            <Sparkles size={18} />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">Avatar Studio</h2>
+            <p className="text-xs text-white/50 mt-0.5">
+              Generate reusable portrait avatars for your personas
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="max-w-4xl mx-auto px-5 py-5 space-y-5">
+
+          {/* Pack status banner */}
+          {packs.error && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+              <AlertTriangle size={14} />
+              <span>Could not load avatar packs: {packs.error}</span>
+            </div>
+          )}
+
+          {packs.data && enabledModes.length === 0 && !packs.loading && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs">
+              <AlertTriangle size={14} />
+              <span>
+                No avatar packs installed. Run{' '}
+                <code className="bg-white/10 px-1 rounded">make download-avatar-models-basic</code>{' '}
+                and ensure ComfyUI is running.
+              </span>
+            </div>
+          )}
+
+          {/* Pack badges */}
+          {packs.data && packs.data.packs.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {packs.data.packs.map((p) => (
+                <div
+                  key={p.id}
+                  className={[
+                    'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border',
+                    p.installed
+                      ? 'border-green-500/30 bg-green-500/10 text-green-400'
+                      : 'border-white/10 bg-white/5 text-white/40',
+                  ].join(' ')}
+                >
+                  {p.installed ? <Check size={12} /> : <X size={12} />}
+                  <span>{p.title}</span>
+                  {!p.commercial_ok && p.installed && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 text-[10px]">
+                      Non-commercial
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Mode pills */}
+          <div>
+            <div className="text-xs text-white/40 mb-2 font-medium uppercase tracking-wider">
+              Generation Mode
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {MODE_OPTIONS.map((o) => {
+                const enabled = enabledModes.includes(o.value)
+                const active = mode === o.value
+                return (
+                  <button
+                    key={o.value}
+                    disabled={!enabled}
+                    onClick={() => setMode(o.value)}
+                    title={o.description}
+                    className={[
+                      'flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-medium transition-all',
+                      'border',
+                      active
+                        ? 'border-purple-500/50 bg-purple-500/15 text-purple-300 shadow-[0_0_12px_rgba(168,85,247,0.15)]'
+                        : enabled
+                          ? 'border-white/10 bg-white/5 text-white/70 hover:bg-white/8 hover:border-white/20'
+                          : 'border-white/5 bg-white/[0.02] text-white/20 cursor-not-allowed',
+                    ].join(' ')}
+                  >
+                    {o.icon}
+                    {o.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Prompt */}
+          <div>
+            <div className="text-xs text-white/40 mb-2 font-medium uppercase tracking-wider">
+              Prompt (optional)
+            </div>
+            <input
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="e.g. professional headshot, warm lighting"
+              className="w-full px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-sm placeholder:text-white/25 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20 transition-all"
+            />
+          </div>
+
+          {/* Reference upload (conditional) */}
+          {needsReference && (
+            <div>
+              <div className="text-xs text-white/40 mb-2 font-medium uppercase tracking-wider">
+                Reference Image
+              </div>
+              <div className="flex items-start gap-4">
+                {/* Upload zone */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-32 h-32 rounded-xl border-2 border-dashed border-white/15 bg-white/[0.02] flex flex-col items-center justify-center gap-2 text-white/40 hover:border-purple-500/40 hover:text-purple-400 hover:bg-purple-500/5 transition-all cursor-pointer"
+                >
+                  <Upload size={20} />
+                  <span className="text-[11px]">Upload photo</span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) handleFileUpload(file)
+                    e.target.value = ''
+                  }}
+                />
+
+                {/* Preview */}
+                {referencePreview && (
+                  <div className="relative w-32 h-32 rounded-xl overflow-hidden border border-white/10">
+                    <img
+                      src={referencePreview}
+                      alt="Reference"
+                      className="w-full h-full object-cover"
+                    />
+                    <button
+                      onClick={() => {
+                        setReferencePreview(null)
+                        setReferenceUrl('')
+                      }}
+                      className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 flex items-center justify-center text-white/70 hover:text-white transition-colors"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+
+                {/* URL input (fallback) */}
+                {!referencePreview && (
+                  <div className="flex-1 space-y-2">
+                    <div className="text-[11px] text-white/30">Or paste an image URL</div>
+                    <input
+                      value={referenceUrl}
+                      onChange={(e) => setReferenceUrl(e.target.value)}
+                      placeholder="https://... or /uploads/..."
+                      className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs placeholder:text-white/20 focus:outline-none focus:border-purple-500/50 transition-all"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Generate button */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onGenerate}
+              disabled={!canGenerate}
+              className={[
+                'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all',
+                canGenerate
+                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 hover:scale-[1.02] active:scale-[0.98]'
+                  : 'bg-white/5 text-white/25 cursor-not-allowed',
+              ].join(' ')}
+            >
+              {gen.loading ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Wand2 size={16} />
+                  Generate {count}
+                </>
+              )}
+            </button>
+
+            {/* Count selector */}
+            <div className="flex items-center gap-1">
+              {[1, 4, 8].map((n) => (
+                <button
+                  key={n}
+                  onClick={() => setCount(n)}
+                  className={[
+                    'px-2.5 py-1 rounded-lg text-xs font-medium transition-all border',
+                    count === n
+                      ? 'border-white/20 bg-white/10 text-white'
+                      : 'border-white/5 bg-white/[0.02] text-white/30 hover:text-white/60',
+                  ].join(' ')}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+
+            {gen.result && (
+              <button
+                onClick={onGenerate}
+                disabled={gen.loading}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-white/10 bg-white/5 text-white/60 text-xs hover:bg-white/8 transition-all"
+              >
+                <RefreshCw size={14} />
+                Regenerate
+              </button>
+            )}
+          </div>
+
+          {/* Error */}
+          {gen.error && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+              <AlertTriangle size={14} />
+              <span>{gen.error}</span>
+            </div>
+          )}
+
+          {/* Warnings */}
+          {gen.result?.warnings?.length ? (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <div>
+                {gen.result.warnings.map((w, i) => (
+                  <div key={i}>{w}</div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Results grid */}
+          {gen.result?.results?.length ? (
+            <div>
+              <div className="text-xs text-white/40 mb-3 font-medium uppercase tracking-wider">
+                Results
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {gen.result.results.map((item, i) => (
+                  <AvatarCard key={i} item={item} backendUrl={backendUrl} />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* Empty state */}
+          {!gen.result && !gen.loading && !gen.error && (
+            <div className="flex flex-col items-center justify-center py-16 text-white/20">
+              <ImageIcon size={48} strokeWidth={1} />
+              <div className="mt-4 text-sm">
+                {needsReference
+                  ? 'Upload a reference photo and click Generate'
+                  : 'Choose a mode and click Generate'}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// AvatarCard (local component)
+// ---------------------------------------------------------------------------
+
+function AvatarCard({ item, backendUrl }: { item: AvatarResult; backendUrl: string }) {
+  const imgUrl = item.url?.startsWith('http')
+    ? item.url
+    : `${(backendUrl || '').replace(/\/+$/, '')}${item.url}`
+
+  return (
+    <div className="group relative rounded-xl overflow-hidden border border-white/8 bg-white/[0.02] hover:border-white/15 transition-all">
+      {/* Image */}
+      <div className="aspect-square bg-white/[0.03]">
+        <img
+          src={imgUrl}
+          alt={`Avatar seed ${item.seed ?? '?'}`}
+          className="w-full h-full object-cover"
+          loading="lazy"
+        />
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-between px-2.5 py-2">
+        <div className="text-[11px] text-white/40 font-mono">
+          {item.seed !== undefined ? `seed ${item.seed}` : 'seed ---'}
+        </div>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            className="p-1 rounded-md hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+            title="Download"
+            onClick={() => {
+              const a = document.createElement('a')
+              a.href = imgUrl
+              a.download = `avatar_${item.seed ?? 'unknown'}.png`
+              a.click()
+            }}
+          >
+            <Download size={14} />
+          </button>
+          <button
+            className="p-1 rounded-md hover:bg-purple-500/20 text-white/50 hover:text-purple-400 transition-colors"
+            title="Save as persona avatar"
+          >
+            <Check size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

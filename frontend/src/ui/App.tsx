@@ -21,6 +21,7 @@ import {
   Copy,
   RotateCw,
   PenLine,
+  Users,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
@@ -44,6 +45,7 @@ import { PersonaSettingsPanel } from './components/PersonaSettingsPanel'
 import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
+import { AvatarStudio } from './avatar'
 import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
 import {
   getVoiceLinkedProjectId,
@@ -92,7 +94,7 @@ export type Msg = {
   }
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio' | 'avatar'
 type Provider = 'backend' | 'ollama'
 
 type HardwarePreset = '4060' | '4080' | 'a100' | 'custom'
@@ -883,6 +885,7 @@ function Sidebar({
           <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} />
           <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} />
           <NavItem icon={ImageIcon} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
+          <NavItem icon={Users} label="Avatar" active={mode === 'avatar'} onClick={() => setMode('avatar')} />
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} />
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} />
@@ -3549,6 +3552,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             provider={settingsDraft.providerImages}
             providerBaseUrl={settingsDraft.baseUrlImages}
             providerModel={settingsDraft.modelImages}
+          />
+        ) : mode === 'avatar' ? (
+          // Avatar Studio: persona avatar generation workspace
+          <AvatarStudio
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
           />
         ) : mode === 'animate' ? (
           // Animate mode: Grok-style video generation gallery
