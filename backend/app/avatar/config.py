@@ -25,7 +25,7 @@ class AvatarConfig:
         default_factory=lambda: os.getenv("AVATAR_SERVICE_URL", "http://localhost:8020")
     )
     allow_non_commercial: bool = field(
-        default_factory=lambda: os.getenv("ALLOW_NON_COMMERCIAL_MODELS", "false").lower() == "true"
+        default_factory=lambda: os.getenv("ALLOW_NON_COMMERCIAL_MODELS", "true").lower() == "true"
     )
     storage_root: str = field(
         default_factory=lambda: os.getenv("AVATAR_STORAGE_ROOT", "data/avatars")
