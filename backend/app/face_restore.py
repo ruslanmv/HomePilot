@@ -53,7 +53,7 @@ _INSTALL_HINT = (
     "Fix (run once):\n"
     "  cd ComfyUI/custom_nodes\n"
     "  git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git\n"
-    "  pip install facexlib gfpgan   (in ComfyUI's Python env)\n"
+    "  pip install ultralytics facexlib gfpgan   (in ComfyUI's Python env)\n"
     "  # then restart ComfyUI"
 )
 
@@ -124,17 +124,19 @@ def face_restore_ready() -> Tuple[bool, str]:
     from .comfy import check_nodes_available
 
     # Check tier 1 (FaceDetailer)
-    ok_t1, _ = check_nodes_available(FACEDETAILER_NODES)
+    ok_t1, missing_t1 = check_nodes_available(FACEDETAILER_NODES)
     if ok_t1:
         return True, "Face restoration ready (FaceDetailer)"
 
     # Check tier 2 (GFPGAN fallback)
-    ok_t2, _ = check_nodes_available(GFPGAN_NODES)
+    ok_t2, missing_t2 = check_nodes_available(GFPGAN_NODES)
     if ok_t2:
         return True, "Face restoration ready (GFPGAN)"
 
+    all_missing = sorted(set(missing_t1 + missing_t2))
     return False, (
         "ComfyUI is running but face restoration nodes are not available.\n"
+        f"Missing: {', '.join(all_missing)}\n"
         f"{_INSTALL_HINT}"
     )
 
