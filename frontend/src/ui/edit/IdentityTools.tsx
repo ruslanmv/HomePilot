@@ -12,16 +12,17 @@
  *   - Change BG (Preserve Person)
  *
  * Full Pack (+ InSwapper):
- *   - Face Swap
+ *   - Face Swap (NOW FUNCTIONAL — uses ReActor/InSwapper workflow)
  */
 
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import { Loader2, UserCheck, Scan, ImageOff, Repeat, Shield } from 'lucide-react'
 import {
   applyIdentityTool,
   IDENTITY_TOOLS,
   type IdentityToolType,
 } from '../enhance/identityApi'
+import { FaceSwapRefInput } from './FaceSwapRefInput'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -78,14 +79,26 @@ export function IdentityTools({
 }: IdentityToolsProps) {
   const [loading, setLoading] = useState<IdentityToolType | null>(null)
 
+  // Face Swap reference input state (additive)
+  const [showFaceSwapRef, setShowFaceSwapRef] = useState(false)
+  const [faceSwapRefUrl, setFaceSwapRefUrl] = useState<string | null>(null)
+
   // Don't render at all if no identity models installed
   if (!hasBasicIdentity) return null
 
   const anyLoading = loading !== null
   const isDisabled = disabled || !imageUrl
 
-  const handleTool = async (toolType: IdentityToolType) => {
+  const handleTool = async (toolType: IdentityToolType, referenceUrl?: string) => {
     if (!imageUrl || anyLoading || isDisabled) return
+
+    // For face_swap, require a reference image — show picker if not set
+    if (toolType === 'face_swap' && !referenceUrl && !faceSwapRefUrl) {
+      setShowFaceSwapRef(true)
+      return
+    }
+
+    const effectiveRefUrl = referenceUrl || faceSwapRefUrl
 
     setLoading(toolType)
     try {
@@ -94,12 +107,18 @@ export function IdentityTools({
         apiKey,
         imageUrl,
         toolType,
+        referenceImageUrl: toolType === 'face_swap' ? effectiveRefUrl || undefined : undefined,
         maskDataUrl: toolType === 'inpaint_identity' && maskDataUrl ? maskDataUrl : undefined,
       })
 
       const resultUrl = result?.media?.images?.[0]
       if (resultUrl) {
         onResult(resultUrl, toolType)
+        // Reset face swap state after successful swap
+        if (toolType === 'face_swap') {
+          setFaceSwapRefUrl(null)
+          setShowFaceSwapRef(false)
+        }
       } else {
         onError('Identity tool completed but no image was returned.')
       }
@@ -134,42 +153,58 @@ export function IdentityTools({
       {/* Tool buttons */}
       <div className="grid grid-cols-1 gap-2">
         {visibleTools.map((tool) => (
-          <button
-            key={tool.id}
-            onClick={() => handleTool(tool.id)}
-            disabled={isDisabled || anyLoading}
-            className={`
-              w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left
-              ${loading === tool.id
-                ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
-                : isDisabled || anyLoading
-                  ? 'bg-white/5 border-white/5 text-white/30 cursor-not-allowed'
-                  : 'bg-white/5 border-white/10 text-white/80 hover:bg-cyan-500/10 hover:border-cyan-500/30 hover:text-cyan-200'
-              }
-            `}
-          >
-            <div className={`
-              w-9 h-9 rounded-lg flex items-center justify-center
-              ${loading === tool.id ? 'bg-cyan-500/30' : 'bg-white/10'}
-            `}>
-              {loading === tool.id ? (
-                <Loader2 size={18} className="animate-spin text-cyan-400" />
-              ) : (
-                getIcon(tool.id)
-              )}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium flex items-center gap-2">
-                {tool.label}
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300/40">
-                  {tool.pack === 'full' ? 'Full Pack' : 'Identity'}
-                </span>
+          <div key={tool.id}>
+            <button
+              onClick={() => handleTool(tool.id)}
+              disabled={isDisabled || anyLoading}
+              className={`
+                w-full flex items-center gap-3 p-3 rounded-xl border transition-all text-left
+                ${loading === tool.id
+                  ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                  : isDisabled || anyLoading
+                    ? 'bg-white/5 border-white/5 text-white/30 cursor-not-allowed'
+                    : 'bg-white/5 border-white/10 text-white/80 hover:bg-cyan-500/10 hover:border-cyan-500/30 hover:text-cyan-200'
+                }
+              `}
+            >
+              <div className={`
+                w-9 h-9 rounded-lg flex items-center justify-center
+                ${loading === tool.id ? 'bg-cyan-500/30' : 'bg-white/10'}
+              `}>
+                {loading === tool.id ? (
+                  <Loader2 size={18} className="animate-spin text-cyan-400" />
+                ) : (
+                  getIcon(tool.id)
+                )}
               </div>
-              <div className="text-[10px] text-white/40 truncate">
-                {tool.description}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium flex items-center gap-2">
+                  {tool.label}
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300/40">
+                    {tool.pack === 'full' ? 'Full Pack' : 'Identity'}
+                  </span>
+                </div>
+                <div className="text-[10px] text-white/40 truncate">
+                  {tool.description}
+                </div>
               </div>
-            </div>
-          </button>
+            </button>
+
+            {/* Face Swap reference input — shown inline below the Face Swap button */}
+            {tool.id === 'face_swap' && showFaceSwapRef && (
+              <FaceSwapRefInput
+                backendUrl={backendUrl}
+                apiKey={apiKey}
+                onReferenceReady={(url) => {
+                  setFaceSwapRefUrl(url)
+                  setShowFaceSwapRef(false)
+                  // Auto-trigger the swap immediately
+                  handleTool('face_swap', url)
+                }}
+                onCancel={() => setShowFaceSwapRef(false)}
+              />
+            )}
+          </div>
         ))}
       </div>
     </div>

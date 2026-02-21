@@ -42,6 +42,9 @@ type Props = {
   apiKey?: string
   onClose: () => void
   onCreated?: (project: any) => void
+  /** Optional pre-filled draft (e.g. from "Save as Persona Avatar" in AvatarStudio).
+   *  When provided with a selected avatar, the wizard auto-skips to Step 1 (Identity). */
+  initialDraft?: Partial<PersonaWizardDraft>
 }
 
 // ---------------------------------------------------------------------------
@@ -196,8 +199,12 @@ const CLASS_COLORS: Record<string, { bg: string; border: string; text: string; r
 // Component
 // ---------------------------------------------------------------------------
 
-export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props) {
-  const [step, setStep] = useState<0 | 1 | 2 | 3>(0)
+export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialDraft }: Props) {
+  // If an initialDraft with a selected avatar is provided, skip to Step 1 (Identity)
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(() => {
+    if (initialDraft?.persona_appearance?.selected) return 1
+    return 0
+  })
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState<string | null>(null)
@@ -218,13 +225,26 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated }: Props)
   const [generationMode, setGenerationMode] = useState<GenerationMode>('standard')
   const { capabilities: avatarCaps } = useAvatarCapabilities(backendUrl, apiKey)
 
-  const [draft, setDraft] = useState<PersonaWizardDraft>(() => ({
-    persona_class: 'custom',
-    persona_agent: defaultPersonaAgent(),
-    persona_appearance: { ...defaultAppearance(), nsfwMode: readNsfwMode() },
-    memory_mode: 'adaptive',
-    agentic: { goal: '', capabilities: [] },
-  }))
+  const [draft, setDraft] = useState<PersonaWizardDraft>(() => {
+    const base: PersonaWizardDraft = {
+      persona_class: 'custom',
+      persona_agent: defaultPersonaAgent(),
+      persona_appearance: { ...defaultAppearance(), nsfwMode: readNsfwMode() },
+      memory_mode: 'adaptive',
+      agentic: { goal: '', capabilities: [] },
+    }
+    // Merge initialDraft (from "Save as Persona Avatar") if provided
+    if (initialDraft) {
+      return {
+        ...base,
+        ...initialDraft,
+        persona_agent: { ...base.persona_agent, ...(initialDraft.persona_agent || {}) },
+        persona_appearance: { ...base.persona_appearance, ...(initialDraft.persona_appearance || {}) },
+        agentic: { ...base.agentic, ...(initialDraft.agentic || {}) },
+      }
+    }
+    return base
+  })
 
   // -------------------------------------------------------------------------
   // Available blueprints: SFW always + NSFW only when enabled + Custom always

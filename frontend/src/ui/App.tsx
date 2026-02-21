@@ -46,6 +46,10 @@ import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
 import { AvatarStudio } from './avatar'
+import type { GalleryItem } from './avatar/galleryTypes'
+import { SaveAsPersonaModal } from './avatar/SaveAsPersonaModal'
+import { PersonaWizard } from './PersonaWizard'
+import type { PersonaWizardDraft } from './personaTypes'
 import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
 import {
   getVoiceLinkedProjectId,
@@ -1513,6 +1517,10 @@ export default function App() {
   })
   const [voiceConversationId, setVoiceConversationId] = useState<string>(() => uuid())
   const [lightbox, setLightbox] = useState<string | null>(null)
+
+  // Persona Integration — "Save as Persona Avatar" from AvatarStudio (additive)
+  const [saveAsPersonaItem, setSaveAsPersonaItem] = useState<GalleryItem | null>(null)
+  const [personaWizardDraft, setPersonaWizardDraft] = useState<Partial<PersonaWizardDraft> | null>(null)
 
   // Phase 2 (additive): per-chat settings stored by conversation id.
   const chatSettingsStorageKey = useMemo(
@@ -3568,6 +3576,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               sessionStorage.setItem('homepilot_edit_from_avatar', imageUrl)
             }}
             onOpenLightbox={(url) => setLightbox(url)}
+            onSaveAsPersonaAvatar={(item) => setSaveAsPersonaItem(item)}
           />
         ) : mode === 'animate' ? (
           // Animate mode: Grok-style video generation gallery
@@ -3697,6 +3706,44 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           onGenerateVideo={handleGenerateVideoFromViewer}
         />
       ) : null}
+
+      {/* Save as Persona Avatar modal (from AvatarStudio gallery) */}
+      {saveAsPersonaItem && (
+        <SaveAsPersonaModal
+          item={saveAsPersonaItem}
+          backendUrl={settingsDraft.backendUrl}
+          apiKey={settingsDraft.apiKey}
+          onClose={() => setSaveAsPersonaItem(null)}
+          onOpenWizard={(draft) => {
+            setSaveAsPersonaItem(null)
+            setPersonaWizardDraft(draft)
+          }}
+          onCreated={(project) => {
+            setSaveAsPersonaItem(null)
+            if (project?.id) {
+              localStorage.setItem('homepilot_current_project', project.id)
+              setMode('project')
+            }
+          }}
+        />
+      )}
+
+      {/* PersonaWizard opened from "Save as Persona Avatar" → "Open in Wizard" */}
+      {personaWizardDraft && (
+        <PersonaWizard
+          backendUrl={settingsDraft.backendUrl}
+          apiKey={settingsDraft.apiKey}
+          initialDraft={personaWizardDraft}
+          onClose={() => setPersonaWizardDraft(null)}
+          onCreated={(project) => {
+            setPersonaWizardDraft(null)
+            if (project?.id) {
+              localStorage.setItem('homepilot_current_project', project.id)
+              setMode('project')
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

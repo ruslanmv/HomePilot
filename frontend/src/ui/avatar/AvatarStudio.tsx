@@ -39,7 +39,11 @@ import {
 
 import { useAvatarPacks } from './useAvatarPacks'
 import { useGenerateAvatars } from './useGenerateAvatars'
+import { useAvatarGallery } from './useAvatarGallery'
+import { AvatarGallery } from './AvatarGallery'
+import { OutfitPanel } from './OutfitPanel'
 import type { AvatarMode, AvatarResult } from './types'
+import type { GalleryItem } from './galleryTypes'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -52,6 +56,10 @@ export interface AvatarStudioProps {
   onSendToEdit?: (imageUrl: string) => void
   /** Open full-screen lightbox */
   onOpenLightbox?: (imageUrl: string) => void
+  /** Save an avatar as a Persona (opens SaveAsPersonaModal) */
+  onSaveAsPersonaAvatar?: (item: GalleryItem) => void
+  /** Open outfit variations panel for a gallery item */
+  onGenerateOutfits?: (item: GalleryItem) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -83,9 +91,10 @@ const MODE_OPTIONS: { label: string; value: AvatarMode; icon: React.ReactNode; d
 // Component
 // ---------------------------------------------------------------------------
 
-export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenLightbox }: AvatarStudioProps) {
+export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenLightbox, onSaveAsPersonaAvatar, onGenerateOutfits }: AvatarStudioProps) {
   const packs = useAvatarPacks(backendUrl, apiKey)
   const gen = useGenerateAvatars(backendUrl, apiKey)
+  const gallery = useAvatarGallery()
 
   const enabledModes = packs.data?.enabled_modes ?? []
   const [mode, setMode] = useState<AvatarMode>('studio_reference')
@@ -93,6 +102,7 @@ export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenL
   const [referenceUrl, setReferenceUrl] = useState('')
   const [referencePreview, setReferencePreview] = useState<string | null>(null)
   const [count, setCount] = useState(4)
+  const [outfitAnchor, setOutfitAnchor] = useState<GalleryItem | null>(null)
   const [copiedSeed, setCopiedSeed] = useState<number | null>(null)
   const [isDraggingRef, setIsDraggingRef] = useState(false)
 
@@ -157,7 +167,7 @@ export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenL
 
   // ---- Generate ----
   const onGenerate = useCallback(async () => {
-    await gen.run({
+    const result = await gen.run({
       mode,
       count,
       prompt: prompt.trim() || undefined,
@@ -167,7 +177,16 @@ export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenL
           : undefined,
       truncation: 0.7,
     })
-  }, [gen, mode, count, prompt, referenceUrl])
+    // Auto-save results to persistent gallery
+    if (result?.results?.length) {
+      gallery.addBatch(
+        result.results,
+        mode,
+        prompt.trim() || undefined,
+        referenceUrl || undefined,
+      )
+    }
+  }, [gen, mode, count, prompt, referenceUrl, gallery])
 
   // ---- Keyboard shortcut: Enter to generate ----
   useEffect(() => {
@@ -556,6 +575,32 @@ export default function AvatarStudio({ backendUrl, apiKey, onSendToEdit, onOpenL
               </div>
             </div>
           )}
+
+          {/* Outfit Variations Panel (appears when user clicks "Outfit Variations" on a gallery item) */}
+          {outfitAnchor && (
+            <OutfitPanel
+              anchor={outfitAnchor}
+              backendUrl={backendUrl}
+              apiKey={apiKey}
+              nsfwMode={(() => { try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false } })()}
+              onResults={(results) => gallery.addBatch(results, mode, outfitAnchor.prompt, outfitAnchor.url)}
+              onSendToEdit={onSendToEdit}
+              onOpenLightbox={onOpenLightbox}
+              onClose={() => setOutfitAnchor(null)}
+            />
+          )}
+
+          {/* Persistent Avatar Gallery */}
+          <AvatarGallery
+            items={gallery.items}
+            backendUrl={backendUrl}
+            onDelete={gallery.removeItem}
+            onClearAll={gallery.clearAll}
+            onOpenLightbox={onOpenLightbox}
+            onSendToEdit={onSendToEdit}
+            onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
+            onGenerateOutfits={(item) => setOutfitAnchor(item)}
+          />
         </div>
       </div>
     </div>

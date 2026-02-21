@@ -96,6 +96,9 @@ from .user_memory import router as memory_router
 # Avatar Studio (additive — persona avatar generation)
 from .avatar import router as avatar_router
 
+# Outfit Variations (additive — wardrobe changes for existing avatars)
+from .avatar.outfit import router as outfit_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -138,6 +141,9 @@ app.include_router(memory_router)
 
 # Include Avatar Studio routes (/v1/avatars/*)
 app.include_router(avatar_router)
+
+# Include Outfit Variation routes (/v1/avatars/outfits)
+app.include_router(outfit_router)
 
 # ----------------------------
 # Models

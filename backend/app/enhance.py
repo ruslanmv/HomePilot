@@ -419,12 +419,16 @@ async def identity_edit(req: IdentityEditRequest):
         elif tool == "face_swap":
             if not req.reference_image_url:
                 raise HTTPException(400, "Face swap requires a reference_image_url")
-            print(f"[IDENTITY EDIT] face_swap — InSwapper workflow not yet integrated")
-            raise HTTPException(
-                501,
-                "Face swap workflow is not yet integrated. "
-                "Install the Full Pack to be ready when face swap becomes available.",
+
+            from .face_swap import execute_face_swap
+
+            print(f"[IDENTITY EDIT] face_swap — routing to InSwapper/ReActor workflow")
+            result = execute_face_swap(
+                source_image_url=req.image_url,
+                reference_image_url=req.reference_image_url,
             )
+            images = result.get("images", [])
+            return IdentityEditResponse(media={"images": images}, tool_used=tool)
 
         else:
             raise HTTPException(400, f"Unknown identity tool: {tool}")
