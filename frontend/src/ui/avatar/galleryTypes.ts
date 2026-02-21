@@ -264,6 +264,9 @@ export interface GalleryItem {
   vibeTag?: string
   /** Whether this was generated with a spicy (18+) vibe */
   nsfw?: boolean
+  /** Links outfit variations to their parent character (MMORPG-style grouping).
+   *  Root characters have no parentId. Outfits point to the root character's id. */
+  parentId?: string
   /** Set when "Save as Persona Avatar" is used */
   personaProjectId?: string
 }

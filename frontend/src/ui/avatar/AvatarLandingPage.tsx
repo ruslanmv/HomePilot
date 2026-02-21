@@ -8,7 +8,7 @@
  *   - Floating FAB for quick access to avatar creation
  */
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import {
   Sparkles,
   Trash2,
@@ -94,7 +94,22 @@ export function AvatarLandingPage({
 }: AvatarLandingPageProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const [showNsfw, setShowNsfw] = useState(false)
-  const hasNsfwItems = items.some((i) => i.nsfw)
+
+  // Only show root characters (no parentId) — outfits live inside the Character Sheet
+  const rootCharacters = useMemo(() => items.filter((i) => !i.parentId), [items])
+
+  // Count outfits per root character
+  const outfitCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const item of items) {
+      if (item.parentId) {
+        counts[item.parentId] = (counts[item.parentId] || 0) + 1
+      }
+    }
+    return counts
+  }, [items])
+
+  const hasNsfwItems = rootCharacters.some((i) => i.nsfw)
 
   const handleDelete = useCallback(
     (item: GalleryItem, e: React.MouseEvent) => {
@@ -121,7 +136,7 @@ export function AvatarLandingPage({
             <div>
               <div className="text-sm font-semibold text-white leading-tight">Avatar Studio</div>
               <div className="text-[10px] text-white/35 leading-tight">
-                {items.length > 0 ? `${items.length} avatar${items.length !== 1 ? 's' : ''}` : 'Gallery'}
+                {rootCharacters.length > 0 ? `${rootCharacters.length} character${rootCharacters.length !== 1 ? 's' : ''}` : 'Gallery'}
               </div>
             </div>
           </div>
@@ -161,7 +176,7 @@ export function AvatarLandingPage({
           <div className="col-span-full h-1" />
 
           {/* Empty state */}
-          {items.length === 0 && (
+          {rootCharacters.length === 0 && (
             <div className="col-span-full">
               <div className="rounded-2xl border bg-white/[0.03] border-white/[0.08] p-12 text-center max-w-lg mx-auto">
                 <div className="mx-auto size-14 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
@@ -203,12 +218,10 @@ export function AvatarLandingPage({
             </div>
           )}
 
-          {/* Gallery cards */}
-          {items.map((item) => {
+          {/* Gallery cards — one card per character (outfits live in Character Sheet) */}
+          {rootCharacters.map((item) => {
             const imgUrl = resolveUrl(item.url, backendUrl)
-            const tagMeta = item.scenarioTag
-              ? SCENARIO_TAG_META.find((t) => t.id === item.scenarioTag)
-              : null
+            const oCount = outfitCounts[item.id] || 0
             return (
               <div
                 key={item.id}
@@ -240,18 +253,18 @@ export function AvatarLandingPage({
                   </div>
                 </div>
 
-                {/* Scenario tag badge */}
-                {tagMeta && (
+                {/* Outfit count badge (top right) */}
+                {oCount > 0 && (
                   <div className="absolute top-2.5 right-2.5 z-10">
-                    <div className="px-1.5 py-0.5 rounded-md bg-black/50 backdrop-blur-sm border border-white/[0.08] text-[9px] text-white/60 font-medium flex items-center gap-1">
-                      <span>{tagMeta.icon}</span>
-                      <span>{tagMeta.label}</span>
+                    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-cyan-500/30 backdrop-blur-sm border border-cyan-500/20 text-[9px] text-cyan-200 font-medium">
+                      <Shirt size={9} />
+                      {oCount}
                     </div>
                   </div>
                 )}
 
-                {/* Persona badge (when no scenario tag) */}
-                {item.personaProjectId && !tagMeta && (
+                {/* Persona badge (when no outfits) */}
+                {item.personaProjectId && oCount === 0 && (
                   <div className="absolute top-2.5 right-2.5 z-10">
                     <div className="px-1.5 py-0.5 rounded-md bg-purple-500/30 backdrop-blur-sm text-purple-200 text-[9px] font-medium">
                       Persona
@@ -327,8 +340,11 @@ export function AvatarLandingPage({
                         <Clock size={9} />
                         {formatTimeAgo(item.createdAt)}
                       </span>
-                      {item.seed !== undefined && (
-                        <span className="font-mono">seed {item.seed}</span>
+                      {oCount > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Shirt size={9} />
+                          {oCount} outfit{oCount !== 1 ? 's' : ''}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -340,7 +356,7 @@ export function AvatarLandingPage({
       </div>
 
       {/* Floating New Avatar FAB */}
-      {items.length > 0 && (
+      {rootCharacters.length > 0 && (
         <div className="absolute bottom-6 right-6 z-30">
           <button
             onClick={onNewAvatar}

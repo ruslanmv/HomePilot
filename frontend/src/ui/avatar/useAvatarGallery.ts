@@ -71,7 +71,7 @@ export function useAvatarGallery() {
       prompt?: string,
       referenceUrl?: string,
       scenarioTag?: OutfitScenarioTag,
-      extra?: { vibeTag?: string; nsfw?: boolean },
+      extra?: { vibeTag?: string; nsfw?: boolean; parentId?: string },
     ) => {
       setItems((prev) => {
         const newItems: GalleryItem[] = results.map((r) => ({
@@ -85,6 +85,7 @@ export function useAvatarGallery() {
           scenarioTag,
           vibeTag: extra?.vibeTag,
           nsfw: extra?.nsfw,
+          parentId: extra?.parentId,
         }))
         const updated = [...newItems, ...prev]
         return updated.slice(0, GALLERY_MAX_ITEMS)

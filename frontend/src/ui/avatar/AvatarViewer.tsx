@@ -134,16 +134,25 @@ export function AvatarViewer({
     try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false }
   })()
 
-  // Find outfits: gallery items whose referenceUrl matches this avatar
+  // Root character ID — if viewing an outfit, resolve to its parent
+  const rootCharacterId = item.parentId || item.id
+
+  // Find outfits: gallery items that belong to this character (via parentId or URL fallback)
   const outfits = useMemo(() => {
     return allItems.filter(
       (g) =>
         g.id !== item.id &&
-        g.referenceUrl &&
-        (g.referenceUrl === item.url ||
-          resolveUrl(g.referenceUrl, backendUrl) === heroUrl),
+        (
+          // Primary: parentId-based grouping
+          g.parentId === rootCharacterId ||
+          // Fallback: URL-based matching for items created before parentId existed
+          (!g.parentId && g.referenceUrl && (
+            g.referenceUrl === item.url ||
+            resolveUrl(g.referenceUrl, backendUrl) === heroUrl
+          ))
+        ),
     )
-  }, [allItems, item, heroUrl, backendUrl])
+  }, [allItems, item, rootCharacterId, heroUrl, backendUrl])
 
   // Filtered outfits for wardrobe display
   const filteredOutfits = useMemo(() => {
@@ -209,8 +218,8 @@ export function AvatarViewer({
         checkpointOverride: checkpoint,
       })
       if (result?.results?.length) {
-        // Tag each result with the scenario tag via the callback
-        onOutfitResults?.(result.results, { ...item, scenarioTag })
+        // Tag each result with the scenario tag + ensure parentId resolves to root
+        onOutfitResults?.(result.results, { ...item, scenarioTag, parentId: item.parentId || undefined })
       }
     } catch {
       // Error captured in hook state

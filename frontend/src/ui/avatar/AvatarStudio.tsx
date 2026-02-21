@@ -282,7 +282,10 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
             anchor={outfitAnchor} backendUrl={backendUrl} apiKey={apiKey}
             nsfwMode={nsfwMode}
             checkpointOverride={resolveCheckpoint(avatarSettings, globalModelImages)}
-            onResults={(results, scenarioTag) => gallery.addBatch(results, mode, outfitAnchor.prompt, outfitAnchor.url, scenarioTag)}
+            onResults={(results, scenarioTag) => {
+              const rootId = outfitAnchor.parentId || outfitAnchor.id
+              gallery.addBatch(results, mode, outfitAnchor.prompt, outfitAnchor.url, scenarioTag, { parentId: rootId })
+            }}
             onSendToEdit={onSendToEdit} onOpenLightbox={onOpenLightbox}
             onClose={() => setOutfitAnchor(null)}
           />
@@ -307,7 +310,8 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           if (id === viewerItem.id) { setViewerItem(null); setViewMode('gallery') }
         }}
         onOutfitResults={(results, anchor) => {
-          gallery.addBatch(results, anchor.mode, anchor.prompt, anchor.url, anchor.scenarioTag)
+          const rootId = anchor.parentId || anchor.id
+          gallery.addBatch(results, anchor.mode, anchor.prompt, anchor.url, anchor.scenarioTag, { parentId: rootId })
         }}
       />
     )
@@ -864,7 +868,10 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
             <OutfitPanel anchor={outfitAnchor} backendUrl={backendUrl} apiKey={apiKey}
               nsfwMode={nsfwMode}
               checkpointOverride={resolveCheckpoint(avatarSettings, globalModelImages)}
-              onResults={(results, scenarioTag) => gallery.addBatch(results, mode, outfitAnchor.prompt, outfitAnchor.url, scenarioTag)}
+              onResults={(results, scenarioTag) => {
+                const rootId = outfitAnchor.parentId || outfitAnchor.id
+                gallery.addBatch(results, mode, outfitAnchor.prompt, outfitAnchor.url, scenarioTag, { parentId: rootId })
+              }}
               onSendToEdit={onSendToEdit} onOpenLightbox={onOpenLightbox}
               onClose={() => setOutfitAnchor(null)}
             />
