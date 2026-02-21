@@ -3552,6 +3552,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             provider={settingsDraft.providerImages}
             providerBaseUrl={settingsDraft.baseUrlImages}
             providerModel={settingsDraft.modelImages}
+            onNavigateToAvatar={() => setMode('avatar')}
           />
         ) : mode === 'avatar' ? (
           // Avatar Studio: persona avatar generation workspace

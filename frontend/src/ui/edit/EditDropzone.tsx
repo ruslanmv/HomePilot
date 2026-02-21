@@ -1,15 +1,21 @@
 /**
  * EditDropzone - Initial upload area for the Edit tab.
  *
- * Displays a styled dropzone for users to upload their first image.
- * Supports drag-and-drop and click-to-upload interactions.
+ * Dual primary action pattern (industry best practice):
+ *   [ Upload Image ]   [ Create Avatar ]
+ *
+ * - Upload Image: standard file upload (drag & drop + click)
+ * - Create Avatar: navigates to Avatar Studio to generate a character
+ *
+ * The two buttons are equal hierarchy, with Create Avatar using a purple
+ * gradient to signal "creative / identity-related" intent.
  */
 
 import React, { useCallback, useState } from 'react'
-import { Image as ImageIcon, Upload } from 'lucide-react'
+import { Image as ImageIcon, Upload, Sparkles } from 'lucide-react'
 import type { EditDropzoneProps } from './types'
 
-export function EditDropzone({ onPickFile, disabled }: EditDropzoneProps) {
+export function EditDropzone({ onPickFile, disabled, onCreateAvatar }: EditDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false)
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -81,27 +87,30 @@ export function EditDropzone({ onPickFile, disabled }: EditDropzoneProps) {
 
       {/* Title */}
       <h2 className="mt-5 text-lg font-bold text-white">
-        Upload an image to start editing
+        Start editing
       </h2>
 
       {/* Description */}
-      <p className="mt-2 text-sm text-white/50 max-w-sm mx-auto">
-        Then describe what you want to change — we'll keep the image selected
-        so you can iterate naturally.
+      <p className="mt-2 text-sm text-white/50 max-w-md mx-auto">
+        Upload an existing image to edit, or create a new avatar character
+        from scratch.
       </p>
 
-      {/* Actions */}
-      <div className="mt-6 flex items-center justify-center gap-3">
+      {/* Dual primary actions */}
+      <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
+        {/* Upload Image — primary action */}
         <label
           className={[
             'cursor-pointer inline-flex items-center gap-2',
-            'px-4 py-2 rounded-xl bg-white/10 hover:bg-white/15',
-            'border border-white/10 transition-colors',
+            'px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15',
+            'border border-white/10 hover:border-white/20 transition-all',
+            'text-sm font-semibold text-white',
             disabled ? 'pointer-events-none opacity-50' : '',
           ].join(' ')}
+          aria-label="Upload an image to edit"
         >
           <Upload size={16} />
-          <span className="text-sm font-semibold">Upload image</span>
+          <span>Upload Image</span>
           <input
             type="file"
             accept="image/png,image/jpeg,image/webp"
@@ -111,12 +120,41 @@ export function EditDropzone({ onPickFile, disabled }: EditDropzoneProps) {
           />
         </label>
 
-        <div className="text-xs text-white/40">or drag & drop</div>
+        {/* Create Avatar — secondary creative action */}
+        {onCreateAvatar && (
+          <button
+            type="button"
+            onClick={onCreateAvatar}
+            disabled={disabled}
+            className={[
+              'inline-flex items-center gap-2',
+              'px-5 py-2.5 rounded-xl',
+              'bg-gradient-to-r from-purple-600/80 to-pink-600/80',
+              'hover:from-purple-500 hover:to-pink-500',
+              'border border-purple-500/30 hover:border-purple-400/50',
+              'text-sm font-semibold text-white',
+              'shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20',
+              'transition-all',
+              disabled ? 'pointer-events-none opacity-50' : '',
+            ].join(' ')}
+            aria-label="Create a reusable avatar character"
+          >
+            <Sparkles size={16} />
+            <span>Create Avatar</span>
+          </button>
+        )}
       </div>
 
-      {/* Supported formats hint */}
+      {/* Subtext for Create Avatar */}
+      {onCreateAvatar && (
+        <p className="mt-3 text-[11px] text-white/30">
+          Create a reusable character from photos
+        </p>
+      )}
+
+      {/* Drag hint */}
       <p className="mt-4 text-xs text-white/30">
-        Supports PNG, JPEG, and WebP images up to 20MB
+        Supports PNG, JPEG, and WebP — drag & drop or click Upload
       </p>
     </div>
   )
