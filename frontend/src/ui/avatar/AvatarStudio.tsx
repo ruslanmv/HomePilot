@@ -109,7 +109,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const [avatarSettings, setAvatarSettings] = useState<AvatarSettings>(loadAvatarSettings)
 
   const enabledModes = packs.data?.enabled_modes ?? []
-  const [mode, setMode] = useState<AvatarMode>('studio_reference')
+  const [mode, setMode] = useState<AvatarMode>('studio_random')
   const [prompt, setPrompt] = useState('studio headshot, soft light, photorealistic')
   const [referenceUrl, setReferenceUrl] = useState('')
   const [referencePreview, setReferencePreview] = useState<string | null>(null)

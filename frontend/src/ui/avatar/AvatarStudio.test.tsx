@@ -162,11 +162,15 @@ describe('AvatarStudio — Designer View', () => {
 
   it('shows reference upload when mode requires it', () => {
     renderDesignerView()
-    // Default mode is studio_reference — should show upload
+    // Default mode is studio_random — should NOT show upload
+    expect(screen.queryByLabelText('Upload reference photo')).not.toBeInTheDocument()
+
+    // Switch to From Reference — should show upload
+    fireEvent.click(screen.getByRole('radio', { name: /From Reference/ }))
     expect(screen.getByText('Reference Image')).toBeInTheDocument()
     expect(screen.getByLabelText('Upload reference photo')).toBeInTheDocument()
 
-    // Switch to Random Face — should hide upload
+    // Switch back to Random Face — should hide upload
     fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
     expect(screen.queryByText('Reference Image')).not.toBeInTheDocument()
   })
