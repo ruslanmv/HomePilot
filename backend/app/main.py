@@ -93,6 +93,12 @@ from .community import router as community_router
 from .profile import router as profile_router
 from .user_memory import router as memory_router
 
+# Avatar Studio (additive — persona avatar generation)
+from .avatar import router as avatar_router
+
+# Outfit Variations (additive — wardrobe changes for existing avatars)
+from .avatar.outfit import router as outfit_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -132,6 +138,32 @@ app.include_router(profile_router)
 
 # Include User Memory routes (/v1/memory/*)
 app.include_router(memory_router)
+
+# Include Avatar Studio routes (/v1/avatars/*)
+app.include_router(avatar_router)
+
+# Include Outfit Variation routes (/v1/avatars/outfits)
+app.include_router(outfit_router)
+
+
+# ----------------------------
+# ComfyUI image proxy
+# ----------------------------
+@app.get("/comfy/view/{filename:path}")
+async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "output"):
+    """Proxy ComfyUI /view requests so the frontend can load generated images."""
+    params = {"filename": filename, "type": type}
+    if subfolder:
+        params["subfolder"] = subfolder
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(f"{COMFY_BASE_URL}/view", params=params)
+            r.raise_for_status()
+            content_type = r.headers.get("content-type", "image/png")
+            return Response(content=r.content, media_type=content_type)
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"detail": f"ComfyUI view failed: {exc}"})
+
 
 # ----------------------------
 # Models
@@ -1908,15 +1940,29 @@ def _resolve_selected_image_url(persona_appearance: Dict[str, Any]) -> Optional[
 
 async def _download_comfy_image(url: str, upload_root: Path) -> str:
     """
-    Download a ComfyUI ``/view?filename=...`` image into *upload_root*.
+    Download a ComfyUI image into *upload_root*.
+
+    Accepts two URL formats:
+      - Absolute: ``http://host:port/view?filename=X.png``
+      - Proxy-relative: ``/comfy/view/X.png`` (Avatar Studio stores these)
 
     Returns the saved filename (basename only).
 
     Security:
-      - Only allows downloads from the configured COMFY_BASE_URL host.
-      - Only allows the ``/view`` endpoint path.
-      - Prevents path-traversal in the filename query parameter.
+      - For absolute URLs: only allows the configured COMFY_BASE_URL host.
+      - For proxy-relative URLs: converts to a direct ComfyUI /view request.
+      - Prevents path-traversal in the filename.
     """
+    # ── Handle /comfy/view/<filename> proxy URLs ──────────────────────
+    # Avatar Studio stores image URLs as "/comfy/view/<filename>" which
+    # are served by the backend's own proxy endpoint.  Convert these to
+    # direct ComfyUI /view?filename=<filename> requests.
+    if url.startswith("/comfy/view/"):
+        filename = os.path.basename(url[len("/comfy/view/"):].split("?")[0])
+        if filename in ("", ".", ".."):
+            raise ValueError("Invalid filename from proxy URL")
+        url = f"{COMFY_BASE_URL}/view?filename={filename}&type=output"
+
     parsed = urlparse(url)
     comfy_parsed = urlparse(COMFY_BASE_URL)
 
@@ -3291,6 +3337,11 @@ async def persona_export(project_id: str, mode: str = Query("blueprint")) -> Res
     # ------------------------------------------------------------------
     if p.get("project_type") == "persona":
         appearance = dict(p.get("persona_appearance") or {})
+        project_root = UPLOAD_PATH / "projects" / project_id
+        appearance_dir = project_root / "persona" / "appearance"
+        dirty = False
+
+        # JIT commit main avatar
         if not appearance.get("selected_filename"):
             try:
                 selected_url = _resolve_selected_image_url(appearance)
@@ -3298,17 +3349,60 @@ async def persona_export(project_id: str, mode: str = Query("blueprint")) -> Res
                     source_filename = await _download_comfy_image(
                         selected_url, UPLOAD_PATH,
                     )
-                    project_root = UPLOAD_PATH / "projects" / project_id
                     commit_result = commit_persona_avatar(
                         UPLOAD_PATH, project_root, source_filename,
                     )
                     appearance["selected_filename"] = commit_result.selected_filename
                     appearance["selected_thumb_filename"] = commit_result.thumb_filename
-                    p = projects.update_project(
-                        project_id, {"persona_appearance": appearance},
-                    )
+                    dirty = True
             except Exception as jit_err:
                 print(f"[PERSONA] Export JIT auto-commit skipped: {jit_err}")
+
+        # JIT download outfit + set images that only exist as ComfyUI URLs
+        def _url_to_filename(url: str) -> Optional[str]:
+            if not url:
+                return None
+            if "/comfy/view/" in url:
+                return os.path.basename(url.rsplit("/comfy/view/", 1)[-1].split("?")[0])
+            if "filename=" in url:
+                return os.path.basename(url.split("filename=")[-1].split("&")[0])
+            return None
+
+        async def _ensure_image_on_disk(url: str) -> None:
+            """Download a ComfyUI image to the appearance dir if not already there."""
+            import shutil as _shutil
+            fname = _url_to_filename(url)
+            if not fname or fname in ("", ".", ".."):
+                return
+            appearance_dir.mkdir(parents=True, exist_ok=True)
+            dest = appearance_dir / fname
+            if dest.exists():
+                return
+            # Also check upload_root (may have been downloaded already)
+            if (UPLOAD_PATH / fname).exists():
+                _shutil.copy2(UPLOAD_PATH / fname, dest)
+                return
+            # Download from ComfyUI
+            downloaded = await _download_comfy_image(url, UPLOAD_PATH)
+            _shutil.copy2(UPLOAD_PATH / downloaded, dest)
+
+        for s in (appearance.get("sets") or []):
+            for img in (s.get("images") or []):
+                try:
+                    await _ensure_image_on_disk(img.get("url", ""))
+                except Exception:
+                    pass
+        for outfit in (appearance.get("outfits") or []):
+            for img in (outfit.get("images") or []):
+                try:
+                    await _ensure_image_on_disk(img.get("url", ""))
+                except Exception:
+                    pass
+
+        if dirty:
+            p = projects.update_project(
+                project_id, {"persona_appearance": appearance},
+            )
 
     try:
         out = export_persona_project(UPLOAD_PATH, p, mode=mode)
