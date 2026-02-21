@@ -43,7 +43,8 @@ import { SCENARIO_TAG_META } from './galleryTypes'
 import type { AvatarMode, AvatarResult } from './types'
 import { OUTFIT_PRESETS } from '../personaTypes'
 import { useOutfitGeneration } from './useOutfitGeneration'
-import { resolveCheckpoint, loadAvatarSettings } from './AvatarSettingsPanel'
+import { AvatarSettingsPanel, resolveCheckpoint, loadAvatarSettings } from './AvatarSettingsPanel'
+import type { AvatarSettings } from './types'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -117,6 +118,7 @@ export function AvatarViewer({
   const [copiedSeed, setCopiedSeed] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [wardrobeFilter, setWardrobeFilter] = useState<OutfitScenarioTag | 'all'>('all')
+  const [avatarSettingsState, setAvatarSettingsState] = useState<AvatarSettings>(loadAvatarSettings)
 
   // Outfit generation state
   const outfit = useOutfitGeneration(backendUrl, apiKey)
@@ -127,8 +129,7 @@ export function AvatarViewer({
 
   const heroUrl = resolveUrl(item.url, backendUrl)
 
-  const avatarSettings = loadAvatarSettings()
-  const checkpoint = resolveCheckpoint(avatarSettings, globalModelImages)
+  const checkpoint = resolveCheckpoint(avatarSettingsState, globalModelImages)
   const nsfwMode = (() => {
     try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false }
   })()
@@ -248,10 +249,18 @@ export function AvatarViewer({
           </div>
         </div>
 
-        {/* Mode badge */}
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/50 font-medium">
-          {MODE_ICONS[item.mode]}
-          {MODE_LABELS[item.mode] || item.mode}
+        <div className="flex items-center gap-2">
+          {/* Mode badge */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/50 font-medium">
+            {MODE_ICONS[item.mode]}
+            {MODE_LABELS[item.mode] || item.mode}
+          </div>
+          {/* Settings gear */}
+          <AvatarSettingsPanel
+            globalModelImages={globalModelImages}
+            settings={avatarSettingsState}
+            onChange={setAvatarSettingsState}
+          />
         </div>
       </div>
 

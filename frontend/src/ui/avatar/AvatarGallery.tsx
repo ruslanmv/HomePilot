@@ -38,6 +38,8 @@ export interface AvatarGalleryProps {
   onSendToEdit?: (imageUrl: string) => void
   onSaveAsPersonaAvatar?: (item: GalleryItem) => void
   onGenerateOutfits?: (item: GalleryItem) => void
+  /** When false, NSFW-tagged images are blurred */
+  showNsfw?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +72,7 @@ export function AvatarGallery({
   onSendToEdit,
   onSaveAsPersonaAvatar,
   onGenerateOutfits,
+  showNsfw = false,
 }: AvatarGalleryProps) {
   const [confirmClear, setConfirmClear] = useState(false)
 
@@ -132,6 +135,7 @@ export function AvatarGallery({
             onSendToEdit={onSendToEdit}
             onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
             onGenerateOutfits={onGenerateOutfits}
+            blurred={!!item.nsfw && !showNsfw}
           />
         ))}
       </div>
@@ -151,6 +155,7 @@ function GalleryThumbnail({
   onSendToEdit,
   onSaveAsPersonaAvatar,
   onGenerateOutfits,
+  blurred = false,
 }: {
   item: GalleryItem
   backendUrl: string
@@ -159,6 +164,7 @@ function GalleryThumbnail({
   onSendToEdit?: (imageUrl: string) => void
   onSaveAsPersonaAvatar?: (item: GalleryItem) => void
   onGenerateOutfits?: (item: GalleryItem) => void
+  blurred?: boolean
 }) {
   const imgUrl = resolveUrl(item.url, backendUrl)
 
@@ -172,7 +178,7 @@ function GalleryThumbnail({
         <img
           src={imgUrl}
           alt={`Avatar${item.seed !== undefined ? `, seed ${item.seed}` : ''}`}
-          className="w-full h-full object-cover"
+          className={`w-full h-full object-cover ${blurred ? 'blur-xl scale-110' : ''}`}
           loading="lazy"
         />
 

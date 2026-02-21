@@ -23,6 +23,8 @@ import {
   Shirt,
   UserPlus,
   Image as ImageIcon,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import type { GalleryItem } from './galleryTypes'
 import { SCENARIO_TAG_META } from './galleryTypes'
@@ -91,6 +93,8 @@ export function AvatarLandingPage({
   onGenerateOutfits,
 }: AvatarLandingPageProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
+  const [showNsfw, setShowNsfw] = useState(false)
+  const hasNsfwItems = items.some((i) => i.nsfw)
 
   const handleDelete = useCallback(
     (item: GalleryItem, e: React.MouseEvent) => {
@@ -123,7 +127,22 @@ export function AvatarLandingPage({
           </div>
         </div>
 
-        <div className="pointer-events-auto">
+        <div className="pointer-events-auto flex items-center gap-2">
+          {hasNsfwItems && (
+            <button
+              onClick={() => setShowNsfw(!showNsfw)}
+              className={[
+                'flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[10px] font-medium transition-all border',
+                showNsfw
+                  ? 'border-rose-500/20 bg-rose-500/10 text-rose-300'
+                  : 'border-white/[0.08] bg-white/[0.05] text-white/30 hover:text-white/50',
+              ].join(' ')}
+              title={showNsfw ? 'Hide NSFW content' : 'Show NSFW content'}
+            >
+              {showNsfw ? <Eye size={12} /> : <EyeOff size={12} />}
+              {showNsfw ? 'NSFW Visible' : 'Show NSFW'}
+            </button>
+          )}
           <button
             className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:brightness-110 border border-purple-500/20 px-4 py-2 rounded-xl text-sm font-semibold shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20 transition-all"
             type="button"
@@ -199,9 +218,19 @@ export function AvatarLandingPage({
                 <img
                   src={imgUrl}
                   alt={item.prompt || 'Avatar'}
-                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                  className={`absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105${item.nsfw && !showNsfw ? ' blur-xl scale-110' : ''}`}
                   loading="lazy"
                 />
+
+                {/* NSFW overlay */}
+                {item.nsfw && !showNsfw && (
+                  <div className="absolute inset-0 z-[5] flex items-center justify-center bg-black/30">
+                    <div className="text-[10px] text-white/40 font-medium px-2 py-1 rounded-md bg-black/40 backdrop-blur-sm">
+                      <EyeOff size={12} className="inline mr-1 -mt-0.5" />
+                      NSFW
+                    </div>
+                  </div>
+                )}
 
                 {/* Mode badge */}
                 <div className="absolute top-2.5 left-2.5 z-10">
