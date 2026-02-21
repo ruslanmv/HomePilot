@@ -27,7 +27,7 @@
   "5": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": {
-      "ckpt_name": "sd_xl_base_1.0_inpainting_0.1.safetensors"
+      "ckpt_name": "{{ckpt_name}}"
     }
   },
   "6": {
