@@ -43,6 +43,8 @@ export type EditTabProps = {
   provider?: string
   providerBaseUrl?: string
   providerModel?: string
+  /** Navigate to Avatar Studio to create a new avatar */
+  onNavigateToAvatar?: () => void
 }
 
 /**

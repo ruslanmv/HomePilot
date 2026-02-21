@@ -1,0 +1,101 @@
+{
+  "_comment": "SDXL InstantID — identity-preserving txt2img. Requires cubiq/ComfyUI_InstantID custom nodes.",
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "{{ckpt_name}}"
+    }
+  },
+  "2": {
+    "class_type": "CLIPTextEncodeSDXL",
+    "inputs": {
+      "clip": ["1", 1],
+      "text_g": "{{prompt}}",
+      "text_l": "{{prompt}}"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncodeSDXL",
+    "inputs": {
+      "clip": ["1", 1],
+      "text_g": "{{negative_prompt}}",
+      "text_l": "{{negative_prompt}}"
+    }
+  },
+  "4": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": "{{width}}",
+      "height": "{{height}}",
+      "batch_size": "{{batch_size}}"
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{reference_image_url}}"
+    }
+  },
+  "11": {
+    "class_type": "InstantIDFaceAnalysis",
+    "inputs": {
+      "provider": "CPU"
+    }
+  },
+  "12": {
+    "class_type": "InstantIDModelLoader",
+    "inputs": {
+      "instantid_file": "ip-adapter.bin"
+    }
+  },
+  "13": {
+    "class_type": "ControlNetLoader",
+    "inputs": {
+      "control_net_name": "InstantID/diffusion_pytorch_model.safetensors"
+    }
+  },
+  "14": {
+    "class_type": "ApplyInstantID",
+    "inputs": {
+      "instantid": ["12", 0],
+      "insightface": ["11", 0],
+      "control_net": ["13", 0],
+      "model": ["1", 0],
+      "positive": ["2", 0],
+      "negative": ["3", 0],
+      "image": ["10", 0],
+      "weight": "{{identity_strength}}",
+      "start_at": 0.0,
+      "end_at": 1.0
+    }
+  },
+  "5": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["14", 0],
+      "positive": ["14", 1],
+      "negative": ["14", 2],
+      "latent_image": ["4", 0],
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1.0
+    }
+  },
+  "6": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["5", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "7": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "instantid_sdxl",
+      "images": ["6", 0]
+    }
+  }
+}

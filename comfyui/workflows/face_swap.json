@@ -1,0 +1,42 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "_meta": { "title": "Source Image (body to keep)" },
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "_meta": { "title": "Reference Image (face donor)" },
+    "inputs": {
+      "image": "{{reference_image_path}}"
+    }
+  },
+  "3": {
+    "class_type": "ReActorFaceSwap",
+    "_meta": { "title": "Face Swap (InSwapper)" },
+    "inputs": {
+      "input_image": ["1", 0],
+      "source_image": ["2", 0],
+      "swap_model": "inswapper_128.onnx",
+      "facedetection": "retinaface_resnet50",
+      "face_restore_model": "GFPGANv1.4.pth",
+      "face_restore_visibility": 1.0,
+      "codeformer_weight": 0.5,
+      "detect_gender_input": "no",
+      "detect_gender_source": "no",
+      "input_faces_index": "0",
+      "source_faces_index": "0",
+      "console_log_level": 1
+    }
+  },
+  "4": {
+    "class_type": "SaveImage",
+    "_meta": { "title": "Save Result" },
+    "inputs": {
+      "images": ["3", 0],
+      "filename_prefix": "{{filename_prefix}}"
+    }
+  }
+}
