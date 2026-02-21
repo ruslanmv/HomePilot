@@ -87,6 +87,13 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "  Installing face restoration dependencies (GFPGAN/CodeFormer)..."
 	@if ComfyUI/.venv/bin/pip install facexlib gfpgan >/dev/null 2>&1; then \
 		echo "  ✓ Face restoration dependencies installed"; \
+		echo "  Patching basicsr for torchvision >= 0.18 compatibility..."; \
+		SITE_PKG=$$(ComfyUI/.venv/bin/python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null); \
+		if [ -f "$$SITE_PKG/basicsr/data/degradations.py" ]; then \
+			sed -i 's/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/' \
+				"$$SITE_PKG/basicsr/data/degradations.py" && \
+			echo "  ✓ basicsr patched (functional_tensor → functional)"; \
+		fi; \
 	else \
 		echo "    (optional: facexlib/gfpgan install skipped)"; \
 	fi
@@ -210,6 +217,12 @@ verify-install: ## Verify that all components are properly installed
 		echo "  ✓ ComfyUI-InstantID installed (Same Person generation)"; \
 	else \
 		echo "  ⚠  ComfyUI-InstantID not installed (optional - Same Person mode needs it)"; \
+	fi
+	@if ComfyUI/.venv/bin/python -c "import gfpgan" 2>/dev/null; then \
+		echo "  ✓ GFPGAN importable in ComfyUI venv (face restoration ready)"; \
+	else \
+		echo "  ⚠  GFPGAN not importable in ComfyUI venv (Fix Faces needs it)"; \
+		echo "     Fix: ComfyUI/.venv/bin/pip install facexlib gfpgan && make install"; \
 	fi
 	@if ComfyUI/.venv/bin/python -c "import insightface" 2>/dev/null; then \
 		echo "  ✓ InsightFace available in ComfyUI venv"; \
