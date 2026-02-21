@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { AvatarResult, AvatarMode } from './types'
-import type { GalleryItem } from './galleryTypes'
+import type { GalleryItem, OutfitScenarioTag } from './galleryTypes'
 import { GALLERY_STORAGE_KEY, GALLERY_MAX_ITEMS } from './galleryTypes'
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,7 @@ export function useAvatarGallery() {
       mode: AvatarMode,
       prompt?: string,
       referenceUrl?: string,
+      scenarioTag?: OutfitScenarioTag,
     ) => {
       setItems((prev) => {
         const newItems: GalleryItem[] = results.map((r) => ({
@@ -80,6 +81,7 @@ export function useAvatarGallery() {
           mode,
           referenceUrl,
           createdAt: Date.now(),
+          scenarioTag,
         }))
         const updated = [...newItems, ...prev]
         return updated.slice(0, GALLERY_MAX_ITEMS)

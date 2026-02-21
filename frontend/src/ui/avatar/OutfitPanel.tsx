@@ -25,7 +25,8 @@ import {
   Copy,
   Check,
 } from 'lucide-react'
-import type { GalleryItem } from './galleryTypes'
+import type { GalleryItem, OutfitScenarioTag } from './galleryTypes'
+import { SCENARIO_TAG_META } from './galleryTypes'
 import type { AvatarResult } from './types'
 import { OUTFIT_PRESETS } from '../personaTypes'
 import { useOutfitGeneration } from './useOutfitGeneration'
@@ -43,7 +44,7 @@ export interface OutfitPanelProps {
   /** Checkpoint override from Avatar Settings (passed to outfit generation) */
   checkpointOverride?: string
   /** Called with generated results so the parent can save to gallery */
-  onResults?: (results: AvatarResult[]) => void
+  onResults?: (results: AvatarResult[], scenarioTag?: OutfitScenarioTag) => void
   onSendToEdit?: (imageUrl: string) => void
   onOpenLightbox?: (imageUrl: string) => void
   onClose: () => void
@@ -102,6 +103,11 @@ export function OutfitPanel({
   const handleGenerate = useCallback(async () => {
     if (!canGenerate) return
 
+    // Determine the scenario tag for this generation
+    const scenarioTag: OutfitScenarioTag = selectedPreset
+      ? (selectedPreset as OutfitScenarioTag)
+      : 'custom'
+
     try {
       const result = await outfit.generate({
         referenceImageUrl: anchor.url,
@@ -111,12 +117,12 @@ export function OutfitPanel({
         checkpointOverride,
       })
       if (result?.results?.length) {
-        onResults?.(result.results)
+        onResults?.(result.results, scenarioTag)
       }
     } catch {
       // Error is already captured in hook state
     }
-  }, [canGenerate, outfit, anchor, effectivePrompt, count, onResults])
+  }, [canGenerate, outfit, anchor, effectivePrompt, count, onResults, selectedPreset])
 
   const handleCopySeed = useCallback((seed: number) => {
     navigator.clipboard.writeText(String(seed)).catch(() => {})
@@ -168,22 +174,26 @@ export function OutfitPanel({
           Outfit Preset
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {presets.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => {
-                setSelectedPreset(selectedPreset === p.id ? null : p.id)
-                if (selectedPreset !== p.id) setCustomPrompt('')
-              }}
-              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                selectedPreset === p.id
-                  ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-300'
-                  : 'border-white/8 bg-white/[0.03] text-white/50 hover:bg-white/5 hover:text-white/70'
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
+          {presets.map((p) => {
+            const tagMeta = SCENARIO_TAG_META.find((t) => t.id === p.id)
+            return (
+              <button
+                key={p.id}
+                onClick={() => {
+                  setSelectedPreset(selectedPreset === p.id ? null : p.id)
+                  if (selectedPreset !== p.id) setCustomPrompt('')
+                }}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                  selectedPreset === p.id
+                    ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-300'
+                    : 'border-white/8 bg-white/[0.03] text-white/50 hover:bg-white/5 hover:text-white/70'
+                }`}
+              >
+                {tagMeta && <span className="text-sm leading-none">{tagMeta.icon}</span>}
+                {p.label}
+              </button>
+            )
+          })}
         </div>
       </div>
 

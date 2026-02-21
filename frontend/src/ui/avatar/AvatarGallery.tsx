@@ -23,6 +23,7 @@ import {
   Image as ImageIcon,
 } from 'lucide-react'
 import type { GalleryItem } from './galleryTypes'
+import { SCENARIO_TAG_META } from './galleryTypes'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -175,8 +176,18 @@ function GalleryThumbnail({
           loading="lazy"
         />
 
+        {/* Scenario tag badge */}
+        {item.scenarioTag && (() => {
+          const tagMeta = SCENARIO_TAG_META.find((t) => t.id === item.scenarioTag)
+          return tagMeta ? (
+            <div className="absolute top-1 left-1 px-1 py-0.5 rounded bg-black/50 backdrop-blur-sm text-[7px] text-white/60 font-medium flex items-center gap-0.5 border border-white/[0.08]">
+              <span>{tagMeta.icon}</span>
+            </div>
+          ) : null
+        })()}
+
         {/* Persona badge */}
-        {item.personaProjectId && (
+        {item.personaProjectId && !item.scenarioTag && (
           <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-purple-500/30 text-purple-200 text-[8px] font-medium backdrop-blur-sm">
             Persona
           </div>
