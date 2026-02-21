@@ -622,6 +622,7 @@ export default function ModelsView(props: ModelsParams) {
   const [avatarDownloadStatus, setAvatarDownloadStatus] = useState<AvatarDownloadStatus | null>(null)
   const [avatarDeleteConfirm, setAvatarDeleteConfirm] = useState<string | null>(null)
   const [avatarDeleteBusy, setAvatarDeleteBusy] = useState<string | null>(null)
+  const [avatarInstallBusy, setAvatarInstallBusy] = useState<string | null>(null) // model ID being installed
 
   // Filter providers based on model type
   const availableProviders = useMemo(() => {
@@ -1254,6 +1255,36 @@ export default function ModelsView(props: ModelsParams) {
     }
   }
 
+  const installSingleAvatarModel = async (modelId: string) => {
+    setAvatarInstallBusy(modelId)
+    setToast(`Starting download for ${modelId}...`)
+    try {
+      const res = await fetch(`${backendUrl}/v1/avatar-models/${modelId}/install`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authKey ? { 'x-api-key': authKey } : {}),
+        },
+      })
+      const data = await res.json()
+      if (data.ok) {
+        if (data.already_installed) {
+          setToast(`${modelId} is already installed`)
+          setAvatarInstallBusy(null)
+          return
+        }
+        // Start polling for progress
+        setAvatarDownloadBusy(`single:${modelId}`)
+      } else {
+        setToast(`Install failed: ${data.error || 'unknown error'}`)
+      }
+    } catch (e: any) {
+      setToast(`Install error: ${e?.message || String(e)}`)
+    } finally {
+      setAvatarInstallBusy(null)
+    }
+  }
+
   // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return
@@ -1836,12 +1867,26 @@ export default function ModelsView(props: ModelsParams) {
         <div className="flex flex-col gap-4 max-w-7xl mx-auto">
           {/* Error messages - hide for Civitai since it's download-only */}
           {installedError && provider !== 'civitai' ? (
-            <div className="rounded-xl border border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-amber-500/5 p-5 text-amber-200">
-              <div className="font-bold text-sm text-amber-100">Configuration Required</div>
-              <div className="text-xs mt-2 text-amber-200/70 font-medium">
-                {installedError.includes('LLM_BASE_URL')
-                  ? 'Configure LLM_BASE_URL environment variable to use OpenAI-compatible (vLLM) provider. Or switch to a different provider.'
-                  : installedError}
+            <div className={`rounded-xl border p-5 ${
+              installedError.includes('Ollama') || installedError.includes('11434')
+                ? 'border-white/10 bg-white/[0.03] text-white/60'
+                : 'border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-amber-500/5 text-amber-200'
+            }`}>
+              <div className={`font-bold text-sm ${
+                installedError.includes('Ollama') || installedError.includes('11434')
+                  ? 'text-white/70'
+                  : 'text-amber-100'
+              }`}>
+                {installedError.includes('Ollama') || installedError.includes('11434')
+                  ? 'Ollama Not Running'
+                  : 'Configuration Required'}
+              </div>
+              <div className="text-xs mt-2 font-medium opacity-70">
+                {installedError.includes('Ollama') || installedError.includes('11434')
+                  ? 'Ollama is not reachable. Start Ollama or switch to a different provider tab. ComfyUI models and Add-ons still work normally.'
+                  : installedError.includes('LLM_BASE_URL')
+                    ? 'Configure LLM_BASE_URL environment variable to use OpenAI-compatible (vLLM) provider. Or switch to a different provider.'
+                    : installedError}
               </div>
             </div>
           ) : null}
@@ -2344,6 +2389,10 @@ export default function ModelsView(props: ModelsParams) {
                       const statusKind = m.installed ? 'ok' : 'warn'
                       const statusLabel = m.installed ? 'Installed' : 'Not Installed'
 
+                      // Basic pack models are tagged as "Recommended" — minimum needed for Avatar to work
+                      const BASIC_PACK_IDS = new Set(['insightface-antelopev2', 'instantid-ip-adapter', 'instantid-controlnet'])
+                      const isRecommended = BASIC_PACK_IDS.has(m.id)
+
                       // Feature labels from used_by
                       const FEATURE_LABELS: Record<string, { label: string; color: string }> = {
                         photo_variations: { label: 'Portraits', color: 'purple' },
@@ -2363,6 +2412,11 @@ export default function ModelsView(props: ModelsParams) {
                               {m.is_default && (
                                 <div className="px-3 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-[10px] font-bold uppercase tracking-wider text-blue-200">
                                   Core
+                                </div>
+                              )}
+                              {isRecommended && (
+                                <div className="px-3 py-1.5 rounded-lg border border-purple-500/30 bg-purple-500/10 text-[10px] font-bold uppercase tracking-wider text-purple-200">
+                                  Recommended
                                 </div>
                               )}
                               {m.license && (
@@ -2432,6 +2486,32 @@ export default function ModelsView(props: ModelsParams) {
                                 <ExternalLink size={13} />
                                 <span>Info</span>
                               </a>
+                            )}
+
+                            {/* Install button — only for not-installed models with a download URL */}
+                            {!m.installed && m.download_url && (
+                              <button
+                                type="button"
+                                className="px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-xs font-bold text-white flex items-center gap-2 transition-all hover:scale-105 active:scale-95 shadow-lg shadow-purple-600/20 disabled:opacity-50 disabled:cursor-wait"
+                                disabled={avatarInstallBusy === m.id || avatarDownloadBusy !== null}
+                                onClick={() => installSingleAvatarModel(m.id)}
+                                title={`Download and install ${m.name}`}
+                              >
+                                {avatarInstallBusy === m.id ? (
+                                  <>
+                                    <svg className="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <span>Installing...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Download size={13} />
+                                    <span>Install</span>
+                                  </>
+                                )}
+                              </button>
                             )}
 
                             {/* Uninstall button — only for installed models */}

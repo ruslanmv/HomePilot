@@ -1,0 +1,77 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{image_path}}"
+    }
+  },
+  "2": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "{{ckpt_name}}"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "high quality, detailed face, sharp features, natural skin texture, well-lit",
+      "clip": ["2", 1]
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "low quality, blurry, deformed, disfigured, ugly, artifacts, noise",
+      "clip": ["2", 1]
+    }
+  },
+  "5": {
+    "class_type": "UltralyticsDetectorProvider",
+    "inputs": {
+      "model_name": "{{detector_model}}"
+    }
+  },
+  "6": {
+    "class_type": "FaceDetailer",
+    "inputs": {
+      "image": ["1", 0],
+      "model": ["2", 0],
+      "clip": ["2", 1],
+      "vae": ["2", 2],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "bbox_detector": ["5", 0],
+      "guide_size": 384,
+      "guide_size_for": true,
+      "max_size": 1024,
+      "seed": "{{seed}}",
+      "steps": 20,
+      "cfg": 7.0,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": "{{denoise}}",
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.5,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 3.0,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 10,
+      "wildcard": "",
+      "cycle": 1
+    }
+  },
+  "7": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["6", 0],
+      "filename_prefix": "{{filename_prefix}}"
+    }
+  }
+}
