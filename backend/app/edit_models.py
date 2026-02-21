@@ -545,14 +545,13 @@ def get_edit_models_status() -> Dict[str, Any]:
     Get comprehensive status of all edit models.
 
     Returns a dict suitable for API response with installed/available models.
-    Includes standalone face restoration availability.
     """
-    # Check standalone face restoration availability
+    # Check ComfyUI face restoration readiness
     try:
-        from .face_restore import check_standalone_available
-        standalone_ok, standalone_reason = check_standalone_available()
+        from .face_restore import face_restore_ready
+        comfyui_ok, comfyui_reason = face_restore_ready()
     except Exception:
-        standalone_ok, standalone_reason = False, "Import error"
+        comfyui_ok, comfyui_reason = False, "Import error"
 
     status: Dict[str, Any] = {
         "upscale": {
@@ -576,8 +575,8 @@ def get_edit_models_status() -> Dict[str, Any]:
                 "installed": [],
                 "available": [],
                 "selected": get_preferences().faces_model,
-                "standalone_available": standalone_ok,
-                "standalone_status": standalone_reason,
+                "comfyui_ready": comfyui_ok,
+                "comfyui_status": comfyui_reason,
             },
         },
     }

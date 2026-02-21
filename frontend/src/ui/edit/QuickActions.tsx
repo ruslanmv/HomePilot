@@ -188,7 +188,7 @@ export function QuickActions({
   const actionInfo: Record<string, { endpoint: string; model: string; type: string }> = {
     photo: { endpoint: '/v1/enhance', model: 'RealESRGAN_x4plus', type: '1-click' },
     restore: { endpoint: '/v1/enhance', model: 'SwinIR', type: '1-click' },
-    faces: { endpoint: '/v1/enhance', model: 'GFPGAN (standalone/ComfyUI)', type: '1-click' },
+    faces: { endpoint: '/v1/enhance', model: 'GFPGAN (ComfyUI)', type: '1-click' },
     upscale: { endpoint: '/v1/upscale', model: '4x-UltraSharp', type: '1-click' },
   }
 

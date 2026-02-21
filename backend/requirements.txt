@@ -10,10 +10,3 @@ chromadb>=0.4.0
 PyPDF2>=3.0.0
 Pillow>=10.0.0
 PyYAML>=6.0
-
-# Face restoration (standalone mode — bypasses ComfyUI Impact-Pack dependency)
-# These are optional: if not installed, face restore falls back to ComfyUI workflow
-gfpgan>=1.3.8
-facexlib>=0.3.0
-basicsr>=1.4.2
-opencv-python-headless>=4.8.0

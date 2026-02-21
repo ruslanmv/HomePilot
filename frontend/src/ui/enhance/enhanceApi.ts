@@ -25,7 +25,6 @@ export interface EnhanceResponse {
     videos?: string[]
   }
   mode_used?: string
-  /** Model used, suffixed with "(standalone)" or "(comfyui)" for faces mode */
   model_used?: string
   original_size?: [number, number]
   enhanced_size?: [number, number]
@@ -96,7 +95,7 @@ export const ENHANCE_MODES = [
   {
     id: 'faces' as const,
     label: 'Fix Faces',
-    description: 'Restore and enhance faces (standalone or ComfyUI)',
+    description: 'Restore and enhance faces via ComfyUI',
     icon: '👤',
     model: 'GFPGANv1.4.pth',
   },

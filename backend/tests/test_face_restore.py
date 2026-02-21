@@ -1,232 +1,174 @@
 """
-Tests for the standalone face restoration service (face_restore.py).
+Tests for the face restoration service (face_restore.py).
+
+Architecture: ComfyUI-only.  The backend never imports torch/gfpgan/ML libs.
+All face restoration runs through ComfyUI's fix_faces_gfpgan workflow.
 
 These tests verify:
-1. Availability checking logic
-2. Model path discovery
-3. Fallback chain in enhance endpoint (standalone → ComfyUI → error)
-4. Image processing flow (mocked)
+1. ComfyUI health check logic
+2. Node readiness check (Impact-Pack installed?)
+3. restore_faces_via_comfyui() happy path and error paths
+4. Enhance endpoint integration (faces mode uses ComfyUI)
+5. Clear error messages when ComfyUI is down or nodes missing
 """
 
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock
 from dataclasses import dataclass
-from pathlib import Path
 
 
-class TestStandaloneAvailability:
-    """Test check_standalone_available() dependency detection."""
+# ---------------------------------------------------------------------------
+# Unit tests for face_restore.py
+# ---------------------------------------------------------------------------
 
-    def test_available_when_all_deps_present(self, monkeypatch):
-        """When gfpgan, facexlib, basicsr, torch are importable and model exists."""
+class TestComfyUIHealthCheck:
+    """Test comfyui_healthy() liveness check."""
+
+    def test_healthy_when_comfyui_responds_200(self, monkeypatch):
+        """Returns True when ComfyUI /system_stats returns 200."""
         import app.face_restore as fr
 
-        # Reset cache
-        fr._gfpgan_available = None
+        mock_response = MagicMock()
+        mock_response.status_code = 200
 
-        # Mock all imports as successful
-        import importlib
-        real_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+        import httpx
+        monkeypatch.setattr(httpx, "get", lambda url, **kw: mock_response)
 
-        # Mock _find_model_path to return a valid path
-        monkeypatch.setattr(fr, "_find_model_path", lambda name: Path("/fake/GFPGANv1.4.pth"))
+        assert fr.comfyui_healthy() is True
 
-        # Mock the import checks by pre-setting the cache
-        fr._gfpgan_available = True
-        ok, reason = fr.check_standalone_available()
+    def test_unhealthy_when_comfyui_down(self, monkeypatch):
+        """Returns False when ComfyUI is unreachable."""
+        import app.face_restore as fr
+
+        import httpx
+        monkeypatch.setattr(
+            httpx, "get",
+            lambda url, **kw: (_ for _ in ()).throw(httpx.ConnectError("refused")),
+        )
+
+        assert fr.comfyui_healthy() is False
+
+    def test_unhealthy_when_comfyui_returns_500(self, monkeypatch):
+        """Returns False when ComfyUI returns non-200."""
+        import app.face_restore as fr
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+
+        import httpx
+        monkeypatch.setattr(httpx, "get", lambda url, **kw: mock_response)
+
+        assert fr.comfyui_healthy() is False
+
+
+class TestFaceRestoreReady:
+    """Test face_restore_ready() readiness check."""
+
+    def test_ready_when_comfyui_healthy_and_nodes_present(self, monkeypatch):
+        """Returns (True, ...) when ComfyUI is up and nodes are registered."""
+        import app.face_restore as fr
+
+        monkeypatch.setattr(fr, "comfyui_healthy", lambda: True)
+        monkeypatch.setattr("app.comfy.check_nodes_available",
+                            lambda nodes: (True, []))
+
+        ok, msg = fr.face_restore_ready()
         assert ok is True
-        assert "ready" in reason.lower()
+        assert "ready" in msg.lower()
 
-    def test_unavailable_when_gfpgan_missing(self, monkeypatch):
-        """When gfpgan is not installed."""
+    def test_not_ready_when_comfyui_down(self, monkeypatch):
+        """Returns (False, ...) when ComfyUI is unreachable."""
         import app.face_restore as fr
 
-        # Reset cache
-        fr._gfpgan_available = None
+        monkeypatch.setattr(fr, "comfyui_healthy", lambda: False)
 
-        # Make gfpgan import fail
-        original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
-
-        def mock_import(name, *args, **kwargs):
-            if name == 'gfpgan':
-                raise ImportError("No module named 'gfpgan'")
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr("builtins.__import__", mock_import)
-
-        ok, reason = fr.check_standalone_available()
+        ok, msg = fr.face_restore_ready()
         assert ok is False
-        assert "gfpgan" in reason.lower()
+        assert "not reachable" in msg.lower()
 
-    def test_unavailable_when_model_missing(self, monkeypatch):
-        """When dependencies are installed but model weights are missing."""
+    def test_not_ready_when_nodes_missing(self, monkeypatch):
+        """Returns (False, ...) when Impact-Pack nodes are not registered."""
         import app.face_restore as fr
 
-        # Reset cache
-        fr._gfpgan_available = None
+        monkeypatch.setattr(fr, "comfyui_healthy", lambda: True)
+        monkeypatch.setattr("app.comfy.check_nodes_available",
+                            lambda nodes: (False, ["FaceRestoreModelLoader"]))
 
-        # Mock all imports as available
-        for mod_name in ['torch', 'gfpgan', 'facexlib', 'basicsr']:
-            monkeypatch.setitem(__import__('sys').modules, mod_name, MagicMock())
-
-        # But model file doesn't exist
-        monkeypatch.setattr(fr, "_find_model_path", lambda name: None)
-
-        ok, reason = fr.check_standalone_available()
+        ok, msg = fr.face_restore_ready()
         assert ok is False
-        assert "not found" in reason.lower() or "model" in reason.lower()
+        assert "FaceRestoreModelLoader" in msg
+        assert "Impact-Pack" in msg
 
 
-class TestModelPathDiscovery:
-    """Test _find_model_path() model file search logic."""
+class TestRestoreFacesViaComfyUI:
+    """Test restore_faces_via_comfyui() workflow submission."""
 
-    def test_finds_model_in_comfy_gfpgan_dir(self, tmp_path, monkeypatch):
-        """Model found in models/comfy/gfpgan/."""
+    def test_success_returns_images(self, monkeypatch):
+        """Happy path: ComfyUI processes the workflow and returns images."""
         import app.face_restore as fr
 
-        # Create fake model file
-        model_dir = tmp_path / "models" / "comfy" / "gfpgan"
-        model_dir.mkdir(parents=True)
-        model_file = model_dir / "GFPGANv1.4.pth"
-        model_file.write_bytes(b"fake model data")
+        monkeypatch.setattr(fr, "comfyui_healthy", lambda: True)
+        monkeypatch.setattr("app.comfy.check_nodes_available",
+                            lambda nodes: (True, []))
+        monkeypatch.setattr("app.comfy.run_workflow", lambda name, vars: {
+            "images": ["http://comfyui:8188/view?filename=restored.png"],
+            "videos": [],
+        })
 
-        # Override search dirs to include our tmp_path
-        original_find = fr._find_model_path
-
-        def patched_find(model_filename="GFPGANv1.4.pth"):
-            candidate = model_dir / model_filename
-            if candidate.exists() and candidate.stat().st_size > 0:
-                return candidate
-            return None
-
-        monkeypatch.setattr(fr, "_find_model_path", patched_find)
-
-        result = fr._find_model_path("GFPGANv1.4.pth")
-        assert result is not None
-        assert result.name == "GFPGANv1.4.pth"
-
-    def test_returns_none_when_no_model(self, monkeypatch):
-        """Returns None when model file not found anywhere."""
-        import app.face_restore as fr
-
-        # Make all paths non-existent
-        monkeypatch.setattr(fr, "_find_model_path", lambda name: None)
-        assert fr._find_model_path("GFPGANv1.4.pth") is None
-
-
-class TestRestoreFaces:
-    """Test the restore_faces() processing function."""
-
-    def test_restore_faces_returns_filename_on_success(self, monkeypatch, tmp_path):
-        """Successful face restoration returns output filename."""
-        import app.face_restore as fr
-
-        # Mock cv2 and numpy
-        mock_cv2 = MagicMock()
-        mock_np = MagicMock()
-
-        # Mock image loading
-        fake_img = MagicMock()
-        fake_img.shape = (512, 512, 3)
-        mock_cv2.imread.return_value = fake_img
-        mock_cv2.IMREAD_COLOR = 1
-        mock_cv2.imwrite.return_value = True
-
-        # Mock GFPGANer
-        mock_restorer = MagicMock()
-        mock_restorer.enhance.return_value = (
-            [fake_img],  # cropped_faces
-            [fake_img],  # restored_faces
-            fake_img,    # output_img
+        result = fr.restore_faces_via_comfyui(
+            "http://localhost:8000/files/test.png",
+            "GFPGANv1.4.pth",
         )
 
-        monkeypatch.setattr(fr, "_get_gfpganer", lambda **kw: mock_restorer)
-        monkeypatch.setattr(fr, "UPLOAD_DIR", str(tmp_path))
+        assert "images" in result
+        assert len(result["images"]) == 1
 
-        # Mock imports inside restore_faces
-        import sys
-        sys.modules['cv2'] = mock_cv2
-        sys.modules['numpy'] = mock_np
-
-        output_filename, error = fr.restore_faces(
-            image_path=str(tmp_path / "test.png"),
-            model_name="GFPGANv1.4.pth",
-        )
-
-        # Clean up mocked modules
-        del sys.modules['cv2']
-        del sys.modules['numpy']
-
-        # restore_faces should have called enhance()
-        mock_restorer.enhance.assert_called_once()
-
-    def test_restore_faces_handles_no_faces(self, monkeypatch, tmp_path):
-        """Returns error when no faces are detected."""
+    def test_raises_when_comfyui_down(self, monkeypatch):
+        """Raises ComfyUIUnavailable when ComfyUI is offline."""
         import app.face_restore as fr
 
-        mock_cv2 = MagicMock()
-        mock_np = MagicMock()
+        monkeypatch.setattr(fr, "comfyui_healthy", lambda: False)
 
-        fake_img = MagicMock()
-        fake_img.shape = (512, 512, 3)
-        mock_cv2.imread.return_value = fake_img
-        mock_cv2.IMREAD_COLOR = 1
+        with pytest.raises(fr.ComfyUIUnavailable, match="not reachable"):
+            fr.restore_faces_via_comfyui("http://localhost:8000/files/test.png")
 
-        # GFPGANer returns no faces
-        mock_restorer = MagicMock()
-        mock_restorer.enhance.return_value = ([], [], None)
-
-        monkeypatch.setattr(fr, "_get_gfpganer", lambda **kw: mock_restorer)
-        monkeypatch.setattr(fr, "UPLOAD_DIR", str(tmp_path))
-
-        import sys
-        sys.modules['cv2'] = mock_cv2
-        sys.modules['numpy'] = mock_np
-
-        output_filename, error = fr.restore_faces(
-            image_path=str(tmp_path / "test.png"),
-        )
-
-        del sys.modules['cv2']
-        del sys.modules['numpy']
-
-        assert output_filename is None
-        assert error is not None
-        assert "no face" in error.lower()
-
-    def test_restore_faces_handles_invalid_image(self, monkeypatch, tmp_path):
-        """Returns error when image cannot be loaded."""
+    def test_raises_when_nodes_missing(self, monkeypatch):
+        """Raises FaceRestoreNodesNotInstalled when Impact-Pack is missing."""
         import app.face_restore as fr
 
-        mock_cv2 = MagicMock()
-        mock_np = MagicMock()
+        monkeypatch.setattr(fr, "comfyui_healthy", lambda: True)
+        monkeypatch.setattr("app.comfy.check_nodes_available",
+                            lambda nodes: (False, ["FaceRestoreModelLoader"]))
 
-        mock_cv2.imread.return_value = None
-        mock_cv2.IMREAD_COLOR = 1
+        with pytest.raises(fr.FaceRestoreNodesNotInstalled, match="Impact-Pack"):
+            fr.restore_faces_via_comfyui("http://localhost:8000/files/test.png")
 
-        monkeypatch.setattr(fr, "UPLOAD_DIR", str(tmp_path))
+    def test_raises_runtime_error_on_workflow_failure(self, monkeypatch):
+        """Propagates RuntimeError when the ComfyUI workflow fails."""
+        import app.face_restore as fr
 
-        import sys
-        sys.modules['cv2'] = mock_cv2
-        sys.modules['numpy'] = mock_np
+        monkeypatch.setattr(fr, "comfyui_healthy", lambda: True)
+        monkeypatch.setattr("app.comfy.check_nodes_available",
+                            lambda nodes: (True, []))
 
-        output_filename, error = fr.restore_faces(
-            image_path=str(tmp_path / "nonexistent.png"),
-        )
+        def boom(name, vars):
+            raise RuntimeError("ComfyUI internal error")
 
-        del sys.modules['cv2']
-        del sys.modules['numpy']
+        monkeypatch.setattr("app.comfy.run_workflow", boom)
 
-        assert output_filename is None
-        assert error is not None
-        assert "failed to load" in error.lower()
+        with pytest.raises(RuntimeError, match="internal error"):
+            fr.restore_faces_via_comfyui("http://localhost:8000/files/test.png")
 
 
-class TestEnhanceFallbackChain:
-    """Test the fallback chain in the enhance endpoint."""
+# ---------------------------------------------------------------------------
+# Integration tests for enhance endpoint (faces mode)
+# ---------------------------------------------------------------------------
 
-    def test_faces_mode_uses_standalone_first(self, client, mock_outbound, monkeypatch):
-        """Face restoration should try standalone before ComfyUI."""
+class TestEnhanceFacesMode:
+    """Test the /v1/enhance endpoint with mode=faces."""
+
+    def test_faces_mode_calls_comfyui(self, client, mock_outbound, monkeypatch):
+        """Face restoration goes through ComfyUI (no standalone ML)."""
 
         @dataclass
         class MockConfig:
@@ -238,26 +180,21 @@ class TestEnhanceFallbackChain:
             default_model_id: str = "GFPGANv1.4"
             param_name: str = "model_name"
 
-        calls = {"standalone": 0, "comfyui": 0}
-
         def mock_get_image_size(url):
             return (512, 512)
 
         def mock_get_enhance_model(mode):
             return ("GFPGANv1.4.pth", None, MockConfig())
 
-        def mock_standalone(image_url, model_filename):
-            calls["standalone"] += 1
-            return {"images": ["/files/restored.png"], "videos": []}
-
-        def mock_comfyui(image_url, model_filename):
-            calls["comfyui"] += 1
-            return {"images": ["/files/restored_comfy.png"], "videos": []}
+        def mock_restore(image_url, model_filename="GFPGANv1.4.pth"):
+            return {
+                "images": ["http://comfyui:8188/view?filename=restored.png"],
+                "videos": [],
+            }
 
         monkeypatch.setattr("app.enhance._get_image_size", mock_get_image_size)
         monkeypatch.setattr("app.enhance.get_enhance_model", mock_get_enhance_model)
-        monkeypatch.setattr("app.enhance._run_face_restore_standalone", mock_standalone)
-        monkeypatch.setattr("app.enhance._run_face_restore_comfyui", mock_comfyui)
+        monkeypatch.setattr("app.enhance.restore_faces_via_comfyui", mock_restore)
 
         response = client.post("/v1/enhance", json={
             "image_url": "http://localhost:8000/files/test.png",
@@ -267,60 +204,10 @@ class TestEnhanceFallbackChain:
         assert response.status_code == 200
         data = response.json()
         assert data["mode_used"] == "faces"
-        assert "standalone" in data["model_used"]
-        # Standalone was tried first and succeeded
-        assert calls["standalone"] == 1
-        assert calls["comfyui"] == 0
+        assert data["model_used"] == "GFPGANv1.4.pth"
 
-    def test_faces_mode_falls_back_to_comfyui(self, client, mock_outbound, monkeypatch):
-        """When standalone fails, falls back to ComfyUI."""
-
-        @dataclass
-        class MockConfig:
-            mode: str = "faces"
-            name: str = "Face Restoration"
-            description: str = "Restore faces"
-            workflow: str = "fix_faces_gfpgan"
-            model_category: str = "face_restore"
-            default_model_id: str = "GFPGANv1.4"
-            param_name: str = "model_name"
-
-        calls = {"standalone": 0, "comfyui": 0}
-
-        def mock_get_image_size(url):
-            return (512, 512)
-
-        def mock_get_enhance_model(mode):
-            return ("GFPGANv1.4.pth", None, MockConfig())
-
-        def mock_standalone(image_url, model_filename):
-            calls["standalone"] += 1
-            return None  # Standalone not available
-
-        def mock_comfyui(image_url, model_filename):
-            calls["comfyui"] += 1
-            return {"images": ["/files/restored_comfy.png"], "videos": []}
-
-        monkeypatch.setattr("app.enhance._get_image_size", mock_get_image_size)
-        monkeypatch.setattr("app.enhance.get_enhance_model", mock_get_enhance_model)
-        monkeypatch.setattr("app.enhance._run_face_restore_standalone", mock_standalone)
-        monkeypatch.setattr("app.enhance._run_face_restore_comfyui", mock_comfyui)
-
-        response = client.post("/v1/enhance", json={
-            "image_url": "http://localhost:8000/files/test.png",
-            "mode": "faces",
-        })
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["mode_used"] == "faces"
-        assert "comfyui" in data["model_used"]
-        # Standalone tried first, then ComfyUI
-        assert calls["standalone"] == 1
-        assert calls["comfyui"] == 1
-
-    def test_faces_mode_returns_503_when_both_fail(self, client, mock_outbound, monkeypatch):
-        """When both standalone and ComfyUI fail, returns 503 with instructions."""
+    def test_faces_mode_returns_503_when_comfyui_down(self, client, mock_outbound, monkeypatch):
+        """Returns 503 with clear message when ComfyUI is offline."""
 
         @dataclass
         class MockConfig:
@@ -338,20 +225,14 @@ class TestEnhanceFallbackChain:
         def mock_get_enhance_model(mode):
             return ("GFPGANv1.4.pth", None, MockConfig())
 
-        def mock_standalone(image_url, model_filename):
-            return None
+        from app.face_restore import ComfyUIUnavailable
 
-        def mock_comfyui(image_url, model_filename):
-            return None
-
-        def mock_check_standalone():
-            return (False, "Missing Python packages: gfpgan")
+        def mock_restore(image_url, model_filename="GFPGANv1.4.pth"):
+            raise ComfyUIUnavailable("ComfyUI is not reachable")
 
         monkeypatch.setattr("app.enhance._get_image_size", mock_get_image_size)
         monkeypatch.setattr("app.enhance.get_enhance_model", mock_get_enhance_model)
-        monkeypatch.setattr("app.enhance._run_face_restore_standalone", mock_standalone)
-        monkeypatch.setattr("app.enhance._run_face_restore_comfyui", mock_comfyui)
-        monkeypatch.setattr("app.enhance.check_standalone_available", mock_check_standalone)
+        monkeypatch.setattr("app.enhance.restore_faces_via_comfyui", mock_restore)
 
         response = client.post("/v1/enhance", json={
             "image_url": "http://localhost:8000/files/test.png",
@@ -359,12 +240,49 @@ class TestEnhanceFallbackChain:
         })
 
         assert response.status_code == 503
-        body = response.text.lower()
-        assert "option a" in body or "standalone" in body
-        assert "option b" in body or "comfyui" in body
+        assert "not reachable" in response.text.lower()
+
+    def test_faces_mode_returns_503_when_nodes_missing(self, client, mock_outbound, monkeypatch):
+        """Returns 503 with install instructions when Impact-Pack is missing."""
+
+        @dataclass
+        class MockConfig:
+            mode: str = "faces"
+            name: str = "Face Restoration"
+            description: str = "Restore faces"
+            workflow: str = "fix_faces_gfpgan"
+            model_category: str = "face_restore"
+            default_model_id: str = "GFPGANv1.4"
+            param_name: str = "model_name"
+
+        def mock_get_image_size(url):
+            return (512, 512)
+
+        def mock_get_enhance_model(mode):
+            return ("GFPGANv1.4.pth", None, MockConfig())
+
+        from app.face_restore import FaceRestoreNodesNotInstalled
+
+        def mock_restore(image_url, model_filename="GFPGANv1.4.pth"):
+            raise FaceRestoreNodesNotInstalled(
+                "Missing nodes: FaceRestoreModelLoader.\n"
+                "Fix: install ComfyUI-Impact-Pack"
+            )
+
+        monkeypatch.setattr("app.enhance._get_image_size", mock_get_image_size)
+        monkeypatch.setattr("app.enhance.get_enhance_model", mock_get_enhance_model)
+        monkeypatch.setattr("app.enhance.restore_faces_via_comfyui", mock_restore)
+
+        response = client.post("/v1/enhance", json={
+            "image_url": "http://localhost:8000/files/test.png",
+            "mode": "faces",
+        })
+
+        assert response.status_code == 503
+        assert "impact-pack" in response.text.lower()
 
     def test_photo_mode_still_uses_workflow(self, client, mock_outbound, monkeypatch):
-        """Photo mode should NOT use the face restore fallback chain."""
+        """Photo mode uses ComfyUI workflow directly (not face restore path)."""
 
         @dataclass
         class MockConfig:
@@ -401,17 +319,41 @@ class TestEnhanceFallbackChain:
         assert data["mode_used"] == "photo"
 
 
-class TestCacheInvalidation:
-    """Test model cache management."""
+# ---------------------------------------------------------------------------
+# Test that backend has NO ML dependencies
+# ---------------------------------------------------------------------------
 
-    def test_invalidate_clears_cache(self):
-        """invalidate_model_cache() resets singleton and availability flag."""
-        import app.face_restore as fr
+class TestNoMLImports:
+    """Verify the backend never imports ML libraries."""
 
-        fr._gfpganer_instance = "fake_instance"
-        fr._gfpgan_available = True
+    def test_face_restore_module_has_no_ml_imports(self):
+        """face_restore.py must not import torch, gfpgan, basicsr, etc."""
+        from pathlib import Path
 
-        fr.invalidate_model_cache()
+        src = Path(__file__).resolve().parent.parent / "app" / "face_restore.py"
+        content = src.read_text()
 
-        assert fr._gfpganer_instance is None
-        assert fr._gfpgan_available is None
+        banned = ["import torch", "import gfpgan", "import basicsr",
+                   "import facexlib", "import cv2", "from gfpgan",
+                   "from basicsr", "from facexlib"]
+        for keyword in banned:
+            assert keyword not in content, (
+                f"face_restore.py must NOT contain '{keyword}'. "
+                f"All ML work runs in ComfyUI."
+            )
+
+    def test_enhance_module_has_no_ml_imports(self):
+        """enhance.py must not import torch, gfpgan, basicsr, etc."""
+        from pathlib import Path
+
+        src = Path(__file__).resolve().parent.parent / "app" / "enhance.py"
+        content = src.read_text()
+
+        banned = ["import torch", "import gfpgan", "import basicsr",
+                   "import facexlib", "from gfpgan", "from basicsr",
+                   "from facexlib"]
+        for keyword in banned:
+            assert keyword not in content, (
+                f"enhance.py must NOT contain '{keyword}'. "
+                f"All ML work runs in ComfyUI."
+            )

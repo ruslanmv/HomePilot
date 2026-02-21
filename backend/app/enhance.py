@@ -2,9 +2,13 @@
 Enhance endpoint for image quality improvement.
 
 This module provides a dedicated API endpoint for enhancing images using
-various ComfyUI models:
+ComfyUI workflows:
 - Upscale models: 4x-UltraSharp, RealESRGAN, SwinIR
-- Face restoration: GFPGAN, CodeFormer
+- Face restoration: GFPGAN, CodeFormer (via ComfyUI-Impact-Pack)
+
+Architecture:
+  The backend is a thin HTTP orchestrator.  ALL GPU/ML work runs inside
+  ComfyUI.  The backend never imports torch, gfpgan, or any ML library.
 
 Features:
 - Multiple enhancement modes (photo, restore, faces)
@@ -29,7 +33,12 @@ from pydantic import BaseModel, Field
 from .comfy import check_nodes_available, run_workflow
 from .config import UPLOAD_DIR
 from .edit_models import get_enhance_model, get_face_restore_model
-from .face_restore import check_standalone_available, restore_faces
+from .face_restore import (
+    ComfyUIUnavailable,
+    FaceRestoreNodesNotInstalled,
+    face_restore_ready,
+    restore_faces_via_comfyui,
+)
 
 router = APIRouter(prefix="/v1", tags=["enhance"])
 
@@ -120,63 +129,45 @@ def _get_image_size(url: str) -> Tuple[int, int]:
         raise HTTPException(400, f"Cannot read image dimensions: {e}")
 
 
-def _run_face_restore_standalone(image_url: str, model_filename: str) -> Optional[dict]:
+# ---------------------------------------------------------------------------
+# Face restoration helpers (ComfyUI-only, no ML imports)
+# ---------------------------------------------------------------------------
+
+def _run_face_restore(image_url: str, model_filename: str) -> dict:
     """
-    Attempt face restoration using the standalone service (no ComfyUI).
+    Run face restoration via ComfyUI.
 
     Returns:
-        dict with {"images": [...], "videos": []} on success, or None if
-        standalone is not available / failed.
-    """
-    standalone_ok, standalone_reason = check_standalone_available()
-    if not standalone_ok:
-        print(f"[ENHANCE] Standalone face restore not available: {standalone_reason}")
-        return None
-
-    print(f"[ENHANCE] Trying standalone face restoration (bypassing ComfyUI)")
-    try:
-        output_filename, error = restore_faces(
-            image_path=image_url,
-            model_name=model_filename,
-        )
-        if error:
-            print(f"[ENHANCE] Standalone face restore failed: {error}")
-            return None
-
-        # Build a /files/ URL for the output
-        output_url = f"/files/{output_filename}"
-        print(f"[ENHANCE] Standalone face restore succeeded: {output_url}")
-        return {"images": [output_url], "videos": []}
-
-    except Exception as e:
-        print(f"[ENHANCE] Standalone face restore exception: {e}")
-        return None
-
-
-def _run_face_restore_comfyui(image_url: str, model_filename: str) -> Optional[dict]:
-    """
-    Attempt face restoration using the ComfyUI workflow.
-
-    Returns:
-        dict with {"images": [...], "videos": []} on success, or None if
-        ComfyUI nodes are not available.
+        {"images": [...], "videos": [...]}
 
     Raises:
-        Exception if ComfyUI is available but the workflow fails.
+        HTTPException 503 if ComfyUI is down or nodes are missing
+        HTTPException 500 if the workflow fails for other reasons
     """
-    # Pre-flight: check if the required ComfyUI nodes exist
-    ok, missing = check_nodes_available(["FaceRestoreModelLoader", "FaceRestoreWithModel"])
-    if not ok:
-        print(f"[ENHANCE] ComfyUI face restore nodes missing: {missing}")
-        return None
+    try:
+        return restore_faces_via_comfyui(image_url, model_filename)
 
-    print(f"[ENHANCE] Running face restoration via ComfyUI workflow")
-    result = run_workflow("fix_faces_gfpgan", {
-        "image_path": image_url,
-        "model_name": model_filename,
-        "filename_prefix": "homepilot_enhance_faces",
-    })
-    return result
+    except ComfyUIUnavailable as e:
+        raise HTTPException(503, str(e))
+
+    except FaceRestoreNodesNotInstalled as e:
+        raise HTTPException(503, str(e))
+
+    except Exception as e:
+        error_str = str(e)
+        print(f"[ENHANCE] Face restore workflow failed: {e}")
+
+        # Check for missing node classes (ComfyUI validation error)
+        if "does not exist" in error_str or "not registered" in error_str:
+            raise HTTPException(
+                503,
+                f"ComfyUI nodes required for face restoration are not available.\n"
+                f"{error_str}\n\n"
+                "Fix: Install ComfyUI-Impact-Pack + facexlib/gfpgan in ComfyUI env,\n"
+                "then restart ComfyUI."
+            )
+
+        raise HTTPException(500, f"Face restoration failed: {e}")
 
 
 @router.post("/enhance", response_model=EnhanceResponse)
@@ -187,18 +178,13 @@ async def enhance_image(req: EnhanceRequest):
     Modes:
     - **photo**: Best for natural photos. Uses RealESRGAN for texture recovery.
     - **restore**: Remove JPEG artifacts and mild blur. Uses SwinIR.
-    - **faces**: Restore and enhance faces. Uses GFPGAN.
+    - **faces**: Restore and enhance faces. Uses GFPGAN via ComfyUI.
 
     The endpoint:
     - Accepts an image URL (must be from your own /files endpoint for best performance)
     - Computes dimensions automatically
-    - Runs the appropriate workflow based on mode
+    - Runs the appropriate ComfyUI workflow based on mode
     - Optionally runs face enhancement as a second pass
-
-    Face restoration fallback chain:
-    1. Standalone GFPGAN (runs directly in backend, no ComfyUI needed)
-    2. ComfyUI workflow (requires Impact-Pack custom nodes)
-    3. Clear error with install instructions for both approaches
 
     Guardrails:
     - Max output edge: 4096px
@@ -250,54 +236,15 @@ async def enhance_image(req: EnhanceRequest):
 
     print(f"[ENHANCE] Using workflow={workflow_name}, model={model_filename}, param={param_name}")
 
-    # ── Face restoration with fallback chain ──────────────────────
-    # For faces mode, we try multiple approaches before giving up:
-    #   1. Standalone GFPGAN (no ComfyUI dependency)
-    #   2. ComfyUI workflow (requires Impact-Pack)
-    #   3. Error with clear install instructions
+    # ── Face restoration (ComfyUI-only) ───────────────────────────
     if req.mode == EnhanceMode.FACES:
-        # Attempt 1: Standalone GFPGAN
-        standalone_result = _run_face_restore_standalone(req.image_url, model_filename)
-        if standalone_result:
-            images = standalone_result.get("images", [])
-            return EnhanceResponse(
-                media=standalone_result,
-                mode_used="faces",
-                model_used=f"{model_filename} (standalone)",
-                original_size=(orig_w, orig_h),
-                enhanced_size=(out_w, out_h),
-            )
-
-        # Attempt 2: ComfyUI workflow
-        try:
-            comfyui_result = _run_face_restore_comfyui(req.image_url, model_filename)
-            if comfyui_result:
-                return EnhanceResponse(
-                    media=comfyui_result,
-                    mode_used="faces",
-                    model_used=f"{model_filename} (comfyui)",
-                    original_size=(orig_w, orig_h),
-                    enhanced_size=(out_w, out_h),
-                )
-        except Exception as e:
-            print(f"[ENHANCE] ComfyUI face restore failed: {e}")
-
-        # Both approaches failed — give a comprehensive error
-        standalone_ok, standalone_reason = check_standalone_available()
-        raise HTTPException(
-            503,
-            "Face restoration is not available. Both approaches failed:\n\n"
-            "Option A — Standalone (recommended, no ComfyUI needed):\n"
-            f"  Status: {standalone_reason}\n"
-            "  Fix: pip install gfpgan facexlib basicsr torch\n"
-            "       (in the backend Python env, then restart the backend)\n\n"
-            "Option B — ComfyUI workflow:\n"
-            "  Status: FaceRestoreModelLoader/FaceRestoreWithModel nodes not registered\n"
-            "  Fix: git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git "
-            "ComfyUI/custom_nodes/ComfyUI-Impact-Pack\n"
-            "       pip install facexlib gfpgan (in ComfyUI's Python env)\n"
-            "       Then restart ComfyUI.\n\n"
-            "After fixing either option, retry the request."
+        result = _run_face_restore(req.image_url, model_filename)
+        return EnhanceResponse(
+            media=result,
+            mode_used="faces",
+            model_used=model_filename,
+            original_size=(orig_w, orig_h),
+            enhanced_size=(out_w, out_h),
         )
 
     # ── Standard enhancement workflow (photo / restore) ───────────
@@ -323,24 +270,15 @@ async def enhance_image(req: EnhanceRequest):
             if images:
                 face_model, face_error = get_face_restore_model()
                 if face_model:
-                    # Try standalone first for the second pass too
-                    face_result = _run_face_restore_standalone(images[0], face_model)
-                    if face_result:
-                        images = face_result.get("images", [])
-                        videos = face_result.get("videos", [])
-                        print(f"[ENHANCE] Face enhancement pass completed (standalone)")
-                    else:
-                        # Fall back to ComfyUI for second pass
-                        try:
-                            face_result = _run_face_restore_comfyui(images[0], face_model)
-                            if face_result:
-                                images = face_result.get("images", [])
-                                videos = face_result.get("videos", [])
-                                print(f"[ENHANCE] Face enhancement pass completed (comfyui)")
-                            else:
-                                print(f"[ENHANCE] Face enhancement skipped — neither standalone nor ComfyUI available")
-                        except Exception as e:
-                            print(f"[ENHANCE] Face enhancement ComfyUI pass failed: {e}")
+                    try:
+                        face_result = restore_faces_via_comfyui(images[0], face_model)
+                        images = face_result.get("images", images)
+                        videos = face_result.get("videos", videos)
+                        print(f"[ENHANCE] Face enhancement pass completed")
+                    except (ComfyUIUnavailable, FaceRestoreNodesNotInstalled) as e:
+                        print(f"[ENHANCE] Face enhancement skipped — {e}")
+                    except Exception as e:
+                        print(f"[ENHANCE] Face enhancement failed: {e}")
                 else:
                     print(f"[ENHANCE] Face enhancement skipped: {face_error}")
 
@@ -352,6 +290,8 @@ async def enhance_image(req: EnhanceRequest):
             enhanced_size=(out_w, out_h)
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         error_str = str(e)
         print(f"[ENHANCE] Workflow failed: {e}")
@@ -427,25 +367,13 @@ async def identity_edit(req: IdentityEditRequest):
 
     try:
         if tool == "fix_faces_identity":
-            # Try standalone GFPGAN first, then ComfyUI fallback
+            # Use ComfyUI GFPGAN workflow (via face_restore service)
             face_model, face_error = get_face_restore_model()
             if not face_model:
                 raise HTTPException(503, f"Face restoration model not available: {face_error}")
 
-            # Attempt 1: Standalone GFPGAN (no ComfyUI needed)
-            standalone_result = _run_face_restore_standalone(req.image_url, face_model)
-            if standalone_result:
-                print(f"[IDENTITY EDIT] fix_faces_identity completed (standalone)")
-                images = standalone_result.get("images", [])
-                return IdentityEditResponse(media={"images": images}, tool_used=tool)
-
-            # Attempt 2: ComfyUI workflow fallback
-            print(f"[IDENTITY EDIT] Running fix_faces_identity (fallback: ComfyUI GFPGAN)")
-            result = run_workflow("fix_faces_gfpgan", {
-                "image_path": req.image_url,
-                "model_name": face_model,
-                "filename_prefix": "homepilot_identity_faces",
-            })
+            print(f"[IDENTITY EDIT] Running fix_faces_identity via ComfyUI")
+            result = restore_faces_via_comfyui(req.image_url, face_model)
             images = result.get("images", [])
             return IdentityEditResponse(media={"images": images}, tool_used=tool)
 
@@ -503,6 +431,8 @@ async def identity_edit(req: IdentityEditRequest):
 
     except HTTPException:
         raise
+    except (ComfyUIUnavailable, FaceRestoreNodesNotInstalled) as e:
+        raise HTTPException(503, str(e))
     except Exception as e:
         error_str = str(e)
         print(f"[IDENTITY EDIT] Failed: {e}")

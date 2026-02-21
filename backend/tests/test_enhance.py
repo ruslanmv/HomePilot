@@ -145,7 +145,7 @@ class TestEnhanceEndpoint:
         assert data["model_used"] == "4x-UltraSharp.pth"
 
     def test_enhance_accepts_valid_faces_request(self, client, mock_outbound, monkeypatch):
-        """Test that valid faces request is accepted (via fallback chain)."""
+        """Test that valid faces request is accepted (via ComfyUI)."""
         def mock_get_image_size(url):
             return (512, 512)
 
@@ -161,11 +161,7 @@ class TestEnhanceEndpoint:
             )
             return ("GFPGANv1.4.pth", None, config)
 
-        # Mock the fallback chain: standalone not available, ComfyUI succeeds
-        def mock_standalone(image_url, model_filename):
-            return None  # Standalone not available
-
-        def mock_comfyui(image_url, model_filename):
+        def mock_restore(image_url, model_filename="GFPGANv1.4.pth"):
             return {
                 "images": ["http://localhost:8000/files/faces_test.png"],
                 "videos": []
@@ -173,8 +169,7 @@ class TestEnhanceEndpoint:
 
         monkeypatch.setattr("app.enhance._get_image_size", mock_get_image_size)
         monkeypatch.setattr("app.enhance.get_enhance_model", mock_get_enhance_model)
-        monkeypatch.setattr("app.enhance._run_face_restore_standalone", mock_standalone)
-        monkeypatch.setattr("app.enhance._run_face_restore_comfyui", mock_comfyui)
+        monkeypatch.setattr("app.enhance.restore_faces_via_comfyui", mock_restore)
 
         response = client.post("/v1/enhance", json={
             "image_url": "http://localhost:8000/files/test.png",
@@ -184,7 +179,7 @@ class TestEnhanceEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["mode_used"] == "faces"
-        assert "GFPGANv1.4.pth" in data["model_used"]
+        assert data["model_used"] == "GFPGANv1.4.pth"
 
     def test_enhance_respects_max_size_guardrail(self, client, mock_outbound, monkeypatch):
         """Test that output size is limited to 4096px max edge."""

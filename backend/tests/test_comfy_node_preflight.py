@@ -615,11 +615,13 @@ class TestIdentityEdit503Hints:
     """POST /v1/edit/identity returns 503 with specific hints when nodes are missing."""
 
     def test_fix_faces_identity_503_when_nodes_missing(self, client, mock_outbound, monkeypatch):
+        from app.face_restore import FaceRestoreNodesNotInstalled
         monkeypatch.setattr("app.enhance.get_face_restore_model",
                             lambda: ("GFPGANv1.4.pth", None))
-        monkeypatch.setattr("app.enhance.run_workflow",
-                            MagicMock(side_effect=RuntimeError(
-                                "FaceRestoreModelLoader does not exist"
+        monkeypatch.setattr("app.enhance.restore_faces_via_comfyui",
+                            MagicMock(side_effect=FaceRestoreNodesNotInstalled(
+                                "Missing nodes: FaceRestoreModelLoader.\n"
+                                "Fix: install ComfyUI-Impact-Pack + pip install facexlib gfpgan"
                             )))
 
         response = client.post("/v1/edit/identity", json={
