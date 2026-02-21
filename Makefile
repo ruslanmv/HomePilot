@@ -466,7 +466,7 @@ test-edit-session: ## Run edit-session sidecar tests
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
 	fi
 
-test-frontend: ## Run frontend TypeScript type-check
+test-frontend: ## Run frontend TypeScript type-check and unit tests
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Running Frontend TypeScript Check"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -477,6 +477,17 @@ test-frontend: ## Run frontend TypeScript type-check
 		echo ""; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
 		echo "  ✅ Frontend TypeScript check passed!"; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+	fi
+	@if [ -d "frontend/node_modules" ]; then \
+		echo ""; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo "  Running Frontend Unit Tests (Vitest)"; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		cd frontend && npx vitest run; \
+		echo ""; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		echo "  ✅ Frontend unit tests passed!"; \
 		echo "════════════════════════════════════════════════════════════════════════════════"; \
 	fi
 
