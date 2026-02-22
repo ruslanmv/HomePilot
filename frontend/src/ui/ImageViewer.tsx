@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { X, Edit, Download, Share2, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
+import { resolveFileUrl } from './resolveFileUrl'
 
 interface ImageViewerProps {
   imageUrl: string
@@ -156,7 +157,7 @@ export function ImageViewer({ imageUrl, onClose, onEdit }: ImageViewerProps) {
       {/* Image Display Area */}
       <div className="flex-1 flex items-center justify-center p-20 overflow-auto">
         <img
-          src={imageUrl}
+          src={resolveFileUrl(imageUrl)}
           onClick={(e) => e.stopPropagation()}
           className="rounded-lg shadow-2xl border border-white/10 transition-transform"
           style={{

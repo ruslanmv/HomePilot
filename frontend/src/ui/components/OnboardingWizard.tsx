@@ -52,6 +52,7 @@ export default function OnboardingWizard({ backendUrl, token, username, onComple
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
+        credentials: 'include',
         body: JSON.stringify({
           display_name: displayName.trim() || username,
           use_cases: selectedUseCases,

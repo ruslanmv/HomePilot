@@ -52,17 +52,19 @@ Add new vision model families here — they will automatically appear everywhere
 _VISION_INTENT_PATTERNS: List[re.Pattern] = [
     re.compile(p, re.IGNORECASE)
     for p in [
-        r"\bread\s+(this|the|my)\s+(image|picture|photo|screenshot|screen|pic)\b",
-        r"\bdescribe\s+(this|the|my)\s+(image|picture|photo|screenshot|screen|pic)\b",
-        r"\bwhat('?s| is)\s+in\s+(this|the|my)\s+(image|picture|photo|screenshot|screen|pic)\b",
-        r"\banalyze\s+(this|the|my)\s+(image|picture|photo|screenshot|screen|pic)\b",
+        r"\bread\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|screen|pic)\b",
+        r"\bdescribe\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|screen|pic)\b",
+        r"\bwhat('?s| is)\s+in\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|screen|pic)\b",
+        r"\banalyze\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|screen|pic)\b",
         r"\bocr\s+(this|the|my)\b",
         r"\btranscribe\s+(this|the|my)\b",
         r"\bextract\s+text\b",
-        r"\blook\s+at\s+(this|the|my)\s+(image|picture|photo|screenshot|screen|pic)\b",
-        r"\bwhat\s+does?\s+(this|the|my)\s+(image|picture|photo|screenshot)\s+(show|contain|say)\b",
+        r"\blook\s+at\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|screen|pic)\b",
+        r"\bwhat\s+does?\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot)\s+(show|contain|say)\b",
         r"\bcan\s+you\s+see\b",
-        r"\btell\s+me\s+(about|what)\s+(this|the|my)\s+(image|picture|photo)\b",
+        r"\bwhat\s+(can\s+you|do\s+you)\s+see\b",
+        r"\bwhat\s+you\s+(can\s+)?see\b",
+        r"\btell\s+me\s+(about|what)\s+(this|the|my)\s+\w*\s*(image|picture|photo)\b",
     ]
 ]
 
@@ -82,27 +84,50 @@ def _resolve_local_image(image_url: str, upload_path: Path) -> Optional[Path]:
     """
     If image_url is a local /files/<name> URL, resolve it to a disk path.
     Returns None if the URL is external or the file doesn't exist.
+
+    Supports two resolution strategies:
+      1. Direct filename match: UPLOAD_PATH / <filename>
+      2. Asset ID lookup: query file_assets DB for rel_path when filename
+         looks like an asset ID (f_<hex>), then resolve UPLOAD_ROOT / rel_path
     """
     parsed = urlparse(image_url)
     path = parsed.path
 
-    # Match /files/<filename> (from path or full URL)
+    # Extract the filename from /files/<filename> in path or raw URL
+    filename: Optional[str] = None
     if path.startswith("/files/"):
         filename = path[len("/files/"):]
-        candidate = upload_path / filename
-        if candidate.exists() and candidate.is_file():
-            return candidate
-
-    # Also try matching the raw URL if it contains /files/
-    if "/files/" in image_url:
+    elif "/files/" in image_url:
         idx = image_url.index("/files/")
         filename = image_url[idx + len("/files/"):]
-        # Strip query params if present
-        if "?" in filename:
-            filename = filename[:filename.index("?")]
-        candidate = upload_path / filename
-        if candidate.exists() and candidate.is_file():
-            return candidate
+
+    if not filename:
+        return None
+
+    # Strip query params if present
+    if "?" in filename:
+        filename = filename[:filename.index("?")]
+
+    if not filename:
+        return None
+
+    # Strategy 1: Direct file match (legacy flat uploads)
+    candidate = upload_path / filename
+    if candidate.exists() and candidate.is_file():
+        return candidate
+
+    # Strategy 2: Asset ID lookup via file_assets database
+    # Asset IDs look like f_<hex20> (e.g. f_fddb5f3c9f6743999421)
+    if filename.startswith("f_"):
+        try:
+            from .files import get_asset, _upload_root
+            asset = get_asset(filename)
+            if asset and asset.get("rel_path"):
+                abs_path = _upload_root() / asset["rel_path"]
+                if abs_path.exists() and abs_path.is_file():
+                    return abs_path
+        except Exception:
+            pass  # DB unavailable — fall through
 
     return None
 
@@ -112,23 +137,36 @@ async def _load_image_bytes(image_url: str, upload_path: Path) -> tuple[bytes, s
     Load image bytes from a local path or remote URL.
     Returns (raw_bytes, mime_type).
     """
-    # Try local resolution first
+    _MIME_MAP = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+    }
+
+    # Try local resolution first (handles both flat files and asset IDs)
     local_path = _resolve_local_image(image_url, upload_path)
     if local_path:
         raw = local_path.read_bytes()
         suffix = local_path.suffix.lower()
-        mime_map = {
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".webp": "image/webp",
-            ".gif": "image/gif",
-            ".bmp": "image/bmp",
-        }
-        mime = mime_map.get(suffix, "image/png")
+        mime = _MIME_MAP.get(suffix, "image/png")
         return raw, mime
 
-    # Remote fetch
+    # Relative /files/ URL that wasn't found on disk — cannot fetch remotely
+    if image_url.startswith("/"):
+        raise FileNotFoundError(f"Local file not found for URL: {image_url}")
+
+    # Full http(s)://...localhost.../files/... URL that local resolution missed
+    # (e.g. asset not in DB or file deleted) — raise instead of fetching without auth
+    if "/files/" in image_url and ("localhost" in image_url or "127.0.0.1" in image_url):
+        raise FileNotFoundError(
+            f"Local file asset not found for URL: {image_url}. "
+            "The file may have been deleted or the asset record is missing."
+        )
+
+    # Remote fetch (external URLs only)
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(image_url)
         r.raise_for_status()
@@ -267,7 +305,7 @@ async def analyze_image_ollama(
         ],
         "stream": False,
         "options": {
-            "temperature": 0.3,
+            "temperature": 0.1,
             "num_predict": 1024,
         },
     }
