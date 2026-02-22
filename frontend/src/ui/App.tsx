@@ -1785,6 +1785,7 @@ export default function App() {
             : parsed.executionProfile === 'quality'
             ? 'quality'
             : 'fast',
+        incognito: !!parsed.incognito,
       }
     } catch {
       return DEFAULT_CHAT_SETTINGS
@@ -1809,6 +1810,7 @@ export default function App() {
             : parsed.executionProfile === 'quality'
             ? 'quality'
             : 'fast',
+        incognito: !!parsed.incognito,
       })
     } catch {
       setChatSettings(DEFAULT_CHAT_SETTINGS)
@@ -4380,6 +4382,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                         : project.agentic?.execution_profile === 'quality'
                         ? 'quality'
                         : 'fast',
+                      incognito: false,
                     }
                     updateChatSettings(agentSettings)
                   }

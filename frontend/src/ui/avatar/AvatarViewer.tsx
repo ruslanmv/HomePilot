@@ -44,6 +44,7 @@ import { OUTFIT_PRESETS } from '../personaTypes'
 import { useOutfitGeneration } from './useOutfitGeneration'
 import { AvatarSettingsPanel, resolveCheckpoint, loadAvatarSettings } from './AvatarSettingsPanel'
 import type { AvatarSettings } from './types'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -68,8 +69,7 @@ export interface AvatarViewerProps {
 // ---------------------------------------------------------------------------
 
 function resolveUrl(url: string, backendUrl: string): string {
-  if (url.startsWith('http')) return url
-  return `${backendUrl.replace(/\/+$/, '')}${url}`
+  return resolveFileUrl(url, backendUrl)
 }
 
 function formatTimeAgo(timestamp: number): string {

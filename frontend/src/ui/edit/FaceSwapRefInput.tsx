@@ -10,6 +10,7 @@
 
 import React, { useState, useCallback, useRef } from 'react'
 import { Upload, X, Loader2, Check } from 'lucide-react'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -137,7 +138,7 @@ export function FaceSwapRefInput({
         {/* Preview thumbnail */}
         {preview && !uploading && (
           <div className="w-9 h-9 rounded-lg overflow-hidden border border-white/10 flex-shrink-0">
-            <img src={preview} alt="Face preview" className="w-full h-full object-cover" />
+            <img src={resolveFileUrl(preview)} alt="Face preview" className="w-full h-full object-cover" />
           </div>
         )}
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useTVModeStore } from "../../stores/tvModeStore";
 import type { TVScene } from "./types";
+import { resolveFileUrl } from '../../../resolveFileUrl';
 
 interface TVModePlayerProps {
   scene: TVScene | undefined;
@@ -98,7 +99,7 @@ export const TVModePlayer: React.FC<TVModePlayerProps> = ({
   }
 
   // Get the image URL (could be in image or image_url field)
-  const imageUrl = displayedScene?.image_url || displayedScene?.image;
+  const imageUrl = resolveFileUrl(displayedScene?.image_url || displayedScene?.image || '');
 
   return (
     <div className="tv-player">
