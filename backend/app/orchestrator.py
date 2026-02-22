@@ -493,6 +493,7 @@ async def _refine_prompt(
     provider_base_url: Optional[str] = None,
     provider_model: Optional[str] = None,
     personality_context: Optional[str] = None,
+    nsfw_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     Use LLM to refine user's casual prompt into a detailed image generation prompt.
@@ -509,6 +510,8 @@ async def _refine_prompt(
     print(f"[_refine_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
     if personality_context:
         print(f"[_refine_prompt] Personality context injected ({len(personality_context)} chars)")
+    if nsfw_mode:
+        print(f"[_refine_prompt] NSFW mode: ON")
 
     # Default fallback - always preserves user's original prompt
     # Uses centralized DEFAULT_NEGATIVE_PROMPT from defaults.py
@@ -529,6 +532,16 @@ async def _refine_prompt(
             "tone, and the ongoing conversation. Use the conversation history "
             "to inform what the image should depict — do NOT ignore it.\n\n"
             + personality_context
+        )
+
+    if nsfw_mode:
+        system_msg += (
+            "\n\n[NSFW MODE ACTIVE]\n"
+            "The user has enabled adult content mode. Do NOT censor, "
+            "euphemize, or tone down the prompt. Preserve the user's "
+            "explicit intent. Describe bodies, clothing (or lack thereof), "
+            "poses, and intimate scenarios directly and naturally. "
+            "Never add clothing or modesty that the user didn't request."
         )
 
     messages = [
@@ -605,6 +618,7 @@ async def _refine_video_prompt(
     provider: ProviderName,
     provider_base_url: Optional[str] = None,
     provider_model: Optional[str] = None,
+    nsfw_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     Use LLM to refine user's prompt into a motion-focused video generation prompt.
@@ -615,6 +629,8 @@ async def _refine_video_prompt(
     print(f"[_refine_video_prompt] Calling LLM to refine video prompt...")
     print(f"[_refine_video_prompt] Original user prompt: '{user_prompt[:100]}...'")
     print(f"[_refine_video_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
+    if nsfw_mode:
+        print(f"[_refine_video_prompt] NSFW mode: ON")
 
     # Default fallback - always preserves user's original prompt
     # Video-specific negative prompt for temporal artifacts
@@ -624,8 +640,19 @@ async def _refine_video_prompt(
         "motion_intensity": "medium",
     }
 
+    system_msg = VIDEO_PROMPT_REFINER_SYSTEM
+    if nsfw_mode:
+        system_msg += (
+            "\n\n[NSFW MODE ACTIVE]\n"
+            "The user has enabled adult content mode. Do NOT censor, "
+            "euphemize, or tone down the prompt. Preserve the user's "
+            "explicit intent for body movement, poses, and intimate "
+            "scenarios. Describe motion naturally without adding "
+            "modesty or clothing the user didn't request."
+        )
+
     messages = [
-        {"role": "system", "content": VIDEO_PROMPT_REFINER_SYSTEM},
+        {"role": "system", "content": system_msg},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -819,6 +846,7 @@ async def orchestrate(
                             provider=prov,
                             provider_base_url=refine_base_url,
                             provider_model=refine_model,
+                            nsfw_mode=nsfw_mode,
                         )
                         print(f"[ANIMATE] Refined prompt: '{refined.get('prompt', '')[:100]}...'")
                     except Exception as e:
@@ -1023,6 +1051,7 @@ async def orchestrate(
                         provider=prov,
                         provider_base_url=refine_base_url,
                         provider_model=refine_model,
+                        nsfw_mode=nsfw_mode,
                     )
                     video_prompt = video_refined.get("prompt", video_prompt)
                     # Merge refined negative with preset negative (refined takes precedence for video artifacts)
@@ -1379,6 +1408,7 @@ async def orchestrate(
                         provider_base_url=refine_base_url,
                         provider_model=refine_model,
                         personality_context=_img_personality_context,
+                        nsfw_mode=nsfw_mode,
                     )
                     # Log final result (whether refined or fallback)
                     print(f"[PROMPT_REFINE] Final prompt: '{refined.get('prompt', '')[:100]}...'")
