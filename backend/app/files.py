@@ -245,6 +245,11 @@ async def upload_file(
 # Secure Download / Serve Endpoint
 # ---------------------------------------------------------------------------
 
+def _is_public_file(name: str) -> bool:
+    """User avatars are public (shown on login screen before auth)."""
+    return name.startswith("avatar_") and "/" not in name and ".." not in name
+
+
 @router.get("/files/{asset_id}")
 def download_file(
     asset_id: str,
@@ -257,7 +262,17 @@ def download_file(
     Requires auth and ownership check.
     This is the endpoint used by <img src="/files/...">.
     Supports ?token=<session_token> for <img> tags that can't set headers.
+    Exception: user avatars (avatar_*) are served without auth for login screen.
     """
+    # Public files (avatars) can be served without auth
+    if _is_public_file(asset_id):
+        safe = Path(asset_id)
+        abs_path = _upload_root() / safe
+        if abs_path.exists() and abs_path.is_file():
+            mime = mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"
+            return FileResponse(path=str(abs_path), media_type=mime, filename=safe.name)
+        raise HTTPException(404, "Not found")
+
     user = _resolve_user(authorization, homepilot_session, token_param=token)
     if not user:
         raise HTTPException(401, "Authentication required")
@@ -306,15 +321,24 @@ def download_file_legacy(
     Serves files from the flat UPLOAD_DIR if the user is authenticated.
     This preserves backward compatibility for existing chat history images.
     Supports ?token=<session_token> for <img> tags that can't set headers.
+    Exception: user avatars (avatar_*) are served without auth for login screen.
     """
-    user = _resolve_user(authorization, homepilot_session, token_param=token)
-    if not user:
-        raise HTTPException(401, "Authentication required")
-
     # Prevent path traversal
     safe = Path(subpath)
     if ".." in safe.parts:
         raise HTTPException(400, "Invalid path")
+
+    # Public files (avatars) can be served without auth
+    if _is_public_file(safe.name):
+        abs_path = _upload_root() / safe
+        if abs_path.exists() and abs_path.is_file():
+            mime = mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"
+            return FileResponse(path=str(abs_path), media_type=mime, filename=safe.name)
+        raise HTTPException(404, "Not found")
+
+    user = _resolve_user(authorization, homepilot_session, token_param=token)
+    if not user:
+        raise HTTPException(401, "Authentication required")
 
     abs_path = _upload_root() / safe
     if not abs_path.exists() or not abs_path.is_file():
