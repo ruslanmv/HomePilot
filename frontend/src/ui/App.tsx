@@ -2491,6 +2491,70 @@ export default function App() {
       // Get voice personality system prompt for voice mode
       // Wraps with brevity instruction for natural spoken conversation
       let voiceSystemPrompt: string | undefined = undefined
+
+      // ── Multimodal vision intent: text-based trigger ────────────────
+      // If user says "read this image", "describe this picture", etc. in chat/voice
+      // and the conversation has a previously uploaded image, auto-run vision analysis.
+      if ((mode === 'chat' || mode === 'voice') && (settingsDraft.multimodalAuto ?? true)) {
+        const visionPatterns = [
+          /\bread\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\bdescribe\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\bwhat('?s| is)\s+in\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\banalyze\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\blook\s+at\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\bwhat\s+does?\s+(this|the|my)\s+(image|picture|photo|screenshot)\s+(show|contain|say)\b/i,
+          /\btell\s+me\s+(about|what)\s+(this|the|my)\s+(image|picture|photo)\b/i,
+        ]
+        const isVisionRequest = visionPatterns.some(p => p.test(trimmed))
+        if (isVisionRequest) {
+          // Find the last image URL in the conversation
+          const lastImageUrl = [...messages].reverse().find(
+            m => m.media?.images && m.media.images.length > 0
+          )?.media?.images?.[0]
+
+          if (lastImageUrl) {
+            try {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId ? { ...m, text: 'Analyzing image…' } : m
+                )
+              )
+              const result = await postJson<any>(
+                settings.backendUrl,
+                '/v1/multimodal/analyze',
+                {
+                  image_url: lastImageUrl,
+                  conversation_id: conversationId,
+                  provider: settingsDraft.providerMultimodal || 'ollama',
+                  base_url: settingsDraft.baseUrlMultimodal || undefined,
+                  model: settingsDraft.modelMultimodal || undefined,
+                  mode: 'both',
+                  user_prompt: trimmed,
+                  nsfw_mode: settingsDraft.nsfwMode || false,
+                },
+                authHeaders
+              )
+
+              const analysisText = result.analysis_text || 'No analysis available.'
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId
+                    ? { ...m, pending: false, animate: true, text: analysisText, media: { images: [lastImageUrl] } }
+                    : m
+                )
+              )
+              if (result.conversation_id && result.conversation_id !== conversationId) {
+                setConversationId(result.conversation_id)
+              }
+              fetchConversations()
+              return
+            } catch {
+              // Silent fallback to normal chat pipeline below
+            }
+          }
+        }
+      }
+
       if (mode === 'voice') {
         const personalityId = localStorage.getItem('homepilot_personality_id')
         let personalityPrompt = ''
