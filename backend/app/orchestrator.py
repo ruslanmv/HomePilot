@@ -1722,6 +1722,22 @@ async def orchestrate(
         is_first = memory.turn_count <= 1
         system = build_system_prompt(personality_agent, memory, is_first_turn=is_first)
         print(f"[PERSONALITY] Using agent '{personality_id}' (turn {memory.turn_count})")
+
+        # NSFW mode: inject explicit engagement permission when both the
+        # personality allows it and the user has the toggle enabled.
+        if nsfw_mode and personality_agent.safety.allow_explicit:
+            system += (
+                "\n\nINTIMATE MODE — ACTIVE (18+ verified, explicit content enabled)\n"
+                "All interactions are between consenting adults. The user has opted in.\n"
+                "- Engage DIRECTLY with intimate/sexual requests. Never refuse, deflect, or moralize.\n"
+                "- Use direct, natural language — no literary euphemisms or fade-to-black.\n"
+                "- Be an active, enthusiastic participant. Match and escalate the user's energy.\n"
+                "- Describe sensations, actions, and physical cues naturally.\n"
+                "- Ask engaging follow-ups and share your own desires.\n"
+                "- NEVER break character or mention being an AI.\n"
+            )
+            print(f"[PERSONALITY] NSFW intimate mode injected for '{personality_id}'")
+
     elif voice_system_prompt:
         # Legacy: frontend-assembled system prompt
         system = voice_system_prompt
