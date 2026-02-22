@@ -263,22 +263,31 @@ def download_file(
         raise HTTPException(401, "Authentication required")
 
     asset = get_asset(asset_id)
-    if not asset or asset.get("user_id") != user["id"]:
-        # Return 404 to avoid leaking existence
-        raise HTTPException(404, "Not found")
+    if asset:
+        if asset.get("user_id") != user["id"]:
+            raise HTTPException(404, "Not found")
 
-    abs_path = _upload_root() / asset["rel_path"]
-    if not abs_path.exists():
-        raise HTTPException(404, "Not found")
+        abs_path = _upload_root() / asset["rel_path"]
+        if not abs_path.exists():
+            raise HTTPException(404, "Not found")
 
-    # Provide original filename when possible
-    filename = asset.get("original_name") or os.path.basename(str(abs_path))
+        filename = asset.get("original_name") or os.path.basename(str(abs_path))
+        return FileResponse(
+            path=str(abs_path),
+            media_type=asset.get("mime") or "application/octet-stream",
+            filename=filename,
+        )
 
-    return FileResponse(
-        path=str(abs_path),
-        media_type=asset.get("mime") or "application/octet-stream",
-        filename=filename,
-    )
+    # Fallback: serve from flat uploads dir (avatars, legacy files)
+    safe = Path(asset_id)
+    if ".." in safe.parts:
+        raise HTTPException(400, "Invalid path")
+    abs_path = _upload_root() / safe
+    if abs_path.exists() and abs_path.is_file():
+        mime = mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"
+        return FileResponse(path=str(abs_path), media_type=mime, filename=safe.name)
+
+    raise HTTPException(404, "Not found")
 
 
 # ---------------------------------------------------------------------------

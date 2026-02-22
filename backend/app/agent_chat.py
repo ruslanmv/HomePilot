@@ -626,15 +626,22 @@ async def _dispatch_tool(
                 None,
             )
 
-        text, full = await _run_vision_analyze(
-            image_url=image_url,
-            question=question,
-            mode=mode,
-            provider=vision_provider,
-            base_url=vision_base_url,
-            model=vision_model,
-            nsfw_mode=nsfw_mode,
-        )
+        try:
+            text, full = await _run_vision_analyze(
+                image_url=image_url,
+                question=question,
+                mode=mode,
+                provider=vision_provider,
+                base_url=vision_base_url,
+                model=vision_model,
+                nsfw_mode=nsfw_mode,
+            )
+        except FileNotFoundError:
+            return (
+                "Could not load the image — the file may no longer exist. Please upload it again.",
+                {"error": "image_load_failed", "image_url": image_url},
+                None,
+            )
         return text, {"image_url": image_url, "mode": mode}, {"images": [image_url]}
 
     elif tool == "knowledge.search":
