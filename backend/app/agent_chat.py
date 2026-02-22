@@ -501,9 +501,11 @@ async def _run_image_generate(
         return "Image generation module is not available.", {"error": "orchestrator_missing"}, None
 
     try:
+        # Use a throwaway conversation_id so the orchestrator doesn't
+        # double-store messages in the agent's conversation history.
         result = await orchestrate(
             user_text=prompt,
-            conversation_id=conversation_id,
+            conversation_id=None,
             mode="imagine",
             nsfw_mode=nsfw_mode,
             user_id=user_id,
@@ -985,6 +987,13 @@ async def agent_chat(
         if meta.get("error") in ("no_image", "unknown_tool"):
             add_message(cid, "assistant", output_text, media=None, project_id=project_id)
             return {"conversation_id": cid, "text": output_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+
+        # image.generate is a terminal tool — return result directly
+        # instead of looping back to the LLM (which wastes a tool call
+        # or hits the max_tool_calls limit).
+        if tool == "image.generate" and media:
+            add_message(cid, "assistant", output_text, media=media, project_id=project_id)
+            return {"conversation_id": cid, "text": output_text, "media": media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         # Track media from tool results (for final response)
         if media:
