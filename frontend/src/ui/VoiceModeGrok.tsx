@@ -115,7 +115,8 @@ function parseInlineMarkdown(
     }
     const fullMatch = match[1];
     const alt = match[2];
-    const url = match[3];
+    // Strip whitespace LLMs may inject mid-URL when line-wrapping
+    const url = match[3].replace(/\s+/g, '');
     const isImage = fullMatch.startsWith('!');
 
     if (isImage) {
@@ -124,9 +125,10 @@ function parseInlineMarkdown(
           key={`img-${match.index}`}
           src={url}
           alt={alt || 'Photo'}
-          className="inline-block max-h-72 max-w-72 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
+          className="inline-block w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
           loading="lazy"
           onClick={() => onImageClick?.(url)}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
         />
       );
     } else {
@@ -140,9 +142,10 @@ function parseInlineMarkdown(
             key={`lnkimg-${match.index}`}
             src={url}
             alt={alt || 'Photo'}
-            className="inline-block max-h-72 max-w-72 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
+            className="inline-block w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
             loading="lazy"
             onClick={() => onImageClick?.(url)}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
           />
         );
       } else {
@@ -435,9 +438,10 @@ function RenderTypedMessage({
               key={i}
               src={src}
               alt={`Generated ${i + 1}`}
-              className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
+              className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
               loading="lazy"
               onClick={() => onImageClick?.(src)}
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
             />
           ))}
         </div>

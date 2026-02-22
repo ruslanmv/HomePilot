@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
@@ -45,11 +45,23 @@ class AgentChatIn(BaseModel):
 
 
 @router.post("/chat", dependencies=[Depends(require_api_key)])
-async def agent_chat_endpoint(inp: AgentChatIn) -> JSONResponse:
+async def agent_chat_endpoint(inp: AgentChatIn, authorization: str = Header(default="")) -> JSONResponse:
     """
     Topology 3: Agent-controlled tool use.
     Additive endpoint. Does not alter /chat or existing multimodal flow.
     """
+    # Resolve authenticated user for per-user memory isolation
+    _uid = None
+    try:
+        from .users import get_current_user, get_or_create_default_user, count_users
+        user = get_current_user(authorization=authorization)
+        if user:
+            _uid = user["id"]
+        elif count_users() <= 1:
+            _uid = get_or_create_default_user().get("id")
+    except Exception:
+        pass
+
     out = await agent_chat(
         user_text=inp.message,
         conversation_id=inp.conversation_id,
@@ -65,5 +77,6 @@ async def agent_chat_endpoint(inp: AgentChatIn) -> JSONResponse:
         nsfw_mode=inp.nsfw_mode,
         max_tool_calls=inp.max_tool_calls,
         history_limit=inp.history_limit,
+        user_id=_uid,
     )
     return JSONResponse(status_code=200, content=out)

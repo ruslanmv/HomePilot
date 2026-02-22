@@ -61,6 +61,7 @@ export async function resolveSession(
   const res = await fetch(`${getBackendUrl()}/persona/sessions/resolve`, {
     method: 'POST',
     headers: getAuthHeaders(),
+    credentials: 'include',
     body: JSON.stringify({ project_id: projectId, mode }),
   })
   const data = await res.json()
@@ -79,6 +80,7 @@ export async function createSession(
   const res = await fetch(`${getBackendUrl()}/persona/sessions`, {
     method: 'POST',
     headers: getAuthHeaders(),
+    credentials: 'include',
     body: JSON.stringify({ project_id: projectId, mode, title }),
   })
   const data = await res.json()
@@ -93,6 +95,7 @@ export async function endSession(sessionId: string): Promise<void> {
   await fetch(`${getBackendUrl()}/persona/sessions/${sessionId}/end`, {
     method: 'POST',
     headers: getAuthHeaders(),
+    credentials: 'include',
   })
 }
 
@@ -105,7 +108,7 @@ export async function listSessions(
 ): Promise<PersonaSession[]> {
   const res = await fetch(
     `${getBackendUrl()}/persona/sessions?project_id=${encodeURIComponent(projectId)}&limit=${limit}`,
-    { headers: getAuthHeaders() }
+    { headers: getAuthHeaders(), credentials: 'include' }
   )
   const data = await res.json()
   if (!data.ok) throw new Error(data.message || 'Failed to list sessions')
@@ -118,6 +121,7 @@ export async function listSessions(
 export async function getSession(sessionId: string): Promise<PersonaSession> {
   const res = await fetch(`${getBackendUrl()}/persona/sessions/${sessionId}`, {
     headers: getAuthHeaders(),
+    credentials: 'include',
   })
   const data = await res.json()
   if (!data.ok) throw new Error(data.message || 'Failed to get session')
@@ -140,6 +144,7 @@ export async function getMemories(
 
   const res = await fetch(`${getBackendUrl()}/persona/memory?${params}`, {
     headers: getAuthHeaders(),
+    credentials: 'include',
   })
   const data = await res.json()
   if (!data.ok) throw new Error(data.message || 'Failed to get memories')
@@ -159,6 +164,7 @@ export async function upsertMemory(
   await fetch(`${getBackendUrl()}/persona/memory`, {
     method: 'POST',
     headers: getAuthHeaders(),
+    credentials: 'include',
     body: JSON.stringify({
       project_id: projectId,
       category,
@@ -181,6 +187,7 @@ export async function forgetMemory(
   await fetch(`${getBackendUrl()}/persona/memory`, {
     method: 'DELETE',
     headers: getAuthHeaders(),
+    credentials: 'include',
     body: JSON.stringify({ project_id: projectId, category, key }),
   })
 }

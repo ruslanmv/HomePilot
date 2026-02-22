@@ -57,13 +57,47 @@ function CodeBlock({ lang, raw }: { lang: string; raw: string }) {
  * - Code blocks have header + language + copy button.
  */
 export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: string; onImageClick?: (src: string) => void; backendUrl?: string }) {
-  const normalized = useMemo(() => (text ?? '').replace(/\r\n/g, '\n'), [text])
+  const normalized = useMemo(() => {
+    let t = (text ?? '').replace(/\r\n/g, '\n')
+    // Fix LLM-wrapped URLs: strip whitespace inside markdown image/link URLs
+    // e.g. ![alt](http://host/path/ with-space) → ![alt](http://host/path/with-space)
+    t = t.replace(/(!?\[[^\]]*\]\()([^)]+)\)/g, (_m, prefix, url) =>
+      `${prefix}${url.replace(/\s+/g, '')})`
+    )
+    return t
+  }, [text])
 
-  /** Resolve backend-relative image paths (e.g. /comfy/view/...) to full URLs */
+  /** Resolve backend-relative image paths (e.g. /comfy/view/..., /files/...) to full URLs.
+   *  Appends auth token for /files/ paths that require authentication. */
   const resolveImgSrc = (src?: string): string | undefined => {
     if (!src) return src
-    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:') || src.startsWith('blob:')) return src
-    if (backendUrl) return `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+    // Strip whitespace LLMs may inject mid-URL when line-wrapping
+    src = src.replace(/\s+/g, '')
+    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:') || src.startsWith('blob:')) {
+      // For absolute backend URLs that contain /files/, append token
+      if (backendUrl && src.includes('/files/')) {
+        const tok = localStorage.getItem('homepilot_auth_token') || ''
+        if (tok) {
+          const sep = src.includes('?') ? '&' : '?'
+          return `${src}${sep}token=${encodeURIComponent(tok)}`
+        }
+      }
+      return src
+    }
+    if (backendUrl) {
+      const base = backendUrl.replace(/\/+$/, '')
+      const path = src.startsWith('/') ? src : `/${src}`
+      const full = `${base}${path}`
+      // Append token for /files/ paths
+      if (path.startsWith('/files/')) {
+        const tok = localStorage.getItem('homepilot_auth_token') || ''
+        if (tok) {
+          const sep = full.includes('?') ? '&' : '?'
+          return `${full}${sep}token=${encodeURIComponent(tok)}`
+        }
+      }
+      return full
+    }
     return src
   }
 
@@ -121,8 +155,9 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
                 src={resolved}
                 alt={alt || 'Photo'}
                 onClick={resolved ? () => onImageClick?.(resolved) : undefined}
-                className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
+                className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
                 loading="lazy"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
               />
             )
           },

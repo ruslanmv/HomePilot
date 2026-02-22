@@ -15,6 +15,7 @@ import type { PersonaClassId, PersonaWizardDraft } from '../personaTypes'
 import { PERSONA_BLUEPRINTS } from '../personaTypes'
 import { draftFromGalleryItem, getVisibleBlueprints } from './personaBridge'
 import { createPersonaProject } from '../personaApi'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -40,8 +41,7 @@ export interface SaveAsPersonaModalProps {
 // ---------------------------------------------------------------------------
 
 function resolveUrl(url: string, backendUrl: string): string {
-  if (url.startsWith('http')) return url
-  return `${backendUrl.replace(/\/+$/, '')}${url}`
+  return resolveFileUrl(url, backendUrl)
 }
 
 function readNsfwMode(): boolean {

@@ -128,6 +128,10 @@ async def _load_image_bytes(image_url: str, upload_path: Path) -> tuple[bytes, s
         mime = mime_map.get(suffix, "image/png")
         return raw, mime
 
+    # Relative /files/ URL that wasn't found on disk — cannot fetch remotely
+    if image_url.startswith("/"):
+        raise FileNotFoundError(f"Local file not found for URL: {image_url}")
+
     # Remote fetch
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(image_url)
@@ -267,7 +271,7 @@ async def analyze_image_ollama(
         ],
         "stream": False,
         "options": {
-            "temperature": 0.3,
+            "temperature": 0.1,
             "num_predict": 1024,
         },
     }
