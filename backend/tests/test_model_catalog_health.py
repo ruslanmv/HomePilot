@@ -35,6 +35,13 @@ def load_ollama_chat_models() -> list[dict]:
     return data["providers"]["ollama"]["chat"]
 
 
+def load_ollama_multimodal_models() -> list[dict]:
+    """Load Ollama multimodal models from the JSON catalog."""
+    with open(CATALOG_PATH) as f:
+        data = json.load(f)
+    return data["providers"]["ollama"].get("multimodal", [])
+
+
 def ollama_registry_url(model_id: str) -> str:
     """Build the Ollama registry URL for a model.
 
@@ -115,6 +122,33 @@ class TestModelCatalogHealth:
                     f"Model {m['id']} has nsfw:true but missing uncensored:true"
                 )
 
+    def test_multimodal_section_exists(self):
+        """Catalog should have a multimodal section under ollama."""
+        models = load_ollama_multimodal_models()
+        assert len(models) > 0, "Catalog should have at least one multimodal model"
+
+    def test_multimodal_models_have_required_fields(self):
+        """Every multimodal model entry must have at least 'id' and 'label'."""
+        models = load_ollama_multimodal_models()
+        for m in models:
+            assert "id" in m, f"Multimodal model missing 'id': {m}"
+            assert "label" in m, f"Multimodal model {m['id']} missing 'label'"
+
+    def test_no_duplicate_multimodal_ids(self):
+        """No duplicate multimodal model IDs."""
+        models = load_ollama_multimodal_models()
+        ids = [m["id"] for m in models]
+        dupes = [mid for mid in ids if ids.count(mid) > 1]
+        assert len(dupes) == 0, f"Duplicate multimodal IDs: {set(dupes)}"
+
+    def test_default_multimodal_model_in_catalog(self):
+        """The default model 'moondream' must be in the multimodal catalog."""
+        models = load_ollama_multimodal_models()
+        ids = [m["id"] for m in models]
+        assert any("moondream" in mid for mid in ids), (
+            f"Default model 'moondream' not found in multimodal catalog. IDs: {ids}"
+        )
+
     @pytest.mark.skipif(
         os.environ.get("SKIP_NETWORK_TESTS", "0") == "1",
         reason="SKIP_NETWORK_TESTS=1",
@@ -150,6 +184,37 @@ class TestModelCatalogHealth:
             import warnings
             warnings.warn("\n".join(msg_lines))
 
+    @pytest.mark.skipif(
+        os.environ.get("SKIP_NETWORK_TESTS", "0") == "1",
+        reason="SKIP_NETWORK_TESTS=1",
+    )
+    def test_ollama_multimodal_models_exist_in_registry(self):
+        """Check that all multimodal models exist on ollama.com (network test)."""
+        models = load_ollama_multimodal_models()
+        if not models:
+            pytest.skip("No multimodal models in catalog")
+
+        seen_bases = set()
+        unique_models = []
+        for m in models:
+            base = m["id"].split(":")[0]
+            if base not in seen_bases:
+                seen_bases.add(base)
+                unique_models.append(m)
+
+        missing = []
+        for m in unique_models:
+            exists, detail = check_model_exists(m["id"])
+            if not exists:
+                missing.append((m["id"], m["label"], detail))
+
+        if missing:
+            msg_lines = [f"\n{len(missing)} multimodal model(s) not found on Ollama registry:"]
+            for mid, label, detail in missing:
+                msg_lines.append(f"  - {mid} ({label}): {detail}")
+            import warnings
+            warnings.warn("\n".join(msg_lines))
+
 
 # ---------------------------------------------------------------------------
 # Standalone mode: check + optional cleanup
@@ -173,17 +238,20 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading catalog from {CATALOG_PATH}")
-    models = load_ollama_chat_models()
-    print(f"Found {len(models)} Ollama chat models\n")
+    chat_models = load_ollama_chat_models()
+    multimodal_models = load_ollama_multimodal_models()
+    print(f"Found {len(chat_models)} Ollama chat models")
+    print(f"Found {len(multimodal_models)} Ollama multimodal models\n")
+
+    all_models = [("chat", m) for m in chat_models] + [("multimodal", m) for m in multimodal_models]
 
     # Deduplicate checks by base name
     seen_bases: dict[str, bool] = {}
-    results: list[tuple[dict, bool, str]] = []
+    results: list[tuple[str, dict, bool, str]] = []
 
-    for m in models:
+    for category, m in all_models:
         base = m["id"].split(":")[0]
         if base in seen_bases:
-            # Reuse result from same base model
             exists = seen_bases[base]
             detail = "(same base model)"
         else:
@@ -192,40 +260,51 @@ def main():
 
         status = "OK" if exists else "MISSING"
         nsfw_tag = " [NSFW]" if m.get("nsfw") else ""
-        print(f"  [{status:>7}] {m['id']:<50} {m['label']}{nsfw_tag}")
-        results.append((m, exists, detail))
+        cat_tag = f"[{category:>10}]"
+        print(f"  [{status:>7}] {cat_tag} {m['id']:<50} {m['label']}{nsfw_tag}")
+        results.append((category, m, exists, detail))
 
     # Summary
-    ok_count = sum(1 for _, exists, _ in results if exists)
-    missing_count = sum(1 for _, exists, _ in results if not exists)
+    ok_count = sum(1 for _, _, exists, _ in results if exists)
+    missing_count = sum(1 for _, _, exists, _ in results if not exists)
     print(f"\nResults: {ok_count} OK, {missing_count} missing out of {len(results)} total")
 
     if missing_count > 0:
         print("\nMissing models:")
-        for m, exists, detail in results:
+        for category, m, exists, detail in results:
             if not exists:
-                print(f"  - {m['id']} ({m['label']}): {detail}")
+                print(f"  - [{category}] {m['id']} ({m['label']}): {detail}")
 
     # Auto-clean if requested
     if args.clean and missing_count > 0:
         print(f"\n--clean: Removing {missing_count} missing model(s) from catalog...")
-        missing_ids = {m["id"] for m, exists, _ in results if not exists}
+        missing_chat = {m["id"] for cat, m, exists, _ in results if not exists and cat == "chat"}
+        missing_mm = {m["id"] for cat, m, exists, _ in results if not exists and cat == "multimodal"}
 
         with open(CATALOG_PATH) as f:
             catalog = json.load(f)
 
-        original_count = len(catalog["providers"]["ollama"]["chat"])
+        original_chat = len(catalog["providers"]["ollama"]["chat"])
         catalog["providers"]["ollama"]["chat"] = [
             m for m in catalog["providers"]["ollama"]["chat"]
-            if m["id"] not in missing_ids
+            if m["id"] not in missing_chat
         ]
-        new_count = len(catalog["providers"]["ollama"]["chat"])
+        new_chat = len(catalog["providers"]["ollama"]["chat"])
+
+        original_mm = len(catalog["providers"]["ollama"].get("multimodal", []))
+        if "multimodal" in catalog["providers"]["ollama"]:
+            catalog["providers"]["ollama"]["multimodal"] = [
+                m for m in catalog["providers"]["ollama"]["multimodal"]
+                if m["id"] not in missing_mm
+            ]
+        new_mm = len(catalog["providers"]["ollama"].get("multimodal", []))
 
         with open(CATALOG_PATH, "w") as f:
             json.dump(catalog, f, indent=2)
             f.write("\n")
 
-        print(f"Catalog updated: {original_count} -> {new_count} models")
+        print(f"Chat catalog updated: {original_chat} -> {new_chat} models")
+        print(f"Multimodal catalog updated: {original_mm} -> {new_mm} models")
         print("NOTE: You also need to update the TSX fallback in frontend/src/ui/Models.tsx manually.")
     elif args.clean and missing_count == 0:
         print("\n--clean: Nothing to remove, all models exist!")

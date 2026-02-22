@@ -146,32 +146,129 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_jobs_pending ON persona_jobs(status, created_at)"
     )
 
+    # Additive: Multi-user accounts tables
+    from .users import ensure_users_tables
+    ensure_users_tables()
+
+    # Additive: Per-user profile, secrets, memory tables
+    from .user_profile_store import ensure_user_profile_tables
+    ensure_user_profile_tables()
+
+    # Additive: user_id column on messages for multi-user data scoping
+    try:
+        cur.execute("ALTER TABLE messages ADD COLUMN user_id TEXT DEFAULT NULL")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    # Conversation ownership table (enterprise multi-user scoping)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_owners(
+            conversation_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+        """
+    )
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_conv_owner_user ON conversation_owners(user_id)")
+
+    # Backfill: assign unowned messages/conversations to the default user
+    try:
+        from .users import get_or_create_default_user
+        default_user = get_or_create_default_user()
+        default_uid = default_user["id"]
+        cur.execute("UPDATE messages SET user_id = ? WHERE user_id IS NULL", (default_uid,))
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO conversation_owners(conversation_id, user_id)
+            SELECT conversation_id, MIN(user_id)
+            FROM messages
+            WHERE conversation_id IS NOT NULL AND user_id IS NOT NULL
+            GROUP BY conversation_id
+            """
+        )
+        con.commit()
+    except Exception as e:
+        print(f"[DB] conversation ownership backfill skipped: {e}")
+
     con.commit()
     con.close()
 
 
-def add_message(conversation_id: str, role: str, content: str, media: Optional[Dict[str, Any]] = None, project_id: Optional[str] = None):
-    """
-    Add a message to the database with optional media attachments.
+def ensure_conversation_owner(conversation_id: str, user_id: str) -> None:
+    """Set owner on first use (idempotent)."""
+    if not conversation_id or not user_id:
+        return
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "INSERT OR IGNORE INTO conversation_owners(conversation_id, user_id) VALUES (?, ?)",
+        (conversation_id, user_id),
+    )
+    con.commit()
+    con.close()
 
-    Args:
-        conversation_id: Unique conversation identifier
-        role: Message role (user/assistant)
-        content: Message text content
-        media: Optional dict containing images/videos, e.g.:
-               {"images": ["url1", "url2"], "video_url": "url"}
-        project_id: Optional project ID this conversation belongs to
+
+def get_conversation_owner(conversation_id: str) -> Optional[str]:
+    """Return the user_id that owns a conversation, or None."""
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute("SELECT user_id FROM conversation_owners WHERE conversation_id = ?", (conversation_id,))
+    row = cur.fetchone()
+    con.close()
+    return row[0] if row else None
+
+
+def _resolve_user_for_conversation(conversation_id: str, user_id: Optional[str]) -> Optional[str]:
+    """
+    Resolve user_id for a conversation consistently:
+      1) If user_id provided, use it and ensure ownership row exists.
+      2) Else if ownership exists, use that.
+      3) Else fall back to default user (single-user legacy).
+    """
+    if user_id:
+        ensure_conversation_owner(conversation_id, user_id)
+        return user_id
+    owner = get_conversation_owner(conversation_id)
+    if owner:
+        return owner
+    try:
+        from .users import get_or_create_default_user
+        du = get_or_create_default_user()
+        ensure_conversation_owner(conversation_id, du["id"])
+        return du["id"]
+    except Exception:
+        return None
+
+
+def add_message(
+    conversation_id: str,
+    role: str,
+    content: str,
+    media: Optional[Dict[str, Any]] = None,
+    project_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+):
+    """
+    Add a message to the database (enterprise multi-user safe).
+
+    If user_id is not provided, we infer it from conversation ownership.
     """
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
 
-    # Serialize media to JSON if provided
     media_json = json.dumps(media) if media else None
+    resolved_user = _resolve_user_for_conversation(conversation_id, user_id)
 
     cur.execute(
-        "INSERT INTO messages(conversation_id, role, content, media, project_id) VALUES (?,?,?,?,?)",
-        (conversation_id, role, content, media_json, project_id),
+        "INSERT INTO messages(conversation_id, role, content, media, project_id, user_id) VALUES (?,?,?,?,?,?)",
+        (conversation_id, role, content, media_json, project_id, resolved_user),
     )
     con.commit()
     con.close()
@@ -195,40 +292,63 @@ def get_recent(conversation_id: str, limit: int = 24) -> List[Tuple[str, str]]:
     return list(reversed(rows))
 
 
-def list_conversations(limit: int = 50, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def list_conversations(limit: int = 50, project_id: Optional[str] = None, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Returns most recent conversations, with last message preview.
-    If project_id is given, only returns conversations belonging to that project.
+    Returns most recent conversations, scoped by user ownership when user_id is provided.
+    If project_id is given, also filters to that project.
     """
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
 
-    if project_id:
-        cur.execute(
-            """
-            SELECT m.conversation_id,
-                   MAX(m.id) as max_id
-            FROM messages m
-            WHERE m.project_id = ?
-            GROUP BY m.conversation_id
-            ORDER BY max_id DESC
-            LIMIT ?
-            """,
-            (project_id, limit),
-        )
+    if user_id:
+        if project_id:
+            cur.execute(
+                """
+                SELECT m.conversation_id, MAX(m.id) as max_id
+                FROM messages m
+                JOIN conversation_owners o ON o.conversation_id = m.conversation_id
+                WHERE o.user_id = ? AND m.project_id = ?
+                GROUP BY m.conversation_id
+                ORDER BY max_id DESC LIMIT ?
+                """,
+                (user_id, project_id, limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT m.conversation_id, MAX(m.id) as max_id
+                FROM messages m
+                JOIN conversation_owners o ON o.conversation_id = m.conversation_id
+                WHERE o.user_id = ?
+                GROUP BY m.conversation_id
+                ORDER BY max_id DESC LIMIT ?
+                """,
+                (user_id, limit),
+            )
     else:
-        cur.execute(
-            """
-            SELECT m.conversation_id,
-                   MAX(m.id) as max_id
-            FROM messages m
-            GROUP BY m.conversation_id
-            ORDER BY max_id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        )
+        # Legacy instance-wide listing (single-user mode)
+        if project_id:
+            cur.execute(
+                """
+                SELECT m.conversation_id, MAX(m.id) as max_id
+                FROM messages m
+                WHERE m.project_id = ?
+                GROUP BY m.conversation_id
+                ORDER BY max_id DESC LIMIT ?
+                """,
+                (project_id, limit),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT m.conversation_id, MAX(m.id) as max_id
+                FROM messages m
+                GROUP BY m.conversation_id
+                ORDER BY max_id DESC LIMIT ?
+                """,
+                (limit,),
+            )
     convs = cur.fetchall()
 
     out: List[Dict[str, Any]] = []
@@ -252,47 +372,50 @@ def list_conversations(limit: int = 50, project_id: Optional[str] = None) -> Lis
     return out
 
 
-def get_messages(conversation_id: str, limit: int = 200) -> List[Dict[str, Any]]:
+def get_messages(conversation_id: str, limit: int = 200, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Retrieve messages for a conversation, including media attachments.
+    Retrieve messages for a conversation, scoped by user ownership when user_id is provided.
 
     Returns:
         List of dicts with keys: role, content, created_at, media
-        media is None or a dict like {"images": [...], "video_url": "..."}
     """
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
-    cur.execute(
-        """
-        SELECT role, content, created_at, media
-        FROM messages
-        WHERE conversation_id=?
-        ORDER BY id ASC
-        LIMIT ?
-        """,
-        (conversation_id, limit),
-    )
+
+    if user_id:
+        cur.execute(
+            """
+            SELECT m.role, m.content, m.created_at, m.media
+            FROM messages m
+            JOIN conversation_owners o ON o.conversation_id = m.conversation_id
+            WHERE m.conversation_id = ? AND o.user_id = ?
+            ORDER BY m.id ASC LIMIT ?
+            """,
+            (conversation_id, user_id, limit),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT role, content, created_at, media
+            FROM messages
+            WHERE conversation_id=?
+            ORDER BY id ASC LIMIT ?
+            """,
+            (conversation_id, limit),
+        )
     rows = cur.fetchall()
     con.close()
 
     result = []
-    for row in rows:
-        r, c, t, media_json = row
-        # Deserialize media from JSON
+    for r, c, t, media_json in rows:
         media = None
         if media_json:
             try:
                 media = json.loads(media_json)
             except (json.JSONDecodeError, TypeError):
                 media = None
-
-        result.append({
-            "role": r,
-            "content": c,
-            "created_at": t,
-            "media": media
-        })
+        result.append({"role": r, "content": c, "created_at": t, "media": media})
 
     return result
 
@@ -353,26 +476,32 @@ def delete_image_url(image_url: str) -> int:
     return updated_count
 
 
-def delete_conversation(conversation_id: str) -> int:
+def delete_conversation(conversation_id: str, user_id: Optional[str] = None) -> int:
     """
-    Delete all messages from a specific conversation.
-
-    Args:
-        conversation_id: The conversation ID to delete
+    Delete all messages from a conversation, scoped by user ownership when user_id is provided.
 
     Returns:
-        Number of messages deleted
+        Number of messages deleted (0 if user doesn't own the conversation).
     """
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
 
-    # Count messages before deletion
+    if user_id:
+        # Verify ownership first
+        cur.execute(
+            "SELECT 1 FROM conversation_owners WHERE conversation_id = ? AND user_id = ?",
+            (conversation_id, user_id),
+        )
+        if not cur.fetchone():
+            con.close()
+            return 0
+
     cur.execute("SELECT COUNT(*) FROM messages WHERE conversation_id = ?", (conversation_id,))
     count = cur.fetchone()[0]
 
-    # Delete all messages for this conversation
     cur.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+    cur.execute("DELETE FROM conversation_owners WHERE conversation_id = ?", (conversation_id,))
 
     con.commit()
     con.close()

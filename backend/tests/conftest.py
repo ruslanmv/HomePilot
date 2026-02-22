@@ -142,6 +142,10 @@ def mock_outbound(monkeypatch):
         async def get(self, url, *a, **k):
             return _httpx_get(url, *a, **k)
 
+    def _mock_request(url: str) -> httpx.Request:
+        """Build a dummy Request so httpx.Response.raise_for_status() works."""
+        return httpx.Request("POST", url)
+
     def _httpx_post(url, *args, **kwargs):
         u = str(url)
 
@@ -150,6 +154,7 @@ def mock_outbound(monkeypatch):
             return httpx.Response(
                 200,
                 json={"choices": [{"message": {"role": "assistant", "content": "mock-llm: hello"}}]},
+                request=_mock_request(u),
             )
 
         # Ollama chat endpoint
@@ -157,16 +162,18 @@ def mock_outbound(monkeypatch):
             return httpx.Response(
                 200,
                 json={"message": {"role": "assistant", "content": "mock-ollama: hello"}},
+                request=_mock_request(u),
             )
 
         # ComfyUI prompt
         if u.rstrip("/").endswith("/prompt"):
-            return httpx.Response(200, json={"prompt_id": "mock-prompt-id"})
+            return httpx.Response(200, json={"prompt_id": "mock-prompt-id"}, request=_mock_request(u))
 
-        return httpx.Response(200, json={})
+        return httpx.Response(200, json={}, request=_mock_request(u))
 
     def _httpx_get(url, *args, **kwargs):
         u = str(url)
+        _get_req = httpx.Request("GET", u)
 
         # ComfyUI history returns an image output
         if "/history/" in u or u.endswith("/history/mock-prompt-id"):
@@ -183,9 +190,10 @@ def mock_outbound(monkeypatch):
                         }
                     }
                 },
+                request=_get_req,
             )
 
-        return httpx.Response(200, json={"ok": True})
+        return httpx.Response(200, json={"ok": True}, request=_get_req)
 
     monkeypatch.setattr(httpx, "post", _httpx_post, raising=False)
     monkeypatch.setattr(httpx, "get", _httpx_get, raising=False)
