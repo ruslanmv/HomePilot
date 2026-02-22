@@ -387,6 +387,32 @@ def _save_project_conversation(project_id: str, conversation_id: str) -> None:
 
 
 # -------------------------------------------------------------------------
+# Image URL validation helper
+# -------------------------------------------------------------------------
+
+def _upload_root_path() -> Path:
+    """Resolve the absolute upload root directory."""
+    p = Path(UPLOAD_DIR)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parents[1] / "data" / "uploads"
+    return p
+
+
+def _file_url_exists(url: str) -> bool:
+    """Check if a /files/ URL points to a file that actually exists on disk."""
+    if not url:
+        return False
+    # Extract the path portion after /files/
+    idx = url.find("/files/")
+    if idx < 0:
+        return True  # Not a /files/ URL — can't validate, assume OK
+    rel = url[idx + len("/files/"):]
+    if not rel or ".." in rel:
+        return False
+    return (_upload_root_path() / rel).is_file()
+
+
+# -------------------------------------------------------------------------
 # Persona context builder (reusable by agent_chat and project chat)
 # -------------------------------------------------------------------------
 
@@ -451,6 +477,9 @@ def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
                           (img.get("set_id", s.get("set_id", "")) == sel_set_id))
             if is_default and _committed_url:
                 full_url = _committed_url
+            # Skip images whose files no longer exist on disk
+            if not _file_url_exists(full_url):
+                continue
             if is_default:
                 default_photo_url = full_url
             photo_catalog.append({
@@ -470,6 +499,11 @@ def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
             full_url = _abs_img_url(url)
             is_default = (img.get("id") == sel_image_id and
                           img.get("set_id", "") == sel_set_id)
+            if is_default and _committed_url:
+                full_url = _committed_url
+            # Skip images whose files no longer exist on disk
+            if not _file_url_exists(full_url):
+                continue
             if is_default:
                 default_photo_url = full_url
             photo_catalog.append({
@@ -770,6 +804,9 @@ When the user asks you to perform an action that matches your capabilities, DO I
                     # Use committed file URL for the selected avatar
                     if is_default and _committed_url:
                         full_url = _committed_url
+                    # Skip images whose files no longer exist on disk
+                    if not _file_url_exists(full_url):
+                        continue
                     if is_default:
                         default_photo_url = full_url
                     photo_catalog.append({
@@ -790,6 +827,11 @@ When the user asks you to perform an action that matches your capabilities, DO I
                     full_url = _abs_img_url(url)
                     is_default = (img.get("id") == sel_image_id and
                                   img.get("set_id", "") == sel_set_id)
+                    if is_default and _committed_url:
+                        full_url = _committed_url
+                    # Skip images whose files no longer exist on disk
+                    if not _file_url_exists(full_url):
+                        continue
                     if is_default:
                         default_photo_url = full_url
                     photo_catalog.append({
