@@ -1037,6 +1037,8 @@ function QueryBar({
   onSend,
   onUpload,
   placeholderOverride,
+  pendingPreviewUrl,
+  onRemoveAttachment,
 }: {
   centered: boolean
   input: string
@@ -1047,6 +1049,8 @@ function QueryBar({
   onSend: () => void
   onUpload: (file: File) => void
   placeholderOverride?: string
+  pendingPreviewUrl?: string | null
+  onRemoveAttachment?: () => void
 }) {
   // ---- Drag-and-drop image support ----
   const [isDragging, setIsDragging] = useState(false)
@@ -1148,7 +1152,7 @@ function QueryBar({
       >
         {isDragging && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-purple-500/10 rounded-[10rem] pointer-events-none">
-            <span className="text-purple-300 text-sm font-semibold">Drop image to analyze</span>
+            <span className="text-purple-300 text-sm font-semibold">Drop image to attach</span>
           </div>
         )}
         {/* Left: attach */}
@@ -1210,6 +1214,28 @@ function QueryBar({
           )}
         </div>
 
+        {/* Pending image attachment preview */}
+        {pendingPreviewUrl && (
+          <div className="ps-12 pe-20 pt-2">
+            <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg p-1.5">
+              <img
+                src={pendingPreviewUrl}
+                alt="Attached"
+                className="h-12 w-12 object-cover rounded"
+              />
+              <span className="text-[11px] text-white/50 max-w-[120px] truncate">Image attached</span>
+              <button
+                type="button"
+                onClick={onRemoveAttachment}
+                className="h-5 w-5 rounded-full bg-white/10 hover:bg-red-500/30 text-white/50 hover:text-red-300 grid place-items-center transition-colors"
+                aria-label="Remove attachment"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Textarea */}
         <div className="ps-12 pe-20">
           <textarea
@@ -1219,11 +1245,11 @@ function QueryBar({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
-                if (input.trim()) onSend()
+                if (canSend) onSend()
               }
             }}
             rows={1}
-            placeholder={placeholderOverride ?? modeHint(mode)}
+            placeholder={pendingPreviewUrl ? 'Describe what you want to do with this image…' : (placeholderOverride ?? modeHint(mode))}
             className={[
               'w-full bg-transparent text-white placeholder:text-white/55',
               'focus:outline-none resize-none',
@@ -1247,6 +1273,8 @@ function EmptyState({
   canSend,
   onSend,
   onUpload,
+  pendingPreviewUrl,
+  onRemoveAttachment,
 }: {
   mode: Mode
   input: string
@@ -1255,6 +1283,8 @@ function EmptyState({
   canSend: boolean
   onSend: () => void
   onUpload: (file: File) => void
+  pendingPreviewUrl?: string | null
+  onRemoveAttachment?: () => void
 }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center px-6">
@@ -1282,6 +1312,8 @@ function EmptyState({
           canSend={canSend}
           onSend={onSend}
           onUpload={onUpload}
+          pendingPreviewUrl={pendingPreviewUrl}
+          onRemoveAttachment={onRemoveAttachment}
         />
       </div>
     </div>
@@ -1331,6 +1363,8 @@ function ChatState({
   onSend,
   onUpload,
   backendUrl,
+  pendingPreviewUrl,
+  onRemoveAttachment,
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -1347,6 +1381,8 @@ function ChatState({
   onSend: () => void
   onUpload: (file: File) => void
   backendUrl: string
+  pendingPreviewUrl?: string | null
+  onRemoveAttachment?: () => void
 }) {
   const { copied, copy } = useCopyMessage()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
@@ -1538,6 +1574,8 @@ function ChatState({
             canSend={canSend}
             onSend={onSend}
             onUpload={onUpload}
+            pendingPreviewUrl={pendingPreviewUrl}
+            onRemoveAttachment={onRemoveAttachment}
           />
         </div>
         <div className="text-center text-[11px] text-[#444] pt-3 font-medium">
@@ -1692,6 +1730,8 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<Msg[]>([])
   const [voiceMessages, setVoiceMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [pendingPreviewUrl, setPendingPreviewUrl] = useState<string | null>(null)
   const [chatConversationId, setChatConversationId] = useState<string>(() => {
     return localStorage.getItem('homepilot_conversation') || uuid()
   })
@@ -2127,7 +2167,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const canSend = useMemo(() => input.trim().length > 0, [input])
+  const canSend = useMemo(() => input.trim().length > 0 || pendingFile !== null, [input, pendingFile])
 
   const authHeaders = useMemo(() => {
     const headers: Record<string, string> = {}
@@ -2146,6 +2186,9 @@ export default function App() {
     // Use stable chat setters directly — "New conversation" is always a chat action.
     setChatConversationId(uuid())
     setChatMessages([])
+    // Clear any staged image attachment
+    setPendingFile(null)
+    setPendingPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
   }, [])
 
   // Listen to "message finished animating" events from Typewriter
@@ -3822,12 +3865,46 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     ]
   )
 
+  // Attach file as a pending preview (multimodal) or send immediately (edit/animate)
+  const handleAttachFile = useCallback(
+    (file: File) => {
+      const isMultimodalMode =
+        (mode === 'chat' || mode === 'voice') &&
+        (settingsDraft.multimodalAuto ?? true)
+
+      if (isMultimodalMode) {
+        // Stage the file — let the user type a prompt before sending
+        if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl)
+        setPendingFile(file)
+        setPendingPreviewUrl(URL.createObjectURL(file))
+      } else {
+        // Edit/animate modes: send immediately (existing behavior)
+        uploadAndSend(file)
+      }
+    },
+    [mode, settingsDraft.multimodalAuto, pendingPreviewUrl, uploadAndSend]
+  )
+
+  const clearPendingFile = useCallback(() => {
+    if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl)
+    setPendingFile(null)
+    setPendingPreviewUrl(null)
+  }, [pendingPreviewUrl])
+
   const onSend = useCallback(() => {
+    if (pendingFile) {
+      // Send the attached image together with whatever the user typed
+      void uploadAndSend(pendingFile)
+      setPendingFile(null)
+      if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl)
+      setPendingPreviewUrl(null)
+      return
+    }
     const v = input
     if (!v.trim()) return
     void sendTextOrIntent(v)
     setInput('')
-  }, [input, sendTextOrIntent])
+  }, [input, sendTextOrIntent, pendingFile, pendingPreviewUrl, uploadAndSend])
 
   // Handle edit from image viewer
   const handleEditFromViewer = useCallback(
@@ -4465,7 +4542,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               fileInputRef={fileInputRef}
               canSend={canSend}
               onSend={onSend}
-              onUpload={uploadAndSend}
+              onUpload={handleAttachFile}
+              pendingPreviewUrl={pendingPreviewUrl}
+              onRemoveAttachment={clearPendingFile}
             />
           ) : (
             <ChatState
@@ -4482,7 +4561,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               fileInputRef={fileInputRef}
               canSend={canSend}
               onSend={onSend}
-              onUpload={uploadAndSend}
+              onUpload={handleAttachFile}
+              pendingPreviewUrl={pendingPreviewUrl}
+              onRemoveAttachment={clearPendingFile}
               backendUrl={settings.backendUrl}
             />
           )
@@ -4517,7 +4598,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 fileInputRef={fileInputRef}
                 canSend={canSend}
                 onSend={onSend}
-                onUpload={uploadAndSend}
+                onUpload={handleAttachFile}
+                pendingPreviewUrl={pendingPreviewUrl}
+                onRemoveAttachment={clearPendingFile}
                 placeholderOverride={
                   currentProject.project_type === 'agent' && agentStartIntent
                     ? INTENT_COPY[agentStartIntent].placeholder
@@ -4534,7 +4617,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             fileInputRef={fileInputRef}
             canSend={canSend}
             onSend={onSend}
-            onUpload={uploadAndSend}
+            onUpload={handleAttachFile}
+            pendingPreviewUrl={pendingPreviewUrl}
+            onRemoveAttachment={clearPendingFile}
           />
         ) : (
           <ChatState
@@ -4551,7 +4636,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             fileInputRef={fileInputRef}
             canSend={canSend}
             onSend={onSend}
-            onUpload={uploadAndSend}
+            onUpload={handleAttachFile}
+            pendingPreviewUrl={pendingPreviewUrl}
+            onRemoveAttachment={clearPendingFile}
             backendUrl={settings.backendUrl}
           />
         )}
