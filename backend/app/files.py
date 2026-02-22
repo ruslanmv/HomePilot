@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Cookie, Header, HTTPException, UploadFile, File
+from fastapi import APIRouter, Cookie, Header, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
 
 from .config import UPLOAD_DIR, MAX_UPLOAD_MB
@@ -71,11 +71,26 @@ def _ensure_user_dir(user_id: str, kind: str, project_id: str = "") -> Path:
     return p
 
 
-def _resolve_user(authorization: str, homepilot_session: Optional[str]) -> Optional[Dict[str, Any]]:
-    """Resolve authenticated user from Bearer header or cookie."""
+def _resolve_user(
+    authorization: str,
+    homepilot_session: Optional[str],
+    token_param: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Resolve authenticated user from Bearer header, cookie, or query token.
+    The query token fallback is needed for <img> tags which can't set headers.
+    """
     from .users import ensure_users_tables, get_current_user
     ensure_users_tables()
-    return get_current_user(authorization=authorization, homepilot_session=homepilot_session)
+    # Try header/cookie first
+    user = get_current_user(authorization=authorization, homepilot_session=homepilot_session)
+    if user:
+        return user
+    # Fallback: query parameter token (for <img> tags)
+    if token_param:
+        from .users import _validate_token
+        return _validate_token(token_param)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -235,13 +250,15 @@ def download_file(
     asset_id: str,
     authorization: str = Header(default=""),
     homepilot_session: Optional[str] = Cookie(default=None),
+    token: Optional[str] = Query(default=None, alias="token"),
 ):
     """
     Secure file serving.
     Requires auth and ownership check.
     This is the endpoint used by <img src="/files/...">.
+    Supports ?token=<session_token> for <img> tags that can't set headers.
     """
-    user = _resolve_user(authorization, homepilot_session)
+    user = _resolve_user(authorization, homepilot_session, token_param=token)
     if not user:
         raise HTTPException(401, "Authentication required")
 
@@ -273,13 +290,15 @@ def download_file_legacy(
     subpath: str,
     authorization: str = Header(default=""),
     homepilot_session: Optional[str] = Cookie(default=None),
+    token: Optional[str] = Query(default=None, alias="token"),
 ):
     """
     Fallback for legacy /files/<filename> paths (pre-asset era).
     Serves files from the flat UPLOAD_DIR if the user is authenticated.
     This preserves backward compatibility for existing chat history images.
+    Supports ?token=<session_token> for <img> tags that can't set headers.
     """
-    user = _resolve_user(authorization, homepilot_session)
+    user = _resolve_user(authorization, homepilot_session, token_param=token)
     if not user:
         raise HTTPException(401, "Authentication required")
 

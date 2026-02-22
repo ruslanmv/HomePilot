@@ -22,6 +22,7 @@ import {
   RotateCw,
   PenLine,
   Users,
+  EyeOff,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import ProfileSettingsModal from './ProfileSettingsModal'
@@ -1387,6 +1388,16 @@ function ChatState({
   const { copied, copy } = useCopyMessage()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
 
+  /** Resolve backend-relative image URLs and append auth token for <img> tags. */
+  const resolveImageUrl = (src: string) => {
+    if (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:')) return src
+    const base = backendUrl.replace(/\/+$/, '')
+    const path = src.startsWith('/') ? src : `/${src}`
+    const tok = localStorage.getItem('homepilot_auth_token') || ''
+    const sep = path.includes('?') ? '&' : '?'
+    return `${base}${path}${tok ? `${sep}token=${encodeURIComponent(tok)}` : ''}`
+  }
+
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
       {/* Top-right fixed: Chat settings gear + New Chat icon (Phase 2, additive) */}
@@ -1419,7 +1430,22 @@ function ChatState({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pt-14 pb-8 space-y-8">
+      {/* Incognito mode banner */}
+      {chatSettings.incognito && (
+        <div className="mx-4 mt-14 mb-0 flex items-center gap-2 px-4 py-2 rounded-2xl bg-white/5 border border-white/10 text-[12px] text-white/50">
+          <EyeOff size={13} className="text-white/40 shrink-0" />
+          <span>Incognito &middot; memories paused, profile not shared</span>
+          <button
+            type="button"
+            onClick={() => onUpdateChatSettings({ ...chatSettings, incognito: false })}
+            className="ml-auto text-[11px] text-white/30 hover:text-white/60 transition-colors"
+          >
+            Turn off
+          </button>
+        </div>
+      )}
+
+      <div className={`flex-1 overflow-y-auto px-4 ${chatSettings.incognito ? 'pt-3' : 'pt-14'} pb-8 space-y-8`}>
         {messages.map((m) => (
           <div
             key={m.id}
@@ -1437,9 +1463,7 @@ function ChatState({
                 {m.media?.images?.length ? (
                   <div className="flex gap-2 mb-2">
                     {m.media.images.map((src: string, i: number) => {
-                      const resolved = (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:'))
-                        ? src
-                        : `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+                      const resolved = resolveImageUrl(src)
                       return (
                         <img
                           key={i}
@@ -1533,9 +1557,7 @@ function ChatState({
                 {m.media?.images?.length ? (
                   <div className="flex gap-2 overflow-x-auto pt-2">
                     {m.media.images.map((src: string, i: number) => {
-                      const resolved = (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:'))
-                        ? src
-                        : `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+                      const resolved = resolveImageUrl(src)
                       return (
                         <img
                           key={i}
@@ -2914,6 +2936,7 @@ export default function App() {
                   textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                   nsfwMode: settingsDraft.nsfwMode,
                   memoryEngine: settingsDraft.memoryEngine || 'v2',
+                  incognito: chatSettings?.incognito || false,
                   extra_system_context: extraCtx,
                 },
                 authHeaders
@@ -3175,6 +3198,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             nsfwMode: settingsDraft.nsfwMode,
             memoryEngine: settingsDraft.memoryEngine || 'v2',
             promptRefinement: settingsDraft.promptRefinement ?? true,
+            // Incognito mode: skip memory storage + profile injection
+            incognito: chatSettings?.incognito || false,
             // Voice mode personality system prompt
             voiceSystemPrompt,
             // Backend personality agent id — needed for personality-aware

@@ -292,6 +292,8 @@ class ChatIn(BaseModel):
         None,
         description="Optional extra system context (e.g., vision analysis) injected into the next LLM call.",
     )
+    # Incognito mode: skip memory storage + profile injection for this request
+    incognito: Optional[bool] = Field(False, description="Incognito mode: no memory storage, no profile injection")
 
 
 class ChatOut(BaseModel):
@@ -2855,6 +2857,8 @@ async def chat(inp: ChatIn, authorization: str = Header(default="")) -> JSONResp
         "personalityId": inp.personalityId,
         # Smart multimodal topology: optional vision context for system prompt
         "extra_system_context": inp.extra_system_context,
+        # Incognito mode: skip memory + profile for this request
+        "incognito": inp.incognito or False,
         # Per-user isolation: resolved user id for memory scoping
         "user_id": user["id"] if user else None,
     }
@@ -2987,7 +2991,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default="")) -> JSONResp
         _mem_mode = "v2"  # default to v2 when unset
     elif _mem_mode == "basic":
         _mem_mode = "v1"
-    if inp.project_id and inp.message and inp.mode in ("chat", "voice") and _mem_mode == "v2":
+    if inp.project_id and inp.message and inp.mode in ("chat", "voice") and _mem_mode == "v2" and not inp.incognito:
         try:
             from .memory_v2 import get_memory_v2, ensure_v2_columns
             ensure_v2_columns()
@@ -2995,6 +2999,8 @@ async def chat(inp: ChatIn, authorization: str = Header(default="")) -> JSONResp
             get_memory_v2().ingest_user_text(inp.project_id, inp.message, user_id=_uid)
         except Exception:
             pass
+    elif inp.incognito:
+        print("[CHAT] Incognito mode: skipping memory V2 ingest")
 
     # Merge game metadata into media (if present)
     game_meta = payload.get("_game")

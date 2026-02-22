@@ -1,15 +1,18 @@
 import React, { useEffect, useRef } from 'react'
+import { EyeOff } from 'lucide-react'
 
 export type ChatScopedSettings = {
   advancedHelpEnabled: boolean
   askBeforeActing: boolean
   executionProfile: 'fast' | 'balanced' | 'quality'
+  incognito: boolean
 }
 
 export const DEFAULT_CHAT_SETTINGS: ChatScopedSettings = {
   advancedHelpEnabled: false,
   askBeforeActing: true,
   executionProfile: 'fast',
+  incognito: false,
 }
 
 function Toggle({
@@ -107,6 +110,25 @@ export function ChatSettingsPopover({
           <Toggle
             value={settings.askBeforeActing}
             onChange={(v) => onChange({ ...settings, askBeforeActing: v })}
+          />
+        </div>
+
+        {/* Divider */}
+        <div className="border-t border-white/5" />
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <EyeOff size={14} className="text-white/40 mt-0.5 shrink-0" />
+            <div>
+              <div className="text-sm text-white/90">Incognito mode</div>
+              <div className="text-[11px] text-white/45">
+                No memories stored, no profile shared. Perfect for work tasks.
+              </div>
+            </div>
+          </div>
+          <Toggle
+            value={settings.incognito}
+            onChange={(v) => onChange({ ...settings, incognito: v })}
           />
         </div>
 

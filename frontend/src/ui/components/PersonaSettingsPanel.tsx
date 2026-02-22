@@ -119,19 +119,33 @@ function readNsfwMode(): boolean {
   }
 }
 
-/** Build a displayable /files/ URL from a DB-stored relative path. */
+/** Build a displayable /files/ URL from a DB-stored relative path.
+ *  Appends auth token for <img> tags that can't set Authorization headers. */
 function fileUrl(backendUrl: string, rel?: string | null): string | null {
   if (!rel) return null
   const clean = rel.replace(/^\/+/, '')
-  return `${backendUrl}/files/${clean}`
+  const tok = localStorage.getItem('homepilot_auth_token') || ''
+  return `${backendUrl}/files/${clean}${tok ? `?token=${encodeURIComponent(tok)}` : ''}`
 }
 
 /** Resolve an image URL — prepend backendUrl for backend-relative paths
- *  like `/comfy/view/...` that come from Avatar Studio exports. */
+ *  like `/comfy/view/...` that come from Avatar Studio exports.
+ *  Appends auth token for /files/ paths (needed for <img> tags). */
 function resolveImgUrl(url: string, backendUrl: string): string {
   if (!url) return url
   if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) return url
-  return `${backendUrl.replace(/\/+$/, '')}${url.startsWith('/') ? url : `/${url}`}`
+  const base = backendUrl.replace(/\/+$/, '')
+  const path = url.startsWith('/') ? url : `/${url}`
+  const full = `${base}${path}`
+  // Append auth token for /files/ paths so <img> tags can access them
+  if (path.startsWith('/files/')) {
+    const tok = localStorage.getItem('homepilot_auth_token') || ''
+    if (tok) {
+      const sep = full.includes('?') ? '&' : '?'
+      return `${full}${sep}token=${encodeURIComponent(tok)}`
+    }
+  }
+  return full
 }
 
 let _imgCounter = 0
@@ -506,8 +520,9 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
       const committedProject = commitResult.project || {}
       const committedPap = committedProject.persona_appearance || {}
       const committedRel = committedPap.selected_thumb_filename || committedPap.selected_filename
+      const _tok = localStorage.getItem('homepilot_auth_token') || ''
       const displayUrl = committedRel
-        ? `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}`
+        ? `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}${_tok ? `&token=${encodeURIComponent(_tok)}` : ''}`
         : url
 
       // Add to gallery sets and select
@@ -568,7 +583,8 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
         const committedPap = commitResult.project?.persona_appearance || {}
         const committedRel = committedPap.selected_thumb_filename || committedPap.selected_filename
         if (committedRel) {
-          displayUrl = `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}`
+          const _tok2 = localStorage.getItem('homepilot_auth_token') || ''
+          displayUrl = `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}${_tok2 ? `&token=${encodeURIComponent(_tok2)}` : ''}`
         }
       } catch {
         // Non-fatal — avatar still works from ComfyUI URL, just not committed

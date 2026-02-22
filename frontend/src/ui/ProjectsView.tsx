@@ -2099,7 +2099,8 @@ export default function ProjectsView({
                         const v = project.updated_at
                           ? Math.floor(Number(project.updated_at) * 1000)
                           : 0
-                        return `${backendUrl}/files/${String(rel).replace(/^\/+/, '')}?v=${v}`
+                        const _tok = localStorage.getItem('homepilot_auth_token') || ''
+                        return `${backendUrl}/files/${String(rel).replace(/^\/+/, '')}?v=${v}${_tok ? `&token=${encodeURIComponent(_tok)}` : ''}`
                       })()
                     : null
                   return (

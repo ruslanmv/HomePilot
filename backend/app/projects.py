@@ -584,6 +584,11 @@ When the user asks you to perform an action that matches your capabilities, DO I
                     return url
                 return f"{_img_base}{url if url.startswith('/') else '/' + url}"
 
+            # If avatar has been committed, prefer the stable backend-served path
+            # over the ephemeral ComfyUI URL for the selected image.
+            _committed_file = pap.get("selected_filename", "")
+            _committed_url = _abs_img_url(f"/files/{_committed_file}") if _committed_file else ""
+
             # Base portraits
             for s in (pap.get("sets") or []):
                 for img in (s.get("images") or []):
@@ -593,6 +598,9 @@ When the user asks you to perform an action that matches your capabilities, DO I
                     full_url = _abs_img_url(url)
                     is_default = (img.get("id") == sel_image_id and
                                   (img.get("set_id", s.get("set_id", "")) == sel_set_id))
+                    # Use committed file URL for the selected avatar
+                    if is_default and _committed_url:
+                        full_url = _committed_url
                     if is_default:
                         default_photo_url = full_url
                     photo_catalog.append({

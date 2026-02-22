@@ -741,6 +741,7 @@ async def orchestrate(
     memory_engine: Optional[str] = None,  # Memory engine: off | v1 | v2 (brain-inspired)
     extra_system_context: Optional[str] = None,  # Smart topology: vision analysis or other context
     user_id: Optional[str] = None,  # Per-user isolation: scope memory reads/writes
+    incognito: bool = False,  # Incognito mode: skip memory storage + profile injection
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -1771,7 +1772,7 @@ async def orchestrate(
     if _mem_engine not in ("off", "v1", "v2"):
         _mem_engine = "v2"
 
-    if _project_id_for_session and _mem_engine != "off":
+    if _project_id_for_session and _mem_engine != "off" and not incognito:
         try:
             ltm_context = ""
             if _mem_engine == "v1":
@@ -1804,6 +1805,8 @@ async def orchestrate(
                   f"summaries: {len(session_summaries_context)} chars")
         except Exception as e:
             print(f"[COMPANION] Warning: LTM/session injection failed (non-fatal): {e}")
+    elif incognito and _project_id_for_session:
+        print("[COMPANION] Incognito mode: skipping memory + session injection")
 
     # ================================================================
     # USER PROFILE INJECTION (additive — gives persona awareness of user identity)
@@ -1811,8 +1814,9 @@ async def orchestrate(
     # When a user_id is available, read their profile (name, birthday, pronouns,
     # preferences) and inject it so the persona can address them by name, know
     # their age, respect boundaries, etc.
+    # Skipped in incognito mode — no personal data shared with the AI.
     # ================================================================
-    if user_id:
+    if user_id and not incognito:
         try:
             from .user_context import build_user_context_for_ai
             from .user_profile_store import _get_user_profile, ensure_user_profile_tables, _get_db_path
@@ -2081,6 +2085,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 memory_engine=payload.get("memoryEngine"),
                 extra_system_context=payload.get("extra_system_context"),
                 user_id=payload.get("user_id"),
+                incognito=payload.get("incognito", False),
             )
             # Tag this conversation with the project for history persistence
             if _project_id and result.get("conversation_id"):
@@ -2165,4 +2170,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             memory_engine=payload.get("memoryEngine"),
             extra_system_context=payload.get("extra_system_context"),
             user_id=payload.get("user_id"),
+            incognito=payload.get("incognito", False),
         )
