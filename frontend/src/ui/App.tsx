@@ -1576,7 +1576,7 @@ function ChatState({
                           key={i}
                           src={resolved}
                           onClick={() => setLightbox(resolved)}
-                          className="max-h-48 max-w-xs object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                          className="w-72 h-72 object-cover rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
                           alt={`image ${i}`}
                         />
                       )
