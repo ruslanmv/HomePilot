@@ -23,6 +23,9 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
+### 👤 Multi-User Sessions
+HomePilot supports **multi-user authentication** with per-user profiles, conversations, memory, and secrets — all scoped by account. Users can log out and switch accounts seamlessly without a page reload, with recent accounts shown for quick re-login. See [docs/USERS.md](docs/USERS.md) for details.
+
 ### 🎭 Personas — Persistent AI Identities
 A **Persona** in HomePilot is not a chatbot, not a voice skin, and not a prompt template. It is a **persistent AI identity** — a named, visual, voice-enabled entity with its own personality, appearance, long-term memory, and session history that evolves with you over time. Where traditional assistants forget you between conversations, a Persona remembers. Where traditional UIs give you a text box, a Persona gives you a face, a voice, and a relationship. One identity, many sessions, continuous context — this is the foundation for AI that actually knows who it's talking to. See [docs/PERSONA.md](docs/PERSONA.md) for the full specification.
 
@@ -69,6 +72,27 @@ Every persona has persistent memory that survives across sessions. Two engines l
 - Switch between engines at any time from Settings or during `.hpersona` import — no data loss
 
 For the full technical deep dive (math, configuration, architecture), see **[docs/MEMORY.md](docs/MEMORY.md)**.
+
+### 🧠 Multimodal Intelligence — Four Processing Topologies
+
+HomePilot processes text, images, documents, and voice through **four topologies** that stack on top of each other — from simple chat to a full knowledge companion with long-term memory, vision, web search, and user awareness.
+
+<p align="center">
+  <img src="assets/multimodal-topologies.svg" alt="Multimodal Topologies" width="820" /><br>
+  <em>T1 Basic Chat → T2 Project RAG → T3 Agent Tools → T4 Knowledge Companion. Each layer is additive.</em>
+</p>
+
+<p align="center">
+  <img src="assets/multimodal-companion-pipeline.svg" alt="Knowledge Companion Pipeline" width="820" /><br>
+  <em>In Topology 4, every message flows through user profile, session history, persona memory, and 6 agent tools before responding.</em>
+</p>
+
+- **T1 Basic Chat** — direct LLM conversation, fast and simple
+- **T2 Project Knowledge** — upload docs/PDFs, get grounded RAG answers
+- **T3 Agent Tool Use** — LLM decides when to call vision, search, memory, and web tools
+- **T4 Knowledge Companion** — full companion mode with user profile, session continuity, and adaptive long-term memory
+
+Switch topologies anytime from Settings. See [docs/MULTIMODAL.md](docs/MULTIMODAL.md) for the full guide.
 
 ### 🎨 Avatar Studio — Zero-Prompt Character Creation
 Create AI portrait avatars from reference photos, random faces, or face+style combinations — all without writing a single text prompt. A complete character management system inspired by RPG mechanics:

@@ -293,6 +293,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
                 "models_list": True,
                 "images": False,
                 "video": False,
+                "multimodal": False,
             },
         },
         "ollama": {
@@ -304,6 +305,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
                 "models_list": True,
                 "images": False,
                 "video": False,
+                "multimodal": True,
             },
         },
         "openai": {
@@ -315,6 +317,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
                 "models_list": True,
                 "images": False,
                 "video": False,
+                "multimodal": False,
             },
         },
         "claude": {
@@ -326,6 +329,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
                 "models_list": True,
                 "images": False,
                 "video": False,
+                "multimodal": False,
             },
         },
         "watsonx": {
@@ -338,6 +342,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
                 "models_list": True,
                 "images": False,
                 "video": False,
+                "multimodal": False,
             },
         },
         "comfyui": {
@@ -352,6 +357,7 @@ def provider_info() -> Dict[str, Dict[str, Any]]:
                 "images": True,
                 "video": True,
                 "edit": True,
+                "multimodal": False,
             },
         },
     }
