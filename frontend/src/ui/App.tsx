@@ -2809,6 +2809,95 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     async (file: File) => {
       setShowSettings(false)
 
+      // ── Multimodal path: chat/voice mode image upload ──────────────
+      // When the user uploads an image in chat or voice mode and
+      // multimodal auto-analyze is enabled, run vision analysis instead
+      // of the edit/animate pipeline.
+      const isMultimodalMode =
+        (mode === 'chat' || mode === 'voice') &&
+        (settingsDraft.multimodalAuto ?? true)
+
+      if (isMultimodalMode) {
+        const fd = new FormData()
+        fd.append('file', file)
+
+        const userPrompt = input.trim() || ''
+        const userText = userPrompt
+          ? `[Image: ${file.name}] ${userPrompt}`
+          : `Analyze this image: ${file.name}`
+
+        const user: Msg = { id: uuid(), role: 'user', text: userText }
+        const tmpId = uuid()
+        const pending: Msg = {
+          id: tmpId,
+          role: 'assistant',
+          text: 'Analyzing image…',
+          pending: true,
+        }
+
+        setMessages((prev) => [...prev, user, pending])
+        setInput('')
+
+        try {
+          // 1. Upload the image
+          const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
+          const imageUrl = up.url as string
+
+          // 2. Call multimodal analysis endpoint
+          const result = await postJson<any>(
+            settings.backendUrl,
+            '/v1/multimodal/analyze',
+            {
+              image_url: imageUrl,
+              conversation_id: conversationId,
+              provider: settingsDraft.providerMultimodal || 'ollama',
+              base_url: settingsDraft.baseUrlMultimodal || undefined,
+              model: settingsDraft.modelMultimodal || undefined,
+              mode: 'both',
+              user_prompt: userPrompt || undefined,
+              nsfw_mode: settingsDraft.nsfwMode || false,
+            },
+            authHeaders
+          )
+
+          const analysisText = result.analysis_text || 'No analysis available.'
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tmpId
+                ? {
+                    ...m,
+                    pending: false,
+                    animate: true,
+                    text: analysisText,
+                    media: { images: [imageUrl] },
+                  }
+                : m
+            )
+          )
+
+          if (result.conversation_id) {
+            setConversationId(result.conversation_id)
+          }
+        } catch (err: any) {
+          const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tmpId
+                ? {
+                    ...m,
+                    pending: false,
+                    text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream2).`,
+                    error: true,
+                  }
+                : m
+            )
+          )
+        }
+        return
+      }
+
+      // ── Original edit/animate path (unchanged) ─────────────────────
       // Only supported via backend (because backend returns stable /uploads URL and handles pipelines)
       const intent: 'edit' | 'animate' = mode === 'animate' ? 'animate' : 'edit'
 

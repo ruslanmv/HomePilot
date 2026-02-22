@@ -60,6 +60,12 @@ export type SettingsModelV2 = {
   // Prompt refinement (AI enhancement of image prompts)
   promptRefinement?: boolean;
 
+  // Multimodal (Vision) settings — additive, optional
+  providerMultimodal?: ProviderKey;
+  baseUrlMultimodal?: string;
+  modelMultimodal?: string;
+  multimodalAuto?: boolean;  // Auto-trigger vision on image upload (default: true)
+
   // Legacy generation parameters (kept for compatibility)
   textTemperature?: number;
   textMaxTokens?: number;
@@ -1025,6 +1031,52 @@ export default function SettingsPanel({
                   ? `Choose from ${availableVoices.length} available voices`
                   : 'Loading voices...'}
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Multimodal (Vision) Settings — additive */}
+        <div className="border-t border-white/5 pt-3">
+          <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">Multimodal (Vision)</div>
+          <div className="text-[10px] text-white/35 mb-3">
+            Enable image understanding in chat &amp; voice. When active, uploading an image or asking about a picture auto-triggers a vision model.
+          </div>
+
+          <div className="space-y-3">
+            {/* Auto-trigger toggle */}
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs text-white/70">Auto-analyze images</div>
+                <div className="text-[10px] text-white/35">Automatically describe uploaded images in chat</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onChangeDraft({ ...value, multimodalAuto: !(value.multimodalAuto ?? true) })}
+                className={[
+                  "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                  (value.multimodalAuto ?? true) ? "bg-purple-600" : "bg-white/10",
+                ].join(" ")}
+              >
+                <span
+                  className={[
+                    "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+                    (value.multimodalAuto ?? true) ? "translate-x-6" : "translate-x-1",
+                  ].join(" ")}
+                />
+              </button>
+            </div>
+
+            {/* Multimodal Provider */}
+            {providerSelectRow("Multimodal Provider", value.providerMultimodal || 'ollama', (k) => onChangeDraft({ ...value, providerMultimodal: k }))}
+
+            {/* Multimodal Base URL */}
+            {baseUrlRow("Multimodal Base URL", value.providerMultimodal || 'ollama', value.baseUrlMultimodal, (v) => onChangeDraft({ ...value, baseUrlMultimodal: v }))}
+
+            {/* Multimodal Model */}
+            {modelSelectRow("Multimodal Model", value.providerMultimodal || 'ollama', value.modelMultimodal || '', (m) => onChangeDraft({ ...value, modelMultimodal: m }), value.baseUrlMultimodal)}
+
+            <div className="text-[10px] text-purple-400/80 bg-purple-500/10 border border-purple-500/20 rounded-lg px-3 py-2">
+              <span className="font-semibold">Recommended:</span> Install Moondream2 (1.6 GB) or Gemma 3 Vision (3 GB) from the Models page &gt; Multimodal tab.
             </div>
           </div>
         </div>

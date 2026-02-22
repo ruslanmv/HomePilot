@@ -99,6 +99,9 @@ from .avatar import router as avatar_router
 # Outfit Variations (additive — wardrobe changes for existing avatars)
 from .avatar.outfit import router as outfit_router
 
+# Multimodal Vision Layer (additive — on-demand image understanding)
+from .multimodal import analyze_image, is_vision_intent
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -3514,5 +3517,140 @@ async def persona_import_preview(file: UploadFile = File(...)) -> JSONResponse:
             "asset_names": preview.asset_names,
             "dependency_check": dep_report.to_dict(),
             "avatar_preview_data_url": preview.thumb_data_url,
+        },
+    )
+
+
+# ============================================================================
+# Multimodal Vision Layer (additive — on-demand image understanding)
+# ============================================================================
+
+class MultimodalAnalyzeIn(BaseModel):
+    """Request body for /v1/multimodal/analyze."""
+    image_url: str = Field(..., description="URL of the image to analyze (local /files/... or remote)")
+    conversation_id: Optional[str] = Field(None, description="Conversation ID to store results into")
+    project_id: Optional[str] = Field(None, description="Optional project context")
+    provider: Optional[str] = Field("ollama", description="Multimodal provider (currently: ollama)")
+    base_url: Optional[str] = Field(None, description="Provider base URL override")
+    model: Optional[str] = Field(None, description="Multimodal model to use (e.g. moondream2, gemma3:4b)")
+    mode: Optional[str] = Field("both", description="Analysis mode: caption | ocr | both")
+    user_prompt: Optional[str] = Field(None, description="Custom prompt for the vision model")
+    nsfw_mode: Optional[bool] = Field(False, description="Enable unrestricted analysis")
+
+
+@app.post("/v1/multimodal/analyze", dependencies=[Depends(require_api_key)])
+async def multimodal_analyze(inp: MultimodalAnalyzeIn) -> JSONResponse:
+    """
+    Analyze an image using a multimodal (vision) model.
+
+    This endpoint is additive and does NOT modify any existing chat logic.
+    It runs a vision model on the provided image and returns structured text.
+    The frontend can then inject this result into the conversation context.
+
+    Flow:
+      1. Load image from local /files/ or remote URL
+      2. Send to configured vision model (Ollama)
+      3. Return analysis text + metadata
+      4. Optionally store into conversation history
+    """
+    try:
+        result = await analyze_image(
+            image_url=inp.image_url,
+            upload_path=UPLOAD_PATH,
+            provider=inp.provider or "ollama",
+            base_url=inp.base_url,
+            model=inp.model,
+            user_prompt=inp.user_prompt,
+            nsfw_mode=bool(inp.nsfw_mode),
+            mode=inp.mode or "both",
+        )
+
+        if not result.get("ok"):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "ok": False,
+                    "error": result.get("error", "Unknown multimodal error"),
+                    "analysis_text": "",
+                    "meta": result.get("meta", {}),
+                },
+            )
+
+        # Optionally persist into conversation history
+        cid = inp.conversation_id
+        if cid and result.get("analysis_text"):
+            try:
+                from .storage import add_message
+                # Store the analysis as an assistant message with the image in media
+                add_message(
+                    cid,
+                    "assistant",
+                    f"[Image Analysis]\n{result['analysis_text']}",
+                    media={"images": [inp.image_url]},
+                    project_id=inp.project_id,
+                )
+            except Exception as e:
+                print(f"[MULTIMODAL] Warning: failed to persist analysis to history: {e}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "conversation_id": cid,
+                "analysis_text": result.get("analysis_text", ""),
+                "meta": result.get("meta", {}),
+            },
+        )
+
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "error": f"Multimodal analysis failed: {str(e)}",
+                "analysis_text": "",
+                "meta": {},
+            },
+        )
+
+
+@app.get("/v1/multimodal/status", dependencies=[Depends(require_api_key)])
+async def multimodal_status() -> JSONResponse:
+    """
+    Check if multimodal capabilities are available.
+    Returns info about configured models and provider status.
+    """
+    # Check if Ollama is reachable and has vision models
+    ollama_ok = False
+    vision_models: list = []
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags")
+            if r.status_code == 200:
+                ollama_ok = True
+                data = r.json()
+                all_models = [m.get("name", "") for m in data.get("models", [])]
+                # Check known vision model patterns
+                vision_patterns = [
+                    "moondream", "llava", "gemma3", "minicpm-v", "llama3.2-vision",
+                    "qwen3-vl", "qwen2-vl", "internvl", "smolvlm", "bakllava",
+                ]
+                vision_models = [
+                    m for m in all_models
+                    if any(p in m.lower() for p in vision_patterns)
+                ]
+    except Exception:
+        pass
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "multimodal_available": ollama_ok and len(vision_models) > 0,
+            "provider": "ollama",
+            "provider_reachable": ollama_ok,
+            "installed_vision_models": vision_models,
+            "recommended_default": vision_models[0] if vision_models else "moondream2",
         },
     )
