@@ -133,12 +133,17 @@ function fileUrl(backendUrl: string, rel?: string | null): string | null {
  *  Appends auth token for /files/ paths (needed for <img> tags). */
 function resolveImgUrl(url: string, backendUrl: string): string {
   if (!url) return url
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) return url
-  const base = backendUrl.replace(/\/+$/, '')
-  const path = url.startsWith('/') ? url : `/${url}`
-  const full = `${base}${path}`
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url
+
+  let full = url
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    const base = backendUrl.replace(/\/+$/, '')
+    const path = url.startsWith('/') ? url : `/${url}`
+    full = `${base}${path}`
+  }
+
   // Append auth token for /files/ paths so <img> tags can access them
-  if (path.startsWith('/files/')) {
+  if (full.includes('/files/')) {
     const tok = localStorage.getItem('homepilot_auth_token') || ''
     if (tok) {
       const sep = full.includes('?') ? '&' : '?'

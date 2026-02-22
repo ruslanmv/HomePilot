@@ -1390,12 +1390,25 @@ function ChatState({
 
   /** Resolve backend-relative image URLs and append auth token for <img> tags. */
   const resolveImageUrl = (src: string) => {
-    if (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:')) return src
-    const base = backendUrl.replace(/\/+$/, '')
-    const path = src.startsWith('/') ? src : `/${src}`
-    const tok = localStorage.getItem('homepilot_auth_token') || ''
-    const sep = path.includes('?') ? '&' : '?'
-    return `${base}${path}${tok ? `${sep}token=${encodeURIComponent(tok)}` : ''}`
+    if (!src || src.startsWith('data:') || src.startsWith('blob:')) return src
+
+    let fullUrl = src
+    if (!src.startsWith('http')) {
+      const base = backendUrl.replace(/\/+$/, '')
+      const path = src.startsWith('/') ? src : `/${src}`
+      fullUrl = `${base}${path}`
+    }
+
+    // Append auth token for /files/ paths — <img> tags can't set headers
+    if (fullUrl.includes('/files/')) {
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      if (tok) {
+        const sep = fullUrl.includes('?') ? '&' : '?'
+        fullUrl = `${fullUrl}${sep}token=${encodeURIComponent(tok)}`
+      }
+    }
+
+    return fullUrl
   }
 
   return (
