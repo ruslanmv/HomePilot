@@ -86,7 +86,7 @@ export type Msg = {
   // when true, show recovery UI and allow retry
   error?: boolean
   // info needed for retry; kept minimal and non-destructive
-  retry?: { requestText: string; mode: Mode; projectId?: string; multimodal?: { imageUrl: string; userPrompt?: string; topology?: 'direct' | 'smart' } }
+  retry?: { requestText: string; mode: Mode; projectId?: string; multimodal?: { imageUrl: string; userPrompt?: string; topology?: 'direct' | 'smart' | 'agent' } }
   media?: {
     images?: string[]
     video_url?: string
@@ -1900,7 +1900,7 @@ export default function App() {
     const providerMultimodal = (localStorage.getItem('homepilot_provider_multimodal') || 'ollama') as string
     const baseUrlMultimodal = localStorage.getItem('homepilot_base_url_multimodal') || ''
     const modelMultimodal = localStorage.getItem('homepilot_model_multimodal') || ''
-    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart')) || 'direct'
+    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent')) || 'direct'
 
     return {
       backendUrl,
@@ -2186,7 +2186,7 @@ export default function App() {
         providerMultimodal: localStorage.getItem('homepilot_provider_multimodal') || 'ollama',
         baseUrlMultimodal: localStorage.getItem('homepilot_base_url_multimodal') || '',
         modelMultimodal: localStorage.getItem('homepilot_model_multimodal') || '',
-        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart')) || 'direct',
+        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent')) || 'direct',
       })
     }
   }, [showSettings, settings])
@@ -2646,6 +2646,56 @@ export default function App() {
 
           try {
             const visionTopology = settingsDraft.multimodalTopology || 'direct'
+
+            // ── Agent topology: route to /v1/agent/chat for autonomous tool use ──
+            if (visionTopology === 'agent') {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m
+                )
+              )
+
+              const agentRes = await postJson<any>(
+                settings.backendUrl,
+                '/v1/agent/chat',
+                {
+                  message: trimmed,
+                  conversation_id: conversationId,
+                  project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+                  provider: settingsDraft.providerChat,
+                  provider_base_url: settingsDraft.baseUrlChat || undefined,
+                  provider_model: settingsDraft.modelChat,
+                  temperature: settingsDraft.textTemperature ?? 0.7,
+                  max_tokens: settingsDraft.textMaxTokens ?? 900,
+                  vision_provider: settingsDraft.providerMultimodal || 'ollama',
+                  vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
+                  vision_model: settingsDraft.modelMultimodal || undefined,
+                  nsfw_mode: settingsDraft.nsfwMode || false,
+                  max_tool_calls: 2,
+                },
+                authHeaders
+              )
+
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId
+                    ? {
+                        ...m,
+                        pending: false,
+                        animate: true,
+                        text: agentRes.text || '',
+                        media: agentRes.media || (lastImageUrl ? { images: [lastImageUrl] } : null),
+                      }
+                    : m
+                )
+              )
+              if (agentRes.conversation_id && agentRes.conversation_id !== conversationId) {
+                setConversationId(agentRes.conversation_id)
+              }
+              fetchConversations()
+              return
+            }
+
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === tmpId ? { ...m, text: 'Analyzing image…' } : m
@@ -2887,6 +2937,60 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       }
 
       try {
+        // ── Agent topology: route text messages through /v1/agent/chat ──
+        // The agent decides autonomously whether to use tools (vision, etc.)
+        const chatTopology = settingsDraft.multimodalTopology || 'direct'
+        if (chatTopology === 'agent' && (mode === 'chat' || mode === 'voice')) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m
+            )
+          )
+
+          const agentRes = await postJson<any>(
+            settings.backendUrl,
+            '/v1/agent/chat',
+            {
+              message: requestText,
+              conversation_id: conversationId,
+              project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+              provider: settingsDraft.providerChat,
+              provider_base_url: settingsDraft.baseUrlChat || undefined,
+              provider_model: settingsDraft.modelChat,
+              temperature: settingsDraft.textTemperature ?? 0.7,
+              max_tokens: mode === 'voice' ? 300 : (settingsDraft.textMaxTokens ?? 900),
+              vision_provider: settingsDraft.providerMultimodal || 'ollama',
+              vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
+              vision_model: settingsDraft.modelMultimodal || undefined,
+              nsfw_mode: settingsDraft.nsfwMode || false,
+              max_tool_calls: 2,
+            },
+            authHeaders
+          )
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tmpId
+                ? { ...m, pending: false, animate: true, text: agentRes.text ?? '…', media: agentRes.media ?? null }
+                : m
+            )
+          )
+
+          if (mode === 'voice' && typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('hp:assistant_message', {
+                detail: { id: tmpId, text: agentRes.text ?? '…', media: agentRes.media ?? null },
+              })
+            )
+          }
+
+          if (agentRes.conversation_id && agentRes.conversation_id !== conversationId) {
+            setConversationId(agentRes.conversation_id)
+          }
+          fetchConversations()
+          return
+        }
+
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
         const data = await postJson<any>(
@@ -3022,6 +3126,59 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       // Respects the topology that was active when the original request was made.
       if (multimodal?.imageUrl) {
         const retryTopology = multimodal.topology || settingsDraft.multimodalTopology || 'direct'
+
+        // ── Agent topology retry: route to /v1/agent/chat ──
+        if (retryTopology === 'agent') {
+          try {
+            const agentRes = await postJson<any>(
+              settings.backendUrl,
+              '/v1/agent/chat',
+              {
+                message: multimodal.userPrompt || requestText,
+                conversation_id: conversationId,
+                project_id: projectId,
+                provider: settingsDraft.providerChat,
+                provider_base_url: settingsDraft.baseUrlChat || undefined,
+                provider_model: settingsDraft.modelChat,
+                temperature: settingsDraft.textTemperature ?? 0.7,
+                max_tokens: settingsDraft.textMaxTokens ?? 900,
+                vision_provider: settingsDraft.providerMultimodal || 'ollama',
+                vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
+                vision_model: settingsDraft.modelMultimodal || undefined,
+                nsfw_mode: settingsDraft.nsfwMode || false,
+                max_tool_calls: 2,
+              },
+              authHeaders
+            )
+
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === failedId
+                  ? {
+                      ...m,
+                      pending: false,
+                      error: false,
+                      animate: true,
+                      text: agentRes.text || '',
+                      media: agentRes.media || { images: [multimodal.imageUrl] },
+                    }
+                  : m
+              )
+            )
+            if (agentRes.conversation_id) setConversationId(agentRes.conversation_id)
+            return
+          } catch (err: any) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === failedId
+                  ? { ...m, pending: false, error: true, text: `Agent retry failed: ${err?.message || 'unknown error'}` }
+                  : m
+              )
+            )
+            return
+          }
+        }
+
         try {
           const result = await postJson<any>(
             settings.backendUrl,
@@ -3260,6 +3417,54 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
           // 2. Call multimodal analysis endpoint (persist depends on topology)
           const topology = settingsDraft.multimodalTopology || 'direct'
+
+          // ── Agent topology: let the backend agent loop handle everything ──
+          if (topology === 'agent') {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m
+              )
+            )
+
+            const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+            const agentRes = await postJson<any>(
+              settings.backendUrl,
+              '/v1/agent/chat',
+              {
+                message: userPrompt || `Analyze this image: ${file.name}`,
+                conversation_id: conversationId,
+                project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+                provider: settingsDraft.providerChat,
+                provider_base_url: settingsDraft.baseUrlChat || undefined,
+                provider_model: settingsDraft.modelChat,
+                temperature: settingsDraft.textTemperature ?? 0.7,
+                max_tokens: settingsDraft.textMaxTokens ?? 900,
+                vision_provider: settingsDraft.providerMultimodal || 'ollama',
+                vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
+                vision_model: settingsDraft.modelMultimodal || undefined,
+                nsfw_mode: settingsDraft.nsfwMode || false,
+                max_tool_calls: 2,
+              },
+              authHeaders
+            )
+
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      animate: true,
+                      text: agentRes.text || '',
+                      media: agentRes.media || { images: [imageUrl] },
+                    }
+                  : m
+              )
+            )
+            if (agentRes.conversation_id) setConversationId(agentRes.conversation_id)
+            fetchConversations()
+            return
+          }
 
           const vision = await postJson<any>(
             settings.backendUrl,

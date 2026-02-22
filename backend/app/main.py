@@ -81,6 +81,9 @@ from .capabilities import router as capabilities_router
 # Agentic AI module routes (additive — zero changes to existing code)
 from .agentic.routes import router as agentic_router
 
+# Topology 3: Agent-Controlled tool use routes (additive)
+from .agent_routes import router as agent_router
+
 # Persona Phase 3 — production hardening (avatar durability, export/import)
 from .personas.avatar_assets import commit_persona_avatar, commit_persona_image
 from .personas.export_import import export_persona_project, import_persona_package, preview_persona_package
@@ -132,6 +135,9 @@ app.include_router(capabilities_router)
 
 # Include Agentic AI routes (/v1/agentic/*)
 app.include_router(agentic_router)
+
+# Include Agent Chat routes (/v1/agent/* — Topology 3)
+app.include_router(agent_router)
 
 # Include Community Gallery proxy routes (/community/*)
 app.include_router(community_router)
