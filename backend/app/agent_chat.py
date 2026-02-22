@@ -6,8 +6,12 @@ Additive module. Does NOT modify any existing endpoints or behavior.
 The agent asks the main LLM to output strict JSON (final answer or tool call),
 executes tools when requested, injects results, and loops until a final answer.
 
-Tools available in v1:
-  - vision.analyze  → uses existing multimodal.analyze_image(...)
+Tools available in v2:
+  - vision.analyze   → uses existing multimodal.analyze_image(...)
+  - knowledge.search → queries project RAG knowledge base (ChromaDB)
+  - memory.recall    → retrieves long-term persona memory (Memory V2)
+  - web.search       → performs web search with summarization
+  - image.index      → indexes image into knowledge base via vision analysis (T4)
 """
 from __future__ import annotations
 
@@ -24,10 +28,49 @@ from .storage import add_message, get_messages, get_recent
 from .config import UPLOAD_DIR
 
 # --- Safety limits (production-friendly defaults) ---
-DEFAULT_MAX_TOOL_CALLS = 2
+DEFAULT_MAX_TOOL_CALLS = 4
 DEFAULT_HISTORY_LIMIT = 24
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+# --- Tool registry ---
+# Maps tool_name -> (description_for_catalog, handler_coroutine_factory)
+# Handlers are registered at module level; dispatch uses this dict.
+TOOL_REGISTRY: Dict[str, str] = {}
+
+
+def _register_tool(name: str, description: str) -> None:
+    """Register a tool name + catalog description (handler lives as _run_<name>)."""
+    TOOL_REGISTRY[name] = description
+
+
+# Register all tools (catalog descriptions only — handlers are async functions below)
+_register_tool(
+    "vision.analyze",
+    "vision.analyze(image_url, question, mode): analyzes an image and returns useful text.\n"
+    "  mode is one of: caption | ocr | both",
+)
+_register_tool(
+    "knowledge.search",
+    "knowledge.search(query, n_results): searches the project's knowledge base for relevant documents.\n"
+    "  query: text to search for. n_results: number of results (default 3, max 5).",
+)
+_register_tool(
+    "memory.recall",
+    "memory.recall(query): recalls long-term memories about the user (preferences, facts, boundaries).\n"
+    "  query: topic or keyword to search memories for.",
+)
+_register_tool(
+    "web.search",
+    "web.search(query, max_results): searches the web for current information.\n"
+    "  query: search query. max_results: number of results (default 3, max 5).",
+)
+_register_tool(
+    "image.index",
+    "image.index(image_url): indexes an image into the project knowledge base for future search.\n"
+    "  Extracts visual description + text via vision analysis and stores it.\n"
+    "  Use this when a user uploads an image and wants it searchable later.",
+)
 
 
 @dataclass
@@ -68,32 +111,53 @@ def _extract_json_obj(s: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _build_agent_system_prompt() -> str:
+def _build_tool_catalog() -> str:
+    """Build the tool catalog section of the system prompt from the registry."""
+    lines = ["Tool catalog:"]
+    for name, desc in TOOL_REGISTRY.items():
+        lines.append(f"- {desc}")
+    return "\n".join(lines)
+
+
+def _build_agent_system_prompt(
+    *,
+    memory_context: str = "",
+    knowledge_hint: str = "",
+) -> str:
     """
     System prompt instructing the LLM to use a minimal JSON protocol.
     This avoids requiring full function-calling support and is easy to ship.
+
+    Accepts optional memory_context and knowledge_hint blocks that are
+    injected into the prompt when available (additive, never destructive).
     """
-    return (
-        "You are an agent that can optionally call tools.\n"
-        "\n"
-        "You MUST reply with STRICT JSON ONLY (no markdown, no extra text).\n"
-        "\n"
+    parts = [
+        "You are an agent that can optionally call tools.\n",
+        "You MUST reply with STRICT JSON ONLY (no markdown, no extra text).\n",
         "Allowed response shapes:\n"
         "1) Final answer:\n"
-        '{ "type": "final", "text": "..." }\n'
-        "\n"
+        '{ "type": "final", "text": "..." }\n',
         "2) Tool call (one at a time):\n"
-        '{ "type": "tool_call", "tool": "vision.analyze", "args": { "image_url": "...", "question": "...", "mode": "both" } }\n'
-        "\n"
-        "Tool catalog:\n"
-        "- vision.analyze(image_url, question, mode): analyzes an image and returns useful text.\n"
-        "  mode is one of: caption | ocr | both\n"
-        "\n"
-        "Rules:\n"
+        '{ "type": "tool_call", "tool": "<tool_name>", "args": { ... } }\n',
+        _build_tool_catalog(),
+        "\nRules:\n"
         "- Only call a tool if it is necessary to answer correctly.\n"
-        "- If no image_url is available, return a final answer asking the user to upload an image.\n"
-        "- Keep tool calls minimal.\n"
-    )
+        "- If no image_url is available for vision.analyze, return a final answer asking the user to upload an image.\n"
+        "- Use knowledge.search when the user asks about project documents or uploaded files.\n"
+        "- Use memory.recall when you need to remember user preferences, facts, or boundaries.\n"
+        "- Use web.search when the user asks about current events or needs up-to-date information.\n"
+        "- Keep tool calls minimal.\n",
+    ]
+
+    # Inject memory context (from Memory V2) if available
+    if memory_context:
+        parts.append(f"\n--- PERSONA MEMORY ---\n{memory_context}\n--- END MEMORY ---\n")
+
+    # Inject knowledge hint if available
+    if knowledge_hint:
+        parts.append(f"\n{knowledge_hint}\n")
+
+    return "\n".join(parts)
 
 
 def _find_last_image_url(conversation_id: str) -> Optional[str]:
@@ -135,6 +199,10 @@ def _format_tool_context(tool_name: str, tool_output: str, meta: Optional[Dict[s
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Tool handlers — each returns (output_text, meta_dict)
+# ---------------------------------------------------------------------------
+
 async def _run_vision_analyze(
     *,
     image_url: str,
@@ -165,6 +233,316 @@ async def _run_vision_analyze(
         analysis = "No analysis available."
     return analysis, res
 
+
+async def _run_knowledge_search(
+    *,
+    query: str,
+    project_id: Optional[str],
+    n_results: int = 3,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Search the project knowledge base (ChromaDB RAG).
+    Wraps existing vectordb.query_project_knowledge().
+    Returns (formatted_results_text, meta).
+    """
+    if not project_id:
+        return "No project context available. Knowledge search requires a project.", {"error": "no_project"}
+
+    try:
+        from .vectordb import query_project_knowledge, get_project_document_count, CHROMADB_AVAILABLE
+    except ImportError:
+        return "Knowledge base is not available (ChromaDB not installed).", {"error": "chromadb_missing"}
+
+    if not CHROMADB_AVAILABLE:
+        return "Knowledge base is not available (ChromaDB not installed).", {"error": "chromadb_missing"}
+
+    n_results = max(1, min(n_results, 5))
+
+    try:
+        doc_count = get_project_document_count(project_id)
+        if doc_count == 0:
+            return "No documents in this project's knowledge base. Upload files to enable knowledge search.", {
+                "doc_count": 0,
+            }
+
+        results = query_project_knowledge(project_id, query, n_results=n_results)
+        if not results:
+            return f"No relevant results found for: {query}", {"doc_count": doc_count, "results_found": 0}
+
+        lines = [f"Found {len(results)} relevant document chunks (out of {doc_count} total):"]
+        for i, doc in enumerate(results, 1):
+            source = doc.get("metadata", {}).get("source", "Unknown")
+            content = doc.get("content", "")
+            similarity = doc.get("similarity", 0.0)
+            lines.append(f"\n[{i}] Source: {source} (relevance: {similarity:.2f})")
+            lines.append(content[:500])
+
+        return "\n".join(lines), {"doc_count": doc_count, "results_found": len(results)}
+
+    except Exception as e:
+        return f"Error searching knowledge base: {e}", {"error": str(e)}
+
+
+async def _run_memory_recall(
+    *,
+    query: str,
+    project_id: Optional[str],
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Recall long-term memories from Memory V2.
+    Wraps existing memory_v2.MemoryV2Engine.build_context().
+    Returns (memory_context_text, meta).
+    """
+    if not project_id:
+        return "No project context available. Memory recall requires a project.", {"error": "no_project"}
+
+    try:
+        from .memory_v2 import get_memory_v2, ensure_v2_columns
+    except ImportError:
+        return "Memory V2 module is not available.", {"error": "memory_v2_missing"}
+
+    try:
+        ensure_v2_columns()
+        engine = get_memory_v2()
+        context = engine.build_context(project_id, query)
+        if not context or not context.strip():
+            return "No memories stored yet for this project.", {"memories_found": 0}
+
+        return context, {"memories_found": context.count("  - ")}
+
+    except Exception as e:
+        return f"Error recalling memories: {e}", {"error": str(e)}
+
+
+async def _run_web_search(
+    *,
+    query: str,
+    max_results: int = 3,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Perform web search using existing search module.
+    Wraps existing search.web_search() + search.summarize_results().
+    Returns (summary_text, meta).
+    """
+    try:
+        from .search import web_search, summarize_results
+    except ImportError:
+        return "Web search module is not available.", {"error": "search_missing"}
+
+    max_results = max(1, min(max_results, 5))
+
+    try:
+        results = await web_search(query, max_results=max_results)
+        if not results:
+            return f"No web results found for: {query}", {"results_found": 0}
+
+        # Build compact output for agent context
+        lines = [f"Web search results for: {query}"]
+        for i, r in enumerate(results, 1):
+            title = r.get("title", "")
+            snippet = r.get("snippet", "")
+            url = r.get("url", "")
+            lines.append(f"\n[{i}] {title}")
+            lines.append(f"    {snippet}")
+            if url:
+                lines.append(f"    URL: {url}")
+
+        return "\n".join(lines), {"results_found": len(results)}
+
+    except Exception as e:
+        return f"Error performing web search: {e}", {"error": str(e)}
+
+
+async def _run_image_index(
+    *,
+    image_url: str,
+    project_id: Optional[str],
+    provider: str,
+    base_url: Optional[str],
+    model: Optional[str],
+    nsfw_mode: bool,
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Index an image into the project knowledge base via vision analysis.
+    Wraps vectordb_images.index_image_from_url().
+    Returns (result_text, meta).
+    """
+    if not project_id:
+        return "No project context available. Image indexing requires a project.", {"error": "no_project"}
+
+    if not image_url:
+        return "No image URL provided for indexing.", {"error": "no_image"}
+
+    try:
+        from .vectordb_images import index_image_from_url
+    except ImportError:
+        return "Image indexing module is not available.", {"error": "module_missing"}
+
+    try:
+        result = await index_image_from_url(
+            project_id=project_id,
+            image_url=image_url,
+            provider=provider,
+            base_url=base_url,
+            model=model,
+            nsfw_mode=nsfw_mode,
+        )
+
+        if result.get("ok"):
+            chunks = result.get("chunks_added", 0)
+            preview = result.get("analysis_preview", "")
+            return (
+                f"Image indexed successfully. {chunks} chunks added to knowledge base.\n"
+                f"Content preview: {preview}"
+            ), result
+        else:
+            return f"Image indexing failed: {result.get('error', 'unknown')}", result
+
+    except Exception as e:
+        return f"Error indexing image: {e}", {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Memory V2 context builder (injected into system prompt)
+# ---------------------------------------------------------------------------
+
+def _get_memory_context(project_id: Optional[str], query: str) -> str:
+    """
+    Build Memory V2 context for system prompt injection.
+    Returns empty string if Memory V2 is unavailable or no memories exist.
+    Non-blocking: failures return empty string.
+    """
+    if not project_id:
+        return ""
+    try:
+        from .memory_v2 import get_memory_v2, ensure_v2_columns
+        ensure_v2_columns()
+        engine = get_memory_v2()
+        ctx = engine.build_context(project_id, query)
+        return (ctx or "").strip()
+    except Exception:
+        return ""
+
+
+def _get_knowledge_hint(project_id: Optional[str]) -> str:
+    """
+    Build a short hint about available knowledge base docs.
+    Helps the agent decide whether to call knowledge.search.
+    """
+    if not project_id:
+        return ""
+    try:
+        from .vectordb import get_project_document_count, CHROMADB_AVAILABLE
+        if not CHROMADB_AVAILABLE:
+            return ""
+        count = get_project_document_count(project_id)
+        if count > 0:
+            return f"[This project has {count} document chunks in its knowledge base. Use knowledge.search to find relevant information.]"
+    except Exception:
+        pass
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Tool dispatch — generalized for N tools
+# ---------------------------------------------------------------------------
+
+async def _dispatch_tool(
+    tool: str,
+    args: Dict[str, Any],
+    *,
+    # Context passed through for tools that need it
+    conversation_id: str,
+    project_id: Optional[str],
+    user_text: str,
+    last_image_url: Optional[str],
+    vision_provider: str,
+    vision_base_url: Optional[str],
+    vision_model: Optional[str],
+    nsfw_mode: bool,
+) -> Tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+    """
+    Dispatch a tool call to the appropriate handler.
+    Returns (output_text, meta_dict, media_dict_or_none).
+    """
+    if tool == "vision.analyze":
+        # Resolve image_url (tool may omit it; use last seen)
+        image_url = (args.get("image_url") or "").strip() or (last_image_url or "")
+        question = (args.get("question") or "").strip() or user_text
+        mode = (args.get("mode") or "both").strip().lower()
+        if mode not in ("caption", "ocr", "both"):
+            mode = "both"
+
+        if not image_url:
+            return (
+                "I don't have an image to analyze. Please upload an image first.",
+                {"error": "no_image"},
+                None,
+            )
+
+        text, full = await _run_vision_analyze(
+            image_url=image_url,
+            question=question,
+            mode=mode,
+            provider=vision_provider,
+            base_url=vision_base_url,
+            model=vision_model,
+            nsfw_mode=nsfw_mode,
+        )
+        return text, {"image_url": image_url, "mode": mode}, {"images": [image_url]}
+
+    elif tool == "knowledge.search":
+        query = (args.get("query") or "").strip() or user_text
+        n_results = int(args.get("n_results", 3))
+        text, meta = await _run_knowledge_search(
+            query=query,
+            project_id=project_id,
+            n_results=n_results,
+        )
+        return text, meta, None
+
+    elif tool == "memory.recall":
+        query = (args.get("query") or "").strip() or user_text
+        text, meta = await _run_memory_recall(
+            query=query,
+            project_id=project_id,
+        )
+        return text, meta, None
+
+    elif tool == "web.search":
+        query = (args.get("query") or "").strip() or user_text
+        max_results = int(args.get("max_results", 3))
+        text, meta = await _run_web_search(
+            query=query,
+            max_results=max_results,
+        )
+        return text, meta, None
+
+    elif tool == "image.index":
+        image_url = (args.get("image_url") or "").strip() or (last_image_url or "")
+        if not image_url:
+            return (
+                "No image URL provided. Please specify an image to index.",
+                {"error": "no_image"},
+                None,
+            )
+        text, meta = await _run_image_index(
+            image_url=image_url,
+            project_id=project_id,
+            provider=vision_provider,
+            base_url=vision_base_url,
+            model=vision_model,
+            nsfw_mode=nsfw_mode,
+        )
+        return text, meta, {"images": [image_url]}
+
+    else:
+        return f"Requested tool '{tool}' is not available.", {"error": "unknown_tool"}, None
+
+
+# ---------------------------------------------------------------------------
+# Main agent loop
+# ---------------------------------------------------------------------------
 
 async def agent_chat(
     *,
@@ -198,6 +576,15 @@ async def agent_chat(
     if text_in:
         add_message(cid, "user", text_in, media=None, project_id=project_id)
 
+    # Ingest user text into Memory V2 (additive, non-blocking)
+    if text_in and project_id:
+        try:
+            from .memory_v2 import get_memory_v2, ensure_v2_columns
+            ensure_v2_columns()
+            get_memory_v2().ingest_user_text(project_id, text_in)
+        except Exception:
+            pass  # Non-fatal: Memory V2 is optional
+
     # Pull recent history for context (role/content only)
     history_pairs: List[Tuple[str, str]] = []
     try:
@@ -205,8 +592,17 @@ async def agent_chat(
     except Exception:
         history_pairs = []
 
+    # Build enriched system prompt with Memory V2 + knowledge hint
+    memory_ctx = _get_memory_context(project_id, text_in)
+    knowledge_hint = _get_knowledge_hint(project_id)
+
     # Convert to chat messages for LLM
-    messages: List[Dict[str, Any]] = [{"role": "system", "content": _build_agent_system_prompt()}]
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": _build_agent_system_prompt(
+            memory_context=memory_ctx,
+            knowledge_hint=knowledge_hint,
+        )}
+    ]
 
     # Include history (excluding current user message if it was just stored, but that's ok either way)
     for role, content in history_pairs[-history_limit:]:
@@ -218,6 +614,7 @@ async def agent_chat(
         messages.append({"role": "user", "content": text_in})
 
     tool_calls_used = 0
+    tools_invoked: List[str] = []
     last_image_url = _find_last_image_url(cid)  # used as fallback if tool call lacks image_url
 
     # --- Agent loop (simple, safe) ---
@@ -247,7 +644,7 @@ async def agent_chat(
             # Fallback: treat as final text to avoid agent deadlock
             final_text = raw_text or "I couldn't parse the agent response. Please try again."
             add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used}}
+            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         step_type = (parsed.get("type") or "").strip().lower()
 
@@ -256,65 +653,72 @@ async def agent_chat(
             if not final_text:
                 final_text = "No answer provided."
             add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used}}
+            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         if step_type != "tool_call":
             # Unknown response type → safe fallback
             final_text = (parsed.get("text") or "").strip() or raw_text or "I couldn't complete the request."
             add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used}}
+            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         # TOOL_CALL
         if tool_calls_used >= max_tool_calls:
             final_text = "I reached the maximum number of tool calls for this request. Please refine your question."
             add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used}}
+            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         tool = (parsed.get("tool") or "").strip()
         args = parsed.get("args") or {}
         if not isinstance(args, dict):
             args = {}
 
-        if tool != "vision.analyze":
-            final_text = f"Requested tool '{tool}' is not available."
+        # Validate tool exists in registry
+        if tool not in TOOL_REGISTRY:
+            final_text = f"Requested tool '{tool}' is not available. Available tools: {', '.join(TOOL_REGISTRY.keys())}"
             add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used}}
+            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
-        # Resolve image_url (tool may omit it; use last seen)
-        image_url = (args.get("image_url") or "").strip() or (last_image_url or "")
-        question = (args.get("question") or "").strip() or text_in
-        mode = (args.get("mode") or "both").strip().lower()
-        if mode not in ("caption", "ocr", "both"):
-            mode = "both"
-
-        if not image_url:
-            final_text = "I don't have an image to analyze. Please upload an image first."
-            add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used}}
-
-        # Execute the vision tool
+        # Dispatch tool
         tool_calls_used += 1
-        analysis_text, full = await _run_vision_analyze(
-            image_url=image_url,
-            question=question,
-            mode=mode,
-            provider=vision_provider,
-            base_url=vision_base_url,
-            model=vision_model,
+        tools_invoked.append(tool)
+
+        output_text, meta, media = await _dispatch_tool(
+            tool,
+            args,
+            conversation_id=cid,
+            project_id=project_id,
+            user_text=text_in,
+            last_image_url=last_image_url,
+            vision_provider=vision_provider,
+            vision_base_url=vision_base_url,
+            vision_model=vision_model,
             nsfw_mode=nsfw_mode,
         )
 
-        # Persist tool artifact in history (consistent with existing multimodal)
+        # Check if dispatch returned an error that should terminate
+        if meta.get("error") in ("no_image", "unknown_tool"):
+            add_message(cid, "assistant", output_text, media=None, project_id=project_id)
+            return {"conversation_id": cid, "text": output_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+
+        # Persist tool artifact in history
+        tool_label = {
+            "vision.analyze": "Image Analysis",
+            "knowledge.search": "Knowledge Search",
+            "memory.recall": "Memory Recall",
+            "web.search": "Web Search",
+            "image.index": "Image Indexed",
+        }.get(tool, tool)
+
         add_message(
             cid,
             "assistant",
-            f"[Image Analysis]\n{analysis_text}",
-            media={"images": [image_url]},
+            f"[{tool_label}]\n{output_text}",
+            media=media,
             project_id=project_id,
         )
 
         # Inject tool result for the next reasoning step
-        tool_ctx = _format_tool_context("vision.analyze", analysis_text, meta={"image_url": image_url, "mode": mode})
+        tool_ctx = _format_tool_context(tool, output_text, meta=meta)
         messages.append({"role": "system", "content": tool_ctx})
 
         # Continue loop for final response

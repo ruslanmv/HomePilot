@@ -40,7 +40,7 @@ class AgentChatIn(BaseModel):
     nsfw_mode: bool = Field(False, description="Allow unrestricted analysis")
 
     # agent controls
-    max_tool_calls: int = Field(2, description="Maximum tool calls per request")
+    max_tool_calls: int = Field(4, description="Maximum tool calls per request")
     history_limit: int = Field(24, description="History messages to include")
 
 

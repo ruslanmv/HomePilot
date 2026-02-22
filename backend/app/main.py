@@ -2235,10 +2235,16 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
         filename = file.filename or "upload.txt"
         ext = os.path.splitext(filename)[1].lower()[:10]
 
-        if ext not in {".pdf", ".txt", ".md"}:
+        # Supported file types: documents + images (T4 multimodal knowledge)
+        _SUPPORTED_DOC_EXTS = {".pdf", ".txt", ".md"}
+        _SUPPORTED_IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+        if ext not in _SUPPORTED_DOC_EXTS and ext not in _SUPPORTED_IMG_EXTS:
             return JSONResponse(
                 status_code=400,
-                content=_safe_err("Only PDF, TXT, and MD files are supported", code="invalid_file_type")
+                content=_safe_err(
+                    "Supported file types: PDF, TXT, MD, PNG, JPG, JPEG, WEBP, GIF, BMP",
+                    code="invalid_file_type",
+                )
             )
 
         max_bytes = int(MAX_UPLOAD_MB) * 1024 * 1024
@@ -2267,8 +2273,20 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
 
         # Process the file and add to vector database
         try:
-            from .vectordb import process_and_add_file
-            chunks_added = process_and_add_file(project_id, path)
+            # T4 Multimodal: route images through vision-based indexing
+            if ext in _SUPPORTED_IMG_EXTS:
+                from .vectordb_images import index_image_to_knowledge
+                img_result = await index_image_to_knowledge(
+                    project_id=project_id,
+                    image_path=path,
+                    original_filename=filename,
+                )
+                chunks_added = img_result.get("chunks_added", 0)
+                source_type = "image"
+            else:
+                from .vectordb import process_and_add_file
+                chunks_added = process_and_add_file(project_id, path)
+                source_type = "document"
 
             # Update project metadata with file info
             project = projects.get_project_by_id(project_id)
@@ -2278,7 +2296,8 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
                     "name": filename,
                     "size": f"{written / 1024 / 1024:.2f} MB",
                     "path": str(path),
-                    "chunks": chunks_added
+                    "chunks": chunks_added,
+                    "source_type": source_type,
                 })
 
                 # Update project
@@ -2292,6 +2311,7 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
                 "filename": filename,
                 "size_bytes": written,
                 "chunks_added": chunks_added,
+                "source_type": source_type,
                 "message": f"File processed and {chunks_added} chunks added to knowledge base"
             })
 
