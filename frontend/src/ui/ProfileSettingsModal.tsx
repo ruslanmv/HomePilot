@@ -7,6 +7,7 @@
  *   3. Integrations — secrets vault
  */
 import React, { useEffect, useMemo, useState } from 'react'
+import { useAuth } from './components/AuthGate'
 import type { UserProfile, SecretListItem, MemoryItem } from './profileApi'
 import {
   // Legacy (global — single-user / API-key mode)
@@ -167,6 +168,7 @@ export default function ProfileSettingsModal({
   token?: string
 }) {
   const [tab, setTab] = useState<TabKey>('profile')
+  const { updateUser } = useAuth()
 
   // Resolve auth token (prop > localStorage)
   const authToken = tokenProp || localStorage.getItem('homepilot_auth_token') || ''
@@ -255,6 +257,11 @@ export default function ProfileSettingsModal({
         await saveProfile(backendUrl, apiKey, pToSave)
         await saveMemory(backendUrl, apiKey, memory)
       }
+      // Propagate display_name / email changes to AuthContext → sidebar updates live
+      updateUser({
+        display_name: profile.display_name,
+        email: profile.email,
+      })
       setSavedMsg(true)
       setTimeout(() => setSavedMsg(false), 2500)
     } catch (e: any) {
@@ -399,15 +406,8 @@ export default function ProfileSettingsModal({
                   avatarUrl={avatarUrl}
                   onAvatarChange={(url) => {
                     setAvatarUrl(url)
-                    // Sync to localStorage user data
-                    try {
-                      const saved = localStorage.getItem('homepilot_auth_user')
-                      if (saved) {
-                        const u = JSON.parse(saved)
-                        u.avatar_url = url
-                        localStorage.setItem('homepilot_auth_user', JSON.stringify(u))
-                      }
-                    } catch {}
+                    // Propagate to AuthContext → sidebar avatar updates live
+                    updateUser({ avatar_url: url })
                   }}
                 />
               )}

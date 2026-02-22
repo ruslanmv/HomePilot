@@ -866,10 +866,17 @@ function Sidebar({
   // Build AccountMenuUser from auth context (fallback for pre-auth setups)
   const currentUser = useMemo<AccountMenuUser>(() => {
     if (authUser) {
+      // Prefer display_name, but fall back to username if display_name is
+      // empty or still the generic default "User"
+      const effectiveName =
+        authUser.display_name && authUser.display_name !== 'User'
+          ? authUser.display_name
+          : authUser.username || authUser.display_name || 'User'
+
       return {
         id: authUser.id,
         username: authUser.username,
-        display_name: authUser.display_name,
+        display_name: effectiveName,
         email: authUser.email,
         avatar_url: authUser.avatar_url,
       }
@@ -877,7 +884,14 @@ function Sidebar({
     // Fallback: try localStorage (backward compat with non-auth setups)
     try {
       const raw = localStorage.getItem('homepilot_auth_user')
-      if (raw) return JSON.parse(raw)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        // Same logic: prefer real display_name over generic "User"
+        if (parsed.display_name === 'User' && parsed.username) {
+          parsed.display_name = parsed.username
+        }
+        return parsed
+      }
     } catch { /* ignore */ }
     return { id: '', username: 'User', display_name: 'User', email: '', avatar_url: '' }
   }, [authUser])

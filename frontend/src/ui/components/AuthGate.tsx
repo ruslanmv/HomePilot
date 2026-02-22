@@ -72,12 +72,15 @@ interface AuthContextValue {
   user: AuthUser | null
   token: string
   logout: () => Promise<void>
+  /** Merge partial updates into the current user (e.g. after avatar upload or profile save). */
+  updateUser: (partial: Partial<AuthUser>) => void
 }
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
   token: '',
   logout: async () => {},
+  updateUser: () => {},
 })
 
 export function useAuth(): AuthContextValue {
@@ -180,6 +183,18 @@ export default function AuthGate({ children }: AuthGateProps) {
     setState('ready')
   }
 
+  // Update user fields live (e.g. after avatar upload or display name change)
+  const updateUser = useCallback((partial: Partial<AuthUser>) => {
+    setUser(prev => {
+      if (!prev) return prev
+      const updated = { ...prev, ...partial }
+      localStorage.setItem(LS_USER_KEY, JSON.stringify(updated))
+      // Also update recent-users cache so the login screen shows fresh data
+      saveRecentUser(updated)
+      return updated
+    })
+  }, [])
+
   // Smooth logout — clears state and transitions to login screen without reload
   const logout = useCallback(async () => {
     const savedToken = localStorage.getItem(LS_TOKEN_KEY) || ''
@@ -255,7 +270,7 @@ export default function AuthGate({ children }: AuthGateProps) {
 
   // Authenticated and onboarded — render the main app with auth context
   return (
-    <AuthContext.Provider value={{ user, token, logout }}>
+    <AuthContext.Provider value={{ user, token, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   )
