@@ -18,6 +18,7 @@ import {
   saveMemory,
   deleteMemoryItem,
 } from './profileApi'
+import AvatarUploader from './components/AvatarUploader'
 import {
   COUNTRIES,
   LANGUAGES,
@@ -146,17 +147,24 @@ export default function ProfileSettingsModal({
   apiKey,
   nsfwMode,
   onClose,
+  token: tokenProp,
 }: {
   backendUrl: string
   apiKey: string
   nsfwMode: boolean
   onClose: () => void
+  /** Optional Bearer token for per-user endpoints. Falls back to localStorage. */
+  token?: string
 }) {
   const [tab, setTab] = useState<TabKey>('profile')
+
+  // Resolve auth token (prop > localStorage)
+  const authToken = tokenProp || localStorage.getItem('homepilot_auth_token') || ''
 
   const [profile, setProfile] = useState<UserProfile>(emptyProfile)
   const [secrets, setSecrets] = useState<SecretListItem[]>([])
   const [memory, setMemory] = useState<MemoryItem[]>([])
+  const [avatarUrl, setAvatarUrl] = useState('')
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -190,6 +198,14 @@ export default function ProfileSettingsModal({
       setSecrets(s)
       const m = await fetchMemory(backendUrl, apiKey)
       setMemory(m)
+      // Load avatar from stored user data (if available)
+      try {
+        const savedUser = localStorage.getItem('homepilot_auth_user')
+        if (savedUser) {
+          const u = JSON.parse(savedUser)
+          if (u.avatar_url) setAvatarUrl(u.avatar_url)
+        }
+      } catch {}
     } catch (e: any) {
       setErr(e?.message || String(e))
     } finally {
@@ -329,6 +345,27 @@ export default function ProfileSettingsModal({
           {/* ================================================================ */}
           {!loading && tab === 'profile' ? (
             <div className="space-y-5">
+              {/* Avatar upload — multi-user identity */}
+              {authToken && (
+                <AvatarUploader
+                  backendUrl={backendUrl}
+                  token={authToken}
+                  displayName={profile.display_name || 'User'}
+                  avatarUrl={avatarUrl}
+                  onAvatarChange={(url) => {
+                    setAvatarUrl(url)
+                    // Sync to localStorage user data
+                    try {
+                      const saved = localStorage.getItem('homepilot_auth_user')
+                      if (saved) {
+                        const u = JSON.parse(saved)
+                        u.avatar_url = url
+                        localStorage.setItem('homepilot_auth_user', JSON.stringify(u))
+                      }
+                    } catch {}
+                  }}
+                />
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input
                   className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-white/20"

@@ -6,7 +6,7 @@ Zero changes to existing single-user behavior: if no users exist,
 the system auto-creates a default user on first boot.
 
 Storage: SQLite (same DB as everything else).
-Passwords: optional, bcrypt-hashed when set.
+Passwords: bcrypt-hashed (preferred) or SHA-256+salt (legacy fallback).
 Tokens: random bearer tokens stored in user_sessions table.
 
 ADDITIVE ONLY — does not modify any existing module.
@@ -22,10 +22,18 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile, File
 from pydantic import BaseModel, Field
 
-from .config import SQLITE_PATH
+from .config import SQLITE_PATH, UPLOAD_DIR
+
+# Try to import bcrypt for stronger password hashing (preferred).
+# Falls back to SHA-256+salt if bcrypt is not installed.
+try:
+    import bcrypt
+    _HAS_BCRYPT = True
+except ImportError:
+    _HAS_BCRYPT = False
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -78,30 +86,59 @@ def ensure_users_tables() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Password hashing (simple SHA-256 + salt — no bcrypt dependency needed)
+# Password hashing — bcrypt preferred, SHA-256+salt legacy fallback
 # ---------------------------------------------------------------------------
 
 def _hash_password(password: str) -> str:
-    """Hash password with random salt. Returns 'salt:hash'."""
+    """Hash password. Uses bcrypt if available, else SHA-256+salt."""
     if not password:
         return ""
+    if _HAS_BCRYPT:
+        return "bcrypt:" + bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    # Fallback: SHA-256 + salt
     salt = secrets.token_hex(16)
     h = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
     return f"{salt}:{h}"
 
 
 def _verify_password(password: str, stored_hash: str) -> bool:
-    """Verify password against stored 'salt:hash'."""
+    """Verify password against stored hash. Supports both bcrypt and SHA-256+salt."""
     if not stored_hash:
         return not password  # No password set → only empty password matches
     if not password:
         return False
+    # bcrypt hashes start with "bcrypt:" prefix
+    if stored_hash.startswith("bcrypt:"):
+        if not _HAS_BCRYPT:
+            return False
+        return bcrypt.checkpw(password.encode(), stored_hash[7:].encode())
+    # Legacy SHA-256+salt: "salt:hash"
     parts = stored_hash.split(":", 1)
     if len(parts) != 2:
         return False
     salt, expected = parts
     h = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
     return h == expected
+
+
+def _upgrade_password_hash_if_needed(user_id: str, password: str, stored_hash: str) -> None:
+    """If password was verified with legacy SHA-256 and bcrypt is available, upgrade."""
+    if not _HAS_BCRYPT:
+        return
+    if stored_hash.startswith("bcrypt:"):
+        return  # Already bcrypt
+    if not password or not stored_hash:
+        return
+    new_hash = _hash_password(password)
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+        (new_hash, time.strftime("%Y-%m-%d %H:%M:%S"), user_id),
+    )
+    con.commit()
+    con.close()
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +163,7 @@ def _create_token(user_id: str) -> str:
 
 
 def _validate_token(token: str) -> Optional[Dict[str, Any]]:
-    """Validate a bearer token. Returns user dict or None."""
+    """Validate a bearer token. Checks expiry. Returns user dict or None."""
     if not token:
         return None
 
@@ -135,11 +172,13 @@ def _validate_token(token: str) -> Optional[Dict[str, Any]]:
     con.row_factory = sqlite3.Row
     cur = con.cursor()
 
+    now = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
     cur.execute("""
         SELECT u.* FROM users u
         JOIN user_sessions s ON s.user_id = u.id
         WHERE s.token = ?
-    """, (token,))
+          AND (s.expires_at IS NULL OR s.expires_at > ?)
+    """, (token, now))
 
     row = cur.fetchone()
     con.close()
@@ -336,6 +375,7 @@ def register(body: RegisterRequest):
             "username": user["username"],
             "display_name": user["display_name"],
             "email": user["email"],
+            "avatar_url": "",
             "onboarding_complete": False,
         },
         "token": token,
@@ -354,6 +394,9 @@ def login(body: LoginRequest):
     if not _verify_password(body.password, user.get("password_hash", "")):
         raise HTTPException(401, "Invalid username or password")
 
+    # Auto-upgrade legacy SHA-256 hashes to bcrypt on successful login
+    _upgrade_password_hash_if_needed(user["id"], body.password, user.get("password_hash", ""))
+
     token = _create_token(user["id"])
 
     return {
@@ -363,6 +406,7 @@ def login(body: LoginRequest):
             "username": user["username"],
             "display_name": user["display_name"],
             "email": user["email"],
+            "avatar_url": user.get("avatar_url", ""),
             "onboarding_complete": bool(user.get("onboarding_complete")),
         },
         "token": token,
@@ -402,6 +446,7 @@ def get_me(authorization: str = Header(default="")):
                     "username": users[0]["username"],
                     "display_name": users[0]["display_name"],
                     "email": users[0]["email"],
+                    "avatar_url": users[0].get("avatar_url", ""),
                     "onboarding_complete": bool(users[0].get("onboarding_complete")),
                 },
                 "token": auto_token,
@@ -415,6 +460,7 @@ def get_me(authorization: str = Header(default="")):
             "username": user["username"],
             "display_name": user["display_name"],
             "email": user["email"],
+            "avatar_url": user.get("avatar_url", ""),
             "onboarding_complete": bool(user.get("onboarding_complete")),
         },
     }
@@ -455,7 +501,7 @@ def complete_onboarding(body: OnboardingRequest, authorization: str = Header(def
     con.commit()
     con.close()
 
-    # Also update the profile.json with onboarding data (bridge to existing system)
+    # Also update the global profile.json (bridge to existing single-user system)
     try:
         from .profile import _data_root, _atomic_write_json, _read_json, PROFILE_FILE
         root = _data_root()
@@ -470,12 +516,27 @@ def complete_onboarding(body: OnboardingRequest, authorization: str = Header(def
     except Exception:
         pass  # Non-fatal — profile sync is best-effort
 
+    # Also sync to per-user profile store (multi-user aware)
+    try:
+        from .user_profile_store import ensure_user_profile_tables, _save_user_profile, _get_user_profile
+        ensure_user_profile_tables()
+        user_profile = _get_user_profile(user["id"])
+        if body.display_name:
+            user_profile["display_name"] = body.display_name.strip()
+        if body.preferred_tone:
+            user_profile["preferred_tone"] = body.preferred_tone
+        user_profile["personalization_enabled"] = True
+        _save_user_profile(user["id"], user_profile)
+    except Exception:
+        pass  # Non-fatal — per-user profile sync is best-effort
+
     return {
         "ok": True,
         "user": {
             "id": user["id"],
             "username": user["username"],
             "display_name": body.display_name.strip() or user["display_name"],
+            "avatar_url": user.get("avatar_url", ""),
             "onboarding_complete": True,
         },
     }
@@ -491,3 +552,106 @@ def get_users():
         "users": users,
         "count": len(users),
     }
+
+
+# ---------------------------------------------------------------------------
+# Avatar upload
+# ---------------------------------------------------------------------------
+
+@router.put("/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    authorization: str = Header(default=""),
+):
+    """Upload or replace user avatar image. Stores in uploads dir, updates users.avatar_url."""
+    token = authorization.replace("Bearer ", "").strip()
+    user = _validate_token(token) if token else None
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    # Validate file type
+    ext = os.path.splitext(file.filename or "")[-1].lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise HTTPException(400, "Unsupported image format. Use PNG, JPG, or WebP.")
+
+    # Read file (limit 5MB for avatars)
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(400, "Avatar image must be under 5MB")
+
+    # Determine upload directory (reuse existing upload path logic)
+    upload_dir = UPLOAD_DIR
+    if not os.path.isabs(upload_dir):
+        import pathlib
+        _backend_dir = pathlib.Path(__file__).resolve().parents[1]
+        upload_dir = str(_backend_dir / "data" / "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Save with unique name
+    filename = f"avatar_{user['id']}_{uuid.uuid4().hex[:8]}{ext}"
+    filepath = os.path.join(upload_dir, filename)
+    with open(filepath, "wb") as f:
+        f.write(contents)
+
+    # Build URL (relative to /files/ static mount)
+    avatar_url = f"/files/{filename}"
+
+    # Delete old avatar file if it exists (cleanup)
+    old_url = user.get("avatar_url", "")
+    if old_url and old_url.startswith("/files/"):
+        old_path = os.path.join(upload_dir, old_url.replace("/files/", "", 1))
+        try:
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        except Exception:
+            pass  # Non-fatal
+
+    # Update DB
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "UPDATE users SET avatar_url = ?, updated_at = ? WHERE id = ?",
+        (avatar_url, time.strftime("%Y-%m-%d %H:%M:%S"), user["id"]),
+    )
+    con.commit()
+    con.close()
+
+    return {"ok": True, "avatar_url": avatar_url}
+
+
+@router.delete("/avatar")
+def delete_avatar(authorization: str = Header(default="")):
+    """Remove user avatar."""
+    token = authorization.replace("Bearer ", "").strip()
+    user = _validate_token(token) if token else None
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    # Delete file
+    old_url = user.get("avatar_url", "")
+    if old_url and old_url.startswith("/files/"):
+        upload_dir = UPLOAD_DIR
+        if not os.path.isabs(upload_dir):
+            import pathlib
+            _backend_dir = pathlib.Path(__file__).resolve().parents[1]
+            upload_dir = str(_backend_dir / "data" / "uploads")
+        old_path = os.path.join(upload_dir, old_url.replace("/files/", "", 1))
+        try:
+            if os.path.exists(old_path):
+                os.remove(old_path)
+        except Exception:
+            pass
+
+    # Clear in DB
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "UPDATE users SET avatar_url = '', updated_at = ? WHERE id = ?",
+        (time.strftime("%Y-%m-%d %H:%M:%S"), user["id"]),
+    )
+    con.commit()
+    con.close()
+
+    return {"ok": True}

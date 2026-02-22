@@ -14,11 +14,12 @@ import React, { useEffect, useState } from 'react'
 import AuthScreen from './AuthScreen'
 import OnboardingWizard from './OnboardingWizard'
 
-interface AuthUser {
+export interface AuthUser {
   id: string
   username: string
   display_name: string
   email: string
+  avatar_url: string
   onboarding_complete: boolean
 }
 

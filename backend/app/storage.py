@@ -150,6 +150,17 @@ def init_db():
     from .users import ensure_users_tables
     ensure_users_tables()
 
+    # Additive: Per-user profile, secrets, memory tables
+    from .user_profile_store import ensure_user_profile_tables
+    ensure_user_profile_tables()
+
+    # Additive: user_id column on messages for multi-user data scoping
+    try:
+        cur.execute("ALTER TABLE messages ADD COLUMN user_id TEXT DEFAULT NULL")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
     con.commit()
     con.close()
 
