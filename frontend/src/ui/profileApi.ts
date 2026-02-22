@@ -170,7 +170,7 @@ function bearerHeaders(token: string) {
 }
 
 export async function fetchUserProfile(backendUrl: string, token: string) {
-  const res = await fetch(`${backendUrl}/v1/user-profile`, { headers: bearerHeaders(token) })
+  const res = await fetch(`${backendUrl}/v1/user-profile`, { headers: bearerHeaders(token), credentials: 'include' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const data = await res.json()
   if (!data.ok) throw new Error(data.message || 'Failed to load user profile')
@@ -181,6 +181,7 @@ export async function saveUserProfile(backendUrl: string, token: string, profile
   const res = await fetch(`${backendUrl}/v1/user-profile`, {
     method: 'PUT',
     headers: bearerHeaders(token),
+    credentials: 'include',
     body: JSON.stringify(profile),
   })
   if (!res.ok) {
@@ -263,6 +264,7 @@ export async function uploadAvatar(backendUrl: string, token: string, file: File
   const res = await fetch(`${backendUrl}/v1/auth/avatar`, {
     method: 'PUT',
     headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    credentials: 'include',
     body: form,
   })
   if (!res.ok) {
@@ -278,6 +280,7 @@ export async function deleteAvatar(backendUrl: string, token: string) {
   const res = await fetch(`${backendUrl}/v1/auth/avatar`, {
     method: 'DELETE',
     headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+    credentials: 'include',
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const data = await res.json()

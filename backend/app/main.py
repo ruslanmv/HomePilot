@@ -166,6 +166,10 @@ app.include_router(users_router)
 # Include Per-User Profile Store routes (/v1/user-profile/*, /v1/user-memory/*)
 app.include_router(user_profile_store_router)
 
+# Include Secure File Storage routes (/v1/files/upload, /files/{asset_id})
+from .files import router as files_router
+app.include_router(files_router)
+
 
 # ----------------------------
 # ComfyUI image proxy
@@ -422,14 +426,12 @@ def _ensure_db_path_is_writable():
 
 def _ensure_static_mount() -> None:
     """
-    StaticFiles validates the directory at mount time,
-    so mount only after ensuring the directory exists.
+    Legacy StaticFiles mount replaced by secure files router (backend/app/files.py).
+    The files router serves /files/{asset_id} with ownership checks and also
+    provides a legacy fallback for /files/{filename} paths.
+    UPLOAD_PATH is still created for backward compatibility.
     """
-    # idempotent mount
-    for route in app.router.routes:
-        if getattr(route, "name", None) == "files":
-            return
-    app.mount("/files", StaticFiles(directory=str(UPLOAD_PATH)), name="files")
+    UPLOAD_PATH.mkdir(parents=True, exist_ok=True)
 
 
 # ----------------------------
@@ -1893,9 +1895,13 @@ def _scoped_user_or_none(authorization: str = "") -> Optional[Dict[str, Any]]:
     - No token + single user -> return default user (backward compat).
     - No token + multiple users -> raise 401.
     """
-    from .users import ensure_users_tables, get_current_user, get_or_create_default_user, count_users
+    from .users import ensure_users_tables, _validate_token, get_or_create_default_user, count_users
     ensure_users_tables()
-    user = get_current_user(authorization=authorization)
+    # Extract token from Authorization header (same logic as get_current_user)
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    user = _validate_token(token) if token else None
     if user:
         return user
     if count_users() > 1:
@@ -2780,6 +2786,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default="")) -> JSONResp
       { conversation_id, text, media }
     """
     # Enterprise: bind conversation to authenticated user (prevents cross-user leakage)
+    user = None
     try:
         from .storage import ensure_conversation_owner
         user = _scoped_user_or_none(authorization=authorization)
@@ -3017,9 +3024,10 @@ async def chat(inp: ChatIn, authorization: str = Header(default="")) -> JSONResp
 
 
 @app.post("/upload", dependencies=[Depends(require_api_key)])
-async def upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+async def upload(request: Request, file: UploadFile = File(...), authorization: str = Header(default="")) -> JSONResponse:
     """
     Stream uploads to disk (avoid reading entire file in memory).
+    Enterprise: registers file as a user-owned asset when auth is available.
     """
     filename = file.filename or "upload.png"
     ext = os.path.splitext(filename)[1].lower()[:10]
@@ -3027,8 +3035,26 @@ async def upload(request: Request, file: UploadFile = File(...)) -> JSONResponse
         ext = ".png"
 
     max_bytes = int(MAX_UPLOAD_MB) * 1024 * 1024
-    name = f"{uuidlib.uuid4().hex}{ext}"
-    path = UPLOAD_PATH / name
+
+    # Resolve user for per-user storage
+    _uid = None
+    try:
+        user = _scoped_user_or_none(authorization=authorization)
+        _uid = user["id"] if user else None
+    except Exception:
+        pass
+
+    if _uid:
+        # Secure path: store under per-user directory and register asset
+        from .files import _ensure_user_dir, _upload_root, insert_asset
+        import mimetypes as _mt
+        folder = _ensure_user_dir(_uid, "upload")
+        name = f"{uuidlib.uuid4().hex}{ext}"
+        path = folder / name
+    else:
+        # Legacy path: flat UPLOAD_PATH
+        name = f"{uuidlib.uuid4().hex}{ext}"
+        path = UPLOAD_PATH / name
 
     written = 0
     chunk_size = 1024 * 1024  # 1MB
@@ -3050,7 +3076,24 @@ async def upload(request: Request, file: UploadFile = File(...)) -> JSONResponse
         await file.close()
 
     base = _base_url_from_request(request)
-    return JSONResponse(status_code=201, content={"url": f"{base}/files/{name}"})
+
+    if _uid:
+        # Register as a secure asset
+        from .files import _upload_root, insert_asset
+        import mimetypes as _mt
+        rel_path = str(path.relative_to(_upload_root()))
+        mime = _mt.guess_type(str(path))[0] or "application/octet-stream"
+        asset_id = insert_asset(
+            user_id=_uid,
+            kind="upload",
+            rel_path=rel_path,
+            mime=mime,
+            size_bytes=written,
+            original_name=filename,
+        )
+        return JSONResponse(status_code=201, content={"url": f"{base}/files/{asset_id}"})
+    else:
+        return JSONResponse(status_code=201, content={"url": f"{base}/files/{name}"})
 
 
 # ----------------------------

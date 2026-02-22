@@ -217,6 +217,7 @@ async function postJson<T>(baseUrl: string, path: string, body: any, apiKey?: st
       'Content-Type': 'application/json',
       ...(apiKey ? { 'x-api-key': apiKey } : {}),
     },
+    credentials: 'include',
     body: JSON.stringify(body),
   })
 

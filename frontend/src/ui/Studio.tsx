@@ -134,6 +134,7 @@ async function fetchJson<T>(baseUrl: string, path: string, apiKey?: string): Pro
       'Content-Type': 'application/json',
       ...(apiKey ? { 'x-api-key': apiKey } : {}),
     },
+    credentials: 'include',
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -150,6 +151,7 @@ async function postJson<T>(baseUrl: string, path: string, body: any, apiKey?: st
       'Content-Type': 'application/json',
       ...(apiKey ? { 'x-api-key': apiKey } : {}),
     },
+    credentials: 'include',
     body: JSON.stringify(body),
   })
   if (!res.ok) {
@@ -167,6 +169,7 @@ async function deleteJson<T>(baseUrl: string, path: string, apiKey?: string): Pr
       'Content-Type': 'application/json',
       ...(apiKey ? { 'x-api-key': apiKey } : {}),
     },
+    credentials: 'include',
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')

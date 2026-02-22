@@ -1641,6 +1641,7 @@ async function postJson<T>(
       'Content-Type': 'application/json',
       ...(headers ?? {}),
     },
+    credentials: 'include',
     body: JSON.stringify(body),
   })
   if (!res.ok) {
@@ -1663,6 +1664,7 @@ async function postForm<T>(
       ...(headers ?? {}),
       // NOTE: do NOT set Content-Type for FormData; browser sets boundary.
     },
+    credentials: 'include',
     body: form,
   })
   if (!res.ok) {

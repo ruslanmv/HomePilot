@@ -110,6 +110,7 @@ export default function AuthGate({ children }: AuthGateProps) {
     try {
       const res = await fetch(`${backendUrl}/v1/auth/me`, {
         headers: savedToken ? { 'Authorization': `Bearer ${savedToken}` } : {},
+        credentials: 'include',
       })
 
       if (!res.ok) {
@@ -206,6 +207,7 @@ export default function AuthGate({ children }: AuthGateProps) {
         await fetch(`${backendUrl}/v1/auth/logout`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${savedToken}` },
+          credentials: 'include',
         })
       } catch { /* non-fatal */ }
     }

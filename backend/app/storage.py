@@ -255,6 +255,29 @@ def init_db():
     except Exception as e:
         print(f"[DB] conversation ownership backfill skipped: {e}")
 
+    # -----------------------------------------------------------------------
+    # Enterprise: file ownership (uploads / generated images / project assets)
+    # -----------------------------------------------------------------------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS file_assets(
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            rel_path TEXT NOT NULL,
+            mime TEXT DEFAULT '',
+            size_bytes INTEGER DEFAULT 0,
+            original_name TEXT DEFAULT '',
+            project_id TEXT DEFAULT '',
+            conversation_id TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_file_assets_user ON file_assets(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_file_assets_user_kind ON file_assets(user_id, kind)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_file_assets_project ON file_assets(project_id)")
+
     con.commit()
     con.close()
 
