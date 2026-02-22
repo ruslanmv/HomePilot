@@ -27,6 +27,7 @@ import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './Se
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
+import { useAuth } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
@@ -860,35 +861,32 @@ function Sidebar({
 }) {
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
+  const { user: authUser, logout } = useAuth()
 
-  // Read current user from localStorage (set by AuthGate on login)
+  // Build AccountMenuUser from auth context (fallback for pre-auth setups)
   const currentUser = useMemo<AccountMenuUser>(() => {
+    if (authUser) {
+      return {
+        id: authUser.id,
+        username: authUser.username,
+        display_name: authUser.display_name,
+        email: authUser.email,
+        avatar_url: authUser.avatar_url,
+      }
+    }
+    // Fallback: try localStorage (backward compat with non-auth setups)
     try {
       const raw = localStorage.getItem('homepilot_auth_user')
       if (raw) return JSON.parse(raw)
     } catch { /* ignore */ }
     return { id: '', username: 'User', display_name: 'User', email: '', avatar_url: '' }
-  }, [])
+  }, [authUser])
 
-  // Logout: clear tokens, call backend, reload to AuthGate
+  // Smooth logout via AuthContext (no page reload)
   const handleLogout = useCallback(async () => {
     setShowAccountMenu(false)
-    const backendUrl = localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
-    const token = localStorage.getItem('homepilot_auth_token') || ''
-    // Fire-and-forget backend invalidation
-    if (token) {
-      try {
-        await fetch(`${backendUrl}/v1/auth/logout`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` },
-        })
-      } catch { /* non-fatal */ }
-    }
-    localStorage.removeItem('homepilot_auth_token')
-    localStorage.removeItem('homepilot_auth_user')
-    // Hard reload → AuthGate picks up "no token" → shows login
-    window.location.reload()
-  }, [])
+    await logout()
+  }, [logout])
 
   return (
     <aside className="w-[280px] flex-shrink-0 flex flex-col h-full bg-black border-r border-white/5 py-4 px-3 gap-3 relative">
@@ -957,11 +955,11 @@ function Sidebar({
         />
       </div>
 
-      {/* User footer — avatar click opens AccountMenu */}
-      <div className="mt-auto px-2 pt-4 border-t border-white/5 flex items-center justify-between">
+      {/* User footer — avatar click opens AccountMenu (settings accessible via menu) */}
+      <div className="mt-auto px-2 pt-4 border-t border-white/5">
         <button
           type="button"
-          className="flex items-center gap-3 min-w-0 hover:bg-white/5 rounded-xl px-1.5 py-1.5 transition-colors cursor-pointer"
+          className="w-full flex items-center gap-3 min-w-0 hover:bg-white/5 rounded-xl px-2 py-2 transition-colors cursor-pointer"
           onClick={() => setShowAccountMenu((v) => !v)}
           aria-haspopup="menu"
           aria-expanded={showAccountMenu}
@@ -972,18 +970,13 @@ function Sidebar({
             avatarUrl={currentUser.avatar_url}
             size={32}
           />
-          <div className="text-sm font-medium text-white/90 truncate">
+          <div className="text-sm font-medium text-white/90 truncate flex-1 text-left">
             {currentUser.display_name || currentUser.username}
           </div>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setShowSettings((v) => !v)}
-          className="text-white/40 hover:text-white p-2 transition-colors rounded-xl hover:bg-white/5"
-          aria-label="Settings"
-        >
-          <Settings size={18} />
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white/30 shrink-0">
+            <path d="M3 5L6 2L9 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M3 7L6 10L9 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         </button>
       </div>
 

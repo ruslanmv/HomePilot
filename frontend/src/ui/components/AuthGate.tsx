@@ -9,8 +9,12 @@
  * 5. If authenticated and onboarded → render children (the main App)
  *
  * Single-user with no password: auto-login, no friction.
+ *
+ * Provides AuthContext so child components (e.g. App.tsx) can call
+ * `logout()` for a smooth transition back to the login screen
+ * without a hard page reload.
  */
-import React, { useEffect, useState } from 'react'
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import AuthScreen from './AuthScreen'
 import OnboardingWizard from './OnboardingWizard'
 
@@ -23,21 +27,74 @@ export interface AuthUser {
   onboarding_complete: boolean
 }
 
-interface AuthGateProps {
-  children: React.ReactNode
+// ── Recent-users helpers (localStorage-backed) ────────────────────────────────
+export interface RecentUser {
+  username: string
+  display_name: string
+  avatar_url: string
+  lastLogin: number // epoch ms
 }
 
 const LS_TOKEN_KEY = 'homepilot_auth_token'
 const LS_USER_KEY = 'homepilot_auth_user'
+const LS_RECENT_USERS_KEY = 'homepilot_recent_users'
 
 function getBackendUrl(): string {
   return localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
+}
+
+function loadRecentUsers(): RecentUser[] {
+  try {
+    const raw = localStorage.getItem(LS_RECENT_USERS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as RecentUser[]
+    // Sort by most recent first, keep max 5
+    return parsed.sort((a, b) => b.lastLogin - a.lastLogin).slice(0, 5)
+  } catch {
+    return []
+  }
+}
+
+function saveRecentUser(user: AuthUser) {
+  const existing = loadRecentUsers().filter(u => u.username !== user.username)
+  const entry: RecentUser = {
+    username: user.username,
+    display_name: user.display_name,
+    avatar_url: user.avatar_url,
+    lastLogin: Date.now(),
+  }
+  const updated = [entry, ...existing].slice(0, 5)
+  localStorage.setItem(LS_RECENT_USERS_KEY, JSON.stringify(updated))
+}
+
+// ── Auth context ──────────────────────────────────────────────────────────────
+interface AuthContextValue {
+  user: AuthUser | null
+  token: string
+  logout: () => Promise<void>
+}
+
+const AuthContext = createContext<AuthContextValue>({
+  user: null,
+  token: '',
+  logout: async () => {},
+})
+
+export function useAuth(): AuthContextValue {
+  return useContext(AuthContext)
+}
+
+// ── AuthGate component ────────────────────────────────────────────────────────
+interface AuthGateProps {
+  children: React.ReactNode
 }
 
 export default function AuthGate({ children }: AuthGateProps) {
   const [state, setState] = useState<'loading' | 'login' | 'onboarding' | 'ready'>('loading')
   const [user, setUser] = useState<AuthUser | null>(null)
   const [token, setToken] = useState<string>('')
+  const [loggedOutMessage, setLoggedOutMessage] = useState<string>('')
+  const [recentUsers, setRecentUsers] = useState<RecentUser[]>([])
   const backendUrl = getBackendUrl()
 
   useEffect(() => {
@@ -46,7 +103,6 @@ export default function AuthGate({ children }: AuthGateProps) {
 
   async function checkAuth() {
     const savedToken = localStorage.getItem(LS_TOKEN_KEY) || ''
-    const savedUser = localStorage.getItem(LS_USER_KEY)
 
     try {
       const res = await fetch(`${backendUrl}/v1/auth/me`, {
@@ -70,6 +126,7 @@ export default function AuthGate({ children }: AuthGateProps) {
 
       if (data.needs_login) {
         // Multi-user, need to log in
+        setRecentUsers(loadRecentUsers())
         setState('login')
         return
       }
@@ -81,6 +138,7 @@ export default function AuthGate({ children }: AuthGateProps) {
         setToken(t)
         if (t) localStorage.setItem(LS_TOKEN_KEY, t)
         localStorage.setItem(LS_USER_KEY, JSON.stringify(u))
+        saveRecentUser(u)
 
         if (!u.onboarding_complete) {
           setState('onboarding')
@@ -101,8 +159,10 @@ export default function AuthGate({ children }: AuthGateProps) {
   function handleAuthenticated(u: AuthUser, t: string) {
     setUser(u)
     setToken(t)
+    setLoggedOutMessage('')
     localStorage.setItem(LS_TOKEN_KEY, t)
     localStorage.setItem(LS_USER_KEY, JSON.stringify(u))
+    saveRecentUser(u)
 
     if (!u.onboarding_complete) {
       setState('onboarding')
@@ -119,6 +179,37 @@ export default function AuthGate({ children }: AuthGateProps) {
     }
     setState('ready')
   }
+
+  // Smooth logout — clears state and transitions to login screen without reload
+  const logout = useCallback(async () => {
+    const savedToken = localStorage.getItem(LS_TOKEN_KEY) || ''
+    const currentDisplayName = user?.display_name || user?.username || ''
+
+    // Fire-and-forget backend invalidation
+    if (savedToken) {
+      try {
+        await fetch(`${backendUrl}/v1/auth/logout`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${savedToken}` },
+        })
+      } catch { /* non-fatal */ }
+    }
+
+    // Clear stored credentials
+    localStorage.removeItem(LS_TOKEN_KEY)
+    localStorage.removeItem(LS_USER_KEY)
+
+    // Transition smoothly
+    setUser(null)
+    setToken('')
+    setLoggedOutMessage(
+      currentDisplayName
+        ? `Signed out as ${currentDisplayName}`
+        : 'Signed out successfully'
+    )
+    setRecentUsers(loadRecentUsers())
+    setState('login')
+  }, [user, backendUrl])
 
   // Loading spinner
   if (state === 'loading') {
@@ -144,6 +235,8 @@ export default function AuthGate({ children }: AuthGateProps) {
       <AuthScreen
         backendUrl={backendUrl}
         onAuthenticated={handleAuthenticated}
+        logoutMessage={loggedOutMessage}
+        recentUsers={recentUsers}
       />
     )
   }
@@ -160,6 +253,10 @@ export default function AuthGate({ children }: AuthGateProps) {
     )
   }
 
-  // Authenticated and onboarded — render the main app
-  return <>{children}</>
+  // Authenticated and onboarded — render the main app with auth context
+  return (
+    <AuthContext.Provider value={{ user, token, logout }}>
+      {children}
+    </AuthContext.Provider>
+  )
 }
