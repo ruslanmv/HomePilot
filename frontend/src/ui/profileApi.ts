@@ -16,6 +16,7 @@ export type UserProfile = {
   locale: string
   timezone: string
   bio: string
+  birthday: string // ISO date e.g. "1990-05-15" (YYYY-MM-DD)
 
   personalization_enabled: boolean
   likes: string[]

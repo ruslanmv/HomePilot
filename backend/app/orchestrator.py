@@ -1805,6 +1805,50 @@ async def orchestrate(
         except Exception as e:
             print(f"[COMPANION] Warning: LTM/session injection failed (non-fatal): {e}")
 
+    # ================================================================
+    # USER PROFILE INJECTION (additive — gives persona awareness of user identity)
+    #
+    # When a user_id is available, read their profile (name, birthday, pronouns,
+    # preferences) and inject it so the persona can address them by name, know
+    # their age, respect boundaries, etc.
+    # ================================================================
+    if user_id:
+        try:
+            from .user_context import build_user_context_for_ai
+            from .user_profile_store import _get_user_profile, ensure_user_profile_tables, _get_db_path
+            import sqlite3 as _sqlite3
+
+            ensure_user_profile_tables()
+            _user_profile = _get_user_profile(user_id)
+            _user_memory: dict = {}
+
+            if _user_profile:
+                # Read per-user memory items
+                try:
+                    _up_path = _get_db_path()
+                    _up_con = _sqlite3.connect(_up_path)
+                    _up_con.row_factory = _sqlite3.Row
+                    _up_cur = _up_con.cursor()
+                    _up_cur.execute(
+                        "SELECT * FROM user_memory_items WHERE user_id = ? ORDER BY pinned DESC, importance DESC",
+                        (user_id,),
+                    )
+                    _up_rows = _up_cur.fetchall()
+                    _up_con.close()
+                    _user_memory = {"items": [dict(r) for r in _up_rows]}
+                except Exception:
+                    pass
+
+                if _user_profile.get("personalization_enabled", True):
+                    _user_ctx = build_user_context_for_ai(
+                        _user_profile, _user_memory, nsfw_mode=bool(nsfw_mode)
+                    )
+                    if _user_ctx and _user_ctx.strip():
+                        system = system + "\n\n" + _user_ctx.strip()
+                        print(f"[COMPANION] User profile injected: {len(_user_ctx)} chars")
+        except Exception as e:
+            print(f"[COMPANION] Warning: user profile injection failed (non-fatal): {e}")
+
     # Additive: optional external context injection (e.g., Smart multimodal topology
     # passes vision analysis here so the main LLM can reason over it)
     if extra_system_context:

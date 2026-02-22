@@ -154,6 +154,7 @@ class UserProfileData(BaseModel):
     locale: str = "en"
     timezone: str = ""
     bio: str = ""
+    birthday: str = ""  # ISO date string e.g. "1990-05-15" (YYYY-MM-DD)
 
     personalization_enabled: bool = True
     likes: list[str] = Field(default_factory=list)

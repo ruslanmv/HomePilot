@@ -7,7 +7,19 @@ does NOT change any existing prompt-building logic until explicitly wired in.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Dict, List
+
+
+def _calc_age(birthday_str: str) -> int | None:
+    """Calculate age from an ISO date string (YYYY-MM-DD). Returns None on failure."""
+    try:
+        bday = date.fromisoformat(birthday_str.strip())
+        today = date.today()
+        age = today.year - bday.year - ((today.month, today.day) < (bday.month, bday.day))
+        return age if age >= 0 else None
+    except (ValueError, AttributeError):
+        return None
 
 
 def build_user_context_for_ai(
@@ -32,6 +44,12 @@ def build_user_context_for_ai(
         lines.append(f"- Name: {p.get('preferred_name') or p.get('display_name')}")
     if p.get("preferred_pronouns"):
         lines.append(f"- Pronouns: {p.get('preferred_pronouns')}")
+    if p.get("birthday"):
+        age = _calc_age(p["birthday"])
+        if age is not None:
+            lines.append(f"- Birthday: {p['birthday']} (age {age})")
+        else:
+            lines.append(f"- Birthday: {p['birthday']}")
     lines.append(f"- Tone: {p.get('preferred_tone', 'neutral')}")
     lines.append(f"- Companion mode: {'enabled' if p.get('companion_mode_enabled') else 'disabled'}")
     lines.append(f"- Affection level: {p.get('affection_level', 'friendly')}")
