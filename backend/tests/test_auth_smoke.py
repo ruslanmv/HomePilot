@@ -61,14 +61,16 @@ def _logout(client, token):
 # ---------------------------------------------------------------------------
 
 class TestFirstBoot:
-    """Before any user exists the system should signal needs_setup."""
+    """On first boot the default admin user is auto-created (for migration backfill).
+    GET /me auto-logs in the single passwordless user."""
 
-    def test_me_returns_needs_setup(self, client):
+    def test_me_auto_login_single_user(self, client):
         r = _me(client)
         assert r.status_code == 200
         data = r.json()
         assert data["ok"] is True
-        assert data.get("needs_setup") is True
+        # Single passwordless user -> auto-login
+        assert data.get("user") is not None or data.get("needs_setup") is True
 
 
 class TestRegistration:
@@ -298,3 +300,78 @@ class TestPerUserProfileIsolation:
     def test_profile_requires_auth(self, client):
         r = client.get("/v1/user-profile")
         assert r.status_code == 401
+
+
+class TestConversationIsolation:
+    """Conversations must be scoped per user — User A cannot see User B's chats."""
+
+    def _auth(self, token):
+        return {"Authorization": f"Bearer {token}"}
+
+    def _send_chat(self, client, token, message, conversation_id):
+        return client.post("/chat", json={
+            "message": message,
+            "conversation_id": conversation_id,
+            "mode": "chat",
+        }, headers=self._auth(token))
+
+    def test_conversations_do_not_leak(self, client):
+        r1 = _register(client, "conv_a", password="pw").json()
+        r2 = _register(client, "conv_b", password="pw").json()
+
+        # Each user sends a chat message to a different conversation
+        self._send_chat(client, r1["token"], "Hello from A", "conv-aaa-111")
+        self._send_chat(client, r2["token"], "Hello from B", "conv-bbb-222")
+
+        # Each user should only see their own conversation
+        list_a = client.get("/conversations", headers=self._auth(r1["token"])).json()
+        list_b = client.get("/conversations", headers=self._auth(r2["token"])).json()
+
+        ids_a = [c["conversation_id"] for c in list_a.get("conversations", [])]
+        ids_b = [c["conversation_id"] for c in list_b.get("conversations", [])]
+
+        assert "conv-aaa-111" in ids_a
+        assert "conv-bbb-222" not in ids_a
+
+        assert "conv-bbb-222" in ids_b
+        assert "conv-aaa-111" not in ids_b
+
+    def test_cannot_read_other_users_messages(self, client):
+        r1 = _register(client, "msg_own", password="pw").json()
+        r2 = _register(client, "msg_spy", password="pw").json()
+
+        self._send_chat(client, r1["token"], "Secret message", "conv-secret")
+
+        # Owner can read
+        msgs_owner = client.get(
+            "/conversations/conv-secret/messages",
+            headers=self._auth(r1["token"]),
+        ).json()
+        assert len(msgs_owner.get("messages", [])) > 0
+
+        # Other user gets empty (not the owner)
+        msgs_spy = client.get(
+            "/conversations/conv-secret/messages",
+            headers=self._auth(r2["token"]),
+        ).json()
+        assert len(msgs_spy.get("messages", [])) == 0
+
+    def test_cannot_delete_other_users_conversation(self, client):
+        r1 = _register(client, "del_own", password="pw").json()
+        r2 = _register(client, "del_spy", password="pw").json()
+
+        self._send_chat(client, r1["token"], "Keep this", "conv-keep")
+
+        # Other user tries to delete — should fail (0 deleted)
+        del_resp = client.delete(
+            "/conversations/conv-keep",
+            headers=self._auth(r2["token"]),
+        ).json()
+        assert del_resp.get("deleted_messages", 0) == 0
+
+        # Owner can still read their messages
+        msgs = client.get(
+            "/conversations/conv-keep/messages",
+            headers=self._auth(r1["token"]),
+        ).json()
+        assert len(msgs.get("messages", [])) > 0

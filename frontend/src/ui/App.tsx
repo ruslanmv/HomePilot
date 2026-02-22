@@ -2055,8 +2055,13 @@ export default function App() {
   const canSend = useMemo(() => input.trim().length > 0, [input])
 
   const authHeaders = useMemo(() => {
+    const headers: Record<string, string> = {}
     const k = settings.apiKey.trim()
-    return k ? { 'x-api-key': k } : undefined
+    if (k) headers['x-api-key'] = k
+    // Multi-user: attach Bearer token so conversations are scoped per user
+    const token = localStorage.getItem('homepilot_auth_token') || ''
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    return Object.keys(headers).length ? headers : undefined
   }, [settings.apiKey])
 
   const onNewConversation = useCallback(() => {

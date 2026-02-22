@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -1886,34 +1886,73 @@ async def check_models_health(
         )
 
 
+def _scoped_user_or_none(authorization: str = "") -> Optional[Dict[str, Any]]:
+    """
+    Resolve the authenticated user for conversation scoping.
+    - Bearer token present -> return that user.
+    - No token + single user -> return default user (backward compat).
+    - No token + multiple users -> raise 401.
+    """
+    from .users import ensure_users_tables, get_current_user, get_or_create_default_user, count_users
+    ensure_users_tables()
+    user = get_current_user(authorization=authorization)
+    if user:
+        return user
+    if count_users() > 1:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return get_or_create_default_user()
+
+
 @app.get("/conversations")
-async def conversations(limit: int = Query(50, ge=1, le=200), project_id: Optional[str] = Query(None)) -> JSONResponse:
-    """List saved conversations (History/Today sidebar). Optionally filter by project_id."""
+async def conversations(
+    limit: int = Query(50, ge=1, le=200),
+    project_id: Optional[str] = Query(None),
+    authorization: str = Header(default=""),
+) -> JSONResponse:
+    """List saved conversations, scoped per user in multi-user mode."""
     try:
-        items = list_conversations(limit=limit, project_id=project_id)
+        user = _scoped_user_or_none(authorization=authorization)
+        uid = user["id"] if user else None
+        items = list_conversations(limit=limit, project_id=project_id, user_id=uid)
         return JSONResponse(status_code=200, content={"ok": True, "conversations": items})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to list conversations: {e}", code="conversations_error"))
 
 
 @app.get("/conversations/{conversation_id}/messages")
-async def conversation_messages(conversation_id: str, limit: int = Query(200, ge=1, le=1000)) -> JSONResponse:
-    """Load full message list for a conversation."""
+async def conversation_messages(
+    conversation_id: str,
+    limit: int = Query(200, ge=1, le=1000),
+    authorization: str = Header(default=""),
+) -> JSONResponse:
+    """Load full message list for a conversation (scoped per user)."""
     try:
-        msgs = get_messages(conversation_id, limit=limit)
+        user = _scoped_user_or_none(authorization=authorization)
+        uid = user["id"] if user else None
+        msgs = get_messages(conversation_id, limit=limit, user_id=uid)
         return JSONResponse(status_code=200, content={"ok": True, "conversation_id": conversation_id, "messages": msgs})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to load conversation: {e}", code="conversation_load_error"))
 
 
 @app.delete("/conversations/{conversation_id}")
-async def delete_conversation_endpoint(conversation_id: str) -> JSONResponse:
-    """Delete all messages and personality memory from a specific conversation."""
+async def delete_conversation_endpoint(
+    conversation_id: str,
+    authorization: str = Header(default=""),
+) -> JSONResponse:
+    """Delete a conversation (scoped per user)."""
     try:
-        deleted_count = delete_conversation(conversation_id)
-        # Also clear in-memory personality context (topics, emotions, engagement)
+        user = _scoped_user_or_none(authorization=authorization)
+        uid = user["id"] if user else None
+        deleted_count = delete_conversation(conversation_id, user_id=uid)
         clear_conversation_memory(conversation_id)
         return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted_count > 0, "deleted_messages": deleted_count, "conversation_id": conversation_id})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete conversation: {e}", code="delete_conversation_error"))
 
@@ -2713,12 +2752,23 @@ async def get_persona_memory_stats(
 # ----------------------------
 
 @app.post("/chat", dependencies=[Depends(require_api_key)])
-async def chat(inp: ChatIn) -> JSONResponse:
+async def chat(inp: ChatIn, authorization: str = Header(default="")) -> JSONResponse:
     """
     Unified chat endpoint with mode-aware routing.
     Stable response schema:
       { conversation_id, text, media }
     """
+    # Enterprise: bind conversation to authenticated user (prevents cross-user leakage)
+    try:
+        from .storage import ensure_conversation_owner
+        user = _scoped_user_or_none(authorization=authorization)
+        if user and inp.conversation_id:
+            ensure_conversation_owner(inp.conversation_id, user["id"])
+    except HTTPException:
+        pass  # Preserve legacy behavior in single-user mode
+    except Exception as e:
+        print(f"[CHAT] Warning: failed to bind conversation owner: {e}")
+
     # Debug: Log incoming parameters
     print(f"[CHAT ENDPOINT] imgModel received from frontend: '{inp.imgModel}' (type: {type(inp.imgModel).__name__ if inp.imgModel is not None else 'None'})")
     print(f"[CHAT ENDPOINT] personalityId: {inp.personalityId!r}, ollama_model: {inp.ollama_model!r}")
