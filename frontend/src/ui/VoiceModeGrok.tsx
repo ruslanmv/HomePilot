@@ -127,6 +127,7 @@ function parseInlineMarkdown(
           className="inline-block w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
           loading="lazy"
           onClick={() => onImageClick?.(url)}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
         />
       );
     } else {
@@ -143,6 +144,7 @@ function parseInlineMarkdown(
             className="inline-block w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
             loading="lazy"
             onClick={() => onImageClick?.(url)}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
           />
         );
       } else {
@@ -438,6 +440,7 @@ function RenderTypedMessage({
               className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
               loading="lazy"
               onClick={() => onImageClick?.(src)}
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
             />
           ))}
         </div>

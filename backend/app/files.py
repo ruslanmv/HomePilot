@@ -250,6 +250,24 @@ def _is_public_file(name: str) -> bool:
     return name.startswith("avatar_") and "/" not in name and ".." not in name
 
 
+def _find_persona_file(filename: str) -> Optional[Path]:
+    """
+    Search all project appearance directories for a file by name.
+
+    Handles the case where selected_filename was stored with a stale
+    project ID (e.g. from a project duplication or re-creation) — the
+    file exists on disk under a different project folder.
+    """
+    projects_dir = _upload_root() / "projects"
+    if not projects_dir.is_dir():
+        return None
+    # Search: projects/*/persona/appearance/<filename>
+    for match in projects_dir.glob(f"*/persona/appearance/{filename}"):
+        if match.is_file():
+            return match
+    return None
+
+
 @router.get("/files/{asset_id}")
 def download_file(
     asset_id: str,
@@ -334,6 +352,12 @@ def download_file_legacy(
         if abs_path.exists() and abs_path.is_file():
             mime = mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"
             return FileResponse(path=str(abs_path), media_type=mime, filename=safe.name)
+        # Fallback: the stored path may reference a stale project ID.
+        # Search all project appearance dirs for the file by name.
+        found = _find_persona_file(safe.name)
+        if found:
+            mime = mimetypes.guess_type(str(found))[0] or "application/octet-stream"
+            return FileResponse(path=str(found), media_type=mime, filename=safe.name)
         raise HTTPException(404, "Not found")
 
     user = _resolve_user(authorization, homepilot_session, token_param=token)
@@ -342,7 +366,11 @@ def download_file_legacy(
 
     abs_path = _upload_root() / safe
     if not abs_path.exists() or not abs_path.is_file():
-        raise HTTPException(404, "Not found")
+        # Fallback: search project appearance dirs for the file by name
+        found = _find_persona_file(safe.name) if "persona" in safe.parts else None
+        if not found:
+            raise HTTPException(404, "Not found")
+        abs_path = found
 
     mime = mimetypes.guess_type(str(abs_path))[0] or "application/octet-stream"
     return FileResponse(

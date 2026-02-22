@@ -602,6 +602,7 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
     conversation_id = payload.get("conversation_id", "")
     project_id = payload.get("project_id", "default")
     provider = payload.get("provider", "openai_compat")
+    user_id = payload.get("user_id")
 
     if not message:
         return {
@@ -939,6 +940,15 @@ You have access to the project's context. When relevant context from the knowled
     else:
         # Fallback if project_id is invalid or 'default'
         system_instruction += f"\n(Context: Operating in project scope '{project_id}')"
+
+    # Inject user context (name, preferences, boundaries) so the persona knows the user
+    try:
+        from .agent_chat import _get_user_context
+        user_ctx = _get_user_context(project_id, user_id=user_id)
+        if user_ctx:
+            system_instruction += f"\n\n--- USER CONTEXT ---\n{user_ctx}\n--- END USER CONTEXT ---\n"
+    except Exception:
+        pass  # Non-fatal: user context is optional
 
     # Voice mode: add brevity hint for natural spoken conversation
     is_voice = payload.get("mode", "").strip().lower() == "voice"

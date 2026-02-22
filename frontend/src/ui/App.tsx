@@ -1578,6 +1578,7 @@ function ChatState({
                           onClick={() => setLightbox(resolved)}
                           className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
                           alt={`image ${i}`}
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                         />
                       )
                     })}

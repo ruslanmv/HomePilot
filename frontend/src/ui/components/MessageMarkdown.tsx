@@ -147,6 +147,7 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
                 onClick={resolved ? () => onImageClick?.(resolved) : undefined}
                 className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
                 loading="lazy"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
               />
             )
           },
