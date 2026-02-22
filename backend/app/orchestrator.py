@@ -740,6 +740,7 @@ async def orchestrate(
     personality_id: Optional[str] = None,  # Backend personality agent id (e.g. 'therapist')
     memory_engine: Optional[str] = None,  # Memory engine: off | v1 | v2 (brain-inspired)
     extra_system_context: Optional[str] = None,  # Smart topology: vision analysis or other context
+    user_id: Optional[str] = None,  # Per-user isolation: scope memory reads/writes
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -1774,14 +1775,14 @@ async def orchestrate(
         try:
             ltm_context = ""
             if _mem_engine == "v1":
-                # V1 Legacy: unchanged behavior
-                ltm_context = persona_ltm_mod.build_ltm_context(_project_id_for_session)
+                # V1 Legacy: user-scoped behavior
+                ltm_context = persona_ltm_mod.build_ltm_context(_project_id_for_session, user_id=user_id)
                 if ltm_context:
                     system = system + "\n\n" + ltm_context
             elif _mem_engine == "v2":
                 # V2 Brain-inspired: decay + reinforcement + consolidation
                 v2 = get_memory_v2()
-                v2_context = v2.build_context(str(_project_id_for_session), query=(user_text or ""))
+                v2_context = v2.build_context(str(_project_id_for_session), query=(user_text or ""), user_id=user_id)
                 if v2_context and v2_context.strip():
                     system = system + "\n\n" + v2_context
                 ltm_context = v2_context or ""
@@ -1903,7 +1904,7 @@ async def orchestrate(
     try:
         if _mem_engine == "v2" and _project_id_for_session:
             v2 = get_memory_v2()
-            v2.ingest_user_text(str(_project_id_for_session), user_text or "")
+            v2.ingest_user_text(str(_project_id_for_session), user_text or "", user_id=user_id)
     except Exception:
         pass  # Never break the response on memory errors
 
@@ -2033,7 +2034,9 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 reference_image_url=payload.get("reference_image_url"),
                 chat_model=_chat_model,
                 personality_id=payload.get("personalityId"),
+                memory_engine=payload.get("memoryEngine"),
                 extra_system_context=payload.get("extra_system_context"),
+                user_id=payload.get("user_id"),
             )
             # Tag this conversation with the project for history persistence
             if _project_id and result.get("conversation_id"):
@@ -2117,4 +2120,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             personality_id=payload.get("personalityId"),
             memory_engine=payload.get("memoryEngine"),
             extra_system_context=payload.get("extra_system_context"),
+            user_id=payload.get("user_id"),
         )

@@ -2625,11 +2625,18 @@ async def get_persona_session(session_id: str) -> JSONResponse:
 async def get_persona_memory(
     project_id: str = Query(..., description="Persona project ID"),
     category: Optional[str] = Query(None, description="Filter by category"),
+    authorization: str = Header(default=""),
 ) -> JSONResponse:
     """Get all memories for a persona project ('What I know about you')."""
     try:
-        memories = persona_ltm_mod.get_memories(project_id, category=category)
-        count = persona_ltm_mod.memory_count(project_id)
+        _uid = None
+        try:
+            user = _scoped_user_or_none(authorization=authorization)
+            _uid = user["id"] if user else None
+        except Exception:
+            pass
+        memories = persona_ltm_mod.get_memories(project_id, category=category, user_id=_uid)
+        count = persona_ltm_mod.memory_count(project_id, user_id=_uid)
         return JSONResponse(
             status_code=200,
             content={"ok": True, "memories": memories, "count": count},
@@ -2642,10 +2649,16 @@ async def get_persona_memory(
 
 
 @app.post("/persona/memory", dependencies=[Depends(require_api_key)])
-async def upsert_persona_memory(request: Request) -> JSONResponse:
+async def upsert_persona_memory(request: Request, authorization: str = Header(default="")) -> JSONResponse:
     """Add or update a memory entry."""
     try:
         body = await request.json()
+        _uid = None
+        try:
+            user = _scoped_user_or_none(authorization=authorization)
+            _uid = user["id"] if user else None
+        except Exception:
+            pass
         result = persona_ltm_mod.upsert_memory(
             project_id=body["project_id"],
             category=body.get("category", "fact"),
@@ -2653,6 +2666,7 @@ async def upsert_persona_memory(request: Request) -> JSONResponse:
             value=body["value"],
             confidence=body.get("confidence", 1.0),
             source_type=body.get("source_type", "user_statement"),
+            user_id=_uid,
         )
         return JSONResponse(status_code=200, content={"ok": True, "memory": result})
     except KeyError as e:
@@ -2668,7 +2682,7 @@ async def upsert_persona_memory(request: Request) -> JSONResponse:
 
 
 @app.delete("/persona/memory", dependencies=[Depends(require_api_key)])
-async def delete_persona_memory(request: Request) -> JSONResponse:
+async def delete_persona_memory(request: Request, authorization: str = Header(default="")) -> JSONResponse:
     """Delete a specific memory entry or forget all."""
     try:
         body = await request.json()
@@ -2679,17 +2693,24 @@ async def delete_persona_memory(request: Request) -> JSONResponse:
                 content=_safe_err("project_id is required", code="missing_project_id"),
             )
 
+        _uid = None
+        try:
+            user = _scoped_user_or_none(authorization=authorization)
+            _uid = user["id"] if user else None
+        except Exception:
+            pass
+
         # If key is provided, delete specific entry; otherwise forget all
         key = body.get("key")
         category = body.get("category")
         if key and category:
-            deleted = persona_ltm_mod.delete_memory(project_id, category, key)
+            deleted = persona_ltm_mod.delete_memory(project_id, category, key, user_id=_uid)
             return JSONResponse(
                 status_code=200,
                 content={"ok": True, "deleted": deleted},
             )
         else:
-            count = persona_ltm_mod.forget_all(project_id)
+            count = persona_ltm_mod.forget_all(project_id, user_id=_uid)
             return JSONResponse(
                 status_code=200,
                 content={"ok": True, "forgotten": count, "message": f"Forgot {count} memories"},
@@ -2827,6 +2848,8 @@ async def chat(inp: ChatIn, authorization: str = Header(default="")) -> JSONResp
         "personalityId": inp.personalityId,
         # Smart multimodal topology: optional vision context for system prompt
         "extra_system_context": inp.extra_system_context,
+        # Per-user isolation: resolved user id for memory scoping
+        "user_id": user["id"] if user else None,
     }
 
     # ----------------------------
@@ -2951,11 +2974,18 @@ async def chat(inp: ChatIn, authorization: str = Header(default="")) -> JSONResp
     # T4 additive: feed user text into Memory V2 for cross-topology learning.
     # Non-blocking: failures are silently ignored. Only for chat/voice modes
     # with a project_id (companion/project context).
-    if inp.project_id and inp.message and inp.mode in ("chat", "voice"):
+    # CRITICAL: only run when memory engine is actually set to "v2" / "adaptive"
+    _mem_mode = (inp.memoryEngine or "").lower().strip()
+    if _mem_mode in ("adaptive", ""):
+        _mem_mode = "v2"  # default to v2 when unset
+    elif _mem_mode == "basic":
+        _mem_mode = "v1"
+    if inp.project_id and inp.message and inp.mode in ("chat", "voice") and _mem_mode == "v2":
         try:
             from .memory_v2 import get_memory_v2, ensure_v2_columns
             ensure_v2_columns()
-            get_memory_v2().ingest_user_text(inp.project_id, inp.message)
+            _uid = user["id"] if user else None
+            get_memory_v2().ingest_user_text(inp.project_id, inp.message, user_id=_uid)
         except Exception:
             pass
 

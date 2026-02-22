@@ -126,6 +126,67 @@ def init_db():
     from .ltm_v1_maintenance import ensure_v1_hardening_columns
     ensure_v1_hardening_columns()
 
+    # -----------------------------------------------------------------------
+    # Additive: per-user scoping for persona_sessions + persona_memory
+    # -----------------------------------------------------------------------
+    # 1) Add user_id columns (safe if already exists)
+    try:
+        cur.execute("ALTER TABLE persona_sessions ADD COLUMN user_id TEXT DEFAULT NULL")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cur.execute("ALTER TABLE persona_memory ADD COLUMN user_id TEXT DEFAULT NULL")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    # 2) Indexes for user-scoped queries
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON persona_sessions(user_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_user ON persona_memory(user_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_user_project ON persona_memory(user_id, project_id)")
+        con.commit()
+    except Exception:
+        pass
+
+    # 3) Backfill: persona_sessions.user_id from conversation ownership
+    try:
+        cur.execute(
+            """
+            UPDATE persona_sessions
+            SET user_id = (
+                SELECT o.user_id
+                FROM conversation_owners o
+                WHERE o.conversation_id = persona_sessions.conversation_id
+            )
+            WHERE user_id IS NULL
+            """
+        )
+        con.commit()
+    except Exception:
+        pass
+
+    # 4) Backfill: persona_memory.user_id from persona_sessions via project_id
+    try:
+        cur.execute(
+            """
+            UPDATE persona_memory
+            SET user_id = (
+                SELECT s.user_id
+                FROM persona_sessions s
+                WHERE s.project_id = persona_memory.project_id
+                  AND s.user_id IS NOT NULL
+                LIMIT 1
+            )
+            WHERE user_id IS NULL
+            """
+        )
+        con.commit()
+    except Exception:
+        pass
+
     # Durable async jobs: survives restarts, processes lazily
     cur.execute(
         """

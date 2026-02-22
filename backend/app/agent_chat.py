@@ -507,20 +507,50 @@ def _get_knowledge_hint(project_id: Optional[str]) -> str:
     return ""
 
 
-def _get_user_context(project_id: Optional[str]) -> str:
+def _get_user_context(project_id: Optional[str], user_id: Optional[str] = None) -> str:
     """
     Build user context (profile + preferences) for agent system prompt.
-    Uses existing user_context.build_user_context_for_ai().
+    Uses per-user SQLite profile when user_id is available (Bearer auth),
+    falls back to legacy profile.json for single-user/API-key mode.
     Returns empty string if unavailable.
     """
     if not project_id:
         return ""
     try:
         from .user_context import build_user_context_for_ai
-        from .profile import read_profile
-        from .user_memory import _read as read_memory
-        profile = read_profile()
-        memory = read_memory()
+
+        profile: dict = {}
+        memory: dict = {}
+
+        if user_id:
+            # Per-user: read from SQLite user_profiles / user_memory_items tables
+            try:
+                from .user_profile_store import _get_user_profile, _get_db_path
+                import sqlite3, json
+                profile = _get_user_profile(user_id)
+                # Read per-user memory items
+                path = _get_db_path()
+                con = sqlite3.connect(path)
+                con.row_factory = sqlite3.Row
+                cur = con.cursor()
+                cur.execute(
+                    "SELECT * FROM user_memory_items WHERE user_id = ? ORDER BY pinned DESC, importance DESC",
+                    (user_id,),
+                )
+                rows = cur.fetchall()
+                con.close()
+                memory = {"items": [dict(r) for r in rows]}
+            except Exception:
+                # Table may not exist yet; fall through to legacy
+                pass
+
+        if not profile:
+            # Legacy: read global profile.json / user_memory.json
+            from .profile import read_profile
+            from .user_memory import _read as read_memory
+            profile = read_profile()
+            memory = read_memory()
+
         if not profile.get("personalization_enabled", True):
             return ""
         ctx = build_user_context_for_ai(profile, memory, nsfw_mode=False)
@@ -691,6 +721,8 @@ async def agent_chat(
     # agent controls
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
     history_limit: int = DEFAULT_HISTORY_LIMIT,
+    # per-user isolation
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Topology 3: Agent-Controlled tool use.
@@ -709,7 +741,7 @@ async def agent_chat(
         try:
             from .memory_v2 import get_memory_v2, ensure_v2_columns
             ensure_v2_columns()
-            get_memory_v2().ingest_user_text(project_id, text_in)
+            get_memory_v2().ingest_user_text(project_id, text_in, user_id=user_id)
         except Exception:
             pass  # Non-fatal: Memory V2 is optional
 
@@ -723,7 +755,7 @@ async def agent_chat(
     # Build enriched system prompt with all context layers
     memory_ctx = _get_memory_context(project_id, text_in)
     knowledge_hint = _get_knowledge_hint(project_id)
-    user_ctx = _get_user_context(project_id)
+    user_ctx = _get_user_context(project_id, user_id=user_id)
     session_ctx = _get_session_context(project_id)
 
     # Convert to chat messages for LLM

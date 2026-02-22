@@ -57,6 +57,7 @@ def upsert_memory(
     confidence: float = 1.0,
     source_session: Optional[str] = None,
     source_type: str = "inferred",
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Insert or update a memory entry. Uses UPSERT on (project_id, category, key).
@@ -76,13 +77,22 @@ def upsert_memory(
     # --- V1 hardening: near-duplicate detection ---
     # Check if any existing entry in the same (project_id, category) has
     # a near-identical value. If so, reinforce that entry instead of inserting.
-    cur.execute(
-        """
-        SELECT id, key, value FROM persona_memory
-        WHERE project_id = ? AND category = ?
-        """,
-        (project_id, category),
-    )
+    if user_id:
+        cur.execute(
+            """
+            SELECT id, key, value FROM persona_memory
+            WHERE project_id = ? AND category = ? AND user_id = ?
+            """,
+            (project_id, category, user_id),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id, key, value FROM persona_memory
+            WHERE project_id = ? AND category = ?
+            """,
+            (project_id, category),
+        )
     for existing in cur.fetchall():
         if existing["key"] == key:
             continue  # Same key = normal upsert, not a dup
@@ -116,8 +126,8 @@ def upsert_memory(
         """
         INSERT INTO persona_memory(project_id, category, key, value, confidence,
                                     source_session, source_type, created_at, updated_at,
-                                    access_count, last_access_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                                    access_count, last_access_at, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
         ON CONFLICT(project_id, category, key) DO UPDATE SET
             value = excluded.value,
             confidence = excluded.confidence,
@@ -127,7 +137,7 @@ def upsert_memory(
             access_count = COALESCE(access_count, 0) + 1,
             last_access_at = excluded.last_access_at
         """,
-        (project_id, category, key, value, confidence, source_session, source_type, now, now, now_ts),
+        (project_id, category, key, value, confidence, source_session, source_type, now, now, now_ts, user_id),
     )
     con.commit()
     con.close()
@@ -148,34 +158,40 @@ def get_memories(
     category: Optional[str] = None,
     min_confidence: float = 0.0,
     limit: int = MAX_ENTRIES_PER_PERSONA,
+    user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Retrieve memories for a persona project, optionally filtered by category.
+    When user_id is provided, only returns memories owned by that user.
     """
     path = _get_db_path()
     con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
     cur = con.cursor()
 
+    # Build user_id filter clause
+    uid_clause = " AND user_id = ?" if user_id else ""
+    uid_params: tuple = (user_id,) if user_id else ()
+
     if category:
         cur.execute(
-            """
+            f"""
             SELECT * FROM persona_memory
-            WHERE project_id = ? AND category = ? AND confidence >= ?
+            WHERE project_id = ? AND category = ? AND confidence >= ?{uid_clause}
             ORDER BY updated_at DESC
             LIMIT ?
             """,
-            (project_id, category, min_confidence, limit),
+            (project_id, category, min_confidence) + uid_params + (limit,),
         )
     else:
         cur.execute(
-            """
+            f"""
             SELECT * FROM persona_memory
-            WHERE project_id = ? AND confidence >= ?
+            WHERE project_id = ? AND confidence >= ?{uid_clause}
             ORDER BY updated_at DESC
             LIMIT ?
             """,
-            (project_id, min_confidence, limit),
+            (project_id, min_confidence) + uid_params + (limit,),
         )
 
     rows = cur.fetchall()
@@ -183,52 +199,76 @@ def get_memories(
     return [dict(r) for r in rows]
 
 
-def delete_memory(project_id: str, category: str, key: str) -> bool:
+def delete_memory(project_id: str, category: str, key: str, user_id: Optional[str] = None) -> bool:
     """Delete a single memory entry. Returns True if found and deleted."""
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
-    cur.execute(
-        "DELETE FROM persona_memory WHERE project_id = ? AND category = ? AND key = ?",
-        (project_id, category, key),
-    )
+    if user_id:
+        cur.execute(
+            "DELETE FROM persona_memory WHERE project_id = ? AND category = ? AND key = ? AND user_id = ?",
+            (project_id, category, key, user_id),
+        )
+    else:
+        cur.execute(
+            "DELETE FROM persona_memory WHERE project_id = ? AND category = ? AND key = ?",
+            (project_id, category, key),
+        )
     changed = cur.rowcount > 0
     con.commit()
     con.close()
     return changed
 
 
-def forget_all(project_id: str) -> int:
+def forget_all(project_id: str, user_id: Optional[str] = None) -> int:
     """
     'Forget me' button — wipe all memories for a persona project.
+    When user_id is provided, only deletes that user's memories.
     Returns count of deleted entries.
     """
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
-    cur.execute(
-        "SELECT COUNT(*) FROM persona_memory WHERE project_id = ?",
-        (project_id,),
-    )
-    count = cur.fetchone()[0]
-    cur.execute(
-        "DELETE FROM persona_memory WHERE project_id = ?",
-        (project_id,),
-    )
+    if user_id:
+        cur.execute(
+            "SELECT COUNT(*) FROM persona_memory WHERE project_id = ? AND user_id = ?",
+            (project_id, user_id),
+        )
+        count = cur.fetchone()[0]
+        cur.execute(
+            "DELETE FROM persona_memory WHERE project_id = ? AND user_id = ?",
+            (project_id, user_id),
+        )
+    else:
+        cur.execute(
+            "SELECT COUNT(*) FROM persona_memory WHERE project_id = ?",
+            (project_id,),
+        )
+        count = cur.fetchone()[0]
+        cur.execute(
+            "DELETE FROM persona_memory WHERE project_id = ?",
+            (project_id,),
+        )
     con.commit()
     con.close()
     return count
 
 
-def memory_count(project_id: str) -> int:
-    """Count total memory entries for a persona."""
+def memory_count(project_id: str, user_id: Optional[str] = None) -> int:
+    """Count total memory entries for a persona, scoped by user_id when provided."""
     path = _get_db_path()
     con = sqlite3.connect(path)
     cur = con.cursor()
-    cur.execute(
-        "SELECT COUNT(*) FROM persona_memory WHERE project_id = ?",
-        (project_id,),
-    )
+    if user_id:
+        cur.execute(
+            "SELECT COUNT(*) FROM persona_memory WHERE project_id = ? AND user_id = ?",
+            (project_id, user_id),
+        )
+    else:
+        cur.execute(
+            "SELECT COUNT(*) FROM persona_memory WHERE project_id = ?",
+            (project_id,),
+        )
     count = cur.fetchone()[0]
     con.close()
     return count
@@ -238,7 +278,7 @@ def memory_count(project_id: str) -> int:
 # Context injection (for system prompt assembly)
 # ---------------------------------------------------------------------------
 
-def build_ltm_context(project_id: str, max_tokens_hint: int = 500) -> str:
+def build_ltm_context(project_id: str, max_tokens_hint: int = 500, user_id: Optional[str] = None) -> str:
     """
     Build a compact context string from LTM for injection into the system prompt.
     Organized by category for clarity.
@@ -246,7 +286,7 @@ def build_ltm_context(project_id: str, max_tokens_hint: int = 500) -> str:
     Returns empty string if no memories exist.
     Target: ~200-500 tokens (compact enough for every voice turn).
     """
-    memories = get_memories(project_id, min_confidence=0.3)
+    memories = get_memories(project_id, min_confidence=0.3, user_id=user_id)
     if not memories:
         return ""
 
