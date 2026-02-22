@@ -18,6 +18,7 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
 
 .PHONY: help install setup run up down stop logs health dev build test test-local test-edit-session test-frontend test-mcp-servers test-docker clean \
         download download-minimal download-minimum download-recommended download-full \
+        download-chat download-multimodal \
         download-edit download-enhance download-video download-verify download-health \
         download-avatar-models-basic download-avatar-models-full \
         start start-backend start-frontend start-no-agentic start-agentic-servers \
@@ -187,10 +188,17 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
 	@echo "Next steps:"
-	@echo "  1. Download models: make download-recommended (~14GB)"
-	@echo "  2. Start Ollama: ollama serve"
-	@echo "  3. Pull a model: ollama pull llama3:8b"
-	@echo "  4. Start HomePilot: make start"
+	@echo "  1. Start Ollama:              ollama serve"
+	@echo "  2. Download core models:      make download-minimal"
+	@echo "     (pulls chat + multimodal + image/video generation models)"
+	@echo "  3. Start HomePilot:           make start"
+	@echo ""
+	@echo "  Or download everything:       make download-recommended (~24GB)"
+	@echo ""
+	@echo "  Individual model downloads:"
+	@echo "    make download-chat          Pull chat model (llama3.2:3b)"
+	@echo "    make download-multimodal    Pull vision model (moondream2)"
+	@echo "    make download-video         Pull video generation models"
 	@if [ "$(AGENTIC)" = "1" ]; then \
 		echo ""; \
 		echo "  MCP Gateway will start on port $(MCP_GATEWAY_PORT)"; \
@@ -615,13 +623,73 @@ test-docker: ## Run backend tests (pytest) inside backend container
 
 download: download-recommended ## Download models (alias for download-recommended)
 
-download-minimal: ## Download minimal models (~7GB - FLUX Schnell + encoders)
+download-minimal: download-chat download-multimodal ## Download minimal models (~7GB ComfyUI + core chat + vision model)
 	@bash scripts/download_models.sh minimal
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ Minimal setup complete!"
+	@echo ""
+	@echo "  What you have now:"
+	@echo "    • Chat model:       llama3.2:3b (via Ollama)"
+	@echo "    • Multimodal model: moondream2  (via Ollama)"
+	@echo "    • Image generation: FLUX Schnell + encoders (via ComfyUI)"
+	@echo "    • Video generation: LTX-Video 2B (via ComfyUI)"
+	@echo ""
+	@echo "  Start HomePilot:  make start"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
 
-download-recommended: ## Download recommended models (~24GB - FLUX Schnell + SDXL + edit models)
+download-chat: ## Pull the core chat model via Ollama (llama3.2:3b — lightweight, fast)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Downloading Core Chat Model (Ollama)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "  Model: llama3.2:3b (~2 GB) — lightweight, fast, recommended for <10 GB RAM"
+	@echo ""
+	@if command -v ollama >/dev/null 2>&1; then \
+		echo "[1/1] Pulling llama3.2:3b via Ollama..."; \
+		ollama pull llama3.2:3b && echo "" && echo "  ✓ llama3.2:3b installed" || \
+		echo "  ⚠  Pull failed — is Ollama running? Start with: ollama serve"; \
+	else \
+		echo "  ❌ Ollama not found. Install it first:"; \
+		echo "     curl -fsSL https://ollama.com/install.sh | sh"; \
+		echo "     ollama serve"; \
+		echo "     Then re-run: make download-chat"; \
+	fi
+	@echo ""
+
+download-multimodal: ## Pull the core multimodal (vision) model via Ollama (moondream2 — 1.6 GB)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Downloading Multimodal (Vision) Model (Ollama)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "  This enables image understanding in chat & voice mode."
+	@echo "  Upload an image or say 'describe this picture' and it just works."
+	@echo ""
+	@echo "  Model: moondream2 (~1.6 GB) — ultra-light vision + OCR"
+	@echo ""
+	@if command -v ollama >/dev/null 2>&1; then \
+		echo "[1/1] Pulling moondream2 via Ollama..."; \
+		ollama pull moondream2 && echo "" && echo "  ✓ moondream2 installed" || \
+		echo "  ⚠  Pull failed — is Ollama running? Start with: ollama serve"; \
+	else \
+		echo "  ❌ Ollama not found. Install it first:"; \
+		echo "     curl -fsSL https://ollama.com/install.sh | sh"; \
+		echo "     ollama serve"; \
+		echo "     Then re-run: make download-multimodal"; \
+	fi
+	@echo ""
+	@echo "  Additional multimodal models (install any time):"
+	@echo "    ollama pull gemma3:4b           # Best overall (3 GB)"
+	@echo "    ollama pull llava:7b            # Strong general-purpose (4.7 GB)"
+	@echo "    ollama pull llama3.2-vision:11b # Best reasoning (7 GB)"
+	@echo ""
+	@echo "  Manage multimodal models in Settings → Models → Multimodal tab"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+download-recommended: download-chat download-multimodal ## Download recommended models (~24GB ComfyUI + core chat + vision)
 	@bash scripts/download_models.sh recommended
 
-download-full: ## Download all models (~63GB - FLUX, SDXL, SD1.5, SVD, all edit models)
+download-full: download-chat download-multimodal ## Download all models (~63GB ComfyUI + core chat + vision)
 	@bash scripts/download_models.sh full
 
 download-edit: ## Download only edit mode models (inpainting, controlnet, etc.)
@@ -864,6 +932,14 @@ download-verify: ## Verify downloaded models and show disk usage
 		ls -lh models/llm/ 2>/dev/null | tail -n +2 || echo "  (managed by Ollama/vLLM)"; \
 		echo ""; \
 	fi
+	@echo ""
+	@echo "  Ollama Models (Chat + Multimodal):"
+	@if command -v ollama >/dev/null 2>&1; then \
+		ollama list 2>/dev/null | head -20 || echo "    (Ollama not running — start with: ollama serve)"; \
+	else \
+		echo "    (Ollama not installed)"; \
+	fi
+	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 
 start-avatar-service: ## Start the optional Avatar Service microservice (StyleGAN random faces, port 8020)
