@@ -810,6 +810,43 @@ async def agent_chat(
     if text_in:
         add_message(cid, "user", text_in, media=None, project_id=project_id)
 
+    # Deterministic persona photo shortcut: if user asks "show me your photo"
+    # and a committed avatar exists, return it immediately without LLM call.
+    if text_in and project_id:
+        _photo_triggers = [
+            "show me your photo", "show me your picture", "show your photo",
+            "show your picture", "your photo", "your picture",
+            "what do you look like", "how do you look", "show me yourself",
+            "let me see you", "show me your photos",
+        ]
+        _lower = text_in.lower()
+        if any(t in _lower for t in _photo_triggers):
+            try:
+                from .projects import get_project_by_id
+                from .config import PUBLIC_BASE_URL
+                proj = get_project_by_id(project_id)
+                if proj and proj.get("project_type") == "persona":
+                    appearance = proj.get("persona_appearance") or {}
+                    sel = appearance.get("selected_filename")
+                    if isinstance(sel, str) and sel:
+                        base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
+                        img_url = f"{base}/files/{sel}"
+                        reply = "Here's my current photo."
+                        # Try to use persona name for a more natural response
+                        pa = proj.get("persona_agent") or {}
+                        label = pa.get("label", "")
+                        if label:
+                            reply = f"Here I am! 😊"
+                        add_message(cid, "assistant", reply, media={"images": [img_url]}, project_id=project_id)
+                        return {
+                            "conversation_id": cid,
+                            "text": reply,
+                            "media": {"images": [img_url]},
+                            "agent": {"tool_calls_used": 0, "tools_invoked": []},
+                        }
+            except Exception:
+                pass  # Fall through to LLM-based handling
+
     # Ingest user text into Memory V2 (additive, non-blocking)
     if text_in and project_id:
         try:
