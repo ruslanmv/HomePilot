@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -81,6 +81,9 @@ from .capabilities import router as capabilities_router
 # Agentic AI module routes (additive — zero changes to existing code)
 from .agentic.routes import router as agentic_router
 
+# Topology 3: Agent-Controlled tool use routes (additive)
+from .agent_routes import router as agent_router
+
 # Persona Phase 3 — production hardening (avatar durability, export/import)
 from .personas.avatar_assets import commit_persona_avatar, commit_persona_image
 from .personas.export_import import export_persona_project, import_persona_package, preview_persona_package
@@ -93,11 +96,20 @@ from .community import router as community_router
 from .profile import router as profile_router
 from .user_memory import router as memory_router
 
+# Multi-User Accounts & Onboarding (additive)
+from .users import router as users_router
+
+# Per-User Profile, Secrets & Memory (additive — multi-user aware)
+from .user_profile_store import router as user_profile_store_router
+
 # Avatar Studio (additive — persona avatar generation)
 from .avatar import router as avatar_router
 
 # Outfit Variations (additive — wardrobe changes for existing avatars)
 from .avatar.outfit import router as outfit_router
+
+# Multimodal Vision Layer (additive — on-demand image understanding)
+from .multimodal import analyze_image, is_vision_intent, VISION_MODEL_PATTERNS
 
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
@@ -130,6 +142,9 @@ app.include_router(capabilities_router)
 # Include Agentic AI routes (/v1/agentic/*)
 app.include_router(agentic_router)
 
+# Include Agent Chat routes (/v1/agent/* — Topology 3)
+app.include_router(agent_router)
+
 # Include Community Gallery proxy routes (/community/*)
 app.include_router(community_router)
 
@@ -144,6 +159,12 @@ app.include_router(avatar_router)
 
 # Include Outfit Variation routes (/v1/avatars/outfits)
 app.include_router(outfit_router)
+
+# Include User Auth & Onboarding routes (/v1/auth/*)
+app.include_router(users_router)
+
+# Include Per-User Profile Store routes (/v1/user-profile/*, /v1/user-memory/*)
+app.include_router(user_profile_store_router)
 
 
 # ----------------------------
@@ -262,6 +283,11 @@ class ChatIn(BaseModel):
     # ----------------------------
     voiceSystemPrompt: Optional[str] = Field(None, description="Custom system prompt for voice mode personalities (legacy)")
     personalityId: Optional[str] = Field(None, description="Backend personality agent id (e.g. 'therapist', 'assistant')")
+    # Smart multimodal topology: optional extra context injected into system prompt
+    extra_system_context: Optional[str] = Field(
+        None,
+        description="Optional extra system context (e.g., vision analysis) injected into the next LLM call.",
+    )
 
 
 class ChatOut(BaseModel):
@@ -602,6 +628,36 @@ async def health_detailed() -> JSONResponse:
             "url": LLM_BASE_URL,
             "message": f"Connection failed: {str(e)}"
         }
+
+    # Test Multimodal (vision models via Ollama)
+    multimodal_status = {"ok": False, "status": "not_checked", "vision_models": []}
+    try:
+        if health_status["ollama"].get("ok"):
+            all_models = health_status["ollama"].get("models", [])
+            vision_models = [
+                m for m in all_models
+                if any(p in m.lower() for p in VISION_MODEL_PATTERNS)
+            ]
+            multimodal_status = {
+                "ok": len(vision_models) > 0,
+                "status": "available" if vision_models else "no_vision_models",
+                "vision_models": vision_models,
+                "vision_model_count": len(vision_models),
+                "recommended_default": vision_models[0] if vision_models else None,
+            }
+        else:
+            multimodal_status = {
+                "ok": False,
+                "status": "ollama_unavailable",
+                "vision_models": [],
+            }
+    except Exception as e:
+        multimodal_status = {
+            "ok": False,
+            "status": f"check_failed: {str(e)}",
+            "vision_models": [],
+        }
+    health_status["multimodal"] = multimodal_status
 
     # Determine overall health
     all_ok = health_status["ollama"]["ok"] or health_status["llm"]["ok"]  # At least one LLM should work
@@ -1162,6 +1218,13 @@ async def list_models(
         models, err = await list_models_for_provider(prov, base_url=base_url)
         if err:
             return JSONResponse(status_code=503, content=_safe_err(err, code="models_unavailable"))
+
+        # Filter Ollama models to only vision-capable ones when multimodal type is requested
+        if provider == "ollama" and model_type == "multimodal":
+            models = [
+                m for m in models
+                if any(p in m.lower() for p in VISION_MODEL_PATTERNS)
+            ]
 
         return JSONResponse(
             status_code=200,
@@ -1823,34 +1886,73 @@ async def check_models_health(
         )
 
 
+def _scoped_user_or_none(authorization: str = "") -> Optional[Dict[str, Any]]:
+    """
+    Resolve the authenticated user for conversation scoping.
+    - Bearer token present -> return that user.
+    - No token + single user -> return default user (backward compat).
+    - No token + multiple users -> raise 401.
+    """
+    from .users import ensure_users_tables, get_current_user, get_or_create_default_user, count_users
+    ensure_users_tables()
+    user = get_current_user(authorization=authorization)
+    if user:
+        return user
+    if count_users() > 1:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return get_or_create_default_user()
+
+
 @app.get("/conversations")
-async def conversations(limit: int = Query(50, ge=1, le=200), project_id: Optional[str] = Query(None)) -> JSONResponse:
-    """List saved conversations (History/Today sidebar). Optionally filter by project_id."""
+async def conversations(
+    limit: int = Query(50, ge=1, le=200),
+    project_id: Optional[str] = Query(None),
+    authorization: str = Header(default=""),
+) -> JSONResponse:
+    """List saved conversations, scoped per user in multi-user mode."""
     try:
-        items = list_conversations(limit=limit, project_id=project_id)
+        user = _scoped_user_or_none(authorization=authorization)
+        uid = user["id"] if user else None
+        items = list_conversations(limit=limit, project_id=project_id, user_id=uid)
         return JSONResponse(status_code=200, content={"ok": True, "conversations": items})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to list conversations: {e}", code="conversations_error"))
 
 
 @app.get("/conversations/{conversation_id}/messages")
-async def conversation_messages(conversation_id: str, limit: int = Query(200, ge=1, le=1000)) -> JSONResponse:
-    """Load full message list for a conversation."""
+async def conversation_messages(
+    conversation_id: str,
+    limit: int = Query(200, ge=1, le=1000),
+    authorization: str = Header(default=""),
+) -> JSONResponse:
+    """Load full message list for a conversation (scoped per user)."""
     try:
-        msgs = get_messages(conversation_id, limit=limit)
+        user = _scoped_user_or_none(authorization=authorization)
+        uid = user["id"] if user else None
+        msgs = get_messages(conversation_id, limit=limit, user_id=uid)
         return JSONResponse(status_code=200, content={"ok": True, "conversation_id": conversation_id, "messages": msgs})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to load conversation: {e}", code="conversation_load_error"))
 
 
 @app.delete("/conversations/{conversation_id}")
-async def delete_conversation_endpoint(conversation_id: str) -> JSONResponse:
-    """Delete all messages and personality memory from a specific conversation."""
+async def delete_conversation_endpoint(
+    conversation_id: str,
+    authorization: str = Header(default=""),
+) -> JSONResponse:
+    """Delete a conversation (scoped per user)."""
     try:
-        deleted_count = delete_conversation(conversation_id)
-        # Also clear in-memory personality context (topics, emotions, engagement)
+        user = _scoped_user_or_none(authorization=authorization)
+        uid = user["id"] if user else None
+        deleted_count = delete_conversation(conversation_id, user_id=uid)
         clear_conversation_memory(conversation_id)
         return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted_count > 0, "deleted_messages": deleted_count, "conversation_id": conversation_id})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete conversation: {e}", code="delete_conversation_error"))
 
@@ -2184,10 +2286,16 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
         filename = file.filename or "upload.txt"
         ext = os.path.splitext(filename)[1].lower()[:10]
 
-        if ext not in {".pdf", ".txt", ".md"}:
+        # Supported file types: documents + images (T4 multimodal knowledge)
+        _SUPPORTED_DOC_EXTS = {".pdf", ".txt", ".md"}
+        _SUPPORTED_IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+        if ext not in _SUPPORTED_DOC_EXTS and ext not in _SUPPORTED_IMG_EXTS:
             return JSONResponse(
                 status_code=400,
-                content=_safe_err("Only PDF, TXT, and MD files are supported", code="invalid_file_type")
+                content=_safe_err(
+                    "Supported file types: PDF, TXT, MD, PNG, JPG, JPEG, WEBP, GIF, BMP",
+                    code="invalid_file_type",
+                )
             )
 
         max_bytes = int(MAX_UPLOAD_MB) * 1024 * 1024
@@ -2216,8 +2324,20 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
 
         # Process the file and add to vector database
         try:
-            from .vectordb import process_and_add_file
-            chunks_added = process_and_add_file(project_id, path)
+            # T4 Multimodal: route images through vision-based indexing
+            if ext in _SUPPORTED_IMG_EXTS:
+                from .vectordb_images import index_image_to_knowledge
+                img_result = await index_image_to_knowledge(
+                    project_id=project_id,
+                    image_path=path,
+                    original_filename=filename,
+                )
+                chunks_added = img_result.get("chunks_added", 0)
+                source_type = "image"
+            else:
+                from .vectordb import process_and_add_file
+                chunks_added = process_and_add_file(project_id, path)
+                source_type = "document"
 
             # Update project metadata with file info
             project = projects.get_project_by_id(project_id)
@@ -2227,7 +2347,8 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
                     "name": filename,
                     "size": f"{written / 1024 / 1024:.2f} MB",
                     "path": str(path),
-                    "chunks": chunks_added
+                    "chunks": chunks_added,
+                    "source_type": source_type,
                 })
 
                 # Update project
@@ -2241,6 +2362,7 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
                 "filename": filename,
                 "size_bytes": written,
                 "chunks_added": chunks_added,
+                "source_type": source_type,
                 "message": f"File processed and {chunks_added} chunks added to knowledge base"
             })
 
@@ -2630,12 +2752,23 @@ async def get_persona_memory_stats(
 # ----------------------------
 
 @app.post("/chat", dependencies=[Depends(require_api_key)])
-async def chat(inp: ChatIn) -> JSONResponse:
+async def chat(inp: ChatIn, authorization: str = Header(default="")) -> JSONResponse:
     """
     Unified chat endpoint with mode-aware routing.
     Stable response schema:
       { conversation_id, text, media }
     """
+    # Enterprise: bind conversation to authenticated user (prevents cross-user leakage)
+    try:
+        from .storage import ensure_conversation_owner
+        user = _scoped_user_or_none(authorization=authorization)
+        if user and inp.conversation_id:
+            ensure_conversation_owner(inp.conversation_id, user["id"])
+    except HTTPException:
+        pass  # Preserve legacy behavior in single-user mode
+    except Exception as e:
+        print(f"[CHAT] Warning: failed to bind conversation owner: {e}")
+
     # Debug: Log incoming parameters
     print(f"[CHAT ENDPOINT] imgModel received from frontend: '{inp.imgModel}' (type: {type(inp.imgModel).__name__ if inp.imgModel is not None else 'None'})")
     print(f"[CHAT ENDPOINT] personalityId: {inp.personalityId!r}, ollama_model: {inp.ollama_model!r}")
@@ -2692,6 +2825,8 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "voiceSystemPrompt": inp.voiceSystemPrompt,
         # Backend personality agent
         "personalityId": inp.personalityId,
+        # Smart multimodal topology: optional vision context for system prompt
+        "extra_system_context": inp.extra_system_context,
     }
 
     # ----------------------------
@@ -2812,6 +2947,17 @@ async def chat(inp: ChatIn) -> JSONResponse:
 
     # Route through mode-aware handler
     out = await handle_request(mode=inp.mode, payload=payload)
+
+    # T4 additive: feed user text into Memory V2 for cross-topology learning.
+    # Non-blocking: failures are silently ignored. Only for chat/voice modes
+    # with a project_id (companion/project context).
+    if inp.project_id and inp.message and inp.mode in ("chat", "voice"):
+        try:
+            from .memory_v2 import get_memory_v2, ensure_v2_columns
+            ensure_v2_columns()
+            get_memory_v2().ingest_user_text(inp.project_id, inp.message)
+        except Exception:
+            pass
 
     # Merge game metadata into media (if present)
     game_meta = payload.get("_game")
@@ -3514,5 +3660,179 @@ async def persona_import_preview(file: UploadFile = File(...)) -> JSONResponse:
             "asset_names": preview.asset_names,
             "dependency_check": dep_report.to_dict(),
             "avatar_preview_data_url": preview.thumb_data_url,
+        },
+    )
+
+
+# ============================================================================
+# Multimodal Vision Layer (additive — on-demand image understanding)
+# ============================================================================
+
+class MultimodalAnalyzeIn(BaseModel):
+    """Request body for /v1/multimodal/analyze."""
+    image_url: str = Field(..., description="URL of the image to analyze (local /files/... or remote)")
+    conversation_id: Optional[str] = Field(None, description="Conversation ID to store results into")
+    project_id: Optional[str] = Field(None, description="Optional project context")
+    provider: Optional[str] = Field("ollama", description="Multimodal provider (currently: ollama)")
+    base_url: Optional[str] = Field(None, description="Provider base URL override")
+    model: Optional[str] = Field(None, description="Multimodal model to use (e.g. moondream, gemma3:4b)")
+    mode: Optional[str] = Field("both", description="Analysis mode: caption | ocr | both")
+    user_prompt: Optional[str] = Field(None, description="Custom prompt for the vision model")
+    nsfw_mode: Optional[bool] = Field(False, description="Enable unrestricted analysis")
+    persist: Optional[bool] = Field(
+        True,
+        description="If true (default), store analysis in conversation history. If false, return only.",
+    )
+
+
+@app.post("/v1/multimodal/analyze", dependencies=[Depends(require_api_key)])
+async def multimodal_analyze(inp: MultimodalAnalyzeIn) -> JSONResponse:
+    """
+    Analyze an image using a multimodal (vision) model.
+
+    This endpoint is additive and does NOT modify any existing chat logic.
+    It runs a vision model on the provided image and returns structured text.
+    The frontend can then inject this result into the conversation context.
+
+    Flow:
+      1. Load image from local /files/ or remote URL
+      2. Send to configured vision model (Ollama)
+      3. Return analysis text + metadata
+      4. Optionally store into conversation history
+    """
+    try:
+        result = await analyze_image(
+            image_url=inp.image_url,
+            upload_path=UPLOAD_PATH,
+            provider=inp.provider or "ollama",
+            base_url=inp.base_url,
+            model=inp.model,
+            user_prompt=inp.user_prompt,
+            nsfw_mode=bool(inp.nsfw_mode),
+            mode=inp.mode or "both",
+        )
+
+        if not result.get("ok"):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "ok": False,
+                    "error": result.get("error", "Unknown multimodal error"),
+                    "analysis_text": "",
+                    "meta": result.get("meta", {}),
+                },
+            )
+
+        # Optionally persist into conversation history (skipped when persist=false)
+        cid = inp.conversation_id
+        if (inp.persist is not False) and cid and result.get("analysis_text"):
+            try:
+                from .storage import add_message
+                # Store the analysis as an assistant message with the image in media
+                add_message(
+                    cid,
+                    "assistant",
+                    f"[Image Analysis]\n{result['analysis_text']}",
+                    media={"images": [inp.image_url]},
+                    project_id=inp.project_id,
+                )
+            except Exception as e:
+                print(f"[MULTIMODAL] Warning: failed to persist analysis to history: {e}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "conversation_id": cid,
+                "analysis_text": result.get("analysis_text", ""),
+                "meta": result.get("meta", {}),
+            },
+        )
+
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "error": f"Multimodal analysis failed: {str(e)}",
+                "analysis_text": "",
+                "meta": {},
+            },
+        )
+
+
+# ============================================================================
+# Multimodal Vision Layer — Attach/Persist (additive)
+# ============================================================================
+
+class MultimodalAttachIn(BaseModel):
+    """Persist an existing vision analysis into conversation history without re-running the vision model."""
+    conversation_id: str = Field(..., description="Conversation ID to attach the analysis into")
+    image_url: str = Field(..., description="Image URL to associate with the analysis")
+    analysis_text: str = Field(..., description="Vision analysis text to store")
+    project_id: Optional[str] = Field(None, description="Optional project context")
+
+
+@app.post("/v1/multimodal/attach", dependencies=[Depends(require_api_key)])
+async def multimodal_attach(inp: MultimodalAttachIn) -> JSONResponse:
+    """
+    Persist an existing multimodal analysis into conversation history without
+    re-running the vision model.  Used by the Smart topology so the vision
+    result is saved as a history artifact after the main LLM has responded.
+
+    Additive and safe for production — no existing endpoints are modified.
+    """
+    try:
+        from .storage import add_message
+        add_message(
+            inp.conversation_id,
+            "assistant",
+            f"[Image Analysis]\n{inp.analysis_text}",
+            media={"images": [inp.image_url]},
+            project_id=inp.project_id,
+        )
+        return JSONResponse(status_code=200, content={"ok": True})
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": f"Failed to attach multimodal analysis: {str(e)}"},
+        )
+
+
+@app.get("/v1/multimodal/status", dependencies=[Depends(require_api_key)])
+async def multimodal_status() -> JSONResponse:
+    """
+    Check if multimodal capabilities are available.
+    Returns info about configured models and provider status.
+    """
+    # Check if Ollama is reachable and has vision models
+    ollama_ok = False
+    vision_models: list = []
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags")
+            if r.status_code == 200:
+                ollama_ok = True
+                data = r.json()
+                all_models = [m.get("name", "") for m in data.get("models", [])]
+                # Check known vision model patterns (single source of truth)
+                vision_models = [
+                    m for m in all_models
+                    if any(p in m.lower() for p in VISION_MODEL_PATTERNS)
+                ]
+    except Exception:
+        pass
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "multimodal_available": ollama_ok and len(vision_models) > 0,
+            "provider": "ollama",
+            "provider_reachable": ollama_ok,
+            "installed_vision_models": vision_models,
+            "recommended_default": vision_models[0] if vision_models else None,
         },
     )
