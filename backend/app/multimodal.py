@@ -31,6 +31,21 @@ from .config import OLLAMA_BASE_URL, TOOL_TIMEOUT_S
 
 
 # ---------------------------------------------------------------------------
+# Known vision model patterns — single source of truth
+# ---------------------------------------------------------------------------
+
+VISION_MODEL_PATTERNS: List[str] = [
+    "moondream", "llava", "gemma3", "minicpm-v", "llama3.2-vision",
+    "qwen3-vl", "qwen2-vl", "internvl", "smolvlm", "bakllava",
+]
+"""
+Substrings to match against Ollama model names to identify vision-capable models.
+Imported by main.py for /models filtering, /health/detailed, and /v1/multimodal/status.
+Add new vision model families here — they will automatically appear everywhere.
+"""
+
+
+# ---------------------------------------------------------------------------
 # Intent detection — lightweight keyword matching
 # ---------------------------------------------------------------------------
 

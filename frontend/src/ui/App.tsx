@@ -86,7 +86,7 @@ export type Msg = {
   // when true, show recovery UI and allow retry
   error?: boolean
   // info needed for retry; kept minimal and non-destructive
-  retry?: { requestText: string; mode: Mode; projectId?: string }
+  retry?: { requestText: string; mode: Mode; projectId?: string; multimodal?: { imageUrl: string; userPrompt?: string } }
   media?: {
     images?: string[]
     video_url?: string
@@ -974,6 +974,46 @@ function QueryBar({
   onUpload: (file: File) => void
   placeholderOverride?: string
 }) {
+  // ---- Drag-and-drop image support ----
+  const [isDragging, setIsDragging] = useState(false)
+  const dragCounterRef = useRef(0)
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current++
+    if (e.dataTransfer.types.includes('Files')) setIsDragging(true)
+  }, [])
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current--
+    if (dragCounterRef.current === 0) setIsDragging(false)
+  }, [])
+  const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.stopPropagation() }, [])
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    dragCounterRef.current = 0
+    const file = e.dataTransfer.files?.[0]
+    if (file && file.type.startsWith('image/')) onUpload(file)
+  }, [onUpload])
+
+  // ---- Paste image from clipboard ----
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const blob = item.getAsFile()
+        if (blob) onUpload(new File([blob], 'pasted-image.png', { type: blob.type }))
+        return
+      }
+    }
+  }, [onUpload])
+
   // ---- Speech-to-text for the mic button ----
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef<any>(null)
@@ -1014,16 +1054,29 @@ function QueryBar({
   }, [isListening, setInput])
 
   return (
-    <div className={`w-full ${centered ? 'max-w-breakout' : ''}`}>
+    <div
+      className={`w-full ${centered ? 'max-w-breakout' : ''}`}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div
         className={[
           'relative w-full overflow-hidden',
           'bg-[#101010] shadow-sm shadow-black/20',
-          'ring-1 ring-inset ring-white/15 hover:ring-white/20 focus-within:ring-white/25',
+          isDragging
+            ? 'ring-2 ring-inset ring-purple-500/60 bg-purple-500/5'
+            : 'ring-1 ring-inset ring-white/15 hover:ring-white/20 focus-within:ring-white/25',
           'rounded-[10rem]',
           'transition-[background-color,box-shadow,border-color] duration-100 ease-in-out',
         ].join(' ')}
       >
+        {isDragging && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-purple-500/10 rounded-[10rem] pointer-events-none">
+            <span className="text-purple-300 text-sm font-semibold">Drop image to analyze</span>
+          </div>
+        )}
         {/* Left: attach */}
         <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
           <button
@@ -1088,6 +1141,7 @@ function QueryBar({
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -2530,45 +2584,75 @@ export default function App() {
             m => m.media?.images && m.media.images.length > 0
           )?.media?.images?.[0]
 
-          if (lastImageUrl) {
-            try {
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === tmpId ? { ...m, text: 'Analyzing image…' } : m
-                )
+          if (!lastImageUrl) {
+            // No image in conversation — tell the user to upload one
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? { ...m, pending: false, animate: true, text: 'No image found in this conversation. Upload an image first, then ask me to describe it.' }
+                  : m
               )
-              const result = await postJson<any>(
-                settings.backendUrl,
-                '/v1/multimodal/analyze',
-                {
-                  image_url: lastImageUrl,
-                  conversation_id: conversationId,
-                  provider: settingsDraft.providerMultimodal || 'ollama',
-                  base_url: settingsDraft.baseUrlMultimodal || undefined,
-                  model: settingsDraft.modelMultimodal || undefined,
-                  mode: 'both',
-                  user_prompt: trimmed,
-                  nsfw_mode: settingsDraft.nsfwMode || false,
-                },
-                authHeaders
-              )
+            )
+            fetchConversations()
+            return
+          }
 
-              const analysisText = result.analysis_text || 'No analysis available.'
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === tmpId
-                    ? { ...m, pending: false, animate: true, text: analysisText, media: { images: [lastImageUrl] } }
-                    : m
-                )
+          try {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId ? { ...m, text: 'Analyzing image…' } : m
               )
-              if (result.conversation_id && result.conversation_id !== conversationId) {
-                setConversationId(result.conversation_id)
-              }
-              fetchConversations()
-              return
-            } catch {
-              // Silent fallback to normal chat pipeline below
+            )
+            const result = await postJson<any>(
+              settings.backendUrl,
+              '/v1/multimodal/analyze',
+              {
+                image_url: lastImageUrl,
+                conversation_id: conversationId,
+                provider: settingsDraft.providerMultimodal || 'ollama',
+                base_url: settingsDraft.baseUrlMultimodal || undefined,
+                model: settingsDraft.modelMultimodal || undefined,
+                mode: 'both',
+                user_prompt: trimmed,
+                nsfw_mode: settingsDraft.nsfwMode || false,
+              },
+              authHeaders
+            )
+
+            const analysisText = result.analysis_text || 'No analysis available.'
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? { ...m, pending: false, animate: true, text: analysisText, media: { images: [lastImageUrl] } }
+                  : m
+              )
+            )
+            if (result.conversation_id && result.conversation_id !== conversationId) {
+              setConversationId(result.conversation_id)
             }
+            fetchConversations()
+            return
+          } catch (visionErr: any) {
+            // Vision failed — show error with retry, then fall through to normal chat
+            const errMsg = typeof visionErr?.message === 'string' ? visionErr.message : 'analysis failed'
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      error: true,
+                      text: `Vision analysis failed: ${errMsg}. Make sure a multimodal model is installed.`,
+                      retry: {
+                        requestText: trimmed,
+                        mode: mode as Mode,
+                        multimodal: { imageUrl: lastImageUrl, userPrompt: trimmed },
+                      },
+                    }
+                  : m
+              )
+            )
+            return
           }
         }
       }
@@ -2802,11 +2886,52 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === failedId ? { ...m, pending: true, error: false, text: '' } : m
+          m.id === failedId ? { ...m, pending: true, error: false, text: 'Retrying…' } : m
         )
       )
 
-      const { requestText, mode: retryMode, projectId } = failed.retry
+      const { requestText, mode: retryMode, projectId, multimodal } = failed.retry
+
+      // Multimodal retry: re-call /v1/multimodal/analyze with the stored image URL
+      if (multimodal?.imageUrl) {
+        try {
+          const result = await postJson<any>(
+            settings.backendUrl,
+            '/v1/multimodal/analyze',
+            {
+              image_url: multimodal.imageUrl,
+              conversation_id: conversationId,
+              provider: settingsDraft.providerMultimodal || 'ollama',
+              base_url: settingsDraft.baseUrlMultimodal || undefined,
+              model: settingsDraft.modelMultimodal || undefined,
+              mode: 'both',
+              user_prompt: multimodal.userPrompt || undefined,
+              nsfw_mode: settingsDraft.nsfwMode || false,
+            },
+            authHeaders
+          )
+
+          const analysisText = result.analysis_text || 'No analysis available.'
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === failedId
+                ? { ...m, pending: false, error: false, animate: true, text: analysisText, media: { images: [multimodal.imageUrl] } }
+                : m
+            )
+          )
+          if (result.conversation_id) setConversationId(result.conversation_id)
+        } catch (err: any) {
+          const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === failedId
+                ? { ...m, pending: false, error: true, text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream).` }
+                : m
+            )
+          )
+        }
+        return
+      }
 
       try {
         const data = await postJson<any>(
@@ -2923,10 +3048,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         setMessages((prev) => [...prev, user, pending])
         setInput('')
 
+        let imageUrl = ''
         try {
           // 1. Upload the image
           const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
-          const imageUrl = up.url as string
+          imageUrl = up.url as string
 
           // Update user message with server URL (revoke blob)
           setMessages((prev) =>
@@ -2983,6 +3109,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     pending: false,
                     text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream).`,
                     error: true,
+                    retry: {
+                      requestText: userText,
+                      mode: mode as Mode,
+                      multimodal: { imageUrl: imageUrl ?? '', userPrompt: userPrompt || undefined },
+                    },
                   }
                 : m
             )

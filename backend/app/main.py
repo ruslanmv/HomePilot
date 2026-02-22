@@ -100,7 +100,7 @@ from .avatar import router as avatar_router
 from .avatar.outfit import router as outfit_router
 
 # Multimodal Vision Layer (additive — on-demand image understanding)
-from .multimodal import analyze_image, is_vision_intent
+from .multimodal import analyze_image, is_vision_intent, VISION_MODEL_PATTERNS
 
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
@@ -611,13 +611,9 @@ async def health_detailed() -> JSONResponse:
     try:
         if health_status["ollama"].get("ok"):
             all_models = health_status["ollama"].get("models", [])
-            vision_patterns = [
-                "moondream", "llava", "gemma3", "minicpm-v", "llama3.2-vision",
-                "qwen3-vl", "qwen2-vl", "internvl", "smolvlm", "bakllava",
-            ]
             vision_models = [
                 m for m in all_models
-                if any(p in m.lower() for p in vision_patterns)
+                if any(p in m.lower() for p in VISION_MODEL_PATTERNS)
             ]
             multimodal_status = {
                 "ok": len(vision_models) > 0,
@@ -1202,13 +1198,9 @@ async def list_models(
 
         # Filter Ollama models to only vision-capable ones when multimodal type is requested
         if provider == "ollama" and model_type == "multimodal":
-            vision_patterns = [
-                "moondream", "llava", "gemma3", "minicpm-v", "llama3.2-vision",
-                "qwen3-vl", "qwen2-vl", "internvl", "smolvlm", "bakllava",
-            ]
             models = [
                 m for m in models
-                if any(p in m.lower() for p in vision_patterns)
+                if any(p in m.lower() for p in VISION_MODEL_PATTERNS)
             ]
 
         return JSONResponse(
@@ -3676,14 +3668,10 @@ async def multimodal_status() -> JSONResponse:
                 ollama_ok = True
                 data = r.json()
                 all_models = [m.get("name", "") for m in data.get("models", [])]
-                # Check known vision model patterns
-                vision_patterns = [
-                    "moondream", "llava", "gemma3", "minicpm-v", "llama3.2-vision",
-                    "qwen3-vl", "qwen2-vl", "internvl", "smolvlm", "bakllava",
-                ]
+                # Check known vision model patterns (single source of truth)
                 vision_models = [
                     m for m in all_models
-                    if any(p in m.lower() for p in vision_patterns)
+                    if any(p in m.lower() for p in VISION_MODEL_PATTERNS)
                 ]
     except Exception:
         pass
