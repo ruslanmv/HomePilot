@@ -1870,6 +1870,11 @@ export default function App() {
     // Prompt refinement: default to true (enabled by default for better results)
     const promptRefinement = localStorage.getItem('homepilot_prompt_refinement') !== 'false'
 
+    // Multimodal (Vision) settings
+    const providerMultimodal = (localStorage.getItem('homepilot_provider_multimodal') || 'ollama') as string
+    const baseUrlMultimodal = localStorage.getItem('homepilot_base_url_multimodal') || ''
+    const modelMultimodal = localStorage.getItem('homepilot_model_multimodal') || ''
+
     return {
       backendUrl,
       apiKey,
@@ -1886,6 +1891,9 @@ export default function App() {
       ttsEnabled,
       selectedVoice,
       promptRefinement,
+      providerMultimodal,
+      baseUrlMultimodal,
+      modelMultimodal,
     }
   })
 
@@ -2065,6 +2073,11 @@ export default function App() {
     localStorage.setItem('homepilot_civitai_api_key', settingsDraft.civitaiApiKey || '')
     localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
 
+    // Multimodal (Vision) settings
+    localStorage.setItem('homepilot_provider_multimodal', settingsDraft.providerMultimodal || 'ollama')
+    localStorage.setItem('homepilot_base_url_multimodal', settingsDraft.baseUrlMultimodal || '')
+    localStorage.setItem('homepilot_model_multimodal', settingsDraft.modelMultimodal || '')
+
     // Save TTS settings to nexus_settings_v1 format (used by SpeechService)
     // This ensures the selected voice is actually used for TTS
     if (window.SpeechService && typeof window.SpeechService.saveTTSConfig === 'function') {
@@ -2140,6 +2153,10 @@ export default function App() {
         vidSeconds: parseInt(localStorage.getItem('homepilot_vid_seconds') || '4'),
         vidFps: parseInt(localStorage.getItem('homepilot_vid_fps') || '8'),
         vidMotion: localStorage.getItem('homepilot_vid_motion') || 'medium',
+        // Multimodal (Vision) settings
+        providerMultimodal: localStorage.getItem('homepilot_provider_multimodal') || 'ollama',
+        baseUrlMultimodal: localStorage.getItem('homepilot_base_url_multimodal') || '',
+        modelMultimodal: localStorage.getItem('homepilot_model_multimodal') || '',
       })
     }
   }, [showSettings, settings])
