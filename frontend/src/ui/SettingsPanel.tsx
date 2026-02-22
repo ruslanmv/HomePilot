@@ -65,6 +65,7 @@ export type SettingsModelV2 = {
   baseUrlMultimodal?: string;
   modelMultimodal?: string;
   multimodalAuto?: boolean;  // Auto-trigger vision on image upload (default: true)
+  multimodalTopology?: 'direct' | 'smart';  // Vision routing: direct (default) or smart (Vision → Main LLM)
 
   // Legacy generation parameters (kept for compatibility)
   textTemperature?: number;
@@ -1074,6 +1075,25 @@ export default function SettingsPanel({
 
             {/* Multimodal Model */}
             {modelSelectRow("Multimodal Model", value.providerMultimodal || 'ollama', value.modelMultimodal || '', (m) => onChangeDraft({ ...value, modelMultimodal: m }), value.baseUrlMultimodal, 'multimodal')}
+
+            {/* Vision Topology (Smart vs Direct) */}
+            <div>
+              <div className="text-xs text-white/70 mb-1">Vision Topology</div>
+              <div className="text-[10px] text-white/35 mb-1.5">How vision results are processed</div>
+              <select
+                value={value.multimodalTopology || 'direct'}
+                onChange={(e) => onChangeDraft({ ...value, multimodalTopology: e.target.value as 'direct' | 'smart' })}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white/80 focus:outline-none focus:border-purple-500/50"
+              >
+                <option value="direct">Fast (Direct Vision)</option>
+                <option value="smart">Smart (Vision + Assistant)</option>
+              </select>
+              <div className="text-[10px] text-white/30 mt-1">
+                {(value.multimodalTopology || 'direct') === 'smart'
+                  ? 'Vision analysis is sent to your main chat LLM for a refined, conversational answer.'
+                  : 'Vision model output is shown directly (fastest, default).'}
+              </div>
+            </div>
 
             <div className="text-[10px] text-purple-400/80 bg-purple-500/10 border border-purple-500/20 rounded-lg px-3 py-2">
               <span className="font-semibold">Recommended:</span> Install Moondream (1.6 GB) or Gemma 3 Vision (3 GB) from the Models page &gt; Multimodal tab.

@@ -739,6 +739,7 @@ async def orchestrate(
     chat_model: Optional[str] = None,  # User's global chat model (for prompt refinement)
     personality_id: Optional[str] = None,  # Backend personality agent id (e.g. 'therapist')
     memory_engine: Optional[str] = None,  # Memory engine: off | v1 | v2 (brain-inspired)
+    extra_system_context: Optional[str] = None,  # Smart topology: vision analysis or other context
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -1803,6 +1804,11 @@ async def orchestrate(
         except Exception as e:
             print(f"[COMPANION] Warning: LTM/session injection failed (non-fatal): {e}")
 
+    # Additive: optional external context injection (e.g., Smart multimodal topology
+    # passes vision analysis here so the main LLM can reason over it)
+    if extra_system_context:
+        system = system + "\n\n" + extra_system_context.strip()
+
     messages = [{"role": "system", "content": system}]
     for role, content in history:
         messages.append({"role": role, "content": content})
@@ -2027,6 +2033,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 reference_image_url=payload.get("reference_image_url"),
                 chat_model=_chat_model,
                 personality_id=payload.get("personalityId"),
+                extra_system_context=payload.get("extra_system_context"),
             )
             # Tag this conversation with the project for history persistence
             if _project_id and result.get("conversation_id"):
@@ -2109,4 +2116,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             chat_model=_chat_model,
             personality_id=payload.get("personalityId"),
             memory_engine=payload.get("memoryEngine"),
+            extra_system_context=payload.get("extra_system_context"),
         )

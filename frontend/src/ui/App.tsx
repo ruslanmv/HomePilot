@@ -86,7 +86,7 @@ export type Msg = {
   // when true, show recovery UI and allow retry
   error?: boolean
   // info needed for retry; kept minimal and non-destructive
-  retry?: { requestText: string; mode: Mode; projectId?: string; multimodal?: { imageUrl: string; userPrompt?: string } }
+  retry?: { requestText: string; mode: Mode; projectId?: string; multimodal?: { imageUrl: string; userPrompt?: string; topology?: 'direct' | 'smart' } }
   media?: {
     images?: string[]
     video_url?: string
@@ -1580,6 +1580,32 @@ async function getJson<T>(
   return (await res.json()) as T
 }
 
+/**
+ * Build a system-context block for the Smart multimodal topology.
+ * This is injected as extra_system_context in the /chat call so the
+ * main LLM can reason over the vision analysis result.
+ */
+function buildVisionSystemContext(args: {
+  imageUrl: string
+  analysisText: string
+  model?: string
+  mode?: string
+}): string {
+  const modelLine = args.model ? `Vision model: ${args.model}` : 'Vision model: (unknown)'
+  const modeLine = args.mode ? `Mode: ${args.mode}` : 'Mode: both'
+  return [
+    'You have a vision analysis result from a multimodal model.',
+    'Use it as factual context to answer the user\'s request. If it is insufficient or uncertain, ask a follow-up question.',
+    '',
+    `Image URL: ${args.imageUrl}`,
+    modelLine,
+    modeLine,
+    '',
+    'Vision analysis:',
+    args.analysisText || '(empty)',
+  ].join('\n')
+}
+
 /** Optional: direct Ollama call (browser->Ollama). Requires Ollama CORS / reverse proxy. */
 type OllamaChatResponse = {
   message?: { role?: string; content?: string }
@@ -1874,6 +1900,7 @@ export default function App() {
     const providerMultimodal = (localStorage.getItem('homepilot_provider_multimodal') || 'ollama') as string
     const baseUrlMultimodal = localStorage.getItem('homepilot_base_url_multimodal') || ''
     const modelMultimodal = localStorage.getItem('homepilot_model_multimodal') || ''
+    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart')) || 'direct'
 
     return {
       backendUrl,
@@ -1894,6 +1921,7 @@ export default function App() {
       providerMultimodal,
       baseUrlMultimodal,
       modelMultimodal,
+      multimodalTopology,
     }
   })
 
@@ -2077,6 +2105,7 @@ export default function App() {
     localStorage.setItem('homepilot_provider_multimodal', settingsDraft.providerMultimodal || 'ollama')
     localStorage.setItem('homepilot_base_url_multimodal', settingsDraft.baseUrlMultimodal || '')
     localStorage.setItem('homepilot_model_multimodal', settingsDraft.modelMultimodal || '')
+    localStorage.setItem('homepilot_multimodal_topology', settingsDraft.multimodalTopology || 'direct')
 
     // Save TTS settings to nexus_settings_v1 format (used by SpeechService)
     // This ensures the selected voice is actually used for TTS
@@ -2157,6 +2186,7 @@ export default function App() {
         providerMultimodal: localStorage.getItem('homepilot_provider_multimodal') || 'ollama',
         baseUrlMultimodal: localStorage.getItem('homepilot_base_url_multimodal') || '',
         modelMultimodal: localStorage.getItem('homepilot_model_multimodal') || '',
+        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart')) || 'direct',
       })
     }
   }, [showSettings, settings])
@@ -2615,6 +2645,7 @@ export default function App() {
           }
 
           try {
+            const visionTopology = settingsDraft.multimodalTopology || 'direct'
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === tmpId ? { ...m, text: 'Analyzing image…' } : m
@@ -2632,20 +2663,94 @@ export default function App() {
                 mode: 'both',
                 user_prompt: trimmed,
                 nsfw_mode: settingsDraft.nsfwMode || false,
+                persist: visionTopology === 'direct',  // Smart: don't persist yet
               },
               authHeaders
             )
 
             const analysisText = result.analysis_text || 'No analysis available.'
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === tmpId
-                  ? { ...m, pending: false, animate: true, text: analysisText, media: { images: [lastImageUrl] } }
-                  : m
+
+            if (visionTopology === 'direct') {
+              // ── Direct: show vision output as-is (existing behavior) ──
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId
+                    ? { ...m, pending: false, animate: true, text: analysisText, media: { images: [lastImageUrl] } }
+                    : m
+                )
               )
-            )
-            if (result.conversation_id && result.conversation_id !== conversationId) {
-              setConversationId(result.conversation_id)
+              if (result.conversation_id && result.conversation_id !== conversationId) {
+                setConversationId(result.conversation_id)
+              }
+            } else {
+              // ── Smart: chain vision → main LLM ──
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId ? { ...m, text: 'Thinking…' } : m
+                )
+              )
+
+              const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+              const extraCtx = buildVisionSystemContext({
+                imageUrl: lastImageUrl,
+                analysisText,
+                model: settingsDraft.modelMultimodal || undefined,
+                mode: 'both',
+              })
+
+              const chat = await postJson<any>(
+                settings.backendUrl,
+                '/chat',
+                {
+                  message: trimmed,
+                  conversation_id: conversationId,
+                  project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+                  fun_mode: settings.funMode,
+                  mode,
+                  provider: settingsDraft.providerChat,
+                  provider_base_url: settingsDraft.baseUrlChat || undefined,
+                  provider_model: settingsDraft.modelChat,
+                  textTemperature: settingsDraft.textTemperature,
+                  textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                  nsfwMode: settingsDraft.nsfwMode,
+                  memoryEngine: settingsDraft.memoryEngine || 'v2',
+                  extra_system_context: extraCtx,
+                },
+                authHeaders
+              )
+
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId
+                    ? {
+                        ...m,
+                        pending: false,
+                        animate: true,
+                        text: chat.text || '',
+                        media: chat.media || { images: [lastImageUrl] },
+                      }
+                    : m
+                )
+              )
+              if (chat.conversation_id && chat.conversation_id !== conversationId) {
+                setConversationId(chat.conversation_id)
+              }
+
+              // Persist the vision analysis into history without re-running vision
+              const cidToAttach = (chat.conversation_id || conversationId || '').trim()
+              if (cidToAttach) {
+                postJson<any>(
+                  settings.backendUrl,
+                  '/v1/multimodal/attach',
+                  {
+                    conversation_id: cidToAttach,
+                    project_id: currentProjectId,
+                    image_url: lastImageUrl,
+                    analysis_text: analysisText,
+                  },
+                  authHeaders
+                ).catch(() => {})
+              }
             }
             fetchConversations()
             return
@@ -2663,7 +2768,11 @@ export default function App() {
                       retry: {
                         requestText: trimmed,
                         mode: mode as Mode,
-                        multimodal: { imageUrl: lastImageUrl, userPrompt: trimmed },
+                        multimodal: {
+                          imageUrl: lastImageUrl,
+                          userPrompt: trimmed,
+                          topology: settingsDraft.multimodalTopology || 'direct',
+                        },
                       },
                     }
                   : m
@@ -2910,7 +3019,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       const { requestText, mode: retryMode, projectId, multimodal } = failed.retry
 
       // Multimodal retry: re-call /v1/multimodal/analyze with the stored image URL
+      // Respects the topology that was active when the original request was made.
       if (multimodal?.imageUrl) {
+        const retryTopology = multimodal.topology || settingsDraft.multimodalTopology || 'direct'
         try {
           const result = await postJson<any>(
             settings.backendUrl,
@@ -2924,19 +3035,86 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               mode: 'both',
               user_prompt: multimodal.userPrompt || undefined,
               nsfw_mode: settingsDraft.nsfwMode || false,
+              persist: retryTopology === 'direct',
             },
             authHeaders
           )
 
           const analysisText = result.analysis_text || 'No analysis available.'
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === failedId
-                ? { ...m, pending: false, error: false, animate: true, text: analysisText, media: { images: [multimodal.imageUrl] } }
-                : m
+
+          if (retryTopology === 'direct') {
+            // Direct: show vision output directly
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === failedId
+                  ? { ...m, pending: false, error: false, animate: true, text: analysisText, media: { images: [multimodal.imageUrl] } }
+                  : m
+              )
             )
-          )
-          if (result.conversation_id) setConversationId(result.conversation_id)
+            if (result.conversation_id) setConversationId(result.conversation_id)
+          } else {
+            // Smart: chain vision → main LLM
+            const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+            const extraCtx = buildVisionSystemContext({
+              imageUrl: multimodal.imageUrl,
+              analysisText,
+              model: settingsDraft.modelMultimodal || undefined,
+              mode: 'both',
+            })
+
+            const chat = await postJson<any>(
+              settings.backendUrl,
+              '/chat',
+              {
+                message: multimodal.userPrompt || requestText,
+                conversation_id: conversationId,
+                project_id: currentProjectId,
+                fun_mode: settings.funMode,
+                mode: retryMode,
+                provider: settingsDraft.providerChat,
+                provider_base_url: settingsDraft.baseUrlChat || undefined,
+                provider_model: settingsDraft.modelChat,
+                textTemperature: settingsDraft.textTemperature,
+                textMaxTokens: retryMode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                nsfwMode: settingsDraft.nsfwMode,
+                memoryEngine: settingsDraft.memoryEngine || 'v2',
+                extra_system_context: extraCtx,
+              },
+              authHeaders
+            )
+
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === failedId
+                  ? {
+                      ...m,
+                      pending: false,
+                      error: false,
+                      animate: true,
+                      text: chat.text || '',
+                      media: chat.media || { images: [multimodal.imageUrl] },
+                    }
+                  : m
+              )
+            )
+            if (chat.conversation_id) setConversationId(chat.conversation_id)
+
+            // Persist vision artifact
+            const cidToAttach = (chat.conversation_id || conversationId || '').trim()
+            if (cidToAttach) {
+              postJson<any>(
+                settings.backendUrl,
+                '/v1/multimodal/attach',
+                {
+                  conversation_id: cidToAttach,
+                  project_id: currentProjectId,
+                  image_url: multimodal.imageUrl,
+                  analysis_text: analysisText,
+                },
+                authHeaders
+              ).catch(() => {})
+            }
+          }
         } catch (err: any) {
           const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
           setMessages((prev) =>
@@ -3080,8 +3258,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             )
           )
 
-          // 2. Call multimodal analysis endpoint
-          const result = await postJson<any>(
+          // 2. Call multimodal analysis endpoint (persist depends on topology)
+          const topology = settingsDraft.multimodalTopology || 'direct'
+
+          const vision = await postJson<any>(
             settings.backendUrl,
             '/v1/multimodal/analyze',
             {
@@ -3093,28 +3273,100 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               mode: 'both',
               user_prompt: userPrompt || undefined,
               nsfw_mode: settingsDraft.nsfwMode || false,
+              persist: topology === 'direct',  // Smart: don't persist yet
             },
             authHeaders
           )
 
-          const analysisText = result.analysis_text || 'No analysis available.'
+          const analysisText = vision.analysis_text || 'No analysis available.'
 
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === tmpId
-                ? {
-                    ...m,
-                    pending: false,
-                    animate: true,
-                    text: analysisText,
-                    media: { images: [imageUrl] },
-                  }
-                : m
+          if (topology === 'direct') {
+            // ── Direct topology: show vision output directly (existing behavior) ──
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      animate: true,
+                      text: analysisText,
+                      media: { images: [imageUrl] },
+                    }
+                  : m
+              )
             )
-          )
+            if (vision.conversation_id) {
+              setConversationId(vision.conversation_id)
+            }
+          } else {
+            // ── Smart topology: chain vision → main LLM for refined answer ──
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId ? { ...m, text: 'Thinking…' } : m
+              )
+            )
 
-          if (result.conversation_id) {
-            setConversationId(result.conversation_id)
+            const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+            const extraCtx = buildVisionSystemContext({
+              imageUrl,
+              analysisText,
+              model: settingsDraft.modelMultimodal || undefined,
+              mode: 'both',
+            })
+
+            const chat = await postJson<any>(
+              settings.backendUrl,
+              '/chat',
+              {
+                message: userPrompt || `Describe what you see in this image.`,
+                conversation_id: conversationId,
+                project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+                fun_mode: settings.funMode,
+                mode,
+                provider: settingsDraft.providerChat,
+                provider_base_url: settingsDraft.baseUrlChat || undefined,
+                provider_model: settingsDraft.modelChat,
+                textTemperature: settingsDraft.textTemperature,
+                textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                nsfwMode: settingsDraft.nsfwMode,
+                memoryEngine: settingsDraft.memoryEngine || 'v2',
+                extra_system_context: extraCtx,
+              },
+              authHeaders
+            )
+
+            // Replace pending assistant with FINAL chat response
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      animate: true,
+                      text: chat.text || '',
+                      media: chat.media || { images: [imageUrl] },
+                    }
+                  : m
+              )
+            )
+
+            if (chat.conversation_id) setConversationId(chat.conversation_id)
+
+            // Persist the vision analysis into history (tool artifact) without re-running vision
+            const cidToAttach = (chat.conversation_id || conversationId || '').trim()
+            if (cidToAttach) {
+              postJson<any>(
+                settings.backendUrl,
+                '/v1/multimodal/attach',
+                {
+                  conversation_id: cidToAttach,
+                  project_id: currentProjectId,
+                  image_url: imageUrl,
+                  analysis_text: analysisText,
+                },
+                authHeaders
+              ).catch(() => {})
+            }
           }
         } catch (err: any) {
           const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
@@ -3129,7 +3381,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     retry: {
                       requestText: userText,
                       mode: mode as Mode,
-                      multimodal: { imageUrl: imageUrl ?? '', userPrompt: userPrompt || undefined },
+                      multimodal: {
+                        imageUrl: imageUrl ?? '',
+                        userPrompt: userPrompt || undefined,
+                        topology: settingsDraft.multimodalTopology || 'direct',
+                      },
                     },
                   }
                 : m

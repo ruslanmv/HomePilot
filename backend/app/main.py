@@ -265,6 +265,11 @@ class ChatIn(BaseModel):
     # ----------------------------
     voiceSystemPrompt: Optional[str] = Field(None, description="Custom system prompt for voice mode personalities (legacy)")
     personalityId: Optional[str] = Field(None, description="Backend personality agent id (e.g. 'therapist', 'assistant')")
+    # Smart multimodal topology: optional extra context injected into system prompt
+    extra_system_context: Optional[str] = Field(
+        None,
+        description="Optional extra system context (e.g., vision analysis) injected into the next LLM call.",
+    )
 
 
 class ChatOut(BaseModel):
@@ -2732,6 +2737,8 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "voiceSystemPrompt": inp.voiceSystemPrompt,
         # Backend personality agent
         "personalityId": inp.personalityId,
+        # Smart multimodal topology: optional vision context for system prompt
+        "extra_system_context": inp.extra_system_context,
     }
 
     # ----------------------------
@@ -3573,6 +3580,10 @@ class MultimodalAnalyzeIn(BaseModel):
     mode: Optional[str] = Field("both", description="Analysis mode: caption | ocr | both")
     user_prompt: Optional[str] = Field(None, description="Custom prompt for the vision model")
     nsfw_mode: Optional[bool] = Field(False, description="Enable unrestricted analysis")
+    persist: Optional[bool] = Field(
+        True,
+        description="If true (default), store analysis in conversation history. If false, return only.",
+    )
 
 
 @app.post("/v1/multimodal/analyze", dependencies=[Depends(require_api_key)])
@@ -3613,9 +3624,9 @@ async def multimodal_analyze(inp: MultimodalAnalyzeIn) -> JSONResponse:
                 },
             )
 
-        # Optionally persist into conversation history
+        # Optionally persist into conversation history (skipped when persist=false)
         cid = inp.conversation_id
-        if cid and result.get("analysis_text"):
+        if (inp.persist is not False) and cid and result.get("analysis_text"):
             try:
                 from .storage import add_message
                 # Store the analysis as an assistant message with the image in media
@@ -3649,6 +3660,45 @@ async def multimodal_analyze(inp: MultimodalAnalyzeIn) -> JSONResponse:
                 "analysis_text": "",
                 "meta": {},
             },
+        )
+
+
+# ============================================================================
+# Multimodal Vision Layer — Attach/Persist (additive)
+# ============================================================================
+
+class MultimodalAttachIn(BaseModel):
+    """Persist an existing vision analysis into conversation history without re-running the vision model."""
+    conversation_id: str = Field(..., description="Conversation ID to attach the analysis into")
+    image_url: str = Field(..., description="Image URL to associate with the analysis")
+    analysis_text: str = Field(..., description="Vision analysis text to store")
+    project_id: Optional[str] = Field(None, description="Optional project context")
+
+
+@app.post("/v1/multimodal/attach", dependencies=[Depends(require_api_key)])
+async def multimodal_attach(inp: MultimodalAttachIn) -> JSONResponse:
+    """
+    Persist an existing multimodal analysis into conversation history without
+    re-running the vision model.  Used by the Smart topology so the vision
+    result is saved as a history artifact after the main LLM has responded.
+
+    Additive and safe for production — no existing endpoints are modified.
+    """
+    try:
+        from .storage import add_message
+        add_message(
+            inp.conversation_id,
+            "assistant",
+            f"[Image Analysis]\n{inp.analysis_text}",
+            media={"images": [inp.image_url]},
+            project_id=inp.project_id,
+        )
+        return JSONResponse(status_code=200, content={"ok": True})
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": f"Failed to attach multimodal analysis: {str(e)}"},
         )
 
 
