@@ -277,6 +277,10 @@ Designed for secretary, enterprise, and finance personas. A flat key-value store
 
 Switch between engines at any time from **Settings** or during `.hpersona` import. No data loss.
 
+### Profile Awareness (Always On)
+
+Independent of memory engines, HomePilot injects your **user profile** into every conversation — plain chat, persona chat, and agent chat. Set your name, birthday, and preferences in **Profile & Integrations**, and the AI will know who you are without needing to tell it. Memory adds the ability for personas to *learn new facts over time* from conversation; your profile provides the baseline identity that is always available.
+
 > Full memory documentation at [docs/MEMORY.md](MEMORY.md).
 
 ---

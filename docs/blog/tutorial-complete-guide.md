@@ -266,6 +266,8 @@ You can use any archetype as-is or customize it to create your own Persona.
   <em>Figure 9 — The four-layer memory system. Persona memory is not a flat log. It is structured into facts, emotional patterns, relationship context, and confidence scoring — all persistent across sessions.</em>
 </p>
 
+**Important distinction:** Your **user profile** (name, birthday, pronouns, preferences — set in Profile & Integrations) is injected into *every* conversation automatically, including plain chat with no persona. You do not need memory enabled for the AI to know your name. Long-term memory, described below, adds the ability for personas to *learn new facts from conversation* and remember them across sessions.
+
 ### Four memory layers
 
 | Layer | What It Stores | Example |
