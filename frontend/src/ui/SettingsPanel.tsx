@@ -1083,12 +1083,12 @@ export default function SettingsPanel({
               <select
                 value={value.multimodalTopology || 'smart'}
                 onChange={(e) => onChangeDraft({ ...value, multimodalTopology: e.target.value as 'direct' | 'smart' | 'agent' | 'knowledge' })}
-                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white/80 focus:outline-none focus:border-purple-500/50"
+                className="w-full bg-black border border-white/10 rounded-lg px-3 py-2 text-xs text-white/80 focus:outline-none focus:border-purple-500/50"
               >
-                <option value="smart">Smart (Vision + Assistant) — Recommended</option>
-                <option value="direct">Fast (Direct Vision)</option>
-                <option value="agent">Agent (Autonomous Tools)</option>
-                <option value="knowledge">Knowledge (Agent + RAG + Memory)</option>
+                <option value="smart" className="bg-[#1a1a2e] text-white">Smart (Vision + Assistant) — Recommended</option>
+                <option value="direct" className="bg-[#1a1a2e] text-white">Fast (Direct Vision)</option>
+                <option value="agent" className="bg-[#1a1a2e] text-white">Agent (Autonomous Tools)</option>
+                <option value="knowledge" className="bg-[#1a1a2e] text-white">Knowledge (Agent + RAG + Memory)</option>
               </select>
               <div className="text-[10px] text-white/30 mt-1">
                 {(value.multimodalTopology || 'smart') === 'knowledge'
