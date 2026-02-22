@@ -30,6 +30,7 @@ import { SCENARIO_TAG_META } from './galleryTypes'
 import type { AvatarResult } from './types'
 import { OUTFIT_PRESETS } from '../personaTypes'
 import { useOutfitGeneration } from './useOutfitGeneration'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -55,8 +56,7 @@ export interface OutfitPanelProps {
 // ---------------------------------------------------------------------------
 
 function resolveUrl(url: string, backendUrl: string): string {
-  if (url.startsWith('http')) return url
-  return `${backendUrl.replace(/\/+$/, '')}${url}`
+  return resolveFileUrl(url, backendUrl)
 }
 
 // ---------------------------------------------------------------------------

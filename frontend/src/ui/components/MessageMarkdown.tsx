@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, Copy } from 'lucide-react'
@@ -57,77 +57,123 @@ function CodeBlock({ lang, raw }: { lang: string; raw: string }) {
  * - Code blocks have header + language + copy button.
  */
 export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: string; onImageClick?: (src: string) => void; backendUrl?: string }) {
-  const normalized = useMemo(() => (text ?? '').replace(/\r\n/g, '\n'), [text])
+  const normalized = useMemo(() => {
+    let t = (text ?? '').replace(/\r\n/g, '\n')
+    // Fix LLM-wrapped URLs: strip whitespace inside markdown image/link URLs
+    // e.g. ![alt](http://host/path/ with-space) → ![alt](http://host/path/with-space)
+    t = t.replace(/(!?\[[^\]]*\]\()([^)]+)\)/g, (_m, prefix, url) =>
+      `${prefix}${url.replace(/\s+/g, '')})`
+    )
+    return t
+  }, [text])
 
-  /** Resolve backend-relative image paths (e.g. /comfy/view/...) to full URLs */
-  const resolveImgSrc = (src?: string): string | undefined => {
+  /** Resolve backend-relative image paths (e.g. /comfy/view/..., /files/...) to full URLs.
+   *  Appends auth token for /files/ paths that require authentication. */
+  const resolveImgSrc = useCallback((src?: string): string | undefined => {
     if (!src) return src
-    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:') || src.startsWith('blob:')) return src
-    if (backendUrl) return `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+    // Strip whitespace LLMs may inject mid-URL when line-wrapping
+    src = src.replace(/\s+/g, '')
+    // Resolve media:// refs via backend /media/resolve endpoint
+    if (src.startsWith('media://') && backendUrl) {
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const base = backendUrl.replace(/\/+$/, '')
+      const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
+      return `${base}/media/resolve?ref=${encodeURIComponent(src)}${qp}`
+    }
+    if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:') || src.startsWith('blob:')) {
+      // For absolute backend URLs that contain /files/, append token
+      if (backendUrl && src.includes('/files/')) {
+        const tok = localStorage.getItem('homepilot_auth_token') || ''
+        if (tok) {
+          const sep = src.includes('?') ? '&' : '?'
+          return `${src}${sep}token=${encodeURIComponent(tok)}`
+        }
+      }
+      return src
+    }
+    if (backendUrl) {
+      const base = backendUrl.replace(/\/+$/, '')
+      const path = src.startsWith('/') ? src : `/${src}`
+      const full = `${base}${path}`
+      // Append token for /files/ paths
+      if (path.startsWith('/files/')) {
+        const tok = localStorage.getItem('homepilot_auth_token') || ''
+        if (tok) {
+          const sep = full.includes('?') ? '&' : '?'
+          return `${full}${sep}token=${encodeURIComponent(tok)}`
+        }
+      }
+      return full
+    }
     return src
-  }
+  }, [backendUrl])
+
+  // Memoize the components object so ReactMarkdown doesn't remount
+  // custom elements (especially <img>) on every parent re-render.
+  const mdComponents = useMemo(() => ({
+    a: ({ children, href, ...props }: any) => (
+      <a
+        {...props}
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="underline decoration-white/30 hover:decoration-white/70 text-white"
+      >
+        {children}
+      </a>
+    ),
+    code: ({ children, className }: any) => {
+      const isBlock = !!className
+      const lang = languageFromClassName(className)
+      const raw = String(children ?? '').replace(/\n$/, '')
+      if (!isBlock) {
+        return (
+          <code className="px-1.5 py-0.5 rounded-md bg-white/10 border border-white/10 text-[0.95em]">
+            {children}
+          </code>
+        )
+      }
+
+      return <CodeBlock lang={lang} raw={raw} />
+    },
+    h1: ({ children }: any) => <h1 className="text-xl font-semibold mt-3 mb-2">{children}</h1>,
+    h2: ({ children }: any) => <h2 className="text-lg font-semibold mt-3 mb-2">{children}</h2>,
+    h3: ({ children }: any) => <h3 className="text-base font-semibold mt-3 mb-2">{children}</h3>,
+    ul: ({ children }: any) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
+    ol: ({ children }: any) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
+    li: ({ children }: any) => <li className="leading-relaxed">{children}</li>,
+    blockquote: ({ children }: any) => (
+      <blockquote className="border-l-2 border-white/15 pl-4 italic text-white/90">{children}</blockquote>
+    ),
+    table: ({ children }: any) => (
+      <div className="overflow-x-auto rounded-2xl border border-white/10">
+        <table className="w-full text-sm">{children}</table>
+      </div>
+    ),
+    thead: ({ children }: any) => <thead className="bg-white/5">{children}</thead>,
+    th: ({ children }: any) => <th className="text-left px-3 py-2 font-semibold">{children}</th>,
+    td: ({ children }: any) => <td className="px-3 py-2 border-t border-white/10">{children}</td>,
+    img: ({ src, alt }: any) => {
+      const resolved = resolveImgSrc(src)
+      return (
+        <img
+          src={resolved}
+          alt={alt || 'Photo'}
+          onClick={resolved ? () => onImageClick?.(resolved) : undefined}
+          className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
+          loading="lazy"
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+      )
+    },
+    p: ({ children }: any) => <p className="leading-relaxed">{children}</p>,
+  }), [resolveImgSrc, onImageClick])
 
   return (
     <div className="prose prose-invert max-w-none prose-p:my-2 prose-pre:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-hr:my-4 prose-blockquote:my-3">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={{
-          a: ({ children, href, ...props }) => (
-            <a
-              {...props}
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              className="underline decoration-white/30 hover:decoration-white/70 text-white"
-            >
-              {children}
-            </a>
-          ),
-          code: ({ children, className }) => {
-            const isBlock = !!className
-            const lang = languageFromClassName(className)
-            const raw = String(children ?? '').replace(/\n$/, '')
-            if (!isBlock) {
-              return (
-                <code className="px-1.5 py-0.5 rounded-md bg-white/10 border border-white/10 text-[0.95em]">
-                  {children}
-                </code>
-              )
-            }
-
-            return <CodeBlock lang={lang} raw={raw} />
-          },
-          h1: ({ children }) => <h1 className="text-xl font-semibold mt-3 mb-2">{children}</h1>,
-          h2: ({ children }) => <h2 className="text-lg font-semibold mt-3 mb-2">{children}</h2>,
-          h3: ({ children }) => <h3 className="text-base font-semibold mt-3 mb-2">{children}</h3>,
-          ul: ({ children }) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
-          li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-          blockquote: ({ children }) => (
-            <blockquote className="border-l-2 border-white/15 pl-4 italic text-white/90">{children}</blockquote>
-          ),
-          table: ({ children }) => (
-            <div className="overflow-x-auto rounded-2xl border border-white/10">
-              <table className="w-full text-sm">{children}</table>
-            </div>
-          ),
-          thead: ({ children }) => <thead className="bg-white/5">{children}</thead>,
-          th: ({ children }) => <th className="text-left px-3 py-2 font-semibold">{children}</th>,
-          td: ({ children }) => <td className="px-3 py-2 border-t border-white/10">{children}</td>,
-          img: ({ src, alt }) => {
-            const resolved = resolveImgSrc(src)
-            return (
-              <img
-                src={resolved}
-                alt={alt || 'Photo'}
-                onClick={resolved ? () => onImageClick?.(resolved) : undefined}
-                className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
-                loading="lazy"
-              />
-            )
-          },
-          p: ({ children }) => <p className="leading-relaxed">{children}</p>,
-        }}
+        components={mdComponents}
       >
         {normalized}
       </ReactMarkdown>

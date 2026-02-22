@@ -7,6 +7,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { CheckCircle, Eye, RotateCcw, X, Download } from 'lucide-react'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 export interface ActionFeedbackProps {
   /** Action that was performed (e.g., "Enhanced", "BG Removed") */
@@ -110,7 +111,7 @@ export function ActionFeedback({
       {/* Thumbnail */}
       {resultUrl && (
         <div className="w-12 h-12 rounded-lg overflow-hidden bg-white/10 shrink-0">
-          <img src={resultUrl} alt="Result" className="w-full h-full object-cover" />
+          <img src={resolveFileUrl(resultUrl)} alt="Result" className="w-full h-full object-cover" />
         </div>
       )}
 

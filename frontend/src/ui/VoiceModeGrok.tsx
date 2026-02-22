@@ -115,8 +115,17 @@ function parseInlineMarkdown(
     }
     const fullMatch = match[1];
     const alt = match[2];
-    const url = match[3];
+    // Strip whitespace LLMs may inject mid-URL when line-wrapping
+    let url = match[3].replace(/\s+/g, '');
     const isImage = fullMatch.startsWith('!');
+
+    // Resolve media:// refs via backend /media/resolve endpoint
+    if (url.startsWith('media://')) {
+      const base = (localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000').replace(/\/+$/, '')
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
+      url = `${base}/media/resolve?ref=${encodeURIComponent(url)}${qp}`
+    }
 
     if (isImage) {
       nodes.push(
@@ -124,9 +133,10 @@ function parseInlineMarkdown(
           key={`img-${match.index}`}
           src={url}
           alt={alt || 'Photo'}
-          className="inline-block max-h-72 max-w-72 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
+          className="inline-block w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
           loading="lazy"
           onClick={() => onImageClick?.(url)}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
         />
       );
     } else {
@@ -140,9 +150,10 @@ function parseInlineMarkdown(
             key={`lnkimg-${match.index}`}
             src={url}
             alt={alt || 'Photo'}
-            className="inline-block max-h-72 max-w-72 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
+            className="inline-block w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
             loading="lazy"
             onClick={() => onImageClick?.(url)}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
           />
         );
       } else {
@@ -427,25 +438,26 @@ function RenderTypedMessage({
         );
       })}
 
-      {/* Render generated images - larger display with click-to-expand */}
-      {media?.images?.length ? (
-        <div className="mt-3 flex gap-3 overflow-x-auto">
-          {media.images.map((src, i) => (
+      {/* Render generated images AFTER typewriter animation completes */}
+      {!isTyping && media?.images?.length ? (
+        <div className="mt-3 flex gap-3 overflow-x-auto hp-fade-in">
+          {[...new Set(media.images)].map((src, i) => (
             <img
-              key={i}
+              key={src || i}
               src={src}
               alt={`Generated ${i + 1}`}
-              className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
+              className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
               loading="lazy"
               onClick={() => onImageClick?.(src)}
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
             />
           ))}
         </div>
       ) : null}
 
-      {/* Render generated video */}
-      {media?.video_url ? (
-        <div className="mt-3">
+      {/* Render generated video AFTER typewriter animation completes */}
+      {!isTyping && media?.video_url ? (
+        <div className="mt-3 hp-fade-in">
           <video
             src={media.video_url}
             controls
