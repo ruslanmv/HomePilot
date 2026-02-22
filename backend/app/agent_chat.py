@@ -72,6 +72,12 @@ _register_tool(
     "  Use this when a user uploads an image and wants it searchable later.",
 )
 _register_tool(
+    "image.generate",
+    "image.generate(prompt): generates an image from a text description.\n"
+    "  prompt: detailed visual description of the image to create.\n"
+    "  Use this when the user asks to generate, create, draw, imagine, or make a picture/photo/image.",
+)
+_register_tool(
     "memory.store",
     "memory.store(key, value, importance): stores a fact or preference about the user.\n"
     "  key: short label (e.g. 'favorite_color'). value: the fact. importance: 0.0-1.0 (default 0.5).\n"
@@ -155,6 +161,7 @@ def _build_agent_system_prompt(
         "- Use memory.recall when you need to remember user preferences, facts, or boundaries.\n"
         "- Use memory.store when you learn an important fact about the user that should be remembered.\n"
         "- Use web.search when the user asks about current events or needs up-to-date information.\n"
+        "- Use image.generate when the user asks to generate, create, draw, imagine, or make a picture/photo/image.\n"
         "- Keep tool calls minimal.\n",
     ]
 
@@ -466,6 +473,48 @@ async def _run_memory_store(
         return f"Error storing memory: {e}", {"error": str(e)}
 
 
+async def _run_image_generate(
+    *,
+    prompt: str,
+    conversation_id: Optional[str],
+    project_id: Optional[str],
+    nsfw_mode: bool,
+    user_id: Optional[str],
+) -> Tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+    """
+    Generate an image by routing through the orchestrator's imagine pipeline.
+    Returns (description_text, meta, media_dict).
+    """
+    if not prompt:
+        return "Please describe what image you'd like me to generate.", {"error": "no_prompt"}, None
+
+    try:
+        from .orchestrator import orchestrate
+    except ImportError:
+        return "Image generation module is not available.", {"error": "orchestrator_missing"}, None
+
+    try:
+        result = await orchestrate(
+            user_text=prompt,
+            conversation_id=conversation_id,
+            mode="imagine",
+            nsfw_mode=nsfw_mode,
+            user_id=user_id,
+        )
+        media = result.get("media")
+        text = result.get("text", "")
+
+        if media and media.get("images"):
+            urls = media["images"]
+            text = text or f"Generated {len(urls)} image(s) for: {prompt[:100]}"
+            return text, {"prompt": prompt, "images": urls}, media
+        else:
+            return text or "Image generation completed but no images were returned.", {"prompt": prompt}, None
+
+    except Exception as e:
+        return f"Image generation failed: {e}", {"error": str(e)}, None
+
+
 # ---------------------------------------------------------------------------
 # Memory V2 context builder (injected into system prompt)
 # ---------------------------------------------------------------------------
@@ -688,6 +737,17 @@ async def _dispatch_tool(
             nsfw_mode=nsfw_mode,
         )
         return text, meta, {"images": [image_url]}
+
+    elif tool == "image.generate":
+        prompt = (args.get("prompt") or "").strip() or user_text
+        text, meta, media = await _run_image_generate(
+            prompt=prompt,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            nsfw_mode=nsfw_mode,
+            user_id=None,  # user_id isn't passed to _dispatch_tool yet
+        )
+        return text, meta, media
 
     elif tool == "memory.store":
         key = (args.get("key") or "").strip()
