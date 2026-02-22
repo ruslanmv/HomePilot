@@ -267,7 +267,7 @@ async def analyze_image_ollama(
         ],
         "stream": False,
         "options": {
-            "temperature": 0.3,
+            "temperature": 0.1,
             "num_predict": 1024,
         },
     }

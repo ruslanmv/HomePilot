@@ -1668,15 +1668,16 @@ function buildVisionSystemContext(args: {
   const modelLine = args.model ? `Vision model: ${args.model}` : 'Vision model: (unknown)'
   const modeLine = args.mode ? `Mode: ${args.mode}` : 'Mode: both'
   return [
-    'You have a vision analysis result from a multimodal model.',
-    'Use it as factual context to answer the user\'s request. If it is insufficient or uncertain, ask a follow-up question.',
+    'IMPORTANT: A vision model has analyzed the user\'s uploaded image. The analysis below is the ONLY source of truth about the image contents.',
+    'You MUST base your answer strictly on this analysis. Do NOT invent, hallucinate, or guess details that are not in the analysis.',
+    'If the analysis is empty or insufficient to answer the user\'s question, say so honestly and suggest re-uploading or asking a more specific question.',
     '',
     `Image URL: ${args.imageUrl}`,
     modelLine,
     modeLine,
     '',
     'Vision analysis:',
-    args.analysisText || '(empty)',
+    args.analysisText || '(empty — vision model returned no content)',
   ].join('\n')
 }
 
@@ -1974,7 +1975,7 @@ export default function App() {
     const providerMultimodal = (localStorage.getItem('homepilot_provider_multimodal') || 'ollama') as string
     const baseUrlMultimodal = localStorage.getItem('homepilot_base_url_multimodal') || ''
     const modelMultimodal = localStorage.getItem('homepilot_model_multimodal') || ''
-    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'direct'
+    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'smart'
 
     return {
       backendUrl,
@@ -2184,7 +2185,7 @@ export default function App() {
     localStorage.setItem('homepilot_provider_multimodal', settingsDraft.providerMultimodal || 'ollama')
     localStorage.setItem('homepilot_base_url_multimodal', settingsDraft.baseUrlMultimodal || '')
     localStorage.setItem('homepilot_model_multimodal', settingsDraft.modelMultimodal || '')
-    localStorage.setItem('homepilot_multimodal_topology', settingsDraft.multimodalTopology || 'direct')
+    localStorage.setItem('homepilot_multimodal_topology', settingsDraft.multimodalTopology || 'smart')
 
     // Save TTS settings to nexus_settings_v1 format (used by SpeechService)
     // This ensures the selected voice is actually used for TTS
@@ -2265,7 +2266,7 @@ export default function App() {
         providerMultimodal: localStorage.getItem('homepilot_provider_multimodal') || 'ollama',
         baseUrlMultimodal: localStorage.getItem('homepilot_base_url_multimodal') || '',
         modelMultimodal: localStorage.getItem('homepilot_model_multimodal') || '',
-        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'direct',
+        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'smart',
       })
     }
   }, [showSettings, settings])
@@ -2724,7 +2725,7 @@ export default function App() {
           }
 
           try {
-            const visionTopology = settingsDraft.multimodalTopology || 'direct'
+            const visionTopology = settingsDraft.multimodalTopology || 'smart'
 
             // ── Agent/Knowledge topology: route to /v1/agent/chat for autonomous tool use ──
             if (visionTopology === 'agent' || visionTopology === 'knowledge') {
@@ -2796,6 +2797,31 @@ export default function App() {
               },
               authHeaders
             )
+
+            // Guard: if vision failed, show the error instead of hallucinating
+            if (result.ok === false || (!result.analysis_text && result.error)) {
+              const errDetail = result.error || 'No vision model available. Install one with: ollama pull gemma3:4b'
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId
+                    ? {
+                        ...m,
+                        pending: false,
+                        error: true,
+                        text: `Vision analysis failed: ${errDetail}`,
+                        media: { images: [lastImageUrl] },
+                        retry: {
+                          requestText: trimmed,
+                          mode: mode as Mode,
+                          multimodal: { imageUrl: lastImageUrl, userPrompt: trimmed, topology: visionTopology },
+                        },
+                      }
+                    : m
+                )
+              )
+              fetchConversations()
+              return
+            }
 
             const analysisText = result.analysis_text || 'No analysis available.'
 
@@ -2900,7 +2926,7 @@ export default function App() {
                         multimodal: {
                           imageUrl: lastImageUrl,
                           userPrompt: trimmed,
-                          topology: settingsDraft.multimodalTopology || 'direct',
+                          topology: settingsDraft.multimodalTopology || 'smart',
                         },
                       },
                     }
@@ -3018,7 +3044,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       try {
         // ── Agent/Knowledge topology: route text messages through /v1/agent/chat ──
         // The agent decides autonomously whether to use tools (vision, knowledge, memory, etc.)
-        const chatTopology = settingsDraft.multimodalTopology || 'direct'
+        const chatTopology = settingsDraft.multimodalTopology || 'smart'
         if ((chatTopology === 'agent' || chatTopology === 'knowledge') && (mode === 'chat' || mode === 'voice')) {
           setMessages((prev) =>
             prev.map((m) =>
@@ -3204,7 +3230,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       // Multimodal retry: re-call /v1/multimodal/analyze with the stored image URL
       // Respects the topology that was active when the original request was made.
       if (multimodal?.imageUrl) {
-        const retryTopology = multimodal.topology || settingsDraft.multimodalTopology || 'direct'
+        const retryTopology = multimodal.topology || settingsDraft.multimodalTopology || 'smart'
 
         // ── Agent/Knowledge topology retry: route to /v1/agent/chat ──
         if (retryTopology === 'agent' || retryTopology === 'knowledge') {
@@ -3495,7 +3521,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           )
 
           // 2. Call multimodal analysis endpoint (persist depends on topology)
-          const topology = settingsDraft.multimodalTopology || 'direct'
+          const topology = settingsDraft.multimodalTopology || 'smart'
 
           // ── Agent/Knowledge topology: let the backend agent loop handle everything ──
           if (topology === 'agent' || topology === 'knowledge') {
@@ -3561,6 +3587,31 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             },
             authHeaders
           )
+
+          // Guard: if vision failed (no model installed, Ollama down, etc.)
+          // show the error immediately instead of falling through to the text LLM
+          if (vision.ok === false || (!vision.analysis_text && vision.error)) {
+            const errDetail = vision.error || 'No vision model available. Install one with: ollama pull gemma3:4b'
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      error: true,
+                      text: `Vision analysis failed: ${errDetail}`,
+                      media: { images: [imageUrl] },
+                      retry: {
+                        requestText: userText,
+                        mode: mode as Mode,
+                        multimodal: { imageUrl, userPrompt: userPrompt || undefined, topology },
+                      },
+                    }
+                  : m
+              )
+            )
+            return
+          }
 
           const analysisText = vision.analysis_text || 'No analysis available.'
 
@@ -3668,7 +3719,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                       multimodal: {
                         imageUrl: imageUrl ?? '',
                         userPrompt: userPrompt || undefined,
-                        topology: settingsDraft.multimodalTopology || 'direct',
+                        topology: settingsDraft.multimodalTopology || 'smart',
                       },
                     },
                   }
