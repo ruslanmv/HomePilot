@@ -96,6 +96,9 @@ from .community import router as community_router
 from .profile import router as profile_router
 from .user_memory import router as memory_router
 
+# Multi-User Accounts & Onboarding (additive)
+from .users import router as users_router
+
 # Avatar Studio (additive — persona avatar generation)
 from .avatar import router as avatar_router
 
@@ -153,6 +156,9 @@ app.include_router(avatar_router)
 
 # Include Outfit Variation routes (/v1/avatars/outfits)
 app.include_router(outfit_router)
+
+# Include User Auth & Onboarding routes (/v1/auth/*)
+app.include_router(users_router)
 
 
 # ----------------------------

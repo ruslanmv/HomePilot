@@ -146,6 +146,10 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_jobs_pending ON persona_jobs(status, created_at)"
     )
 
+    # Additive: Multi-user accounts tables
+    from .users import ensure_users_tables
+    ensure_users_tables()
+
     con.commit()
     con.close()
 
