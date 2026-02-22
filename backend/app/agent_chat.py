@@ -32,6 +32,7 @@ DEFAULT_MAX_TOOL_CALLS = 4
 DEFAULT_HISTORY_LIMIT = 24
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
+_MEDIA_REF_RE = re.compile(r"media://persona/[a-f0-9\-]+/(?:default\b|label/[^)\"]+)")
 
 # --- Tool registry ---
 # Maps tool_name -> (description_for_catalog, handler_coroutine_factory)
@@ -189,6 +190,65 @@ def _build_agent_system_prompt(
         parts.append(f"\n{knowledge_hint}\n")
 
     return "\n".join(parts)
+
+
+def _resolve_media_ref(ref: str) -> Optional[str]:
+    """Resolve a media://persona/<id>/... ref to a real image URL."""
+    if not ref.startswith("media://"):
+        return None
+    try:
+        from .media_resolver import _build_label_index, _abs_img_url
+        parts = ref.replace("media://", "").split("/")
+        if len(parts) < 3:
+            return None
+        kind, project_id, action = parts[0], parts[1], parts[2]
+        if kind != "persona":
+            return None
+        idx = _build_label_index(project_id)
+        if action == "default":
+            return idx.get("default")
+        if action == "label" and len(parts) >= 4:
+            label = "/".join(parts[3:]).strip()
+            return idx.get(f"label:{label}")
+    except Exception:
+        pass
+    return None
+
+
+def _extract_media_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Extract media:// refs from LLM text and resolve them to real image URLs.
+    Returns a media dict like {"images": [url1, ...]} or None.
+    """
+    refs = _MEDIA_REF_RE.findall(text)
+    if not refs:
+        return None
+    urls = []
+    for ref in refs:
+        url = _resolve_media_ref(ref)
+        if url:
+            urls.append(url)
+    return {"images": urls} if urls else None
+
+
+def _build_persona_photo_index(project_id: str) -> Dict[str, str]:
+    """
+    Build a mapping from lowercase label -> media:// ref for deterministic
+    photo shortcut resolution. Also includes 'default' key.
+    """
+    try:
+        from .media_resolver import _build_label_index
+        idx = _build_label_index(project_id)
+        result: Dict[str, str] = {}
+        for key, url in idx.items():
+            if key == "default":
+                result["default"] = url
+            elif key.startswith("label:"):
+                label = key[len("label:"):]
+                result[label.lower()] = url
+        return result
+    except Exception:
+        return {}
 
 
 def _find_last_image_url(conversation_id: str) -> Optional[str]:
@@ -824,42 +884,99 @@ async def agent_chat(
     if text_in:
         add_message(cid, "user", text_in, media=None, project_id=project_id)
 
-    # Deterministic persona photo shortcut: if user asks "show me your photo"
-    # and a committed avatar exists, return it immediately without LLM call.
+    # Deterministic persona photo shortcut: detect photo requests and return
+    # the matching image immediately without an LLM call.  Handles both default
+    # photo requests ("show me your photo") and outfit-specific requests
+    # ("show me your lingerie look", "yes please" after an offer, etc.).
     if text_in and project_id:
-        _photo_triggers = [
+        _lower = text_in.lower().strip()
+        _default_triggers = [
             "show me your photo", "show me your picture", "show your photo",
             "show your picture", "your photo", "your picture",
             "what do you look like", "how do you look", "show me yourself",
             "let me see you", "show me your photos",
         ]
-        _lower = text_in.lower()
-        if any(t in _lower for t in _photo_triggers):
-            try:
-                from .projects import get_project_by_id
-                from .config import PUBLIC_BASE_URL
-                proj = get_project_by_id(project_id)
-                if proj and proj.get("project_type") == "persona":
-                    appearance = proj.get("persona_appearance") or {}
-                    sel = appearance.get("selected_filename")
-                    if isinstance(sel, str) and sel:
-                        base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
-                        img_url = f"{base}/files/{sel}"
+        _outfit_triggers = [
+            "show me your", "show your", "show me the",
+            "let me see your", "i want to see your",
+        ]
+        # "yes" / "yes please" / "sure" after the LLM offered to show an outfit
+        _confirm_triggers = [
+            "yes", "yes please", "sure", "yeah", "yep", "ok", "okay",
+            "go ahead", "show me", "please", "absolutely", "of course",
+            "do it", "let's see", "i'd love to", "yes show me",
+        ]
+        try:
+            from .projects import get_project_by_id
+            proj = get_project_by_id(project_id)
+            if proj and proj.get("project_type") == "persona":
+                photo_idx = _build_persona_photo_index(project_id)
+                pa = proj.get("persona_agent") or {}
+                p_label = pa.get("label", "")
+
+                matched_url: Optional[str] = None
+                matched_outfit_label: Optional[str] = None
+
+                # 1) Default photo triggers
+                if any(t in _lower for t in _default_triggers):
+                    matched_url = photo_idx.get("default")
+                    matched_outfit_label = "Default Look"
+
+                # 2) Outfit-specific triggers: "show me your lingerie"
+                if not matched_url:
+                    for trigger in _outfit_triggers:
+                        if trigger in _lower:
+                            # Extract the part after the trigger
+                            after = _lower.split(trigger, 1)[1].strip()
+                            # Remove trailing words like "look", "outfit", "photo", "style"
+                            for suffix in ["look", "outfit", "photo", "picture", "style", "please"]:
+                                after = after.replace(suffix, "").strip()
+                            if after:
+                                # Match against known labels
+                                for label_key, url in photo_idx.items():
+                                    if label_key == "default":
+                                        continue
+                                    if label_key in after or after in label_key:
+                                        matched_url = url
+                                        matched_outfit_label = label_key.title()
+                                        break
+
+                # 3) Confirmation triggers: check last assistant message for offered label
+                if not matched_url and _lower in _confirm_triggers:
+                    try:
+                        history = get_recent(cid, limit=4)
+                        for role, content in reversed(history):
+                            if role == "assistant" and content:
+                                # Look for [Label] pattern in the offer
+                                bracket_match = re.findall(r'\[([^\]]+)\]', content)
+                                for offered_label in bracket_match:
+                                    ol = offered_label.lower().strip()
+                                    if ol in photo_idx:
+                                        matched_url = photo_idx[ol]
+                                        matched_outfit_label = offered_label
+                                        break
+                                if matched_url:
+                                    break
+                    except Exception:
+                        pass
+
+                if matched_url:
+                    if matched_outfit_label and matched_outfit_label.lower() != "default look":
+                        reply = f"Here's my {matched_outfit_label} look! 😘"
+                    elif p_label:
+                        reply = f"Here I am! 😊"
+                    else:
                         reply = "Here's my current photo."
-                        # Try to use persona name for a more natural response
-                        pa = proj.get("persona_agent") or {}
-                        label = pa.get("label", "")
-                        if label:
-                            reply = f"Here I am! 😊"
-                        add_message(cid, "assistant", reply, media={"images": [img_url]}, project_id=project_id)
-                        return {
-                            "conversation_id": cid,
-                            "text": reply,
-                            "media": {"images": [img_url]},
-                            "agent": {"tool_calls_used": 0, "tools_invoked": []},
-                        }
-            except Exception:
-                pass  # Fall through to LLM-based handling
+                    media = {"images": [matched_url]}
+                    add_message(cid, "assistant", reply, media=media, project_id=project_id)
+                    return {
+                        "conversation_id": cid,
+                        "text": reply,
+                        "media": media,
+                        "agent": {"tool_calls_used": 0, "tools_invoked": []},
+                    }
+        except Exception:
+            pass  # Fall through to LLM-based handling
 
     # Ingest user text into Memory V2 (additive, non-blocking)
     if text_in and project_id:
@@ -943,8 +1060,9 @@ async def agent_chat(
         if not parsed:
             # Fallback: treat as final text to avoid agent deadlock
             final_text = raw_text or "I couldn't parse the agent response. Please try again."
-            add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+            text_media = _extract_media_from_text(final_text)
+            add_message(cid, "assistant", final_text, media=text_media, project_id=project_id)
+            return {"conversation_id": cid, "text": final_text, "media": text_media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         step_type = (parsed.get("type") or "").strip().lower()
 
@@ -952,14 +1070,24 @@ async def agent_chat(
             final_text = (parsed.get("text") or "").strip()
             if not final_text:
                 final_text = "No answer provided."
-            add_message(cid, "assistant", final_text, media=last_media, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": last_media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+            # Merge media from tool results and from media:// refs in text
+            merged_media = last_media
+            text_media = _extract_media_from_text(final_text)
+            if text_media and not merged_media:
+                merged_media = text_media
+            elif text_media and merged_media:
+                merged_media = dict(merged_media)
+                existing = merged_media.get("images") or []
+                merged_media["images"] = existing + (text_media.get("images") or [])
+            add_message(cid, "assistant", final_text, media=merged_media, project_id=project_id)
+            return {"conversation_id": cid, "text": final_text, "media": merged_media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         if step_type != "tool_call":
             # Unknown response type → safe fallback
             final_text = (parsed.get("text") or "").strip() or raw_text or "I couldn't complete the request."
-            add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+            text_media = _extract_media_from_text(final_text)
+            add_message(cid, "assistant", final_text, media=text_media, project_id=project_id)
+            return {"conversation_id": cid, "text": final_text, "media": text_media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         # TOOL_CALL
         if tool_calls_used >= max_tool_calls:

@@ -1976,7 +1976,15 @@ async def orchestrate(
             else:
                 text = "I'm here. What's on your mind?"
 
-    add_message(cid, "assistant", text)
+    # Extract media:// refs from LLM text and resolve to real image URLs
+    text_media = None
+    try:
+        from .agent_chat import _extract_media_from_text
+        text_media = _extract_media_from_text(text)
+    except Exception:
+        pass
+
+    add_message(cid, "assistant", text, media=text_media)
 
     # Additive: Memory V2 ingestion after response (persona projects only)
     try:
@@ -2000,7 +2008,7 @@ async def orchestrate(
     except Exception:
         pass
 
-    return {"conversation_id": cid, "text": text, "media": None}
+    return {"conversation_id": cid, "text": text, "media": text_media}
 
 
 async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[str, Any]:
