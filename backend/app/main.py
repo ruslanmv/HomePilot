@@ -170,6 +170,10 @@ app.include_router(user_profile_store_router)
 from .files import router as files_router
 app.include_router(files_router)
 
+# Include media:// URI resolver (/media/resolve)
+from .media_resolver import router as media_router
+app.include_router(media_router)
+
 
 # ----------------------------
 # ComfyUI image proxy

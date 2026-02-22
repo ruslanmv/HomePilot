@@ -1393,6 +1393,13 @@ function ChatState({
     if (!src || src.startsWith('data:') || src.startsWith('blob:')) return src
     // Strip whitespace LLMs may inject mid-URL when line-wrapping
     src = src.replace(/\s+/g, '')
+    // Resolve media:// refs via backend /media/resolve endpoint
+    if (src.startsWith('media://')) {
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const base = backendUrl.replace(/\/+$/, '')
+      const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
+      return `${base}/media/resolve?ref=${encodeURIComponent(src)}${qp}`
+    }
 
     let fullUrl = src
     if (!src.startsWith('http')) {
@@ -3059,7 +3066,11 @@ export default function App() {
                   if (seenLabels.has(photo.label)) continue
                   seenLabels.add(photo.label)
                   const tag = photo.isDefault ? ' (currently wearing)' : ''
-                  catalogLines.push(`  - ${photo.label}${tag}: ${photo.outfit} → ![${persona.label}](${_resolvePhotoUrl(photo.url)})`)
+                  // Use short media:// refs so the LLM never has to reproduce long URLs
+                  const ref = photo.isDefault
+                    ? `media://persona/${projId}/default`
+                    : `media://persona/${projId}/label/${photo.label}`
+                  catalogLines.push(`  - ${photo.label}${tag}: ${photo.outfit} → ![${persona.label}](${ref})`)
                 }
                 const catalogText = catalogLines.length > 0
                   ? catalogLines.join('\n')
@@ -3098,9 +3109,9 @@ ${catalogText}
 
 PERSONA RULES:
 1. You ARE ${persona.label}. You exist. You have a body, a face, and clothes. Never deny your existence or say you are "just an AI".
-2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Use the ![alt](url) syntax — the exclamation mark is REQUIRED.
-   Example response: "Here's my current look!\n![${persona.label}](url)"
-3. CRITICAL: Always use ![...](url) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
+2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Copy the media:// link EXACTLY as shown — do NOT modify, shorten, or rewrite it.
+   Example response: "Here's my current look!\n![${persona.label}](media://persona/...)"
+3. CRITICAL: Always use ![...](media://...) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
 4. You can offer to show different outfits. For example: "I can also show you my [outfit label] look, want to see?" Then when they say yes, show the matching image markdown on its own line.
 5. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
 6. You are aware of the current time (${timeContext}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.

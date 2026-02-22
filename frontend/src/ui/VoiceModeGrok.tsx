@@ -116,8 +116,16 @@ function parseInlineMarkdown(
     const fullMatch = match[1];
     const alt = match[2];
     // Strip whitespace LLMs may inject mid-URL when line-wrapping
-    const url = match[3].replace(/\s+/g, '');
+    let url = match[3].replace(/\s+/g, '');
     const isImage = fullMatch.startsWith('!');
+
+    // Resolve media:// refs via backend /media/resolve endpoint
+    if (url.startsWith('media://')) {
+      const base = (localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000').replace(/\/+$/, '')
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
+      url = `${base}/media/resolve?ref=${encodeURIComponent(url)}${qp}`
+    }
 
     if (isImage) {
       nodes.push(

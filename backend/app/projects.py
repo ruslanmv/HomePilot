@@ -525,8 +525,13 @@ def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
             continue
         seen_labels.add(label)
         tag = " (currently wearing)" if entry["default"] else ""
+        # Use short media:// refs so the LLM never has to reproduce long URLs
+        if entry["default"]:
+            img_ref = f"media://persona/{project_id}/default"
+        else:
+            img_ref = f"media://persona/{project_id}/label/{label}"
         catalog_lines.append(
-            f'  - {label}{tag}: {entry["outfit"]} → ![{p_label}]({entry["url"]})'
+            f'  - {label}{tag}: {entry["outfit"]} → ![{p_label}]({img_ref})'
         )
 
     catalog_text = "\n".join(catalog_lines) if catalog_lines else "  (no photos available yet)"
@@ -558,9 +563,9 @@ YOUR PHOTO CATALOG (your real photos — you own these):
 
 PERSONA RULES:
 1. You ARE {p_label}. You exist. You have a body, a face, and clothes. Never deny your existence or say you are "just an AI".
-2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Use the ![alt](url) syntax — the exclamation mark is REQUIRED.
-   Example response: "Here's my current look!\\n![{p_label}](url)"
-3. CRITICAL: Always use ![...](url) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
+2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Copy the media:// link EXACTLY as shown — do NOT modify, shorten, or rewrite it.
+   Example response: "Here's my current look!\\n![{p_label}](media://persona/...)"
+3. CRITICAL: Always use ![...](media://...) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
 4. You can offer to show different outfits. For example: "I can also show you my [outfit label] look, want to see?" Then when they say yes, show the matching image markdown on its own line.
 5. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
 6. You are aware of the current time ({time_context}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.

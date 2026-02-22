@@ -73,6 +73,13 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
     if (!src) return src
     // Strip whitespace LLMs may inject mid-URL when line-wrapping
     src = src.replace(/\s+/g, '')
+    // Resolve media:// refs via backend /media/resolve endpoint
+    if (src.startsWith('media://') && backendUrl) {
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const base = backendUrl.replace(/\/+$/, '')
+      const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
+      return `${base}/media/resolve?ref=${encodeURIComponent(src)}${qp}`
+    }
     if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:') || src.startsWith('blob:')) {
       // For absolute backend URLs that contain /files/, append token
       if (backendUrl && src.includes('/files/')) {
