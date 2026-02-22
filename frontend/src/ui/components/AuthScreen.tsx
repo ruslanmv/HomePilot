@@ -6,14 +6,7 @@
  */
 import React, { useState } from 'react'
 import { User, LogIn, UserPlus, ArrowRight, Eye, EyeOff, Mail, AlertCircle } from 'lucide-react'
-
-interface AuthUser {
-  id: string
-  username: string
-  display_name: string
-  email: string
-  onboarding_complete: boolean
-}
+import type { AuthUser } from './AuthGate'
 
 interface AuthScreenProps {
   backendUrl: string
