@@ -2951,7 +2951,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 ? {
                     ...m,
                     pending: false,
-                    text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream2).`,
+                    text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream).`,
                     error: true,
                   }
                 : m

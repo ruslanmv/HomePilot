@@ -277,7 +277,7 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
     ],
     multimodal: [
       // SFW Vision Models
-      { id: 'moondream2', label: 'Moondream2 (1.6 GB)', recommended: true, description: 'Ultra-light vision captioning + OCR.' },
+      { id: 'moondream', label: 'Moondream (1.6 GB)', recommended: true, description: 'Ultra-light vision captioning + OCR.' },
       { id: 'gemma3:4b', label: 'Gemma 3 Vision 4B (3 GB)', recommended: true, description: 'Best overall edge multimodal model.' },
       { id: 'llava:7b', label: 'LLaVA 1.6 7B (4.7 GB)', recommended: true, description: 'Strong general-purpose vision model.' },
       { id: 'minicpm-v:latest', label: 'MiniCPM-V 2.6 (5 GB)', description: 'Strong multi-image reasoning.' },

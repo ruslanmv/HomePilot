@@ -197,7 +197,7 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo ""
 	@echo "  Individual model downloads:"
 	@echo "    make download-chat          Pull chat model (llama3.2:3b)"
-	@echo "    make download-multimodal    Pull vision model (moondream2)"
+	@echo "    make download-multimodal    Pull vision model (moondream)"
 	@echo "    make download-video         Pull video generation models"
 	@if [ "$(AGENTIC)" = "1" ]; then \
 		echo ""; \
@@ -631,7 +631,7 @@ download-minimal: download-chat download-multimodal ## Download minimal models (
 	@echo ""
 	@echo "  What you have now:"
 	@echo "    • Chat model:       llama3.2:3b (via Ollama)"
-	@echo "    • Multimodal model: moondream2  (via Ollama)"
+	@echo "    • Multimodal model: moondream   (via Ollama)"
 	@echo "    • Image generation: FLUX Schnell + encoders (via ComfyUI)"
 	@echo "    • Video generation: LTX-Video 2B (via ComfyUI)"
 	@echo ""
@@ -657,7 +657,7 @@ download-chat: ## Pull the core chat model via Ollama (llama3.2:3b — lightweig
 	fi
 	@echo ""
 
-download-multimodal: ## Pull the core multimodal (vision) model via Ollama (moondream2 — 1.6 GB)
+download-multimodal: ## Pull the core multimodal (vision) model via Ollama (moondream — 1.6 GB)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Downloading Multimodal (Vision) Model (Ollama)"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -665,11 +665,11 @@ download-multimodal: ## Pull the core multimodal (vision) model via Ollama (moon
 	@echo "  This enables image understanding in chat & voice mode."
 	@echo "  Upload an image or say 'describe this picture' and it just works."
 	@echo ""
-	@echo "  Model: moondream2 (~1.6 GB) — ultra-light vision + OCR"
+	@echo "  Model: moondream (~1.6 GB) — ultra-light vision + OCR"
 	@echo ""
 	@if command -v ollama >/dev/null 2>&1; then \
-		echo "[1/1] Pulling moondream2 via Ollama..."; \
-		ollama pull moondream2 && echo "" && echo "  ✓ moondream2 installed" || \
+		echo "[1/1] Pulling moondream via Ollama..."; \
+		ollama pull moondream && echo "" && echo "  ✓ moondream installed" || \
 		echo "  ⚠  Pull failed — is Ollama running? Start with: ollama serve"; \
 	else \
 		echo "  ❌ Ollama not found. Install it first:"; \

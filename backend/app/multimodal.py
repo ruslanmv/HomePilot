@@ -71,9 +71,20 @@ def _resolve_local_image(image_url: str, upload_path: Path) -> Optional[Path]:
     parsed = urlparse(image_url)
     path = parsed.path
 
-    # Match /files/<filename>
+    # Match /files/<filename> (from path or full URL)
     if path.startswith("/files/"):
         filename = path[len("/files/"):]
+        candidate = upload_path / filename
+        if candidate.exists() and candidate.is_file():
+            return candidate
+
+    # Also try matching the raw URL if it contains /files/
+    if "/files/" in image_url:
+        idx = image_url.index("/files/")
+        filename = image_url[idx + len("/files/"):]
+        # Strip query params if present
+        if "?" in filename:
+            filename = filename[:filename.index("?")]
         candidate = upload_path / filename
         if candidate.exists() and candidate.is_file():
             return candidate
@@ -154,7 +165,7 @@ async def analyze_image_ollama(
         }
     """
     base = (base_url or OLLAMA_BASE_URL).rstrip("/")
-    mdl = (model or "moondream2").strip()
+    mdl = (model or "moondream").strip()
 
     # Load and encode image
     raw_bytes, mime_type = await _load_image_bytes(image_url, upload_path)

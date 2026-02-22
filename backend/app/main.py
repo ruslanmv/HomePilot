@@ -3532,7 +3532,7 @@ class MultimodalAnalyzeIn(BaseModel):
     project_id: Optional[str] = Field(None, description="Optional project context")
     provider: Optional[str] = Field("ollama", description="Multimodal provider (currently: ollama)")
     base_url: Optional[str] = Field(None, description="Provider base URL override")
-    model: Optional[str] = Field(None, description="Multimodal model to use (e.g. moondream2, gemma3:4b)")
+    model: Optional[str] = Field(None, description="Multimodal model to use (e.g. moondream, gemma3:4b)")
     mode: Optional[str] = Field("both", description="Analysis mode: caption | ocr | both")
     user_prompt: Optional[str] = Field(None, description="Custom prompt for the vision model")
     nsfw_mode: Optional[bool] = Field(False, description="Enable unrestricted analysis")
@@ -3651,6 +3651,6 @@ async def multimodal_status() -> JSONResponse:
             "provider": "ollama",
             "provider_reachable": ollama_ok,
             "installed_vision_models": vision_models,
-            "recommended_default": vision_models[0] if vision_models else "moondream2",
+            "recommended_default": vision_models[0] if vision_models else "moondream",
         },
     )

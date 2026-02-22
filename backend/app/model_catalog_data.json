@@ -499,8 +499,8 @@
       ],
       "multimodal": [
         {
-          "id": "moondream2",
-          "label": "Moondream2",
+          "id": "moondream",
+          "label": "Moondream",
           "recommended": true,
           "description": "Ultra-light vision captioning + OCR. Instant responses, minimal RAM.",
           "size_gb": 1.6,
