@@ -242,3 +242,59 @@ class TestUserSwitching:
         # A's old token is dead
         me_a = _me(client, tok_a).json()
         assert me_a.get("user") is None or me_a.get("needs_login")
+
+
+class TestOnboardingIsolation:
+    """Onboarding for user A must not affect user B's display name."""
+
+    def test_onboarding_does_not_leak(self, client):
+        r1 = _register(client, "iso_a", password="pw", display_name="Alice").json()
+        r2 = _register(client, "iso_b", password="pw", display_name="Bob").json()
+
+        # A completes onboarding with a new display name
+        _onboarding(client, r1["token"], display_name="Alice Updated", tone="casual")
+
+        # B's identity should be unchanged
+        me_b = _me(client, r2["token"]).json()
+        assert me_b["user"]["display_name"] == "Bob"
+
+        # A should have the updated name
+        me_a = _me(client, r1["token"]).json()
+        assert me_a["user"]["display_name"] == "Alice Updated"
+
+
+class TestPerUserProfileIsolation:
+    """Per-user profile endpoints must scope data by Bearer token."""
+
+    def _save_profile(self, client, token, data):
+        return client.put("/v1/user-profile", json=data,
+                          headers={"Authorization": f"Bearer {token}"})
+
+    def _get_profile(self, client, token):
+        return client.get("/v1/user-profile",
+                          headers={"Authorization": f"Bearer {token}"})
+
+    def test_profiles_do_not_leak(self, client):
+        r1 = _register(client, "prof_a", password="pw").json()
+        r2 = _register(client, "prof_b", password="pw").json()
+
+        # A saves a profile with a unique bio
+        self._save_profile(client, r1["token"], {
+            "display_name": "A", "bio": "I am user A",
+        })
+
+        # B saves a different bio
+        self._save_profile(client, r2["token"], {
+            "display_name": "B", "bio": "I am user B",
+        })
+
+        # Each should see only their own data
+        pa = self._get_profile(client, r1["token"]).json()
+        pb = self._get_profile(client, r2["token"]).json()
+
+        assert pa["profile"]["bio"] == "I am user A"
+        assert pb["profile"]["bio"] == "I am user B"
+
+    def test_profile_requires_auth(self, client):
+        r = client.get("/v1/user-profile")
+        assert r.status_code == 401

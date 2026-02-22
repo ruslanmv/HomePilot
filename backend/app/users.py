@@ -501,20 +501,24 @@ def complete_onboarding(body: OnboardingRequest, authorization: str = Header(def
     con.commit()
     con.close()
 
-    # Also update the global profile.json (bridge to existing single-user system)
+    # Legacy bridge: only update global profile.json when the instance is
+    # still in single-user mode.  In multi-user setups writing here would
+    # let one user's onboarding overwrite another's shared profile — a
+    # cross-user contamination bug.
     try:
-        from .profile import _data_root, _atomic_write_json, _read_json, PROFILE_FILE
-        root = _data_root()
-        profile_path = root / PROFILE_FILE
-        profile = _read_json(profile_path, default={})
-        if body.display_name:
-            profile["display_name"] = body.display_name.strip()
-        if body.preferred_tone:
-            profile["preferred_tone"] = body.preferred_tone
-        profile["personalization_enabled"] = True
-        _atomic_write_json(profile_path, profile)
+        if count_users() <= 1:
+            from .profile import _data_root, _atomic_write_json, _read_json, PROFILE_FILE
+            root = _data_root()
+            profile_path = root / PROFILE_FILE
+            profile = _read_json(profile_path, default={})
+            if body.display_name:
+                profile["display_name"] = body.display_name.strip()
+            if body.preferred_tone:
+                profile["preferred_tone"] = body.preferred_tone
+            profile["personalization_enabled"] = True
+            _atomic_write_json(profile_path, profile)
     except Exception:
-        pass  # Non-fatal — profile sync is best-effort
+        pass  # Non-fatal — legacy bridge
 
     # Also sync to per-user profile store (multi-user aware)
     try:

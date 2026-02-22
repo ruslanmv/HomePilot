@@ -9,6 +9,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import type { UserProfile, SecretListItem, MemoryItem } from './profileApi'
 import {
+  // Legacy (global — single-user / API-key mode)
   fetchProfile,
   saveProfile,
   listSecrets,
@@ -17,6 +18,15 @@ import {
   fetchMemory,
   saveMemory,
   deleteMemoryItem,
+  // Multi-user (Bearer, per-user scoped)
+  fetchUserProfile,
+  saveUserProfile,
+  listUserSecrets,
+  upsertUserSecret,
+  deleteUserSecret,
+  fetchUserMemory,
+  saveUserMemory,
+  deleteUserMemoryItem,
 } from './profileApi'
 import AvatarUploader from './components/AvatarUploader'
 import {
@@ -160,6 +170,8 @@ export default function ProfileSettingsModal({
 
   // Resolve auth token (prop > localStorage)
   const authToken = tokenProp || localStorage.getItem('homepilot_auth_token') || ''
+  // Per-user mode when a Bearer token is available (multi-user)
+  const usePerUser = !!authToken
 
   const [profile, setProfile] = useState<UserProfile>(emptyProfile)
   const [secrets, setSecrets] = useState<SecretListItem[]>([])
@@ -187,17 +199,29 @@ export default function ProfileSettingsModal({
     setLoading(true)
     setErr(null)
     try {
-      const p = await fetchProfile(backendUrl, apiKey)
+      // Profile — per-user when Bearer token present, else legacy global
+      const p = usePerUser
+        ? await fetchUserProfile(backendUrl, authToken)
+        : await fetchProfile(backendUrl, apiKey)
       const merged = { ...emptyProfile, ...p }
       // Auto-detect system timezone if profile has none saved
       if (!merged.timezone) {
         merged.timezone = getSystemTimezone()
       }
       setProfile(merged)
-      const s = await listSecrets(backendUrl, apiKey)
+
+      // Secrets
+      const s = usePerUser
+        ? await listUserSecrets(backendUrl, authToken)
+        : await listSecrets(backendUrl, apiKey)
       setSecrets(s)
-      const m = await fetchMemory(backendUrl, apiKey)
+
+      // Memory
+      const m = usePerUser
+        ? await fetchUserMemory(backendUrl, authToken)
+        : await fetchMemory(backendUrl, apiKey)
       setMemory(m)
+
       // Load avatar from stored user data (if available)
       try {
         const savedUser = localStorage.getItem('homepilot_auth_user')
@@ -223,11 +247,14 @@ export default function ProfileSettingsModal({
     setErr(null)
     setSavedMsg(false)
     try {
-      await saveProfile(backendUrl, apiKey, {
-        ...profile,
-        default_spicy_strength: clamp01(profile.default_spicy_strength),
-      })
-      await saveMemory(backendUrl, apiKey, memory)
+      const pToSave = { ...profile, default_spicy_strength: clamp01(profile.default_spicy_strength) }
+      if (usePerUser) {
+        await saveUserProfile(backendUrl, authToken, pToSave)
+        await saveUserMemory(backendUrl, authToken, memory)
+      } else {
+        await saveProfile(backendUrl, apiKey, pToSave)
+        await saveMemory(backendUrl, apiKey, memory)
+      }
       setSavedMsg(true)
       setTimeout(() => setSavedMsg(false), 2500)
     } catch (e: any) {
@@ -243,11 +270,16 @@ export default function ProfileSettingsModal({
     if (!k || !v) return
     setErr(null)
     try {
-      await upsertSecret(backendUrl, apiKey, { key: k, value: v, description: secretDesc })
+      if (usePerUser) {
+        await upsertUserSecret(backendUrl, authToken, { key: k, value: v, description: secretDesc })
+        setSecrets(await listUserSecrets(backendUrl, authToken))
+      } else {
+        await upsertSecret(backendUrl, apiKey, { key: k, value: v, description: secretDesc })
+        setSecrets(await listSecrets(backendUrl, apiKey))
+      }
       setSecretKey('')
       setSecretVal('')
       setSecretDesc('')
-      setSecrets(await listSecrets(backendUrl, apiKey))
     } catch (e: any) {
       setErr(e?.message || String(e))
     }
@@ -256,8 +288,13 @@ export default function ProfileSettingsModal({
   async function onDeleteSecret(key: string) {
     setErr(null)
     try {
-      await deleteSecret(backendUrl, apiKey, key)
-      setSecrets(await listSecrets(backendUrl, apiKey))
+      if (usePerUser) {
+        await deleteUserSecret(backendUrl, authToken, key)
+        setSecrets(await listUserSecrets(backendUrl, authToken))
+      } else {
+        await deleteSecret(backendUrl, apiKey, key)
+        setSecrets(await listSecrets(backendUrl, apiKey))
+      }
     } catch (e: any) {
       setErr(e?.message || String(e))
     }
@@ -284,7 +321,11 @@ export default function ProfileSettingsModal({
   async function removeMemory(id: string) {
     setErr(null)
     try {
-      await deleteMemoryItem(backendUrl, apiKey, id)
+      if (usePerUser) {
+        await deleteUserMemoryItem(backendUrl, authToken, id)
+      } else {
+        await deleteMemoryItem(backendUrl, apiKey, id)
+      }
       setMemory(memory.filter((m) => m.id !== id))
     } catch (e: any) {
       setErr(e?.message || String(e))
@@ -331,6 +372,10 @@ export default function ProfileSettingsModal({
                 {t.label}
               </button>
             ))}
+          </div>
+          {/* Mode hint (helpful for enterprise debugging) */}
+          <div className="ml-auto text-[10px] text-white/40 self-center pr-1">
+            {usePerUser ? 'Per-user (Bearer)' : 'Instance-wide (API key)'}
           </div>
         </div>
 
@@ -471,7 +516,9 @@ export default function ProfileSettingsModal({
               />
 
               <div className="text-xs text-white/40">
-                Saved locally on your HomePilot backend.
+                {usePerUser
+                  ? 'Stored per user on your HomePilot backend.'
+                  : 'Stored locally on your HomePilot backend (instance-wide).'}
               </div>
             </div>
           ) : null}
@@ -831,7 +878,9 @@ export default function ProfileSettingsModal({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between">
           <div className="text-xs text-white/35">
-            Profile stores preferences, memory, and integrations.
+            {usePerUser
+              ? 'Profile, memory & secrets are scoped to your account.'
+              : 'Profile stores preferences, memory, and integrations (instance-wide).'}
           </div>
           <button
             type="button"
