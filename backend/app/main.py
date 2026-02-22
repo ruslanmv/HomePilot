@@ -643,7 +643,7 @@ async def health_detailed() -> JSONResponse:
                 "status": "available" if vision_models else "no_vision_models",
                 "vision_models": vision_models,
                 "vision_model_count": len(vision_models),
-                "recommended_default": vision_models[0] if vision_models else "moondream",
+                "recommended_default": vision_models[0] if vision_models else None,
             }
         else:
             multimodal_status = {
@@ -3833,6 +3833,6 @@ async def multimodal_status() -> JSONResponse:
             "provider": "ollama",
             "provider_reachable": ollama_ok,
             "installed_vision_models": vision_models,
-            "recommended_default": vision_models[0] if vision_models else "moondream",
+            "recommended_default": vision_models[0] if vision_models else None,
         },
     )

@@ -159,6 +159,33 @@ _NSFW_SYSTEM_PROMPT = (
 )
 
 
+def is_vision_model(name: str) -> bool:
+    """Check whether *name* matches any known vision-capable model pattern."""
+    lower = name.lower()
+    return any(p in lower for p in VISION_MODEL_PATTERNS)
+
+
+async def _detect_first_vision_model(base_url: str) -> Optional[str]:
+    """
+    Query Ollama for installed models and return the first that matches
+    a known vision pattern. Returns None if Ollama is unreachable or no
+    vision model is installed.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base_url}/api/tags")
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            for m in data.get("models", []):
+                name = m.get("name", "")
+                if is_vision_model(name):
+                    return name
+    except Exception:
+        pass
+    return None
+
+
 async def analyze_image_ollama(
     image_url: str,
     upload_path: Path,
@@ -172,6 +199,11 @@ async def analyze_image_ollama(
     """
     Analyze an image using an Ollama vision model.
 
+    Model resolution order:
+      1. Explicit *model* parameter (from user settings)
+      2. Auto-detect: first installed vision model from Ollama
+      3. Return a helpful error listing how to install one
+
     Returns:
         {
             "ok": True,
@@ -180,7 +212,28 @@ async def analyze_image_ollama(
         }
     """
     base = (base_url or OLLAMA_BASE_URL).rstrip("/")
-    mdl = (model or "moondream").strip()
+
+    # ── Resolve model (no more hardcoded "moondream") ──────────────────────
+    mdl: Optional[str] = (model or "").strip() or None
+
+    if not mdl:
+        # Auto-detect the first installed vision model
+        mdl = await _detect_first_vision_model(base)
+
+    if not mdl:
+        # Nothing selected and nothing installed — helpful error
+        available = ", ".join(VISION_MODEL_PATTERNS[:5])
+        return {
+            "ok": False,
+            "error": (
+                "No multimodal model selected and none detected on Ollama. "
+                f"Install a vision model (e.g. ollama pull moondream, ollama pull gemma3:4b) "
+                f"or select one in Settings > Multimodal. "
+                f"Known vision families: {available}."
+            ),
+            "analysis_text": "",
+            "meta": {"model": None, "mode": mode},
+        }
 
     # Load and encode image
     raw_bytes, mime_type = await _load_image_bytes(image_url, upload_path)
@@ -228,9 +281,18 @@ async def analyze_image_ollama(
             data = r.json()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
+                # Try to suggest an installed alternative
+                fallback = await _detect_first_vision_model(base)
+                hint = (
+                    f" However, '{fallback}' is installed and can be used instead — "
+                    f"select it in Settings > Multimodal."
+                ) if fallback else ""
                 return {
                     "ok": False,
-                    "error": f"Multimodal model '{mdl}' not found. Run 'ollama pull {mdl}' to install it.",
+                    "error": (
+                        f"Multimodal model '{mdl}' not found on Ollama. "
+                        f"Run 'ollama pull {mdl}' to install it.{hint}"
+                    ),
                     "analysis_text": "",
                     "meta": {"model": mdl, "mode": mode},
                 }
