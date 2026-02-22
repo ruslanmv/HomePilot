@@ -7,7 +7,7 @@ import subprocess
 import uuid as uuidlib
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
@@ -2457,6 +2457,252 @@ async def delete_project_document(project_id: str, document_name: str) -> JSONRe
         })
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete document: {e}"))
+
+
+# ----------------------------
+# Project Items / File Manager API
+# ----------------------------
+
+from .project_files import (
+    ensure_project_items_table as _ensure_items_tbl,
+    create_item as _create_item,
+    get_item as _get_item,
+    list_items as _list_items,
+    update_item as _update_item,
+    delete_item as _delete_item,
+)
+
+
+class ProjectItemIn(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    category: Optional[str] = "file"
+    item_type: Optional[str] = "document"
+    tags: Optional[List[str]] = []
+    properties: Optional[Dict[str, Any]] = {}
+
+
+@app.get("/projects/{project_id}/items", dependencies=[Depends(require_api_key)])
+async def list_project_items(
+    project_id: str,
+    category: Optional[str] = None,
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+) -> JSONResponse:
+    """List all items attached to a project."""
+    try:
+        items = _list_items(project_id, category=category, limit=limit, offset=offset)
+        return JSONResponse(status_code=200, content={"ok": True, "items": items})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to list items: {e}"))
+
+
+@app.post("/projects/{project_id}/items", dependencies=[Depends(require_api_key)])
+async def create_project_item(
+    project_id: str,
+    body: ProjectItemIn,
+    authorization: str = Header(default=""),
+) -> JSONResponse:
+    """Create a new item (metadata only — file upload is separate)."""
+    try:
+        proj = projects.get_project_by_id(project_id)
+        if not proj:
+            return JSONResponse(status_code=404, content=_safe_err("Project not found"))
+
+        user_id = ""
+        try:
+            user = _scoped_user_or_none(authorization=authorization)
+            user_id = user["id"] if user else ""
+        except Exception:
+            pass
+
+        item = _create_item(
+            project_id,
+            body.name,
+            user_id=user_id,
+            description=body.description or "",
+            category=body.category or "file",
+            item_type=body.item_type or "document",
+            tags=body.tags or [],
+            properties=body.properties or {},
+        )
+        return JSONResponse(status_code=201, content={"ok": True, "item": item})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to create item: {e}"))
+
+
+@app.post("/projects/{project_id}/items/upload", dependencies=[Depends(require_api_key)])
+async def upload_project_item(
+    request: Request,
+    project_id: str,
+    file: UploadFile = File(...),
+    name: str = "",
+    description: str = "",
+    category: str = "file",
+    tags: str = "",
+    authorization: str = Header(default=""),
+) -> JSONResponse:
+    """
+    Upload a file and create a project item in one step.
+    Accepts any file type: PDFs, images, text, etc.
+    Also indexes documents into the knowledge base (RAG) when applicable.
+    """
+    try:
+        proj = projects.get_project_by_id(project_id)
+        if not proj:
+            return JSONResponse(status_code=404, content=_safe_err("Project not found"))
+
+        user_id = ""
+        try:
+            user = _scoped_user_or_none(authorization=authorization)
+            user_id = user["id"] if user else ""
+        except Exception:
+            pass
+
+        filename = file.filename or "upload.bin"
+        content_type = (file.content_type or "").lower()
+        ext = ""
+        if filename and "." in filename:
+            ext = filename.rsplit(".", 1)[1].lower()
+
+        # Determine item_type from extension
+        doc_exts = {"pdf", "txt", "md", "doc", "docx", "csv", "json", "yaml", "yml"}
+        img_exts = {"png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"}
+        if ext in doc_exts:
+            item_type = "document"
+        elif ext in img_exts:
+            item_type = "image"
+        else:
+            item_type = "file"
+
+        # Read file data
+        data = await file.read()
+        if not data:
+            return JSONResponse(status_code=400, content=_safe_err("Empty file"))
+
+        max_bytes = int(MAX_UPLOAD_MB) * 1024 * 1024
+        if len(data) > max_bytes:
+            return JSONResponse(
+                status_code=413,
+                content=_safe_err(f"File too large (max {MAX_UPLOAD_MB}MB)"),
+            )
+
+        # Save to disk
+        import mimetypes as _mt
+        save_ext = f".{ext}" if ext else ".bin"
+        save_name = f"{uuidlib.uuid4().hex}{save_ext}"
+        save_path = UPLOAD_PATH / save_name
+        save_path.write_bytes(data)
+
+        mime = content_type or _mt.guess_type(str(save_path))[0] or "application/octet-stream"
+        base = _base_url_from_request(request)
+
+        # Register as secure asset if user is authenticated
+        asset_id = ""
+        file_url = f"{base}/files/{save_name}"
+        if user_id:
+            try:
+                from .files import _ensure_user_dir, _upload_root, insert_asset
+                folder = _ensure_user_dir(user_id, "project_asset", project_id=project_id)
+                import shutil
+                dest = folder / save_name
+                shutil.move(str(save_path), str(dest))
+                save_path = dest
+                rel_path = str(dest.relative_to(_upload_root()))
+                asset_id = insert_asset(
+                    user_id=user_id,
+                    kind="project_asset",
+                    rel_path=rel_path,
+                    mime=mime,
+                    size_bytes=len(data),
+                    original_name=filename,
+                    project_id=project_id,
+                )
+                file_url = f"{base}/files/{asset_id}"
+            except Exception as asset_err:
+                print(f"[ITEMS] Asset registration skipped: {asset_err}")
+
+        # Index into knowledge base (RAG) for documents and images
+        chunks_added = 0
+        if ext in {"pdf", "txt", "md"} and RAG_ENABLED:
+            try:
+                from .vectordb import process_and_add_file
+                chunks_added = process_and_add_file(project_id, str(save_path), filename)
+            except Exception as rag_err:
+                print(f"[ITEMS] RAG indexing skipped: {rag_err}")
+
+        # Parse tags
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+        # Create item record
+        item = _create_item(
+            project_id,
+            name or filename,
+            user_id=user_id,
+            description=description,
+            category=category,
+            item_type=item_type,
+            tags=tag_list,
+            asset_id=asset_id,
+            file_url=file_url,
+            mime=mime,
+            size_bytes=len(data),
+            original_name=filename,
+        )
+
+        # Also update the project's files[] array for backward compat
+        try:
+            files_list = list(proj.get("files") or [])
+            files_list.append({
+                "name": filename,
+                "size": f"{len(data) / (1024*1024):.2f} MB" if len(data) > 1024*1024 else f"{len(data) / 1024:.1f} KB",
+                "path": str(save_path),
+                "chunks": chunks_added,
+                "source_type": item_type,
+                "item_id": item["id"],
+            })
+            projects.update_project(project_id, {"files": files_list})
+        except Exception:
+            pass
+
+        return JSONResponse(status_code=201, content={
+            "ok": True,
+            "item": item,
+            "chunks_added": chunks_added,
+            "file_url": file_url,
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to upload item: {e}"))
+
+
+@app.put("/projects/{project_id}/items/{item_id}", dependencies=[Depends(require_api_key)])
+async def update_project_item(
+    project_id: str,
+    item_id: str,
+    body: Dict[str, Any],
+) -> JSONResponse:
+    """Update item metadata (name, description, tags, properties, etc.)."""
+    try:
+        existing = _get_item(item_id)
+        if not existing or existing.get("project_id") != project_id:
+            return JSONResponse(status_code=404, content=_safe_err("Item not found"))
+        updated = _update_item(item_id, body)
+        return JSONResponse(status_code=200, content={"ok": True, "item": updated})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to update item: {e}"))
+
+
+@app.delete("/projects/{project_id}/items/{item_id}", dependencies=[Depends(require_api_key)])
+async def delete_project_item(project_id: str, item_id: str) -> JSONResponse:
+    """Delete an item and optionally its backing file."""
+    try:
+        existing = _get_item(item_id)
+        if not existing or existing.get("project_id") != project_id:
+            return JSONResponse(status_code=404, content=_safe_err("Item not found"))
+        _delete_item(item_id)
+        return JSONResponse(status_code=200, content={"ok": True, "message": "Item deleted"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete item: {e}"))
 
 
 # ----------------------------

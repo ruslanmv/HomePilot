@@ -548,21 +548,33 @@ def _get_memory_context(project_id: Optional[str], query: str) -> str:
 
 def _get_knowledge_hint(project_id: Optional[str]) -> str:
     """
-    Build a short hint about available knowledge base docs.
+    Build a short hint about available knowledge base docs and project items.
     Helps the agent decide whether to call knowledge.search.
     """
     if not project_id:
         return ""
+    parts: list[str] = []
+
+    # RAG document chunks
     try:
         from .vectordb import get_project_document_count, CHROMADB_AVAILABLE
-        if not CHROMADB_AVAILABLE:
-            return ""
-        count = get_project_document_count(project_id)
-        if count > 0:
-            return f"[This project has {count} document chunks in its knowledge base. Use knowledge.search to find relevant information.]"
+        if CHROMADB_AVAILABLE:
+            count = get_project_document_count(project_id)
+            if count > 0:
+                parts.append(f"[This project has {count} document chunks in its knowledge base. Use knowledge.search to find relevant information.]")
     except Exception:
         pass
-    return ""
+
+    # Project items catalog (files, photos, items attached by the user)
+    try:
+        from .project_files import build_item_context
+        item_ctx = build_item_context(project_id)
+        if item_ctx:
+            parts.append(item_ctx)
+    except Exception:
+        pass
+
+    return "\n".join(parts)
 
 
 def _get_user_context(project_id: Optional[str], user_id: Optional[str] = None) -> str:
