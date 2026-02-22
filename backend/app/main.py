@@ -1200,6 +1200,17 @@ async def list_models(
         if err:
             return JSONResponse(status_code=503, content=_safe_err(err, code="models_unavailable"))
 
+        # Filter Ollama models to only vision-capable ones when multimodal type is requested
+        if provider == "ollama" and model_type == "multimodal":
+            vision_patterns = [
+                "moondream", "llava", "gemma3", "minicpm-v", "llama3.2-vision",
+                "qwen3-vl", "qwen2-vl", "internvl", "smolvlm", "bakllava",
+            ]
+            models = [
+                m for m in models
+                if any(p in m.lower() for p in vision_patterns)
+            ]
+
         return JSONResponse(
             status_code=200,
             content={

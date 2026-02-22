@@ -229,7 +229,7 @@ export default function SettingsPanel({
     }
   }
 
-  async function fetchModelsFor(providerKey: string, baseUrlOverride?: string, modelType?: 'image' | 'video') {
+  async function fetchModelsFor(providerKey: string, baseUrlOverride?: string, modelType?: 'image' | 'video' | 'multimodal') {
     // Use compound key for storing models by provider + type (to separate image vs video models)
     const stateKey = modelType ? `${providerKey}_${modelType}` : providerKey;
     setModelsLoading((m) => ({ ...m, [stateKey]: true }));
@@ -496,7 +496,7 @@ export default function SettingsPanel({
     modelValue: string,
     setModel: (m: string) => void,
     baseUrlOverride?: string,
-    modelType?: 'image' | 'video'
+    modelType?: 'image' | 'video' | 'multimodal'
   ) {
     // Use compound key for provider + type (to separate image vs video models)
     const stateKey = modelType ? `${providerKey}_${modelType}` : providerKey;
@@ -1073,10 +1073,10 @@ export default function SettingsPanel({
             {baseUrlRow("Multimodal Base URL", value.providerMultimodal || 'ollama', value.baseUrlMultimodal, (v) => onChangeDraft({ ...value, baseUrlMultimodal: v }))}
 
             {/* Multimodal Model */}
-            {modelSelectRow("Multimodal Model", value.providerMultimodal || 'ollama', value.modelMultimodal || '', (m) => onChangeDraft({ ...value, modelMultimodal: m }), value.baseUrlMultimodal)}
+            {modelSelectRow("Multimodal Model", value.providerMultimodal || 'ollama', value.modelMultimodal || '', (m) => onChangeDraft({ ...value, modelMultimodal: m }), value.baseUrlMultimodal, 'multimodal')}
 
             <div className="text-[10px] text-purple-400/80 bg-purple-500/10 border border-purple-500/20 rounded-lg px-3 py-2">
-              <span className="font-semibold">Recommended:</span> Install Moondream2 (1.6 GB) or Gemma 3 Vision (3 GB) from the Models page &gt; Multimodal tab.
+              <span className="font-semibold">Recommended:</span> Install Moondream (1.6 GB) or Gemma 3 Vision (3 GB) from the Models page &gt; Multimodal tab.
             </div>
           </div>
         </div>

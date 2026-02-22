@@ -1270,6 +1270,24 @@ function ChatState({
             {/* User: bubble | Assistant: bare text on background (Grok style) */}
             {m.role === 'user' ? (
               <div className="max-w-[85%] bg-white/10 border border-white/10 rounded-3xl px-5 py-4">
+                {m.media?.images?.length ? (
+                  <div className="flex gap-2 mb-2">
+                    {m.media.images.map((src: string, i: number) => {
+                      const resolved = (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:'))
+                        ? src
+                        : `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+                      return (
+                        <img
+                          key={i}
+                          src={resolved}
+                          onClick={() => setLightbox(resolved)}
+                          className="h-16 w-16 object-cover rounded-lg border border-white/10 cursor-zoom-in hover:opacity-80 transition-opacity"
+                          alt={`uploaded ${i}`}
+                        />
+                      )
+                    })}
+                  </div>
+                ) : null}
                 <div className="text-[16px] leading-relaxed whitespace-pre-wrap text-[#EEE] font-normal tracking-wide">
                   {m.text}
                 </div>
@@ -1359,8 +1377,8 @@ function ChatState({
                           key={i}
                           src={resolved}
                           onClick={() => setLightbox(resolved)}
-                          className="h-56 w-56 object-cover rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
-                          alt={`generated ${i}`}
+                          className="max-h-48 max-w-xs object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                          alt={`image ${i}`}
                         />
                       )
                     })}
@@ -2890,7 +2908,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           ? `[Image: ${file.name}] ${userPrompt}`
           : `Analyze this image: ${file.name}`
 
-        const user: Msg = { id: uuid(), role: 'user', text: userText }
+        const userId = uuid()
         const tmpId = uuid()
         const pending: Msg = {
           id: tmpId,
@@ -2899,6 +2917,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           pending: true,
         }
 
+        // Show user message immediately with a local preview blob
+        const localPreview = URL.createObjectURL(file)
+        const user: Msg = { id: userId, role: 'user', text: userText, media: { images: [localPreview] } }
         setMessages((prev) => [...prev, user, pending])
         setInput('')
 
@@ -2906,6 +2927,15 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           // 1. Upload the image
           const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
           const imageUrl = up.url as string
+
+          // Update user message with server URL (revoke blob)
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === userId
+                ? { ...m, media: { images: [imageUrl] } }
+                : m
+            )
+          )
 
           // 2. Call multimodal analysis endpoint
           const result = await postJson<any>(

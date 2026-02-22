@@ -755,6 +755,8 @@ export default function ModelsView(props: ModelsParams) {
       if (baseUrl.trim()) q.set('base_url', baseUrl.trim())
       // Pass model_type so backend returns correct installed models for this type
       if (modelType && provider === 'comfyui') q.set('model_type', modelType)
+      // For Ollama multimodal, filter to vision-capable models only
+      if (modelType === 'multimodal' && provider === 'ollama') q.set('model_type', 'multimodal')
 
       const data = await getJson<ModelsListResponse>(backendUrl, `/models?${q.toString()}`, authKey)
       setInstalled(Array.isArray(data.models) ? data.models : [])
@@ -806,6 +808,15 @@ export default function ModelsView(props: ModelsParams) {
 
   const installedSet = useMemo(() => new Set(installed), [installed])
 
+  // For Ollama: also match "model" with "model:latest" (Ollama convention)
+  const isInstalled = useCallback((id: string): boolean => {
+    if (installedSet.has(id)) return true
+    // Check if installed list contains id:latest (e.g. catalog has "moondream", Ollama reports "moondream:latest")
+    if (!id.includes(':') && installedSet.has(`${id}:latest`)) return true
+    // Check if catalog has "model:tag" and installed has exactly that
+    return false
+  }, [installedSet])
+
   // Merge supported + installed
   const merged = useMemo(() => {
     const supportedMap = new Map<string, ModelCatalogEntry>()
@@ -837,7 +848,7 @@ export default function ModelsView(props: ModelsParams) {
         description: s.description,
         civitai_url: s.civitai_url,
         civitai_version_id: s.civitai_version_id,
-        status: installedSet.has(s.id) ? 'installed' : 'missing',
+        status: isInstalled(s.id) ? 'installed' : 'missing',
         install: s.install,
       })
     }
@@ -866,8 +877,20 @@ export default function ModelsView(props: ModelsParams) {
     const isLlmModel = (id: string) =>
       id.includes(':') || /^(llama|mistral|gemma|qwen|phi|deepseek|codellama|vicuna|samantha)/i.test(id)
 
+    // Check if an installed model name matches any supported catalog entry
+    // e.g. "moondream:latest" matches catalog "moondream"
+    const matchesSupportedEntry = (modelName: string): boolean => {
+      if (supportedMap.has(modelName)) return true
+      // "model:latest" → try "model" (Ollama convention)
+      if (modelName.endsWith(':latest')) {
+        const base = modelName.slice(0, -':latest'.length)
+        if (supportedMap.has(base)) return true
+      }
+      return false
+    }
+
     for (const m of installed) {
-      if (!supportedMap.has(m)) {
+      if (!matchesSupportedEntry(m)) {
         // Skip models that belong to another type's catalog
         if (otherTypeIds.has(m)) continue
         // Skip checkpoint files on the chat tab
@@ -896,7 +919,7 @@ export default function ModelsView(props: ModelsParams) {
     })
 
     return rows
-  }, [supportedForSelection, installed, installedSet, props.nsfwMode, modelType, provider])
+  }, [supportedForSelection, installed, installedSet, isInstalled, props.nsfwMode, modelType, provider])
 
   const tryInstall = async (modelId: string, install?: ModelCatalogEntry['install']) => {
     setInstallBusy(modelId)
