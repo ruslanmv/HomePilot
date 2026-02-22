@@ -606,6 +606,40 @@ async def health_detailed() -> JSONResponse:
             "message": f"Connection failed: {str(e)}"
         }
 
+    # Test Multimodal (vision models via Ollama)
+    multimodal_status = {"ok": False, "status": "not_checked", "vision_models": []}
+    try:
+        if health_status["ollama"].get("ok"):
+            all_models = health_status["ollama"].get("models", [])
+            vision_patterns = [
+                "moondream", "llava", "gemma3", "minicpm-v", "llama3.2-vision",
+                "qwen3-vl", "qwen2-vl", "internvl", "smolvlm", "bakllava",
+            ]
+            vision_models = [
+                m for m in all_models
+                if any(p in m.lower() for p in vision_patterns)
+            ]
+            multimodal_status = {
+                "ok": len(vision_models) > 0,
+                "status": "available" if vision_models else "no_vision_models",
+                "vision_models": vision_models,
+                "vision_model_count": len(vision_models),
+                "recommended_default": vision_models[0] if vision_models else "moondream",
+            }
+        else:
+            multimodal_status = {
+                "ok": False,
+                "status": "ollama_unavailable",
+                "vision_models": [],
+            }
+    except Exception as e:
+        multimodal_status = {
+            "ok": False,
+            "status": f"check_failed: {str(e)}",
+            "vision_models": [],
+        }
+    health_status["multimodal"] = multimodal_status
+
     # Determine overall health
     all_ok = health_status["ollama"]["ok"] or health_status["llm"]["ok"]  # At least one LLM should work
 

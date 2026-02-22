@@ -248,6 +248,21 @@ verify-install: ## Verify that all components are properly installed
 	else \
 		echo "  ⚠  MCP Context Forge not installed (optional - run: make install-mcp)"; \
 	fi
+	@if command -v ollama >/dev/null 2>&1; then \
+		echo "  ✓ Ollama installed"; \
+		if ollama list 2>/dev/null | grep -q "llama3.2"; then \
+			echo "  ✓ Chat model (llama3.2) available"; \
+		else \
+			echo "  ⚠  Chat model not found (run: make download-chat)"; \
+		fi; \
+		if ollama list 2>/dev/null | grep -q "moondream"; then \
+			echo "  ✓ Multimodal vision model (moondream) available"; \
+		else \
+			echo "  ⚠  Multimodal vision model not found (run: make download-multimodal)"; \
+		fi; \
+	else \
+		echo "  ⚠  Ollama not installed (required for chat + multimodal)"; \
+	fi
 	@echo ""
 	@echo "✅ All components verified successfully!"
 
@@ -996,7 +1011,7 @@ health-check: ## Comprehensive health check of all services
 	@echo "1. Backend API"
 	@curl -fsS http://localhost:8000/health 2>/dev/null | jq '.' || echo "❌ Backend not running"
 	@echo ""
-	@echo "2. Detailed Service Health"
+	@echo "2. Detailed Service Health (includes multimodal)"
 	@curl -fsS http://localhost:8000/health/detailed 2>/dev/null | jq '.' || echo "❌ Backend not running"
 	@echo ""
 	@echo "3. Direct Service Checks:"
@@ -1012,6 +1027,30 @@ health-check: ## Comprehensive health check of all services
 	@echo ""
 	@echo "   MCP Gateway:"
 	@curl -fsS http://localhost:$(MCP_GATEWAY_PORT)/health 2>/dev/null >/dev/null && echo "   ✅ MCP Gateway is running" || echo "   ⚠  MCP Gateway not running (optional - start with: make start-mcp)"
+	@echo ""
+	@echo "4. Multimodal (Vision) Status:"
+	@curl -fsS http://localhost:8000/v1/multimodal/status 2>/dev/null | jq '.' || echo "   ❌ Multimodal status unavailable (backend not running?)"
+	@echo ""
+	@echo "5. Ollama Model Inventory:"
+	@if command -v ollama >/dev/null 2>&1; then \
+		echo "   Installed models:"; \
+		ollama list 2>/dev/null | head -20 || echo "   (Ollama not running)"; \
+		echo ""; \
+		echo "   Chat model check:"; \
+		if ollama list 2>/dev/null | grep -q "llama3.2"; then \
+			echo "   ✅ Chat model (llama3.2) installed"; \
+		else \
+			echo "   ⚠  Chat model (llama3.2) not found — run: make download-chat"; \
+		fi; \
+		echo "   Multimodal model check:"; \
+		if ollama list 2>/dev/null | grep -q "moondream"; then \
+			echo "   ✅ Vision model (moondream) installed"; \
+		else \
+			echo "   ⚠  Vision model (moondream) not found — run: make download-multimodal"; \
+		fi; \
+	else \
+		echo "   ❌ Ollama not installed"; \
+	fi
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 

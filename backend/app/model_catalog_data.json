@@ -561,6 +561,7 @@
           "description": "Detailed scene analysis. Strong at understanding complex visual content.",
           "size_gb": 7.0,
           "context_window": 131072,
+          "uncensored": true,
           "vision": true
         },
         {

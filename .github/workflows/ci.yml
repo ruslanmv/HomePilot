@@ -12,8 +12,11 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r backend/requirements.txt
-      - run: pytest -q
+      - name: Run backend tests (including multimodal catalog + endpoint tests)
+        run: pytest -q
         working-directory: backend
+        env:
+          SKIP_NETWORK_TESTS: "1"
 
   frontend:
     runs-on: ubuntu-latest
