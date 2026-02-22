@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 340" fill="none">
+  <defs>
+    <style>
+      @keyframes cg-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
+      @keyframes cg-flow { 0%{stroke-dashoffset:14} 100%{stroke-dashoffset:0} }
+      @keyframes cg-pulse { 0%,100%{opacity:0.4} 50%{opacity:0.9} }
+      .cg-float { animation: cg-float 3s ease-in-out infinite; }
+      .cg-flow { stroke-dasharray: 4 3; animation: cg-flow 1.5s linear infinite; }
+      .cg-pulse { animation: cg-pulse 2.5s ease-in-out infinite; }
+    </style>
+    <linearGradient id="cg-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f0f23"/><stop offset="100%" style="stop-color:#1a1a3e"/>
+    </linearGradient>
+    <linearGradient id="cg-accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#10b981"/><stop offset="50%" style="stop-color:#06b6d4"/><stop offset="100%" style="stop-color:#3b82f6"/>
+    </linearGradient>
+    <filter id="cg-glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="cg-shadow"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.3"/></filter>
+    <clipPath id="cg-clip"><rect width="900" height="340" rx="16"/></clipPath>
+  </defs>
+  <g clip-path="url(#cg-clip)">
+    <rect width="900" height="340" fill="url(#cg-bg)" rx="16"/>
+
+    <!-- Title -->
+    <text x="450" y="32" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="3" text-anchor="middle">COMMUNITY GALLERY</text>
+    <text x="450" y="50" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Share personas with the world — two backends, zero vendor lock-in</text>
+
+    <!-- Pipeline: Create → Export → Submit → Review → Publish → Browse → Install -->
+
+    <!-- Step 1: Create -->
+    <g transform="translate(30,80)" class="cg-float" filter="url(#cg-shadow)">
+      <rect x="0" y="0" width="105" height="80" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="1.5"/>
+      <text x="52" y="28" font-family="system-ui,sans-serif" font-size="18" fill="#10b981" text-anchor="middle">&#128100;</text>
+      <text x="52" y="48" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#6ee7b7" text-anchor="middle">Create</text>
+      <text x="52" y="62" font-family="system-ui,sans-serif" font-size="7" fill="#64748b" text-anchor="middle">Build persona</text>
+    </g>
+    <line x1="138" y1="120" x2="165" y2="120" stroke="#10b981" stroke-width="1.5" class="cg-flow"/>
+    <polygon points="163,116 170,120 163,124" fill="#10b981" opacity="0.6"/>
+
+    <!-- Step 2: Export -->
+    <g transform="translate(173,80)" class="cg-float" style="animation-delay:0.3s" filter="url(#cg-shadow)">
+      <rect x="0" y="0" width="105" height="80" rx="10" fill="#1e293b" stroke="#06b6d4" stroke-width="1.5"/>
+      <text x="52" y="28" font-family="system-ui,sans-serif" font-size="18" fill="#06b6d4" text-anchor="middle">&#128230;</text>
+      <text x="52" y="48" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#67e8f9" text-anchor="middle">Export</text>
+      <text x="52" y="62" font-family="system-ui,sans-serif" font-size="7" fill="#64748b" text-anchor="middle">.hpersona file</text>
+    </g>
+    <line x1="281" y1="120" x2="308" y2="120" stroke="#06b6d4" stroke-width="1.5" class="cg-flow" style="animation-delay:0.2s"/>
+    <polygon points="306,116 313,120 306,124" fill="#06b6d4" opacity="0.6"/>
+
+    <!-- Step 3: Submit -->
+    <g transform="translate(316,80)" class="cg-float" style="animation-delay:0.6s" filter="url(#cg-shadow)">
+      <rect x="0" y="0" width="105" height="80" rx="10" fill="#1e293b" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="52" y="28" font-family="system-ui,sans-serif" font-size="18" fill="#3b82f6" text-anchor="middle">&#128221;</text>
+      <text x="52" y="48" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#93c5fd" text-anchor="middle">Submit</text>
+      <text x="52" y="62" font-family="system-ui,sans-serif" font-size="7" fill="#64748b" text-anchor="middle">GitHub Issue</text>
+    </g>
+    <line x1="424" y1="120" x2="451" y2="120" stroke="#3b82f6" stroke-width="1.5" class="cg-flow" style="animation-delay:0.4s"/>
+    <polygon points="449,116 456,120 449,124" fill="#3b82f6" opacity="0.6"/>
+
+    <!-- Step 4: Review -->
+    <g transform="translate(459,80)" class="cg-float" style="animation-delay:0.9s" filter="url(#cg-shadow)">
+      <rect x="0" y="0" width="105" height="80" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="52" y="28" font-family="system-ui,sans-serif" font-size="18" fill="#f59e0b" text-anchor="middle">&#128270;</text>
+      <text x="52" y="48" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#fcd34d" text-anchor="middle">Review</text>
+      <text x="52" y="62" font-family="system-ui,sans-serif" font-size="7" fill="#64748b" text-anchor="middle">Admin approval</text>
+    </g>
+    <line x1="567" y1="120" x2="594" y2="120" stroke="#f59e0b" stroke-width="1.5" class="cg-flow" style="animation-delay:0.6s"/>
+    <polygon points="592,116 599,120 592,124" fill="#f59e0b" opacity="0.6"/>
+
+    <!-- Step 5: Publish -->
+    <g transform="translate(602,80)" class="cg-float" style="animation-delay:1.2s" filter="url(#cg-shadow)">
+      <rect x="0" y="0" width="105" height="80" rx="10" fill="#1e293b" stroke="#8b5cf6" stroke-width="1.5"/>
+      <text x="52" y="28" font-family="system-ui,sans-serif" font-size="18" fill="#8b5cf6" text-anchor="middle">&#128640;</text>
+      <text x="52" y="48" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#c4b5fd" text-anchor="middle">Publish</text>
+      <text x="52" y="62" font-family="system-ui,sans-serif" font-size="7" fill="#64748b" text-anchor="middle">Auto pipeline</text>
+    </g>
+    <line x1="710" y1="120" x2="737" y2="120" stroke="#8b5cf6" stroke-width="1.5" class="cg-flow" style="animation-delay:0.8s"/>
+    <polygon points="735,116 742,120 735,124" fill="#8b5cf6" opacity="0.6"/>
+
+    <!-- Step 6: Install -->
+    <g transform="translate(745,80)" class="cg-float" style="animation-delay:1.5s" filter="url(#cg-shadow)">
+      <rect x="0" y="0" width="120" height="80" rx="10" fill="#1e293b" stroke="url(#cg-accent)" stroke-width="2"/>
+      <text x="60" y="28" font-family="system-ui,sans-serif" font-size="18" text-anchor="middle" class="cg-pulse">&#11088;</text>
+      <text x="60" y="48" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#6ee7b7" text-anchor="middle">Browse &amp; Install</text>
+      <text x="60" y="62" font-family="system-ui,sans-serif" font-size="7" fill="#64748b" text-anchor="middle">One-click from app</text>
+    </g>
+
+    <!-- Two backends section -->
+    <g transform="translate(100,195)">
+      <!-- GitHub backend -->
+      <rect x="0" y="0" width="310" height="85" rx="12" fill="#1e293b" stroke="#10b981" stroke-width="1" opacity="0.6"/>
+      <text x="20" y="24" font-family="system-ui,sans-serif" font-size="10" font-weight="700" fill="#6ee7b7">GitHub-Native (Zero Infrastructure)</text>
+      <text x="20" y="42" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">Issues for submission &#183; Actions for validation</text>
+      <text x="20" y="56" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">Releases for storage &#183; Pages for gallery</text>
+      <rect x="20" y="64" width="70" height="14" rx="4" fill="#10b981" opacity="0.15"/>
+      <text x="55" y="74" font-family="system-ui,sans-serif" font-size="7" fill="#6ee7b7" text-anchor="middle">$0 / month</text>
+    </g>
+
+    <g transform="translate(490,195)">
+      <!-- Cloudflare backend -->
+      <rect x="0" y="0" width="310" height="85" rx="12" fill="#1e293b" stroke="#f59e0b" stroke-width="1" opacity="0.6"/>
+      <text x="20" y="24" font-family="system-ui,sans-serif" font-size="10" font-weight="700" fill="#fcd34d">Cloudflare (Production Scale)</text>
+      <text x="20" y="42" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">R2 storage &#183; Workers proxy &#183; CDN caching</text>
+      <text x="20" y="56" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">Immutable versioned assets &#183; Global edge</text>
+      <rect x="20" y="64" width="100" height="14" rx="4" fill="#f59e0b" opacity="0.15"/>
+      <text x="70" y="74" font-family="system-ui,sans-serif" font-size="7" fill="#fcd34d" text-anchor="middle">Enterprise-ready</text>
+    </g>
+
+    <!-- Connecting line between backends -->
+    <text x="450" y="245" font-family="system-ui,sans-serif" font-size="9" fill="#475569" text-anchor="middle">or</text>
+
+    <!-- Bottom tagline -->
+    <text x="450" y="326" font-family="system-ui,sans-serif" font-size="10" fill="#475569" text-anchor="middle">Search by name &#183; Filter by tag &#183; Content rating &#183; Preview card &#183; Dependency check before install</text>
+  </g>
+</svg>

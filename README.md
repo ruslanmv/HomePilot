@@ -23,9 +23,6 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
-### 👤 Multi-User Sessions
-HomePilot supports **multi-user authentication** with per-user profiles, conversations, memory, and secrets — all scoped by account. Users can log out and switch accounts seamlessly without a page reload, with recent accounts shown for quick re-login. See [docs/USERS.md](docs/USERS.md) for details.
-
 ### 🎭 Personas — Persistent AI Identities
 A **Persona** in HomePilot is not a chatbot, not a voice skin, and not a prompt template. It is a **persistent AI identity** — a named, visual, voice-enabled entity with its own personality, appearance, long-term memory, and session history that evolves with you over time. Where traditional assistants forget you between conversations, a Persona remembers. Where traditional UIs give you a text box, a Persona gives you a face, a voice, and a relationship. One identity, many sessions, continuous context — this is the foundation for AI that actually knows who it's talking to. See [docs/PERSONA.md](docs/PERSONA.md) for the full specification.
 
@@ -70,6 +67,8 @@ Every persona has persistent memory that survives across sessions. Two engines l
 - **Adaptive Memory** — brain-inspired engine with decay, reinforcement, consolidation, and pruning; ideal for companion and assistant personas
 - **Basic Memory** — deterministic flat store with TTL, per-category caps, near-duplicate detection, and pin-to-keep; ideal for secretary and enterprise personas
 - Switch between engines at any time from Settings or during `.hpersona` import — no data loss
+
+> **Profile vs Memory:** Your user profile (name, birthday, pronouns, preferences) is injected into *every* conversation automatically — no persona required. Long-term memory adds the ability for personas to *learn new facts from conversation* and remember them across sessions. Set your name in **Profile & Integrations** and every chat will know it. Enable memory mode on a persona for cross-session learning.
 
 For the full technical deep dive (math, configuration, architecture), see **[docs/MEMORY.md](docs/MEMORY.md)**.
 

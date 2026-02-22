@@ -247,11 +247,57 @@ but run it in Basic mode if you prefer deterministic behavior.
 
 ---
 
+## Profile Awareness vs Long-Term Memory
+
+HomePilot has **two distinct systems** that help the AI know who you are:
+
+### User Profile (always active)
+
+Your **user profile** (set in Profile & Integrations) is injected into every conversation —
+plain chat, persona chat, and agent chat. No setup needed. When you set your
+display name, birthday, pronouns, or preferences, every AI conversation will see them.
+
+| Profile field | Available in chat? |
+|---|---|
+| Display name / preferred name | Yes — always |
+| Birthday and calculated age | Yes — always |
+| Pronouns | Yes — always |
+| Preferred tone, affection level | Yes — always |
+| Likes, dislikes, boundaries | Yes — always |
+
+**How to use:** Go to **Profile & Integrations → Profile tab**, fill in your name and
+birthday, click **Save All**. The next chat message you send will include your profile
+in the system prompt.
+
+### Long-Term Memory (per-persona, opt-in)
+
+**Memory** is a separate system that learns *new things about you from conversation* and
+remembers them across sessions. It is available **only inside persona projects** with
+memory mode set to `adaptive` or `basic`.
+
+| Feature | Plain chat | Persona (memory=off) | Persona (memory=adaptive) | Persona (memory=basic) |
+|---|---|---|---|---|
+| Profile awareness (name, birthday) | Yes | Yes | Yes | Yes |
+| Learns facts from conversation | No | No | Yes | Yes |
+| Remembers across sessions | No | No | Yes | Yes |
+| Decay and reinforcement | No | No | Yes | No |
+
+**How to enable:** Create a persona → set Memory Mode to *Adaptive* or *Basic* in the
+persona settings → chat inside that persona's conversation. The persona will learn
+about you over time and remember facts, preferences, and patterns across sessions.
+
+> **Key takeaway:** You do not need memory enabled for the AI to know your name.
+> Your profile is always injected. Memory adds the ability to *accumulate knowledge
+> over time* through conversation.
+
+---
+
 ## Quick reference
 
 | Question | Answer |
 |----------|--------|
-| **Which should I choose?** | Adaptive for human-feeling personas; Basic for business/enterprise. |
+| **Does the AI know my name in plain chat?** | Yes — your user profile is always injected when you are logged in. |
+| **Which memory engine should I choose?** | Adaptive for human-feeling personas; Basic for business/enterprise. |
 | **Can I switch later?** | Yes — Settings → Memory Mode. No data is lost. |
 | **Are memories portable?** | Yes — `.hpersona` export includes memory mode in the manifest. |
 | **How many memories per persona?** | Up to 200 (Basic cap) or unbounded-with-pruning (Adaptive). |

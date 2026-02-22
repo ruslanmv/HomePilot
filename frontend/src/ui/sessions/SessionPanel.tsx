@@ -14,14 +14,18 @@
  */
 
 import React, { useEffect, useState, useCallback } from 'react'
+import { Trash2, ChevronDown, ChevronUp, Pin } from 'lucide-react'
 import {
   PersonaSession,
+  PersonaMemoryEntry,
   resolveSession,
   createSession,
   listSessions,
   endSession,
   getMemories,
+  forgetMemory,
 } from './sessionsApi'
+import ConfirmForgetDialog from '../components/ConfirmForgetDialog'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -51,7 +55,16 @@ export default function SessionPanel({
   const [sessions, setSessions] = useState<PersonaSession[]>([])
   const [activeSession, setActiveSession] = useState<PersonaSession | null>(null)
   const [memoryCount, setMemoryCount] = useState(0)
+  const [memories, setMemories] = useState<PersonaMemoryEntry[]>([])
+  const [memoriesExpanded, setMemoriesExpanded] = useState(false)
   const [loading, setLoading] = useState(true)
+
+  // Confirmation dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    mode: 'single' | 'all'
+    memory?: PersonaMemoryEntry
+  } | null>(null)
+  const [confirmLoading, setConfirmLoading] = useState(false)
 
   // Load sessions + memory count on mount
   const loadData = useCallback(async () => {
@@ -63,6 +76,7 @@ export default function SessionPanel({
       ])
       setSessions(sessionList)
       setMemoryCount(memData.count)
+      setMemories(memData.memories)
 
       // Find active session (first non-ended)
       const active = sessionList.find((s) => !s.ended_at) || null
@@ -117,6 +131,36 @@ export default function SessionPanel({
       console.error('[SessionPanel] Failed to create text session:', err)
     }
   }, [projectId, activeSession, onOpenSession])
+
+  // Memory deletion handlers
+  const handleForgetSingle = useCallback(async (mem: PersonaMemoryEntry) => {
+    setConfirmLoading(true)
+    try {
+      await forgetMemory(projectId, mem.category, mem.key)
+      setMemories((prev) => prev.filter((m) => m.id !== mem.id))
+      setMemoryCount((prev) => Math.max(0, prev - 1))
+      setConfirmDialog(null)
+    } catch (err) {
+      console.error('[SessionPanel] Failed to forget memory:', err)
+    } finally {
+      setConfirmLoading(false)
+    }
+  }, [projectId])
+
+  const handleForgetAll = useCallback(async () => {
+    setConfirmLoading(true)
+    try {
+      await forgetMemory(projectId)
+      setMemories([])
+      setMemoryCount(0)
+      setConfirmDialog(null)
+      setMemoriesExpanded(false)
+    } catch (err) {
+      console.error('[SessionPanel] Failed to forget all memories:', err)
+    } finally {
+      setConfirmLoading(false)
+    }
+  }, [projectId])
 
   const handleOpenPast = useCallback(
     (session: PersonaSession) => {
@@ -261,6 +305,74 @@ export default function SessionPanel({
         </button>
       </div>
 
+      {/* Memories Section — expandable list with per-item delete + Forget All */}
+      {memoryCount > 0 && (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setMemoriesExpanded(!memoriesExpanded)}
+            className="w-full flex items-center justify-between px-1 mb-2 group"
+          >
+            <h3 className="text-xs uppercase tracking-wider text-gray-500">
+              Memories ({memoryCount})
+            </h3>
+            <div className="flex items-center gap-2">
+              {memoriesExpanded && memoryCount > 0 && (
+                <span
+                  role="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setConfirmDialog({ mode: 'all' })
+                  }}
+                  className="text-[11px] text-red-400/60 hover:text-red-400 transition-colors cursor-pointer"
+                >
+                  Forget All
+                </span>
+              )}
+              {memoriesExpanded ? (
+                <ChevronUp size={14} className="text-gray-500" />
+              ) : (
+                <ChevronDown size={14} className="text-gray-500" />
+              )}
+            </div>
+          </button>
+
+          {memoriesExpanded && (
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden divide-y divide-white/5">
+              {memories.map((mem) => (
+                <div
+                  key={mem.id}
+                  className="flex items-start justify-between gap-3 px-3 py-2.5 group/item hover:bg-white/[0.03] transition-colors"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[13px] text-white/80 leading-relaxed">
+                      {mem.value}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="text-[10px] text-white/30">{mem.category}</span>
+                      {mem.source_type === 'user_statement' && (
+                        <>
+                          <span className="text-[10px] text-white/15">&middot;</span>
+                          <Pin size={9} className="text-white/25" />
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDialog({ mode: 'single', memory: mem })}
+                    className="p-1.5 rounded-lg opacity-0 group-hover/item:opacity-100 hover:bg-red-500/10 text-white/30 hover:text-red-400 transition-all shrink-0 mt-0.5"
+                    title="Forget this memory"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Past Sessions — only show sessions that have actual messages */}
       {realSessions.length > 0 && (
         <div className="mt-2">
@@ -290,6 +402,26 @@ export default function SessionPanel({
             ))}
           </div>
         </div>
+      )}
+
+      {/* Confirmation Dialog */}
+      {confirmDialog && (
+        <ConfirmForgetDialog
+          mode={confirmDialog.mode}
+          personaName={projectName}
+          memoryCount={memoryCount}
+          memoryLabel={confirmDialog.memory?.value}
+          memoryCategory={confirmDialog.memory?.category}
+          loading={confirmLoading}
+          onConfirm={() => {
+            if (confirmDialog.mode === 'all') {
+              handleForgetAll()
+            } else if (confirmDialog.memory) {
+              handleForgetSingle(confirmDialog.memory)
+            }
+          }}
+          onCancel={() => { setConfirmDialog(null); setConfirmLoading(false) }}
+        />
       )}
     </div>
   )

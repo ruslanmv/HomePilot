@@ -7,6 +7,7 @@
 import React from 'react'
 import { Check, RefreshCw, Download } from 'lucide-react'
 import type { EditResultGridProps } from './types'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 export function EditResultGrid({
   images,
@@ -81,7 +82,7 @@ export function EditResultGrid({
               aria-label={`View result ${index + 1} fullscreen`}
             >
               <img
-                src={url}
+                src={resolveFileUrl(url)}
                 className="w-full aspect-square object-cover"
                 alt={`Edit result ${index + 1}`}
                 loading="lazy"

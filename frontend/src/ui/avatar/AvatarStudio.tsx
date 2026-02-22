@@ -43,6 +43,7 @@ import { AvatarSettingsPanel, loadAvatarSettings, resolveCheckpoint } from './Av
 import type { AvatarMode, AvatarSettings } from './types'
 import type { GalleryItem, AvatarVibePreset, CharacterGender } from './galleryTypes'
 import { AVATAR_VIBE_PRESETS, GENDER_OPTIONS, CHARACTER_STYLE_PRESETS, buildCharacterPrompt } from './galleryTypes'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -566,7 +567,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                   {referencePreview ? (
                     <div className="relative flex-shrink-0">
                       <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-purple-500/40">
-                        <img src={referencePreview} alt="Reference" className="w-full h-full object-cover" />
+                        <img src={resolveFileUrl(referencePreview, backendUrl)} alt="Reference" className="w-full h-full object-cover" />
                       </div>
                       <button
                         onClick={handleRemoveReference}
@@ -803,7 +804,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
               {/* Result grid — select one, dim the rest */}
               <div className={`grid gap-3 ${gen.result.results.length === 1 ? 'grid-cols-1 max-w-xs mx-auto' : 'grid-cols-2 sm:grid-cols-4'}`}>
                 {gen.result.results.map((item, i) => {
-                  const imgUrl = item.url?.startsWith('http') ? item.url : `${(backendUrl || '').replace(/\/+$/, '')}${item.url}`
+                  const imgUrl = resolveFileUrl(item.url, backendUrl)
                   const blurred = isSpicyContent && !showNsfw
                   const isSelected = selectedResultIndex === i
                   const hasSelection = selectedResultIndex !== null

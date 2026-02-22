@@ -1,0 +1,163 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 420" font-family="system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0a0a0f"/>
+      <stop offset="100%" stop-color="#12121a"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e1e2e"/>
+      <stop offset="100%" stop-color="#16161f"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="820" height="420" rx="16" fill="url(#bg)"/>
+  <rect width="820" height="420" rx="16" fill="none" stroke="#ffffff08" stroke-width="1"/>
+
+  <!-- Title -->
+  <text x="410" y="38" text-anchor="middle" fill="#ffffff" font-size="16" font-weight="700" letter-spacing="0.5">Multi-User Session Architecture</text>
+  <line x1="310" y1="48" x2="510" y2="48" stroke="url(#accent)" stroke-width="2" opacity="0.6"/>
+
+  <!-- ═══ LEFT: User Cards ═══ -->
+
+  <!-- User A -->
+  <g filter="url(#shadow)">
+    <rect x="30" y="75" width="170" height="145" rx="12" fill="url(#card)" stroke="#a78bfa33" stroke-width="1"/>
+  </g>
+  <circle cx="115" cy="108" r="18" fill="#a78bfa22" stroke="#a78bfa" stroke-width="1.5">
+    <animate attributeName="stroke-opacity" values="0.4;1;0.4" dur="3s" repeatCount="indefinite"/>
+  </circle>
+  <text x="115" y="113" text-anchor="middle" fill="#a78bfa" font-size="16">A</text>
+  <text x="115" y="142" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="600">Alice</text>
+  <text x="115" y="158" text-anchor="middle" fill="#ffffff80" font-size="9">Conversations</text>
+  <text x="115" y="172" text-anchor="middle" fill="#ffffff80" font-size="9">Memory &amp; Secrets</text>
+  <text x="115" y="186" text-anchor="middle" fill="#ffffff80" font-size="9">Profile &amp; Prefs</text>
+  <rect x="60" y="196" width="110" height="16" rx="8" fill="#a78bfa22"/>
+  <text x="115" y="208" text-anchor="middle" fill="#a78bfa" font-size="8" font-weight="600">ISOLATED</text>
+
+  <!-- User B -->
+  <g filter="url(#shadow)">
+    <rect x="30" y="245" width="170" height="145" rx="12" fill="url(#card)" stroke="#34d39933" stroke-width="1"/>
+  </g>
+  <circle cx="115" cy="278" r="18" fill="#34d39922" stroke="#34d399" stroke-width="1.5">
+    <animate attributeName="stroke-opacity" values="0.4;1;0.4" dur="3s" begin="1.5s" repeatCount="indefinite"/>
+  </circle>
+  <text x="115" y="283" text-anchor="middle" fill="#34d399" font-size="16">B</text>
+  <text x="115" y="312" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="600">Bob</text>
+  <text x="115" y="328" text-anchor="middle" fill="#ffffff80" font-size="9">Conversations</text>
+  <text x="115" y="342" text-anchor="middle" fill="#ffffff80" font-size="9">Memory &amp; Secrets</text>
+  <text x="115" y="356" text-anchor="middle" fill="#ffffff80" font-size="9">Profile &amp; Prefs</text>
+  <rect x="60" y="366" width="110" height="16" rx="8" fill="#34d39922"/>
+  <text x="115" y="378" text-anchor="middle" fill="#34d399" font-size="8" font-weight="600">ISOLATED</text>
+
+  <!-- ═══ CENTER: Auth Flow ═══ -->
+
+  <!-- Arrow A → Auth -->
+  <line x1="200" y1="148" x2="275" y2="195" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.6">
+    <animate attributeName="stroke-dashoffset" values="0;-14" dur="1.5s" repeatCount="indefinite"/>
+  </line>
+  <polygon points="275,195 267,189 270,197" fill="#a78bfa" opacity="0.6"/>
+
+  <!-- Arrow B → Auth -->
+  <line x1="200" y1="318" x2="275" y2="250" stroke="#34d399" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.6">
+    <animate attributeName="stroke-dashoffset" values="0;-14" dur="1.5s" begin="0.5s" repeatCount="indefinite"/>
+  </line>
+  <polygon points="275,250 267,256 270,248" fill="#34d399" opacity="0.6"/>
+
+  <!-- Auth Box -->
+  <g filter="url(#shadow)">
+    <rect x="280" y="180" width="160" height="85" rx="12" fill="url(#card)" stroke="#ffffff15" stroke-width="1"/>
+  </g>
+  <text x="360" y="206" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="700">Auth Layer</text>
+  <line x1="310" y1="214" x2="410" y2="214" stroke="#ffffff15" stroke-width="1"/>
+  <text x="360" y="232" text-anchor="middle" fill="#ffffff80" font-size="9">POST /v1/auth/login</text>
+  <text x="360" y="247" text-anchor="middle" fill="#ffffff80" font-size="9">Bearer Token → Session</text>
+  <circle cx="360" cy="258" r="3" fill="#34d399">
+    <animate attributeName="r" values="2;4;2" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Arrow Auth → Backend -->
+  <line x1="440" y1="222" x2="500" y2="222" stroke="#ffffff40" stroke-width="1.5" stroke-dasharray="4 3">
+    <animate attributeName="stroke-dashoffset" values="0;-14" dur="1.5s" repeatCount="indefinite"/>
+  </line>
+  <polygon points="500,222 493,217 493,227" fill="#ffffff40"/>
+
+  <!-- ═══ RIGHT: Backend Scoping ═══ -->
+
+  <g filter="url(#shadow)">
+    <rect x="505" y="75" width="285" height="315" rx="14" fill="url(#card)" stroke="#ffffff10" stroke-width="1"/>
+  </g>
+  <text x="647" y="102" text-anchor="middle" fill="#ffffff" font-size="12" font-weight="700">HomePilot Backend</text>
+  <line x1="535" y1="112" x2="760" y2="112" stroke="#ffffff10" stroke-width="1"/>
+
+  <!-- Per-User scope label -->
+  <rect x="525" y="125" width="245" height="22" rx="6" fill="#a78bfa15"/>
+  <text x="647" y="140" text-anchor="middle" fill="#a78bfa" font-size="9" font-weight="600" letter-spacing="1">PER-USER SCOPE</text>
+
+  <!-- Scoped items -->
+  <g>
+    <rect x="530" y="156" width="115" height="38" rx="8" fill="#ffffff08" stroke="#ffffff10" stroke-width="0.5"/>
+    <text x="588" y="172" text-anchor="middle" fill="#ffffff90" font-size="9" font-weight="600">Conversations</text>
+    <text x="588" y="185" text-anchor="middle" fill="#ffffff50" font-size="8">Chat history</text>
+  </g>
+  <g>
+    <rect x="655" y="156" width="115" height="38" rx="8" fill="#ffffff08" stroke="#ffffff10" stroke-width="0.5"/>
+    <text x="712" y="172" text-anchor="middle" fill="#ffffff90" font-size="9" font-weight="600">Memory</text>
+    <text x="712" y="185" text-anchor="middle" fill="#ffffff50" font-size="8">Long-term facts</text>
+  </g>
+  <g>
+    <rect x="530" y="202" width="115" height="38" rx="8" fill="#ffffff08" stroke="#ffffff10" stroke-width="0.5"/>
+    <text x="588" y="218" text-anchor="middle" fill="#ffffff90" font-size="9" font-weight="600">Secrets Vault</text>
+    <text x="588" y="231" text-anchor="middle" fill="#ffffff50" font-size="8">API keys, creds</text>
+  </g>
+  <g>
+    <rect x="655" y="202" width="115" height="38" rx="8" fill="#ffffff08" stroke="#ffffff10" stroke-width="0.5"/>
+    <text x="712" y="218" text-anchor="middle" fill="#ffffff90" font-size="9" font-weight="600">Profile</text>
+    <text x="712" y="231" text-anchor="middle" fill="#ffffff50" font-size="8">Name, avatar, prefs</text>
+  </g>
+
+  <!-- Shared scope label -->
+  <rect x="525" y="255" width="245" height="22" rx="6" fill="#34d39915"/>
+  <text x="647" y="270" text-anchor="middle" fill="#34d399" font-size="9" font-weight="600" letter-spacing="1">SHARED ACROSS USERS</text>
+
+  <g>
+    <rect x="530" y="286" width="115" height="38" rx="8" fill="#ffffff08" stroke="#ffffff10" stroke-width="0.5"/>
+    <text x="588" y="302" text-anchor="middle" fill="#ffffff90" font-size="9" font-weight="600">Personas</text>
+    <text x="588" y="315" text-anchor="middle" fill="#ffffff50" font-size="8">AI identities</text>
+  </g>
+  <g>
+    <rect x="655" y="286" width="115" height="38" rx="8" fill="#ffffff08" stroke="#ffffff10" stroke-width="0.5"/>
+    <text x="712" y="302" text-anchor="middle" fill="#ffffff90" font-size="9" font-weight="600">Models</text>
+    <text x="712" y="315" text-anchor="middle" fill="#ffffff50" font-size="8">Ollama, ComfyUI</text>
+  </g>
+
+  <!-- Switch indicator -->
+  <g>
+    <rect x="530" y="338" width="240" height="38" rx="10" fill="#ffffff06" stroke="#ffffff10" stroke-width="0.5"/>
+    <text x="575" y="362" text-anchor="middle" fill="#ffffff60" font-size="9">Switch accounts →</text>
+    <text x="700" y="362" text-anchor="middle" fill="#34d399" font-size="9" font-weight="600">No page reload</text>
+    <circle cx="553" cy="358" r="5" fill="none" stroke="#a78bfa" stroke-width="1.2">
+      <animate attributeName="cx" values="553;665;553" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="stroke" values="#a78bfa;#34d399;#a78bfa" dur="4s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- Footer -->
+  <text x="410" y="408" text-anchor="middle" fill="#ffffff30" font-size="9">All data stored locally — nothing leaves your machine</text>
+</svg>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { resolveFileUrl } from './resolveFileUrl';
 import {
   FolderKanban,
   Plus,
@@ -70,7 +71,7 @@ const ProjectCard = ({
         <div className="flex items-center gap-3 min-w-0">
           {avatarUrl ? (
             <div className="w-10 h-10 shrink-0 rounded-xl overflow-hidden border border-pink-500/30">
-              <img src={avatarUrl} alt="" className="block w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+              <img src={resolveFileUrl(avatarUrl)} alt="" className="block w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
             </div>
           ) : (
             <div
@@ -2099,7 +2100,8 @@ export default function ProjectsView({
                         const v = project.updated_at
                           ? Math.floor(Number(project.updated_at) * 1000)
                           : 0
-                        return `${backendUrl}/files/${String(rel).replace(/^\/+/, '')}?v=${v}`
+                        const _tok = localStorage.getItem('homepilot_auth_token') || ''
+                        return `${backendUrl}/files/${String(rel).replace(/^\/+/, '')}?v=${v}${_tok ? `&token=${encodeURIComponent(_tok)}` : ''}`
                       })()
                     : null
                   return (

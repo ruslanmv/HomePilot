@@ -72,6 +72,12 @@ _register_tool(
     "  Use this when a user uploads an image and wants it searchable later.",
 )
 _register_tool(
+    "image.generate",
+    "image.generate(prompt): generates an image from a text description.\n"
+    "  prompt: detailed visual description of the image to create.\n"
+    "  Use this when the user asks to generate, create, draw, imagine, or make a picture/photo/image.",
+)
+_register_tool(
     "memory.store",
     "memory.store(key, value, importance): stores a fact or preference about the user.\n"
     "  key: short label (e.g. 'favorite_color'). value: the fact. importance: 0.0-1.0 (default 0.5).\n"
@@ -131,6 +137,7 @@ def _build_agent_system_prompt(
     knowledge_hint: str = "",
     user_context: str = "",
     session_context: str = "",
+    persona_context: str = "",
 ) -> str:
     """
     System prompt instructing the LLM to use a minimal JSON protocol.
@@ -139,7 +146,13 @@ def _build_agent_system_prompt(
     Accepts optional context blocks that are injected into the prompt
     when available (additive, never destructive).
     """
-    parts = [
+    parts = []
+
+    # Persona identity comes first — the agent must know who it is
+    if persona_context:
+        parts.append(persona_context)
+
+    parts += [
         "You are an agent that can optionally call tools.\n",
         "You MUST reply with STRICT JSON ONLY (no markdown, no extra text).\n",
         "Allowed response shapes:\n"
@@ -155,6 +168,7 @@ def _build_agent_system_prompt(
         "- Use memory.recall when you need to remember user preferences, facts, or boundaries.\n"
         "- Use memory.store when you learn an important fact about the user that should be remembered.\n"
         "- Use web.search when the user asks about current events or needs up-to-date information.\n"
+        "- Use image.generate when the user asks to generate, create, draw, imagine, or make a picture/photo/image.\n"
         "- Keep tool calls minimal.\n",
     ]
 
@@ -466,6 +480,50 @@ async def _run_memory_store(
         return f"Error storing memory: {e}", {"error": str(e)}
 
 
+async def _run_image_generate(
+    *,
+    prompt: str,
+    conversation_id: Optional[str],
+    project_id: Optional[str],
+    nsfw_mode: bool,
+    user_id: Optional[str],
+) -> Tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+    """
+    Generate an image by routing through the orchestrator's imagine pipeline.
+    Returns (description_text, meta, media_dict).
+    """
+    if not prompt:
+        return "Please describe what image you'd like me to generate.", {"error": "no_prompt"}, None
+
+    try:
+        from .orchestrator import orchestrate
+    except ImportError:
+        return "Image generation module is not available.", {"error": "orchestrator_missing"}, None
+
+    try:
+        # Use a throwaway conversation_id so the orchestrator doesn't
+        # double-store messages in the agent's conversation history.
+        result = await orchestrate(
+            user_text=prompt,
+            conversation_id=None,
+            mode="imagine",
+            nsfw_mode=nsfw_mode,
+            user_id=user_id,
+        )
+        media = result.get("media")
+        text = result.get("text", "")
+
+        if media and media.get("images"):
+            urls = media["images"]
+            text = text or f"Generated {len(urls)} image(s) for: {prompt[:100]}"
+            return text, {"prompt": prompt, "images": urls}, media
+        else:
+            return text or "Image generation completed but no images were returned.", {"prompt": prompt}, None
+
+    except Exception as e:
+        return f"Image generation failed: {e}", {"error": str(e)}, None
+
+
 # ---------------------------------------------------------------------------
 # Memory V2 context builder (injected into system prompt)
 # ---------------------------------------------------------------------------
@@ -490,37 +548,79 @@ def _get_memory_context(project_id: Optional[str], query: str) -> str:
 
 def _get_knowledge_hint(project_id: Optional[str]) -> str:
     """
-    Build a short hint about available knowledge base docs.
+    Build a short hint about available knowledge base docs and project items.
     Helps the agent decide whether to call knowledge.search.
     """
     if not project_id:
         return ""
+    parts: list[str] = []
+
+    # RAG document chunks
     try:
         from .vectordb import get_project_document_count, CHROMADB_AVAILABLE
-        if not CHROMADB_AVAILABLE:
-            return ""
-        count = get_project_document_count(project_id)
-        if count > 0:
-            return f"[This project has {count} document chunks in its knowledge base. Use knowledge.search to find relevant information.]"
+        if CHROMADB_AVAILABLE:
+            count = get_project_document_count(project_id)
+            if count > 0:
+                parts.append(f"[This project has {count} document chunks in its knowledge base. Use knowledge.search to find relevant information.]")
     except Exception:
         pass
-    return ""
+
+    # Project items catalog (files, photos, items attached by the user)
+    try:
+        from .project_files import build_item_context
+        item_ctx = build_item_context(project_id)
+        if item_ctx:
+            parts.append(item_ctx)
+    except Exception:
+        pass
+
+    return "\n".join(parts)
 
 
-def _get_user_context(project_id: Optional[str]) -> str:
+def _get_user_context(project_id: Optional[str], user_id: Optional[str] = None) -> str:
     """
     Build user context (profile + preferences) for agent system prompt.
-    Uses existing user_context.build_user_context_for_ai().
+    Uses per-user SQLite profile when user_id is available (Bearer auth),
+    falls back to legacy profile.json for single-user/API-key mode.
     Returns empty string if unavailable.
     """
     if not project_id:
         return ""
     try:
         from .user_context import build_user_context_for_ai
-        from .profile import read_profile
-        from .user_memory import _read as read_memory
-        profile = read_profile()
-        memory = read_memory()
+
+        profile: dict = {}
+        memory: dict = {}
+
+        if user_id:
+            # Per-user: read from SQLite user_profiles / user_memory_items tables
+            try:
+                from .user_profile_store import _get_user_profile, _get_db_path
+                import sqlite3, json
+                profile = _get_user_profile(user_id)
+                # Read per-user memory items
+                path = _get_db_path()
+                con = sqlite3.connect(path)
+                con.row_factory = sqlite3.Row
+                cur = con.cursor()
+                cur.execute(
+                    "SELECT * FROM user_memory_items WHERE user_id = ? ORDER BY pinned DESC, importance DESC",
+                    (user_id,),
+                )
+                rows = cur.fetchall()
+                con.close()
+                memory = {"items": [dict(r) for r in rows]}
+            except Exception:
+                # Table may not exist yet; fall through to legacy
+                pass
+
+        if not profile:
+            # Legacy: read global profile.json / user_memory.json
+            from .profile import read_profile
+            from .user_memory import _read as read_memory
+            profile = read_profile()
+            memory = read_memory()
+
         if not profile.get("personalization_enabled", True):
             return ""
         ctx = build_user_context_for_ai(profile, memory, nsfw_mode=False)
@@ -596,15 +696,22 @@ async def _dispatch_tool(
                 None,
             )
 
-        text, full = await _run_vision_analyze(
-            image_url=image_url,
-            question=question,
-            mode=mode,
-            provider=vision_provider,
-            base_url=vision_base_url,
-            model=vision_model,
-            nsfw_mode=nsfw_mode,
-        )
+        try:
+            text, full = await _run_vision_analyze(
+                image_url=image_url,
+                question=question,
+                mode=mode,
+                provider=vision_provider,
+                base_url=vision_base_url,
+                model=vision_model,
+                nsfw_mode=nsfw_mode,
+            )
+        except FileNotFoundError:
+            return (
+                "Could not load the image — the file may no longer exist. Please upload it again.",
+                {"error": "image_load_failed", "image_url": image_url},
+                None,
+            )
         return text, {"image_url": image_url, "mode": mode}, {"images": [image_url]}
 
     elif tool == "knowledge.search":
@@ -652,6 +759,17 @@ async def _dispatch_tool(
         )
         return text, meta, {"images": [image_url]}
 
+    elif tool == "image.generate":
+        prompt = (args.get("prompt") or "").strip() or user_text
+        text, meta, media = await _run_image_generate(
+            prompt=prompt,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            nsfw_mode=nsfw_mode,
+            user_id=None,  # user_id isn't passed to _dispatch_tool yet
+        )
+        return text, meta, media
+
     elif tool == "memory.store":
         key = (args.get("key") or "").strip()
         value = (args.get("value") or "").strip()
@@ -691,6 +809,8 @@ async def agent_chat(
     # agent controls
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
     history_limit: int = DEFAULT_HISTORY_LIMIT,
+    # per-user isolation
+    user_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Topology 3: Agent-Controlled tool use.
@@ -704,12 +824,49 @@ async def agent_chat(
     if text_in:
         add_message(cid, "user", text_in, media=None, project_id=project_id)
 
+    # Deterministic persona photo shortcut: if user asks "show me your photo"
+    # and a committed avatar exists, return it immediately without LLM call.
+    if text_in and project_id:
+        _photo_triggers = [
+            "show me your photo", "show me your picture", "show your photo",
+            "show your picture", "your photo", "your picture",
+            "what do you look like", "how do you look", "show me yourself",
+            "let me see you", "show me your photos",
+        ]
+        _lower = text_in.lower()
+        if any(t in _lower for t in _photo_triggers):
+            try:
+                from .projects import get_project_by_id
+                from .config import PUBLIC_BASE_URL
+                proj = get_project_by_id(project_id)
+                if proj and proj.get("project_type") == "persona":
+                    appearance = proj.get("persona_appearance") or {}
+                    sel = appearance.get("selected_filename")
+                    if isinstance(sel, str) and sel:
+                        base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
+                        img_url = f"{base}/files/{sel}"
+                        reply = "Here's my current photo."
+                        # Try to use persona name for a more natural response
+                        pa = proj.get("persona_agent") or {}
+                        label = pa.get("label", "")
+                        if label:
+                            reply = f"Here I am! 😊"
+                        add_message(cid, "assistant", reply, media={"images": [img_url]}, project_id=project_id)
+                        return {
+                            "conversation_id": cid,
+                            "text": reply,
+                            "media": {"images": [img_url]},
+                            "agent": {"tool_calls_used": 0, "tools_invoked": []},
+                        }
+            except Exception:
+                pass  # Fall through to LLM-based handling
+
     # Ingest user text into Memory V2 (additive, non-blocking)
     if text_in and project_id:
         try:
             from .memory_v2 import get_memory_v2, ensure_v2_columns
             ensure_v2_columns()
-            get_memory_v2().ingest_user_text(project_id, text_in)
+            get_memory_v2().ingest_user_text(project_id, text_in, user_id=user_id)
         except Exception:
             pass  # Non-fatal: Memory V2 is optional
 
@@ -723,8 +880,17 @@ async def agent_chat(
     # Build enriched system prompt with all context layers
     memory_ctx = _get_memory_context(project_id, text_in)
     knowledge_hint = _get_knowledge_hint(project_id)
-    user_ctx = _get_user_context(project_id)
+    user_ctx = _get_user_context(project_id, user_id=user_id)
     session_ctx = _get_session_context(project_id)
+
+    # Build persona self-awareness context (identity, photo catalog, rules)
+    persona_ctx = ""
+    if project_id:
+        try:
+            from .projects import build_persona_context
+            persona_ctx = build_persona_context(project_id, nsfw_mode=nsfw_mode)
+        except Exception:
+            pass  # Non-fatal
 
     # Convert to chat messages for LLM
     messages: List[Dict[str, Any]] = [
@@ -733,6 +899,7 @@ async def agent_chat(
             knowledge_hint=knowledge_hint,
             user_context=user_ctx,
             session_context=session_ctx,
+            persona_context=persona_ctx,
         )}
     ]
 
@@ -747,6 +914,7 @@ async def agent_chat(
 
     tool_calls_used = 0
     tools_invoked: List[str] = []
+    last_media: Optional[Dict[str, Any]] = None  # track media from tool results
     last_image_url = _find_last_image_url(cid)  # used as fallback if tool call lacks image_url
 
     # --- Agent loop (simple, safe) ---
@@ -784,8 +952,8 @@ async def agent_chat(
             final_text = (parsed.get("text") or "").strip()
             if not final_text:
                 final_text = "No answer provided."
-            add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+            add_message(cid, "assistant", final_text, media=last_media, project_id=project_id)
+            return {"conversation_id": cid, "text": final_text, "media": last_media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         if step_type != "tool_call":
             # Unknown response type → safe fallback
@@ -832,6 +1000,17 @@ async def agent_chat(
             add_message(cid, "assistant", output_text, media=None, project_id=project_id)
             return {"conversation_id": cid, "text": output_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
+        # image.generate is a terminal tool — return result directly
+        # instead of looping back to the LLM (which wastes a tool call
+        # or hits the max_tool_calls limit).
+        if tool == "image.generate" and media:
+            add_message(cid, "assistant", output_text, media=media, project_id=project_id)
+            return {"conversation_id": cid, "text": output_text, "media": media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+
+        # Track media from tool results (for final response)
+        if media:
+            last_media = media
+
         # Persist tool artifact in history
         tool_label = {
             "vision.analyze": "Image Analysis",
@@ -840,6 +1019,7 @@ async def agent_chat(
             "web.search": "Web Search",
             "image.index": "Image Indexed",
             "memory.store": "Memory Stored",
+            "image.generate": "Image Generated",
         }.get(tool, tool)
 
         add_message(

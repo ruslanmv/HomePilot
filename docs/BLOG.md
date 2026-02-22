@@ -85,6 +85,59 @@ Turn any still image into a short video clip. HomePilot ships with workflow supp
 
 ---
 
+## Multimodal Intelligence: Four Processing Topologies
+
+HomePilot does not just chat. It **sees**, **reads**, **searches**, and **remembers** — through a unified agent pipeline that processes text, images, documents, and voice in a single conversation.
+
+<p align="center">
+  <img src="../assets/blog/multimodal-intelligence.svg" alt="Multimodal Intelligence — Agent Pipeline" width="820" /><br>
+  <em>Text, vision, voice, and documents flow into a central agent that auto-selects from 6 tools.</em>
+</p>
+
+The system is built on four **topologies** — processing modes that stack on top of each other. Pick the one that fits your use case:
+
+<p align="center">
+  <img src="../assets/multimodal-topologies.svg" alt="Multimodal Topologies" width="820" /><br>
+  <em>T1 Basic Chat → T2 Project RAG → T3 Agent Tools → T4 Knowledge Companion. Each layer is additive.</em>
+</p>
+
+| Topology | Name | What It Does | Best For |
+|:---:|:---|:---|:---|
+| **T1** | Basic Chat | Direct LLM conversation | Quick questions, brainstorming |
+| **T2** | Project Knowledge | Searches your uploaded docs before answering | Research, documentation Q&A |
+| **T3** | Agent Tool Use | LLM decides when to use tools (vision, search, memory) | Complex tasks, image analysis |
+| **T4** | Knowledge Companion | All tools + user profile + long-term memory + session history | Personal assistant, long-term companion |
+
+In Topology 4, every message flows through all context layers before the agent responds — user profile, session history, persona memory, knowledge base, and 6 agent tools:
+
+<p align="center">
+  <img src="../assets/multimodal-companion-pipeline.svg" alt="Knowledge Companion Pipeline" width="820" /><br>
+  <em>The full companion pipeline — every context layer is optional and non-blocking.</em>
+</p>
+
+Switch topologies anytime from **Settings**. All your data — projects, memory, documents — is preserved regardless of which topology you use.
+
+### Vision Pipeline: See and Understand Images
+
+Upload any image — drag-and-drop, paste from clipboard, or type an intent like *"describe this photo"* — and the agent processes it through a local vision model, then hands the description to the main LLM for a grounded response.
+
+<p align="center">
+  <img src="../assets/blog/vision-pipeline.svg" alt="Vision Pipeline" width="820" /><br>
+  <em>Upload → Local Vision Model (moondream/llava) → Main LLM → Grounded Response. 100% local.</em>
+</p>
+
+The vision pipeline supports:
+- **Caption** — describe what's in the image
+- **OCR** — extract text from documents, screenshots, whiteboards
+- **Q&A** — answer specific questions about image content
+- **Image Indexing** — store image descriptions in your knowledge base for future search
+
+All processing happens on your machine. No images are sent to external servers.
+
+> Full multimodal documentation at [docs/MULTIMODAL.md](MULTIMODAL.md).
+
+---
+
 ## Personas: A New Primitive for AI
 
 <p align="center">
@@ -148,7 +201,96 @@ Create a persona in Tokyo, share it with someone in Brazil, and they get the exa
 
 ---
 
+## Avatar Studio: Zero-Prompt Character Creation
+
+Every Persona needs a face. HomePilot's **Avatar Studio** is a complete visual character creation system — you pick options, not write prompts.
+
+<p align="center">
+  <img src="../assets/blog/avatar-studio.svg" alt="Avatar Studio — Zero-Prompt Character Creation" width="820" /><br>
+  <em>Three creation modes, RPG-style wardrobe, and one-click persona export.</em>
+</p>
+
+### Three Creation Modes
+
+| Mode | How It Works |
+| :--- | :--- |
+| **From Reference** | Upload a photo. InstantID preserves your face across all generations. |
+| **Design Character** | Pick gender + style + vibe presets (16 styles, 16 vibes). No text prompt needed. |
+| **Face + Style** | Combine your face with a styled body and scene. Identity-preserving face swap. |
+
+### RPG Character Sheet
+
+Every generated avatar opens into a **Character Sheet** — an RPG-inspired split-panel interface:
+
+<p align="center">
+  <img src="../assets/avatar-character-sheet.svg" alt="RPG Character Sheet" width="820" /><br>
+  <em>MMORPG-style Character Sheet — equip outfits on the stage, manage your wardrobe inventory.</em>
+</p>
+
+- **The Stage** — toggle between Anchor Face (locked identity) and Latest Outfit
+- **Outfit Studio** — one-click scenario badges (Business, Casual, Evening, Active) or free-text prompts
+- **Wardrobe Inventory** — an MMORPG-style inventory grid where all outfits are stored; click to equip, amber glow highlights the active item
+
+### From Avatar to Persona
+
+Any character can be saved as a Persona — a persistent AI identity with personality, voice, and memory. All images transfer: main avatar, every outfit, generation seeds for reproducibility.
+
+<p align="center">
+  <img src="../assets/avatar-export-persona.svg" alt="Avatar to Persona Export" width="820" /><br>
+  <em>Save any character as a Persona — main avatar and all outfit variations export as real image files.</em>
+</p>
+
+The exported `.hpersona` package includes avatar images as real binary files (not base64), outfit metadata with scenario tags, and full generation settings for reproducibility.
+
+> Full Avatar Studio specification at [docs/AVATAR.md](AVATAR.md).
+
+---
+
+## Persona Memory: How Your AI Remembers You
+
+A Persona that forgets you between sessions is just a chatbot with a face. HomePilot gives every Persona **persistent memory** — and two engines to choose from.
+
+<p align="center">
+  <img src="../assets/blog/memory-system.svg" alt="Adaptive Memory System" width="820" /><br>
+  <em>Brain-inspired memory with three-tier hierarchy, exponential decay, and reinforcement.</em>
+</p>
+
+### Adaptive Memory (Brain-Inspired)
+
+Designed for companion, assistant, and partner personas. Memories have **three tiers**:
+
+| Tier | Decay | Description |
+|:---|:---|:---|
+| **Pinned** | Never | Core memories — name, birthday, boundaries. User-approved. |
+| **Semantic** | ~30 days | Stable facts and preferences. Slow decay, prunable. |
+| **Working** | ~6 hours | Current conversation context. Fast decay. |
+
+Unused memories fade over time following `A(t) = strength * e^(-t/τ)`. Accessed memories grow stronger through reinforcement. A background "sleep cycle" promotes working memories to semantic when they are repeated and important enough. Below a threshold — automatically forgotten.
+
+### Basic Memory (Deterministic)
+
+Designed for secretary, enterprise, and finance personas. A flat key-value store with:
+- TTL-based expiry and per-category caps
+- Near-duplicate detection (Jaccard similarity threshold 0.85)
+- Explicit — nothing is stored unless triggered
+- Fully auditable — every entry has source, confidence, and access count
+
+Switch between engines at any time from **Settings** or during `.hpersona` import. No data loss.
+
+### Profile Awareness (Always On)
+
+Independent of memory engines, HomePilot injects your **user profile** into every conversation — plain chat, persona chat, and agent chat. Set your name, birthday, and preferences in **Profile & Integrations**, and the AI will know who you are without needing to tell it. Memory adds the ability for personas to *learn new facts over time* from conversation; your profile provides the baseline identity that is always available.
+
+> Full memory documentation at [docs/MEMORY.md](MEMORY.md).
+
+---
+
 ## Community Gallery: Share Personas with the World
+
+<p align="center">
+  <img src="../assets/blog/community-gallery.svg" alt="Community Gallery Pipeline" width="820" /><br>
+  <em>Create → Export → Submit → Review → Publish → Browse &amp; Install. Two backends, zero vendor lock-in.</em>
+</p>
 
 HomePilot includes a **Community Gallery** — a public registry where anyone can browse, download, and install personas created by other users. The gallery runs on two tiers:
 
@@ -297,7 +439,39 @@ You control autonomy per tool, per Persona, or globally.
 
 ---
 
+## Multi-User Accounts: Shared Hardware, Private Data
+
+HomePilot now supports **multiple user accounts** on a single installation — share the hardware, keep the data private.
+
+<p align="center">
+  <img src="../assets/blog/multi-user-accounts.svg" alt="Multi-User Session Architecture" width="820" /><br>
+  <em>Per-user isolation — conversations, memory, secrets, and profiles are scoped per account.</em>
+</p>
+
+### How It Works
+
+- **3-Step Onboarding Wizard** — new users create an account with name, avatar upload, and preferences
+- **Per-User Isolation** — conversations, long-term memory, API keys, and profile settings are completely scoped per user. Alice's chat history never leaks into Bob's sessions.
+- **Shared Resources** — personas, projects, models, and workflows are shared across all accounts
+- **Instant Account Switching** — switch between accounts from the enterprise account menu with no page reload
+- **Avatar Upload** — each user gets their own avatar that propagates across the sidebar and account menu
+- **Keyboard Navigation** — full keyboard support for the account menu (arrow keys, Enter, Escape)
+
+The auth layer uses bearer tokens with per-session scoping. Everything stays local — no external auth providers required.
+
+<p align="center">
+  <img src="../assets/users-session-architecture.svg" alt="Multi-User Technical Architecture" width="820" /><br>
+  <em>Auth layer scopes all data access — private data per user, shared infrastructure for everyone.</em>
+</p>
+
+---
+
 ## The Architecture: Why It Works
+
+<p align="center">
+  <img src="../assets/blog/architecture-diagram.svg" alt="HomePilot Architecture" width="820" /><br>
+  <em>Modular, Docker-orchestrated services — swap any component without touching the rest.</em>
+</p>
 
 HomePilot is not a monolith. It is a modular system of replaceable services orchestrated via Docker:
 
@@ -446,14 +620,16 @@ This launches the MCP Gateway and all built-in tool servers. Your persona can no
 
 | | Traditional AI Chat | HomePilot |
 | :--- | :--- | :--- |
-| **Memory** | Per-session only | Persistent across sessions, months, years |
-| **Identity** | Generic assistant | Named Personas with face, voice, personality |
-| **Modality** | Text only (or separate apps) | Text + image + video + voice in one conversation |
+| **Memory** | Per-session only | Adaptive + Basic engines — decay, reinforcement, consolidation |
+| **Identity** | Generic assistant | Named Personas with face, voice, personality, wardrobe |
+| **Vision** | Text only (or separate apps) | 4 multimodal topologies — text, image, voice, documents in one agent |
+| **Avatar** | No visual identity | Zero-prompt Avatar Studio with RPG wardrobe mechanics |
 | **Content creation** | Copy-paste workflows | Integrated studio with outlines, scenes, export |
-| **Tools** | None or proprietary plugins | Open MCP gateway with unlimited tool servers |
+| **Tools** | None or proprietary plugins | Open MCP gateway with 5 tool servers + 2 A2A agents |
 | **Integrations** | Closed ecosystem | Email, WhatsApp, Slack, GitHub, Calendar, Home Automation |
+| **Multi-user** | Single account | Per-user isolation with instant account switching |
 | **Community** | Isolated users | Public persona gallery with one-click install |
-| **Data** | Sent to vendor servers | 100% local, self-hosted |
+| **Data** | Sent to vendor servers | 100% local, self-hosted, zero telemetry |
 | **Cost** | Per-seat, per-month | One-time setup, your hardware |
 | **Extensibility** | Closed ecosystem | Swap any service, add any tool, modify any workflow |
 
@@ -461,9 +637,11 @@ This launches the MCP Gateway and all built-in tool servers. Your persona can no
 
 ## The Bottom Line
 
-HomePilot is not a wrapper around an API. It is a **complete AI operating environment** — conversation, creation, memory, identity, and action — running on your hardware, under your control.
+HomePilot is not a wrapper around an API. It is a **complete AI operating environment** — conversation, creation, memory, identity, vision, and action — running on your hardware, under your control.
 
-Install it. Create a Persona. Share it with the world. Start a conversation that does not end when you close the browser.
+What started as a chat interface is now a multimodal system that **sees** your images, **remembers** your preferences, **creates** professional content, and **acts** on your behalf through real-world tools — all while keeping every byte of data on your machine.
+
+Install it. Create a Persona. Give it eyes with the Avatar Studio. Let it remember you with Adaptive Memory. Share it with the world through the Community Gallery. Start a conversation that does not end when you close the browser.
 
 ```bash
 git clone https://github.com/ruslanmv/homepilot && cd homepilot && make install && make run
@@ -482,5 +660,5 @@ For a comprehensive, step-by-step walkthrough of every HomePilot feature — fro
 <p align="center">
   <img src="../assets/homepilot-logo.svg" alt="HomePilot" width="300" /><br><br>
   <b>HomePilot</b> — Your AI. Your data. Your rules.<br>
-  <a href="https://github.com/ruslanmv/homepilot">GitHub</a> · <a href="PERSONA.md">Persona Spec</a> · <a href="INTEGRATIONS.md">Integrations Guide</a> · <a href="https://ruslanmv.github.io/HomePilot/gallery.html">Community Gallery</a>
+  <a href="https://github.com/ruslanmv/homepilot">GitHub</a> · <a href="PERSONA.md">Persona Spec</a> · <a href="MULTIMODAL.md">Multimodal Guide</a> · <a href="AVATAR.md">Avatar Studio</a> · <a href="MEMORY.md">Memory System</a> · <a href="INTEGRATIONS.md">Integrations</a> · <a href="https://ruslanmv.github.io/HomePilot/gallery.html">Community Gallery</a>
 </p>

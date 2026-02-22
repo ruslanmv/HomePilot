@@ -32,6 +32,7 @@ import { PERSONA_BLUEPRINTS } from './personaTypes'
 import { createPersonaProject, generatePersonaImages } from './personaApi'
 import { commitPersonaAvatar } from './personaPortability'
 import { useAvatarCapabilities } from './useAvatarCapabilities'
+import { resolveFileUrl } from './resolveFileUrl'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -1104,7 +1105,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
                             }`}
                           >
                             <div className="aspect-[4/5] w-full overflow-hidden bg-zinc-900">
-                              <img src={img.url} className="w-full h-full object-cover" alt="" loading="lazy" decoding="async" />
+                              <img src={resolveFileUrl(img.url)} className="w-full h-full object-cover" alt="" loading="lazy" decoding="async" />
                             </div>
                             {isSel && (
                               <div className="absolute top-2 right-2 text-xs bg-purple-500 px-2 py-1 rounded-full font-medium shadow-lg">

@@ -1,6 +1,13 @@
 # Multi-User Sessions
 
-HomePilot supports multiple user accounts on a single self-hosted instance. Each user gets their own isolated workspace.
+HomePilot supports multiple user accounts on a single self-hosted instance. Each user gets their own isolated workspace — conversations, memory, secrets, and profile are private by default. Personas and models are shared across all users.
+
+<p align="center">
+  <img src="../assets/users-session-architecture.svg" alt="Multi-User Session Architecture" width="820" /><br>
+  <em>Per-user data isolation with shared personas and seamless account switching.</em>
+</p>
+
+---
 
 ## What's Scoped Per User
 
@@ -11,7 +18,10 @@ HomePilot supports multiple user accounts on a single self-hosted instance. Each
 | Memory | Per user — long-term memory items are private |
 | Secrets vault | Per user — API keys and credentials are isolated |
 | Personas | Shared — all users can access installed personas |
+| Models | Shared — Ollama and ComfyUI models are instance-wide |
 | Settings | Per browser — stored in localStorage |
+
+---
 
 ## Authentication Flow
 
@@ -22,6 +32,8 @@ HomePilot supports multiple user accounts on a single self-hosted instance. Each
 
 Tokens are issued by the backend (`POST /v1/auth/login`) and validated on every request (`GET /v1/auth/me`). Logout invalidates the token server-side.
 
+---
+
 ## Switching Accounts
 
 Clicking **Log out** from the account menu smoothly transitions to the login screen (no page reload). The login screen shows:
@@ -29,6 +41,8 @@ Clicking **Log out** from the account menu smoothly transitions to the login scr
 - **Recent Accounts** — previously logged-in users for one-click re-login
 - **Sign In** — log in with a different existing account
 - **Create Account** — register a new user on the same instance
+
+---
 
 ## API Endpoints
 
@@ -40,6 +54,8 @@ Clicking **Log out** from the account menu smoothly transitions to the login scr
 | `POST` | `/v1/auth/logout` | Invalidate the current token |
 | `GET` | `/v1/user/profile` | Get per-user profile (Bearer) |
 | `POST` | `/v1/user/profile` | Save per-user profile (Bearer) |
+
+---
 
 ## Single-User Mode
 

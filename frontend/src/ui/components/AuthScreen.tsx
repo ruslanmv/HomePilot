@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import type { AuthUser } from './AuthGate'
 import type { RecentUser } from './AuthGate'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 interface AuthScreenProps {
   backendUrl: string
@@ -75,6 +76,7 @@ export default function AuthScreen({
       const res = await fetch(`${backendUrl}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body),
       })
 
@@ -306,7 +308,7 @@ export default function AuthScreen({
               {/* Avatar */}
               {recent.avatar_url ? (
                 <img
-                  src={recent.avatar_url}
+                  src={resolveFileUrl(recent.avatar_url)}
                   alt=""
                   style={{
                     width: 36,

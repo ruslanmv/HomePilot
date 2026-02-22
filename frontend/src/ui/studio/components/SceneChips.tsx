@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { Check, Loader2, AlertCircle, ImageIcon, X } from 'lucide-react'
+import { resolveFileUrl } from '../../resolveFileUrl'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -78,7 +79,7 @@ export function SceneChips({ scenes, activeIndex, onSelect, onDelete, className 
                 <div className="w-16 h-10 flex items-center justify-center bg-white/5">
                   {hasThumb ? (
                     <img
-                      src={scene.thumbnailUrl!}
+                      src={resolveFileUrl(scene.thumbnailUrl!)}
                       alt={`Scene ${scene.idx + 1}`}
                       className="w-full h-full object-cover"
                     />

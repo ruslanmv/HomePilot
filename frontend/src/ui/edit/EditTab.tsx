@@ -57,6 +57,7 @@ import {
   extractImages,
 } from './editApi'
 import type { EditTabProps, VersionEntry } from './types'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -976,7 +977,7 @@ export function EditTab({
                 className="relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 hover:border-white/20 transition-colors cursor-pointer aspect-square"
               >
                 <img
-                  src={item.url}
+                  src={resolveFileUrl(item.url, backendUrl)}
                   alt={item.instruction}
                   className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                   loading="lazy"
@@ -1138,7 +1139,7 @@ export function EditTab({
             <div className="relative w-full h-full p-8 pb-32 flex items-center justify-center">
               <div className="relative group max-w-full max-h-full shadow-2xl">
                 <img
-                  src={active!}
+                  src={resolveFileUrl(active!, backendUrl)}
                   alt="Active Canvas"
                   className="max-w-full max-h-[65vh] object-contain rounded-sm shadow-[0_0_50px_rgba(0,0,0,0.5)] border border-white/5"
                 />
@@ -1231,7 +1232,7 @@ export function EditTab({
             <div className="w-full max-w-5xl flex gap-3 overflow-x-auto pb-4 px-2 pt-2 snap-x scrollbar-hide">
               {results.map((url, idx) => (
                 <div key={`res-${idx}`} className="snap-center shrink-0 relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-purple-500/50 cursor-pointer shadow-[0_0_20px_rgba(147,51,234,0.3)]">
-                  <img src={url} className="w-full h-full object-cover" alt="Result" />
+                  <img src={resolveFileUrl(url, backendUrl)} className="w-full h-full object-cover" alt="Result" />
                   <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                     <button onClick={() => handleUse(url)} className="text-[10px] font-bold bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-400 hover:scale-105 transition-all">
                       USE THIS
@@ -1255,7 +1256,7 @@ export function EditTab({
                       : 'border-white/10 hover:border-white/40'
                   }`}
                 >
-                  <img src={version.url} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="Version" />
+                  <img src={resolveFileUrl(version.url, backendUrl)} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="Version" />
 
                   {/* Delete button - top right, visible on hover */}
                   <button
@@ -1558,7 +1559,7 @@ export function EditTab({
                         : 'bg-white/5 border border-transparent hover:border-white/10'
                     }`}
                   >
-                    <img src={v.url} alt="" className="w-10 h-10 rounded object-cover" />
+                    <img src={resolveFileUrl(v.url, backendUrl)} alt="" className="w-10 h-10 rounded object-cover" />
                     <div className="flex-1 min-w-0">
                       <div className="text-xs text-white/80 truncate">
                         {v.instruction || 'Original'}

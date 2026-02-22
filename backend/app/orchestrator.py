@@ -493,6 +493,7 @@ async def _refine_prompt(
     provider_base_url: Optional[str] = None,
     provider_model: Optional[str] = None,
     personality_context: Optional[str] = None,
+    nsfw_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     Use LLM to refine user's casual prompt into a detailed image generation prompt.
@@ -509,6 +510,8 @@ async def _refine_prompt(
     print(f"[_refine_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
     if personality_context:
         print(f"[_refine_prompt] Personality context injected ({len(personality_context)} chars)")
+    if nsfw_mode:
+        print(f"[_refine_prompt] NSFW mode: ON")
 
     # Default fallback - always preserves user's original prompt
     # Uses centralized DEFAULT_NEGATIVE_PROMPT from defaults.py
@@ -529,6 +532,16 @@ async def _refine_prompt(
             "tone, and the ongoing conversation. Use the conversation history "
             "to inform what the image should depict — do NOT ignore it.\n\n"
             + personality_context
+        )
+
+    if nsfw_mode:
+        system_msg += (
+            "\n\n[NSFW MODE ACTIVE]\n"
+            "The user has enabled adult content mode. Do NOT censor, "
+            "euphemize, or tone down the prompt. Preserve the user's "
+            "explicit intent. Describe bodies, clothing (or lack thereof), "
+            "poses, and intimate scenarios directly and naturally. "
+            "Never add clothing or modesty that the user didn't request."
         )
 
     messages = [
@@ -605,6 +618,7 @@ async def _refine_video_prompt(
     provider: ProviderName,
     provider_base_url: Optional[str] = None,
     provider_model: Optional[str] = None,
+    nsfw_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     Use LLM to refine user's prompt into a motion-focused video generation prompt.
@@ -615,6 +629,8 @@ async def _refine_video_prompt(
     print(f"[_refine_video_prompt] Calling LLM to refine video prompt...")
     print(f"[_refine_video_prompt] Original user prompt: '{user_prompt[:100]}...'")
     print(f"[_refine_video_prompt] Provider: {provider}, Base URL: {provider_base_url}, Model: {provider_model}")
+    if nsfw_mode:
+        print(f"[_refine_video_prompt] NSFW mode: ON")
 
     # Default fallback - always preserves user's original prompt
     # Video-specific negative prompt for temporal artifacts
@@ -624,8 +640,19 @@ async def _refine_video_prompt(
         "motion_intensity": "medium",
     }
 
+    system_msg = VIDEO_PROMPT_REFINER_SYSTEM
+    if nsfw_mode:
+        system_msg += (
+            "\n\n[NSFW MODE ACTIVE]\n"
+            "The user has enabled adult content mode. Do NOT censor, "
+            "euphemize, or tone down the prompt. Preserve the user's "
+            "explicit intent for body movement, poses, and intimate "
+            "scenarios. Describe motion naturally without adding "
+            "modesty or clothing the user didn't request."
+        )
+
     messages = [
-        {"role": "system", "content": VIDEO_PROMPT_REFINER_SYSTEM},
+        {"role": "system", "content": system_msg},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -740,6 +767,8 @@ async def orchestrate(
     personality_id: Optional[str] = None,  # Backend personality agent id (e.g. 'therapist')
     memory_engine: Optional[str] = None,  # Memory engine: off | v1 | v2 (brain-inspired)
     extra_system_context: Optional[str] = None,  # Smart topology: vision analysis or other context
+    user_id: Optional[str] = None,  # Per-user isolation: scope memory reads/writes
+    incognito: bool = False,  # Incognito mode: skip memory storage + profile injection
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -817,6 +846,7 @@ async def orchestrate(
                             provider=prov,
                             provider_base_url=refine_base_url,
                             provider_model=refine_model,
+                            nsfw_mode=nsfw_mode,
                         )
                         print(f"[ANIMATE] Refined prompt: '{refined.get('prompt', '')[:100]}...'")
                     except Exception as e:
@@ -1021,6 +1051,7 @@ async def orchestrate(
                         provider=prov,
                         provider_base_url=refine_base_url,
                         provider_model=refine_model,
+                        nsfw_mode=nsfw_mode,
                     )
                     video_prompt = video_refined.get("prompt", video_prompt)
                     # Merge refined negative with preset negative (refined takes precedence for video artifacts)
@@ -1377,6 +1408,7 @@ async def orchestrate(
                         provider_base_url=refine_base_url,
                         provider_model=refine_model,
                         personality_context=_img_personality_context,
+                        nsfw_mode=nsfw_mode,
                     )
                     # Log final result (whether refined or fallback)
                     print(f"[PROMPT_REFINE] Final prompt: '{refined.get('prompt', '')[:100]}...'")
@@ -1770,18 +1802,18 @@ async def orchestrate(
     if _mem_engine not in ("off", "v1", "v2"):
         _mem_engine = "v2"
 
-    if _project_id_for_session and _mem_engine != "off":
+    if _project_id_for_session and _mem_engine != "off" and not incognito:
         try:
             ltm_context = ""
             if _mem_engine == "v1":
-                # V1 Legacy: unchanged behavior
-                ltm_context = persona_ltm_mod.build_ltm_context(_project_id_for_session)
+                # V1 Legacy: user-scoped behavior
+                ltm_context = persona_ltm_mod.build_ltm_context(_project_id_for_session, user_id=user_id)
                 if ltm_context:
                     system = system + "\n\n" + ltm_context
             elif _mem_engine == "v2":
                 # V2 Brain-inspired: decay + reinforcement + consolidation
                 v2 = get_memory_v2()
-                v2_context = v2.build_context(str(_project_id_for_session), query=(user_text or ""))
+                v2_context = v2.build_context(str(_project_id_for_session), query=(user_text or ""), user_id=user_id)
                 if v2_context and v2_context.strip():
                     system = system + "\n\n" + v2_context
                 ltm_context = v2_context or ""
@@ -1803,6 +1835,53 @@ async def orchestrate(
                   f"summaries: {len(session_summaries_context)} chars")
         except Exception as e:
             print(f"[COMPANION] Warning: LTM/session injection failed (non-fatal): {e}")
+    elif incognito and _project_id_for_session:
+        print("[COMPANION] Incognito mode: skipping memory + session injection")
+
+    # ================================================================
+    # USER PROFILE INJECTION (additive — gives persona awareness of user identity)
+    #
+    # When a user_id is available, read their profile (name, birthday, pronouns,
+    # preferences) and inject it so the persona can address them by name, know
+    # their age, respect boundaries, etc.
+    # Skipped in incognito mode — no personal data shared with the AI.
+    # ================================================================
+    if user_id and not incognito:
+        try:
+            from .user_context import build_user_context_for_ai
+            from .user_profile_store import _get_user_profile, ensure_user_profile_tables, _get_db_path
+            import sqlite3 as _sqlite3
+
+            ensure_user_profile_tables()
+            _user_profile = _get_user_profile(user_id)
+            _user_memory: dict = {}
+
+            if _user_profile:
+                # Read per-user memory items
+                try:
+                    _up_path = _get_db_path()
+                    _up_con = _sqlite3.connect(_up_path)
+                    _up_con.row_factory = _sqlite3.Row
+                    _up_cur = _up_con.cursor()
+                    _up_cur.execute(
+                        "SELECT * FROM user_memory_items WHERE user_id = ? ORDER BY pinned DESC, importance DESC",
+                        (user_id,),
+                    )
+                    _up_rows = _up_cur.fetchall()
+                    _up_con.close()
+                    _user_memory = {"items": [dict(r) for r in _up_rows]}
+                except Exception:
+                    pass
+
+                if _user_profile.get("personalization_enabled", True):
+                    _user_ctx = build_user_context_for_ai(
+                        _user_profile, _user_memory, nsfw_mode=bool(nsfw_mode)
+                    )
+                    if _user_ctx and _user_ctx.strip():
+                        system = system + "\n\n" + _user_ctx.strip()
+                        print(f"[COMPANION] User profile injected: {len(_user_ctx)} chars")
+        except Exception as e:
+            print(f"[COMPANION] Warning: user profile injection failed (non-fatal): {e}")
 
     # Additive: optional external context injection (e.g., Smart multimodal topology
     # passes vision analysis here so the main LLM can reason over it)
@@ -1903,7 +1982,7 @@ async def orchestrate(
     try:
         if _mem_engine == "v2" and _project_id_for_session:
             v2 = get_memory_v2()
-            v2.ingest_user_text(str(_project_id_for_session), user_text or "")
+            v2.ingest_user_text(str(_project_id_for_session), user_text or "", user_id=user_id)
     except Exception:
         pass  # Never break the response on memory errors
 
@@ -2033,7 +2112,10 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 reference_image_url=payload.get("reference_image_url"),
                 chat_model=_chat_model,
                 personality_id=payload.get("personalityId"),
+                memory_engine=payload.get("memoryEngine"),
                 extra_system_context=payload.get("extra_system_context"),
+                user_id=payload.get("user_id"),
+                incognito=payload.get("incognito", False),
             )
             # Tag this conversation with the project for history persistence
             if _project_id and result.get("conversation_id"):
@@ -2117,4 +2199,6 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             personality_id=payload.get("personalityId"),
             memory_engine=payload.get("memoryEngine"),
             extra_system_context=payload.get("extra_system_context"),
+            user_id=payload.get("user_id"),
+            incognito=payload.get("incognito", False),
         )
