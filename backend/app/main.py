@@ -2886,6 +2886,17 @@ async def chat(inp: ChatIn) -> JSONResponse:
     # Route through mode-aware handler
     out = await handle_request(mode=inp.mode, payload=payload)
 
+    # T4 additive: feed user text into Memory V2 for cross-topology learning.
+    # Non-blocking: failures are silently ignored. Only for chat/voice modes
+    # with a project_id (companion/project context).
+    if inp.project_id and inp.message and inp.mode in ("chat", "voice"):
+        try:
+            from .memory_v2 import get_memory_v2, ensure_v2_columns
+            ensure_v2_columns()
+            get_memory_v2().ingest_user_text(inp.project_id, inp.message)
+        except Exception:
+            pass
+
     # Merge game metadata into media (if present)
     game_meta = payload.get("_game")
     if isinstance(game_meta, dict):

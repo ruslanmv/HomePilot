@@ -86,7 +86,7 @@ export type Msg = {
   // when true, show recovery UI and allow retry
   error?: boolean
   // info needed for retry; kept minimal and non-destructive
-  retry?: { requestText: string; mode: Mode; projectId?: string; multimodal?: { imageUrl: string; userPrompt?: string; topology?: 'direct' | 'smart' | 'agent' } }
+  retry?: { requestText: string; mode: Mode; projectId?: string; multimodal?: { imageUrl: string; userPrompt?: string; topology?: 'direct' | 'smart' | 'agent' | 'knowledge' } }
   media?: {
     images?: string[]
     video_url?: string
@@ -1900,7 +1900,7 @@ export default function App() {
     const providerMultimodal = (localStorage.getItem('homepilot_provider_multimodal') || 'ollama') as string
     const baseUrlMultimodal = localStorage.getItem('homepilot_base_url_multimodal') || ''
     const modelMultimodal = localStorage.getItem('homepilot_model_multimodal') || ''
-    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent')) || 'direct'
+    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'direct'
 
     return {
       backendUrl,
@@ -2186,7 +2186,7 @@ export default function App() {
         providerMultimodal: localStorage.getItem('homepilot_provider_multimodal') || 'ollama',
         baseUrlMultimodal: localStorage.getItem('homepilot_base_url_multimodal') || '',
         modelMultimodal: localStorage.getItem('homepilot_model_multimodal') || '',
-        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent')) || 'direct',
+        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'direct',
       })
     }
   }, [showSettings, settings])
@@ -2647,8 +2647,8 @@ export default function App() {
           try {
             const visionTopology = settingsDraft.multimodalTopology || 'direct'
 
-            // ── Agent topology: route to /v1/agent/chat for autonomous tool use ──
-            if (visionTopology === 'agent') {
+            // ── Agent/Knowledge topology: route to /v1/agent/chat for autonomous tool use ──
+            if (visionTopology === 'agent' || visionTopology === 'knowledge') {
               setMessages((prev) =>
                 prev.map((m) =>
                   m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m
@@ -2937,10 +2937,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       }
 
       try {
-        // ── Agent topology: route text messages through /v1/agent/chat ──
-        // The agent decides autonomously whether to use tools (vision, etc.)
+        // ── Agent/Knowledge topology: route text messages through /v1/agent/chat ──
+        // The agent decides autonomously whether to use tools (vision, knowledge, memory, etc.)
         const chatTopology = settingsDraft.multimodalTopology || 'direct'
-        if (chatTopology === 'agent' && (mode === 'chat' || mode === 'voice')) {
+        if ((chatTopology === 'agent' || chatTopology === 'knowledge') && (mode === 'chat' || mode === 'voice')) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m
@@ -3127,8 +3127,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       if (multimodal?.imageUrl) {
         const retryTopology = multimodal.topology || settingsDraft.multimodalTopology || 'direct'
 
-        // ── Agent topology retry: route to /v1/agent/chat ──
-        if (retryTopology === 'agent') {
+        // ── Agent/Knowledge topology retry: route to /v1/agent/chat ──
+        if (retryTopology === 'agent' || retryTopology === 'knowledge') {
           try {
             const agentRes = await postJson<any>(
               settings.backendUrl,
@@ -3418,8 +3418,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           // 2. Call multimodal analysis endpoint (persist depends on topology)
           const topology = settingsDraft.multimodalTopology || 'direct'
 
-          // ── Agent topology: let the backend agent loop handle everything ──
-          if (topology === 'agent') {
+          // ── Agent/Knowledge topology: let the backend agent loop handle everything ──
+          if (topology === 'agent' || topology === 'knowledge') {
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m

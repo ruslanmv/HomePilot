@@ -71,6 +71,12 @@ _register_tool(
     "  Extracts visual description + text via vision analysis and stores it.\n"
     "  Use this when a user uploads an image and wants it searchable later.",
 )
+_register_tool(
+    "memory.store",
+    "memory.store(key, value, importance): stores a fact or preference about the user.\n"
+    "  key: short label (e.g. 'favorite_color'). value: the fact. importance: 0.0-1.0 (default 0.5).\n"
+    "  Use this when you learn something important the user would want remembered long-term.",
+)
 
 
 @dataclass
@@ -123,13 +129,15 @@ def _build_agent_system_prompt(
     *,
     memory_context: str = "",
     knowledge_hint: str = "",
+    user_context: str = "",
+    session_context: str = "",
 ) -> str:
     """
     System prompt instructing the LLM to use a minimal JSON protocol.
     This avoids requiring full function-calling support and is easy to ship.
 
-    Accepts optional memory_context and knowledge_hint blocks that are
-    injected into the prompt when available (additive, never destructive).
+    Accepts optional context blocks that are injected into the prompt
+    when available (additive, never destructive).
     """
     parts = [
         "You are an agent that can optionally call tools.\n",
@@ -145,9 +153,18 @@ def _build_agent_system_prompt(
         "- If no image_url is available for vision.analyze, return a final answer asking the user to upload an image.\n"
         "- Use knowledge.search when the user asks about project documents or uploaded files.\n"
         "- Use memory.recall when you need to remember user preferences, facts, or boundaries.\n"
+        "- Use memory.store when you learn an important fact about the user that should be remembered.\n"
         "- Use web.search when the user asks about current events or needs up-to-date information.\n"
         "- Keep tool calls minimal.\n",
     ]
+
+    # Inject user context (profile, preferences, boundaries)
+    if user_context:
+        parts.append(f"\n--- USER CONTEXT ---\n{user_context}\n--- END USER CONTEXT ---\n")
+
+    # Inject session continuity context
+    if session_context:
+        parts.append(f"\n{session_context}\n")
 
     # Inject memory context (from Memory V2) if available
     if memory_context:
@@ -402,6 +419,53 @@ async def _run_image_index(
         return f"Error indexing image: {e}", {"error": str(e)}
 
 
+async def _run_memory_store(
+    *,
+    key: str,
+    value: str,
+    importance: float,
+    project_id: Optional[str],
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Store a fact/preference into Memory V2 as a semantic memory.
+    Wraps memory_v2._upsert_memory().
+    Returns (result_text, meta).
+    """
+    if not project_id:
+        return "No project context available. Memory store requires a project.", {"error": "no_project"}
+
+    if not key or not value:
+        return "Both key and value are required to store a memory.", {"error": "missing_args"}
+
+    try:
+        from .memory_v2 import get_memory_v2, ensure_v2_columns, _upsert_memory
+    except ImportError:
+        return "Memory V2 module is not available.", {"error": "memory_v2_missing"}
+
+    try:
+        ensure_v2_columns()
+        importance = max(0.0, min(1.0, importance))
+
+        _upsert_memory(
+            project_id=project_id,
+            category="agent_learned",
+            key=key.strip()[:100],
+            value=value.strip()[:600],
+            mem_type="S",
+            source_type="inferred",
+            confidence=0.8,
+            strength=0.6,
+            importance=importance,
+        )
+
+        return (
+            f"Stored memory: '{key}' = '{value[:80]}{'...' if len(value) > 80 else ''}' (importance: {importance:.1f})"
+        ), {"key": key, "importance": importance}
+
+    except Exception as e:
+        return f"Error storing memory: {e}", {"error": str(e)}
+
+
 # ---------------------------------------------------------------------------
 # Memory V2 context builder (injected into system prompt)
 # ---------------------------------------------------------------------------
@@ -441,6 +505,58 @@ def _get_knowledge_hint(project_id: Optional[str]) -> str:
     except Exception:
         pass
     return ""
+
+
+def _get_user_context(project_id: Optional[str]) -> str:
+    """
+    Build user context (profile + preferences) for agent system prompt.
+    Uses existing user_context.build_user_context_for_ai().
+    Returns empty string if unavailable.
+    """
+    if not project_id:
+        return ""
+    try:
+        from .user_context import build_user_context_for_ai
+        from .profile import read_profile
+        from .user_memory import _read as read_memory
+        profile = read_profile()
+        memory = read_memory()
+        if not profile.get("personalization_enabled", True):
+            return ""
+        ctx = build_user_context_for_ai(profile, memory, nsfw_mode=False)
+        return (ctx or "").strip()
+    except Exception:
+        return ""
+
+
+def _get_session_context(project_id: Optional[str]) -> str:
+    """
+    Build session awareness context for the agent.
+    Shows active session info and last session summary.
+    Returns empty string if no session data available.
+    """
+    if not project_id:
+        return ""
+    try:
+        from .sessions import list_sessions, resolve_session
+        active = resolve_session(project_id)
+        if not active:
+            return ""
+        lines = []
+        title = active.get("title", "Untitled")
+        msg_count = active.get("message_count", 0)
+        lines.append(f"[Active session: \"{title}\" ({msg_count} messages)]")
+
+        # Include last ended session summary if available
+        sessions = list_sessions(project_id, limit=3)
+        for s in sessions:
+            if s.get("ended_at") and s.get("summary"):
+                lines.append(f"[Previous session summary: {s['summary'][:200]}]")
+                break
+
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +652,18 @@ async def _dispatch_tool(
         )
         return text, meta, {"images": [image_url]}
 
+    elif tool == "memory.store":
+        key = (args.get("key") or "").strip()
+        value = (args.get("value") or "").strip()
+        importance = float(args.get("importance", 0.5))
+        text, meta = await _run_memory_store(
+            key=key,
+            value=value,
+            importance=importance,
+            project_id=project_id,
+        )
+        return text, meta, None
+
     else:
         return f"Requested tool '{tool}' is not available.", {"error": "unknown_tool"}, None
 
@@ -592,15 +720,19 @@ async def agent_chat(
     except Exception:
         history_pairs = []
 
-    # Build enriched system prompt with Memory V2 + knowledge hint
+    # Build enriched system prompt with all context layers
     memory_ctx = _get_memory_context(project_id, text_in)
     knowledge_hint = _get_knowledge_hint(project_id)
+    user_ctx = _get_user_context(project_id)
+    session_ctx = _get_session_context(project_id)
 
     # Convert to chat messages for LLM
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": _build_agent_system_prompt(
             memory_context=memory_ctx,
             knowledge_hint=knowledge_hint,
+            user_context=user_ctx,
+            session_context=session_ctx,
         )}
     ]
 
@@ -707,6 +839,7 @@ async def agent_chat(
             "memory.recall": "Memory Recall",
             "web.search": "Web Search",
             "image.index": "Image Indexed",
+            "memory.store": "Memory Stored",
         }.get(tool, tool)
 
         add_message(

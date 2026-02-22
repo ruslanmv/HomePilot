@@ -132,7 +132,7 @@ class TestTopology3AgentToolUse:
         assert "tools_invoked" in data["agent"]
 
     def test_tool_registry_has_all_tools(self):
-        """TOOL_REGISTRY should contain all 5 expected tools."""
+        """TOOL_REGISTRY should contain all 6 expected tools."""
         from app.agent_chat import TOOL_REGISTRY
         expected = {
             "vision.analyze",
@@ -140,6 +140,7 @@ class TestTopology3AgentToolUse:
             "memory.recall",
             "web.search",
             "image.index",
+            "memory.store",
         }
         assert expected.issubset(set(TOOL_REGISTRY.keys())), (
             f"Missing tools: {expected - set(TOOL_REGISTRY.keys())}"
@@ -154,6 +155,7 @@ class TestTopology3AgentToolUse:
         assert "memory.recall" in prompt
         assert "web.search" in prompt
         assert "image.index" in prompt
+        assert "memory.store" in prompt
 
     def test_json_parser_valid(self):
         """JSON extractor handles well-formed and malformed input."""

@@ -65,7 +65,7 @@ export type SettingsModelV2 = {
   baseUrlMultimodal?: string;
   modelMultimodal?: string;
   multimodalAuto?: boolean;  // Auto-trigger vision on image upload (default: true)
-  multimodalTopology?: 'direct' | 'smart' | 'agent';  // Vision routing: direct (default), smart (Vision → Main LLM), or agent (autonomous tool loop)
+  multimodalTopology?: 'direct' | 'smart' | 'agent' | 'knowledge';  // Vision routing: direct (default), smart (Vision → Main LLM), agent (autonomous tool loop), or knowledge (agent + RAG + memory)
 
   // Legacy generation parameters (kept for compatibility)
   textTemperature?: number;
@@ -1082,19 +1082,22 @@ export default function SettingsPanel({
               <div className="text-[10px] text-white/35 mb-1.5">How vision results are processed</div>
               <select
                 value={value.multimodalTopology || 'direct'}
-                onChange={(e) => onChangeDraft({ ...value, multimodalTopology: e.target.value as 'direct' | 'smart' | 'agent' })}
+                onChange={(e) => onChangeDraft({ ...value, multimodalTopology: e.target.value as 'direct' | 'smart' | 'agent' | 'knowledge' })}
                 className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white/80 focus:outline-none focus:border-purple-500/50"
               >
                 <option value="direct">Fast (Direct Vision)</option>
                 <option value="smart">Smart (Vision + Assistant)</option>
                 <option value="agent">Agent (Autonomous Tools)</option>
+                <option value="knowledge">Knowledge (Agent + RAG + Memory)</option>
               </select>
               <div className="text-[10px] text-white/30 mt-1">
-                {(value.multimodalTopology || 'direct') === 'agent'
-                  ? 'LLM autonomously decides when to call vision and other tools, then synthesizes a final answer.'
-                  : (value.multimodalTopology || 'direct') === 'smart'
-                    ? 'Vision analysis is sent to your main chat LLM for a refined, conversational answer.'
-                    : 'Vision model output is shown directly (fastest, default).'}
+                {(value.multimodalTopology || 'direct') === 'knowledge'
+                  ? 'Full companion mode: agent uses knowledge base, long-term memory, vision, and web search together.'
+                  : (value.multimodalTopology || 'direct') === 'agent'
+                    ? 'LLM autonomously decides when to call vision and other tools, then synthesizes a final answer.'
+                    : (value.multimodalTopology || 'direct') === 'smart'
+                      ? 'Vision analysis is sent to your main chat LLM for a refined, conversational answer.'
+                      : 'Vision model output is shown directly (fastest, default).'}
               </div>
             </div>
 
