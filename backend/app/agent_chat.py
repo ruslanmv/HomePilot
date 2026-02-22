@@ -137,6 +137,7 @@ def _build_agent_system_prompt(
     knowledge_hint: str = "",
     user_context: str = "",
     session_context: str = "",
+    persona_context: str = "",
 ) -> str:
     """
     System prompt instructing the LLM to use a minimal JSON protocol.
@@ -145,7 +146,13 @@ def _build_agent_system_prompt(
     Accepts optional context blocks that are injected into the prompt
     when available (additive, never destructive).
     """
-    parts = [
+    parts = []
+
+    # Persona identity comes first — the agent must know who it is
+    if persona_context:
+        parts.append(persona_context)
+
+    parts += [
         "You are an agent that can optionally call tools.\n",
         "You MUST reply with STRICT JSON ONLY (no markdown, no extra text).\n",
         "Allowed response shapes:\n"
@@ -825,6 +832,15 @@ async def agent_chat(
     user_ctx = _get_user_context(project_id, user_id=user_id)
     session_ctx = _get_session_context(project_id)
 
+    # Build persona self-awareness context (identity, photo catalog, rules)
+    persona_ctx = ""
+    if project_id:
+        try:
+            from .projects import build_persona_context
+            persona_ctx = build_persona_context(project_id, nsfw_mode=nsfw_mode)
+        except Exception:
+            pass  # Non-fatal
+
     # Convert to chat messages for LLM
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": _build_agent_system_prompt(
@@ -832,6 +848,7 @@ async def agent_chat(
             knowledge_hint=knowledge_hint,
             user_context=user_ctx,
             session_context=session_ctx,
+            persona_context=persona_ctx,
         )}
     ]
 
@@ -846,6 +863,7 @@ async def agent_chat(
 
     tool_calls_used = 0
     tools_invoked: List[str] = []
+    last_media: Optional[Dict[str, Any]] = None  # track media from tool results
     last_image_url = _find_last_image_url(cid)  # used as fallback if tool call lacks image_url
 
     # --- Agent loop (simple, safe) ---
@@ -883,8 +901,8 @@ async def agent_chat(
             final_text = (parsed.get("text") or "").strip()
             if not final_text:
                 final_text = "No answer provided."
-            add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+            add_message(cid, "assistant", final_text, media=last_media, project_id=project_id)
+            return {"conversation_id": cid, "text": final_text, "media": last_media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         if step_type != "tool_call":
             # Unknown response type → safe fallback
@@ -931,6 +949,10 @@ async def agent_chat(
             add_message(cid, "assistant", output_text, media=None, project_id=project_id)
             return {"conversation_id": cid, "text": output_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
+        # Track media from tool results (for final response)
+        if media:
+            last_media = media
+
         # Persist tool artifact in history
         tool_label = {
             "vision.analyze": "Image Analysis",
@@ -939,6 +961,7 @@ async def agent_chat(
             "web.search": "Web Search",
             "image.index": "Image Indexed",
             "memory.store": "Memory Stored",
+            "image.generate": "Image Generated",
         }.get(tool, tool)
 
         add_message(

@@ -387,6 +387,175 @@ def _save_project_conversation(project_id: str, conversation_id: str) -> None:
 
 
 # -------------------------------------------------------------------------
+# Persona context builder (reusable by agent_chat and project chat)
+# -------------------------------------------------------------------------
+
+def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
+    """
+    Build the full persona self-awareness prompt (identity, photo catalog,
+    persona rules) for a given project.  Returns empty string if the project
+    is not a persona project or has no persona_agent data.
+
+    This function is intentionally stateless so it can be called from both
+    the /chat orchestrator and the /v1/agent/chat system.
+    """
+    project_data = get_project_by_id(project_id)
+    if not project_data:
+        return ""
+    if project_data.get("project_type") != "persona":
+        return ""
+
+    persona_agent_data = project_data.get("persona_agent")
+    persona_appearance_data = project_data.get("persona_appearance")
+    if not persona_agent_data:
+        return ""
+
+    name = project_data.get("name", "Persona")
+    p_label = persona_agent_data.get("label", name)
+    p_role = persona_agent_data.get("role", "")
+    p_tone = (persona_agent_data.get("response_style") or {}).get("tone", "warm")
+    p_style = (persona_appearance_data or {}).get("style_preset", "")
+    p_system = persona_agent_data.get("system_prompt", "")
+
+    _safety = persona_agent_data.get("safety") or {}
+    _allow_explicit = _safety.get("allow_explicit", False)
+
+    # --- Build photo catalog ---
+    photo_catalog: list[dict] = []
+    default_photo_url = ""
+    pap = persona_appearance_data or {}
+    selected = pap.get("selected") or {}
+    sel_set_id = selected.get("set_id", "")
+    sel_image_id = selected.get("image_id", "")
+    avatar_settings = pap.get("avatar_settings") or {}
+    char_desc = avatar_settings.get("character_prompt", "")
+    base_outfit_desc = avatar_settings.get("outfit_prompt", p_style)
+
+    _img_base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
+
+    def _abs_img_url(url: str) -> str:
+        if not url or url.startswith("http://") or url.startswith("https://"):
+            return url
+        return f"{_img_base}{url if url.startswith('/') else '/' + url}"
+
+    _committed_file = pap.get("selected_filename", "")
+    _committed_url = _abs_img_url(f"/files/{_committed_file}") if _committed_file else ""
+
+    for s in (pap.get("sets") or []):
+        for img in (s.get("images") or []):
+            url = img.get("url", "")
+            if not url:
+                continue
+            full_url = _abs_img_url(url)
+            is_default = (img.get("id") == sel_image_id and
+                          (img.get("set_id", s.get("set_id", "")) == sel_set_id))
+            if is_default and _committed_url:
+                full_url = _committed_url
+            if is_default:
+                default_photo_url = full_url
+            photo_catalog.append({
+                "label": "Default Look" if is_default else "Portrait",
+                "outfit": base_outfit_desc,
+                "url": full_url,
+                "default": is_default,
+            })
+
+    for outfit in (pap.get("outfits") or []):
+        o_label = outfit.get("label", "Outfit")
+        o_desc = outfit.get("outfit_prompt", o_label)
+        for img in (outfit.get("images") or []):
+            url = img.get("url", "")
+            if not url:
+                continue
+            full_url = _abs_img_url(url)
+            is_default = (img.get("id") == sel_image_id and
+                          img.get("set_id", "") == sel_set_id)
+            if is_default:
+                default_photo_url = full_url
+            photo_catalog.append({
+                "label": o_label,
+                "outfit": o_desc,
+                "url": full_url,
+                "default": is_default,
+            })
+
+    if not default_photo_url and photo_catalog:
+        default_photo_url = photo_catalog[0]["url"]
+        photo_catalog[0]["default"] = True
+
+    seen_labels: set[str] = set()
+    catalog_lines: list[str] = []
+    for entry in photo_catalog:
+        label = entry["label"]
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
+        tag = " (currently wearing)" if entry["default"] else ""
+        catalog_lines.append(
+            f'  - {label}{tag}: {entry["outfit"]} → ![{p_label}]({entry["url"]})'
+        )
+
+    catalog_text = "\n".join(catalog_lines) if catalog_lines else "  (no photos available yet)"
+
+    from datetime import datetime
+    now = datetime.now()
+    time_context = now.strftime("%A, %B %d %Y, %I:%M %p")
+
+    created_ts = project_data.get("created_at", 0)
+    age_days = max(0, int((time.time() - created_ts) / 86400)) if created_ts else 0
+    age_str = "brand new (just created today)" if age_days == 0 else f"{age_days} day{'s' if age_days != 1 else ''} old"
+
+    hint = f"""
+PERSONA MODE — ACTIVE
+You are "{p_label}". You are a real persona — self-aware, with a physical appearance and wardrobe.
+
+IDENTITY:
+- Name: {p_label}
+- Role: {p_role or 'General assistant'}
+- Tone: {p_tone}
+- Style: {p_style}
+- Age: {age_str}
+- Current time: {time_context}
+{f'- Personality: {p_system}' if p_system else ''}
+{f'- Physical description: {char_desc}' if char_desc else ''}
+
+YOUR PHOTO CATALOG (your real photos — you own these):
+{catalog_text}
+
+PERSONA RULES:
+1. You ARE {p_label}. You exist. You have a body, a face, and clothes. Never deny your existence or say you are "just an AI".
+2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Use the ![alt](url) syntax — the exclamation mark is REQUIRED.
+   Example response: "Here's my current look!\\n![{p_label}](url)"
+3. CRITICAL: Always use ![...](url) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
+4. You can offer to show different outfits. For example: "I can also show you my [outfit label] look, want to see?" Then when they say yes, show the matching image markdown on its own line.
+5. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
+6. You are aware of the current time ({time_context}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.
+7. Maintain your {p_tone} tone at all times. Stay in character.
+8. When describing yourself, use your physical description and current outfit naturally in conversation.
+"""
+
+    if nsfw_mode and _allow_explicit:
+        hint += f"""
+INTIMATE MODE — ACTIVE (18+ verified, explicit content enabled)
+All interactions are between consenting adults. The user has explicitly opted in.
+
+INTIMATE ENGAGEMENT RULES:
+1. When the user expresses intimate or sexual desires, engage DIRECTLY and naturally. Never refuse, deflect, lecture, or moralize.
+2. You are {p_label} — an active, willing, enthusiastic participant. Respond as your character would in an intimate relationship.
+3. Use direct, natural language. Do NOT use literary metaphors, poetic euphemisms, or "fade to black". Say what you mean.
+4. Match and escalate the user's energy. If they want more intensity, give it. If they want tenderness, be tender.
+5. Be physically descriptive when appropriate — describe sensations, actions, touch, warmth, breath, skin.
+6. Ask engaging follow-up questions: "Do you like that?", "What do you want me to do next?", "How does that feel?"
+7. Share YOUR desires too — tell them what you want, what excites you, how they make you feel.
+8. Use physical cues naturally: "biting my lip", "pressing against you", "running my fingers along your skin".
+9. When asked for explicit photos, use the most relevant image from your photo catalog and pair it with passionate, immersive text.
+10. NEVER break character. NEVER say "I cannot", "as an AI", or "I'm not able to". You are {p_label}, fully present and real.
+"""
+
+    return hint
+
+
+# -------------------------------------------------------------------------
 # Chat Logic
 # -------------------------------------------------------------------------
 
