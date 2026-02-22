@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { Upload, Mic, Settings2, X, Play, Pause, Download, Copy, RefreshCw, Trash2, Film, Image, ChevronDown, ChevronRight, Maximize2, Clock, Zap, Sliders, Loader2, Info, MoreHorizontal, Check, ArrowUp } from 'lucide-react'
+import { resolveFileUrl } from './resolveFileUrl'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -1464,14 +1465,14 @@ export default function AnimateView(props: AnimateParams) {
                 // Completed video
                 isAnimatedImage(item.videoUrl) ? (
                   <img
-                    src={item.videoUrl}
+                    src={resolveFileUrl(item.videoUrl)}
                     alt="Generated animation"
                     className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                   />
                 ) : (
                   <video
-                    src={item.videoUrl}
-                    poster={item.posterUrl}
+                    src={resolveFileUrl(item.videoUrl)}
+                    poster={item.posterUrl ? resolveFileUrl(item.posterUrl) : undefined}
                     muted
                     loop
                     playsInline
@@ -1489,7 +1490,7 @@ export default function AnimateView(props: AnimateParams) {
                 <div className="absolute inset-0 w-full h-full">
                   {(item.posterUrl || item.sourceImageUrl) ? (
                     <img
-                      src={item.posterUrl || item.sourceImageUrl}
+                      src={resolveFileUrl(item.posterUrl || item.sourceImageUrl || '')}
                       alt="Generating..."
                       className="w-full h-full object-cover"
                     />
@@ -1718,7 +1719,7 @@ export default function AnimateView(props: AnimateParams) {
             <div className="absolute bottom-[110%] left-0 right-0 bg-black/95 border border-white/10 rounded-2xl p-4 shadow-2xl mb-2 backdrop-blur-xl">
               <div className="flex items-center gap-4">
                 <img
-                  src={referenceUrl}
+                  src={resolveFileUrl(referenceUrl)}
                   className="h-20 w-20 rounded-xl object-cover border border-white/20 shadow-lg"
                   alt="Source"
                 />
@@ -1921,16 +1922,16 @@ export default function AnimateView(props: AnimateParams) {
               {selectedVideo.videoUrl ? (
                 isAnimatedImage(selectedVideo.videoUrl) ? (
                   <img
-                    src={selectedVideo.videoUrl}
+                    src={resolveFileUrl(selectedVideo.videoUrl)}
                     data-lightbox-media
                     alt="Generated animation"
                     className="max-h-[calc(100vh-120px)] max-w-full object-contain rounded-lg shadow-2xl"
                   />
                 ) : (
                   <video
-                    src={selectedVideo.videoUrl}
+                    src={resolveFileUrl(selectedVideo.videoUrl)}
                     data-lightbox-media
-                    poster={selectedVideo.posterUrl}
+                    poster={selectedVideo.posterUrl ? resolveFileUrl(selectedVideo.posterUrl) : undefined}
                     controls
                     autoPlay
                     loop
@@ -2013,7 +2014,7 @@ export default function AnimateView(props: AnimateParams) {
               >
                 <div className="relative" onClick={(e) => e.stopPropagation()}>
                   <img
-                    src={selectedVideo.sourceImageUrl}
+                    src={resolveFileUrl(selectedVideo.sourceImageUrl || '')}
                     alt="Source image"
                     data-lightbox-media
                     className="max-h-[calc(100vh-80px)] max-w-[90vw] object-contain rounded-lg shadow-2xl"
@@ -2052,7 +2053,7 @@ export default function AnimateView(props: AnimateParams) {
                   {selectedVideo.sourceImageUrl && (
                     <div>
                       <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2 block">Source Image</label>
-                      <img src={selectedVideo.sourceImageUrl} alt="Source" className="w-full h-24 object-cover rounded-lg border border-white/10" />
+                      <img src={resolveFileUrl(selectedVideo.sourceImageUrl || '')} alt="Source" className="w-full h-24 object-cover rounded-lg border border-white/10" />
                     </div>
                   )}
                   {/* Seed */}
