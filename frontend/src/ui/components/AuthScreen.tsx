@@ -1,9 +1,16 @@
 /**
  * AuthScreen — Login / Register screen.
  *
- * Shown when no active user session. Minimalist, Claude-inspired design.
- * Supports: login, register, passwordless single-user auto-login,
- * smooth post-logout transition, and quick-switch via recent accounts.
+ * Shown when no active user session.
+ * Design system: matches the main app's neutral dark palette.
+ *
+ * Color tokens (aligned with App.tsx / SettingsPanel / AccountMenu):
+ *   Page bg:    #050506 (slightly deeper than --bg: hsl(0,0%,4%) = #0a0a0a)
+ *   Card bg:    #141414 (matches elevated surfaces: #121212–#181818)
+ *   Input bg:   rgba(255,255,255, 0.035) over card = app input style
+ *   Borders:    rgba(255,255,255, 0.08) (matches white/10 in app)
+ *   Primary:    #2563eb solid (blue-600, matches app buttons)
+ *   Text:       white at 95/70/45/30 opacity (matches app hierarchy)
  */
 import React, { useEffect, useState } from 'react'
 import {
@@ -95,7 +102,6 @@ export default function AuthScreen({
     setPassword('')
     setError('')
     setShowLogoutBanner(false)
-    // Focus the password field after a tick
     setTimeout(() => {
       const pwInput = document.getElementById('auth-password-input')
       pwInput?.focus()
@@ -105,23 +111,71 @@ export default function AuthScreen({
   const filteredRecent = (recentUsers || []).filter(u => u.username !== username)
   const showRecentUsers = mode === 'login' && filteredRecent.length > 0
 
-  // Input shared styles
+  // ── Design tokens (app-consistent) ──────────────────────────────────────────
+  const T = {
+    pageBg:       '#050506',
+    cardBg:       '#141414',
+    inputBg:      'rgba(255, 255, 255, 0.035)',
+    inputBgFocus: 'rgba(255, 255, 255, 0.055)',
+    border:       'rgba(255, 255, 255, 0.08)',
+    borderFocus:  'rgba(255, 255, 255, 0.18)',
+    borderSubtle: 'rgba(255, 255, 255, 0.05)',
+    // Text
+    textPrimary:   'rgba(255, 255, 255, 0.95)',
+    textSecondary: 'rgba(255, 255, 255, 0.70)',
+    textMuted:     'rgba(255, 255, 255, 0.45)',
+    textFaint:     'rgba(255, 255, 255, 0.30)',
+    textPlaceholder: 'rgba(255, 255, 255, 0.22)',
+    // Accent
+    blue:         '#2563eb',
+    blueHover:    '#3b82f6',
+    blueSubtle:   'rgba(37, 99, 235, 0.12)',
+    blueBorder:   'rgba(37, 99, 235, 0.25)',
+    blueText:     'rgba(147, 197, 253, 0.90)',  // light blue for links
+    // Status
+    green:        'rgba(34, 197, 94, 0.12)',
+    greenBorder:  'rgba(34, 197, 94, 0.25)',
+    greenText:    '#86efac',
+    red:          'rgba(239, 68, 68, 0.10)',
+    redBorder:    'rgba(239, 68, 68, 0.20)',
+    redText:      '#fca5a5',
+    // Surfaces
+    recentBg:     '#111111',
+    tabBg:        'rgba(255, 255, 255, 0.03)',
+    tabActive:    'rgba(37, 99, 235, 0.15)',
+    // Misc
+    icon:         'rgba(255, 255, 255, 0.25)',
+    font:         'Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
+  }
+
   const inputStyle: React.CSSProperties = {
     width: '100%',
-    padding: '10px 12px 10px 36px',
-    borderRadius: 8,
-    border: '1px solid rgba(148, 163, 184, 0.15)',
-    background: 'rgba(15, 23, 42, 0.5)',
-    color: '#e2e8f0',
+    padding: '11px 12px 11px 38px',
+    borderRadius: 10,
+    border: `1px solid ${T.border}`,
+    background: T.inputBg,
+    color: T.textPrimary,
     fontSize: 14,
     outline: 'none',
     boxSizing: 'border-box',
-    transition: 'border-color 0.2s',
+    transition: 'border-color 0.2s, background 0.2s',
+    fontFamily: T.font,
   }
 
   const inputStyleNoIcon: React.CSSProperties = {
     ...inputStyle,
     paddingLeft: 12,
+  }
+
+  const focusHandlers = {
+    onFocus: (e: React.FocusEvent<HTMLInputElement>) => {
+      e.currentTarget.style.borderColor = T.borderFocus
+      e.currentTarget.style.background = T.inputBgFocus
+    },
+    onBlur: (e: React.FocusEvent<HTMLInputElement>) => {
+      e.currentTarget.style.borderColor = T.border
+      e.currentTarget.style.background = T.inputBg
+    },
   }
 
   return (
@@ -131,22 +185,35 @@ export default function AuthScreen({
       flexDirection: 'column',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'linear-gradient(135deg, #0a0a1a 0%, #111827 50%, #0f172a 100%)',
-      fontFamily: 'system-ui, -apple-system, sans-serif',
+      background: T.pageBg,
+      fontFamily: T.font,
       padding: '20px',
     }}>
+      {/* Subtle decorative glow — behind card, not competing */}
+      <div style={{
+        position: 'fixed',
+        top: '35%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        width: 600,
+        height: 400,
+        background: 'radial-gradient(ellipse, rgba(37, 99, 235, 0.04) 0%, transparent 70%)',
+        pointerEvents: 'none',
+        zIndex: 0,
+      }} />
+
       {/* Logo / Title */}
-      <div style={{ marginBottom: 32, textAlign: 'center' }}>
+      <div style={{ marginBottom: 36, textAlign: 'center', position: 'relative', zIndex: 1 }}>
         <h1 style={{
-          fontSize: 28,
+          fontSize: 30,
           fontWeight: 700,
-          color: '#e2e8f0',
+          color: T.textPrimary,
           margin: 0,
           letterSpacing: '-0.5px',
         }}>
           HomePilot
         </h1>
-        <p style={{ color: '#64748b', fontSize: 14, marginTop: 8 }}>
+        <p style={{ color: T.textMuted, fontSize: 14, marginTop: 8 }}>
           Your AI-Powered Creative Studio
         </p>
       </div>
@@ -159,13 +226,15 @@ export default function AuthScreen({
           gap: 10,
           padding: '12px 20px',
           borderRadius: 12,
-          background: 'rgba(34, 197, 94, 0.1)',
-          border: '1px solid rgba(34, 197, 94, 0.2)',
+          background: T.green,
+          border: `1px solid ${T.greenBorder}`,
           marginBottom: 20,
           fontSize: 14,
-          color: '#86efac',
-          maxWidth: 400,
+          color: T.greenText,
+          maxWidth: 420,
           width: '100%',
+          position: 'relative',
+          zIndex: 1,
           animation: 'fadeIn 300ms ease-out',
         }}>
           <CheckCircle2 size={18} style={{ flexShrink: 0 }} />
@@ -177,7 +246,7 @@ export default function AuthScreen({
               marginLeft: 'auto',
               background: 'none',
               border: 'none',
-              color: '#86efac',
+              color: T.greenText,
               cursor: 'pointer',
               padding: 2,
               fontSize: 18,
@@ -191,23 +260,24 @@ export default function AuthScreen({
         </div>
       )}
 
-      {/* Recent accounts — quick switch (Google-style) */}
+      {/* Recent accounts — quick switch */}
       {showRecentUsers && (
         <div style={{
           width: '100%',
-          maxWidth: 400,
-          marginBottom: 16,
-          background: 'rgba(30, 41, 59, 0.6)',
-          border: '1px solid rgba(148, 163, 184, 0.08)',
+          maxWidth: 420,
+          marginBottom: 12,
+          background: T.recentBg,
+          border: `1px solid ${T.borderSubtle}`,
           borderRadius: 14,
           overflow: 'hidden',
-          backdropFilter: 'blur(8px)',
+          position: 'relative',
+          zIndex: 1,
         }}>
           <div style={{
             padding: '12px 16px 8px',
             fontSize: 11,
             fontWeight: 600,
-            color: '#64748b',
+            color: T.textFaint,
             letterSpacing: '0.5px',
             textTransform: 'uppercase',
           }}>
@@ -230,7 +300,7 @@ export default function AuthScreen({
                 transition: 'background 0.15s',
                 textAlign: 'left',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.05)')}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.04)')}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
               {/* Avatar */}
@@ -243,7 +313,7 @@ export default function AuthScreen({
                     height: 36,
                     borderRadius: '50%',
                     objectFit: 'cover',
-                    border: '2px solid rgba(148, 163, 184, 0.1)',
+                    border: `2px solid ${T.border}`,
                   }}
                 />
               ) : (
@@ -251,7 +321,7 @@ export default function AuthScreen({
                   width: 36,
                   height: 36,
                   borderRadius: '50%',
-                  background: 'linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)',
+                  background: T.blue,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -267,7 +337,7 @@ export default function AuthScreen({
                 <div style={{
                   fontSize: 14,
                   fontWeight: 600,
-                  color: '#e2e8f0',
+                  color: T.textPrimary,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
@@ -276,7 +346,7 @@ export default function AuthScreen({
                 </div>
                 <div style={{
                   fontSize: 12,
-                  color: '#64748b',
+                  color: T.textMuted,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
@@ -284,30 +354,33 @@ export default function AuthScreen({
                   @{recent.username}
                 </div>
               </div>
-              <ChevronRight size={16} style={{ color: '#475569', flexShrink: 0 }} />
+              <ChevronRight size={16} style={{ color: T.textFaint, flexShrink: 0 }} />
             </button>
           ))}
         </div>
       )}
 
-      {/* Card */}
+      {/* Card — primary interaction surface */}
       <div style={{
         width: '100%',
-        maxWidth: 400,
-        background: 'rgba(30, 41, 59, 0.8)',
-        border: '1px solid rgba(148, 163, 184, 0.1)',
+        maxWidth: 420,
+        background: T.cardBg,
+        border: `1px solid ${T.border}`,
         borderRadius: 16,
-        padding: 32,
-        backdropFilter: 'blur(12px)',
+        padding: '32px 28px',
+        position: 'relative',
+        zIndex: 1,
+        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5), 0 1px 4px rgba(0, 0, 0, 0.3)',
       }}>
         {/* Tab switcher */}
         <div style={{
           display: 'flex',
           gap: 4,
-          marginBottom: 24,
-          background: 'rgba(15, 23, 42, 0.5)',
+          marginBottom: 28,
+          background: T.tabBg,
           borderRadius: 10,
           padding: 4,
+          border: `1px solid ${T.borderSubtle}`,
         }}>
           {(['login', 'register'] as const).map(m => (
             <button
@@ -318,12 +391,12 @@ export default function AuthScreen({
                 padding: '10px 0',
                 borderRadius: 8,
                 border: 'none',
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
                 transition: 'all 0.2s',
-                background: mode === m ? 'rgba(59, 130, 246, 0.2)' : 'transparent',
-                color: mode === m ? '#93c5fd' : '#64748b',
+                background: mode === m ? T.tabActive : 'transparent',
+                color: mode === m ? T.blueText : T.textMuted,
               }}
             >
               {m === 'login' ? (
@@ -346,26 +419,26 @@ export default function AuthScreen({
             alignItems: 'center',
             gap: 8,
             padding: '10px 14px',
-            borderRadius: 8,
-            background: 'rgba(239, 68, 68, 0.1)',
-            border: '1px solid rgba(239, 68, 68, 0.2)',
+            borderRadius: 10,
+            background: T.red,
+            border: `1px solid ${T.redBorder}`,
             marginBottom: 16,
             fontSize: 13,
-            color: '#fca5a5',
+            color: T.redText,
           }}>
-            <AlertCircle size={14} />
+            <AlertCircle size={14} style={{ flexShrink: 0 }} />
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit}>
           {/* Username */}
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6, fontWeight: 500 }}>
+          <div style={{ marginBottom: 18 }}>
+            <label style={{ display: 'block', fontSize: 12, color: T.textMuted, marginBottom: 6, fontWeight: 500 }}>
               Username
             </label>
             <div style={{ position: 'relative' }}>
-              <User size={16} style={{ position: 'absolute', left: 12, top: 12, color: '#475569' }} />
+              <User size={16} style={{ position: 'absolute', left: 12, top: 12, color: T.icon }} />
               <input
                 type="text"
                 value={username}
@@ -376,17 +449,16 @@ export default function AuthScreen({
                 minLength={2}
                 maxLength={32}
                 style={inputStyle}
-                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)')}
-                onBlur={e => (e.currentTarget.style.borderColor = 'rgba(148, 163, 184, 0.15)')}
+                {...focusHandlers}
               />
             </div>
           </div>
 
           {/* Display Name (register only) */}
           {mode === 'register' && (
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6, fontWeight: 500 }}>
-                Display Name <span style={{ color: '#475569' }}>(optional)</span>
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ display: 'block', fontSize: 12, color: T.textMuted, marginBottom: 6, fontWeight: 500 }}>
+                Display Name <span style={{ color: T.textFaint }}>(optional)</span>
               </label>
               <input
                 type="text"
@@ -395,16 +467,15 @@ export default function AuthScreen({
                 placeholder="How should we call you?"
                 maxLength={64}
                 style={inputStyleNoIcon}
-                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)')}
-                onBlur={e => (e.currentTarget.style.borderColor = 'rgba(148, 163, 184, 0.15)')}
+                {...focusHandlers}
               />
             </div>
           )}
 
           {/* Password */}
-          <div style={{ marginBottom: mode === 'register' ? 16 : 24 }}>
-            <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6, fontWeight: 500 }}>
-              Password {mode === 'register' && <span style={{ color: '#475569' }}>(optional — skip for passwordless)</span>}
+          <div style={{ marginBottom: mode === 'register' ? 18 : 24 }}>
+            <label style={{ display: 'block', fontSize: 12, color: T.textMuted, marginBottom: 6, fontWeight: 500 }}>
+              Password {mode === 'register' && <span style={{ color: T.textFaint }}>(optional — skip for passwordless)</span>}
             </label>
             <div style={{ position: 'relative' }}>
               <input
@@ -418,8 +489,7 @@ export default function AuthScreen({
                   ...inputStyleNoIcon,
                   paddingRight: 40,
                 }}
-                onFocus={e => (e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)')}
-                onBlur={e => (e.currentTarget.style.borderColor = 'rgba(148, 163, 184, 0.15)')}
+                {...focusHandlers}
               />
               <button
                 type="button"
@@ -430,7 +500,7 @@ export default function AuthScreen({
                   top: 8,
                   background: 'none',
                   border: 'none',
-                  color: '#475569',
+                  color: T.icon,
                   cursor: 'pointer',
                   padding: 4,
                 }}
@@ -443,11 +513,11 @@ export default function AuthScreen({
           {/* Email (register only) */}
           {mode === 'register' && (
             <div style={{ marginBottom: 24 }}>
-              <label style={{ display: 'block', fontSize: 12, color: '#94a3b8', marginBottom: 6, fontWeight: 500 }}>
-                Email <span style={{ color: '#475569' }}>(optional — for password recovery)</span>
+              <label style={{ display: 'block', fontSize: 12, color: T.textMuted, marginBottom: 6, fontWeight: 500 }}>
+                Email <span style={{ color: T.textFaint }}>(optional — for password recovery)</span>
               </label>
               <div style={{ position: 'relative' }}>
-                <Mail size={16} style={{ position: 'absolute', left: 12, top: 12, color: '#475569' }} />
+                <Mail size={16} style={{ position: 'absolute', left: 12, top: 12, color: T.icon }} />
                 <input
                   type="email"
                   value={email}
@@ -455,14 +525,13 @@ export default function AuthScreen({
                   placeholder="your@email.com"
                   maxLength={256}
                   style={inputStyle}
-                  onFocus={e => (e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.4)')}
-                  onBlur={e => (e.currentTarget.style.borderColor = 'rgba(148, 163, 184, 0.15)')}
+                  {...focusHandlers}
                 />
               </div>
             </div>
           )}
 
-          {/* Submit */}
+          {/* Submit — single authority blue */}
           <button
             type="submit"
             disabled={loading || !username.trim()}
@@ -471,7 +540,7 @@ export default function AuthScreen({
               padding: '12px',
               borderRadius: 10,
               border: 'none',
-              background: loading ? '#1e3a5f' : 'linear-gradient(135deg, #2563eb 0%, #3b82f6 100%)',
+              background: T.blue,
               color: '#fff',
               fontSize: 15,
               fontWeight: 600,
@@ -480,9 +549,13 @@ export default function AuthScreen({
               alignItems: 'center',
               justifyContent: 'center',
               gap: 8,
-              transition: 'all 0.2s',
-              opacity: (!username.trim() || loading) ? 0.5 : 1,
+              transition: 'all 0.15s',
+              opacity: (!username.trim() || loading) ? 0.4 : 1,
+              fontFamily: T.font,
+              letterSpacing: '0.01em',
             }}
+            onMouseEnter={e => { if (username.trim() && !loading) e.currentTarget.style.background = T.blueHover }}
+            onMouseLeave={e => { e.currentTarget.style.background = T.blue }}
           >
             {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
             {!loading && <ArrowRight size={16} />}
@@ -494,11 +567,11 @@ export default function AuthScreen({
           <div style={{
             marginTop: 16,
             padding: '10px 14px',
-            borderRadius: 8,
-            background: 'rgba(59, 130, 246, 0.08)',
-            border: '1px solid rgba(59, 130, 246, 0.12)',
+            borderRadius: 10,
+            background: T.blueSubtle,
+            border: `1px solid ${T.blueBorder}`,
             fontSize: 12,
-            color: '#93c5fd',
+            color: T.textSecondary,
             textAlign: 'center',
             lineHeight: 1.5,
           }}>
@@ -509,12 +582,13 @@ export default function AuthScreen({
               style={{
                 background: 'none',
                 border: 'none',
-                color: '#60a5fa',
+                color: T.blueText,
                 cursor: 'pointer',
                 fontWeight: 600,
                 fontSize: 12,
                 textDecoration: 'underline',
                 padding: 0,
+                fontFamily: T.font,
               }}
             >
               create a new account
@@ -524,7 +598,7 @@ export default function AuthScreen({
       </div>
 
       {/* Footer */}
-      <p style={{ color: '#475569', fontSize: 12, marginTop: 24 }}>
+      <p style={{ color: T.textFaint, fontSize: 12, marginTop: 24, position: 'relative', zIndex: 1 }}>
         Self-hosted &middot; Private &middot; Open Source
       </p>
 
@@ -533,6 +607,19 @@ export default function AuthScreen({
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(-8px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        /* Override browser autofill styling to match dark theme */
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus {
+          -webkit-box-shadow: 0 0 0 1000px #141414 inset !important;
+          -webkit-text-fill-color: rgba(255, 255, 255, 0.95) !important;
+          caret-color: rgba(255, 255, 255, 0.95) !important;
+          transition: background-color 5000s ease-in-out 0s;
+        }
+        /* Placeholder color */
+        input::placeholder {
+          color: rgba(255, 255, 255, 0.22) !important;
         }
       `}</style>
     </div>

@@ -226,7 +226,7 @@ export default function AuthGate({ children }: AuthGateProps) {
     setState('login')
   }, [user, backendUrl])
 
-  // Loading spinner
+  // Loading spinner — uses same neutral bg as login page
   if (state === 'loading') {
     return (
       <div style={{
@@ -234,9 +234,9 @@ export default function AuthGate({ children }: AuthGateProps) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#0a0a1a',
-        color: '#64748b',
-        fontFamily: 'system-ui, sans-serif',
+        background: '#050506',
+        color: 'rgba(255, 255, 255, 0.30)',
+        fontFamily: 'Inter, system-ui, sans-serif',
         fontSize: 14,
       }}>
         Loading...
