@@ -24,6 +24,9 @@ import {
   Users,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
+import ProfileSettingsModal from './ProfileSettingsModal'
+import UserAvatar from './components/UserAvatar'
+import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
@@ -855,6 +858,38 @@ function Sidebar({
   showHistory: boolean
   setShowHistory: React.Dispatch<React.SetStateAction<boolean>>
 }) {
+  const [showAccountMenu, setShowAccountMenu] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+
+  // Read current user from localStorage (set by AuthGate on login)
+  const currentUser = useMemo<AccountMenuUser>(() => {
+    try {
+      const raw = localStorage.getItem('homepilot_auth_user')
+      if (raw) return JSON.parse(raw)
+    } catch { /* ignore */ }
+    return { id: '', username: 'User', display_name: 'User', email: '', avatar_url: '' }
+  }, [])
+
+  // Logout: clear tokens, call backend, reload to AuthGate
+  const handleLogout = useCallback(async () => {
+    setShowAccountMenu(false)
+    const backendUrl = localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
+    const token = localStorage.getItem('homepilot_auth_token') || ''
+    // Fire-and-forget backend invalidation
+    if (token) {
+      try {
+        await fetch(`${backendUrl}/v1/auth/logout`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+        })
+      } catch { /* non-fatal */ }
+    }
+    localStorage.removeItem('homepilot_auth_token')
+    localStorage.removeItem('homepilot_auth_user')
+    // Hard reload → AuthGate picks up "no token" → shows login
+    window.location.reload()
+  }, [])
+
   return (
     <aside className="w-[280px] flex-shrink-0 flex flex-col h-full bg-black border-r border-white/5 py-4 px-3 gap-3 relative">
       {/* Search */}
@@ -922,14 +957,25 @@ function Sidebar({
         />
       </div>
 
-      {/* User footer */}
+      {/* User footer — avatar click opens AccountMenu */}
       <div className="mt-auto px-2 pt-4 border-t border-white/5 flex items-center justify-between">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-lg">
-            U
+        <button
+          type="button"
+          className="flex items-center gap-3 min-w-0 hover:bg-white/5 rounded-xl px-1.5 py-1.5 transition-colors cursor-pointer"
+          onClick={() => setShowAccountMenu((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={showAccountMenu}
+          aria-label="Account menu"
+        >
+          <UserAvatar
+            displayName={currentUser.display_name || currentUser.username}
+            avatarUrl={currentUser.avatar_url}
+            size={32}
+          />
+          <div className="text-sm font-medium text-white/90 truncate">
+            {currentUser.display_name || currentUser.username}
           </div>
-          <div className="text-sm font-medium text-white/90 truncate">User</div>
-        </div>
+        </button>
 
         <button
           type="button"
@@ -940,6 +986,27 @@ function Sidebar({
           <Settings size={18} />
         </button>
       </div>
+
+      {/* Account menu popover (anchored above avatar) */}
+      {showAccountMenu && (
+        <AccountMenu
+          user={currentUser}
+          onClose={() => setShowAccountMenu(false)}
+          onOpenSettings={() => setShowSettings(true)}
+          onOpenProfile={() => setShowProfileModal(true)}
+          onLogout={handleLogout}
+        />
+      )}
+
+      {/* Profile & Personalization modal (opened from account menu) */}
+      {showProfileModal && (
+        <ProfileSettingsModal
+          backendUrl={settingsDraft.backendUrl}
+          apiKey={settingsDraft.apiKey}
+          nsfwMode={!!settingsDraft.nsfwMode}
+          onClose={() => setShowProfileModal(false)}
+        />
+      )}
 
       {showSettings ? (
         <SettingsPanel
