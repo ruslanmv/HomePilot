@@ -3572,9 +3572,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         fd.append('file', file)
 
         const userPrompt = input.trim() || ''
-        const userText = userPrompt
-          ? `[Image: ${file.name}] ${userPrompt}`
-          : `Analyze this image: ${file.name}`
+        // Display text: show only the user's question (the thumbnail already shows the image)
+        const userDisplayText = userPrompt || `Analyze this image: ${file.name}`
 
         const userId = uuid()
         const tmpId = uuid()
@@ -3587,7 +3586,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Show user message immediately with a local preview blob
         const localPreview = URL.createObjectURL(file)
-        const user: Msg = { id: userId, role: 'user', text: userText, media: { images: [localPreview] } }
+        const user: Msg = { id: userId, role: 'user', text: userDisplayText, media: { images: [localPreview] } }
         setMessages((prev) => [...prev, user, pending])
         setInput('')
 
@@ -3688,7 +3687,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                       text: `Vision analysis failed: ${errDetail}`,
                       media: { images: [imageUrl] },
                       retry: {
-                        requestText: userText,
+                        requestText: userDisplayText,
                         mode: mode as Mode,
                         multimodal: { imageUrl, userPrompt: userPrompt || undefined, topology },
                       },
@@ -3800,7 +3799,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream).`,
                     error: true,
                     retry: {
-                      requestText: userText,
+                      requestText: userDisplayText,
                       mode: mode as Mode,
                       multimodal: {
                         imageUrl: imageUrl ?? '',
