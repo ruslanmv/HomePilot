@@ -24,6 +24,10 @@ import {
   Users,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
+import ProfileSettingsModal from './ProfileSettingsModal'
+import UserAvatar from './components/UserAvatar'
+import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
+import { useAuth } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
@@ -86,7 +90,7 @@ export type Msg = {
   // when true, show recovery UI and allow retry
   error?: boolean
   // info needed for retry; kept minimal and non-destructive
-  retry?: { requestText: string; mode: Mode; projectId?: string }
+  retry?: { requestText: string; mode: Mode; projectId?: string; multimodal?: { imageUrl: string; userPrompt?: string; topology?: 'direct' | 'smart' | 'agent' | 'knowledge' } }
   media?: {
     images?: string[]
     video_url?: string
@@ -855,6 +859,49 @@ function Sidebar({
   showHistory: boolean
   setShowHistory: React.Dispatch<React.SetStateAction<boolean>>
 }) {
+  const [showAccountMenu, setShowAccountMenu] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const { user: authUser, logout } = useAuth()
+
+  // Build AccountMenuUser from auth context (fallback for pre-auth setups)
+  const currentUser = useMemo<AccountMenuUser>(() => {
+    if (authUser) {
+      // Prefer display_name, but fall back to username if display_name is
+      // empty or still the generic default "User"
+      const effectiveName =
+        authUser.display_name && authUser.display_name !== 'User'
+          ? authUser.display_name
+          : authUser.username || authUser.display_name || 'User'
+
+      return {
+        id: authUser.id,
+        username: authUser.username,
+        display_name: effectiveName,
+        email: authUser.email,
+        avatar_url: authUser.avatar_url,
+      }
+    }
+    // Fallback: try localStorage (backward compat with non-auth setups)
+    try {
+      const raw = localStorage.getItem('homepilot_auth_user')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        // Same logic: prefer real display_name over generic "User"
+        if (parsed.display_name === 'User' && parsed.username) {
+          parsed.display_name = parsed.username
+        }
+        return parsed
+      }
+    } catch { /* ignore */ }
+    return { id: '', username: 'User', display_name: 'User', email: '', avatar_url: '' }
+  }, [authUser])
+
+  // Smooth logout via AuthContext (no page reload)
+  const handleLogout = useCallback(async () => {
+    setShowAccountMenu(false)
+    await logout()
+  }, [logout])
+
   return (
     <aside className="w-[280px] flex-shrink-0 flex flex-col h-full bg-black border-r border-white/5 py-4 px-3 gap-3 relative">
       {/* Search */}
@@ -922,24 +969,51 @@ function Sidebar({
         />
       </div>
 
-      {/* User footer */}
-      <div className="mt-auto px-2 pt-4 border-t border-white/5 flex items-center justify-between">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-lg">
-            U
-          </div>
-          <div className="text-sm font-medium text-white/90 truncate">User</div>
-        </div>
-
+      {/* User footer — avatar click opens AccountMenu (settings accessible via menu) */}
+      <div className="mt-auto px-2 pt-4 border-t border-white/5">
         <button
           type="button"
-          onClick={() => setShowSettings((v) => !v)}
-          className="text-white/40 hover:text-white p-2 transition-colors rounded-xl hover:bg-white/5"
-          aria-label="Settings"
+          className="w-full flex items-center gap-3 min-w-0 hover:bg-white/5 rounded-xl px-2 py-2 transition-colors cursor-pointer"
+          onClick={() => setShowAccountMenu((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={showAccountMenu}
+          aria-label="Account menu"
         >
-          <Settings size={18} />
+          <UserAvatar
+            displayName={currentUser.display_name || currentUser.username}
+            avatarUrl={currentUser.avatar_url}
+            size={32}
+          />
+          <div className="text-sm font-medium text-white/90 truncate flex-1 text-left">
+            {currentUser.display_name || currentUser.username}
+          </div>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white/30 shrink-0">
+            <path d="M3 5L6 2L9 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M3 7L6 10L9 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         </button>
       </div>
+
+      {/* Account menu popover (anchored above avatar) */}
+      {showAccountMenu && (
+        <AccountMenu
+          user={currentUser}
+          onClose={() => setShowAccountMenu(false)}
+          onOpenSettings={() => setShowSettings(true)}
+          onOpenProfile={() => setShowProfileModal(true)}
+          onLogout={handleLogout}
+        />
+      )}
+
+      {/* Profile & Personalization modal (opened from account menu) */}
+      {showProfileModal && (
+        <ProfileSettingsModal
+          backendUrl={settingsDraft.backendUrl}
+          apiKey={settingsDraft.apiKey}
+          nsfwMode={!!settingsDraft.nsfwMode}
+          onClose={() => setShowProfileModal(false)}
+        />
+      )}
 
       {showSettings ? (
         <SettingsPanel
@@ -974,6 +1048,46 @@ function QueryBar({
   onUpload: (file: File) => void
   placeholderOverride?: string
 }) {
+  // ---- Drag-and-drop image support ----
+  const [isDragging, setIsDragging] = useState(false)
+  const dragCounterRef = useRef(0)
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current++
+    if (e.dataTransfer.types.includes('Files')) setIsDragging(true)
+  }, [])
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current--
+    if (dragCounterRef.current === 0) setIsDragging(false)
+  }, [])
+  const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); e.stopPropagation() }, [])
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    dragCounterRef.current = 0
+    const file = e.dataTransfer.files?.[0]
+    if (file && file.type.startsWith('image/')) onUpload(file)
+  }, [onUpload])
+
+  // ---- Paste image from clipboard ----
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const blob = item.getAsFile()
+        if (blob) onUpload(new File([blob], 'pasted-image.png', { type: blob.type }))
+        return
+      }
+    }
+  }, [onUpload])
+
   // ---- Speech-to-text for the mic button ----
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef<any>(null)
@@ -1014,16 +1128,29 @@ function QueryBar({
   }, [isListening, setInput])
 
   return (
-    <div className={`w-full ${centered ? 'max-w-breakout' : ''}`}>
+    <div
+      className={`w-full ${centered ? 'max-w-breakout' : ''}`}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div
         className={[
           'relative w-full overflow-hidden',
           'bg-[#101010] shadow-sm shadow-black/20',
-          'ring-1 ring-inset ring-white/15 hover:ring-white/20 focus-within:ring-white/25',
+          isDragging
+            ? 'ring-2 ring-inset ring-purple-500/60 bg-purple-500/5'
+            : 'ring-1 ring-inset ring-white/15 hover:ring-white/20 focus-within:ring-white/25',
           'rounded-[10rem]',
           'transition-[background-color,box-shadow,border-color] duration-100 ease-in-out',
         ].join(' ')}
       >
+        {isDragging && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-purple-500/10 rounded-[10rem] pointer-events-none">
+            <span className="text-purple-300 text-sm font-semibold">Drop image to analyze</span>
+          </div>
+        )}
         {/* Left: attach */}
         <div className="absolute left-3 top-1/2 -translate-y-1/2 z-20">
           <button
@@ -1088,6 +1215,7 @@ function QueryBar({
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -1270,6 +1398,24 @@ function ChatState({
             {/* User: bubble | Assistant: bare text on background (Grok style) */}
             {m.role === 'user' ? (
               <div className="max-w-[85%] bg-white/10 border border-white/10 rounded-3xl px-5 py-4">
+                {m.media?.images?.length ? (
+                  <div className="flex gap-2 mb-2">
+                    {m.media.images.map((src: string, i: number) => {
+                      const resolved = (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:'))
+                        ? src
+                        : `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+                      return (
+                        <img
+                          key={i}
+                          src={resolved}
+                          onClick={() => setLightbox(resolved)}
+                          className="h-16 w-16 object-cover rounded-lg border border-white/10 cursor-zoom-in hover:opacity-80 transition-opacity"
+                          alt={`uploaded ${i}`}
+                        />
+                      )
+                    })}
+                  </div>
+                ) : null}
                 <div className="text-[16px] leading-relaxed whitespace-pre-wrap text-[#EEE] font-normal tracking-wide">
                   {m.text}
                 </div>
@@ -1359,8 +1505,8 @@ function ChatState({
                           key={i}
                           src={resolved}
                           onClick={() => setLightbox(resolved)}
-                          className="h-56 w-56 object-cover rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
-                          alt={`generated ${i}`}
+                          className="max-h-48 max-w-xs object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                          alt={`image ${i}`}
                         />
                       )
                     })}
@@ -1506,6 +1652,32 @@ async function getJson<T>(
     throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
   }
   return (await res.json()) as T
+}
+
+/**
+ * Build a system-context block for the Smart multimodal topology.
+ * This is injected as extra_system_context in the /chat call so the
+ * main LLM can reason over the vision analysis result.
+ */
+function buildVisionSystemContext(args: {
+  imageUrl: string
+  analysisText: string
+  model?: string
+  mode?: string
+}): string {
+  const modelLine = args.model ? `Vision model: ${args.model}` : 'Vision model: (unknown)'
+  const modeLine = args.mode ? `Mode: ${args.mode}` : 'Mode: both'
+  return [
+    'You have a vision analysis result from a multimodal model.',
+    'Use it as factual context to answer the user\'s request. If it is insufficient or uncertain, ask a follow-up question.',
+    '',
+    `Image URL: ${args.imageUrl}`,
+    modelLine,
+    modeLine,
+    '',
+    'Vision analysis:',
+    args.analysisText || '(empty)',
+  ].join('\n')
 }
 
 /** Optional: direct Ollama call (browser->Ollama). Requires Ollama CORS / reverse proxy. */
@@ -1798,6 +1970,12 @@ export default function App() {
     // Prompt refinement: default to true (enabled by default for better results)
     const promptRefinement = localStorage.getItem('homepilot_prompt_refinement') !== 'false'
 
+    // Multimodal (Vision) settings
+    const providerMultimodal = (localStorage.getItem('homepilot_provider_multimodal') || 'ollama') as string
+    const baseUrlMultimodal = localStorage.getItem('homepilot_base_url_multimodal') || ''
+    const modelMultimodal = localStorage.getItem('homepilot_model_multimodal') || ''
+    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'direct'
+
     return {
       backendUrl,
       apiKey,
@@ -1814,6 +1992,10 @@ export default function App() {
       ttsEnabled,
       selectedVoice,
       promptRefinement,
+      providerMultimodal,
+      baseUrlMultimodal,
+      modelMultimodal,
+      multimodalTopology,
     }
   })
 
@@ -1947,8 +2129,13 @@ export default function App() {
   const canSend = useMemo(() => input.trim().length > 0, [input])
 
   const authHeaders = useMemo(() => {
+    const headers: Record<string, string> = {}
     const k = settings.apiKey.trim()
-    return k ? { 'x-api-key': k } : undefined
+    if (k) headers['x-api-key'] = k
+    // Multi-user: attach Bearer token so conversations are scoped per user
+    const token = localStorage.getItem('homepilot_auth_token') || ''
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    return Object.keys(headers).length ? headers : undefined
   }, [settings.apiKey])
 
   const onNewConversation = useCallback(() => {
@@ -1992,6 +2179,12 @@ export default function App() {
     localStorage.setItem('homepilot_experimental_civitai', String(!!settingsDraft.experimentalCivitai))
     localStorage.setItem('homepilot_civitai_api_key', settingsDraft.civitaiApiKey || '')
     localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
+
+    // Multimodal (Vision) settings
+    localStorage.setItem('homepilot_provider_multimodal', settingsDraft.providerMultimodal || 'ollama')
+    localStorage.setItem('homepilot_base_url_multimodal', settingsDraft.baseUrlMultimodal || '')
+    localStorage.setItem('homepilot_model_multimodal', settingsDraft.modelMultimodal || '')
+    localStorage.setItem('homepilot_multimodal_topology', settingsDraft.multimodalTopology || 'direct')
 
     // Save TTS settings to nexus_settings_v1 format (used by SpeechService)
     // This ensures the selected voice is actually used for TTS
@@ -2068,6 +2261,11 @@ export default function App() {
         vidSeconds: parseInt(localStorage.getItem('homepilot_vid_seconds') || '4'),
         vidFps: parseInt(localStorage.getItem('homepilot_vid_fps') || '8'),
         vidMotion: localStorage.getItem('homepilot_vid_motion') || 'medium',
+        // Multimodal (Vision) settings
+        providerMultimodal: localStorage.getItem('homepilot_provider_multimodal') || 'ollama',
+        baseUrlMultimodal: localStorage.getItem('homepilot_base_url_multimodal') || '',
+        modelMultimodal: localStorage.getItem('homepilot_model_multimodal') || '',
+        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'direct',
       })
     }
   }, [showSettings, settings])
@@ -2491,6 +2689,229 @@ export default function App() {
       // Get voice personality system prompt for voice mode
       // Wraps with brevity instruction for natural spoken conversation
       let voiceSystemPrompt: string | undefined = undefined
+
+      // ── Multimodal vision intent: text-based trigger ────────────────
+      // If user says "read this image", "describe this picture", etc. in chat/voice
+      // and the conversation has a previously uploaded image, auto-run vision analysis.
+      if ((mode === 'chat' || mode === 'voice') && (settingsDraft.multimodalAuto ?? true)) {
+        const visionPatterns = [
+          /\bread\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\bdescribe\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\bwhat('?s| is)\s+in\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\banalyze\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\blook\s+at\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
+          /\bwhat\s+does?\s+(this|the|my)\s+(image|picture|photo|screenshot)\s+(show|contain|say)\b/i,
+          /\btell\s+me\s+(about|what)\s+(this|the|my)\s+(image|picture|photo)\b/i,
+        ]
+        const isVisionRequest = visionPatterns.some(p => p.test(trimmed))
+        if (isVisionRequest) {
+          // Find the last image URL in the conversation
+          const lastImageUrl = [...messages].reverse().find(
+            m => m.media?.images && m.media.images.length > 0
+          )?.media?.images?.[0]
+
+          if (!lastImageUrl) {
+            // No image in conversation — tell the user to upload one
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? { ...m, pending: false, animate: true, text: 'No image found in this conversation. Upload an image first, then ask me to describe it.' }
+                  : m
+              )
+            )
+            fetchConversations()
+            return
+          }
+
+          try {
+            const visionTopology = settingsDraft.multimodalTopology || 'direct'
+
+            // ── Agent/Knowledge topology: route to /v1/agent/chat for autonomous tool use ──
+            if (visionTopology === 'agent' || visionTopology === 'knowledge') {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m
+                )
+              )
+
+              const agentRes = await postJson<any>(
+                settings.backendUrl,
+                '/v1/agent/chat',
+                {
+                  message: trimmed,
+                  conversation_id: conversationId,
+                  project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+                  provider: settingsDraft.providerChat,
+                  provider_base_url: settingsDraft.baseUrlChat || undefined,
+                  provider_model: settingsDraft.modelChat,
+                  temperature: settingsDraft.textTemperature ?? 0.7,
+                  max_tokens: settingsDraft.textMaxTokens ?? 900,
+                  vision_provider: settingsDraft.providerMultimodal || 'ollama',
+                  vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
+                  vision_model: settingsDraft.modelMultimodal || undefined,
+                  nsfw_mode: settingsDraft.nsfwMode || false,
+                  max_tool_calls: 2,
+                },
+                authHeaders
+              )
+
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId
+                    ? {
+                        ...m,
+                        pending: false,
+                        animate: true,
+                        text: agentRes.text || '',
+                        media: agentRes.media || (lastImageUrl ? { images: [lastImageUrl] } : null),
+                      }
+                    : m
+                )
+              )
+              if (agentRes.conversation_id && agentRes.conversation_id !== conversationId) {
+                setConversationId(agentRes.conversation_id)
+              }
+              fetchConversations()
+              return
+            }
+
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId ? { ...m, text: 'Analyzing image…' } : m
+              )
+            )
+            const result = await postJson<any>(
+              settings.backendUrl,
+              '/v1/multimodal/analyze',
+              {
+                image_url: lastImageUrl,
+                conversation_id: conversationId,
+                provider: settingsDraft.providerMultimodal || 'ollama',
+                base_url: settingsDraft.baseUrlMultimodal || undefined,
+                model: settingsDraft.modelMultimodal || undefined,
+                mode: 'both',
+                user_prompt: trimmed,
+                nsfw_mode: settingsDraft.nsfwMode || false,
+                persist: visionTopology === 'direct',  // Smart: don't persist yet
+              },
+              authHeaders
+            )
+
+            const analysisText = result.analysis_text || 'No analysis available.'
+
+            if (visionTopology === 'direct') {
+              // ── Direct: show vision output as-is (existing behavior) ──
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId
+                    ? { ...m, pending: false, animate: true, text: analysisText, media: { images: [lastImageUrl] } }
+                    : m
+                )
+              )
+              if (result.conversation_id && result.conversation_id !== conversationId) {
+                setConversationId(result.conversation_id)
+              }
+            } else {
+              // ── Smart: chain vision → main LLM ──
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId ? { ...m, text: 'Thinking…' } : m
+                )
+              )
+
+              const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+              const extraCtx = buildVisionSystemContext({
+                imageUrl: lastImageUrl,
+                analysisText,
+                model: settingsDraft.modelMultimodal || undefined,
+                mode: 'both',
+              })
+
+              const chat = await postJson<any>(
+                settings.backendUrl,
+                '/chat',
+                {
+                  message: trimmed,
+                  conversation_id: conversationId,
+                  project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+                  fun_mode: settings.funMode,
+                  mode,
+                  provider: settingsDraft.providerChat,
+                  provider_base_url: settingsDraft.baseUrlChat || undefined,
+                  provider_model: settingsDraft.modelChat,
+                  textTemperature: settingsDraft.textTemperature,
+                  textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                  nsfwMode: settingsDraft.nsfwMode,
+                  memoryEngine: settingsDraft.memoryEngine || 'v2',
+                  extra_system_context: extraCtx,
+                },
+                authHeaders
+              )
+
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId
+                    ? {
+                        ...m,
+                        pending: false,
+                        animate: true,
+                        text: chat.text || '',
+                        media: chat.media || { images: [lastImageUrl] },
+                      }
+                    : m
+                )
+              )
+              if (chat.conversation_id && chat.conversation_id !== conversationId) {
+                setConversationId(chat.conversation_id)
+              }
+
+              // Persist the vision analysis into history without re-running vision
+              const cidToAttach = (chat.conversation_id || conversationId || '').trim()
+              if (cidToAttach) {
+                postJson<any>(
+                  settings.backendUrl,
+                  '/v1/multimodal/attach',
+                  {
+                    conversation_id: cidToAttach,
+                    project_id: currentProjectId,
+                    image_url: lastImageUrl,
+                    analysis_text: analysisText,
+                  },
+                  authHeaders
+                ).catch(() => {})
+              }
+            }
+            fetchConversations()
+            return
+          } catch (visionErr: any) {
+            // Vision failed — show error with retry, then fall through to normal chat
+            const errMsg = typeof visionErr?.message === 'string' ? visionErr.message : 'analysis failed'
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      error: true,
+                      text: `Vision analysis failed: ${errMsg}. Make sure a multimodal model is installed.`,
+                      retry: {
+                        requestText: trimmed,
+                        mode: mode as Mode,
+                        multimodal: {
+                          imageUrl: lastImageUrl,
+                          userPrompt: trimmed,
+                          topology: settingsDraft.multimodalTopology || 'direct',
+                        },
+                      },
+                    }
+                  : m
+              )
+            )
+            return
+          }
+        }
+      }
+
       if (mode === 'voice') {
         const personalityId = localStorage.getItem('homepilot_personality_id')
         let personalityPrompt = ''
@@ -2595,6 +3016,60 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       }
 
       try {
+        // ── Agent/Knowledge topology: route text messages through /v1/agent/chat ──
+        // The agent decides autonomously whether to use tools (vision, knowledge, memory, etc.)
+        const chatTopology = settingsDraft.multimodalTopology || 'direct'
+        if ((chatTopology === 'agent' || chatTopology === 'knowledge') && (mode === 'chat' || mode === 'voice')) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m
+            )
+          )
+
+          const agentRes = await postJson<any>(
+            settings.backendUrl,
+            '/v1/agent/chat',
+            {
+              message: requestText,
+              conversation_id: conversationId,
+              project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+              provider: settingsDraft.providerChat,
+              provider_base_url: settingsDraft.baseUrlChat || undefined,
+              provider_model: settingsDraft.modelChat,
+              temperature: settingsDraft.textTemperature ?? 0.7,
+              max_tokens: mode === 'voice' ? 300 : (settingsDraft.textMaxTokens ?? 900),
+              vision_provider: settingsDraft.providerMultimodal || 'ollama',
+              vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
+              vision_model: settingsDraft.modelMultimodal || undefined,
+              nsfw_mode: settingsDraft.nsfwMode || false,
+              max_tool_calls: 2,
+            },
+            authHeaders
+          )
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tmpId
+                ? { ...m, pending: false, animate: true, text: agentRes.text ?? '…', media: agentRes.media ?? null }
+                : m
+            )
+          )
+
+          if (mode === 'voice' && typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('hp:assistant_message', {
+                detail: { id: tmpId, text: agentRes.text ?? '…', media: agentRes.media ?? null },
+              })
+            )
+          }
+
+          if (agentRes.conversation_id && agentRes.conversation_id !== conversationId) {
+            setConversationId(agentRes.conversation_id)
+          }
+          fetchConversations()
+          return
+        }
+
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
         const data = await postJson<any>(
@@ -2720,11 +3195,174 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === failedId ? { ...m, pending: true, error: false, text: '' } : m
+          m.id === failedId ? { ...m, pending: true, error: false, text: 'Retrying…' } : m
         )
       )
 
-      const { requestText, mode: retryMode, projectId } = failed.retry
+      const { requestText, mode: retryMode, projectId, multimodal } = failed.retry
+
+      // Multimodal retry: re-call /v1/multimodal/analyze with the stored image URL
+      // Respects the topology that was active when the original request was made.
+      if (multimodal?.imageUrl) {
+        const retryTopology = multimodal.topology || settingsDraft.multimodalTopology || 'direct'
+
+        // ── Agent/Knowledge topology retry: route to /v1/agent/chat ──
+        if (retryTopology === 'agent' || retryTopology === 'knowledge') {
+          try {
+            const agentRes = await postJson<any>(
+              settings.backendUrl,
+              '/v1/agent/chat',
+              {
+                message: multimodal.userPrompt || requestText,
+                conversation_id: conversationId,
+                project_id: projectId,
+                provider: settingsDraft.providerChat,
+                provider_base_url: settingsDraft.baseUrlChat || undefined,
+                provider_model: settingsDraft.modelChat,
+                temperature: settingsDraft.textTemperature ?? 0.7,
+                max_tokens: settingsDraft.textMaxTokens ?? 900,
+                vision_provider: settingsDraft.providerMultimodal || 'ollama',
+                vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
+                vision_model: settingsDraft.modelMultimodal || undefined,
+                nsfw_mode: settingsDraft.nsfwMode || false,
+                max_tool_calls: 2,
+              },
+              authHeaders
+            )
+
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === failedId
+                  ? {
+                      ...m,
+                      pending: false,
+                      error: false,
+                      animate: true,
+                      text: agentRes.text || '',
+                      media: agentRes.media || { images: [multimodal.imageUrl] },
+                    }
+                  : m
+              )
+            )
+            if (agentRes.conversation_id) setConversationId(agentRes.conversation_id)
+            return
+          } catch (err: any) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === failedId
+                  ? { ...m, pending: false, error: true, text: `Agent retry failed: ${err?.message || 'unknown error'}` }
+                  : m
+              )
+            )
+            return
+          }
+        }
+
+        try {
+          const result = await postJson<any>(
+            settings.backendUrl,
+            '/v1/multimodal/analyze',
+            {
+              image_url: multimodal.imageUrl,
+              conversation_id: conversationId,
+              provider: settingsDraft.providerMultimodal || 'ollama',
+              base_url: settingsDraft.baseUrlMultimodal || undefined,
+              model: settingsDraft.modelMultimodal || undefined,
+              mode: 'both',
+              user_prompt: multimodal.userPrompt || undefined,
+              nsfw_mode: settingsDraft.nsfwMode || false,
+              persist: retryTopology === 'direct',
+            },
+            authHeaders
+          )
+
+          const analysisText = result.analysis_text || 'No analysis available.'
+
+          if (retryTopology === 'direct') {
+            // Direct: show vision output directly
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === failedId
+                  ? { ...m, pending: false, error: false, animate: true, text: analysisText, media: { images: [multimodal.imageUrl] } }
+                  : m
+              )
+            )
+            if (result.conversation_id) setConversationId(result.conversation_id)
+          } else {
+            // Smart: chain vision → main LLM
+            const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+            const extraCtx = buildVisionSystemContext({
+              imageUrl: multimodal.imageUrl,
+              analysisText,
+              model: settingsDraft.modelMultimodal || undefined,
+              mode: 'both',
+            })
+
+            const chat = await postJson<any>(
+              settings.backendUrl,
+              '/chat',
+              {
+                message: multimodal.userPrompt || requestText,
+                conversation_id: conversationId,
+                project_id: currentProjectId,
+                fun_mode: settings.funMode,
+                mode: retryMode,
+                provider: settingsDraft.providerChat,
+                provider_base_url: settingsDraft.baseUrlChat || undefined,
+                provider_model: settingsDraft.modelChat,
+                textTemperature: settingsDraft.textTemperature,
+                textMaxTokens: retryMode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                nsfwMode: settingsDraft.nsfwMode,
+                memoryEngine: settingsDraft.memoryEngine || 'v2',
+                extra_system_context: extraCtx,
+              },
+              authHeaders
+            )
+
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === failedId
+                  ? {
+                      ...m,
+                      pending: false,
+                      error: false,
+                      animate: true,
+                      text: chat.text || '',
+                      media: chat.media || { images: [multimodal.imageUrl] },
+                    }
+                  : m
+              )
+            )
+            if (chat.conversation_id) setConversationId(chat.conversation_id)
+
+            // Persist vision artifact
+            const cidToAttach = (chat.conversation_id || conversationId || '').trim()
+            if (cidToAttach) {
+              postJson<any>(
+                settings.backendUrl,
+                '/v1/multimodal/attach',
+                {
+                  conversation_id: cidToAttach,
+                  project_id: currentProjectId,
+                  image_url: multimodal.imageUrl,
+                  analysis_text: analysisText,
+                },
+                authHeaders
+              ).catch(() => {})
+            }
+          }
+        } catch (err: any) {
+          const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === failedId
+                ? { ...m, pending: false, error: true, text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream).` }
+                : m
+            )
+          )
+        }
+        return
+      }
 
       try {
         const data = await postJson<any>(
@@ -2809,6 +3447,239 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     async (file: File) => {
       setShowSettings(false)
 
+      // ── Multimodal path: chat/voice mode image upload ──────────────
+      // When the user uploads an image in chat or voice mode and
+      // multimodal auto-analyze is enabled, run vision analysis instead
+      // of the edit/animate pipeline.
+      const isMultimodalMode =
+        (mode === 'chat' || mode === 'voice') &&
+        (settingsDraft.multimodalAuto ?? true)
+
+      if (isMultimodalMode) {
+        const fd = new FormData()
+        fd.append('file', file)
+
+        const userPrompt = input.trim() || ''
+        const userText = userPrompt
+          ? `[Image: ${file.name}] ${userPrompt}`
+          : `Analyze this image: ${file.name}`
+
+        const userId = uuid()
+        const tmpId = uuid()
+        const pending: Msg = {
+          id: tmpId,
+          role: 'assistant',
+          text: 'Analyzing image…',
+          pending: true,
+        }
+
+        // Show user message immediately with a local preview blob
+        const localPreview = URL.createObjectURL(file)
+        const user: Msg = { id: userId, role: 'user', text: userText, media: { images: [localPreview] } }
+        setMessages((prev) => [...prev, user, pending])
+        setInput('')
+
+        let imageUrl = ''
+        try {
+          // 1. Upload the image
+          const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
+          imageUrl = up.url as string
+
+          // Update user message with server URL (revoke blob)
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === userId
+                ? { ...m, media: { images: [imageUrl] } }
+                : m
+            )
+          )
+
+          // 2. Call multimodal analysis endpoint (persist depends on topology)
+          const topology = settingsDraft.multimodalTopology || 'direct'
+
+          // ── Agent/Knowledge topology: let the backend agent loop handle everything ──
+          if (topology === 'agent' || topology === 'knowledge') {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m
+              )
+            )
+
+            const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+            const agentRes = await postJson<any>(
+              settings.backendUrl,
+              '/v1/agent/chat',
+              {
+                message: userPrompt || `Analyze this image: ${file.name}`,
+                conversation_id: conversationId,
+                project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+                provider: settingsDraft.providerChat,
+                provider_base_url: settingsDraft.baseUrlChat || undefined,
+                provider_model: settingsDraft.modelChat,
+                temperature: settingsDraft.textTemperature ?? 0.7,
+                max_tokens: settingsDraft.textMaxTokens ?? 900,
+                vision_provider: settingsDraft.providerMultimodal || 'ollama',
+                vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
+                vision_model: settingsDraft.modelMultimodal || undefined,
+                nsfw_mode: settingsDraft.nsfwMode || false,
+                max_tool_calls: 2,
+              },
+              authHeaders
+            )
+
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      animate: true,
+                      text: agentRes.text || '',
+                      media: agentRes.media || { images: [imageUrl] },
+                    }
+                  : m
+              )
+            )
+            if (agentRes.conversation_id) setConversationId(agentRes.conversation_id)
+            fetchConversations()
+            return
+          }
+
+          const vision = await postJson<any>(
+            settings.backendUrl,
+            '/v1/multimodal/analyze',
+            {
+              image_url: imageUrl,
+              conversation_id: conversationId,
+              provider: settingsDraft.providerMultimodal || 'ollama',
+              base_url: settingsDraft.baseUrlMultimodal || undefined,
+              model: settingsDraft.modelMultimodal || undefined,
+              mode: 'both',
+              user_prompt: userPrompt || undefined,
+              nsfw_mode: settingsDraft.nsfwMode || false,
+              persist: topology === 'direct',  // Smart: don't persist yet
+            },
+            authHeaders
+          )
+
+          const analysisText = vision.analysis_text || 'No analysis available.'
+
+          if (topology === 'direct') {
+            // ── Direct topology: show vision output directly (existing behavior) ──
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      animate: true,
+                      text: analysisText,
+                      media: { images: [imageUrl] },
+                    }
+                  : m
+              )
+            )
+            if (vision.conversation_id) {
+              setConversationId(vision.conversation_id)
+            }
+          } else {
+            // ── Smart topology: chain vision → main LLM for refined answer ──
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId ? { ...m, text: 'Thinking…' } : m
+              )
+            )
+
+            const currentProjectId = localStorage.getItem('homepilot_current_project') || undefined
+            const extraCtx = buildVisionSystemContext({
+              imageUrl,
+              analysisText,
+              model: settingsDraft.modelMultimodal || undefined,
+              mode: 'both',
+            })
+
+            const chat = await postJson<any>(
+              settings.backendUrl,
+              '/chat',
+              {
+                message: userPrompt || `Describe what you see in this image.`,
+                conversation_id: conversationId,
+                project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+                fun_mode: settings.funMode,
+                mode,
+                provider: settingsDraft.providerChat,
+                provider_base_url: settingsDraft.baseUrlChat || undefined,
+                provider_model: settingsDraft.modelChat,
+                textTemperature: settingsDraft.textTemperature,
+                textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                nsfwMode: settingsDraft.nsfwMode,
+                memoryEngine: settingsDraft.memoryEngine || 'v2',
+                extra_system_context: extraCtx,
+              },
+              authHeaders
+            )
+
+            // Replace pending assistant with FINAL chat response
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      animate: true,
+                      text: chat.text || '',
+                      media: chat.media || { images: [imageUrl] },
+                    }
+                  : m
+              )
+            )
+
+            if (chat.conversation_id) setConversationId(chat.conversation_id)
+
+            // Persist the vision analysis into history (tool artifact) without re-running vision
+            const cidToAttach = (chat.conversation_id || conversationId || '').trim()
+            if (cidToAttach) {
+              postJson<any>(
+                settings.backendUrl,
+                '/v1/multimodal/attach',
+                {
+                  conversation_id: cidToAttach,
+                  project_id: currentProjectId,
+                  image_url: imageUrl,
+                  analysis_text: analysisText,
+                },
+                authHeaders
+              ).catch(() => {})
+            }
+          }
+        } catch (err: any) {
+          const errorMsg = typeof err?.message === 'string' ? err.message : 'backend error.'
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tmpId
+                ? {
+                    ...m,
+                    pending: false,
+                    text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream).`,
+                    error: true,
+                    retry: {
+                      requestText: userText,
+                      mode: mode as Mode,
+                      multimodal: {
+                        imageUrl: imageUrl ?? '',
+                        userPrompt: userPrompt || undefined,
+                        topology: settingsDraft.multimodalTopology || 'direct',
+                      },
+                    },
+                  }
+                : m
+            )
+          )
+        }
+        return
+      }
+
+      // ── Original edit/animate path (unchanged) ─────────────────────
       // Only supported via backend (because backend returns stable /uploads URL and handles pipelines)
       const intent: 'edit' | 'animate' = mode === 'animate' ? 'animate' : 'edit'
 

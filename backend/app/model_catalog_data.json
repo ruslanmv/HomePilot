@@ -496,6 +496,85 @@
           "context_window": 8192,
           "uncensored": true
         }
+      ],
+      "multimodal": [
+        {
+          "id": "moondream",
+          "label": "Moondream",
+          "recommended": true,
+          "description": "Ultra-light vision captioning + OCR. Instant responses, minimal RAM.",
+          "size_gb": 1.6,
+          "context_window": 8192,
+          "vision": true
+        },
+        {
+          "id": "gemma3:4b",
+          "label": "Gemma 3 Vision (4B)",
+          "recommended": true,
+          "description": "Best overall edge multimodal model. Fast, accurate image understanding.",
+          "size_gb": 3.0,
+          "context_window": 131072,
+          "vision": true
+        },
+        {
+          "id": "llava:7b",
+          "label": "LLaVA 1.6 (7B)",
+          "recommended": true,
+          "description": "Strong general-purpose vision model. Good balance of quality and speed.",
+          "size_gb": 4.7,
+          "context_window": 32768,
+          "vision": true
+        },
+        {
+          "id": "minicpm-v:latest",
+          "label": "MiniCPM-V 2.6",
+          "description": "Strong multi-image reasoning. Good for documents and charts.",
+          "size_gb": 5.0,
+          "context_window": 131072,
+          "vision": true
+        },
+        {
+          "id": "llama3.2-vision:11b",
+          "label": "Llama 3.2 Vision (11B)",
+          "description": "Best reasoning near the RAM limit. High-quality image understanding.",
+          "size_gb": 7.0,
+          "context_window": 131072,
+          "vision": true
+        },
+        {
+          "id": "huihui_ai/qwen3-vl-abliterated:8b-instruct",
+          "label": "Qwen3-VL Abliterated (8B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Vision-Language abliterated. Unfiltered image descriptions without restrictions.",
+          "size_gb": 5.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "abliterated": true,
+          "vision": true
+        },
+        {
+          "id": "internvl3:8b",
+          "label": "InternVL3 8B",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Detailed scene analysis. Strong at understanding complex visual content.",
+          "size_gb": 7.0,
+          "context_window": 131072,
+          "uncensored": true,
+          "vision": true
+        },
+        {
+          "id": "smolvlm2:latest",
+          "label": "SmolVLM2 (2.2B)",
+          "nsfw": true,
+          "recommended_nsfw": true,
+          "description": "Fast unrestricted captioning. Ultra-lightweight vision model.",
+          "size_gb": 2.0,
+          "context_window": 8192,
+          "uncensored": true,
+          "vision": true
+        }
       ]
     },
     "comfyui": {
