@@ -185,22 +185,22 @@ Step 3: Ready
 ### Technical Plan
 
 #### Backend
-- [ ] `users` SQLite table (id, username, password_hash, email, created_at, onboarding_complete)
-- [ ] `POST /v1/auth/register` — create account
-- [ ] `POST /v1/auth/login` — authenticate, return session token
-- [ ] `POST /v1/auth/logout` — invalidate session
+- [x] `users` SQLite table (id, username, password_hash, email, created_at, onboarding_complete)
+- [x] `POST /v1/auth/register` — create account
+- [x] `POST /v1/auth/login` — authenticate, return session token
+- [x] `POST /v1/auth/logout` — invalidate session
 - [ ] `POST /v1/auth/forgot-password` — send reset email (if email configured)
-- [ ] `PUT /v1/auth/onboarding` — save onboarding answers
-- [ ] Session tokens via signed JWT or simple bearer tokens (stored in `user_sessions` table)
+- [x] `PUT /v1/auth/onboarding` — save onboarding answers
+- [x] Session tokens via bearer tokens (stored in `user_sessions` table, 30-day expiry)
 - [ ] `user_id` foreign key added to: projects, conversations, profile, persona_sessions
-- [ ] Existing single-user data migrated to a default "admin" user on first boot
+- [x] Existing single-user data migrated to a default "admin" user on first boot
 
 #### Frontend
-- [ ] Login/Register screen (shown when no active session)
-- [ ] 3-step onboarding wizard (shown after first registration)
+- [x] Login/Register screen (shown when no active session)
+- [x] 3-step onboarding wizard (shown after first registration)
 - [ ] User switcher in sidebar (avatar + dropdown)
 - [ ] All API calls include `Authorization: Bearer <token>` header
-- [ ] LocalStorage stores token per user
+- [x] LocalStorage stores token per user
 
 #### Migration Strategy (ADDITIVE)
 - Existing data belongs to a default user (zero data loss)
