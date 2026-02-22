@@ -1391,6 +1391,8 @@ function ChatState({
   /** Resolve backend-relative image URLs and append auth token for <img> tags. */
   const resolveImageUrl = (src: string) => {
     if (!src || src.startsWith('data:') || src.startsWith('blob:')) return src
+    // Strip whitespace LLMs may inject mid-URL when line-wrapping
+    src = src.replace(/\s+/g, '')
 
     let fullUrl = src
     if (!src.startsWith('http')) {

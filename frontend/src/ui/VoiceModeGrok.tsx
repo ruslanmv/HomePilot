@@ -115,7 +115,8 @@ function parseInlineMarkdown(
     }
     const fullMatch = match[1];
     const alt = match[2];
-    const url = match[3];
+    // Strip whitespace LLMs may inject mid-URL when line-wrapping
+    const url = match[3].replace(/\s+/g, '');
     const isImage = fullMatch.startsWith('!');
 
     if (isImage) {

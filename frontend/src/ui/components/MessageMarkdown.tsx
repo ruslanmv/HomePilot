@@ -57,12 +57,22 @@ function CodeBlock({ lang, raw }: { lang: string; raw: string }) {
  * - Code blocks have header + language + copy button.
  */
 export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: string; onImageClick?: (src: string) => void; backendUrl?: string }) {
-  const normalized = useMemo(() => (text ?? '').replace(/\r\n/g, '\n'), [text])
+  const normalized = useMemo(() => {
+    let t = (text ?? '').replace(/\r\n/g, '\n')
+    // Fix LLM-wrapped URLs: strip whitespace inside markdown image/link URLs
+    // e.g. ![alt](http://host/path/ with-space) → ![alt](http://host/path/with-space)
+    t = t.replace(/(!?\[[^\]]*\]\()([^)]+)\)/g, (_m, prefix, url) =>
+      `${prefix}${url.replace(/\s+/g, '')})`
+    )
+    return t
+  }, [text])
 
   /** Resolve backend-relative image paths (e.g. /comfy/view/..., /files/...) to full URLs.
    *  Appends auth token for /files/ paths that require authentication. */
   const resolveImgSrc = (src?: string): string | undefined => {
     if (!src) return src
+    // Strip whitespace LLMs may inject mid-URL when line-wrapping
+    src = src.replace(/\s+/g, '')
     if (src.startsWith('http://') || src.startsWith('https://') || src.startsWith('data:') || src.startsWith('blob:')) {
       // For absolute backend URLs that contain /files/, append token
       if (backendUrl && src.includes('/files/')) {
