@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, Copy } from 'lucide-react'
@@ -69,7 +69,7 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
 
   /** Resolve backend-relative image paths (e.g. /comfy/view/..., /files/...) to full URLs.
    *  Appends auth token for /files/ paths that require authentication. */
-  const resolveImgSrc = (src?: string): string | undefined => {
+  const resolveImgSrc = useCallback((src?: string): string | undefined => {
     if (!src) return src
     // Strip whitespace LLMs may inject mid-URL when line-wrapping
     src = src.replace(/\s+/g, '')
@@ -106,7 +106,7 @@ export function MessageMarkdown({ text, onImageClick, backendUrl }: { text: stri
       return full
     }
     return src
-  }
+  }, [backendUrl])
 
   return (
     <div className="prose prose-invert max-w-none prose-p:my-2 prose-pre:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-hr:my-4 prose-blockquote:my-3">

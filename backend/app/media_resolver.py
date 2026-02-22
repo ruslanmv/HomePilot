@@ -7,17 +7,20 @@ truncates, wraps, or hallucinates), we give it short stable refs like:
     media://persona/<project_id>/default
     media://persona/<project_id>/label/Lingerie
 
-This endpoint resolves them to the real image URL and 302-redirects.
+This endpoint resolves them and serves the image file directly with
+cache headers so the browser doesn't re-fetch on every React render.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import mimetypes
+from pathlib import Path
+from typing import Any, Dict, Optional
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Cookie, Header, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse
 
-from .config import PUBLIC_BASE_URL
+from .config import PUBLIC_BASE_URL, UPLOAD_DIR
 from .projects import get_project_by_id, _file_url_exists
 
 router = APIRouter(tags=["media"])
@@ -35,6 +38,32 @@ def _abs_img_url(url: str) -> str:
         return url
     base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
     return f"{base}{url if url.startswith('/') else '/' + url}"
+
+
+def _upload_root() -> Path:
+    """Return the upload root directory (same as files.py)."""
+    p = Path(UPLOAD_DIR)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parents[1] / "data" / "uploads"
+    return p
+
+
+def _url_to_local_path(url: str) -> Optional[Path]:
+    """
+    Convert a resolved absolute URL back to a local filesystem path.
+    Works for /files/ URLs (the committed avatar paths).
+    """
+    idx = url.find("/files/")
+    if idx < 0:
+        # Try /comfy/view/ URLs — these are proxied, can't serve locally
+        return None
+    rel = url[idx + len("/files/"):]
+    if not rel or ".." in rel:
+        return None
+    path = _upload_root() / rel
+    if path.is_file():
+        return path
+    return None
 
 
 def _resolve_user(
@@ -80,9 +109,6 @@ def _build_label_index(project_id: str) -> Dict[str, str]:
 
     mapping: Dict[str, str] = {}
     default_url = ""
-    base_outfit_desc = (pap.get("avatar_settings") or {}).get(
-        "outfit_prompt", pap.get("style_preset", "")
-    )
 
     # --- portrait sets ---
     for s in pap.get("sets") or []:
@@ -135,28 +161,12 @@ def _build_label_index(project_id: str) -> Dict[str, str]:
     return mapping
 
 
-# ---------------------------------------------------------------------------
-# Endpoint
-# ---------------------------------------------------------------------------
-
-@router.get("/media/resolve")
-def resolve_media(
-    ref: str = Query(..., description="media://persona/<project_id>/default or media://persona/<project_id>/label/<Label>"),
-    token: Optional[str] = Query(default=None),
-    authorization: str = Header(default=""),
-    homepilot_session: Optional[str] = Cookie(default=None),
-):
-    """Resolve a media:// ref to a real URL and 302-redirect."""
-    user = _resolve_user(authorization, homepilot_session, token_param=token)
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication required")
-
+def _resolve_ref(ref: str) -> str:
+    """Parse a media:// ref and return the resolved absolute image URL."""
     ref = unquote(ref)
     if not ref.startswith("media://"):
         raise HTTPException(status_code=400, detail="Invalid ref — must start with media://")
 
-    # media://persona/<project_id>/default
-    # media://persona/<project_id>/label/<Label>
     parts = ref.replace("media://", "").split("/")
     if len(parts) < 3:
         raise HTTPException(status_code=400, detail="Invalid ref format")
@@ -171,15 +181,55 @@ def resolve_media(
         url = idx.get("default")
         if not url:
             raise HTTPException(status_code=404, detail="No default image")
-        return RedirectResponse(url)
+        return url
 
     if action == "label":
         if len(parts) < 4:
             raise HTTPException(status_code=400, detail="Missing label")
-        label = "/".join(parts[3:])  # labels may contain spaces (URL-encoded)
+        label = "/".join(parts[3:])
         url = idx.get(f"label:{label}")
         if not url:
             raise HTTPException(status_code=404, detail=f"Label '{label}' not found")
-        return RedirectResponse(url)
+        return url
 
     raise HTTPException(status_code=404, detail="Unknown action")
+
+
+# ---------------------------------------------------------------------------
+# Endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/media/resolve")
+def resolve_media(
+    ref: str = Query(..., description="media://persona/<project_id>/default or media://persona/<project_id>/label/<Label>"),
+    token: Optional[str] = Query(default=None),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+):
+    """
+    Resolve a media:// ref and serve the image file directly.
+    Uses FileResponse with cache headers so the browser doesn't re-fetch
+    on every React re-render (prevents image blinking).
+    """
+    user = _resolve_user(authorization, homepilot_session, token_param=token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    url = _resolve_ref(ref)
+
+    # Try to serve file directly from disk (fast, cacheable)
+    local_path = _url_to_local_path(url)
+    if local_path:
+        mime = mimetypes.guess_type(str(local_path))[0] or "image/png"
+        return FileResponse(
+            path=str(local_path),
+            media_type=mime,
+            filename=local_path.name,
+            headers={
+                "Cache-Control": "private, max-age=3600, immutable",
+            },
+        )
+
+    # Fallback: redirect to the URL (e.g. ComfyUI proxied images)
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url, headers={"Cache-Control": "private, max-age=3600"})

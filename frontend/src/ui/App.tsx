@@ -1389,7 +1389,7 @@ function ChatState({
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
 
   /** Resolve backend-relative image URLs and append auth token for <img> tags. */
-  const resolveImageUrl = (src: string) => {
+  const resolveImageUrl = useCallback((src: string) => {
     if (!src || src.startsWith('data:') || src.startsWith('blob:')) return src
     // Strip whitespace LLMs may inject mid-URL when line-wrapping
     src = src.replace(/\s+/g, '')
@@ -1418,7 +1418,7 @@ function ChatState({
     }
 
     return fullUrl
-  }
+  }, [backendUrl])
 
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
@@ -1488,7 +1488,7 @@ function ChatState({
                       const resolved = resolveImageUrl(src)
                       return (
                         <img
-                          key={i}
+                          key={src || i}
                           src={resolved}
                           onClick={() => setLightbox(resolved)}
                           className="h-16 w-16 object-cover rounded-lg border border-white/10 cursor-zoom-in hover:opacity-80 transition-opacity"
@@ -1582,7 +1582,7 @@ function ChatState({
                       const resolved = resolveImageUrl(src)
                       return (
                         <img
-                          key={i}
+                          key={src || i}
                           src={resolved}
                           onClick={() => setLightbox(resolved)}
                           className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
