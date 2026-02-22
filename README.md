@@ -70,6 +70,27 @@ Every persona has persistent memory that survives across sessions. Two engines l
 
 For the full technical deep dive (math, configuration, architecture), see **[docs/MEMORY.md](docs/MEMORY.md)**.
 
+### 🧠 Multimodal Intelligence — Four Processing Topologies
+
+HomePilot processes text, images, documents, and voice through **four topologies** that stack on top of each other — from simple chat to a full knowledge companion with long-term memory, vision, web search, and user awareness.
+
+<p align="center">
+  <img src="assets/multimodal-topologies.svg" alt="Multimodal Topologies" width="820" /><br>
+  <em>T1 Basic Chat → T2 Project RAG → T3 Agent Tools → T4 Knowledge Companion. Each layer is additive.</em>
+</p>
+
+<p align="center">
+  <img src="assets/multimodal-companion-pipeline.svg" alt="Knowledge Companion Pipeline" width="820" /><br>
+  <em>In Topology 4, every message flows through user profile, session history, persona memory, and 6 agent tools before responding.</em>
+</p>
+
+- **T1 Basic Chat** — direct LLM conversation, fast and simple
+- **T2 Project Knowledge** — upload docs/PDFs, get grounded RAG answers
+- **T3 Agent Tool Use** — LLM decides when to call vision, search, memory, and web tools
+- **T4 Knowledge Companion** — full companion mode with user profile, session continuity, and adaptive long-term memory
+
+Switch topologies anytime from Settings. See [docs/MULTIMODAL.md](docs/MULTIMODAL.md) for the full guide.
+
 ### 🎨 Avatar Studio — Zero-Prompt Character Creation
 Create AI portrait avatars from reference photos, random faces, or face+style combinations — all without writing a single text prompt. A complete character management system inspired by RPG mechanics:
 
