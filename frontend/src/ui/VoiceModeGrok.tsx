@@ -57,6 +57,7 @@ import { User } from 'lucide-react';
 import {
   LS_PERSONA_CACHE,
 } from './voice/personalityGating';
+import { resolveFileUrl } from './resolveFileUrl';
 
 // localStorage keys
 const LS_SPEED = 'homepilot_speech_speed';
@@ -115,8 +116,20 @@ function parseInlineMarkdown(
     }
     const fullMatch = match[1];
     const alt = match[2];
-    const url = match[3];
+    // Strip whitespace LLMs may inject mid-URL when line-wrapping
+    let url = match[3].replace(/\s+/g, '');
     const isImage = fullMatch.startsWith('!');
+
+    // Resolve media:// refs via backend /media/resolve endpoint
+    if (url.startsWith('media://')) {
+      const base = (localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000').replace(/\/+$/, '')
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
+      url = `${base}/media/resolve?ref=${encodeURIComponent(url)}${qp}`
+    } else {
+      // Resolve /files/ URLs (and other relative paths) with auth token
+      url = resolveFileUrl(url)
+    }
 
     if (isImage) {
       nodes.push(
@@ -124,9 +137,10 @@ function parseInlineMarkdown(
           key={`img-${match.index}`}
           src={url}
           alt={alt || 'Photo'}
-          className="inline-block max-h-72 max-w-72 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
+          className="inline-block w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
           loading="lazy"
           onClick={() => onImageClick?.(url)}
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
         />
       );
     } else {
@@ -140,9 +154,10 @@ function parseInlineMarkdown(
             key={`lnkimg-${match.index}`}
             src={url}
             alt={alt || 'Photo'}
-            className="inline-block max-h-72 max-w-72 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
+            className="inline-block w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity my-2"
             loading="lazy"
             onClick={() => onImageClick?.(url)}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
           />
         );
       } else {
@@ -427,25 +442,29 @@ function RenderTypedMessage({
         );
       })}
 
-      {/* Render generated images - larger display with click-to-expand */}
-      {media?.images?.length ? (
-        <div className="mt-3 flex gap-3 overflow-x-auto">
-          {media.images.map((src, i) => (
-            <img
-              key={i}
-              src={src}
-              alt={`Generated ${i + 1}`}
-              className="max-h-80 max-w-80 w-auto h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
-              loading="lazy"
-              onClick={() => onImageClick?.(src)}
-            />
-          ))}
+      {/* Render generated images AFTER typewriter animation completes */}
+      {!isTyping && media?.images?.length ? (
+        <div className="mt-3 flex gap-3 overflow-x-auto hp-fade-in">
+          {[...new Set(media.images)].map((src, i) => {
+            const resolved = resolveFileUrl(src)
+            return (
+              <img
+                key={src || i}
+                src={resolved}
+                alt={`Generated ${i + 1}`}
+                className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
+                loading="lazy"
+                onClick={() => onImageClick?.(resolved)}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+              />
+            )
+          })}
         </div>
       ) : null}
 
-      {/* Render generated video */}
-      {media?.video_url ? (
-        <div className="mt-3">
+      {/* Render generated video AFTER typewriter animation completes */}
+      {!isTyping && media?.video_url ? (
+        <div className="mt-3 hp-fade-in">
           <video
             src={media.video_url}
             controls
@@ -466,10 +485,11 @@ function RenderTypedMessage({
  */
 function VoiceLightbox({ src, onClose }: { src: string; onClose: () => void }) {
   const [zoom, setZoom] = useState(100);
+  const resolvedSrc = resolveFileUrl(src);
 
   const handleDownload = async () => {
     try {
-      const response = await fetch(src);
+      const response = await fetch(resolvedSrc);
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -539,7 +559,7 @@ function VoiceLightbox({ src, onClose }: { src: string; onClose: () => void }) {
       {/* Image */}
       <div className="flex-1 flex items-center justify-center p-16 overflow-auto">
         <img
-          src={src}
+          src={resolvedSrc}
           onClick={(e) => e.stopPropagation()}
           className="rounded-lg shadow-2xl border border-white/10 transition-transform"
           style={{

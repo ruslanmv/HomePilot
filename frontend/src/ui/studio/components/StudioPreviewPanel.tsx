@@ -1,5 +1,6 @@
 import React from 'react'
 import { Loader2, ImageIcon, RefreshCw } from 'lucide-react'
+import { resolveFileUrl } from '../../resolveFileUrl'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -44,7 +45,7 @@ export function StudioPreviewPanel({
             {/* Image container with subtle shadow */}
             <div className="relative max-w-full max-h-full">
               <img
-                src={imageUrl!}
+                src={resolveFileUrl(imageUrl!)}
                 alt="Scene preview"
                 className="max-h-[calc(100vh-320px)] max-w-full object-contain rounded-lg shadow-2xl transition-opacity duration-700"
               />

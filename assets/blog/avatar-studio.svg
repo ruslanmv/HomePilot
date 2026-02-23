@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 440" fill="none">
+  <defs>
+    <style>
+      @keyframes av-pulse { 0%,100%{opacity:0.6} 50%{opacity:1} }
+      @keyframes av-equip { 0%{stroke-dashoffset:12} 100%{stroke-dashoffset:0} }
+      @keyframes av-glow { 0%,100%{opacity:0.2;r:4} 50%{opacity:0.7;r:7} }
+      @keyframes av-slide { 0%{transform:translateX(0)} 50%{transform:translateX(4px)} 100%{transform:translateX(0)} }
+      .av-pulse { animation: av-pulse 3s ease-in-out infinite; }
+      .av-equip { stroke-dasharray: 6 6; animation: av-equip 1.2s linear infinite; }
+      .av-slide { animation: av-slide 2s ease-in-out infinite; }
+    </style>
+    <linearGradient id="av-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f0f23"/><stop offset="100%" style="stop-color:#1a1a3e"/>
+    </linearGradient>
+    <linearGradient id="av-accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f59e0b"/><stop offset="50%" style="stop-color:#ef4444"/><stop offset="100%" style="stop-color:#ec4899"/>
+    </linearGradient>
+    <linearGradient id="av-purple" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#8b5cf6"/><stop offset="100%" style="stop-color:#a78bfa"/>
+    </linearGradient>
+    <filter id="av-blur"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="av-clip"><rect width="900" height="440" rx="16"/></clipPath>
+  </defs>
+  <g clip-path="url(#av-clip)">
+    <rect width="900" height="440" fill="url(#av-bg)" rx="16"/>
+    <g stroke="#334155" stroke-width="0.5" opacity="0.05">
+      <line x1="0" y1="110" x2="900" y2="110"/><line x1="0" y1="220" x2="900" y2="220"/>
+      <line x1="0" y1="330" x2="900" y2="330"/>
+    </g>
+
+    <!-- Title -->
+    <text x="450" y="32" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="3" text-anchor="middle">AVATAR STUDIO</text>
+    <text x="450" y="52" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Zero-prompt character creation with RPG wardrobe mechanics</text>
+    <rect x="350" y="58" width="200" height="2" rx="1" fill="url(#av-accent)" opacity="0.4">
+      <animate attributeName="width" values="200;260;200" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="x" values="350;320;350" dur="4s" repeatCount="indefinite"/>
+    </rect>
+
+    <!-- Creation Modes (top row) -->
+    <!-- Mode 1: Reference -->
+    <g transform="translate(80,85)">
+      <rect x="0" y="0" width="210" height="80" rx="12" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5" opacity="0.7" class="av-pulse"/>
+      <rect x="12" y="12" width="32" height="32" rx="8" fill="#f59e0b" opacity="0.15"/>
+      <text x="28" y="33" font-family="system-ui,sans-serif" font-size="16" fill="#f59e0b" text-anchor="middle">&#128247;</text>
+      <text x="54" y="26" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#fcd34d">From Reference</text>
+      <text x="54" y="42" font-family="system-ui,sans-serif" font-size="9" fill="#94a3b8">Upload photo → InstantID</text>
+      <text x="14" y="66" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">Face preserved across all generations</text>
+    </g>
+
+    <!-- Mode 2: Design -->
+    <g transform="translate(345,85)">
+      <rect x="0" y="0" width="210" height="80" rx="12" fill="#1e293b" stroke="#ef4444" stroke-width="1.5" opacity="0.7" class="av-pulse" style="animation-delay:0.5s"/>
+      <rect x="12" y="12" width="32" height="32" rx="8" fill="#ef4444" opacity="0.15"/>
+      <text x="28" y="33" font-family="system-ui,sans-serif" font-size="16" fill="#ef4444" text-anchor="middle">&#127912;</text>
+      <text x="54" y="26" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#fca5a5">Design Character</text>
+      <text x="54" y="42" font-family="system-ui,sans-serif" font-size="9" fill="#94a3b8">Gender + Style + Vibe presets</text>
+      <text x="14" y="66" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">16 styles, 16 vibes — no prompt needed</text>
+    </g>
+
+    <!-- Mode 3: Face+Style -->
+    <g transform="translate(610,85)">
+      <rect x="0" y="0" width="210" height="80" rx="12" fill="#1e293b" stroke="#ec4899" stroke-width="1.5" opacity="0.7" class="av-pulse" style="animation-delay:1s"/>
+      <rect x="12" y="12" width="32" height="32" rx="8" fill="#ec4899" opacity="0.15"/>
+      <text x="28" y="33" font-family="system-ui,sans-serif" font-size="16" fill="#ec4899" text-anchor="middle">&#10024;</text>
+      <text x="54" y="26" font-family="system-ui,sans-serif" font-size="12" font-weight="600" fill="#f9a8d4">Face + Style</text>
+      <text x="54" y="42" font-family="system-ui,sans-serif" font-size="9" fill="#94a3b8">Your face + styled body</text>
+      <text x="14" y="66" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">Identity-preserving face swap</text>
+    </g>
+
+    <!-- Arrow down to Character Sheet -->
+    <line x1="450" y1="170" x2="450" y2="195" stroke="url(#av-accent)" stroke-width="1.5" opacity="0.4"/>
+    <polygon points="445,192 455,192 450,200" fill="#f59e0b" opacity="0.6"/>
+
+    <!-- Character Sheet Section -->
+    <rect x="40" y="205" width="820" height="140" rx="14" fill="#1e293b" stroke="#f59e0b" stroke-width="1" opacity="0.4"/>
+    <text x="70" y="228" font-family="system-ui,sans-serif" font-size="11" font-weight="700" fill="#fcd34d" letter-spacing="2">CHARACTER SHEET</text>
+
+    <!-- Stage Panel (left) -->
+    <g transform="translate(60,240)">
+      <rect x="0" y="0" width="160" height="90" rx="10" fill="#0f172a" stroke="#f59e0b" stroke-width="1" opacity="0.6"/>
+      <rect x="6" y="6" width="148" height="54" rx="6" fill="#1a1a2e"/>
+      <text x="80" y="38" font-family="system-ui,sans-serif" font-size="18" fill="#f59e0b" text-anchor="middle" opacity="0.3">&#128100;</text>
+      <text x="80" y="78" font-family="system-ui,sans-serif" font-size="9" font-weight="600" fill="#fcd34d" text-anchor="middle">Stage</text>
+      <text x="80" y="88" font-family="system-ui,sans-serif" font-size="7" fill="#64748b" text-anchor="middle">Anchor / Outfit toggle</text>
+    </g>
+
+    <!-- Outfit Studio (center) -->
+    <g transform="translate(250,240)">
+      <rect x="0" y="0" width="240" height="90" rx="10" fill="#0f172a" stroke="#ef4444" stroke-width="1" opacity="0.6"/>
+      <text x="15" y="22" font-family="system-ui,sans-serif" font-size="9" font-weight="600" fill="#fca5a5">Outfit Studio</text>
+      <!-- Scenario badges -->
+      <g transform="translate(15,32)">
+        <rect x="0" y="0" width="52" height="18" rx="4" fill="#ef4444" opacity="0.15"/><text x="26" y="13" font-family="system-ui,sans-serif" font-size="7" fill="#fca5a5" text-anchor="middle">Business</text>
+        <rect x="58" y="0" width="46" height="18" rx="4" fill="#ef4444" opacity="0.15"/><text x="81" y="13" font-family="system-ui,sans-serif" font-size="7" fill="#fca5a5" text-anchor="middle">Casual</text>
+        <rect x="110" y="0" width="52" height="18" rx="4" fill="#ef4444" opacity="0.15"/><text x="136" y="13" font-family="system-ui,sans-serif" font-size="7" fill="#fca5a5" text-anchor="middle">Evening</text>
+        <rect x="168" y="0" width="46" height="18" rx="4" fill="#ef4444" opacity="0.15"/><text x="191" y="13" font-family="system-ui,sans-serif" font-size="7" fill="#fca5a5" text-anchor="middle">Active</text>
+      </g>
+      <rect x="15" y="58" width="80" height="22" rx="6" fill="url(#av-accent)" opacity="0.8"/>
+      <text x="55" y="73" font-family="system-ui,sans-serif" font-size="9" font-weight="600" fill="#0f0f23" text-anchor="middle">Generate</text>
+    </g>
+
+    <!-- Wardrobe Inventory (right) -->
+    <g transform="translate(520,240)">
+      <rect x="0" y="0" width="320" height="90" rx="10" fill="#0f172a" stroke="#ec4899" stroke-width="1" opacity="0.6"/>
+      <text x="15" y="22" font-family="system-ui,sans-serif" font-size="9" font-weight="600" fill="#f9a8d4">Wardrobe Inventory</text>
+      <!-- Grid of outfit slots -->
+      <g transform="translate(15,32)">
+        <rect x="0" y="0" width="38" height="38" rx="4" fill="#1a1a2e" stroke="#f59e0b" stroke-width="1.5" opacity="0.8">
+          <animate attributeName="stroke-opacity" values="0.5;1;0.5" dur="2s" repeatCount="indefinite"/>
+        </rect>
+        <text x="19" y="24" font-family="system-ui,sans-serif" font-size="10" fill="#f59e0b" text-anchor="middle" opacity="0.5">&#128084;</text>
+        <rect x="44" y="0" width="38" height="38" rx="4" fill="#1a1a2e" stroke="#64748b" stroke-width="0.5"/>
+        <text x="63" y="24" font-family="system-ui,sans-serif" font-size="10" fill="#475569" text-anchor="middle">&#128085;</text>
+        <rect x="88" y="0" width="38" height="38" rx="4" fill="#1a1a2e" stroke="#64748b" stroke-width="0.5"/>
+        <text x="107" y="24" font-family="system-ui,sans-serif" font-size="10" fill="#475569" text-anchor="middle">&#128087;</text>
+        <rect x="132" y="0" width="38" height="38" rx="4" fill="#1a1a2e" stroke="#64748b" stroke-width="0.5"/>
+        <text x="151" y="24" font-family="system-ui,sans-serif" font-size="10" fill="#475569" text-anchor="middle">&#9917;</text>
+        <rect x="176" y="0" width="38" height="38" rx="4" fill="#1a1a2e" stroke="#334155" stroke-width="0.5" stroke-dasharray="3 3"/>
+        <text x="195" y="24" font-family="system-ui,sans-serif" font-size="12" fill="#334155" text-anchor="middle">+</text>
+        <rect x="220" y="0" width="38" height="38" rx="4" fill="#1a1a2e" stroke="#334155" stroke-width="0.5" stroke-dasharray="3 3"/>
+        <text x="239" y="24" font-family="system-ui,sans-serif" font-size="12" fill="#334155" text-anchor="middle">+</text>
+      </g>
+      <text x="160" y="83" font-family="system-ui,sans-serif" font-size="7" fill="#64748b" text-anchor="middle">Click to equip — amber glow = active outfit</text>
+    </g>
+
+    <!-- Arrow down to Export -->
+    <line x1="450" y1="350" x2="450" y2="370" stroke="url(#av-purple)" stroke-width="1.5" opacity="0.4"/>
+    <polygon points="445,367 455,367 450,375" fill="#8b5cf6" opacity="0.6"/>
+
+    <!-- Export Section -->
+    <g transform="translate(200,380)">
+      <rect x="0" y="0" width="500" height="42" rx="10" fill="#1e293b" stroke="url(#av-purple)" stroke-width="1.5" opacity="0.7"/>
+      <text x="20" y="18" font-family="system-ui,sans-serif" font-size="11" font-weight="600" fill="#c4b5fd">Export as .hpersona</text>
+      <text x="20" y="32" font-family="system-ui,sans-serif" font-size="8" fill="#64748b">Avatar + all outfits + personality + tools → portable ZIP package</text>
+      <!-- Animated arrow -->
+      <g transform="translate(420,12)" class="av-slide">
+        <rect x="0" y="0" width="60" height="22" rx="6" fill="#8b5cf6" opacity="0.8"/>
+        <text x="30" y="15" font-family="system-ui,sans-serif" font-size="9" font-weight="600" fill="#0f0f23" text-anchor="middle">Share</text>
+      </g>
+    </g>
+
+    <!-- Bottom tagline -->
+    <text x="450" y="434" font-family="system-ui,sans-serif" font-size="10" fill="#475569" text-anchor="middle">Create characters in zero prompts — dress them like RPG armor — share with the world</text>
+  </g>
+</svg>

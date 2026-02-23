@@ -68,6 +68,8 @@ Every persona has persistent memory that survives across sessions. Two engines l
 - **Basic Memory** — deterministic flat store with TTL, per-category caps, near-duplicate detection, and pin-to-keep; ideal for secretary and enterprise personas
 - Switch between engines at any time from Settings or during `.hpersona` import — no data loss
 
+> **Profile vs Memory:** Your user profile (name, birthday, pronouns, preferences) is injected into *every* conversation automatically — no persona required. Long-term memory adds the ability for personas to *learn new facts from conversation* and remember them across sessions. Set your name in **Profile & Integrations** and every chat will know it. Enable memory mode on a persona for cross-session learning.
+
 For the full technical deep dive (math, configuration, architecture), see **[docs/MEMORY.md](docs/MEMORY.md)**.
 
 ### 🧠 Multimodal Intelligence — Four Processing Topologies

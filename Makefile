@@ -21,7 +21,7 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         download-chat download-multimodal \
         download-edit download-enhance download-video download-verify download-health \
         download-avatar-models-basic download-avatar-models-full \
-        start start-backend start-frontend start-no-agentic start-agentic-servers \
+        start start-backend start-frontend start-no-agentic start-agentic-servers start-inventory \
         install-mcp start-mcp stop-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
@@ -312,6 +312,7 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 	@if [ "$(AGENTIC)" = "1" ] && ([ -d "$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1); then \
 		echo "  MCP Gateway:  http://localhost:$(MCP_GATEWAY_PORT)"; \
 		echo "  MCP Servers:  http://localhost:9101-9105"; \
+		echo "  MCP Inventory: http://localhost:9120"; \
 		echo "  A2A Agents:   http://localhost:9201-9202"; \
 	fi
 	@echo ""
@@ -383,8 +384,8 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 			else \
 				echo "  ⚠ Context Forge (port $(MCP_GATEWAY_PORT)): not responding"; \
 			fi; \
-			mcp_ok=0; mcp_total=5; \
-			for _p in 9101 9102 9103 9104 9105; do \
+			mcp_ok=0; mcp_total=6; \
+			for _p in 9101 9102 9103 9104 9105 9120; do \
 				if curl -sf "http://127.0.0.1:$$_p/health" >/dev/null 2>&1; then \
 					mcp_ok=$$((mcp_ok + 1)); \
 				fi; \
@@ -406,6 +407,7 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 			echo ""; \
 			echo "  Agentic servers:"; \
 			echo "    MCP:  personal-assistant(:9101) knowledge(:9102) decision(:9103) briefing(:9104) web-search(:9105)"; \
+			echo "    MCP:  inventory(:9120)"; \
 			echo "    A2A:  everyday-assistant(:9201) chief-of-staff(:9202)"; \
 			echo "    Forge Admin: http://localhost:$(MCP_GATEWAY_PORT)/admin"; \
 		else \
@@ -591,7 +593,7 @@ stop: ## Stop all local HomePilot processes (kills processes on all service port
 	@# Kill processes by port (works on Linux/macOS/WSL)
 	@# Core: 3000(frontend) 8000(backend) 8010(edit-session) 8188(comfyui)
 	@# MCP:  9101-9105(MCP servers) 9201-9202(A2A agents)
-	@for port in 3000 8000 8010 8188 9101 9102 9103 9104 9105 9201 9202; do \
+	@for port in 3000 8000 8010 8188 9101 9102 9103 9104 9105 9120 9201 9202; do \
 		echo "Checking port $$port..."; \
 		pid=$$(lsof -ti :$$port 2>/dev/null || true); \
 		if [ -n "$$pid" ]; then \
@@ -1068,7 +1070,7 @@ start-agentic-servers: ## Start HomePilot MCP servers + A2A agents + seed Forge 
 		exit 1; \
 	fi
 	@echo ""
-	@echo "  MCP servers:  ports 9101-9105"
+	@echo "  MCP servers:  ports 9101-9105, 9120 (inventory)"
 	@echo "  A2A agents:   ports 9201-9202"
 	@echo ""
 	@echo "  Press Ctrl+C to stop"
@@ -1090,10 +1092,29 @@ start-agentic-servers: ## Start HomePilot MCP servers + A2A agents + seed Forge 
 		echo "  ✅ Agentic servers running!"; \
 		echo ""; \
 		echo "  MCP:  personal-assistant(:9101) knowledge(:9102) decision(:9103) briefing(:9104) web-search(:9105)"; \
+		echo "  MCP:  inventory(:9120)"; \
 		echo "  A2A:  everyday-assistant(:9201) chief-of-staff(:9202)"; \
 		echo ""; \
 		wait \
 	'
+
+start-inventory: ## Start the Inventory MCP server standalone (port 9120)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Starting Inventory MCP Server (port 9120)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
+		exit 1; \
+	fi
+	@echo ""
+	@echo "  Inventory:  http://localhost:9120"
+	@echo "  Health:     http://localhost:9120/health"
+	@echo ""
+	@echo "  Press Ctrl+C to stop"
+	@echo ""
+	@PYTHONPATH="$$(pwd)" backend/.venv/bin/python -m uvicorn \
+		agentic.integrations.mcp.inventory_server:app \
+		--host 127.0.0.1 --port 9120 --log-level info
 
 install-mcp: ## Install MCP Context Forge separately (gateway + servers + agent)
 	@echo "════════════════════════════════════════════════════════════════════════════════"

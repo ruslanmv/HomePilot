@@ -39,11 +39,13 @@ import {
   Copy,
   Upload,
   RefreshCw,
+  Package,
 } from 'lucide-react'
 import { ImageViewer } from '../ImageViewer'
+import { InventoryView } from './InventoryView'
 import type { PersonaImageRef, PersonaOutfit, AvatarGenerationSettings, GenerationMode } from '../personaTypes'
 import { OUTFIT_PRESETS, PERSONA_BLUEPRINTS } from '../personaTypes'
-import { generateOutfitImages, generatePersonaImages } from '../personaApi'
+import { generateOutfitImages, generatePersonaImages, commitGeneratedImages } from '../personaApi'
 import { commitPersonaAvatar } from '../personaPortability'
 import { useAvatarCapabilities } from '../useAvatarCapabilities'
 
@@ -119,19 +121,38 @@ function readNsfwMode(): boolean {
   }
 }
 
-/** Build a displayable /files/ URL from a DB-stored relative path. */
+/** Build a displayable /files/ URL from a DB-stored relative path.
+ *  Appends auth token for <img> tags that can't set Authorization headers. */
 function fileUrl(backendUrl: string, rel?: string | null): string | null {
   if (!rel) return null
   const clean = rel.replace(/^\/+/, '')
-  return `${backendUrl}/files/${clean}`
+  const tok = localStorage.getItem('homepilot_auth_token') || ''
+  return `${backendUrl}/files/${clean}${tok ? `?token=${encodeURIComponent(tok)}` : ''}`
 }
 
 /** Resolve an image URL — prepend backendUrl for backend-relative paths
- *  like `/comfy/view/...` that come from Avatar Studio exports. */
+ *  like `/comfy/view/...` that come from Avatar Studio exports.
+ *  Appends auth token for /files/ paths (needed for <img> tags). */
 function resolveImgUrl(url: string, backendUrl: string): string {
   if (!url) return url
-  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:') || url.startsWith('blob:')) return url
-  return `${backendUrl.replace(/\/+$/, '')}${url.startsWith('/') ? url : `/${url}`}`
+  if (url.startsWith('data:') || url.startsWith('blob:')) return url
+
+  let full = url
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    const base = backendUrl.replace(/\/+$/, '')
+    const path = url.startsWith('/') ? url : `/${url}`
+    full = `${base}${path}`
+  }
+
+  // Append auth token for /files/ paths so <img> tags can access them
+  if (full.includes('/files/')) {
+    const tok = localStorage.getItem('homepilot_auth_token') || ''
+    if (tok) {
+      const sep = full.includes('?') ? '&' : '?'
+      return `${full}${sep}token=${encodeURIComponent(tok)}`
+    }
+  }
+  return full
 }
 
 let _imgCounter = 0
@@ -220,6 +241,9 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
 
   // Avatar model capabilities — purely informational, never blocks existing flows
   const { capabilities: avatarCaps } = useAvatarCapabilities(backendUrl, apiKey)
+
+  // --- View mode: "sheet" (default character sheet) or "inventory" ---
+  const [viewMode, setViewMode] = useState<'sheet' | 'inventory'>('sheet')
 
   // --- Persona identity state ---
   const [name, setName] = useState(pa.label || project.name || '')
@@ -506,8 +530,9 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
       const committedProject = commitResult.project || {}
       const committedPap = committedProject.persona_appearance || {}
       const committedRel = committedPap.selected_thumb_filename || committedPap.selected_filename
+      const _tok = localStorage.getItem('homepilot_auth_token') || ''
       const displayUrl = committedRel
-        ? `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}`
+        ? `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}${_tok ? `&token=${encodeURIComponent(_tok)}` : ''}`
         : url
 
       // Add to gallery sets and select
@@ -555,35 +580,55 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
         return
       }
 
-      // Commit the first generated image as the durable avatar
-      // (ComfyUI URL — commit endpoint downloads and stores it)
-      let displayUrl = out.urls[0]
-      try {
-        const commitResult = await commitPersonaAvatar({
-          backendUrl,
-          apiKey,
-          projectId: project.id,
-          sourceUrl: out.urls[0],
-        })
-        const committedPap = commitResult.project?.persona_appearance || {}
-        const committedRel = committedPap.selected_thumb_filename || committedPap.selected_filename
-        if (committedRel) {
-          displayUrl = `${backendUrl}/files/${String(committedRel).replace(/^\/+/, '')}?v=${Date.now()}`
-        }
-      } catch {
-        // Non-fatal — avatar still works from ComfyUI URL, just not committed
-      }
-
       const setId = `set_gen_${Date.now()}`
       const newImages: PersonaImageRef[] = out.urls.map((url, i) => ({
         id: nextImageId(),
-        url: i === 0 ? displayUrl : url,
+        url,
         created_at: new Date().toISOString(),
         set_id: setId,
         seed: out.seeds?.[i],
       }))
+
+      // Show images immediately (comfy URLs) while commit runs
       setSets((prev) => [...prev, { set_id: setId, images: newImages }])
       setSelectedImage({ set_id: setId, image_id: newImages[0].id })
+
+      // Commit-on-generate: persist to durable /files/ storage immediately
+      // so inventory + MCP + chat can resolve them without waiting for Save.
+      try {
+        const commitRes = await commitGeneratedImages({
+          backendUrl,
+          apiKey,
+          projectId: project.id,
+          kind: 'set',
+          images: newImages.map(img => ({ url: img.url, id: img.id, set_id: img.set_id })),
+        })
+        // Replace local URLs with durable /files/ URLs
+        if (commitRes.committed?.length) {
+          const urlMap = new Map(commitRes.committed.map(c => [c.id, c.url]))
+          setSets((prev) =>
+            prev.map(s =>
+              s.set_id === setId
+                ? { ...s, images: s.images.map(img => ({ ...img, url: urlMap.get(img.id) || img.url })) }
+                : s
+            )
+          )
+        }
+      } catch {
+        // Non-fatal — images still display from ComfyUI URLs, commit on Save
+      }
+
+      // Also commit the selected avatar so thumbnail is durable
+      try {
+        await commitPersonaAvatar({
+          backendUrl,
+          apiKey,
+          projectId: project.id,
+          auto: true,
+        })
+      } catch {
+        // Non-fatal
+      }
 
       // Update avatar_settings with the generation params
       const newSettings: AvatarGenerationSettings = {
@@ -606,7 +651,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
     } finally {
       setGeneratingPhoto(false)
     }
-  }, [avatarSettingsLocal, backendUrl, apiKey, name, stylePreset, pap.gender, generationMode, selectedUrl])
+  }, [avatarSettingsLocal, backendUrl, apiKey, name, stylePreset, pap.gender, generationMode, selectedUrl, project.id])
 
   // --- Enable outfit variations for imported personas ---
   const handleEnableOutfitVariations = useCallback((charDescription: string) => {
@@ -674,29 +719,83 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
       }
 
       const created_at = new Date().toISOString()
+      const outfitId = `outfit_${Date.now()}`
       const images: PersonaImageRef[] = out.urls.map((url, i) => ({
         id: nextImageId(),
         url,
         created_at,
-        set_id: `outfit_${Date.now()}`,
+        set_id: outfitId,
         seed: out.seeds?.[i],
       }))
 
+      const genSettings = {
+        ...effectiveAvatarSettings,
+        outfit_prompt: outfitPrompt,
+        full_prompt: out.final_prompt ?? `${effectiveAvatarSettings.character_prompt}, ${outfitPrompt}`,
+      }
+
       const newOutfit: PersonaOutfit = {
-        id: `outfit_${Date.now()}`,
+        id: outfitId,
         label,
         outfit_prompt: outfitPrompt,
         images,
         selected_image_id: images[0]?.id,
-        generation_settings: {
-          ...effectiveAvatarSettings,
-          outfit_prompt: outfitPrompt,
-          full_prompt: out.final_prompt ?? `${effectiveAvatarSettings.character_prompt}, ${outfitPrompt}`,
-        },
+        generation_settings: genSettings,
         created_at,
       }
 
-      setOutfits((prev) => [...prev, newOutfit])
+      // Show immediately in local state (comfy URLs)
+      // Merge into existing outfit with the same label (avoid duplicates
+      // like two separate "Lingerie" entries — instead combine images).
+      setOutfits((prev) => {
+        const existingIdx = prev.findIndex(
+          (o) => o.label.toLowerCase() === newOutfit.label.toLowerCase(),
+        )
+        if (existingIdx >= 0) {
+          const updated = [...prev]
+          const existing = updated[existingIdx]
+          updated[existingIdx] = {
+            ...existing,
+            images: [...existing.images, ...newOutfit.images],
+          }
+          return updated
+        }
+        return [...prev, newOutfit]
+      })
+
+      // Commit-on-generate: persist to durable /files/ storage immediately
+      // so inventory + MCP + chat can resolve them without waiting for Save.
+      try {
+        const commitRes = await commitGeneratedImages({
+          backendUrl,
+          apiKey,
+          projectId: project.id,
+          kind: 'outfit',
+          images: images.map(img => ({ url: img.url, id: img.id, set_id: img.set_id })),
+          outfitId,
+          outfitLabel: label,
+          outfitPrompt,
+          generationSettings: genSettings,
+        })
+        // Replace local URLs with durable /files/ URLs
+        if (commitRes.committed?.length) {
+          const urlMap = new Map(commitRes.committed.map(c => [c.id, c.url]))
+          setOutfits((prev) =>
+            prev.map(o => {
+              if (o.id === outfitId || o.label.toLowerCase() === label.toLowerCase()) {
+                return {
+                  ...o,
+                  images: o.images.map(img => ({ ...img, url: urlMap.get(img.id) || img.url })),
+                }
+              }
+              return o
+            })
+          )
+        }
+      } catch {
+        // Non-fatal — images still display from ComfyUI URLs, commit on Save
+      }
+
       setCustomOutfitPrompt('')
       setCustomOutfitLabel('')
       setSelectedOutfitPreset('')
@@ -706,7 +805,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
     } finally {
       setGeneratingOutfit(false)
     }
-  }, [effectiveAvatarSettings, customOutfitPrompt, customOutfitLabel, selectedOutfitPreset, backendUrl, apiKey, generationMode, selectedUrl])
+  }, [effectiveAvatarSettings, customOutfitPrompt, customOutfitLabel, selectedOutfitPreset, backendUrl, apiKey, generationMode, selectedUrl, project.id])
 
   // --- Delete outfit ---
   const handleDeleteOutfit = (outfitId: string) => {
@@ -875,19 +974,63 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                     </span>
                   )}
                 </h2>
-                <p className="text-[11px] text-white/40 uppercase tracking-widest">Character Sheet</p>
+                <p className="text-[11px] text-white/40 uppercase tracking-widest">
+                  {viewMode === 'inventory' ? 'Inventory' : 'Character Sheet'}
+                </p>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="p-2 text-white/50 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-            >
-              <X size={20} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  if (viewMode === 'inventory') {
+                    setViewMode('sheet')
+                  } else {
+                    // Auto-save before switching to inventory so the backend
+                    // has fresh persona_appearance data (including newly
+                    // generated outfits) for the inventory API to read.
+                    if (dirty) {
+                      await handleSave()
+                    }
+                    setViewMode('inventory')
+                  }
+                }}
+                className={[
+                  'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all border',
+                  viewMode === 'inventory'
+                    ? 'bg-amber-500/20 border-amber-500/30 text-amber-400'
+                    : 'bg-white/5 border-white/10 text-white/50 hover:text-white hover:bg-white/10',
+                ].join(' ')}
+              >
+                <Package size={14} />
+                Inventory
+              </button>
+              <button
+                onClick={onClose}
+                className="p-2 text-white/50 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* -- Content -- */}
+        {/* -- Content: swap between sheet and inventory -- */}
+        {viewMode === 'inventory' ? (
+          <InventoryView
+            projectId={project.id}
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+            onBack={() => setViewMode('sheet')}
+            activeSelection={selectedImage}
+            draftAppearance={{ sets, outfits, selected: selectedImage }}
+            onSetActiveLook={(sel) => {
+              // Wardrobe-style selection: update selectedImage state, mark dirty.
+              // Stay on inventory page — no auto navigation back.
+              setSelectedImage({ set_id: sel.set_id, image_id: sel.image_id })
+              markDirty()
+            }}
+          />
+        ) : (
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           {/* -- Top: Avatar + Stats -- */}
           <div className="p-6 border-b border-white/5">
@@ -1969,6 +2112,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
             </section>
           </div>
         </div>
+        )}
 
         {/* -- Footer -- */}
         <div className="px-6 py-4 border-t border-white/10 bg-[#0f0f1e] flex items-center justify-between">
