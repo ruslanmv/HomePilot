@@ -17,13 +17,30 @@ from .config import UPLOAD_DIR, PUBLIC_BASE_URL
 
 # Import vectordb for RAG functionality
 try:
-    from .vectordb import query_project_knowledge, get_project_document_count, CHROMADB_AVAILABLE
+    from .vectordb import (
+        query_project_knowledge,
+        query_project_knowledge_filtered,
+        get_project_document_count,
+        CHROMADB_AVAILABLE,
+    )
     RAG_ENABLED = CHROMADB_AVAILABLE
     if not RAG_ENABLED:
         print("Warning: ChromaDB not available. RAG functionality disabled.")
 except ImportError as e:
     RAG_ENABLED = False
     print(f"Warning: ChromaDB not available. RAG functionality disabled. Error: {e}")
+
+# Import persona attachment helpers for scoped document retrieval
+try:
+    from .persona_attachments import (
+        get_allowed_document_item_ids_for_chat,
+        list_persona_documents as _list_persona_docs_for_chat,
+    )
+except ImportError:
+    def get_allowed_document_item_ids_for_chat(project_id: str) -> list:
+        return []
+    def _list_persona_docs_for_chat(project_id: str) -> list:
+        return []
 
 # -------------------------------------------------------------------------
 # Persistence Layer (Self-contained JSON store for projects)
@@ -661,20 +678,41 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
     system_instruction = "You are HomePilot, a helpful AI assistant."
 
     # 4. Retrieve relevant context from knowledge base (RAG)
+    #    Uses persona-scoped filtering so each persona only sees its own
+    #    attached documents, and deduplicates chunks from the same source
+    #    so the LLM doesn't think N chunks = N separate documents.
     knowledge_context = ""
+    is_persona = project_data and project_data.get("project_type") == "persona"
     if project_data and RAG_ENABLED:
         try:
             doc_count = get_project_document_count(project_id)
             if doc_count > 0:
-                # Query the knowledge base for relevant chunks
-                relevant_docs = query_project_knowledge(project_id, message, n_results=3)
+                # For persona projects, restrict retrieval to attached docs only
+                if is_persona:
+                    allowed_ids = get_allowed_document_item_ids_for_chat(project_id)
+                    relevant_docs = query_project_knowledge_filtered(
+                        project_id, message, n_results=5,
+                        allowed_item_ids=allowed_ids if allowed_ids else None,
+                    )
+                else:
+                    relevant_docs = query_project_knowledge(project_id, message, n_results=3)
 
                 if relevant_docs:
-                    knowledge_context = "\n\nRELEVANT KNOWLEDGE BASE CONTEXT:\n"
-                    for i, doc in enumerate(relevant_docs, 1):
+                    # Group chunks by source document to avoid the LLM
+                    # interpreting multiple chunks as separate documents.
+                    from collections import OrderedDict
+                    source_chunks: OrderedDict[str, list] = OrderedDict()
+                    for doc in relevant_docs:
                         source = doc.get("metadata", {}).get("source", "Unknown")
                         content = doc.get("content", "")
-                        knowledge_context += f"\n[Source {i}: {source}]\n{content}\n"
+                        if source not in source_chunks:
+                            source_chunks[source] = []
+                        source_chunks[source].append(content)
+
+                    knowledge_context = "\n\nRELEVANT KNOWLEDGE BASE CONTEXT:\n"
+                    for i, (source, chunks) in enumerate(source_chunks.items(), 1):
+                        merged = "\n...\n".join(chunks)
+                        knowledge_context += f"\n[Document {i}: {source}]\n{merged}\n"
         except Exception as e:
             print(f"Error retrieving knowledge base context: {e}")
 
@@ -682,14 +720,36 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
         # Construct a rich system prompt based on project settings
         name = project_data.get("name", "Unknown")
         instructions = project_data.get("instructions", "")
-        files_info = ", ".join([f.get('name', '') for f in project_data.get("files", [])])
-        doc_count_info = ""
 
-        if RAG_ENABLED:
+        # Build accurate document list from persona attachments (preferred)
+        # or fall back to the legacy project files array.
+        files_info = ""
+        doc_count_info = ""
+        if is_persona:
             try:
-                doc_count = get_project_document_count(project_id)
-                if doc_count > 0:
-                    doc_count_info = f"\n\nKnowledge Base: {doc_count} document chunks indexed"
+                persona_docs = _list_persona_docs_for_chat(project_id)
+                # Deduplicate by item id to avoid showing the same doc twice
+                seen_ids: set = set()
+                unique_names: list = []
+                for pd in persona_docs:
+                    pid = pd.get("id") or pd.get("item_id")
+                    if pid and pid not in seen_ids:
+                        seen_ids.add(pid)
+                        unique_names.append(pd.get("original_name") or pd.get("name", ""))
+                if unique_names:
+                    files_info = ", ".join(n for n in unique_names if n)
+                    doc_count_info = f"\n\nKnowledge Base: {len(unique_names)} document{'s' if len(unique_names) != 1 else ''} indexed"
+            except Exception:
+                pass
+
+        if not files_info:
+            files_info = ", ".join([f.get('name', '') for f in project_data.get("files", [])])
+
+        if not doc_count_info and RAG_ENABLED:
+            try:
+                chunk_count = get_project_document_count(project_id)
+                if chunk_count > 0:
+                    doc_count_info = f"\n\nKnowledge Base: documents indexed ({chunk_count} chunks)"
             except Exception:
                 pass
 

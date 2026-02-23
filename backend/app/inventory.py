@@ -127,16 +127,29 @@ def _open_db() -> Optional[sqlite3.Connection]:
     return None
 
 
-def _db_list_project_files(project_id: str) -> List[Dict[str, Any]]:
+def _db_list_project_files(project_id: str, *, user_id: str = "") -> List[Dict[str, Any]]:
+    """List file_assets for a project.
+
+    TODO: When per-user auth is threaded to the inventory router, pass
+    user_id here and add ``AND user_id = ?`` to the query so that
+    documents from one user never leak into another user's inventory.
+    """
     conn = _open_db()
     if not conn:
         return []
     try:
-        cur = conn.execute(
-            "SELECT id, kind, rel_path, mime, size_bytes, original_name "
-            "FROM file_assets WHERE project_id = ?",
-            (project_id,),
-        )
+        if user_id:
+            cur = conn.execute(
+                "SELECT id, kind, rel_path, mime, size_bytes, original_name "
+                "FROM file_assets WHERE project_id = ? AND user_id = ?",
+                (project_id, user_id),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, kind, rel_path, mime, size_bytes, original_name "
+                "FROM file_assets WHERE project_id = ?",
+                (project_id,),
+            )
         out: List[Dict[str, Any]] = []
         for r in cur.fetchall():
             rp = _safe_rel_path(str(r["rel_path"] or ""))
@@ -280,6 +293,9 @@ def _collect_image_assets(project_id: str, appearance: Dict[str, Any]) -> List[D
 
 def _collect_document_assets(project_id: str) -> List[Dict[str, Any]]:
     seen_ids: set = set()
+    # Track asset_ids (file_assets.id) from project_items so Source 2
+    # doesn't re-add the same physical file under a different ID.
+    seen_asset_ids: set = set()
     out: List[Dict[str, Any]] = []
 
     # Source 1: project_items table (preferred — has index_status, tags, etc.)
@@ -297,6 +313,8 @@ def _collect_document_assets(project_id: str) -> List[Dict[str, Any]]:
             seen_ids.add(item_id)
             file_url = pi.get("file_url") or ""
             asset_id = pi.get("asset_id") or ""
+            if asset_id:
+                seen_asset_ids.add(asset_id)
             props = pi.get("properties") or {}
             if isinstance(props, str):
                 try:
@@ -329,17 +347,27 @@ def _collect_document_assets(project_id: str) -> List[Dict[str, Any]]:
         pass
 
     # Source 2: file_assets table (fallback for docs not in project_items)
+    # Skip any file_assets row whose id already appeared as an asset_id in
+    # a project_items row — this prevents the same physical file from being
+    # counted twice (once as item, once as raw asset).
     rows = _db_list_project_files(project_id)
     for r in rows:
         mime = (r.get("mime") or "").lower()
         if mime.startswith("image/"):
             continue
         rel_path = r.get("rel_path") or ""
-        asset_id = str(r.get("db_id") or "").strip() or _sha_id("file", f"{project_id}|{rel_path}")
-        if asset_id in seen_ids:
+        db_id = str(r.get("db_id") or "").strip()
+        asset_id = db_id or _sha_id("file", f"{project_id}|{rel_path}")
+        if asset_id in seen_ids or asset_id in seen_asset_ids:
+            continue
+        # Also deduplicate by original_name + size to catch edge cases
+        orig_name = r.get("original_name") or Path(rel_path).name
+        file_key = f"{orig_name}:{r.get('size_bytes', 0)}"
+        if file_key in seen_ids:
             continue
         seen_ids.add(asset_id)
-        label = r.get("original_name") or Path(rel_path).name
+        seen_ids.add(file_key)
+        label = orig_name
         ext = Path(rel_path).suffix.lstrip(".")
         out.append({
             "id": asset_id,

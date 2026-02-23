@@ -2764,6 +2764,32 @@ async def upload_project_item(
                 content=_safe_err(f"File too large (max {MAX_UPLOAD_MB}MB)"),
             )
 
+        # ── Content-hash dedup: if the same file content already exists
+        #    in this project, return the existing item instead of creating
+        #    a duplicate.  Uses sha256 stored in project_items.properties.
+        import hashlib as _hl
+        content_hash = _hl.sha256(data).hexdigest()
+        try:
+            existing_items = _list_items(project_id, category=category)
+            for ei in existing_items:
+                ei_props = ei.get("properties") or {}
+                if isinstance(ei_props, str):
+                    try:
+                        ei_props = json.loads(ei_props)
+                    except Exception:
+                        ei_props = {}
+                if ei_props.get("content_hash") == content_hash:
+                    # Same content already exists — return it
+                    return JSONResponse(status_code=200, content={
+                        "ok": True,
+                        "item": ei,
+                        "chunks_added": ei_props.get("chunk_count", 0),
+                        "file_url": ei.get("file_url", ""),
+                        "duplicate": True,
+                    })
+        except Exception:
+            pass  # Non-fatal: proceed with upload if dedup check fails
+
         # Save to disk
         import mimetypes as _mt
         save_ext = f".{ext}" if ext else ".bin"
@@ -2823,7 +2849,10 @@ async def upload_project_item(
         chunks_added = 0
         if ext in {"pdf", "txt", "md"} and projects.RAG_ENABLED:
             try:
-                _update_item(item["id"], {"properties": json.dumps({"index_status": "indexing"})})
+                _update_item(item["id"], {"properties": json.dumps({
+                    "index_status": "indexing",
+                    "content_hash": content_hash,
+                })})
             except Exception:
                 pass
             try:
@@ -2841,6 +2870,7 @@ async def upload_project_item(
                         "index_status": "ready",
                         "chunk_count": chunks_added,
                         "last_indexed_at": _t.time(),
+                        "content_hash": content_hash,
                     })})
                 except Exception:
                     pass
@@ -2850,9 +2880,18 @@ async def upload_project_item(
                     _update_item(item["id"], {"properties": json.dumps({
                         "index_status": "error",
                         "error_message": str(rag_err),
+                        "content_hash": content_hash,
                     })})
                 except Exception:
                     pass
+        else:
+            # Non-RAG files: still store content_hash for dedup
+            try:
+                _update_item(item["id"], {"properties": json.dumps({
+                    "content_hash": content_hash,
+                })})
+            except Exception:
+                pass
 
         # Also update the project's files[] array for backward compat
         try:
