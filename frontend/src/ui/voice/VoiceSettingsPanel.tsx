@@ -102,14 +102,24 @@ export default function VoiceSettingsPanel({
           const photos: Array<{ label: string; outfit: string; url: string; isDefault: boolean }> = [];
           const baseOutfitDesc = avatarSettings.outfit_prompt || pap.style_preset || '';
 
+          // Track label counts for numbering duplicates: Lingerie, Lingerie_2, …
+          // Must match backend _next_label logic.
+          const labelCounts: Record<string, number> = {};
+          const nextLabel = (base: string): string => {
+            const count = (labelCounts[base] || 0) + 1;
+            labelCounts[base] = count;
+            return count === 1 ? base : `${base} ${count}`;
+          };
+
           // Base portraits
           for (const s of (pap.sets || [])) {
             for (const img of (s.images || [])) {
               if (!img.url) continue;
               const isDefault = img.id === selected.image_id &&
                 (img.set_id || s.set_id || '') === (selected.set_id || '');
+              const baseLabel = isDefault ? 'Default Look' : 'Portrait';
               photos.push({
-                label: isDefault ? 'Default Look' : 'Portrait',
+                label: nextLabel(baseLabel),
                 outfit: baseOutfitDesc,
                 url: img.url,
                 isDefault,
@@ -125,7 +135,7 @@ export default function VoiceSettingsPanel({
               if (!img.url) continue;
               const isDefault = img.id === selected.image_id &&
                 (img.set_id || '') === (selected.set_id || '');
-              photos.push({ label: oLabel, outfit: oDesc, url: img.url, isDefault });
+              photos.push({ label: nextLabel(oLabel), outfit: oDesc, url: img.url, isDefault });
             }
           }
 

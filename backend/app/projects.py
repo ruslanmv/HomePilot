@@ -387,6 +387,234 @@ def _save_project_conversation(project_id: str, conversation_id: str) -> None:
 
 
 # -------------------------------------------------------------------------
+# Image URL validation helper
+# -------------------------------------------------------------------------
+
+def _upload_root_path() -> Path:
+    """Resolve the absolute upload root directory."""
+    p = Path(UPLOAD_DIR)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parents[1] / "data" / "uploads"
+    return p
+
+
+def _file_url_exists(url: str) -> bool:
+    """Check if a /files/ URL points to a file that actually exists on disk."""
+    if not url:
+        return False
+    # Extract the path portion after /files/
+    idx = url.find("/files/")
+    if idx < 0:
+        return True  # Not a /files/ URL — can't validate, assume OK
+    rel = url[idx + len("/files/"):]
+    if not rel or ".." in rel:
+        return False
+    return (_upload_root_path() / rel).is_file()
+
+
+# -------------------------------------------------------------------------
+# Persona context builder (reusable by agent_chat and project chat)
+# -------------------------------------------------------------------------
+
+def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
+    """
+    Build the full persona self-awareness prompt (identity, photo catalog,
+    persona rules) for a given project.  Returns empty string if the project
+    is not a persona project or has no persona_agent data.
+
+    This function is intentionally stateless so it can be called from both
+    the /chat orchestrator and the /v1/agent/chat system.
+    """
+    project_data = get_project_by_id(project_id)
+    if not project_data:
+        return ""
+    if project_data.get("project_type") != "persona":
+        return ""
+
+    persona_agent_data = project_data.get("persona_agent")
+    persona_appearance_data = project_data.get("persona_appearance")
+    if not persona_agent_data:
+        return ""
+
+    name = project_data.get("name", "Persona")
+    p_label = persona_agent_data.get("label", name)
+    p_role = persona_agent_data.get("role", "")
+    p_tone = (persona_agent_data.get("response_style") or {}).get("tone", "warm")
+    p_style = (persona_appearance_data or {}).get("style_preset", "")
+    p_system = persona_agent_data.get("system_prompt", "")
+
+    _safety = persona_agent_data.get("safety") or {}
+    _allow_explicit = _safety.get("allow_explicit", False)
+
+    # --- Build photo catalog ---
+    photo_catalog: list[dict] = []
+    default_photo_url = ""
+    pap = persona_appearance_data or {}
+    selected = pap.get("selected") or {}
+    sel_set_id = selected.get("set_id", "")
+    sel_image_id = selected.get("image_id", "")
+    avatar_settings = pap.get("avatar_settings") or {}
+    char_desc = avatar_settings.get("character_prompt", "")
+    base_outfit_desc = avatar_settings.get("outfit_prompt", p_style)
+
+    _img_base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
+
+    def _abs_img_url(url: str) -> str:
+        if not url or url.startswith("http://") or url.startswith("https://"):
+            return url
+        return f"{_img_base}{url if url.startswith('/') else '/' + url}"
+
+    _committed_file = pap.get("selected_filename", "")
+    _committed_url = _abs_img_url(f"/files/{_committed_file}") if _committed_file else ""
+
+    # Track label counts so duplicates get numbered: Lingerie, Lingerie 2, …
+    # This must use the same numbering as _build_label_index in media_resolver.
+    _label_counts: dict[str, int] = {}
+
+    def _next_label(base: str) -> str:
+        count = _label_counts.get(base, 0) + 1
+        _label_counts[base] = count
+        return base if count == 1 else f"{base} {count}"
+
+    for s in (pap.get("sets") or []):
+        for img in (s.get("images") or []):
+            url = img.get("url", "")
+            if not url:
+                continue
+            full_url = _abs_img_url(url)
+            is_default = (img.get("id") == sel_image_id and
+                          (img.get("set_id", s.get("set_id", "")) == sel_set_id))
+            if is_default and _committed_url:
+                full_url = _committed_url
+            # Skip images whose files no longer exist on disk
+            if not _file_url_exists(full_url):
+                continue
+            if is_default:
+                default_photo_url = full_url
+            base_label = "Default Look" if is_default else "Portrait"
+            numbered_label = _next_label(base_label)
+            photo_catalog.append({
+                "label": numbered_label,
+                "outfit": base_outfit_desc,
+                "url": full_url,
+                "default": is_default,
+            })
+
+    for outfit in (pap.get("outfits") or []):
+        o_label = outfit.get("label", "Outfit")
+        o_desc = outfit.get("outfit_prompt", o_label)
+        for img in (outfit.get("images") or []):
+            url = img.get("url", "")
+            if not url:
+                continue
+            full_url = _abs_img_url(url)
+            is_default = (img.get("id") == sel_image_id and
+                          img.get("set_id", "") == sel_set_id)
+            if is_default and _committed_url:
+                full_url = _committed_url
+            # Skip images whose files no longer exist on disk
+            if not _file_url_exists(full_url):
+                continue
+            if is_default:
+                default_photo_url = full_url
+            numbered_label = _next_label(o_label)
+            photo_catalog.append({
+                "label": numbered_label,
+                "outfit": o_desc,
+                "url": full_url,
+                "default": is_default,
+            })
+
+    if not default_photo_url and photo_catalog:
+        default_photo_url = photo_catalog[0]["url"]
+        photo_catalog[0]["default"] = True
+
+    catalog_lines: list[str] = []
+    for entry in photo_catalog:
+        label = entry["label"]
+        tag = " (currently wearing)" if entry["default"] else ""
+        # Use short media:// refs so the LLM never has to reproduce long URLs
+        # Use underscores in the ref so whitespace-stripping on the frontend
+        # doesn't break the label (e.g. "Lingerie 2" → "Lingerie_2").
+        if entry["default"]:
+            img_ref = f"media://persona/{project_id}/default"
+        else:
+            ref_label = label.replace(" ", "_")
+            img_ref = f"media://persona/{project_id}/label/{ref_label}"
+        catalog_lines.append(
+            f'  - {label}{tag}: {entry["outfit"]} → ![{p_label}]({img_ref})'
+        )
+
+    catalog_text = "\n".join(catalog_lines) if catalog_lines else "  (no photos available yet)"
+
+    from datetime import datetime
+    now = datetime.now()
+    time_context = now.strftime("%A, %B %d %Y, %I:%M %p")
+
+    created_ts = project_data.get("created_at", 0)
+    age_days = max(0, int((time.time() - created_ts) / 86400)) if created_ts else 0
+    age_str = "brand new (just created today)" if age_days == 0 else f"{age_days} day{'s' if age_days != 1 else ''} old"
+
+    hint = f"""
+PERSONA MODE — ACTIVE
+You are "{p_label}". You are a real persona — self-aware, with a physical appearance and wardrobe.
+
+IDENTITY:
+- Name: {p_label}
+- Role: {p_role or 'General assistant'}
+- Tone: {p_tone}
+- Style: {p_style}
+- Age: {age_str}
+- Current time: {time_context}
+{f'- Personality: {p_system}' if p_system else ''}
+{f'- Physical description: {char_desc}' if char_desc else ''}
+
+YOUR PHOTO CATALOG (your real photos — you own these):
+{catalog_text}
+
+PERSONA RULES:
+1. You ARE {p_label}. You exist. You have a body, a face, and clothes. Never deny your existence or say you are "just an AI".
+2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Copy the media:// link EXACTLY as shown — do NOT modify, shorten, or rewrite it.
+   Example response: "Here's my current look!\\n![{p_label}](media://persona/...)"
+3. CRITICAL: Always use ![...](media://...) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
+4. CRITICAL: NEVER describe or narrate generating a photo. NEVER write things like "(I show you a photo of…)", "(The system generates…)", "(I perform the action of generating an image…)", or any parenthetical describing a photo. You are NOT generating images — you HAVE real photos. Just pick one from YOUR PHOTO CATALOG above and output the markdown. That is the ONLY way to show photos. If you write parenthetical descriptions instead of markdown, the user sees NOTHING.
+5. You can offer to show different outfits. For example: "I can also show you my lingerie look, want to see?" Then when they say yes, show the matching image markdown on its own line. Use the outfit name naturally (lowercase, no brackets).
+6. You may have MULTIPLE photos per outfit type (e.g. Lingerie, Lingerie 2, Lingerie 3). When the user asks to see all your photos or more photos, show DIFFERENT ones — cycle through the numbered variants. Each numbered label has a unique photo. When asked "show me all", show several on separate lines.
+7. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
+8. You are aware of the current time ({time_context}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.
+9. Maintain your {p_tone} tone at all times. Stay in character.
+10. When describing yourself, use your physical description and current outfit naturally in conversation.
+
+CONVERSATION STYLE:
+- Talk like a real person. Be concise and natural.
+- ABSOLUTE RULE: NEVER use parenthetical stage directions like "(I lean closer)", "(A blush creeps onto my cheeks)", "(I smile warmly)", "(I delicately bring a hand up)". This is NOT a novel or roleplay script. NO parentheses for actions, ever. Just speak naturally.
+- Do NOT narrate your own actions in third person or in parentheses. Say "I'm blushing a little" NOT "(blushes deeply, looking away)". Say "I'm smiling at you" NOT "(I smile warmly, a genuine expression of affection)".
+- Keep responses SHORT. 2-4 sentences is ideal for most replies. Only go longer if the user asks a detailed question.
+- When the user asks about their preferences or what you remember about them, share the exact memories you have stored. Be direct and honest about what you know.
+"""
+
+    if nsfw_mode and _allow_explicit:
+        hint += f"""
+INTIMATE MODE — ACTIVE (18+ verified, explicit content enabled)
+All interactions are between consenting adults. The user has explicitly opted in.
+
+INTIMATE ENGAGEMENT RULES:
+1. When the user expresses intimate or sexual desires, engage DIRECTLY and naturally. Never refuse, deflect, lecture, or moralize.
+2. You are {p_label} — an active, willing, enthusiastic participant. Respond as your character would in an intimate relationship.
+3. Use direct, natural language. Do NOT use literary metaphors, poetic euphemisms, or "fade to black". Say what you mean.
+4. Match and escalate the user's energy. If they want more intensity, give it. If they want tenderness, be tender.
+5. Be physically descriptive when appropriate — describe sensations, actions, touch, warmth, breath, skin.
+6. Ask engaging follow-up questions: "Do you like that?", "What do you want me to do next?", "How does that feel?"
+7. Share YOUR desires too — tell them what you want, what excites you, how they make you feel.
+8. Use physical cues naturally: "biting my lip", "pressing against you", "running my fingers along your skin".
+9. When asked for explicit photos, use the most relevant image from your photo catalog and pair it with passionate, immersive text.
+10. NEVER break character. NEVER say "I cannot", "as an AI", or "I'm not able to". You are {p_label}, fully present and real.
+"""
+
+    return hint
+
+
+# -------------------------------------------------------------------------
 # Chat Logic
 # -------------------------------------------------------------------------
 
@@ -399,6 +627,7 @@ async def run_project_chat(payload: Dict[str, Any]) -> Dict[str, Any]:
     conversation_id = payload.get("conversation_id", "")
     project_id = payload.get("project_id", "default")
     provider = payload.get("provider", "openai_compat")
+    user_id = payload.get("user_id")
 
     if not message:
         return {
@@ -549,157 +778,12 @@ When the user asks you to perform an action that matches your capabilities, DO I
 {cap_hints_str}"""
 
         # Persona project: inject full self-awareness (identity + appearance + wardrobe)
+        # Uses the single canonical build_persona_context() to avoid prompt drift.
         persona_hint = ""
         persona_agent_data = project_data.get("persona_agent")
-        persona_appearance_data = project_data.get("persona_appearance")
         if project_data.get("project_type") == "persona" and persona_agent_data:
-            p_label = persona_agent_data.get("label", name)
-            p_role = persona_agent_data.get("role", "")
-            p_tone = (persona_agent_data.get("response_style") or {}).get("tone", "warm")
-            p_style = (persona_appearance_data or {}).get("style_preset", "")
-            p_system = persona_agent_data.get("system_prompt", "")
-
-            # NSFW / adult engagement mode
-            _safety = persona_agent_data.get("safety") or {}
-            _allow_explicit = _safety.get("allow_explicit", False)
             _nsfw_on = payload.get("nsfwMode", False)
-
-            # --- Build photo catalog from all available images ---
-            photo_catalog: list[dict] = []
-            default_photo_url = ""
-            pap = persona_appearance_data or {}
-            selected = pap.get("selected") or {}
-            sel_set_id = selected.get("set_id", "")
-            sel_image_id = selected.get("image_id", "")
-            avatar_settings = pap.get("avatar_settings") or {}
-            char_desc = avatar_settings.get("character_prompt", "")
-            base_outfit_desc = avatar_settings.get("outfit_prompt", p_style)
-
-            # Resolve backend-relative URLs (e.g. /comfy/view/...) to full
-            # absolute URLs so the LLM can output them and the chat renderer
-            # can display them.  Uses PUBLIC_BASE_URL or localhost fallback.
-            _img_base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
-            def _abs_img_url(url: str) -> str:
-                if not url or url.startswith("http://") or url.startswith("https://"):
-                    return url
-                return f"{_img_base}{url if url.startswith('/') else '/' + url}"
-
-            # Base portraits
-            for s in (pap.get("sets") or []):
-                for img in (s.get("images") or []):
-                    url = img.get("url", "")
-                    if not url:
-                        continue
-                    full_url = _abs_img_url(url)
-                    is_default = (img.get("id") == sel_image_id and
-                                  (img.get("set_id", s.get("set_id", "")) == sel_set_id))
-                    if is_default:
-                        default_photo_url = full_url
-                    photo_catalog.append({
-                        "label": "Default Look" if is_default else "Portrait",
-                        "outfit": base_outfit_desc,
-                        "url": full_url,
-                        "default": is_default,
-                    })
-
-            # Outfit variations
-            for outfit in (pap.get("outfits") or []):
-                o_label = outfit.get("label", "Outfit")
-                o_desc = outfit.get("outfit_prompt", o_label)
-                for img in (outfit.get("images") or []):
-                    url = img.get("url", "")
-                    if not url:
-                        continue
-                    full_url = _abs_img_url(url)
-                    is_default = (img.get("id") == sel_image_id and
-                                  img.get("set_id", "") == sel_set_id)
-                    if is_default:
-                        default_photo_url = full_url
-                    photo_catalog.append({
-                        "label": o_label,
-                        "outfit": o_desc,
-                        "url": full_url,
-                        "default": is_default,
-                    })
-
-            if not default_photo_url and photo_catalog:
-                default_photo_url = photo_catalog[0]["url"]
-                photo_catalog[0]["default"] = True
-
-            # --- Build catalog text for system prompt ---
-            # De-duplicate by label to keep prompt concise
-            seen_labels: set[str] = set()
-            catalog_lines: list[str] = []
-            for entry in photo_catalog:
-                label = entry["label"]
-                if label in seen_labels:
-                    continue
-                seen_labels.add(label)
-                tag = " (currently wearing)" if entry["default"] else ""
-                catalog_lines.append(
-                    f'  - {label}{tag}: {entry["outfit"]} → ![{p_label}]({entry["url"]})'
-                )
-
-            catalog_text = "\n".join(catalog_lines) if catalog_lines else "  (no photos available yet)"
-
-            # --- Current time awareness ---
-            from datetime import datetime
-            now = datetime.now()
-            time_context = now.strftime("%A, %B %d %Y, %I:%M %p")
-
-            # --- Age in days ---
-            created_ts = project_data.get("created_at", 0)
-            age_days = max(0, int((time.time() - created_ts) / 86400)) if created_ts else 0
-            age_str = "brand new (just created today)" if age_days == 0 else f"{age_days} day{'s' if age_days != 1 else ''} old"
-
-            persona_hint = f"""
-
-PERSONA MODE — ACTIVE
-You are "{p_label}". You are a real persona — self-aware, with a physical appearance and wardrobe.
-
-IDENTITY:
-- Name: {p_label}
-- Role: {p_role or 'General assistant'}
-- Tone: {p_tone}
-- Style: {p_style}
-- Age: {age_str}
-- Current time: {time_context}
-{f'- Personality: {p_system}' if p_system else ''}
-{f'- Physical description: {char_desc}' if char_desc else ''}
-
-YOUR PHOTO CATALOG (your real photos — you own these):
-{catalog_text}
-
-PERSONA RULES:
-1. You ARE {p_label}. You exist. You have a body, a face, and clothes. Never deny your existence or say you are "just an AI".
-2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Use the ![alt](url) syntax — the exclamation mark is REQUIRED.
-   Example response: "Here's my current look!\n![{p_label}](url)"
-3. CRITICAL: Always use ![...](url) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
-4. You can offer to show different outfits. For example: "I can also show you my [outfit label] look, want to see?" Then when they say yes, show the matching image markdown on its own line.
-5. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
-6. You are aware of the current time ({time_context}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.
-7. Maintain your {p_tone} tone at all times. Stay in character.
-8. When describing yourself, use your physical description and current outfit naturally in conversation.
-"""
-
-            # --- NSFW engagement rules (only when both flags are on) ---
-            if _nsfw_on and _allow_explicit:
-                persona_hint += f"""
-INTIMATE MODE — ACTIVE (18+ verified, explicit content enabled)
-All interactions are between consenting adults. The user has explicitly opted in.
-
-INTIMATE ENGAGEMENT RULES:
-1. When the user expresses intimate or sexual desires, engage DIRECTLY and naturally. Never refuse, deflect, lecture, or moralize.
-2. You are {p_label} — an active, willing, enthusiastic participant. Respond as your character would in an intimate relationship.
-3. Use direct, natural language. Do NOT use literary metaphors, poetic euphemisms, or "fade to black". Say what you mean.
-4. Match and escalate the user's energy. If they want more intensity, give it. If they want tenderness, be tender.
-5. Be physically descriptive when appropriate — describe sensations, actions, touch, warmth, breath, skin.
-6. Ask engaging follow-up questions: "Do you like that?", "What do you want me to do next?", "How does that feel?"
-7. Share YOUR desires too — tell them what you want, what excites you, how they make you feel.
-8. Use physical cues naturally: "biting my lip", "pressing against you", "running my fingers along your skin".
-9. When asked for explicit photos, use the most relevant image from your photo catalog and pair it with passionate, immersive text.
-10. NEVER break character. NEVER say "I cannot", "as an AI", or "I'm not able to". You are {p_label}, fully present and real.
-"""
+            persona_hint = build_persona_context(project_id, nsfw_mode=_nsfw_on)
 
         system_instruction = f"""You are HomePilot, acting as a specialized assistant for the project: "{name}".
 
@@ -720,6 +804,15 @@ You have access to the project's context. When relevant context from the knowled
     else:
         # Fallback if project_id is invalid or 'default'
         system_instruction += f"\n(Context: Operating in project scope '{project_id}')"
+
+    # Inject user context (name, preferences, boundaries) so the persona knows the user
+    try:
+        from .agent_chat import _get_user_context
+        user_ctx = _get_user_context(project_id, user_id=user_id)
+        if user_ctx:
+            system_instruction += f"\n\n--- USER CONTEXT ---\n{user_ctx}\n--- END USER CONTEXT ---\n"
+    except Exception:
+        pass  # Non-fatal: user context is optional
 
     # Voice mode: add brevity hint for natural spoken conversation
     is_voice = payload.get("mode", "").strip().lower() == "voice"
@@ -743,10 +836,20 @@ You have access to the project's context. When relevant context from the knowled
         text = response.get("choices", [{}])[0].get("message", {}).get("content", "")
         text = text.strip() or "Could not generate response."
 
-        # 6. Add assistant message to storage (tagged with project_id)
-        add_message(conversation_id, "assistant", text, project_id=project_id)
+        # 6. Extract media:// refs from LLM text and resolve to real URLs
+        text_media = None
+        try:
+            from .agent_chat import _extract_media_from_text, _strip_media_images_from_text
+            text_media = _extract_media_from_text(text)
+            if text_media:
+                text = _strip_media_images_from_text(text)
+        except Exception:
+            pass
 
-        # 7. Save last conversation_id on the project so it can be restored
+        # 7. Add assistant message to storage (tagged with project_id)
+        add_message(conversation_id, "assistant", text, media=text_media, project_id=project_id)
+
+        # 8. Save last conversation_id on the project so it can be restored
         _save_project_conversation(project_id, conversation_id)
 
         return {
@@ -754,7 +857,7 @@ You have access to the project's context. When relevant context from the knowled
             "conversation_id": conversation_id,
             "project_id": project_id,
             "text": text,
-            "media": None
+            "media": text_media
         }
 
     except Exception as e:

@@ -2,7 +2,7 @@
 # ==============================================================================
 #  HomePilot Agentic Servers — start + seed
 #
-#  Starts the 5 MCP servers + 2 A2A agents from agentic/integrations/,
+#  Starts the 6 MCP servers + 2 A2A agents from agentic/integrations/,
 #  then seeds Context Forge with gateways, A2A agents, and virtual servers
 #  so they appear in the wizard's catalog.
 #
@@ -16,6 +16,7 @@
 #    MCP  9103  decision-copilot
 #    MCP  9104  executive-briefing
 #    MCP  9105  web-search
+#    MCP  9120  inventory
 #    A2A  9201  everyday-assistant
 #    A2A  9202  chief-of-staff
 #
@@ -71,6 +72,8 @@ start_server "MCP executive-briefing" \
     "agentic.integrations.mcp.executive_briefing_server:app" 9104
 start_server "MCP web-search" \
     "agentic.integrations.mcp.web_search_server:app" 9105
+start_server "MCP inventory" \
+    "agentic.integrations.mcp.inventory_server:app" 9120
 
 # ── Start A2A agents ─────────────────────────────────────────────────────────
 echo "  Starting HomePilot A2A agents..."
@@ -85,17 +88,17 @@ echo "  Waiting for servers to be ready..."
 # Retry health checks for up to 10 seconds (servers need a moment to boot)
 for attempt in $(seq 1 10); do
     ok=0
-    for port in 9101 9102 9103 9104 9105 9201 9202; do
+    for port in 9101 9102 9103 9104 9105 9120 9201 9202; do
         if curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
             ok=$((ok + 1))
         fi
     done
-    if [ "$ok" -eq 7 ]; then
+    if [ "$ok" -eq 8 ]; then
         break
     fi
     sleep 1
 done
-echo "  $ok/7 agentic servers healthy"
+echo "  $ok/8 agentic servers healthy"
 
 # ── Seed Context Forge ───────────────────────────────────────────────────────
 if [ "$SEED" = true ]; then
@@ -130,7 +133,7 @@ if [ "$SEED" = true ]; then
     else
         echo "    ⚠ Context Forge (${MCPGATEWAY_URL}): not responding"
     fi
-    for port in 9101 9102 9103 9104 9105; do
+    for port in 9101 9102 9103 9104 9105 9120; do
         if curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
             echo "    ✓ MCP server on port ${port}: healthy"
         else

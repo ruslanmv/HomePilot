@@ -125,6 +125,51 @@ export async function createPersonaProject(params: {
  * Uses the stored character_prompt + a new outfit_prompt to generate
  * images that maintain the same character appearance.
  */
+/**
+ * Commit newly generated images to durable project storage immediately.
+ *
+ * Called right after generation so photos appear in inventory and chat
+ * without waiting for Save.  Returns updated image list with /files/ URLs.
+ */
+export async function commitGeneratedImages(params: {
+  backendUrl: string
+  apiKey?: string
+  projectId: string
+  kind: 'set' | 'outfit'
+  images: Array<{ url: string; id: string; set_id: string }>
+  outfitId?: string
+  outfitLabel?: string
+  outfitPrompt?: string
+  generationSettings?: Record<string, unknown>
+}): Promise<{
+  ok: boolean
+  committed: Array<{ id: string; url: string; set_id: string }>
+  project: Record<string, unknown>
+}> {
+  const body: Record<string, unknown> = {
+    kind: params.kind,
+    images: params.images,
+  }
+  if (params.kind === 'outfit') {
+    if (params.outfitId) body.outfit_id = params.outfitId
+    if (params.outfitLabel) body.outfit_label = params.outfitLabel
+    if (params.outfitPrompt) body.outfit_prompt = params.outfitPrompt
+    if (params.generationSettings) body.generation_settings = params.generationSettings
+  }
+
+  const res = await fetch(
+    `${params.backendUrl}/projects/${params.projectId}/persona/appearance/commit_generated`,
+    { method: 'POST', headers: authHeaders(params.apiKey), body: JSON.stringify(body) },
+  )
+  if (!res.ok) throw new Error(`commit_generated failed: ${res.status}`)
+  return res.json()
+}
+
+/**
+ * Generate an outfit variation for an existing persona.
+ * Uses the stored character_prompt + a new outfit_prompt to generate
+ * images that maintain the same character appearance.
+ */
 export async function generateOutfitImages(params: {
   backendUrl: string
   apiKey?: string
