@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { PolicyBadge } from './PolicyBadge';
+import { resolveFileUrl } from '../../resolveFileUrl';
 
 interface GenerationSettings {
   model: string;
@@ -155,7 +156,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
             <p>Generating...</p>
           </div>
         ) : generatedImage ? (
-          <img src={generatedImage} alt="Generated" className="generated-image" />
+          <img src={resolveFileUrl(generatedImage)} alt="Generated" className="generated-image" />
         ) : (
           <div className="empty-state">
             <span className="empty-icon">&#127912;</span>

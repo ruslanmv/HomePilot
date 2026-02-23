@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .llm import chat as llm_chat
+from .llm import chat as llm_chat, strip_think_tags, _is_reasoning_text, recover_from_reasoning
 from .multimodal import analyze_image
 from .storage import add_message, get_messages, get_recent
 from .config import UPLOAD_DIR
@@ -32,6 +32,9 @@ DEFAULT_MAX_TOOL_CALLS = 4
 DEFAULT_HISTORY_LIMIT = 24
 
 _JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
+# Match media:// refs with or without the "label/" prefix.
+# LLMs sometimes drop the prefix: media://persona/<id>/Lingerie instead of .../label/Lingerie
+_MEDIA_REF_RE = re.compile(r"media://persona/[a-f0-9\-]+/(?:default\b|label/[^)\"]+|[^)/\"]+)")
 
 # --- Tool registry ---
 # Maps tool_name -> (description_for_catalog, handler_coroutine_factory)
@@ -70,6 +73,12 @@ _register_tool(
     "image.index(image_url): indexes an image into the project knowledge base for future search.\n"
     "  Extracts visual description + text via vision analysis and stores it.\n"
     "  Use this when a user uploads an image and wants it searchable later.",
+)
+_register_tool(
+    "image.generate",
+    "image.generate(prompt): generates an image from a text description.\n"
+    "  prompt: detailed visual description of the image to create.\n"
+    "  Use this when the user asks to generate, create, draw, imagine, or make a picture/photo/image.",
 )
 _register_tool(
     "memory.store",
@@ -131,6 +140,7 @@ def _build_agent_system_prompt(
     knowledge_hint: str = "",
     user_context: str = "",
     session_context: str = "",
+    persona_context: str = "",
 ) -> str:
     """
     System prompt instructing the LLM to use a minimal JSON protocol.
@@ -139,7 +149,13 @@ def _build_agent_system_prompt(
     Accepts optional context blocks that are injected into the prompt
     when available (additive, never destructive).
     """
-    parts = [
+    parts = []
+
+    # Persona identity comes first — the agent must know who it is
+    if persona_context:
+        parts.append(persona_context)
+
+    parts += [
         "You are an agent that can optionally call tools.\n",
         "You MUST reply with STRICT JSON ONLY (no markdown, no extra text).\n",
         "Allowed response shapes:\n"
@@ -155,6 +171,7 @@ def _build_agent_system_prompt(
         "- Use memory.recall when you need to remember user preferences, facts, or boundaries.\n"
         "- Use memory.store when you learn an important fact about the user that should be remembered.\n"
         "- Use web.search when the user asks about current events or needs up-to-date information.\n"
+        "- Use image.generate when the user asks to generate, create, draw, imagine, or make a picture/photo/image.\n"
         "- Keep tool calls minimal.\n",
     ]
 
@@ -175,6 +192,85 @@ def _build_agent_system_prompt(
         parts.append(f"\n{knowledge_hint}\n")
 
     return "\n".join(parts)
+
+
+def _resolve_media_ref(ref: str) -> Optional[str]:
+    """Resolve a media://persona/<id>/... ref to a real image URL."""
+    if not ref.startswith("media://"):
+        return None
+    try:
+        from .media_resolver import _build_label_index, _lookup_label
+        parts = ref.replace("media://", "").split("/")
+        if len(parts) < 3:
+            return None
+        kind, project_id, action = parts[0], parts[1], parts[2]
+        if kind != "persona":
+            return None
+        idx = _build_label_index(project_id)
+        if action == "default":
+            return idx.get("default")
+        if action == "label" and len(parts) >= 4:
+            label = "/".join(parts[3:]).strip()
+        else:
+            # LLMs sometimes drop "label/" prefix:
+            # media://persona/<id>/Lingerie instead of .../label/Lingerie
+            label = "/".join(parts[2:]).strip()
+        return _lookup_label(idx, label)
+    except Exception:
+        pass
+    return None
+
+
+def _extract_media_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Extract media:// refs from LLM text and resolve them to real image URLs.
+    Returns a media dict like {"images": [url1, ...]} or None.
+    Deduplicates URLs — LLMs sometimes repeat the same image ref multiple times.
+    """
+    refs = _MEDIA_REF_RE.findall(text)
+    if not refs:
+        return None
+    seen: set[str] = set()
+    urls: list[str] = []
+    for ref in refs:
+        url = _resolve_media_ref(ref)
+        if url and url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return {"images": urls} if urls else None
+
+
+# Regex to match markdown image tags containing media:// refs
+_MD_MEDIA_IMG_RE = re.compile(r'!\[[^\]]*\]\(media://[^)]+\)\s*')
+
+
+def _strip_media_images_from_text(text: str) -> str:
+    """
+    Remove markdown image tags that contain media:// refs from the text.
+    This prevents double-rendering: once via MessageMarkdown and once via
+    the media gallery.
+    """
+    return _MD_MEDIA_IMG_RE.sub('', text).strip()
+
+
+def _build_persona_photo_index(project_id: str) -> Dict[str, str]:
+    """
+    Build a mapping from lowercase label -> media:// ref for deterministic
+    photo shortcut resolution. Also includes 'default' key.
+    """
+    try:
+        from .media_resolver import _build_label_index
+        idx = _build_label_index(project_id)
+        result: Dict[str, str] = {}
+        for key, url in idx.items():
+            if key == "default":
+                result["default"] = url
+            elif key.startswith("label:"):
+                label = key[len("label:"):]
+                result[label.lower()] = url
+        return result
+    except Exception:
+        return {}
 
 
 def _find_last_image_url(conversation_id: str) -> Optional[str]:
@@ -256,17 +352,22 @@ async def _run_knowledge_search(
     query: str,
     project_id: Optional[str],
     n_results: int = 3,
+    allowed_item_ids: Optional[List[str]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """
     Search the project knowledge base (ChromaDB RAG).
-    Wraps existing vectordb.query_project_knowledge().
+
+    When allowed_item_ids is provided, retrieval is scoped to only those
+    project_items (persona-scoped Chat-with-Docs). When None/empty, behaves
+    like the standard project-wide search.
+
     Returns (formatted_results_text, meta).
     """
     if not project_id:
         return "No project context available. Knowledge search requires a project.", {"error": "no_project"}
 
     try:
-        from .vectordb import query_project_knowledge, get_project_document_count, CHROMADB_AVAILABLE
+        from .vectordb import query_project_knowledge, query_project_knowledge_filtered, get_project_document_count, CHROMADB_AVAILABLE
     except ImportError:
         return "Knowledge base is not available (ChromaDB not installed).", {"error": "chromadb_missing"}
 
@@ -282,7 +383,15 @@ async def _run_knowledge_search(
                 "doc_count": 0,
             }
 
-        results = query_project_knowledge(project_id, query, n_results=n_results)
+        # Use persona-scoped retrieval when allowed_item_ids is provided
+        if allowed_item_ids:
+            results = query_project_knowledge_filtered(
+                project_id, query, n_results=n_results,
+                allowed_item_ids=allowed_item_ids,
+            )
+        else:
+            results = query_project_knowledge(project_id, query, n_results=n_results)
+
         if not results:
             return f"No relevant results found for: {query}", {"doc_count": doc_count, "results_found": 0}
 
@@ -466,6 +575,68 @@ async def _run_memory_store(
         return f"Error storing memory: {e}", {"error": str(e)}
 
 
+async def _run_image_generate(
+    *,
+    prompt: str,
+    conversation_id: Optional[str],
+    project_id: Optional[str],
+    nsfw_mode: bool,
+    user_id: Optional[str],
+) -> Tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+    """
+    Generate an image by routing through the orchestrator's imagine pipeline.
+    Returns (description_text, meta, media_dict).
+    """
+    if not prompt:
+        return "Please describe what image you'd like me to generate.", {"error": "no_prompt"}, None
+
+    try:
+        from .orchestrator import orchestrate
+    except ImportError:
+        return "Image generation module is not available.", {"error": "orchestrator_missing"}, None
+
+    try:
+        # Use a throwaway conversation_id so the orchestrator doesn't
+        # double-store messages in the agent's conversation history.
+        # But pass the real cid as project context so images are linked
+        # to the right conversation for persistence.
+        result = await orchestrate(
+            user_text=prompt,
+            conversation_id=None,
+            mode="imagine",
+            nsfw_mode=nsfw_mode,
+            user_id=user_id,
+        )
+        # Re-link persisted images to the real conversation
+        if conversation_id and result.get("media") and result["media"].get("images"):
+            try:
+                from .files import _db
+                con = _db()
+                cur = con.cursor()
+                throwaway_cid = result.get("conversation_id", "")
+                if throwaway_cid and throwaway_cid != conversation_id:
+                    cur.execute(
+                        "UPDATE file_assets SET conversation_id = ? WHERE conversation_id = ?",
+                        (conversation_id, throwaway_cid),
+                    )
+                    con.commit()
+                con.close()
+            except Exception:
+                pass
+        media = result.get("media")
+        text = result.get("text", "")
+
+        if media and media.get("images"):
+            urls = media["images"]
+            text = text or f"Generated {len(urls)} image(s) for: {prompt[:100]}"
+            return text, {"prompt": prompt, "images": urls}, media
+        else:
+            return text or "Image generation completed but no images were returned.", {"prompt": prompt}, None
+
+    except Exception as e:
+        return f"Image generation failed: {e}", {"error": str(e)}, None
+
+
 # ---------------------------------------------------------------------------
 # Memory V2 context builder (injected into system prompt)
 # ---------------------------------------------------------------------------
@@ -490,37 +661,79 @@ def _get_memory_context(project_id: Optional[str], query: str) -> str:
 
 def _get_knowledge_hint(project_id: Optional[str]) -> str:
     """
-    Build a short hint about available knowledge base docs.
+    Build a short hint about available knowledge base docs and project items.
     Helps the agent decide whether to call knowledge.search.
     """
     if not project_id:
         return ""
+    parts: list[str] = []
+
+    # RAG document chunks
     try:
         from .vectordb import get_project_document_count, CHROMADB_AVAILABLE
-        if not CHROMADB_AVAILABLE:
-            return ""
-        count = get_project_document_count(project_id)
-        if count > 0:
-            return f"[This project has {count} document chunks in its knowledge base. Use knowledge.search to find relevant information.]"
+        if CHROMADB_AVAILABLE:
+            count = get_project_document_count(project_id)
+            if count > 0:
+                parts.append(f"[This project has {count} document chunks in its knowledge base. Use knowledge.search to find relevant information.]")
     except Exception:
         pass
-    return ""
+
+    # Project items catalog (files, photos, items attached by the user)
+    try:
+        from .project_files import build_item_context
+        item_ctx = build_item_context(project_id)
+        if item_ctx:
+            parts.append(item_ctx)
+    except Exception:
+        pass
+
+    return "\n".join(parts)
 
 
-def _get_user_context(project_id: Optional[str]) -> str:
+def _get_user_context(project_id: Optional[str], user_id: Optional[str] = None) -> str:
     """
     Build user context (profile + preferences) for agent system prompt.
-    Uses existing user_context.build_user_context_for_ai().
+    Uses per-user SQLite profile when user_id is available (Bearer auth),
+    falls back to legacy profile.json for single-user/API-key mode.
     Returns empty string if unavailable.
     """
     if not project_id:
         return ""
     try:
         from .user_context import build_user_context_for_ai
-        from .profile import read_profile
-        from .user_memory import _read as read_memory
-        profile = read_profile()
-        memory = read_memory()
+
+        profile: dict = {}
+        memory: dict = {}
+
+        if user_id:
+            # Per-user: read from SQLite user_profiles / user_memory_items tables
+            try:
+                from .user_profile_store import _get_user_profile, _get_db_path
+                import sqlite3, json
+                profile = _get_user_profile(user_id)
+                # Read per-user memory items
+                path = _get_db_path()
+                con = sqlite3.connect(path)
+                con.row_factory = sqlite3.Row
+                cur = con.cursor()
+                cur.execute(
+                    "SELECT * FROM user_memory_items WHERE user_id = ? ORDER BY pinned DESC, importance DESC",
+                    (user_id,),
+                )
+                rows = cur.fetchall()
+                con.close()
+                memory = {"items": [dict(r) for r in rows]}
+            except Exception:
+                # Table may not exist yet; fall through to legacy
+                pass
+
+        if not profile:
+            # Legacy: read global profile.json / user_memory.json
+            from .profile import read_profile
+            from .user_memory import _read as read_memory
+            profile = read_profile()
+            memory = read_memory()
+
         if not profile.get("personalization_enabled", True):
             return ""
         ctx = build_user_context_for_ai(profile, memory, nsfw_mode=False)
@@ -576,6 +789,7 @@ async def _dispatch_tool(
     vision_base_url: Optional[str],
     vision_model: Optional[str],
     nsfw_mode: bool,
+    user_id: Optional[str] = None,
 ) -> Tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
     """
     Dispatch a tool call to the appropriate handler.
@@ -596,24 +810,42 @@ async def _dispatch_tool(
                 None,
             )
 
-        text, full = await _run_vision_analyze(
-            image_url=image_url,
-            question=question,
-            mode=mode,
-            provider=vision_provider,
-            base_url=vision_base_url,
-            model=vision_model,
-            nsfw_mode=nsfw_mode,
-        )
+        try:
+            text, full = await _run_vision_analyze(
+                image_url=image_url,
+                question=question,
+                mode=mode,
+                provider=vision_provider,
+                base_url=vision_base_url,
+                model=vision_model,
+                nsfw_mode=nsfw_mode,
+            )
+        except FileNotFoundError:
+            return (
+                "Could not load the image — the file may no longer exist. Please upload it again.",
+                {"error": "image_load_failed", "image_url": image_url},
+                None,
+            )
         return text, {"image_url": image_url, "mode": mode}, {"images": [image_url]}
 
     elif tool == "knowledge.search":
         query = (args.get("query") or "").strip() or user_text
         n_results = int(args.get("n_results", 3))
+        # Persona-scoped retrieval: only search attached docs if any
+        _allowed_ids: Optional[List[str]] = None
+        if project_id:
+            try:
+                from .persona_attachments import get_allowed_document_item_ids_for_chat
+                _ids = get_allowed_document_item_ids_for_chat(project_id)
+                if _ids:
+                    _allowed_ids = _ids
+            except Exception:
+                pass
         text, meta = await _run_knowledge_search(
             query=query,
             project_id=project_id,
             n_results=n_results,
+            allowed_item_ids=_allowed_ids,
         )
         return text, meta, None
 
@@ -651,6 +883,17 @@ async def _dispatch_tool(
             nsfw_mode=nsfw_mode,
         )
         return text, meta, {"images": [image_url]}
+
+    elif tool == "image.generate":
+        prompt = (args.get("prompt") or "").strip() or user_text
+        text, meta, media = await _run_image_generate(
+            prompt=prompt,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            nsfw_mode=nsfw_mode,
+            user_id=user_id,
+        )
+        return text, meta, media
 
     elif tool == "memory.store":
         key = (args.get("key") or "").strip()
@@ -691,6 +934,10 @@ async def agent_chat(
     # agent controls
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS,
     history_limit: int = DEFAULT_HISTORY_LIMIT,
+    # per-user isolation
+    user_id: Optional[str] = None,
+    # explicit image URL from frontend (takes priority over conversation history)
+    image_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Topology 3: Agent-Controlled tool use.
@@ -700,16 +947,119 @@ async def agent_chat(
     cid = conversation_id or str(uuid.uuid4())
     text_in = (user_text or "").strip()
 
-    # Persist the user message (same as existing behavior)
+    # Persist the user message (include media when an image URL was provided)
+    _user_media = {"images": [image_url]} if image_url else None
     if text_in:
-        add_message(cid, "user", text_in, media=None, project_id=project_id)
+        add_message(cid, "user", text_in, media=_user_media, project_id=project_id)
+
+    # Deterministic persona photo shortcut: detect photo requests and return
+    # the matching image immediately without an LLM call.  Handles both default
+    # photo requests ("show me your photo") and outfit-specific requests
+    # ("show me your lingerie look", "yes please" after an offer, etc.).
+    if text_in and project_id:
+        _lower = text_in.lower().strip()
+        _default_triggers = [
+            "show me your photo", "show me your picture", "show your photo",
+            "show your picture", "your photo", "your picture",
+            "what do you look like", "how do you look", "show me yourself",
+            "let me see you", "show me your photos",
+        ]
+        _outfit_triggers = [
+            "show me your", "show your", "show me the",
+            "let me see your", "i want to see your",
+        ]
+        # "yes" / "yes please" / "sure" after the LLM offered to show an outfit
+        _confirm_triggers = [
+            "yes", "yes please", "sure", "yeah", "yep", "ok", "okay",
+            "go ahead", "show me", "please", "absolutely", "of course",
+            "do it", "let's see", "i'd love to", "yes show me",
+        ]
+        try:
+            from .projects import get_project_by_id
+            proj = get_project_by_id(project_id)
+            if proj and proj.get("project_type") == "persona":
+                photo_idx = _build_persona_photo_index(project_id)
+                pa = proj.get("persona_agent") or {}
+                p_label = pa.get("label", "")
+
+                matched_url: Optional[str] = None
+                matched_outfit_label: Optional[str] = None
+
+                # 1) Default photo triggers
+                if any(t in _lower for t in _default_triggers):
+                    matched_url = photo_idx.get("default")
+                    matched_outfit_label = "Default Look"
+
+                # 2) Outfit-specific triggers: "show me your lingerie"
+                if not matched_url:
+                    for trigger in _outfit_triggers:
+                        if trigger in _lower:
+                            # Extract the part after the trigger
+                            after = _lower.split(trigger, 1)[1].strip()
+                            # Remove trailing words like "look", "outfit", "photo", "style"
+                            for suffix in ["look", "outfit", "photo", "picture", "style", "please"]:
+                                after = after.replace(suffix, "").strip()
+                            if after:
+                                # Match against known labels
+                                for label_key, url in photo_idx.items():
+                                    if label_key == "default":
+                                        continue
+                                    if label_key in after or after in label_key:
+                                        matched_url = url
+                                        matched_outfit_label = label_key.title()
+                                        break
+
+                # 3) Confirmation triggers: check last assistant message for offered label
+                if not matched_url and _lower in _confirm_triggers:
+                    try:
+                        history = get_recent(cid, limit=4)
+                        for role, content in reversed(history):
+                            if role == "assistant" and content:
+                                content_lower = content.lower()
+                                # First try [Label] pattern (legacy format)
+                                bracket_match = re.findall(r'\[([^\]]+)\]', content)
+                                for offered_label in bracket_match:
+                                    ol = offered_label.lower().strip()
+                                    if ol in photo_idx:
+                                        matched_url = photo_idx[ol]
+                                        matched_outfit_label = offered_label
+                                        break
+                                # Fallback: check if any known label appears in the text
+                                if not matched_url:
+                                    for label_key, label_url in photo_idx.items():
+                                        if label_key in content_lower and label_key != "default":
+                                            matched_url = label_url
+                                            matched_outfit_label = label_key.title()
+                                            break
+                                if matched_url:
+                                    break
+                    except Exception:
+                        pass
+
+                if matched_url:
+                    if matched_outfit_label and matched_outfit_label.lower() != "default look":
+                        reply = f"Here's my {matched_outfit_label} look! 😘"
+                    elif p_label:
+                        reply = f"Here I am! 😊"
+                    else:
+                        reply = "Here's my current photo."
+                    media = {"images": [matched_url]}
+                    add_message(cid, "assistant", reply, media=media, project_id=project_id)
+                    return {
+                        "conversation_id": cid,
+                        "text": reply,
+                        "media": media,
+                        "agent": {"tool_calls_used": 0, "tools_invoked": []},
+                    }
+        except Exception:
+            pass  # Fall through to LLM-based handling
 
     # Ingest user text into Memory V2 (additive, non-blocking)
     if text_in and project_id:
         try:
             from .memory_v2 import get_memory_v2, ensure_v2_columns
             ensure_v2_columns()
-            get_memory_v2().ingest_user_text(project_id, text_in)
+            get_memory_v2().ingest_user_text(project_id, text_in, user_id=user_id)
         except Exception:
             pass  # Non-fatal: Memory V2 is optional
 
@@ -723,8 +1073,17 @@ async def agent_chat(
     # Build enriched system prompt with all context layers
     memory_ctx = _get_memory_context(project_id, text_in)
     knowledge_hint = _get_knowledge_hint(project_id)
-    user_ctx = _get_user_context(project_id)
+    user_ctx = _get_user_context(project_id, user_id=user_id)
     session_ctx = _get_session_context(project_id)
+
+    # Build persona self-awareness context (identity, photo catalog, rules)
+    persona_ctx = ""
+    if project_id:
+        try:
+            from .projects import build_persona_context
+            persona_ctx = build_persona_context(project_id, nsfw_mode=nsfw_mode)
+        except Exception:
+            pass  # Non-fatal
 
     # Convert to chat messages for LLM
     messages: List[Dict[str, Any]] = [
@@ -733,6 +1092,7 @@ async def agent_chat(
             knowledge_hint=knowledge_hint,
             user_context=user_ctx,
             session_context=session_ctx,
+            persona_context=persona_ctx,
         )}
     ]
 
@@ -742,12 +1102,18 @@ async def agent_chat(
             messages.append({"role": role, "content": content})
 
     # Ensure current user prompt is last
+    # When an image URL is available, hint it so the LLM knows to call vision.analyze
     if text_in:
-        messages.append({"role": "user", "content": text_in})
+        user_content = text_in
+        if image_url:
+            user_content = f"[The user uploaded an image: {image_url}]\n{text_in}"
+        messages.append({"role": "user", "content": user_content})
 
     tool_calls_used = 0
     tools_invoked: List[str] = []
-    last_image_url = _find_last_image_url(cid)  # used as fallback if tool call lacks image_url
+    last_media: Optional[Dict[str, Any]] = None  # track media from tool results
+    # Prefer explicit image_url from frontend; fall back to conversation history
+    last_image_url = image_url or _find_last_image_url(cid)
 
     # --- Agent loop (simple, safe) ---
     while True:
@@ -771,12 +1137,25 @@ async def agent_chat(
                 except Exception:
                     pass
 
+        # Strip thinking model tags before parsing
+        raw_text = strip_think_tags(raw_text)
+
         parsed = _extract_json_obj(raw_text)
         if not parsed:
             # Fallback: treat as final text to avoid agent deadlock
             final_text = raw_text or "I couldn't parse the agent response. Please try again."
-            add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+            # Filter leaked reasoning from the response
+            if _is_reasoning_text(final_text):
+                recovered = recover_from_reasoning(final_text)
+                if recovered:
+                    final_text = recovered
+                else:
+                    final_text = "I'm here. What would you like?"
+            text_media = _extract_media_from_text(final_text)
+            if text_media:
+                final_text = _strip_media_images_from_text(final_text)
+            add_message(cid, "assistant", final_text, media=text_media, project_id=project_id)
+            return {"conversation_id": cid, "text": final_text, "media": text_media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         step_type = (parsed.get("type") or "").strip().lower()
 
@@ -784,14 +1163,38 @@ async def agent_chat(
             final_text = (parsed.get("text") or "").strip()
             if not final_text:
                 final_text = "No answer provided."
-            add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+            # Filter leaked reasoning from the final text
+            if _is_reasoning_text(final_text):
+                recovered = recover_from_reasoning(final_text)
+                if recovered:
+                    final_text = recovered
+                else:
+                    final_text = "I'm here. What would you like?"
+            # Merge media from tool results and from media:// refs in text
+            merged_media = last_media
+            text_media = _extract_media_from_text(final_text)
+            if text_media:
+                final_text = _strip_media_images_from_text(final_text)
+            if text_media and not merged_media:
+                merged_media = text_media
+            elif text_media and merged_media:
+                merged_media = dict(merged_media)
+                existing = merged_media.get("images") or []
+                # Deduplicate when merging tool media + text media
+                seen = set(existing)
+                new_imgs = [u for u in (text_media.get("images") or []) if u not in seen]
+                merged_media["images"] = existing + new_imgs
+            add_message(cid, "assistant", final_text, media=merged_media, project_id=project_id)
+            return {"conversation_id": cid, "text": final_text, "media": merged_media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         if step_type != "tool_call":
             # Unknown response type → safe fallback
             final_text = (parsed.get("text") or "").strip() or raw_text or "I couldn't complete the request."
-            add_message(cid, "assistant", final_text, media=None, project_id=project_id)
-            return {"conversation_id": cid, "text": final_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+            text_media = _extract_media_from_text(final_text)
+            if text_media:
+                final_text = _strip_media_images_from_text(final_text)
+            add_message(cid, "assistant", final_text, media=text_media, project_id=project_id)
+            return {"conversation_id": cid, "text": final_text, "media": text_media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
 
         # TOOL_CALL
         if tool_calls_used >= max_tool_calls:
@@ -825,12 +1228,24 @@ async def agent_chat(
             vision_base_url=vision_base_url,
             vision_model=vision_model,
             nsfw_mode=nsfw_mode,
+            user_id=user_id,
         )
 
         # Check if dispatch returned an error that should terminate
         if meta.get("error") in ("no_image", "unknown_tool"):
             add_message(cid, "assistant", output_text, media=None, project_id=project_id)
             return {"conversation_id": cid, "text": output_text, "media": None, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+
+        # image.generate is a terminal tool — return result directly
+        # instead of looping back to the LLM (which wastes a tool call
+        # or hits the max_tool_calls limit).
+        if tool == "image.generate" and media:
+            add_message(cid, "assistant", output_text, media=media, project_id=project_id)
+            return {"conversation_id": cid, "text": output_text, "media": media, "agent": {"tool_calls_used": tool_calls_used, "tools_invoked": tools_invoked}}
+
+        # Track media from tool results (for final response)
+        if media:
+            last_media = media
 
         # Persist tool artifact in history
         tool_label = {
@@ -840,6 +1255,7 @@ async def agent_chat(
             "web.search": "Web Search",
             "image.index": "Image Indexed",
             "memory.store": "Memory Stored",
+            "image.generate": "Image Generated",
         }.get(tool, tool)
 
         add_message(

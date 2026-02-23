@@ -148,6 +148,25 @@ services:
     profiles: ["local", "all"]
 
   # ═══════════════════════════════════════════════════════════════════════════
+  # INVENTORY MCP SERVER (port 9120)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  inventory:
+    <<: *mcp-server
+    environment:
+      <<: *mcp-env
+      SERVER_MODULE: agentic.integrations.mcp.inventory_server:app
+      PORT: "9120"
+      UPLOAD_DIR: /app/data/uploads
+      BACKEND_BASE_URL: ${BACKEND_BASE_URL:-http://backend:8000}
+      INVENTORY_DEFAULT_SENSITIVITY_MAX: ${INVENTORY_SENSITIVITY_MAX:-safe}
+      INVENTORY_ALLOW_PROJECT_IDS: ${INVENTORY_ALLOW_PROJECT_IDS:-}
+    ports: ["9120:9120"]
+    volumes:
+      - ${DATA_DIR:-./backend/data}:/app/data:ro
+    profiles: ["local", "all"]
+
+  # ═══════════════════════════════════════════════════════════════════════════
   # COMMUNICATION MCP SERVERS (ports 9114–9117)
   # ═══════════════════════════════════════════════════════════════════════════
 

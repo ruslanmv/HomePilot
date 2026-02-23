@@ -7,6 +7,7 @@
 
 import React from 'react'
 import type { EditHistoryStripProps } from './types'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 export function EditHistoryStrip({
   history,
@@ -49,7 +50,7 @@ export function EditHistoryStrip({
               aria-label={isActive ? 'Currently active image' : 'Select this image as base'}
             >
               <img
-                src={url}
+                src={resolveFileUrl(url)}
                 className="h-14 w-14 object-cover"
                 alt={`History image ${index + 1}`}
                 loading="lazy"
