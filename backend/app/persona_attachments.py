@@ -182,6 +182,11 @@ def list_persona_documents(project_id: str) -> List[Dict[str, Any]]:
     """
     Returns attached items joined with project_items so UI can show:
     - name, mime, size, properties.index_status, etc.
+
+    Defensively deduplicates by asset_id (preferred), then by
+    (original_name, size_bytes) so the same physical file never
+    appears more than once — even if multiple project_items rows
+    or attachment rows reference it.
     """
     ensure_project_items_table()
     ensure_persona_attachments_table()
@@ -206,6 +211,7 @@ def list_persona_documents(project_id: str) -> List[Dict[str, Any]]:
     con.close()
 
     out: List[Dict[str, Any]] = []
+    seen_keys: set = set()
     for r in rows:
         d = dict(r)
         for field in ("tags", "properties"):
@@ -214,6 +220,19 @@ def list_persona_documents(project_id: str) -> List[Dict[str, Any]]:
                     d[field] = json.loads(d[field])
                 except Exception:
                     d[field] = [] if field == "tags" else {}
+
+        # Deduplicate: prefer asset_id, fall back to (name, size)
+        asset_id = d.get("asset_id") or ""
+        if asset_id:
+            dedup_key = f"asset:{asset_id}"
+        else:
+            name = d.get("original_name") or d.get("name") or ""
+            size = d.get("size_bytes") or 0
+            dedup_key = f"file:{name}:{size}"
+
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
         out.append(d)
     return out
 
