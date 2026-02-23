@@ -101,6 +101,29 @@ def commit_persona_avatar(
     return AvatarCommitResult(selected_filename=rel_avatar, thumb_filename=rel_thumb)
 
 
+def ensure_thumb_for_selected(upload_root: Path, selected_rel: str) -> str:
+    """
+    Given a relative path to a committed image (e.g.
+    ``projects/<id>/persona/appearance/outfit_xyz.png``), ensure a
+    corresponding thumbnail exists and return its relative path.
+
+    Thumbnail is placed next to the source as ``thumb_<stem>.webp``.
+    Reuses existing thumbnails if present; generates on demand otherwise.
+    """
+    src_path = upload_root / selected_rel
+    if not src_path.exists():
+        raise FileNotFoundError(f"Selected image not found: {selected_rel}")
+
+    thumb_name = f"thumb_{src_path.stem}.webp"
+    thumb_path = src_path.parent / thumb_name
+
+    if not thumb_path.exists():
+        _ensure_dir(thumb_path.parent)
+        _top_crop_thumb(src_path, thumb_path, size=256)
+
+    return str(thumb_path.relative_to(upload_root))
+
+
 def commit_persona_image(
     upload_root: Path,
     project_root: Path,

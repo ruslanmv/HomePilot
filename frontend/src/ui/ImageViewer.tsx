@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { X, Edit, Download, Share2, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
+import { resolveFileUrl } from './resolveFileUrl'
 
 interface ImageViewerProps {
   imageUrl: string
@@ -10,9 +11,11 @@ interface ImageViewerProps {
 export function ImageViewer({ imageUrl, onClose, onEdit }: ImageViewerProps) {
   const [zoom, setZoom] = useState(100)
 
+  const resolvedUrl = resolveFileUrl(imageUrl)
+
   const handleDownload = async () => {
     try {
-      const response = await fetch(imageUrl)
+      const response = await fetch(resolvedUrl)
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -30,7 +33,7 @@ export function ImageViewer({ imageUrl, onClose, onEdit }: ImageViewerProps) {
   const handleShare = async () => {
     try {
       if (navigator.share) {
-        const response = await fetch(imageUrl)
+        const response = await fetch(resolvedUrl)
         const blob = await response.blob()
         const file = new File([blob], 'image.png', { type: 'image/png' })
         await navigator.share({
@@ -40,7 +43,7 @@ export function ImageViewer({ imageUrl, onClose, onEdit }: ImageViewerProps) {
         })
       } else {
         // Fallback: copy URL to clipboard
-        await navigator.clipboard.writeText(imageUrl)
+        await navigator.clipboard.writeText(resolvedUrl)
         alert('Image URL copied to clipboard!')
       }
     } catch (error) {
@@ -156,7 +159,7 @@ export function ImageViewer({ imageUrl, onClose, onEdit }: ImageViewerProps) {
       {/* Image Display Area */}
       <div className="flex-1 flex items-center justify-center p-20 overflow-auto">
         <img
-          src={imageUrl}
+          src={resolveFileUrl(imageUrl)}
           onClick={(e) => e.stopPropagation()}
           className="rounded-lg shadow-2xl border border-white/10 transition-transform"
           style={{

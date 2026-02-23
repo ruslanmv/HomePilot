@@ -132,6 +132,83 @@ Connect a custom domain to the Worker for cleaner URLs.
 
 ---
 
+## COMPLETED: Multimodal Intelligence — Four Processing Topologies
+
+> **Completed February 2026** — All 4 topologies implemented and tested.
+
+- [x] T1: Basic Chat (direct LLM)
+- [x] T2: Project-Scoped Knowledge (RAG with ChromaDB)
+- [x] T3: Agent Tool Use (6-tool registry: vision, knowledge, memory recall/store, web search, image index)
+- [x] T4: Knowledge Companion (agent + user profile + session context + persona memory)
+- [x] Cross-topology Memory V2 ingestion
+- [x] Frontend topology selector (direct / smart / agent / knowledge)
+- [x] Image-as-text indexing pipeline (images → vision analysis → ChromaDB)
+- [x] 800 backend tests passing, topology health tests for CI
+- [x] Documentation: `docs/MULTIMODAL.md` + animated SVG diagrams in README
+
+---
+
+## Feature: Multi-User Accounts & Onboarding Wizard
+
+> **Status**: In Progress
+> **Priority**: High
+> **Scope**: Allow multiple users on the same HomePilot instance, each with their own profile, personas, sessions, and memory. Minimalist onboarding (Claude-style, 3 steps max).
+
+### Design
+
+**Philosophy**: Open source, self-hosted — no phone verification, no plan selection, no external auth providers. Password is optional (for single-user local setups). Email is optional (for password recovery only).
+
+### Onboarding Flow (3 steps)
+
+```
+Step 1: Create Account
+  - Username (required)
+  - Password (optional — skip for passwordless local use)
+  - Email (optional — only for password recovery)
+
+Step 2: About You
+  - Display name / preferred name
+  - What you'll use HomePilot for (multi-select):
+    ○ Chat & conversation
+    ○ Image generation & editing
+    ○ Research & knowledge
+    ○ Personal AI companion
+    ○ Content creation
+  - Preferred tone: Casual / Balanced / Professional
+
+Step 3: Ready
+  - Quick summary of your profile
+  - "Start using HomePilot" button
+  - Links to: Create your first persona, Explore the gallery
+```
+
+### Technical Plan
+
+#### Backend
+- [x] `users` SQLite table (id, username, password_hash, email, created_at, onboarding_complete)
+- [x] `POST /v1/auth/register` — create account
+- [x] `POST /v1/auth/login` — authenticate, return session token
+- [x] `POST /v1/auth/logout` — invalidate session
+- [ ] `POST /v1/auth/forgot-password` — send reset email (if email configured)
+- [x] `PUT /v1/auth/onboarding` — save onboarding answers
+- [x] Session tokens via bearer tokens (stored in `user_sessions` table, 30-day expiry)
+- [ ] `user_id` foreign key added to: projects, conversations, profile, persona_sessions
+- [x] Existing single-user data migrated to a default "admin" user on first boot
+
+#### Frontend
+- [x] Login/Register screen (shown when no active session)
+- [x] 3-step onboarding wizard (shown after first registration)
+- [ ] User switcher in sidebar (avatar + dropdown)
+- [ ] All API calls include `Authorization: Bearer <token>` header
+- [x] LocalStorage stores token per user
+
+#### Migration Strategy (ADDITIVE)
+- Existing data belongs to a default user (zero data loss)
+- If only one user exists and no password is set, auto-login (backward compatible)
+- Multi-user is opt-in: single-user setups work exactly as before
+
+---
+
 ## Feature: Synthetic Avatar Generator (Optional Extra Package)
 
 > **Status**: Planned

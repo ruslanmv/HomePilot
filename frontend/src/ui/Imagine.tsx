@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film, Check, ArrowUp, Loader2 } from 'lucide-react'
 import { upscaleImage } from './enhance/upscaleApi'
+import { resolveFileUrl } from './resolveFileUrl'
 
 // -----------------------------------------------------------------------------
 // Types
@@ -127,6 +128,7 @@ async function postJson<T>(baseUrl: string, path: string, body: any, apiKey?: st
       'Content-Type': 'application/json',
       ...(apiKey ? { 'x-api-key': apiKey } : {}),
     },
+    credentials: 'include',
     body: JSON.stringify(body),
   })
 
@@ -145,6 +147,7 @@ async function deleteJson<T>(baseUrl: string, path: string, body: any, apiKey?: 
       'Content-Type': 'application/json',
       ...(apiKey ? { 'x-api-key': apiKey } : {}),
     },
+    credentials: 'include',
     body: JSON.stringify(body),
   })
 
@@ -1599,7 +1602,7 @@ export default function ImagineView(props: ImagineParams) {
               {/* Image content - show based on status */}
               {img.status === 'done' && img.url ? (
                 <img
-                  src={img.url}
+                  src={resolveFileUrl(img.url, props.backendUrl)}
                   alt={img.prompt}
                   className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
                   loading="lazy"
@@ -1662,7 +1665,7 @@ export default function ImagineView(props: ImagineParams) {
                       title="Copy URL"
                       onClick={(e) => {
                         e.stopPropagation()
-                        if (img.url) navigator.clipboard?.writeText(img.url).catch(() => {})
+                        if (img.url) navigator.clipboard?.writeText(resolveFileUrl(img.url, props.backendUrl)).catch(() => {})
                       }}
                     >
                       <MoreHorizontal size={18} />
@@ -1992,7 +1995,7 @@ export default function ImagineView(props: ImagineParams) {
             <div className="flex-1 flex items-center justify-center p-2 relative group min-h-0 overflow-hidden">
               {selectedImage.url ? (
                 <img
-                  src={selectedImage.url}
+                  src={resolveFileUrl(selectedImage.url, props.backendUrl)}
                   data-lightbox-media
                   className={
                     isFullscreen
@@ -2189,7 +2192,7 @@ export default function ImagineView(props: ImagineParams) {
                   onClick={() => {
                     if (!selectedImage.url) return
                     const a = document.createElement('a')
-                    a.href = selectedImage.url
+                    a.href = resolveFileUrl(selectedImage.url, props.backendUrl)
                     a.download = `imagine-${selectedImage.id}.png`
                     a.click()
                   }}
