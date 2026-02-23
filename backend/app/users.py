@@ -22,7 +22,8 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, UploadFile, File
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .config import SQLITE_PATH, UPLOAD_DIR
@@ -302,16 +303,26 @@ def get_or_create_default_user() -> Dict[str, Any]:
 # Auth dependency (for protecting endpoints)
 # ---------------------------------------------------------------------------
 
-def get_current_user(authorization: str = Header(default="")) -> Optional[Dict[str, Any]]:
+def get_current_user(
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+) -> Optional[Dict[str, Any]]:
     """
-    FastAPI dependency: extract user from Authorization header.
+    Enterprise auth:
+      - Prefer Authorization: Bearer <token>
+      - Fall back to HttpOnly cookie `homepilot_session` (for <img> tags and file downloads)
     Returns user dict or None. Does NOT raise — for optional auth.
     """
-    if not authorization:
-        return None
-    token = authorization.replace("Bearer ", "").strip()
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+
+    if not token and homepilot_session:
+        token = homepilot_session.strip()
+
     if not token:
         return None
+
     return _validate_token(token)
 
 
@@ -368,7 +379,7 @@ def register(body: RegisterRequest):
 
     token = _create_token(user["id"])
 
-    return {
+    resp = JSONResponse({
         "ok": True,
         "user": {
             "id": user["id"],
@@ -379,7 +390,17 @@ def register(body: RegisterRequest):
             "onboarding_complete": False,
         },
         "token": token,
-    }
+    })
+    resp.set_cookie(
+        key="homepilot_session",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,  # set True if behind HTTPS
+        max_age=30 * 24 * 60 * 60,
+        path="/",
+    )
+    return resp
 
 
 @router.post("/login")
@@ -399,7 +420,7 @@ def login(body: LoginRequest):
 
     token = _create_token(user["id"])
 
-    return {
+    resp = JSONResponse({
         "ok": True,
         "user": {
             "id": user["id"],
@@ -410,7 +431,17 @@ def login(body: LoginRequest):
             "onboarding_complete": bool(user.get("onboarding_complete")),
         },
         "token": token,
-    }
+    })
+    resp.set_cookie(
+        key="homepilot_session",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,  # set True if behind HTTPS
+        max_age=30 * 24 * 60 * 60,
+        path="/",
+    )
+    return resp
 
 
 @router.post("/logout")
@@ -419,15 +450,25 @@ def logout(authorization: str = Header(default="")):
     token = authorization.replace("Bearer ", "").strip()
     if token:
         _invalidate_token(token)
-    return {"ok": True}
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie("homepilot_session", path="/")
+    return resp
 
 
 @router.get("/me")
-def get_me(authorization: str = Header(default="")):
+def get_me(
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+):
     """Get the current authenticated user."""
     ensure_users_tables()
 
-    token = authorization.replace("Bearer ", "").strip()
+    # Support both Bearer header and HttpOnly cookie
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    if not token and homepilot_session:
+        token = homepilot_session.strip()
     user = _validate_token(token) if token else None
 
     if not user:
@@ -439,7 +480,7 @@ def get_me(authorization: str = Header(default="")):
         if len(users) == 1 and not users[0].get("password_hash"):
             # Single user, no password — auto-login
             auto_token = _create_token(users[0]["id"])
-            return {
+            resp = JSONResponse({
                 "ok": True,
                 "user": {
                     "id": users[0]["id"],
@@ -450,7 +491,17 @@ def get_me(authorization: str = Header(default="")):
                     "onboarding_complete": bool(users[0].get("onboarding_complete")),
                 },
                 "token": auto_token,
-            }
+            })
+            resp.set_cookie(
+                key="homepilot_session",
+                value=auto_token,
+                httponly=True,
+                samesite="lax",
+                secure=False,
+                max_age=30 * 24 * 60 * 60,
+                path="/",
+            )
+            return resp
         return {"ok": True, "user": None, "needs_login": True}
 
     return {

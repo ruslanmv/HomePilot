@@ -51,6 +51,7 @@ const emptyProfile: UserProfile = {
   locale: 'en',
   timezone: '',
   bio: '',
+  birthday: '',
 
   personalization_enabled: true,
   likes: [],
@@ -448,6 +449,18 @@ export default function ProfileSettingsModal({
                   value={profile.role}
                   onChange={(e) => setProfile({ ...profile, role: e.target.value })}
                 />
+              </div>
+
+              {/* Birthday */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] uppercase tracking-wider text-white/40 font-semibold">Birthday</label>
+                <input
+                  type="date"
+                  className="w-full md:w-1/2 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-white/20 [color-scheme:dark]"
+                  value={profile.birthday}
+                  onChange={(e) => setProfile({ ...profile, birthday: e.target.value })}
+                />
+                <div className="text-[10px] text-white/35">Personas will know your age and can celebrate your birthday.</div>
               </div>
 
               {/* Country, Language, Timezone */}

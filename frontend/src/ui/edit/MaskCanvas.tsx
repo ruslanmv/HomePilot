@@ -11,6 +11,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { resolveFileUrl } from '../resolveFileUrl'
 import {
   Brush,
   Eraser,
@@ -325,7 +326,7 @@ export function MaskCanvas({
         <div className="relative">
           {/* Background image */}
           <img
-            src={imageUrl}
+            src={resolveFileUrl(imageUrl)}
             alt="Source"
             className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl"
             style={{

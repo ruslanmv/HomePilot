@@ -174,11 +174,17 @@ def _connect() -> sqlite3.Connection:
     return con
 
 
-def _select_memories(project_id: str) -> List[Dict[str, Any]]:
-    """Fetch all V2 memories for a project (safe dict-based access)."""
+def _select_memories(project_id: str, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Fetch all V2 memories for a project, optionally scoped to user."""
     con = _connect()
     cur = con.cursor()
-    cur.execute("SELECT * FROM persona_memory WHERE project_id = ?", (project_id,))
+    if user_id:
+        cur.execute(
+            "SELECT * FROM persona_memory WHERE project_id = ? AND user_id = ?",
+            (project_id, user_id),
+        )
+    else:
+        cur.execute("SELECT * FROM persona_memory WHERE project_id = ?", (project_id,))
     rows = [dict(r) for r in cur.fetchall()]
     con.close()
     return rows
@@ -196,6 +202,7 @@ def _upsert_memory(
     importance: float,
     seen_now: bool = True,
     reinforce_eta: Optional[float] = None,
+    user_id: Optional[str] = None,
 ) -> None:
     """
     Additive upsert using existing UNIQUE(project_id, category, key).
@@ -235,17 +242,20 @@ def _upsert_memory(
             INSERT INTO persona_memory
                 (project_id, category, key, value, confidence, source_session,
                  source_type, created_at, updated_at,
-                 mem_type, strength, importance, last_access_at, access_count, last_seen_at)
+                 mem_type, strength, importance, last_access_at, access_count, last_seen_at,
+                 user_id)
             VALUES
                 (?, ?, ?, ?, ?, NULL,
                  ?, ?, ?,
-                 ?, ?, ?, 0, 0, ?)
+                 ?, ?, ?, 0, 0, ?,
+                 ?)
             """,
             (project_id, category, key, value, float(confidence),
              source_type, now_dt, now_dt,
              mem_type, float(_clamp(strength, 0.0, 1.0)),
              float(_clamp(importance, 0.0, 1.0)),
-             now_ts if seen_now else 0.0),
+             now_ts if seen_now else 0.0,
+             user_id),
         )
 
     # Reinforce if requested (on existing or just-inserted row)
@@ -308,7 +318,7 @@ class MemoryV2Engine:
 
     # ---- ingest (called per user message) ----
 
-    def ingest_user_text(self, project_id: str, user_text: str) -> None:
+    def ingest_user_text(self, project_id: str, user_text: str, user_id: Optional[str] = None) -> None:
         """
         Ingest user text as memory. Three paths:
           1. Explicit "remember this" -> Pinned (P), never decays
@@ -332,6 +342,7 @@ class MemoryV2Engine:
                 strength=1.0,
                 importance=0.95,
                 reinforce_eta=self.cfg.eta_user_confirmed,
+                user_id=user_id,
             )
             return
 
@@ -347,14 +358,15 @@ class MemoryV2Engine:
             strength=0.5,
             importance=0.25,
             reinforce_eta=None,
+            user_id=user_id,
         )
 
         # Throttled maintenance (consolidation + pruning)
-        self._maybe_maintain(project_id)
+        self._maybe_maintain(project_id, user_id=user_id)
 
     # ---- throttled maintenance ----
 
-    def _maybe_maintain(self, project_id: str) -> None:
+    def _maybe_maintain(self, project_id: str, user_id: Optional[str] = None) -> None:
         """Run consolidation + pruning at most once per maintenance_interval."""
         now = _now()
         last = self._last_maintenance.get(project_id, 0.0)
@@ -362,14 +374,14 @@ class MemoryV2Engine:
             return
         self._last_maintenance[project_id] = now
         try:
-            self.consolidate(project_id)
-            self.prune(project_id)
+            self.consolidate(project_id, user_id=user_id)
+            self.prune(project_id, user_id=user_id)
         except Exception as e:
             print(f"[MEMORY_V2] Maintenance warning (non-fatal): {e}")
 
     # ---- consolidate (promote W -> S when reinforced) ----
 
-    def consolidate(self, project_id: str) -> None:
+    def consolidate(self, project_id: str, user_id: Optional[str] = None) -> None:
         """
         Promote Working -> Semantic if:
           - Repetition (similar to 2+ other W items OR similar to existing S item)
@@ -378,7 +390,7 @@ class MemoryV2Engine:
 
         Also: when W overlaps with an existing S entry, reinforce that S entry.
         """
-        mem = _select_memories(project_id)
+        mem = _select_memories(project_id, user_id=user_id)
         working = [m for m in mem if (m.get("mem_type") or "S") == "W"]
         semantic = [m for m in mem if (m.get("mem_type") or "S") == "S"]
 
@@ -446,18 +458,19 @@ class MemoryV2Engine:
                     strength=0.55,
                     importance=_clamp(imp, 0.0, 1.0),
                     reinforce_eta=self.cfg.eta_inferred,
+                    user_id=user_id,
                 )
                 # Clean up promoted working item
                 _delete_by_id(project_id, int(w["id"]))
 
     # ---- prune (human-like forgetting) ----
 
-    def prune(self, project_id: str) -> None:
+    def prune(self, project_id: str, user_id: Optional[str] = None) -> None:
         """
         Prune low-activation + low-importance Semantic entries (forgetting).
         Never prune Pinned (P). Trim excessive Working noise to ~25 items.
         """
-        mem = _select_memories(project_id)
+        mem = _select_memories(project_id, user_id=user_id)
 
         # Prune semantic (decay-based)
         for s in mem:
@@ -485,13 +498,13 @@ class MemoryV2Engine:
 
     # ---- retrieve (build context for system prompt injection) ----
 
-    def build_context(self, project_id: str, query: str) -> str:
+    def build_context(self, project_id: str, query: str, user_id: Optional[str] = None) -> str:
         """
         Build a compact memory context block for the system prompt.
         Retrieves: top Pinned + top Semantic (scored by relevance+activation) + 1 Working.
         Reinforces retrieved Semantic entries (light touch).
         """
-        mem = _select_memories(project_id)
+        mem = _select_memories(project_id, user_id=user_id)
 
         pinned = [m for m in mem if (m.get("mem_type") or "S") == "P"]
         sem = [m for m in mem if (m.get("mem_type") or "S") == "S"]
