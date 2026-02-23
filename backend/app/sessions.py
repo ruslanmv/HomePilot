@@ -34,17 +34,100 @@ def _get_db_path() -> str:
 # Session CRUD
 # ---------------------------------------------------------------------------
 
+def _find_recent_session(
+    project_id: str,
+    seconds: int = 600,
+) -> Optional[Dict[str, Any]]:
+    """
+    Return the most recent session if it was started within *seconds* ago.
+
+    This prevents "reconnect spam": voice reconnects, page refreshes, and mic
+    permission retries that each create a new session.  If the most recent
+    session is recent enough AND low-activity (< 3 messages), it is reusable.
+    """
+    import datetime
+
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    cur.execute(
+        """
+        SELECT * FROM persona_sessions
+        WHERE project_id = ?
+        ORDER BY started_at DESC
+        LIMIT 1
+        """,
+        (project_id,),
+    )
+    row = cur.fetchone()
+    con.close()
+    if not row:
+        return None
+
+    s = dict(row)
+    try:
+        dt = datetime.datetime.strptime(s["started_at"], "%Y-%m-%d %H:%M:%S")
+        age = (datetime.datetime.utcnow() - dt).total_seconds()
+        if age <= seconds:
+            _enrich_message_counts([s])
+            return s
+    except Exception:
+        pass
+    return None
+
+
 def create_session(
     project_id: str,
     mode: str = "text",
     title: Optional[str] = None,
     conversation_id: Optional[str] = None,
+    *,
+    force_new: bool = False,
 ) -> Dict[str, Any]:
     """
     Create a new session for a persona project.
 
-    Returns the created session dict.
+    Soft-reuse: If a recent low-activity session exists (< 3 messages,
+    started within 10 minutes), reuse it instead of inserting a new row.
+    This prevents "session spam" from reconnects, refreshes, and mic retries.
+
+    Pass *force_new=True* to bypass reuse and always create a fresh session.
+
+    Returns the created (or reused) session dict.
     """
+    # ── Soft-reuse: prevent reconnect spam ────────────────────────────────
+    if not force_new:
+        recent = _find_recent_session(project_id, seconds=600)
+        if recent and (recent.get("message_count") or 0) < 3:
+            # Switch mode if needed
+            if mode and recent.get("mode") != mode:
+                path = _get_db_path()
+                con = sqlite3.connect(path)
+                cur = con.cursor()
+                cur.execute(
+                    "UPDATE persona_sessions SET mode = ? WHERE id = ?",
+                    (mode, recent["id"]),
+                )
+                con.commit()
+                con.close()
+                recent["mode"] = mode
+            # Re-open if ended
+            if recent.get("ended_at"):
+                path = _get_db_path()
+                con = sqlite3.connect(path)
+                cur = con.cursor()
+                cur.execute(
+                    "UPDATE persona_sessions SET ended_at = NULL WHERE id = ?",
+                    (recent["id"],),
+                )
+                con.commit()
+                con.close()
+                recent["ended_at"] = None
+            _set_active_session(project_id, recent["id"])
+            return recent
+
+    # ── Insert a genuinely new session ────────────────────────────────────
     session_id = str(uuid.uuid4())
     cid = conversation_id or str(uuid.uuid4())
     now = time.strftime("%Y-%m-%d %H:%M:%S")

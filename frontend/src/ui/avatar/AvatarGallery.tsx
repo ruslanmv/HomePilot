@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import type { GalleryItem } from './galleryTypes'
 import { SCENARIO_TAG_META } from './galleryTypes'
+import { resolveFileUrl } from '../resolveFileUrl'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -55,8 +56,7 @@ function formatTimeAgo(timestamp: number): string {
 }
 
 function resolveUrl(url: string, backendUrl: string): string {
-  if (url.startsWith('http')) return url
-  return `${backendUrl.replace(/\/+$/, '')}${url}`
+  return resolveFileUrl(url, backendUrl)
 }
 
 // ---------------------------------------------------------------------------

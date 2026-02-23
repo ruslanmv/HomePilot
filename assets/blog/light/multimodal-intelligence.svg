@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 480" fill="none">
+  <defs>
+    <style>
+      @keyframes mi-pulse { 0%,100%{opacity:0.5;transform:scale(0.97)} 50%{opacity:1;transform:scale(1)} }
+      @keyframes mi-flow { 0%{stroke-dashoffset:20} 100%{stroke-dashoffset:0} }
+      @keyframes mi-glow { 0%,100%{opacity:0.3} 50%{opacity:0.8} }
+      @keyframes mi-orbit { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)} }
+      .mi-node { animation: mi-pulse 3s ease-in-out infinite; }
+      .mi-line { stroke-dasharray: 10 10; animation: mi-flow 1.5s linear infinite; }
+      .mi-glow { animation: mi-glow 2.5s ease-in-out infinite; }
+      .mi-orbit { animation: mi-orbit 20s linear infinite; transform-origin: 450px 260px; }
+    </style>
+    <linearGradient id="mi-accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#0891b2"/><stop offset="50%" style="stop-color:#2563eb"/><stop offset="100%" style="stop-color:#7c3aed"/>
+    </linearGradient>
+    <radialGradient id="mi-center" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:0.1"/><stop offset="100%" style="stop-color:#2563eb;stop-opacity:0"/>
+    </radialGradient>
+    <filter id="mi-blur"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <clipPath id="mi-clip"><rect width="900" height="480" rx="16"/></clipPath>
+  </defs>
+  <g clip-path="url(#mi-clip)">
+    <rect width="900" height="480" fill="#fafafa" rx="16"/>
+    <rect width="900" height="480" fill="none" stroke="#e5e7eb" stroke-width="1" rx="16"/>
+    <g stroke="#e5e7eb" stroke-width="0.5" opacity="0.5">
+      <line x1="0" y1="120" x2="900" y2="120"/><line x1="0" y1="240" x2="900" y2="240"/>
+      <line x1="0" y1="360" x2="900" y2="360"/>
+    </g>
+
+    <text x="450" y="32" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#374151" letter-spacing="3" text-anchor="middle">MULTIMODAL INTELLIGENCE</text>
+    <text x="450" y="52" font-family="system-ui,sans-serif" font-size="11" fill="#6b7280" text-anchor="middle">Text, vision, voice, documents, and web — unified in a single agent pipeline</text>
+    <rect x="350" y="58" width="200" height="2" rx="1" fill="url(#mi-accent)" opacity="0.5">
+      <animate attributeName="width" values="200;260;200" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="x" values="350;320;350" dur="4s" repeatCount="indefinite"/>
+    </rect>
+
+    <!-- Central brain hub -->
+    <circle cx="450" cy="250" r="90" fill="url(#mi-center)"/>
+    <g class="mi-orbit" opacity="0.08">
+      <circle cx="450" cy="250" r="85" fill="none" stroke="#2563eb" stroke-width="1" stroke-dasharray="4 8"/>
+    </g>
+    <circle cx="450" cy="250" r="56" fill="#eff6ff" stroke="url(#mi-accent)" stroke-width="2.5"/>
+    <circle cx="450" cy="250" r="56" fill="none" stroke="url(#mi-accent)" stroke-width="1" opacity="0" class="mi-glow">
+      <animate attributeName="r" values="56;64;56" dur="3s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;0.3;0" dur="3s" repeatCount="indefinite"/>
+    </circle>
+    <text x="450" y="240" font-family="system-ui,sans-serif" font-size="14" font-weight="700" fill="#1e3a5f" text-anchor="middle">Agent</text>
+    <text x="450" y="258" font-family="system-ui,sans-serif" font-size="10" fill="#2563eb" text-anchor="middle">LLM + 6 Tools</text>
+    <text x="450" y="272" font-family="system-ui,sans-serif" font-size="9" fill="#9ca3af" text-anchor="middle">auto-selects tools</text>
+
+    <!-- Input modalities -->
+    <g transform="translate(80,130)" class="mi-node">
+      <rect x="0" y="0" width="110" height="50" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.5"/>
+      <text x="14" y="22" font-family="system-ui,sans-serif" font-size="14" fill="#2563eb">Aa</text>
+      <text x="38" y="22" font-family="system-ui,sans-serif" font-size="11" font-weight="600" fill="#1d4ed8">Text</text>
+      <text x="14" y="38" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">Chat, questions, prompts</text>
+    </g>
+    <line x1="190" y1="168" x2="400" y2="230" stroke="#2563eb" stroke-width="1.5" class="mi-line"/>
+
+    <g transform="translate(60,220)" class="mi-node" style="animation-delay:0.4s">
+      <rect x="0" y="0" width="110" height="50" rx="10" fill="#ffffff" stroke="#db2777" stroke-width="1.5"/>
+      <text x="14" y="22" font-family="system-ui,sans-serif" font-size="13" fill="#db2777">&#128065;</text>
+      <text x="38" y="22" font-family="system-ui,sans-serif" font-size="11" font-weight="600" fill="#be185d">Vision</text>
+      <text x="14" y="38" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">Images, screenshots</text>
+    </g>
+    <line x1="170" y1="250" x2="394" y2="250" stroke="#db2777" stroke-width="1.5" class="mi-line" style="animation-delay:0.3s"/>
+
+    <g transform="translate(80,310)" class="mi-node" style="animation-delay:0.8s">
+      <rect x="0" y="0" width="110" height="50" rx="10" fill="#ffffff" stroke="#059669" stroke-width="1.5"/>
+      <text x="14" y="22" font-family="system-ui,sans-serif" font-size="13" fill="#059669">&#127908;</text>
+      <text x="38" y="22" font-family="system-ui,sans-serif" font-size="11" font-weight="600" fill="#047857">Voice</text>
+      <text x="14" y="38" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">Speech, commands</text>
+    </g>
+    <line x1="190" y1="330" x2="400" y2="270" stroke="#059669" stroke-width="1.5" class="mi-line" style="animation-delay:0.6s"/>
+
+    <g transform="translate(60,400)" class="mi-node" style="animation-delay:1.2s">
+      <rect x="0" y="0" width="110" height="50" rx="10" fill="#ffffff" stroke="#d97706" stroke-width="1.5"/>
+      <text x="14" y="22" font-family="system-ui,sans-serif" font-size="13" fill="#d97706">&#128196;</text>
+      <text x="38" y="22" font-family="system-ui,sans-serif" font-size="11" font-weight="600" fill="#b45309">Documents</text>
+      <text x="14" y="38" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">PDFs, files, markdown</text>
+    </g>
+    <line x1="170" y1="418" x2="430" y2="306" stroke="#d97706" stroke-width="1" opacity="0.4"/>
+
+    <!-- Tool panels (right side) -->
+    <g transform="translate(650,100)">
+      <rect x="0" y="0" width="195" height="42" rx="8" fill="#ffffff" stroke="#db2777" stroke-width="1"/>
+      <text x="36" y="18" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#be185d">vision.analyze</text>
+      <text x="36" y="32" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">Caption, OCR, describe</text>
+    </g>
+    <line x1="506" y1="230" x2="650" y2="121" stroke="#db2777" stroke-width="1" opacity="0.3"/>
+
+    <g transform="translate(660,160)">
+      <rect x="0" y="0" width="195" height="42" rx="8" fill="#ffffff" stroke="#7c3aed" stroke-width="1"/>
+      <text x="36" y="18" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#6d28d9">knowledge.search</text>
+      <text x="36" y="32" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">RAG over your documents</text>
+    </g>
+    <line x1="506" y1="240" x2="660" y2="181" stroke="#7c3aed" stroke-width="1" opacity="0.3"/>
+
+    <g transform="translate(670,220)">
+      <rect x="0" y="0" width="195" height="42" rx="8" fill="#ffffff" stroke="#0891b2" stroke-width="1"/>
+      <text x="36" y="18" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#0e7490">memory.recall</text>
+      <text x="36" y="32" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">Retrieve stored facts</text>
+    </g>
+    <line x1="506" y1="250" x2="670" y2="241" stroke="#0891b2" stroke-width="1" opacity="0.3"/>
+
+    <g transform="translate(670,280)">
+      <rect x="0" y="0" width="195" height="42" rx="8" fill="#ffffff" stroke="#0891b2" stroke-width="1" class="mi-glow"/>
+      <text x="36" y="18" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#0e7490">memory.store</text>
+      <text x="36" y="32" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">Save new facts about you</text>
+    </g>
+    <line x1="506" y1="260" x2="670" y2="301" stroke="#0891b2" stroke-width="1" opacity="0.3"/>
+
+    <g transform="translate(660,340)">
+      <rect x="0" y="0" width="195" height="42" rx="8" fill="#ffffff" stroke="#059669" stroke-width="1"/>
+      <text x="36" y="18" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#047857">web.search</text>
+      <text x="36" y="32" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">Real-time web queries</text>
+    </g>
+    <line x1="506" y1="270" x2="660" y2="361" stroke="#059669" stroke-width="1" opacity="0.3"/>
+
+    <g transform="translate(650,400)">
+      <rect x="0" y="0" width="195" height="42" rx="8" fill="#ffffff" stroke="#d97706" stroke-width="1"/>
+      <text x="36" y="18" font-family="system-ui,sans-serif" font-size="10" font-weight="600" fill="#b45309">image.index</text>
+      <text x="36" y="32" font-family="system-ui,sans-serif" font-size="8" fill="#6b7280">Index images for search</text>
+    </g>
+    <line x1="506" y1="275" x2="650" y2="421" stroke="#d97706" stroke-width="1" opacity="0.3"/>
+
+    <text x="450" y="468" font-family="system-ui,sans-serif" font-size="10" fill="#9ca3af" text-anchor="middle">The agent auto-selects which tools to invoke — no manual mode switching required</text>
+  </g>
+</svg>

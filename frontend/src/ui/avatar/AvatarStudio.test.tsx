@@ -37,6 +37,7 @@ const mockRun = vi.fn().mockResolvedValue({
   results: [{ url: '/files/avatar.png', seed: 42 }],
 })
 const mockReset = vi.fn()
+const mockCancel = vi.fn()
 
 vi.mock('./useAvatarPacks', () => ({
   useAvatarPacks: () => ({
@@ -54,6 +55,7 @@ vi.mock('./useGenerateAvatars', () => ({
     error: null,
     run: mockRun,
     reset: mockReset,
+    cancel: mockCancel,
   }),
 }))
 
@@ -96,9 +98,9 @@ describe('AvatarStudio — Gallery View', () => {
   it('clicking "New Avatar" navigates to designer view', () => {
     render(<AvatarStudio backendUrl="http://localhost:8000" />)
     fireEvent.click(screen.getByText('New Avatar'))
-    // Should now see designer header
+    // Should now see designer header with back button
     expect(screen.getByText('Avatar Studio')).toBeInTheDocument()
-    expect(screen.getByLabelText('Back to Avatar Gallery')).toBeInTheDocument()
+    expect(screen.getByTitle('Back to Gallery')).toBeInTheDocument()
   })
 })
 
@@ -113,109 +115,72 @@ describe('AvatarStudio — Designer View', () => {
 
   it('renders the designer header with back button', () => {
     renderDesignerView()
-    expect(screen.getByLabelText('Back to Avatar Gallery')).toBeInTheDocument()
+    expect(screen.getByTitle('Back to Gallery')).toBeInTheDocument()
     expect(screen.getByText('Avatar Studio')).toBeInTheDocument()
   })
 
   it('renders all three mode pills', () => {
     renderDesignerView()
     // In designer view: mode pills as radio buttons
+    expect(screen.getByRole('radio', { name: /Design Character/ })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /From Reference/ })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: /Random Face/ })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: /Face \+ Style/ })).toBeInTheDocument()
   })
 
-  it('renders pack badges', () => {
+  it('default mode is Design Character', () => {
     renderDesignerView()
-    expect(screen.getByText('Basic')).toBeInTheDocument()
+    const designBtn = screen.getByRole('radio', { name: /Design Character/ })
+    expect(designBtn).toHaveAttribute('aria-checked', 'true')
   })
 
-  it('renders the prompt input with default value', () => {
+  it('renders the generate button with count', () => {
     renderDesignerView()
-    const input = screen.getByLabelText('Avatar generation prompt')
-    expect(input).toBeInTheDocument()
-    expect((input as HTMLInputElement).value).toBe(
-      'studio headshot, soft light, photorealistic',
-    )
-  })
-
-  it('renders count selector buttons (1, 4, 8)', () => {
-    renderDesignerView()
-    expect(screen.getByText('1')).toBeInTheDocument()
-    expect(screen.getByText('4')).toBeInTheDocument()
-    expect(screen.getByText('8')).toBeInTheDocument()
-  })
-
-  it('shows generate button with count', () => {
-    renderDesignerView()
-    // Switch to studio_random first
-    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
-    expect(screen.getByText('Generate 4')).toBeInTheDocument()
+    // Default count is 1
+    expect(screen.getByText(/Generate \(1\)/)).toBeInTheDocument()
   })
 
   it('switching mode changes active pill', () => {
     renderDesignerView()
-    const randomBtn = screen.getByRole('radio', { name: /Random Face/ })
-    fireEvent.click(randomBtn)
-    expect(randomBtn).toHaveAttribute('aria-checked', 'true')
+    const refBtn = screen.getByRole('radio', { name: /From Reference/ })
+    fireEvent.click(refBtn)
+    expect(refBtn).toHaveAttribute('aria-checked', 'true')
+    // Previous mode should be deselected
+    const designBtn = screen.getByRole('radio', { name: /Design Character/ })
+    expect(designBtn).toHaveAttribute('aria-checked', 'false')
   })
 
-  it('shows reference upload when mode requires it', () => {
+  it('shows upload section when mode requires it', () => {
     renderDesignerView()
-    // Default mode is studio_random — should NOT show upload
-    expect(screen.queryByLabelText('Upload reference photo')).not.toBeInTheDocument()
+    // Default mode is Design Character — should NOT show upload
+    expect(screen.queryByTitle('Upload a reference photo')).not.toBeInTheDocument()
 
-    // Switch to From Reference — should show upload
+    // Switch to From Reference — should show upload area
     fireEvent.click(screen.getByRole('radio', { name: /From Reference/ }))
-    expect(screen.getByText('Reference Image')).toBeInTheDocument()
-    expect(screen.getByLabelText('Upload reference photo')).toBeInTheDocument()
+    expect(screen.getByText('1. Upload a face')).toBeInTheDocument()
+    expect(screen.getByTitle('Upload a reference photo')).toBeInTheDocument()
 
-    // Switch back to Random Face — should hide upload
-    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
-    expect(screen.queryByText('Reference Image')).not.toBeInTheDocument()
+    // Switch back to Design Character — should hide upload
+    fireEvent.click(screen.getByRole('radio', { name: /Design Character/ }))
+    expect(screen.queryByText('1. Upload a face')).not.toBeInTheDocument()
   })
 
-  it('shows empty state hint', () => {
+  it('clicking generate calls gen.run', async () => {
     renderDesignerView()
-    // Switch to Random Face to see the non-reference empty state
-    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
-    expect(
-      screen.getByText('Click Generate to create a new avatar'),
-    ).toBeInTheDocument()
-  })
-
-  it('clicking generate calls gen.run with correct params', async () => {
-    renderDesignerView()
-    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
-    fireEvent.click(screen.getByText('Generate 4'))
+    fireEvent.click(screen.getByText(/Generate \(1\)/))
 
     await waitFor(() => {
       expect(mockRun).toHaveBeenCalledWith(
         expect.objectContaining({
-          mode: 'studio_random',
-          count: 4,
-          truncation: 0.7,
+          mode: 'creative',
+          count: 1,
         }),
-      )
-    })
-  })
-
-  it('count selector updates the count', async () => {
-    renderDesignerView()
-    fireEvent.click(screen.getByRole('radio', { name: /Random Face/ }))
-    fireEvent.click(screen.getByText('8'))
-    fireEvent.click(screen.getByText('Generate 8'))
-
-    await waitFor(() => {
-      expect(mockRun).toHaveBeenCalledWith(
-        expect.objectContaining({ count: 8 }),
       )
     })
   })
 
   it('back button returns to gallery view', () => {
     renderDesignerView()
-    fireEvent.click(screen.getByLabelText('Back to Avatar Gallery'))
+    fireEvent.click(screen.getByTitle('Back to Gallery'))
     // Should see gallery landing again
     expect(screen.getByText('New Avatar')).toBeInTheDocument()
   })
@@ -230,12 +195,5 @@ describe('AvatarStudio — Designer View', () => {
     const onOpenLightbox = vi.fn()
     renderDesignerView({ onOpenLightbox })
     expect(onOpenLightbox).not.toHaveBeenCalled()
-  })
-
-  it('prompt input updates on user typing', () => {
-    renderDesignerView()
-    const input = screen.getByLabelText('Avatar generation prompt') as HTMLInputElement
-    fireEvent.change(input, { target: { value: 'cyberpunk portrait' } })
-    expect(input.value).toBe('cyberpunk portrait')
   })
 })

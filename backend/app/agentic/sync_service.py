@@ -41,6 +41,8 @@ MCP_SERVERS = [
     # Dev & Knowledge (9118–9119)
     ("hp-github", 9118, "HomePilot GitHub MCP server"),
     ("hp-notion", 9119, "HomePilot Notion MCP server"),
+    # Inventory (9120)
+    ("hp-inventory", 9120, "HomePilot Inventory MCP server"),
 ]
 
 

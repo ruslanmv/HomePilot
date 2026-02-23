@@ -283,3 +283,91 @@ def process_and_add_file(project_id: str, file_path: Path) -> int:
 
     # Add to collection
     return add_documents_to_project(project_id, chunks, metadatas, ids)
+
+
+def query_project_knowledge_filtered(
+    project_id: str,
+    query: str,
+    n_results: int = 3,
+    *,
+    allowed_item_ids: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Query project knowledge, optionally restricting to a set of project_items ids.
+
+    This enables persona-scoped Chat-with-Docs:
+    - persona attachments define allowed_item_ids
+    - retrieval only searches those docs
+
+    Backward compatible: if allowed_item_ids is None/empty, behaves like
+    the standard query_project_knowledge.
+    """
+    try:
+        collection = get_or_create_collection(project_id)
+
+        where = None
+        if allowed_item_ids:
+            where = {"item_id": {"$in": allowed_item_ids}}
+
+        results = collection.query(
+            query_texts=[query],
+            n_results=n_results,
+            where=where,
+        )
+
+        formatted_results = []
+        if results and results.get("documents") and len(results["documents"]) > 0:
+            documents = results["documents"][0]
+            metadatas = results["metadatas"][0] if results.get("metadatas") else [{}] * len(documents)
+            distances = results["distances"][0] if results.get("distances") else [0.0] * len(documents)
+
+            for doc, meta, dist in zip(documents, metadatas, distances):
+                formatted_results.append({
+                    "content": doc,
+                    "metadata": meta,
+                    "similarity": 1.0 - dist,
+                })
+
+        return formatted_results
+
+    except Exception as e:
+        print(f"Error querying project knowledge (filtered): {e}")
+        return []
+
+
+def process_and_add_file_with_item_id(
+    project_id: str,
+    file_path: Path,
+    *,
+    item_id: str,
+    asset_id: str = "",
+    original_name: str = "",
+) -> int:
+    """
+    Process a file and add it to the project's knowledge base,
+    tagging each chunk with item_id so we can do persona-scoped retrieval.
+    """
+    text = extract_text_from_file(file_path)
+    if not text or text.startswith("["):
+        return 0
+
+    chunks = chunk_text(text)
+    if not chunks:
+        return 0
+
+    source_name = original_name or file_path.name
+
+    metadatas = [{
+        "source": source_name,
+        "chunk_index": i,
+        "total_chunks": len(chunks),
+        "item_id": item_id,
+        "asset_id": asset_id,
+    } for i in range(len(chunks))]
+
+    ids = [
+        f"{hashlib.md5((item_id + '_' + source_name).encode()).hexdigest()[:8]}_{i}"
+        for i in range(len(chunks))
+    ]
+
+    return add_documents_to_project(project_id, chunks, metadatas, ids)

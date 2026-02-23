@@ -94,6 +94,7 @@ class UserProfile(BaseModel):
     locale: str = "en"
     timezone: str = ""
     bio: str = ""
+    birthday: str = ""  # ISO date string e.g. "1990-05-15" (YYYY-MM-DD)
 
     # Preferences (for future recommendations)
     personalization_enabled: bool = True

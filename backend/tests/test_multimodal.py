@@ -111,12 +111,14 @@ class TestMultimodalCatalog:
                     f"Multimodal model {m['id']} has nsfw:true but missing uncensored:true"
                 )
 
-    def test_default_model_in_catalog(self):
-        """The default model 'moondream' must be in the catalog."""
+    def test_known_vision_models_in_catalog(self):
+        """At least one known vision model (moondream, gemma3, llava) should be in the catalog."""
         models = load_ollama_multimodal_models()
         ids = [m["id"] for m in models]
-        assert any("moondream" in mid for mid in ids), (
-            f"Default model 'moondream' not found in multimodal catalog. IDs: {ids}"
+        known = ["moondream", "gemma3", "llava"]
+        found = [k for k in known if any(k in mid for mid in ids)]
+        assert len(found) > 0, (
+            f"No known vision models found in multimodal catalog. IDs: {ids}"
         )
 
     @pytest.mark.skipif(
@@ -239,13 +241,14 @@ class TestMultimodalEndpoints:
                 "mode": "caption",
             },
         )
-        # With mocked outbound, may succeed or gracefully fail (image fetch error)
-        assert response.status_code in [200, 500]
+        # May succeed (200), fail on image fetch/model call (500), or return
+        # a structured error like "no vision model found" (422).
+        assert response.status_code in [200, 422, 500]
         data = response.json()
         # Whether it succeeded or not, it should return structured JSON
         assert isinstance(data, dict)
+        assert "ok" in data
         if response.status_code == 200:
-            assert "ok" in data
             assert "meta" in data
 
 

@@ -7,8 +7,10 @@
  *   3. Integrations — secrets vault
  */
 import React, { useEffect, useMemo, useState } from 'react'
+import { useAuth } from './components/AuthGate'
 import type { UserProfile, SecretListItem, MemoryItem } from './profileApi'
 import {
+  // Legacy (global — single-user / API-key mode)
   fetchProfile,
   saveProfile,
   listSecrets,
@@ -17,7 +19,17 @@ import {
   fetchMemory,
   saveMemory,
   deleteMemoryItem,
+  // Multi-user (Bearer, per-user scoped)
+  fetchUserProfile,
+  saveUserProfile,
+  listUserSecrets,
+  upsertUserSecret,
+  deleteUserSecret,
+  fetchUserMemory,
+  saveUserMemory,
+  deleteUserMemoryItem,
 } from './profileApi'
+import AvatarUploader from './components/AvatarUploader'
 import {
   COUNTRIES,
   LANGUAGES,
@@ -39,6 +51,7 @@ const emptyProfile: UserProfile = {
   locale: 'en',
   timezone: '',
   bio: '',
+  birthday: '',
 
   personalization_enabled: true,
   likes: [],
@@ -146,17 +159,27 @@ export default function ProfileSettingsModal({
   apiKey,
   nsfwMode,
   onClose,
+  token: tokenProp,
 }: {
   backendUrl: string
   apiKey: string
   nsfwMode: boolean
   onClose: () => void
+  /** Optional Bearer token for per-user endpoints. Falls back to localStorage. */
+  token?: string
 }) {
   const [tab, setTab] = useState<TabKey>('profile')
+  const { updateUser } = useAuth()
+
+  // Resolve auth token (prop > localStorage)
+  const authToken = tokenProp || localStorage.getItem('homepilot_auth_token') || ''
+  // Per-user mode when a Bearer token is available (multi-user)
+  const usePerUser = !!authToken
 
   const [profile, setProfile] = useState<UserProfile>(emptyProfile)
   const [secrets, setSecrets] = useState<SecretListItem[]>([])
   const [memory, setMemory] = useState<MemoryItem[]>([])
+  const [avatarUrl, setAvatarUrl] = useState('')
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -179,17 +202,37 @@ export default function ProfileSettingsModal({
     setLoading(true)
     setErr(null)
     try {
-      const p = await fetchProfile(backendUrl, apiKey)
+      // Profile — per-user when Bearer token present, else legacy global
+      const p = usePerUser
+        ? await fetchUserProfile(backendUrl, authToken)
+        : await fetchProfile(backendUrl, apiKey)
       const merged = { ...emptyProfile, ...p }
       // Auto-detect system timezone if profile has none saved
       if (!merged.timezone) {
         merged.timezone = getSystemTimezone()
       }
       setProfile(merged)
-      const s = await listSecrets(backendUrl, apiKey)
+
+      // Secrets
+      const s = usePerUser
+        ? await listUserSecrets(backendUrl, authToken)
+        : await listSecrets(backendUrl, apiKey)
       setSecrets(s)
-      const m = await fetchMemory(backendUrl, apiKey)
+
+      // Memory
+      const m = usePerUser
+        ? await fetchUserMemory(backendUrl, authToken)
+        : await fetchMemory(backendUrl, apiKey)
       setMemory(m)
+
+      // Load avatar from stored user data (if available)
+      try {
+        const savedUser = localStorage.getItem('homepilot_auth_user')
+        if (savedUser) {
+          const u = JSON.parse(savedUser)
+          if (u.avatar_url) setAvatarUrl(u.avatar_url)
+        }
+      } catch {}
     } catch (e: any) {
       setErr(e?.message || String(e))
     } finally {
@@ -207,11 +250,19 @@ export default function ProfileSettingsModal({
     setErr(null)
     setSavedMsg(false)
     try {
-      await saveProfile(backendUrl, apiKey, {
-        ...profile,
-        default_spicy_strength: clamp01(profile.default_spicy_strength),
+      const pToSave = { ...profile, default_spicy_strength: clamp01(profile.default_spicy_strength) }
+      if (usePerUser) {
+        await saveUserProfile(backendUrl, authToken, pToSave)
+        await saveUserMemory(backendUrl, authToken, memory)
+      } else {
+        await saveProfile(backendUrl, apiKey, pToSave)
+        await saveMemory(backendUrl, apiKey, memory)
+      }
+      // Propagate display_name / email changes to AuthContext → sidebar updates live
+      updateUser({
+        display_name: profile.display_name,
+        email: profile.email,
       })
-      await saveMemory(backendUrl, apiKey, memory)
       setSavedMsg(true)
       setTimeout(() => setSavedMsg(false), 2500)
     } catch (e: any) {
@@ -227,11 +278,16 @@ export default function ProfileSettingsModal({
     if (!k || !v) return
     setErr(null)
     try {
-      await upsertSecret(backendUrl, apiKey, { key: k, value: v, description: secretDesc })
+      if (usePerUser) {
+        await upsertUserSecret(backendUrl, authToken, { key: k, value: v, description: secretDesc })
+        setSecrets(await listUserSecrets(backendUrl, authToken))
+      } else {
+        await upsertSecret(backendUrl, apiKey, { key: k, value: v, description: secretDesc })
+        setSecrets(await listSecrets(backendUrl, apiKey))
+      }
       setSecretKey('')
       setSecretVal('')
       setSecretDesc('')
-      setSecrets(await listSecrets(backendUrl, apiKey))
     } catch (e: any) {
       setErr(e?.message || String(e))
     }
@@ -240,8 +296,13 @@ export default function ProfileSettingsModal({
   async function onDeleteSecret(key: string) {
     setErr(null)
     try {
-      await deleteSecret(backendUrl, apiKey, key)
-      setSecrets(await listSecrets(backendUrl, apiKey))
+      if (usePerUser) {
+        await deleteUserSecret(backendUrl, authToken, key)
+        setSecrets(await listUserSecrets(backendUrl, authToken))
+      } else {
+        await deleteSecret(backendUrl, apiKey, key)
+        setSecrets(await listSecrets(backendUrl, apiKey))
+      }
     } catch (e: any) {
       setErr(e?.message || String(e))
     }
@@ -268,7 +329,11 @@ export default function ProfileSettingsModal({
   async function removeMemory(id: string) {
     setErr(null)
     try {
-      await deleteMemoryItem(backendUrl, apiKey, id)
+      if (usePerUser) {
+        await deleteUserMemoryItem(backendUrl, authToken, id)
+      } else {
+        await deleteMemoryItem(backendUrl, apiKey, id)
+      }
       setMemory(memory.filter((m) => m.id !== id))
     } catch (e: any) {
       setErr(e?.message || String(e))
@@ -316,6 +381,10 @@ export default function ProfileSettingsModal({
               </button>
             ))}
           </div>
+          {/* Mode hint (helpful for enterprise debugging) */}
+          <div className="ml-auto text-[10px] text-white/40 self-center pr-1">
+            {usePerUser ? 'Per-user (Bearer)' : 'Instance-wide (API key)'}
+          </div>
         </div>
 
         {/* Content */}
@@ -329,6 +398,20 @@ export default function ProfileSettingsModal({
           {/* ================================================================ */}
           {!loading && tab === 'profile' ? (
             <div className="space-y-5">
+              {/* Avatar upload — multi-user identity */}
+              {authToken && (
+                <AvatarUploader
+                  backendUrl={backendUrl}
+                  token={authToken}
+                  displayName={profile.display_name || 'User'}
+                  avatarUrl={avatarUrl}
+                  onAvatarChange={(url) => {
+                    setAvatarUrl(url)
+                    // Propagate to AuthContext → sidebar avatar updates live
+                    updateUser({ avatar_url: url })
+                  }}
+                />
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input
                   className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-white/20"
@@ -366,6 +449,18 @@ export default function ProfileSettingsModal({
                   value={profile.role}
                   onChange={(e) => setProfile({ ...profile, role: e.target.value })}
                 />
+              </div>
+
+              {/* Birthday */}
+              <div className="space-y-1.5">
+                <label className="text-[11px] uppercase tracking-wider text-white/40 font-semibold">Birthday</label>
+                <input
+                  type="date"
+                  className="w-full md:w-1/2 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-white/20 [color-scheme:dark]"
+                  value={profile.birthday}
+                  onChange={(e) => setProfile({ ...profile, birthday: e.target.value })}
+                />
+                <div className="text-[10px] text-white/35">Personas will know your age and can celebrate your birthday.</div>
               </div>
 
               {/* Country, Language, Timezone */}
@@ -434,7 +529,9 @@ export default function ProfileSettingsModal({
               />
 
               <div className="text-xs text-white/40">
-                Saved locally on your HomePilot backend.
+                {usePerUser
+                  ? 'Stored per user on your HomePilot backend.'
+                  : 'Stored locally on your HomePilot backend (instance-wide).'}
               </div>
             </div>
           ) : null}
@@ -794,7 +891,9 @@ export default function ProfileSettingsModal({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-white/10 flex items-center justify-between">
           <div className="text-xs text-white/35">
-            Profile stores preferences, memory, and integrations.
+            {usePerUser
+              ? 'Profile, memory & secrets are scoped to your account.'
+              : 'Profile stores preferences, memory, and integrations (instance-wide).'}
           </div>
           <button
             type="button"
