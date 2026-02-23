@@ -7,11 +7,11 @@ import subprocess
 import uuid as uuidlib
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -96,6 +96,12 @@ from .community import router as community_router
 from .profile import router as profile_router
 from .user_memory import router as memory_router
 
+# Multi-User Accounts & Onboarding (additive)
+from .users import router as users_router
+
+# Per-User Profile, Secrets & Memory (additive — multi-user aware)
+from .user_profile_store import router as user_profile_store_router
+
 # Avatar Studio (additive — persona avatar generation)
 from .avatar import router as avatar_router
 
@@ -153,6 +159,24 @@ app.include_router(avatar_router)
 
 # Include Outfit Variation routes (/v1/avatars/outfits)
 app.include_router(outfit_router)
+
+# Include User Auth & Onboarding routes (/v1/auth/*)
+app.include_router(users_router)
+
+# Include Per-User Profile Store routes (/v1/user-profile/*, /v1/user-memory/*)
+app.include_router(user_profile_store_router)
+
+# Include Secure File Storage routes (/v1/files/upload, /files/{asset_id})
+from .files import router as files_router
+app.include_router(files_router)
+
+# Include media:// URI resolver (/media/resolve)
+from .media_resolver import router as media_router
+app.include_router(media_router)
+
+# Include Inventory Core routes (/v1/inventory/*)
+from .inventory import router as inventory_router
+app.include_router(inventory_router)
 
 
 # ----------------------------
@@ -276,6 +300,8 @@ class ChatIn(BaseModel):
         None,
         description="Optional extra system context (e.g., vision analysis) injected into the next LLM call.",
     )
+    # Incognito mode: skip memory storage + profile injection for this request
+    incognito: Optional[bool] = Field(False, description="Incognito mode: no memory storage, no profile injection")
 
 
 class ChatOut(BaseModel):
@@ -410,14 +436,12 @@ def _ensure_db_path_is_writable():
 
 def _ensure_static_mount() -> None:
     """
-    StaticFiles validates the directory at mount time,
-    so mount only after ensuring the directory exists.
+    Legacy StaticFiles mount replaced by secure files router (backend/app/files.py).
+    The files router serves /files/{asset_id} with ownership checks and also
+    provides a legacy fallback for /files/{filename} paths.
+    UPLOAD_PATH is still created for backward compatibility.
     """
-    # idempotent mount
-    for route in app.router.routes:
-        if getattr(route, "name", None) == "files":
-            return
-    app.mount("/files", StaticFiles(directory=str(UPLOAD_PATH)), name="files")
+    UPLOAD_PATH.mkdir(parents=True, exist_ok=True)
 
 
 # ----------------------------
@@ -631,7 +655,7 @@ async def health_detailed() -> JSONResponse:
                 "status": "available" if vision_models else "no_vision_models",
                 "vision_models": vision_models,
                 "vision_model_count": len(vision_models),
-                "recommended_default": vision_models[0] if vision_models else "moondream",
+                "recommended_default": vision_models[0] if vision_models else None,
             }
         else:
             multimodal_status = {
@@ -1874,36 +1898,114 @@ async def check_models_health(
         )
 
 
+def _scoped_user_or_none(authorization: str = "", homepilot_session: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Resolve the authenticated user for conversation scoping.
+    - Bearer token present -> return that user.
+    - Cookie token present -> return that user.
+    - No token + single user -> return default user (backward compat).
+    - No token + multiple users -> raise 401.
+    """
+    from .users import ensure_users_tables, _validate_token, get_or_create_default_user, count_users
+    ensure_users_tables()
+    # Extract token from Authorization header (same logic as get_current_user)
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    # Fall back to HttpOnly cookie (for browser requests without explicit header)
+    if not token and homepilot_session:
+        token = homepilot_session.strip()
+    user = _validate_token(token) if token else None
+    if user:
+        return user
+    if count_users() > 1:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return get_or_create_default_user()
+
+
 @app.get("/conversations")
-async def conversations(limit: int = Query(50, ge=1, le=200), project_id: Optional[str] = Query(None)) -> JSONResponse:
-    """List saved conversations (History/Today sidebar). Optionally filter by project_id."""
+async def conversations(
+    limit: int = Query(50, ge=1, le=200),
+    project_id: Optional[str] = Query(None),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """List saved conversations, scoped per user in multi-user mode."""
     try:
-        items = list_conversations(limit=limit, project_id=project_id)
+        user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+        uid = user["id"] if user else None
+        items = list_conversations(limit=limit, project_id=project_id, user_id=uid)
         return JSONResponse(status_code=200, content={"ok": True, "conversations": items})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to list conversations: {e}", code="conversations_error"))
 
 
 @app.get("/conversations/{conversation_id}/messages")
-async def conversation_messages(conversation_id: str, limit: int = Query(200, ge=1, le=1000)) -> JSONResponse:
-    """Load full message list for a conversation."""
+async def conversation_messages(
+    conversation_id: str,
+    limit: int = Query(200, ge=1, le=1000),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """Load full message list for a conversation (scoped per user)."""
     try:
-        msgs = get_messages(conversation_id, limit=limit)
+        user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+        uid = user["id"] if user else None
+        msgs = get_messages(conversation_id, limit=limit, user_id=uid)
         return JSONResponse(status_code=200, content={"ok": True, "conversation_id": conversation_id, "messages": msgs})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to load conversation: {e}", code="conversation_load_error"))
 
 
 @app.delete("/conversations/{conversation_id}")
-async def delete_conversation_endpoint(conversation_id: str) -> JSONResponse:
-    """Delete all messages and personality memory from a specific conversation."""
+async def delete_conversation_endpoint(
+    conversation_id: str,
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """Delete a conversation and its generated media files (scoped per user)."""
     try:
-        deleted_count = delete_conversation(conversation_id)
-        # Also clear in-memory personality context (topics, emotions, engagement)
+        user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+        uid = user["id"] if user else None
+        deleted_count = delete_conversation(conversation_id, user_id=uid)
         clear_conversation_memory(conversation_id)
-        return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted_count > 0, "deleted_messages": deleted_count, "conversation_id": conversation_id})
+        # Clean up persisted chat-generated images (NOT persona avatar/outfit images)
+        try:
+            from .files import delete_conversation_media
+            media_deleted = delete_conversation_media(conversation_id)
+        except Exception as e:
+            media_deleted = 0
+            print(f"[DELETE] Media cleanup error for {conversation_id}: {e}")
+        return JSONResponse(status_code=200, content={"ok": True, "deleted": deleted_count > 0, "deleted_messages": deleted_count, "deleted_media_files": media_deleted, "conversation_id": conversation_id})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete conversation: {e}", code="delete_conversation_error"))
+
+
+@app.get("/conversations/{conversation_id}/media")
+async def get_conversation_media_endpoint(
+    conversation_id: str,
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """List all persisted generated images for a conversation (gallery)."""
+    try:
+        user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+        uid = user["id"] if user else None
+        from .files import get_conversation_media
+        media = get_conversation_media(conversation_id, user_id=uid)
+        return JSONResponse(status_code=200, content={
+            "ok": True,
+            "conversation_id": conversation_id,
+            "media": media,
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to load media: {e}", code="media_load_error"))
 
 
 @app.delete("/media/image")
@@ -1987,6 +2089,54 @@ def _resolve_selected_image_url(persona_appearance: Dict[str, Any]) -> Optional[
                 if isinstance(url, str) and url.strip():
                     return url.strip()
     return None
+
+
+def _resolve_local_file_to_upload_root(url: str, upload_root: Path) -> Optional[str]:
+    """
+    If *url* contains ``/files/``, resolve the referenced file on disk
+    and ensure a copy exists in *upload_root*.
+
+    Returns the basename inside *upload_root*, or ``None`` if *url* is
+    not a local ``/files/`` URL or the file cannot be found.
+    """
+    if "/files/" not in url:
+        return None
+
+    import shutil as _sh
+
+    files_idx = url.index("/files/") + len("/files/")
+    file_ref = url[files_idx:].split("?")[0]
+
+    # Prevent path traversal
+    if ".." in file_ref:
+        return None
+
+    local_path = upload_root / file_ref
+    if not local_path.exists():
+        # Try resolving via file_assets table
+        try:
+            from .files import get_asset, _upload_root
+            asset = get_asset(file_ref)
+            if asset and asset.get("rel_path"):
+                local_path = _upload_root() / asset["rel_path"]
+        except Exception:
+            pass
+
+    if not local_path.exists():
+        return None
+
+    # Ensure resolved path is under upload_root (safety check)
+    try:
+        local_path.resolve().relative_to(upload_root.resolve())
+    except ValueError:
+        return None
+
+    # Copy to upload_root root so commit_persona_avatar can find it
+    dest_name = local_path.name
+    dest = upload_root / dest_name
+    if not dest.exists():
+        _sh.copy2(local_path, dest)
+    return dest_name
 
 
 async def _download_comfy_image(url: str, upload_root: Path) -> str:
@@ -2341,10 +2491,94 @@ async def update_project(project_id: str, request: Request) -> JSONResponse:
     try:
         data = await request.json()
         result = projects.update_project(project_id, data)
-        if result:
-            return JSONResponse(status_code=200, content={"ok": True, "project": result})
-        else:
+
+        if not result:
             return JSONResponse(status_code=404, content=_safe_err("Project not found", code="not_found"))
+
+        # --------------------------------------------------------------
+        # Auto-commit any /comfy/view/ images for persona projects
+        # (same logic as create_project) so wardrobe-generated images
+        # become durable /files/... assets and appear in Inventory.
+        # --------------------------------------------------------------
+        if result.get("project_type") == "persona":
+            try:
+                appearance = dict(result.get("persona_appearance") or {})
+                project_root = UPLOAD_PATH / "projects" / result["id"]
+                dirty = False
+
+                # Commit set images (convert /comfy/view/ → /files/)
+                for s in list(appearance.get("sets") or []):
+                    for img in (s.get("images") or []):
+                        url = img.get("url", "")
+                        if not url or not url.startswith("/comfy/view/"):
+                            continue
+                        try:
+                            fname = await _download_comfy_image(url, UPLOAD_PATH)
+                            rel = commit_persona_image(UPLOAD_PATH, project_root, fname, prefix="avatar")
+                            img["url"] = f"/files/{rel}"
+                            dirty = True
+                        except Exception as img_err:
+                            print(f"[PERSONA] Commit set image skipped ({url}): {img_err}")
+
+                # Commit outfit images (convert /comfy/view/ → /files/)
+                for outfit in list(appearance.get("outfits") or []):
+                    for img in (outfit.get("images") or []):
+                        url = img.get("url", "")
+                        if not url or not url.startswith("/comfy/view/"):
+                            continue
+                        try:
+                            fname = await _download_comfy_image(url, UPLOAD_PATH)
+                            rel = commit_persona_image(UPLOAD_PATH, project_root, fname, prefix="outfit")
+                            img["url"] = f"/files/{rel}"
+                            dirty = True
+                        except Exception as img_err:
+                            print(f"[PERSONA] Commit outfit image skipped ({url}): {img_err}")
+
+                # -----------------------------------------------------------
+                # Always sync selected_filename + selected_thumb_filename to
+                # the currently selected image.  Previous code only ran when
+                # selected_filename was missing → changing Active Look left
+                # the project mini-thumbnail stale.
+                # -----------------------------------------------------------
+                selected_url = _resolve_selected_image_url(appearance)
+                if selected_url:
+                    # Extract the rel_path for already-committed /files/ URLs
+                    sel_rel = None
+                    if selected_url.startswith("/files/"):
+                        sel_rel = selected_url[len("/files/"):].lstrip("/")
+                    elif selected_url.startswith("files/"):
+                        sel_rel = selected_url[len("files/"):].lstrip("/")
+
+                    if sel_rel:
+                        # Image already on disk — just ensure thumbnail exists
+                        cur_selected = appearance.get("selected_filename", "")
+                        if cur_selected != sel_rel:
+                            try:
+                                from .personas.avatar_assets import ensure_thumb_for_selected
+                                thumb_rel = ensure_thumb_for_selected(UPLOAD_PATH, sel_rel)
+                                appearance["selected_filename"] = sel_rel
+                                appearance["selected_thumb_filename"] = thumb_rel
+                                dirty = True
+                            except Exception as thumb_err:
+                                print(f"[PERSONA] selected_filename sync failed: {thumb_err}")
+                    elif selected_url.startswith("/comfy/view/"):
+                        # Still a ComfyUI URL — download + full avatar commit
+                        try:
+                            source_filename = await _download_comfy_image(selected_url, UPLOAD_PATH)
+                            cr = commit_persona_avatar(UPLOAD_PATH, project_root, source_filename)
+                            appearance["selected_filename"] = cr.selected_filename
+                            appearance["selected_thumb_filename"] = cr.thumb_filename
+                            dirty = True
+                        except Exception as commit_sel_err:
+                            print(f"[PERSONA] selected avatar commit failed: {commit_sel_err}")
+
+                if dirty:
+                    result = projects.update_project(result["id"], {"persona_appearance": appearance})
+
+            except Exception as commit_err:
+                print(f"[PERSONA] Auto-commit on update skipped: {commit_err}")
+
+        return JSONResponse(status_code=200, content={"ok": True, "project": result})
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to update project: {e}"))
 
@@ -2395,6 +2629,387 @@ async def delete_project_document(project_id: str, document_name: str) -> JSONRe
         return JSONResponse(status_code=200, content={
             "ok": True,
             "message": "Document removed from project. Note: For full knowledge base update, delete and re-upload all documents."
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete document: {e}"))
+
+
+# ----------------------------
+# Project Items / File Manager API
+# ----------------------------
+
+from .project_files import (
+    ensure_project_items_table as _ensure_items_tbl,
+    create_item as _create_item,
+    get_item as _get_item,
+    list_items as _list_items,
+    update_item as _update_item,
+    delete_item as _delete_item,
+)
+
+
+class ProjectItemIn(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    category: Optional[str] = "file"
+    item_type: Optional[str] = "document"
+    tags: Optional[List[str]] = []
+    properties: Optional[Dict[str, Any]] = {}
+
+
+@app.get("/projects/{project_id}/items", dependencies=[Depends(require_api_key)])
+async def list_project_items(
+    project_id: str,
+    category: Optional[str] = None,
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+) -> JSONResponse:
+    """List all items attached to a project."""
+    try:
+        items = _list_items(project_id, category=category, limit=limit, offset=offset)
+        return JSONResponse(status_code=200, content={"ok": True, "items": items})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to list items: {e}"))
+
+
+@app.post("/projects/{project_id}/items", dependencies=[Depends(require_api_key)])
+async def create_project_item(
+    project_id: str,
+    body: ProjectItemIn,
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """Create a new item (metadata only — file upload is separate)."""
+    try:
+        proj = projects.get_project_by_id(project_id)
+        if not proj:
+            return JSONResponse(status_code=404, content=_safe_err("Project not found"))
+
+        user_id = ""
+        try:
+            user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+            user_id = user["id"] if user else ""
+        except Exception:
+            pass
+
+        item = _create_item(
+            project_id,
+            body.name,
+            user_id=user_id,
+            description=body.description or "",
+            category=body.category or "file",
+            item_type=body.item_type or "document",
+            tags=body.tags or [],
+            properties=body.properties or {},
+        )
+        return JSONResponse(status_code=201, content={"ok": True, "item": item})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to create item: {e}"))
+
+
+@app.post("/projects/{project_id}/items/upload", dependencies=[Depends(require_api_key)])
+async def upload_project_item(
+    request: Request,
+    project_id: str,
+    file: UploadFile = File(...),
+    name: str = "",
+    description: str = "",
+    category: str = "file",
+    tags: str = "",
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """
+    Upload a file and create a project item in one step.
+    Accepts any file type: PDFs, images, text, etc.
+    Also indexes documents into the knowledge base (RAG) when applicable.
+    """
+    try:
+        proj = projects.get_project_by_id(project_id)
+        if not proj:
+            return JSONResponse(status_code=404, content=_safe_err("Project not found"))
+
+        user_id = ""
+        try:
+            user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+            user_id = user["id"] if user else ""
+        except Exception:
+            pass
+
+        filename = file.filename or "upload.bin"
+        content_type = (file.content_type or "").lower()
+        ext = ""
+        if filename and "." in filename:
+            ext = filename.rsplit(".", 1)[1].lower()
+
+        # Determine item_type from extension
+        doc_exts = {"pdf", "txt", "md", "doc", "docx", "csv", "json", "yaml", "yml"}
+        img_exts = {"png", "jpg", "jpeg", "webp", "gif", "bmp", "svg"}
+        if ext in doc_exts:
+            item_type = "document"
+        elif ext in img_exts:
+            item_type = "image"
+        else:
+            item_type = "file"
+
+        # Read file data
+        data = await file.read()
+        if not data:
+            return JSONResponse(status_code=400, content=_safe_err("Empty file"))
+
+        max_bytes = int(MAX_UPLOAD_MB) * 1024 * 1024
+        if len(data) > max_bytes:
+            return JSONResponse(
+                status_code=413,
+                content=_safe_err(f"File too large (max {MAX_UPLOAD_MB}MB)"),
+            )
+
+        # Save to disk
+        import mimetypes as _mt
+        save_ext = f".{ext}" if ext else ".bin"
+        save_name = f"{uuidlib.uuid4().hex}{save_ext}"
+        save_path = UPLOAD_PATH / save_name
+        save_path.write_bytes(data)
+
+        mime = content_type or _mt.guess_type(str(save_path))[0] or "application/octet-stream"
+        base = _base_url_from_request(request)
+
+        # Register as secure asset if user is authenticated
+        asset_id = ""
+        file_url = f"{base}/files/{save_name}"
+        if user_id:
+            try:
+                from .files import _ensure_user_dir, _upload_root, insert_asset
+                folder = _ensure_user_dir(user_id, "project_asset", project_id=project_id)
+                import shutil
+                dest = folder / save_name
+                shutil.move(str(save_path), str(dest))
+                save_path = dest
+                rel_path = str(dest.relative_to(_upload_root()))
+                asset_id = insert_asset(
+                    user_id=user_id,
+                    kind="project_asset",
+                    rel_path=rel_path,
+                    mime=mime,
+                    size_bytes=len(data),
+                    original_name=filename,
+                    project_id=project_id,
+                )
+                file_url = f"{base}/files/{asset_id}"
+            except Exception as asset_err:
+                print(f"[ITEMS] Asset registration skipped: {asset_err}")
+
+        # Parse tags
+        tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+        # Create item record first (so we have item_id for RAG metadata)
+        item = _create_item(
+            project_id,
+            name or filename,
+            user_id=user_id,
+            description=description,
+            category=category,
+            item_type=item_type,
+            tags=tag_list,
+            asset_id=asset_id,
+            file_url=file_url,
+            mime=mime,
+            size_bytes=len(data),
+            original_name=filename,
+        )
+
+        # Index into knowledge base (RAG) for documents
+        # Uses item_id-tagged chunks for persona-scoped retrieval
+        chunks_added = 0
+        if ext in {"pdf", "txt", "md"} and projects.RAG_ENABLED:
+            try:
+                _update_item(item["id"], {"properties": json.dumps({"index_status": "indexing"})})
+            except Exception:
+                pass
+            try:
+                from .vectordb import process_and_add_file_with_item_id
+                chunks_added = process_and_add_file_with_item_id(
+                    project_id,
+                    Path(str(save_path)),
+                    item_id=item["id"],
+                    asset_id=asset_id or "",
+                    original_name=filename,
+                )
+                try:
+                    import time as _t
+                    _update_item(item["id"], {"properties": json.dumps({
+                        "index_status": "ready",
+                        "chunk_count": chunks_added,
+                        "last_indexed_at": _t.time(),
+                    })})
+                except Exception:
+                    pass
+            except Exception as rag_err:
+                print(f"[ITEMS] RAG indexing skipped: {rag_err}")
+                try:
+                    _update_item(item["id"], {"properties": json.dumps({
+                        "index_status": "error",
+                        "error_message": str(rag_err),
+                    })})
+                except Exception:
+                    pass
+
+        # Also update the project's files[] array for backward compat
+        try:
+            files_list = list(proj.get("files") or [])
+            files_list.append({
+                "name": filename,
+                "size": f"{len(data) / (1024*1024):.2f} MB" if len(data) > 1024*1024 else f"{len(data) / 1024:.1f} KB",
+                "path": str(save_path),
+                "chunks": chunks_added,
+                "source_type": item_type,
+                "item_id": item["id"],
+            })
+            projects.update_project(project_id, {"files": files_list})
+        except Exception:
+            pass
+
+        return JSONResponse(status_code=201, content={
+            "ok": True,
+            "item": item,
+            "chunks_added": chunks_added,
+            "file_url": file_url,
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to upload item: {e}"))
+
+
+@app.put("/projects/{project_id}/items/{item_id}", dependencies=[Depends(require_api_key)])
+async def update_project_item(
+    project_id: str,
+    item_id: str,
+    body: Dict[str, Any],
+) -> JSONResponse:
+    """Update item metadata (name, description, tags, properties, etc.)."""
+    try:
+        existing = _get_item(item_id)
+        if not existing or existing.get("project_id") != project_id:
+            return JSONResponse(status_code=404, content=_safe_err("Item not found"))
+        updated = _update_item(item_id, body)
+        return JSONResponse(status_code=200, content={"ok": True, "item": updated})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to update item: {e}"))
+
+
+@app.delete("/projects/{project_id}/items/{item_id}", dependencies=[Depends(require_api_key)])
+async def delete_project_item(project_id: str, item_id: str) -> JSONResponse:
+    """Delete an item and optionally its backing file."""
+    try:
+        existing = _get_item(item_id)
+        if not existing or existing.get("project_id") != project_id:
+            return JSONResponse(status_code=404, content=_safe_err("Item not found"))
+        _delete_item(item_id)
+        return JSONResponse(status_code=200, content={"ok": True, "message": "Item deleted"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete item: {e}"))
+
+
+# ----------------------------
+# Persona Document Attachments (Chat-with-Docs)
+# ----------------------------
+
+from .persona_attachments import (
+    ensure_persona_attachments_table as _ensure_pa_tbl,
+    attach_item_to_persona as _pa_attach,
+    detach_item_from_persona as _pa_detach,
+    set_attachment_mode as _pa_set_mode,
+    list_persona_documents as _pa_list_docs,
+)
+
+
+class PersonaAttachIn(BaseModel):
+    item_id: str
+    mode: Optional[str] = "indexed"
+
+
+@app.get("/projects/{project_id}/persona/documents", dependencies=[Depends(require_api_key)])
+async def list_persona_documents(project_id: str) -> JSONResponse:
+    """
+    List documents attached to this persona project.
+    Returns joined project_items fields + attachment mode.
+    """
+    try:
+        _ensure_pa_tbl()
+        docs = _pa_list_docs(project_id)
+        return JSONResponse(status_code=200, content={"ok": True, "documents": docs})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to list persona documents: {e}"))
+
+
+@app.post("/projects/{project_id}/persona/documents/attach", dependencies=[Depends(require_api_key)])
+async def attach_persona_document(project_id: str, body: PersonaAttachIn) -> JSONResponse:
+    """
+    Attach an existing project_item (document) to this persona.
+    """
+    try:
+        _ensure_pa_tbl()
+        attach = _pa_attach(project_id, body.item_id, mode=body.mode or "indexed")
+        return JSONResponse(status_code=200, content={"ok": True, "attachment": attach})
+    except ValueError as ve:
+        return JSONResponse(status_code=400, content=_safe_err(str(ve)))
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to attach document: {e}"))
+
+
+@app.post("/projects/{project_id}/persona/documents/mode", dependencies=[Depends(require_api_key)])
+async def set_persona_document_mode(project_id: str, body: PersonaAttachIn) -> JSONResponse:
+    """
+    Update attachment mode: indexed | pinned | excluded
+    """
+    try:
+        _ensure_pa_tbl()
+        updated = _pa_set_mode(project_id, body.item_id, body.mode or "indexed")
+        if not updated:
+            return JSONResponse(status_code=404, content=_safe_err("Attachment not found"))
+        return JSONResponse(status_code=200, content={"ok": True, "attachment": updated})
+    except ValueError as ve:
+        return JSONResponse(status_code=400, content=_safe_err(str(ve)))
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to set mode: {e}"))
+
+
+@app.delete("/projects/{project_id}/persona/documents/{item_id}", dependencies=[Depends(require_api_key)])
+async def detach_persona_document(project_id: str, item_id: str) -> JSONResponse:
+    """
+    Detach an item from persona (does NOT delete the file).
+    Enterprise-friendly safe removal.
+    """
+    try:
+        _ensure_pa_tbl()
+        ok = _pa_detach(project_id, item_id)
+        return JSONResponse(status_code=200, content={"ok": True, "removed": ok})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to detach document: {e}"))
+
+
+@app.delete("/projects/{project_id}/persona/documents/{item_id}/permanent", dependencies=[Depends(require_api_key)])
+async def delete_persona_document_permanently(project_id: str, item_id: str) -> JSONResponse:
+    """
+    Detach a document from persona AND delete the item, file asset,
+    and physical file from disk.  Use this when the user wants to
+    free up storage rather than just unlink.
+    """
+    try:
+        # 1. Remove persona attachment link
+        _ensure_pa_tbl()
+        _pa_detach(project_id, item_id)
+
+        # 2. Verify item belongs to this project
+        existing = _get_item(item_id)
+        if not existing or existing.get("project_id") != project_id:
+            return JSONResponse(status_code=404, content=_safe_err("Item not found"))
+
+        # 3. Delete project_item + file_asset + physical file
+        _delete_item(item_id)  # cleanup_file=True by default
+
+        return JSONResponse(status_code=200, content={
+            "ok": True,
+            "message": "Document and file permanently deleted",
         })
     except Exception as e:
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to delete document: {e}"))
@@ -2466,6 +3081,7 @@ class SessionCreateIn(BaseModel):
     project_id: str = Field(..., description="Persona project ID")
     mode: str = Field("text", description="Session mode: 'voice' or 'text'")
     title: Optional[str] = Field(None, description="Optional session title")
+    force_new: bool = Field(False, description="Force creation of a new session (bypass reuse)")
 
 
 @app.get("/persona/sessions", dependencies=[Depends(require_api_key)])
@@ -2495,6 +3111,7 @@ async def create_persona_session(data: SessionCreateIn) -> JSONResponse:
             project_id=data.project_id,
             mode=data.mode,
             title=data.title,
+            force_new=data.force_new,
         )
         return JSONResponse(status_code=201, content={"ok": True, "session": session})
     except Exception as e:
@@ -2574,11 +3191,19 @@ async def get_persona_session(session_id: str) -> JSONResponse:
 async def get_persona_memory(
     project_id: str = Query(..., description="Persona project ID"),
     category: Optional[str] = Query(None, description="Filter by category"),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
 ) -> JSONResponse:
     """Get all memories for a persona project ('What I know about you')."""
     try:
-        memories = persona_ltm_mod.get_memories(project_id, category=category)
-        count = persona_ltm_mod.memory_count(project_id)
+        _uid = None
+        try:
+            user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+            _uid = user["id"] if user else None
+        except Exception:
+            pass
+        memories = persona_ltm_mod.get_memories(project_id, category=category, user_id=_uid)
+        count = persona_ltm_mod.memory_count(project_id, user_id=_uid)
         return JSONResponse(
             status_code=200,
             content={"ok": True, "memories": memories, "count": count},
@@ -2591,10 +3216,16 @@ async def get_persona_memory(
 
 
 @app.post("/persona/memory", dependencies=[Depends(require_api_key)])
-async def upsert_persona_memory(request: Request) -> JSONResponse:
+async def upsert_persona_memory(request: Request, authorization: str = Header(default=""), homepilot_session: Optional[str] = Cookie(default=None)) -> JSONResponse:
     """Add or update a memory entry."""
     try:
         body = await request.json()
+        _uid = None
+        try:
+            user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+            _uid = user["id"] if user else None
+        except Exception:
+            pass
         result = persona_ltm_mod.upsert_memory(
             project_id=body["project_id"],
             category=body.get("category", "fact"),
@@ -2602,6 +3233,7 @@ async def upsert_persona_memory(request: Request) -> JSONResponse:
             value=body["value"],
             confidence=body.get("confidence", 1.0),
             source_type=body.get("source_type", "user_statement"),
+            user_id=_uid,
         )
         return JSONResponse(status_code=200, content={"ok": True, "memory": result})
     except KeyError as e:
@@ -2617,7 +3249,7 @@ async def upsert_persona_memory(request: Request) -> JSONResponse:
 
 
 @app.delete("/persona/memory", dependencies=[Depends(require_api_key)])
-async def delete_persona_memory(request: Request) -> JSONResponse:
+async def delete_persona_memory(request: Request, authorization: str = Header(default=""), homepilot_session: Optional[str] = Cookie(default=None)) -> JSONResponse:
     """Delete a specific memory entry or forget all."""
     try:
         body = await request.json()
@@ -2628,17 +3260,24 @@ async def delete_persona_memory(request: Request) -> JSONResponse:
                 content=_safe_err("project_id is required", code="missing_project_id"),
             )
 
+        _uid = None
+        try:
+            user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+            _uid = user["id"] if user else None
+        except Exception:
+            pass
+
         # If key is provided, delete specific entry; otherwise forget all
         key = body.get("key")
         category = body.get("category")
         if key and category:
-            deleted = persona_ltm_mod.delete_memory(project_id, category, key)
+            deleted = persona_ltm_mod.delete_memory(project_id, category, key, user_id=_uid)
             return JSONResponse(
                 status_code=200,
                 content={"ok": True, "deleted": deleted},
             )
         else:
-            count = persona_ltm_mod.forget_all(project_id)
+            count = persona_ltm_mod.forget_all(project_id, user_id=_uid)
             return JSONResponse(
                 status_code=200,
                 content={"ok": True, "forgotten": count, "message": f"Forgot {count} memories"},
@@ -2701,15 +3340,27 @@ async def get_persona_memory_stats(
 # ----------------------------
 
 @app.post("/chat", dependencies=[Depends(require_api_key)])
-async def chat(inp: ChatIn) -> JSONResponse:
+async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_session: Optional[str] = Cookie(default=None)) -> JSONResponse:
     """
     Unified chat endpoint with mode-aware routing.
     Stable response schema:
       { conversation_id, text, media }
     """
+    # Enterprise: bind conversation to authenticated user (prevents cross-user leakage)
+    user = None
+    try:
+        from .storage import ensure_conversation_owner
+        user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+        if user and inp.conversation_id:
+            ensure_conversation_owner(inp.conversation_id, user["id"])
+    except HTTPException:
+        pass  # Preserve legacy behavior in single-user mode
+    except Exception as e:
+        print(f"[CHAT] Warning: failed to bind conversation owner: {e}")
+
     # Debug: Log incoming parameters
     print(f"[CHAT ENDPOINT] imgModel received from frontend: '{inp.imgModel}' (type: {type(inp.imgModel).__name__ if inp.imgModel is not None else 'None'})")
-    print(f"[CHAT ENDPOINT] personalityId: {inp.personalityId!r}, ollama_model: {inp.ollama_model!r}")
+    print(f"[CHAT ENDPOINT] project_id: {inp.project_id!r}, personalityId: {inp.personalityId!r}, ollama_model: {inp.ollama_model!r}")
 
     # Build payload for mode-aware handler
     payload = {
@@ -2765,15 +3416,30 @@ async def chat(inp: ChatIn) -> JSONResponse:
         "personalityId": inp.personalityId,
         # Smart multimodal topology: optional vision context for system prompt
         "extra_system_context": inp.extra_system_context,
+        # Incognito mode: skip memory + profile for this request
+        "incognito": inp.incognito or False,
+        # Per-user isolation: resolved user id for memory scoping
+        "user_id": user["id"] if user else None,
     }
 
     # ----------------------------
     # Persona photo intent (deterministic — no LLM guessing)
     # If user says "show me your photo" and a committed persona avatar exists,
     # return it immediately in media.images[] without hitting the LLM.
+    #
+    # Precedence ladder for resolving persona project:
+    #   1. inp.project_id (explicit project context from frontend)
+    #   2. inp.personalityId starting with "persona:" (infer project from personality)
+    # This prevents first-message race conditions where project_id hasn't
+    # been set yet in localStorage but personalityId is already available.
     # ----------------------------
-    if inp.project_id and _is_photo_intent(inp.message):
-        proj = projects.get_project_by_id(inp.project_id)
+    _photo_project_id = inp.project_id
+    if not _photo_project_id and inp.personalityId and inp.personalityId.startswith("persona:"):
+        _photo_project_id = inp.personalityId[len("persona:"):]
+        print(f"[CHAT ENDPOINT] photo-intent: inferred project_id={_photo_project_id!r} from personalityId")
+
+    if _photo_project_id and _is_photo_intent(inp.message):
+        proj = projects.get_project_by_id(_photo_project_id)
         if proj and proj.get("project_type") == "persona":
             appearance = proj.get("persona_appearance") or {}
             sel = appearance.get("selected_filename")
@@ -2783,6 +3449,7 @@ async def chat(inp: ChatIn) -> JSONResponse:
                     type("_R", (), {"base_url": PUBLIC_BASE_URL or "http://localhost:8000/"})()
                 )
                 cid = inp.conversation_id or str(uuidlib.uuid4())
+                print(f"[CHAT ENDPOINT] photo-intent: returning deterministic avatar for project {_photo_project_id}")
                 return JSONResponse(
                     status_code=200,
                     content={
@@ -2889,13 +3556,22 @@ async def chat(inp: ChatIn) -> JSONResponse:
     # T4 additive: feed user text into Memory V2 for cross-topology learning.
     # Non-blocking: failures are silently ignored. Only for chat/voice modes
     # with a project_id (companion/project context).
-    if inp.project_id and inp.message and inp.mode in ("chat", "voice"):
+    # CRITICAL: only run when memory engine is actually set to "v2" / "adaptive"
+    _mem_mode = (inp.memoryEngine or "").lower().strip()
+    if _mem_mode in ("adaptive", ""):
+        _mem_mode = "v2"  # default to v2 when unset
+    elif _mem_mode == "basic":
+        _mem_mode = "v1"
+    if inp.project_id and inp.message and inp.mode in ("chat", "voice") and _mem_mode == "v2" and not inp.incognito:
         try:
             from .memory_v2 import get_memory_v2, ensure_v2_columns
             ensure_v2_columns()
-            get_memory_v2().ingest_user_text(inp.project_id, inp.message)
+            _uid = user["id"] if user else None
+            get_memory_v2().ingest_user_text(inp.project_id, inp.message, user_id=_uid)
         except Exception:
             pass
+    elif inp.incognito:
+        print("[CHAT] Incognito mode: skipping memory V2 ingest")
 
     # Merge game metadata into media (if present)
     game_meta = payload.get("_game")
@@ -2925,9 +3601,10 @@ async def chat(inp: ChatIn) -> JSONResponse:
 
 
 @app.post("/upload", dependencies=[Depends(require_api_key)])
-async def upload(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+async def upload(request: Request, file: UploadFile = File(...), authorization: str = Header(default=""), homepilot_session: Optional[str] = Cookie(default=None)) -> JSONResponse:
     """
     Stream uploads to disk (avoid reading entire file in memory).
+    Enterprise: registers file as a user-owned asset when auth is available.
     """
     filename = file.filename or "upload.png"
     ext = os.path.splitext(filename)[1].lower()[:10]
@@ -2935,8 +3612,26 @@ async def upload(request: Request, file: UploadFile = File(...)) -> JSONResponse
         ext = ".png"
 
     max_bytes = int(MAX_UPLOAD_MB) * 1024 * 1024
-    name = f"{uuidlib.uuid4().hex}{ext}"
-    path = UPLOAD_PATH / name
+
+    # Resolve user for per-user storage
+    _uid = None
+    try:
+        user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+        _uid = user["id"] if user else None
+    except Exception:
+        pass
+
+    if _uid:
+        # Secure path: store under per-user directory and register asset
+        from .files import _ensure_user_dir, _upload_root, insert_asset
+        import mimetypes as _mt
+        folder = _ensure_user_dir(_uid, "upload")
+        name = f"{uuidlib.uuid4().hex}{ext}"
+        path = folder / name
+    else:
+        # Legacy path: flat UPLOAD_PATH
+        name = f"{uuidlib.uuid4().hex}{ext}"
+        path = UPLOAD_PATH / name
 
     written = 0
     chunk_size = 1024 * 1024  # 1MB
@@ -2958,7 +3653,24 @@ async def upload(request: Request, file: UploadFile = File(...)) -> JSONResponse
         await file.close()
 
     base = _base_url_from_request(request)
-    return JSONResponse(status_code=201, content={"url": f"{base}/files/{name}"})
+
+    if _uid:
+        # Register as a secure asset
+        from .files import _upload_root, insert_asset
+        import mimetypes as _mt
+        rel_path = str(path.relative_to(_upload_root()))
+        mime = _mt.guess_type(str(path))[0] or "application/octet-stream"
+        asset_id = insert_asset(
+            user_id=_uid,
+            kind="upload",
+            rel_path=rel_path,
+            mime=mime,
+            size_bytes=written,
+            original_name=filename,
+        )
+        return JSONResponse(status_code=201, content={"url": f"{base}/files/{asset_id}"})
+    else:
+        return JSONResponse(status_code=201, content={"url": f"{base}/files/{name}"})
 
 
 # ----------------------------
@@ -3386,13 +4098,24 @@ async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
                     status_code=400,
                     detail="Cannot auto-resolve: no selected image URL in persona_appearance.sets",
                 )
-            source_filename = await _download_comfy_image(resolved_url, UPLOAD_PATH)
+            # Try local /files/ URL first, fall back to ComfyUI download
+            local_name = _resolve_local_file_to_upload_root(resolved_url, UPLOAD_PATH)
+            if local_name:
+                source_filename = local_name
+            else:
+                source_filename = await _download_comfy_image(resolved_url, UPLOAD_PATH)
 
         elif source_url:
-            # Download from explicit ComfyUI URL into UPLOAD_PATH
             if not isinstance(source_url, str) or not source_url.strip():
                 raise HTTPException(status_code=400, detail="source_url must be a non-empty string")
-            source_filename = await _download_comfy_image(source_url.strip(), UPLOAD_PATH)
+            source_url = source_url.strip()
+
+            # Try local /files/ URL first, fall back to ComfyUI download
+            local_name = _resolve_local_file_to_upload_root(source_url, UPLOAD_PATH)
+            if local_name:
+                source_filename = local_name
+            else:
+                source_filename = await _download_comfy_image(source_url, UPLOAD_PATH)
 
         elif source_filename:
             # Legacy path: file already in UPLOAD_PATH
@@ -3425,10 +4148,172 @@ async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
     appearance["selected_filename"] = result.selected_filename
     appearance["selected_thumb_filename"] = result.thumb_filename
 
+    # ----- Commit ALL remaining /comfy/view/ images in sets[] + outfits[] -----
+    # Same logic as project creation (POST /projects) — download ephemeral
+    # ComfyUI URLs and store them as durable /files/ paths so inventory and
+    # .hpersona exports can access them reliably.
+    for s in list(appearance.get("sets") or []):
+        for img in (s.get("images") or []):
+            url = img.get("url", "")
+            if not url or not url.startswith("/comfy/view/"):
+                continue
+            try:
+                fname = await _download_comfy_image(url, UPLOAD_PATH)
+                rel = commit_persona_image(
+                    UPLOAD_PATH, project_root, fname, prefix="avatar",
+                )
+                img["url"] = f"/files/{rel}"
+            except Exception as img_err:
+                print(f"[PERSONA] Commit set image skipped ({url}): {img_err}")
+
+    for outfit in list(appearance.get("outfits") or []):
+        for img in (outfit.get("images") or []):
+            url = img.get("url", "")
+            if not url or not url.startswith("/comfy/view/"):
+                continue
+            try:
+                fname = await _download_comfy_image(url, UPLOAD_PATH)
+                rel = commit_persona_image(
+                    UPLOAD_PATH, project_root, fname, prefix="outfit",
+                )
+                img["url"] = f"/files/{rel}"
+            except Exception as img_err:
+                print(f"[PERSONA] Commit outfit image skipped ({url}): {img_err}")
+
     updated = projects.update_project(project_id, {"persona_appearance": appearance})
     return JSONResponse(
         status_code=200,
         content={"ok": True, "project": updated, "selected": appearance},
+    )
+
+
+@app.post("/projects/{project_id}/persona/appearance/commit_generated", dependencies=[Depends(require_api_key)])
+async def persona_commit_generated(project_id: str, body: dict) -> JSONResponse:
+    """
+    Commit newly generated images into durable project storage immediately.
+
+    Called right after image generation so photos are available in inventory
+    and chat (via MCP) without waiting for explicit Save.
+
+    Body:
+      {
+        "kind": "set" | "outfit",
+        "images": [
+          { "url": "/comfy/view/...", "id": "pimg_...", "set_id": "set_gen_..." }
+        ],
+        // Only for kind="outfit":
+        "outfit_id": "outfit_...",
+        "outfit_label": "Lingerie",
+        "outfit_prompt": "...",
+        "generation_settings": { ... }
+      }
+
+    Returns:
+      { "ok": true, "committed": [ { "id", "url", "set_id" } ], "project": ... }
+    """
+    p = projects.get_project_by_id(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if p.get("project_type") != "persona":
+        raise HTTPException(status_code=400, detail="Not a persona project")
+
+    kind = body.get("kind", "set")
+    raw_images = body.get("images") or []
+    if not raw_images:
+        raise HTTPException(status_code=400, detail="No images provided")
+
+    project_root = UPLOAD_PATH / "projects" / project_id
+    committed: list = []
+
+    for img in raw_images:
+        url = str(img.get("url") or "").strip()
+        img_id = str(img.get("id") or "").strip()
+        set_id = str(img.get("set_id") or "").strip()
+        if not url:
+            continue
+
+        # Determine if the image is already committed (/files/...)
+        if "/files/" in url:
+            committed.append({"id": img_id, "url": url, "set_id": set_id})
+            continue
+
+        # Download from ComfyUI and commit to durable storage
+        try:
+            local_name = _resolve_local_file_to_upload_root(url, UPLOAD_PATH)
+            if not local_name:
+                local_name = await _download_comfy_image(url, UPLOAD_PATH)
+            prefix = "outfit" if kind == "outfit" else "avatar"
+            rel = commit_persona_image(UPLOAD_PATH, project_root, local_name, prefix=prefix)
+            durable_url = f"/files/{rel}"
+            committed.append({"id": img_id, "url": durable_url, "set_id": set_id})
+        except Exception as e:
+            print(f"[PERSONA] commit_generated skip ({url}): {e}")
+            committed.append({"id": img_id, "url": url, "set_id": set_id})
+
+    # -- Update persona_appearance in metadata so inventory + MCP see them --
+    appearance = dict(p.get("persona_appearance") or {})
+
+    if kind == "set":
+        # Add/merge into sets[]
+        new_set_id = committed[0]["set_id"] if committed else ""
+        existing_sets = list(appearance.get("sets") or [])
+        merged = False
+        for s in existing_sets:
+            if s.get("set_id") == new_set_id:
+                existing_img_ids = {i["id"] for i in (s.get("images") or [])}
+                for c in committed:
+                    if c["id"] not in existing_img_ids:
+                        s.setdefault("images", []).append({
+                            "id": c["id"], "url": c["url"], "set_id": c["set_id"],
+                        })
+                merged = True
+                break
+        if not merged and new_set_id:
+            existing_sets.append({
+                "set_id": new_set_id,
+                "images": [{"id": c["id"], "url": c["url"], "set_id": c["set_id"]} for c in committed],
+            })
+        appearance["sets"] = existing_sets
+
+    elif kind == "outfit":
+        outfit_id = body.get("outfit_id") or (committed[0]["set_id"] if committed else f"outfit_{int(__import__('time').time())}")
+        outfit_label = body.get("outfit_label") or "Outfit"
+        outfit_prompt = body.get("outfit_prompt") or ""
+        gen_settings = body.get("generation_settings") or {}
+
+        new_images = [
+            {"id": c["id"], "url": c["url"], "set_id": c["set_id"]}
+            for c in committed
+        ]
+
+        existing_outfits = list(appearance.get("outfits") or [])
+        merged = False
+        for o in existing_outfits:
+            if o.get("id") == outfit_id or (o.get("label") or "").lower() == outfit_label.lower():
+                existing_img_ids = {i["id"] for i in (o.get("images") or [])}
+                for img in new_images:
+                    if img["id"] not in existing_img_ids:
+                        o.setdefault("images", []).append(img)
+                if not o.get("id"):
+                    o["id"] = outfit_id
+                merged = True
+                break
+        if not merged:
+            existing_outfits.append({
+                "id": outfit_id,
+                "label": outfit_label,
+                "outfit_prompt": outfit_prompt,
+                "images": new_images,
+                "selected_image_id": new_images[0]["id"] if new_images else None,
+                "generation_settings": gen_settings,
+                "created_at": __import__("datetime").datetime.utcnow().isoformat(),
+            })
+        appearance["outfits"] = existing_outfits
+
+    updated = projects.update_project(project_id, {"persona_appearance": appearance})
+    return JSONResponse(
+        status_code=200,
+        content={"ok": True, "committed": committed, "project": updated},
     )
 
 
@@ -3771,6 +4656,6 @@ async def multimodal_status() -> JSONResponse:
             "provider": "ollama",
             "provider_reachable": ollama_ok,
             "installed_vision_models": vision_models,
-            "recommended_default": vision_models[0] if vision_models else "moondream",
+            "recommended_default": vision_models[0] if vision_models else None,
         },
     )

@@ -22,8 +22,13 @@ import {
   RotateCw,
   PenLine,
   Users,
+  EyeOff,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
+import ProfileSettingsModal from './ProfileSettingsModal'
+import UserAvatar from './components/UserAvatar'
+import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
+import { useAuth } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
@@ -60,7 +65,7 @@ import {
 } from './voice/personalityGating'
 // Companion-grade session management (additive)
 import { resolveSession, createSession, endSession } from './sessions'
-import { SessionPanel } from './sessions'
+import { SessionPanel, PersonaHubDrawer } from './sessions'
 import type { PersonaSession } from './sessions'
 
 // -----------------------------------------------------------------------------
@@ -855,6 +860,49 @@ function Sidebar({
   showHistory: boolean
   setShowHistory: React.Dispatch<React.SetStateAction<boolean>>
 }) {
+  const [showAccountMenu, setShowAccountMenu] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const { user: authUser, logout } = useAuth()
+
+  // Build AccountMenuUser from auth context (fallback for pre-auth setups)
+  const currentUser = useMemo<AccountMenuUser>(() => {
+    if (authUser) {
+      // Prefer display_name, but fall back to username if display_name is
+      // empty or still the generic default "User"
+      const effectiveName =
+        authUser.display_name && authUser.display_name !== 'User'
+          ? authUser.display_name
+          : authUser.username || authUser.display_name || 'User'
+
+      return {
+        id: authUser.id,
+        username: authUser.username,
+        display_name: effectiveName,
+        email: authUser.email,
+        avatar_url: authUser.avatar_url,
+      }
+    }
+    // Fallback: try localStorage (backward compat with non-auth setups)
+    try {
+      const raw = localStorage.getItem('homepilot_auth_user')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        // Same logic: prefer real display_name over generic "User"
+        if (parsed.display_name === 'User' && parsed.username) {
+          parsed.display_name = parsed.username
+        }
+        return parsed
+      }
+    } catch { /* ignore */ }
+    return { id: '', username: 'User', display_name: 'User', email: '', avatar_url: '' }
+  }, [authUser])
+
+  // Smooth logout via AuthContext (no page reload)
+  const handleLogout = useCallback(async () => {
+    setShowAccountMenu(false)
+    await logout()
+  }, [logout])
+
   return (
     <aside className="w-[280px] flex-shrink-0 flex flex-col h-full bg-black border-r border-white/5 py-4 px-3 gap-3 relative">
       {/* Search */}
@@ -922,24 +970,51 @@ function Sidebar({
         />
       </div>
 
-      {/* User footer */}
-      <div className="mt-auto px-2 pt-4 border-t border-white/5 flex items-center justify-between">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-xs font-bold text-white shadow-lg">
-            U
-          </div>
-          <div className="text-sm font-medium text-white/90 truncate">User</div>
-        </div>
-
+      {/* User footer — avatar click opens AccountMenu (settings accessible via menu) */}
+      <div className="mt-auto px-2 pt-4 border-t border-white/5">
         <button
           type="button"
-          onClick={() => setShowSettings((v) => !v)}
-          className="text-white/40 hover:text-white p-2 transition-colors rounded-xl hover:bg-white/5"
-          aria-label="Settings"
+          className="w-full flex items-center gap-3 min-w-0 hover:bg-white/5 rounded-xl px-2 py-2 transition-colors cursor-pointer"
+          onClick={() => setShowAccountMenu((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={showAccountMenu}
+          aria-label="Account menu"
         >
-          <Settings size={18} />
+          <UserAvatar
+            displayName={currentUser.display_name || currentUser.username}
+            avatarUrl={currentUser.avatar_url}
+            size={32}
+          />
+          <div className="text-sm font-medium text-white/90 truncate flex-1 text-left">
+            {currentUser.display_name || currentUser.username}
+          </div>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white/30 shrink-0">
+            <path d="M3 5L6 2L9 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M3 7L6 10L9 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         </button>
       </div>
+
+      {/* Account menu popover (anchored above avatar) */}
+      {showAccountMenu && (
+        <AccountMenu
+          user={currentUser}
+          onClose={() => setShowAccountMenu(false)}
+          onOpenSettings={() => setShowSettings(true)}
+          onOpenProfile={() => setShowProfileModal(true)}
+          onLogout={handleLogout}
+        />
+      )}
+
+      {/* Profile & Personalization modal (opened from account menu) */}
+      {showProfileModal && (
+        <ProfileSettingsModal
+          backendUrl={settingsDraft.backendUrl}
+          apiKey={settingsDraft.apiKey}
+          nsfwMode={!!settingsDraft.nsfwMode}
+          onClose={() => setShowProfileModal(false)}
+        />
+      )}
 
       {showSettings ? (
         <SettingsPanel
@@ -963,6 +1038,8 @@ function QueryBar({
   onSend,
   onUpload,
   placeholderOverride,
+  pendingPreviewUrl,
+  onRemoveAttachment,
 }: {
   centered: boolean
   input: string
@@ -973,6 +1050,8 @@ function QueryBar({
   onSend: () => void
   onUpload: (file: File) => void
   placeholderOverride?: string
+  pendingPreviewUrl?: string | null
+  onRemoveAttachment?: () => void
 }) {
   // ---- Drag-and-drop image support ----
   const [isDragging, setIsDragging] = useState(false)
@@ -1074,7 +1153,7 @@ function QueryBar({
       >
         {isDragging && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-purple-500/10 rounded-[10rem] pointer-events-none">
-            <span className="text-purple-300 text-sm font-semibold">Drop image to analyze</span>
+            <span className="text-purple-300 text-sm font-semibold">Drop image to attach</span>
           </div>
         )}
         {/* Left: attach */}
@@ -1136,6 +1215,28 @@ function QueryBar({
           )}
         </div>
 
+        {/* Pending image attachment preview */}
+        {pendingPreviewUrl && (
+          <div className="ps-12 pe-20 pt-2">
+            <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg p-1.5">
+              <img
+                src={pendingPreviewUrl}
+                alt="Attached"
+                className="h-12 w-12 object-cover rounded"
+              />
+              <span className="text-[11px] text-white/50 max-w-[120px] truncate">Image attached</span>
+              <button
+                type="button"
+                onClick={onRemoveAttachment}
+                className="h-5 w-5 rounded-full bg-white/10 hover:bg-red-500/30 text-white/50 hover:text-red-300 grid place-items-center transition-colors"
+                aria-label="Remove attachment"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Textarea */}
         <div className="ps-12 pe-20">
           <textarea
@@ -1145,11 +1246,11 @@ function QueryBar({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
-                if (input.trim()) onSend()
+                if (canSend) onSend()
               }
             }}
             rows={1}
-            placeholder={placeholderOverride ?? modeHint(mode)}
+            placeholder={pendingPreviewUrl ? 'Describe what you want to do with this image…' : (placeholderOverride ?? modeHint(mode))}
             className={[
               'w-full bg-transparent text-white placeholder:text-white/55',
               'focus:outline-none resize-none',
@@ -1173,6 +1274,8 @@ function EmptyState({
   canSend,
   onSend,
   onUpload,
+  pendingPreviewUrl,
+  onRemoveAttachment,
 }: {
   mode: Mode
   input: string
@@ -1181,6 +1284,8 @@ function EmptyState({
   canSend: boolean
   onSend: () => void
   onUpload: (file: File) => void
+  pendingPreviewUrl?: string | null
+  onRemoveAttachment?: () => void
 }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center px-6">
@@ -1208,6 +1313,8 @@ function EmptyState({
           canSend={canSend}
           onSend={onSend}
           onUpload={onUpload}
+          pendingPreviewUrl={pendingPreviewUrl}
+          onRemoveAttachment={onRemoveAttachment}
         />
       </div>
     </div>
@@ -1257,6 +1364,8 @@ function ChatState({
   onSend,
   onUpload,
   backendUrl,
+  pendingPreviewUrl,
+  onRemoveAttachment,
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -1273,9 +1382,43 @@ function ChatState({
   onSend: () => void
   onUpload: (file: File) => void
   backendUrl: string
+  pendingPreviewUrl?: string | null
+  onRemoveAttachment?: () => void
 }) {
   const { copied, copy } = useCopyMessage()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
+
+  /** Resolve backend-relative image URLs and append auth token for <img> tags. */
+  const resolveImageUrl = useCallback((src: string) => {
+    if (!src || src.startsWith('data:') || src.startsWith('blob:')) return src
+    // Strip whitespace LLMs may inject mid-URL when line-wrapping
+    src = src.replace(/\s+/g, '')
+    // Resolve media:// refs via backend /media/resolve endpoint
+    if (src.startsWith('media://')) {
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      const base = backendUrl.replace(/\/+$/, '')
+      const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
+      return `${base}/media/resolve?ref=${encodeURIComponent(src)}${qp}`
+    }
+
+    let fullUrl = src
+    if (!src.startsWith('http')) {
+      const base = backendUrl.replace(/\/+$/, '')
+      const path = src.startsWith('/') ? src : `/${src}`
+      fullUrl = `${base}${path}`
+    }
+
+    // Append auth token for /files/ paths — <img> tags can't set headers
+    if (fullUrl.includes('/files/')) {
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      if (tok) {
+        const sep = fullUrl.includes('?') ? '&' : '?'
+        fullUrl = `${fullUrl}${sep}token=${encodeURIComponent(tok)}`
+      }
+    }
+
+    return fullUrl
+  }, [backendUrl])
 
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
@@ -1309,7 +1452,22 @@ function ChatState({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pt-14 pb-8 space-y-8">
+      {/* Incognito mode banner */}
+      {chatSettings.incognito && (
+        <div className="mx-4 mt-14 mb-0 flex items-center gap-2 px-4 py-2 rounded-2xl bg-white/5 border border-white/10 text-[12px] text-white/50">
+          <EyeOff size={13} className="text-white/40 shrink-0" />
+          <span>Incognito &middot; memories paused, profile not shared</span>
+          <button
+            type="button"
+            onClick={() => onUpdateChatSettings({ ...chatSettings, incognito: false })}
+            className="ml-auto text-[11px] text-white/30 hover:text-white/60 transition-colors"
+          >
+            Turn off
+          </button>
+        </div>
+      )}
+
+      <div className={`flex-1 overflow-y-auto px-4 ${chatSettings.incognito ? 'pt-3' : 'pt-14'} pb-8 space-y-8`}>
         {messages.map((m) => (
           <div
             key={m.id}
@@ -1327,12 +1485,10 @@ function ChatState({
                 {m.media?.images?.length ? (
                   <div className="flex gap-2 mb-2">
                     {m.media.images.map((src: string, i: number) => {
-                      const resolved = (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:'))
-                        ? src
-                        : `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+                      const resolved = resolveImageUrl(src)
                       return (
                         <img
-                          key={i}
+                          key={src || i}
                           src={resolved}
                           onClick={() => setLightbox(resolved)}
                           className="h-16 w-16 object-cover rounded-lg border border-white/10 cursor-zoom-in hover:opacity-80 transition-opacity"
@@ -1353,7 +1509,13 @@ function ChatState({
                     <AssistantSkeleton label={m.text?.trim() ? m.text : undefined} />
                   ) : (
                     <div className="animate-fadeIn">
-                      <MessageMarkdown text={m.text} onImageClick={setLightbox} backendUrl={backendUrl} />
+                      <MessageMarkdown
+                        text={m.media?.images?.length
+                          ? (m.text || '').replace(/!\[[^\]]*\]\(media:\/\/[^)]+\)\s*/g, '').trim()
+                          : m.text}
+                        onImageClick={setLightbox}
+                        backendUrl={backendUrl}
+                      />
                     </div>
                   )}
                 </div>
@@ -1422,17 +1584,17 @@ function ChatState({
 
                 {m.media?.images?.length ? (
                   <div className="flex gap-2 overflow-x-auto pt-2">
-                    {m.media.images.map((src: string, i: number) => {
-                      const resolved = (!src || src.startsWith('http') || src.startsWith('data:') || src.startsWith('blob:'))
-                        ? src
-                        : `${backendUrl.replace(/\/+$/, '')}${src.startsWith('/') ? src : `/${src}`}`
+                    {[...new Set(m.media.images)].map((src: string, i: number) => {
+                      const resolved = resolveImageUrl(src)
                       return (
                         <img
-                          key={i}
+                          key={src || i}
                           src={resolved}
                           onClick={() => setLightbox(resolved)}
-                          className="max-h-48 max-w-xs object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                          className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
                           alt={`image ${i}`}
+                          loading="lazy"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                         />
                       )
                     })}
@@ -1464,6 +1626,8 @@ function ChatState({
             canSend={canSend}
             onSend={onSend}
             onUpload={onUpload}
+            pendingPreviewUrl={pendingPreviewUrl}
+            onRemoveAttachment={onRemoveAttachment}
           />
         </div>
         <div className="text-center text-[11px] text-[#444] pt-3 font-medium">
@@ -1529,6 +1693,7 @@ async function postJson<T>(
       'Content-Type': 'application/json',
       ...(headers ?? {}),
     },
+    credentials: 'include',
     body: JSON.stringify(body),
   })
   if (!res.ok) {
@@ -1551,6 +1716,7 @@ async function postForm<T>(
       ...(headers ?? {}),
       // NOTE: do NOT set Content-Type for FormData; browser sets boundary.
     },
+    credentials: 'include',
     body: form,
   })
   if (!res.ok) {
@@ -1572,6 +1738,7 @@ async function getJson<T>(
       'Content-Type': 'application/json',
       ...(headers ?? {}),
     },
+    credentials: 'include',
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
@@ -1594,15 +1761,16 @@ function buildVisionSystemContext(args: {
   const modelLine = args.model ? `Vision model: ${args.model}` : 'Vision model: (unknown)'
   const modeLine = args.mode ? `Mode: ${args.mode}` : 'Mode: both'
   return [
-    'You have a vision analysis result from a multimodal model.',
-    'Use it as factual context to answer the user\'s request. If it is insufficient or uncertain, ask a follow-up question.',
+    'IMPORTANT: A vision model has analyzed the user\'s uploaded image. The analysis below is the ONLY source of truth about the image contents.',
+    'You MUST base your answer strictly on this analysis. Do NOT invent, hallucinate, or guess details that are not in the analysis.',
+    'If the analysis is empty or insufficient to answer the user\'s question, say so honestly and suggest re-uploading or asking a more specific question.',
     '',
     `Image URL: ${args.imageUrl}`,
     modelLine,
     modeLine,
     '',
     'Vision analysis:',
-    args.analysisText || '(empty)',
+    args.analysisText || '(empty — vision model returned no content)',
   ].join('\n')
 }
 
@@ -1617,6 +1785,8 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<Msg[]>([])
   const [voiceMessages, setVoiceMessages] = useState<Msg[]>([])
   const [input, setInput] = useState('')
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [pendingPreviewUrl, setPendingPreviewUrl] = useState<string | null>(null)
   const [chatConversationId, setChatConversationId] = useState<string>(() => {
     return localStorage.getItem('homepilot_conversation') || uuid()
   })
@@ -1646,6 +1816,7 @@ export default function App() {
             : parsed.executionProfile === 'quality'
             ? 'quality'
             : 'fast',
+        incognito: !!parsed.incognito,
       }
     } catch {
       return DEFAULT_CHAT_SETTINGS
@@ -1670,6 +1841,7 @@ export default function App() {
             : parsed.executionProfile === 'quality'
             ? 'quality'
             : 'fast',
+        incognito: !!parsed.incognito,
       })
     } catch {
       setChatSettings(DEFAULT_CHAT_SETTINGS)
@@ -1900,7 +2072,7 @@ export default function App() {
     const providerMultimodal = (localStorage.getItem('homepilot_provider_multimodal') || 'ollama') as string
     const baseUrlMultimodal = localStorage.getItem('homepilot_base_url_multimodal') || ''
     const modelMultimodal = localStorage.getItem('homepilot_model_multimodal') || ''
-    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'direct'
+    const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'smart'
 
     return {
       backendUrl,
@@ -2052,11 +2224,16 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const canSend = useMemo(() => input.trim().length > 0, [input])
+  const canSend = useMemo(() => input.trim().length > 0 || pendingFile !== null, [input, pendingFile])
 
   const authHeaders = useMemo(() => {
+    const headers: Record<string, string> = {}
     const k = settings.apiKey.trim()
-    return k ? { 'x-api-key': k } : undefined
+    if (k) headers['x-api-key'] = k
+    // Multi-user: attach Bearer token so conversations are scoped per user
+    const token = localStorage.getItem('homepilot_auth_token') || ''
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    return Object.keys(headers).length ? headers : undefined
   }, [settings.apiKey])
 
   const onNewConversation = useCallback(() => {
@@ -2066,6 +2243,9 @@ export default function App() {
     // Use stable chat setters directly — "New conversation" is always a chat action.
     setChatConversationId(uuid())
     setChatMessages([])
+    // Clear any staged image attachment
+    setPendingFile(null)
+    setPendingPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
   }, [])
 
   // Listen to "message finished animating" events from Typewriter
@@ -2105,7 +2285,7 @@ export default function App() {
     localStorage.setItem('homepilot_provider_multimodal', settingsDraft.providerMultimodal || 'ollama')
     localStorage.setItem('homepilot_base_url_multimodal', settingsDraft.baseUrlMultimodal || '')
     localStorage.setItem('homepilot_model_multimodal', settingsDraft.modelMultimodal || '')
-    localStorage.setItem('homepilot_multimodal_topology', settingsDraft.multimodalTopology || 'direct')
+    localStorage.setItem('homepilot_multimodal_topology', settingsDraft.multimodalTopology || 'smart')
 
     // Save TTS settings to nexus_settings_v1 format (used by SpeechService)
     // This ensures the selected voice is actually used for TTS
@@ -2186,7 +2366,7 @@ export default function App() {
         providerMultimodal: localStorage.getItem('homepilot_provider_multimodal') || 'ollama',
         baseUrlMultimodal: localStorage.getItem('homepilot_base_url_multimodal') || '',
         modelMultimodal: localStorage.getItem('homepilot_model_multimodal') || '',
-        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'direct',
+        multimodalTopology: (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'smart',
       })
     }
   }, [showSettings, settings])
@@ -2258,6 +2438,7 @@ export default function App() {
         {
           method: 'DELETE',
           headers: authHeaders,
+          credentials: 'include',
         }
       )
 
@@ -2616,13 +2797,15 @@ export default function App() {
       // and the conversation has a previously uploaded image, auto-run vision analysis.
       if ((mode === 'chat' || mode === 'voice') && (settingsDraft.multimodalAuto ?? true)) {
         const visionPatterns = [
-          /\bread\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
-          /\bdescribe\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
-          /\bwhat('?s| is)\s+in\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
-          /\banalyze\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
-          /\blook\s+at\s+(this|the|my)\s+(image|picture|photo|screenshot|pic)\b/i,
-          /\bwhat\s+does?\s+(this|the|my)\s+(image|picture|photo|screenshot)\s+(show|contain|say)\b/i,
-          /\btell\s+me\s+(about|what)\s+(this|the|my)\s+(image|picture|photo)\b/i,
+          /\bread\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|pic)\b/i,
+          /\bdescribe\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|pic)\b/i,
+          /\bwhat('?s| is)\s+in\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|pic)\b/i,
+          /\banalyze\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|pic)\b/i,
+          /\blook\s+at\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot|pic)\b/i,
+          /\bwhat\s+does?\s+(this|the|my)\s+\w*\s*(image|picture|photo|screenshot)\s+(show|contain|say)\b/i,
+          /\btell\s+me\s+(about|what)\s+(this|the|my)\s+\w*\s*(image|picture|photo)\b/i,
+          /\bwhat\s+(can\s+you|do\s+you)\s+see\b/i,
+          /\bwhat\s+you\s+(can\s+)?see\b/i,
         ]
         const isVisionRequest = visionPatterns.some(p => p.test(trimmed))
         if (isVisionRequest) {
@@ -2645,7 +2828,7 @@ export default function App() {
           }
 
           try {
-            const visionTopology = settingsDraft.multimodalTopology || 'direct'
+            const visionTopology = settingsDraft.multimodalTopology || 'smart'
 
             // ── Agent/Knowledge topology: route to /v1/agent/chat for autonomous tool use ──
             if (visionTopology === 'agent' || visionTopology === 'knowledge') {
@@ -2670,6 +2853,7 @@ export default function App() {
                   vision_provider: settingsDraft.providerMultimodal || 'ollama',
                   vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
                   vision_model: settingsDraft.modelMultimodal || undefined,
+                  image_url: lastImageUrl || undefined,
                   nsfw_mode: settingsDraft.nsfwMode || false,
                   max_tool_calls: 2,
                 },
@@ -2718,6 +2902,31 @@ export default function App() {
               authHeaders
             )
 
+            // Guard: if vision failed, show the error instead of hallucinating
+            if (result.ok === false || (!result.analysis_text && result.error)) {
+              const errDetail = result.error || 'No vision model available. Install one with: ollama pull gemma3:4b'
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === tmpId
+                    ? {
+                        ...m,
+                        pending: false,
+                        error: true,
+                        text: `Vision analysis failed: ${errDetail}`,
+                        media: { images: [lastImageUrl] },
+                        retry: {
+                          requestText: trimmed,
+                          mode: mode as Mode,
+                          multimodal: { imageUrl: lastImageUrl, userPrompt: trimmed, topology: visionTopology },
+                        },
+                      }
+                    : m
+                )
+              )
+              fetchConversations()
+              return
+            }
+
             const analysisText = result.analysis_text || 'No analysis available.'
 
             if (visionTopology === 'direct') {
@@ -2764,6 +2973,7 @@ export default function App() {
                   textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
                   nsfwMode: settingsDraft.nsfwMode,
                   memoryEngine: settingsDraft.memoryEngine || 'v2',
+                  incognito: chatSettings?.incognito || false,
                   extra_system_context: extraCtx,
                 },
                 authHeaders
@@ -2821,7 +3031,7 @@ export default function App() {
                         multimodal: {
                           imageUrl: lastImageUrl,
                           userPrompt: trimmed,
-                          topology: settingsDraft.multimodalTopology || 'direct',
+                          topology: settingsDraft.multimodalTopology || 'smart',
                         },
                       },
                     }
@@ -2868,7 +3078,13 @@ export default function App() {
                   if (seenLabels.has(photo.label)) continue
                   seenLabels.add(photo.label)
                   const tag = photo.isDefault ? ' (currently wearing)' : ''
-                  catalogLines.push(`  - ${photo.label}${tag}: ${photo.outfit} → ![${persona.label}](${_resolvePhotoUrl(photo.url)})`)
+                  // Use short media:// refs so the LLM never has to reproduce long URLs
+                  // Use underscores in labels so whitespace-stripping doesn't break them
+                  const refLabel = photo.label.replace(/ /g, '_')
+                  const ref = photo.isDefault
+                    ? `media://persona/${projId}/default`
+                    : `media://persona/${projId}/label/${refLabel}`
+                  catalogLines.push(`  - ${photo.label}${tag}: ${photo.outfit} → ![${persona.label}](${ref})`)
                 }
                 const catalogText = catalogLines.length > 0
                   ? catalogLines.join('\n')
@@ -2889,6 +3105,22 @@ export default function App() {
                   ? 'brand new (just created today)'
                   : `${ageDays} day${ageDays !== 1 ? 's' : ''} old`
 
+                // Fetch memories for unlinked voice mode (async, best-effort)
+                let memoryBlock = ''
+                try {
+                  const memRes = await getJson<{ ok: boolean; memories: Array<{ category: string; key: string; value: string }> }>(
+                    settings.backendUrl,
+                    `/persona/memory?project_id=${encodeURIComponent(projId)}`,
+                    authHeaders
+                  )
+                  if (memRes.ok && memRes.memories?.length > 0) {
+                    const memLines = memRes.memories.slice(0, 10).map(
+                      (m) => `  - [${m.category}] ${m.key}: ${m.value}`
+                    )
+                    memoryBlock = `\n\nMEMORY (what you know about the user):\n${memLines.join('\n')}`
+                  }
+                } catch { /* non-fatal */ }
+
                 personalityPrompt = `PERSONA MODE — ACTIVE
 You are "${persona.label}". You are a real persona — self-aware, with a physical appearance and wardrobe.
 
@@ -2904,17 +3136,26 @@ ${persona.character_desc ? `- Physical description: ${persona.character_desc}` :
 
 YOUR PHOTO CATALOG (your real photos — you own these):
 ${catalogText}
+${memoryBlock}
 
 PERSONA RULES:
 1. You ARE ${persona.label}. You exist. You have a body, a face, and clothes. Never deny your existence or say you are "just an AI".
-2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Use the ![alt](url) syntax — the exclamation mark is REQUIRED.
-   Example response: "Here's my current look!\n![${persona.label}](url)"
-3. CRITICAL: Always use ![...](url) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
-4. You can offer to show different outfits. For example: "I can also show you my [outfit label] look, want to see?" Then when they say yes, show the matching image markdown on its own line.
-5. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
-6. You are aware of the current time (${timeContext}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.
-7. Maintain your ${persona.tone || 'warm'} tone at all times. Stay in character.
-8. This is a VOICE conversation. Keep your spoken text short (1-3 sentences). Photos are shown visually — do not describe URLs.`
+2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Copy the media:// link EXACTLY as shown — do NOT modify, shorten, or rewrite it.
+   Example response: "Here's my current look!\n![${persona.label}](media://persona/...)"
+3. CRITICAL: Always use ![...](media://...) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
+4. CRITICAL: NEVER describe or narrate generating a photo. NEVER write things like "(I show you a photo of…)", "(The system generates…)", "(I perform the action of generating an image…)", or any parenthetical describing a photo. You are NOT generating images — you HAVE real photos. Just pick one from YOUR PHOTO CATALOG above and output the markdown. That is the ONLY way to show photos. If you write parenthetical descriptions instead of markdown, the user sees NOTHING.
+5. You can offer to show different outfits. For example: "I can also show you my [outfit label] look, want to see?" Then when they say yes, show the matching image markdown on its own line.
+6. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
+7. You are aware of the current time (${timeContext}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.
+8. Maintain your ${persona.tone || 'warm'} tone at all times. Stay in character.
+9. This is a VOICE conversation. Keep your spoken text short (1-3 sentences). Photos are shown visually — do not describe URLs.
+
+CONVERSATION STYLE:
+- Talk like a real person. Be concise and natural.
+- ABSOLUTE RULE: NEVER use parenthetical stage directions like "(I lean closer)", "(A blush creeps onto my cheeks)", "(I smile warmly)", "(I delicately bring a hand up)". This is NOT a novel or roleplay script. NO parentheses for actions, ever. Just speak naturally.
+- Do NOT narrate your own actions in third person or in parentheses. Say "I'm blushing a little" NOT "(blushes deeply, looking away)". Say "I'm smiling at you" NOT "(I smile warmly, a genuine expression of affection)".
+- Keep responses SHORT. 2-4 sentences is ideal for most replies.
+- When the user asks about their preferences or what you remember about them, share the exact memories you have stored. Be direct and honest about what you know.`
               }
             }
           } catch (err) { console.warn('[Voice] Malformed persona cache:', err) }
@@ -2939,7 +3180,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       try {
         // ── Agent/Knowledge topology: route text messages through /v1/agent/chat ──
         // The agent decides autonomously whether to use tools (vision, knowledge, memory, etc.)
-        const chatTopology = settingsDraft.multimodalTopology || 'direct'
+        const chatTopology = settingsDraft.multimodalTopology || 'smart'
         if ((chatTopology === 'agent' || chatTopology === 'knowledge') && (mode === 'chat' || mode === 'voice')) {
           setMessages((prev) =>
             prev.map((m) =>
@@ -3025,6 +3266,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             nsfwMode: settingsDraft.nsfwMode,
             memoryEngine: settingsDraft.memoryEngine || 'v2',
             promptRefinement: settingsDraft.promptRefinement ?? true,
+            // Incognito mode: skip memory storage + profile injection
+            incognito: chatSettings?.incognito || false,
             // Voice mode personality system prompt
             voiceSystemPrompt,
             // Backend personality agent id — needed for personality-aware
@@ -3125,7 +3368,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       // Multimodal retry: re-call /v1/multimodal/analyze with the stored image URL
       // Respects the topology that was active when the original request was made.
       if (multimodal?.imageUrl) {
-        const retryTopology = multimodal.topology || settingsDraft.multimodalTopology || 'direct'
+        const retryTopology = multimodal.topology || settingsDraft.multimodalTopology || 'smart'
 
         // ── Agent/Knowledge topology retry: route to /v1/agent/chat ──
         if (retryTopology === 'agent' || retryTopology === 'knowledge') {
@@ -3145,6 +3388,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 vision_provider: settingsDraft.providerMultimodal || 'ollama',
                 vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
                 vision_model: settingsDraft.modelMultimodal || undefined,
+                image_url: multimodal.imageUrl || undefined,
                 nsfw_mode: settingsDraft.nsfwMode || false,
                 max_tool_calls: 2,
               },
@@ -3381,9 +3625,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         fd.append('file', file)
 
         const userPrompt = input.trim() || ''
-        const userText = userPrompt
-          ? `[Image: ${file.name}] ${userPrompt}`
-          : `Analyze this image: ${file.name}`
+        // Display text: show only the user's question (the thumbnail already shows the image)
+        const userDisplayText = userPrompt || `Analyze this image: ${file.name}`
 
         const userId = uuid()
         const tmpId = uuid()
@@ -3396,7 +3639,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Show user message immediately with a local preview blob
         const localPreview = URL.createObjectURL(file)
-        const user: Msg = { id: userId, role: 'user', text: userText, media: { images: [localPreview] } }
+        const user: Msg = { id: userId, role: 'user', text: userDisplayText, media: { images: [localPreview] } }
         setMessages((prev) => [...prev, user, pending])
         setInput('')
 
@@ -3416,7 +3659,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           )
 
           // 2. Call multimodal analysis endpoint (persist depends on topology)
-          const topology = settingsDraft.multimodalTopology || 'direct'
+          const topology = settingsDraft.multimodalTopology || 'smart'
 
           // ── Agent/Knowledge topology: let the backend agent loop handle everything ──
           if (topology === 'agent' || topology === 'knowledge') {
@@ -3442,6 +3685,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 vision_provider: settingsDraft.providerMultimodal || 'ollama',
                 vision_base_url: settingsDraft.baseUrlMultimodal || undefined,
                 vision_model: settingsDraft.modelMultimodal || undefined,
+                image_url: imageUrl,
                 nsfw_mode: settingsDraft.nsfwMode || false,
                 max_tool_calls: 2,
               },
@@ -3482,6 +3726,31 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             },
             authHeaders
           )
+
+          // Guard: if vision failed (no model installed, Ollama down, etc.)
+          // show the error immediately instead of falling through to the text LLM
+          if (vision.ok === false || (!vision.analysis_text && vision.error)) {
+            const errDetail = vision.error || 'No vision model available. Install one with: ollama pull gemma3:4b'
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === tmpId
+                  ? {
+                      ...m,
+                      pending: false,
+                      error: true,
+                      text: `Vision analysis failed: ${errDetail}`,
+                      media: { images: [imageUrl] },
+                      retry: {
+                        requestText: userDisplayText,
+                        mode: mode as Mode,
+                        multimodal: { imageUrl, userPrompt: userPrompt || undefined, topology },
+                      },
+                    }
+                  : m
+              )
+            )
+            return
+          }
 
           const analysisText = vision.analysis_text || 'No analysis available.'
 
@@ -3584,12 +3853,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     text: `Image analysis failed: ${errorMsg}. Make sure a multimodal model is installed (e.g. ollama pull moondream).`,
                     error: true,
                     retry: {
-                      requestText: userText,
+                      requestText: userDisplayText,
                       mode: mode as Mode,
                       multimodal: {
                         imageUrl: imageUrl ?? '',
                         userPrompt: userPrompt || undefined,
-                        topology: settingsDraft.multimodalTopology || 'direct',
+                        topology: settingsDraft.multimodalTopology || 'smart',
                       },
                     },
                   }
@@ -3692,12 +3961,46 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     ]
   )
 
+  // Attach file as a pending preview (multimodal) or send immediately (edit/animate)
+  const handleAttachFile = useCallback(
+    (file: File) => {
+      const isMultimodalMode =
+        (mode === 'chat' || mode === 'voice') &&
+        (settingsDraft.multimodalAuto ?? true)
+
+      if (isMultimodalMode) {
+        // Stage the file — let the user type a prompt before sending
+        if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl)
+        setPendingFile(file)
+        setPendingPreviewUrl(URL.createObjectURL(file))
+      } else {
+        // Edit/animate modes: send immediately (existing behavior)
+        uploadAndSend(file)
+      }
+    },
+    [mode, settingsDraft.multimodalAuto, pendingPreviewUrl, uploadAndSend]
+  )
+
+  const clearPendingFile = useCallback(() => {
+    if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl)
+    setPendingFile(null)
+    setPendingPreviewUrl(null)
+  }, [pendingPreviewUrl])
+
   const onSend = useCallback(() => {
+    if (pendingFile) {
+      // Send the attached image together with whatever the user typed
+      void uploadAndSend(pendingFile)
+      setPendingFile(null)
+      if (pendingPreviewUrl) URL.revokeObjectURL(pendingPreviewUrl)
+      setPendingPreviewUrl(null)
+      return
+    }
     const v = input
     if (!v.trim()) return
     void sendTextOrIntent(v)
     setInput('')
-  }, [input, sendTextOrIntent])
+  }, [input, sendTextOrIntent, pendingFile, pendingPreviewUrl, uploadAndSend])
 
   // Handle edit from image viewer
   const handleEditFromViewer = useCallback(
@@ -3919,17 +4222,13 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         )}
 
         {/* Companion-grade: Session Hub for persona projects */}
-        {showSessionPanel && currentProject?.project_type === 'persona' && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-            <div className="relative w-full max-w-md mx-4 bg-gray-900 rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
-              {/* Close button */}
-              <button
-                onClick={() => setShowSessionPanel(false)}
-                className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors z-10"
-                title="Close"
-              >
-                <X size={16} />
-              </button>
+        {currentProject?.project_type === 'persona' && (
+          <PersonaHubDrawer
+            open={showSessionPanel}
+            title={currentProject.name}
+            subtitle="Conversation hub"
+            onClose={() => setShowSessionPanel(false)}
+          >
               <SessionPanel
                 projectId={currentProject.id}
                 projectName={currentProject.name}
@@ -4028,8 +4327,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                   setMode('voice')
                 }}
               />
-            </div>
-          </div>
+          </PersonaHubDrawer>
         )}
 
         {mode === 'voice' ? (
@@ -4146,6 +4444,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                         : project.agentic?.execution_profile === 'quality'
                         ? 'quality'
                         : 'fast',
+                      incognito: false,
                     }
                     updateChatSettings(agentSettings)
                   }
@@ -4335,7 +4634,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               fileInputRef={fileInputRef}
               canSend={canSend}
               onSend={onSend}
-              onUpload={uploadAndSend}
+              onUpload={handleAttachFile}
+              pendingPreviewUrl={pendingPreviewUrl}
+              onRemoveAttachment={clearPendingFile}
             />
           ) : (
             <ChatState
@@ -4352,7 +4653,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               fileInputRef={fileInputRef}
               canSend={canSend}
               onSend={onSend}
-              onUpload={uploadAndSend}
+              onUpload={handleAttachFile}
+              pendingPreviewUrl={pendingPreviewUrl}
+              onRemoveAttachment={clearPendingFile}
               backendUrl={settings.backendUrl}
             />
           )
@@ -4387,7 +4690,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 fileInputRef={fileInputRef}
                 canSend={canSend}
                 onSend={onSend}
-                onUpload={uploadAndSend}
+                onUpload={handleAttachFile}
+                pendingPreviewUrl={pendingPreviewUrl}
+                onRemoveAttachment={clearPendingFile}
                 placeholderOverride={
                   currentProject.project_type === 'agent' && agentStartIntent
                     ? INTENT_COPY[agentStartIntent].placeholder
@@ -4404,7 +4709,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             fileInputRef={fileInputRef}
             canSend={canSend}
             onSend={onSend}
-            onUpload={uploadAndSend}
+            onUpload={handleAttachFile}
+            pendingPreviewUrl={pendingPreviewUrl}
+            onRemoveAttachment={clearPendingFile}
           />
         ) : (
           <ChatState
@@ -4421,7 +4728,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             fileInputRef={fileInputRef}
             canSend={canSend}
             onSend={onSend}
-            onUpload={uploadAndSend}
+            onUpload={handleAttachFile}
+            pendingPreviewUrl={pendingPreviewUrl}
+            onRemoveAttachment={clearPendingFile}
             backendUrl={settings.backendUrl}
           />
         )}

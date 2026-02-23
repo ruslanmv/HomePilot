@@ -222,6 +222,7 @@ def v2_db(tmp_path):
             visibility TEXT DEFAULT 'private',
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            user_id TEXT DEFAULT NULL,
             UNIQUE(project_id, category, key)
         )
     """)
