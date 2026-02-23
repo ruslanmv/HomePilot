@@ -275,6 +275,18 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       { id: 'goekdenizguelmez/JOSIEFIED-Llama', label: 'JOSIEFIED Llama', nsfw: true, recommended_nsfw: true },
       { id: 'samantha-mistral', label: 'Samantha Mistral (7B)', nsfw: true, recommended_nsfw: true },
     ],
+    multimodal: [
+      // SFW Vision Models
+      { id: 'moondream', label: 'Moondream (1.6 GB)', recommended: true, description: 'Ultra-light vision captioning + OCR.' },
+      { id: 'gemma3:4b', label: 'Gemma 3 Vision 4B (3 GB)', recommended: true, description: 'Best overall edge multimodal model.' },
+      { id: 'llava:7b', label: 'LLaVA 1.6 7B (4.7 GB)', recommended: true, description: 'Strong general-purpose vision model.' },
+      { id: 'minicpm-v:latest', label: 'MiniCPM-V 2.6 (5 GB)', description: 'Strong multi-image reasoning.' },
+      { id: 'llama3.2-vision:11b', label: 'Llama 3.2 Vision 11B (7 GB)', description: 'Best reasoning near RAM limit.' },
+      // NSFW Vision Models
+      { id: 'huihui_ai/qwen3-vl-abliterated:8b-instruct', label: 'Qwen3-VL Abliterated 8B (5 GB)', nsfw: true, recommended_nsfw: true, description: 'Unfiltered image descriptions.' },
+      { id: 'internvl3:8b', label: 'InternVL3 8B (7 GB)', nsfw: true, recommended_nsfw: true, description: 'Detailed scene analysis.' },
+      { id: 'smolvlm2:latest', label: 'SmolVLM2 2.2B (2 GB)', nsfw: true, recommended_nsfw: true, description: 'Fast unrestricted captioning.' },
+    ],
   },
   comfyui: {
     image: [
@@ -565,11 +577,12 @@ export default function ModelsView(props: ModelsParams) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [providersError, setProvidersError] = useState<string | null>(null)
 
-  const [modelType, setModelType] = useState<'chat' | 'image' | 'video' | 'edit' | 'enhance' | 'addons'>('chat')
+  const [modelType, setModelType] = useState<'chat' | 'multimodal' | 'image' | 'video' | 'edit' | 'enhance' | 'addons'>('chat')
   const [provider, setProvider] = useState<string>(props.providerChat || 'ollama')
 
   const defaultBaseUrl = useMemo(() => {
     if (modelType === 'chat') return props.baseUrlChat || ''
+    if (modelType === 'multimodal') return props.baseUrlChat || ''
     if (modelType === 'image') return props.baseUrlImages || ''
     if (modelType === 'edit') return props.baseUrlImages || ''
     if (modelType === 'enhance') return props.baseUrlImages || ''
@@ -629,6 +642,9 @@ export default function ModelsView(props: ModelsParams) {
     if (modelType === 'chat') {
       // For chat: all providers EXCEPT comfyui and civitai
       return providers.filter(p => p.name !== 'comfyui' && p.name !== 'civitai')
+    } else if (modelType === 'multimodal') {
+      // Multimodal: only Ollama (vision models run locally)
+      return providers.filter(p => p.name === 'ollama')
     } else {
       // For image/video/edit/enhance: comfyui + civitai (if experimental enabled)
       const filtered = providers.filter(p => p.name === 'comfyui')
@@ -652,6 +668,10 @@ export default function ModelsView(props: ModelsParams) {
       // Switch to a chat provider (prefer the one from settings, or default to ollama)
       const newProvider = props.providerChat || 'ollama'
       setProvider(newProvider)
+      setBaseUrl(props.baseUrlChat || '')
+    } else if (modelType === 'multimodal') {
+      // Multimodal models are served via Ollama (vision-capable models)
+      setProvider('ollama')
       setBaseUrl(props.baseUrlChat || '')
     } else if (modelType === 'image') {
       // Switch to comfyui for images
@@ -735,6 +755,8 @@ export default function ModelsView(props: ModelsParams) {
       if (baseUrl.trim()) q.set('base_url', baseUrl.trim())
       // Pass model_type so backend returns correct installed models for this type
       if (modelType && provider === 'comfyui') q.set('model_type', modelType)
+      // For Ollama multimodal, filter to vision-capable models only
+      if (modelType === 'multimodal' && provider === 'ollama') q.set('model_type', 'multimodal')
 
       const data = await getJson<ModelsListResponse>(backendUrl, `/models?${q.toString()}`, authKey)
       setInstalled(Array.isArray(data.models) ? data.models : [])
@@ -786,6 +808,15 @@ export default function ModelsView(props: ModelsParams) {
 
   const installedSet = useMemo(() => new Set(installed), [installed])
 
+  // For Ollama: also match "model" with "model:latest" (Ollama convention)
+  const isInstalled = useCallback((id: string): boolean => {
+    if (installedSet.has(id)) return true
+    // Check if installed list contains id:latest (e.g. catalog has "moondream", Ollama reports "moondream:latest")
+    if (!id.includes(':') && installedSet.has(`${id}:latest`)) return true
+    // Check if catalog has "model:tag" and installed has exactly that
+    return false
+  }, [installedSet])
+
   // Merge supported + installed
   const merged = useMemo(() => {
     const supportedMap = new Map<string, ModelCatalogEntry>()
@@ -817,7 +848,7 @@ export default function ModelsView(props: ModelsParams) {
         description: s.description,
         civitai_url: s.civitai_url,
         civitai_version_id: s.civitai_version_id,
-        status: installedSet.has(s.id) ? 'installed' : 'missing',
+        status: isInstalled(s.id) ? 'installed' : 'missing',
         install: s.install,
       })
     }
@@ -846,8 +877,20 @@ export default function ModelsView(props: ModelsParams) {
     const isLlmModel = (id: string) =>
       id.includes(':') || /^(llama|mistral|gemma|qwen|phi|deepseek|codellama|vicuna|samantha)/i.test(id)
 
+    // Check if an installed model name matches any supported catalog entry
+    // e.g. "moondream:latest" matches catalog "moondream"
+    const matchesSupportedEntry = (modelName: string): boolean => {
+      if (supportedMap.has(modelName)) return true
+      // "model:latest" → try "model" (Ollama convention)
+      if (modelName.endsWith(':latest')) {
+        const base = modelName.slice(0, -':latest'.length)
+        if (supportedMap.has(base)) return true
+      }
+      return false
+    }
+
     for (const m of installed) {
-      if (!supportedMap.has(m)) {
+      if (!matchesSupportedEntry(m)) {
         // Skip models that belong to another type's catalog
         if (otherTypeIds.has(m)) continue
         // Skip checkpoint files on the chat tab
@@ -876,7 +919,7 @@ export default function ModelsView(props: ModelsParams) {
     })
 
     return rows
-  }, [supportedForSelection, installed, installedSet, props.nsfwMode, modelType, provider])
+  }, [supportedForSelection, installed, installedSet, isInstalled, props.nsfwMode, modelType, provider])
 
   const tryInstall = async (modelId: string, install?: ModelCatalogEntry['install']) => {
     setInstallBusy(modelId)
@@ -1540,7 +1583,7 @@ export default function ModelsView(props: ModelsParams) {
           <div>
             <label className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-2.5">Model Type</label>
             <div className="flex flex-col gap-1.5">
-              {(['chat', 'image', 'edit', 'video', 'enhance', 'addons'] as const).map((t) => (
+              {(['chat', 'multimodal', 'image', 'edit', 'video', 'enhance', 'addons'] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
