@@ -2,6 +2,7 @@
  * Sessions module — Companion-grade persona session management
  */
 export { default as SessionPanel } from './SessionPanel'
+export { default as PersonaHubDrawer } from './PersonaHubDrawer'
 export {
   resolveSession,
   createSession,

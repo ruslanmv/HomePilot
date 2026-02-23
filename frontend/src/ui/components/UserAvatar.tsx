@@ -59,9 +59,16 @@ export default function UserAvatar({
   }
 
   if (hasImage) {
-    // Resolve relative URLs against the backend
+    // Resolve relative URLs against the backend, append auth token for /files/ paths
     const backendUrl = localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
-    const fullUrl = avatarUrl.startsWith('http') ? avatarUrl : `${backendUrl}${avatarUrl}`
+    let fullUrl = avatarUrl.startsWith('http') ? avatarUrl : `${backendUrl}${avatarUrl}`
+    if (fullUrl.includes('/files/')) {
+      const tok = localStorage.getItem('homepilot_auth_token') || ''
+      if (tok) {
+        const sep = fullUrl.includes('?') ? '&' : '?'
+        fullUrl = `${fullUrl}${sep}token=${encodeURIComponent(tok)}`
+      }
+    }
 
     return (
       <div style={baseStyle} onClick={onClick}>

@@ -126,6 +126,67 @@ def init_db():
     from .ltm_v1_maintenance import ensure_v1_hardening_columns
     ensure_v1_hardening_columns()
 
+    # -----------------------------------------------------------------------
+    # Additive: per-user scoping for persona_sessions + persona_memory
+    # -----------------------------------------------------------------------
+    # 1) Add user_id columns (safe if already exists)
+    try:
+        cur.execute("ALTER TABLE persona_sessions ADD COLUMN user_id TEXT DEFAULT NULL")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cur.execute("ALTER TABLE persona_memory ADD COLUMN user_id TEXT DEFAULT NULL")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    # 2) Indexes for user-scoped queries
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON persona_sessions(user_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_user ON persona_memory(user_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memory_user_project ON persona_memory(user_id, project_id)")
+        con.commit()
+    except Exception:
+        pass
+
+    # 3) Backfill: persona_sessions.user_id from conversation ownership
+    try:
+        cur.execute(
+            """
+            UPDATE persona_sessions
+            SET user_id = (
+                SELECT o.user_id
+                FROM conversation_owners o
+                WHERE o.conversation_id = persona_sessions.conversation_id
+            )
+            WHERE user_id IS NULL
+            """
+        )
+        con.commit()
+    except Exception:
+        pass
+
+    # 4) Backfill: persona_memory.user_id from persona_sessions via project_id
+    try:
+        cur.execute(
+            """
+            UPDATE persona_memory
+            SET user_id = (
+                SELECT s.user_id
+                FROM persona_sessions s
+                WHERE s.project_id = persona_memory.project_id
+                  AND s.user_id IS NOT NULL
+                LIMIT 1
+            )
+            WHERE user_id IS NULL
+            """
+        )
+        con.commit()
+    except Exception:
+        pass
+
     # Durable async jobs: survives restarts, processes lazily
     cur.execute(
         """
@@ -193,6 +254,29 @@ def init_db():
         con.commit()
     except Exception as e:
         print(f"[DB] conversation ownership backfill skipped: {e}")
+
+    # -----------------------------------------------------------------------
+    # Enterprise: file ownership (uploads / generated images / project assets)
+    # -----------------------------------------------------------------------
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS file_assets(
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            rel_path TEXT NOT NULL,
+            mime TEXT DEFAULT '',
+            size_bytes INTEGER DEFAULT 0,
+            original_name TEXT DEFAULT '',
+            project_id TEXT DEFAULT '',
+            conversation_id TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_file_assets_user ON file_assets(user_id)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_file_assets_user_kind ON file_assets(user_id, kind)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_file_assets_project ON file_assets(project_id)")
 
     con.commit()
     con.close()

@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 380" fill="none">
+  <defs>
+    <style>
+      @keyframes mu-pulse { 0%,100%{stroke-opacity:0.4} 50%{stroke-opacity:1} }
+      @keyframes mu-flow { 0%{stroke-dashoffset:14} 100%{stroke-dashoffset:0} }
+      @keyframes mu-switch { 0%{cx:195} 50%{cx:310} 100%{cx:195} }
+      @keyframes mu-fade { 0%,100%{opacity:0.5} 50%{opacity:1} }
+      .mu-pulse { animation: mu-pulse 3s ease-in-out infinite; }
+      .mu-flow { stroke-dasharray: 4 3; animation: mu-flow 1.5s linear infinite; }
+      .mu-fade { animation: mu-fade 3s ease-in-out infinite; }
+    </style>
+    <linearGradient id="mu-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" style="stop-color:#0a0a0f"/><stop offset="100%" style="stop-color:#12121a"/>
+    </linearGradient>
+    <linearGradient id="mu-purple" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" style="stop-color:#a78bfa"/><stop offset="100%" style="stop-color:#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="mu-green" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" style="stop-color:#34d399"/><stop offset="100%" style="stop-color:#059669"/>
+    </linearGradient>
+    <linearGradient id="mu-cyan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" style="stop-color:#06b6d4"/><stop offset="100%" style="stop-color:#0891b2"/>
+    </linearGradient>
+    <filter id="mu-glow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="mu-shadow"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.4"/></filter>
+    <clipPath id="mu-clip"><rect width="900" height="380" rx="16"/></clipPath>
+  </defs>
+  <g clip-path="url(#mu-clip)">
+    <rect width="900" height="380" fill="url(#mu-bg)" rx="16"/>
+    <rect width="900" height="380" rx="16" fill="none" stroke="#ffffff08" stroke-width="1"/>
+
+    <!-- Title -->
+    <text x="450" y="32" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="3" text-anchor="middle">MULTI-USER ACCOUNTS</text>
+    <text x="450" y="50" font-family="system-ui,sans-serif" font-size="11" fill="#64748b" text-anchor="middle">Per-user isolation with 3-step onboarding and instant account switching</text>
+    <rect x="350" y="56" width="200" height="2" rx="1" fill="url(#mu-purple)" opacity="0.4">
+      <animate attributeName="width" values="200;260;200" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="x" values="350;320;350" dur="4s" repeatCount="indefinite"/>
+    </rect>
+
+    <!-- User A Card -->
+    <g filter="url(#mu-shadow)">
+      <rect x="40" y="80" width="155" height="130" rx="12" fill="#1e1e2e" stroke="#a78bfa33" stroke-width="1"/>
+    </g>
+    <circle cx="118" cy="112" r="18" fill="#a78bfa22" stroke="#a78bfa" stroke-width="1.5" class="mu-pulse">
+    </circle>
+    <text x="118" y="117" text-anchor="middle" fill="#a78bfa" font-family="system-ui,sans-serif" font-size="16" font-weight="600">A</text>
+    <text x="118" y="142" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Alice</text>
+    <text x="118" y="158" text-anchor="middle" fill="#ffffff70" font-family="system-ui,sans-serif" font-size="8">Conversations</text>
+    <text x="118" y="170" text-anchor="middle" fill="#ffffff70" font-family="system-ui,sans-serif" font-size="8">Memory &amp; Profile</text>
+    <rect x="68" y="180" width="100" height="16" rx="8" fill="#a78bfa18"/>
+    <text x="118" y="191" text-anchor="middle" fill="#a78bfa" font-family="system-ui,sans-serif" font-size="8" font-weight="600">ISOLATED</text>
+
+    <!-- User B Card -->
+    <g filter="url(#mu-shadow)">
+      <rect x="40" y="230" width="155" height="130" rx="12" fill="#1e1e2e" stroke="#34d39933" stroke-width="1"/>
+    </g>
+    <circle cx="118" cy="262" r="18" fill="#34d39922" stroke="#34d399" stroke-width="1.5" class="mu-pulse" style="animation-delay:1.5s">
+    </circle>
+    <text x="118" y="267" text-anchor="middle" fill="#34d399" font-family="system-ui,sans-serif" font-size="16" font-weight="600">B</text>
+    <text x="118" y="292" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="11" font-weight="600">Bob</text>
+    <text x="118" y="308" text-anchor="middle" fill="#ffffff70" font-family="system-ui,sans-serif" font-size="8">Conversations</text>
+    <text x="118" y="320" text-anchor="middle" fill="#ffffff70" font-family="system-ui,sans-serif" font-size="8">Memory &amp; Profile</text>
+    <rect x="68" y="330" width="100" height="16" rx="8" fill="#34d39918"/>
+    <text x="118" y="341" text-anchor="middle" fill="#34d399" font-family="system-ui,sans-serif" font-size="8" font-weight="600">ISOLATED</text>
+
+    <!-- Auth arrows -->
+    <line x1="195" y1="145" x2="265" y2="190" stroke="#a78bfa" stroke-width="1.5" class="mu-flow" opacity="0.6"/>
+    <polygon points="265,190 258,184 260,192" fill="#a78bfa" opacity="0.6"/>
+    <line x1="195" y1="295" x2="265" y2="240" stroke="#34d399" stroke-width="1.5" class="mu-flow" opacity="0.6" style="animation-delay:0.5s"/>
+    <polygon points="265,240 258,246 260,238" fill="#34d399" opacity="0.6"/>
+
+    <!-- Auth Box -->
+    <g filter="url(#mu-shadow)">
+      <rect x="270" y="180" width="155" height="75" rx="12" fill="#1e1e2e" stroke="#ffffff15" stroke-width="1"/>
+    </g>
+    <text x="348" y="204" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="11" font-weight="700">Auth Layer</text>
+    <line x1="295" y1="212" x2="400" y2="212" stroke="#ffffff12" stroke-width="1"/>
+    <text x="348" y="228" text-anchor="middle" fill="#ffffff70" font-family="system-ui,sans-serif" font-size="8">POST /v1/auth/login</text>
+    <text x="348" y="242" text-anchor="middle" fill="#ffffff70" font-family="system-ui,sans-serif" font-size="8">Bearer Token → Session</text>
+
+    <!-- Arrow to backend -->
+    <line x1="425" y1="218" x2="485" y2="218" stroke="#ffffff30" stroke-width="1.5" class="mu-flow"/>
+    <polygon points="485,218 478,213 478,223" fill="#ffffff30"/>
+
+    <!-- Backend Panel -->
+    <g filter="url(#mu-shadow)">
+      <rect x="490" y="78" width="375" height="285" rx="14" fill="#1e1e2e" stroke="#ffffff10" stroke-width="1"/>
+    </g>
+    <text x="678" y="102" text-anchor="middle" fill="#ffffff" font-family="system-ui,sans-serif" font-size="12" font-weight="700">HomePilot Backend</text>
+    <line x1="520" y1="112" x2="835" y2="112" stroke="#ffffff08" stroke-width="1"/>
+
+    <!-- Per-User Scope -->
+    <rect x="510" y="122" width="335" height="22" rx="6" fill="#a78bfa12"/>
+    <text x="678" y="137" text-anchor="middle" fill="#a78bfa" font-family="system-ui,sans-serif" font-size="9" font-weight="600" letter-spacing="1">PER-USER SCOPE</text>
+
+    <g>
+      <rect x="515" y="152" width="78" height="42" rx="8" fill="#ffffff06" stroke="#ffffff0a" stroke-width="0.5"/>
+      <text x="554" y="170" text-anchor="middle" fill="#ffffff90" font-family="system-ui,sans-serif" font-size="9" font-weight="600">Chats</text>
+      <text x="554" y="184" text-anchor="middle" fill="#ffffff40" font-family="system-ui,sans-serif" font-size="7">History</text>
+    </g>
+    <g>
+      <rect x="601" y="152" width="78" height="42" rx="8" fill="#ffffff06" stroke="#ffffff0a" stroke-width="0.5"/>
+      <text x="640" y="170" text-anchor="middle" fill="#ffffff90" font-family="system-ui,sans-serif" font-size="9" font-weight="600">Memory</text>
+      <text x="640" y="184" text-anchor="middle" fill="#ffffff40" font-family="system-ui,sans-serif" font-size="7">Long-term</text>
+    </g>
+    <g>
+      <rect x="687" y="152" width="78" height="42" rx="8" fill="#ffffff06" stroke="#ffffff0a" stroke-width="0.5"/>
+      <text x="726" y="170" text-anchor="middle" fill="#ffffff90" font-family="system-ui,sans-serif" font-size="9" font-weight="600">Secrets</text>
+      <text x="726" y="184" text-anchor="middle" fill="#ffffff40" font-family="system-ui,sans-serif" font-size="7">API keys</text>
+    </g>
+    <g>
+      <rect x="773" y="152" width="78" height="42" rx="8" fill="#ffffff06" stroke="#ffffff0a" stroke-width="0.5"/>
+      <text x="812" y="170" text-anchor="middle" fill="#ffffff90" font-family="system-ui,sans-serif" font-size="9" font-weight="600">Profile</text>
+      <text x="812" y="184" text-anchor="middle" fill="#ffffff40" font-family="system-ui,sans-serif" font-size="7">Avatar, prefs</text>
+    </g>
+
+    <!-- Shared Scope -->
+    <rect x="510" y="206" width="335" height="22" rx="6" fill="#34d39912"/>
+    <text x="678" y="221" text-anchor="middle" fill="#34d399" font-family="system-ui,sans-serif" font-size="9" font-weight="600" letter-spacing="1">SHARED ACROSS USERS</text>
+
+    <g>
+      <rect x="515" y="236" width="160" height="42" rx="8" fill="#ffffff06" stroke="#ffffff0a" stroke-width="0.5"/>
+      <text x="595" y="254" text-anchor="middle" fill="#ffffff90" font-family="system-ui,sans-serif" font-size="9" font-weight="600">Personas &amp; Projects</text>
+      <text x="595" y="268" text-anchor="middle" fill="#ffffff40" font-family="system-ui,sans-serif" font-size="7">AI identities shared by all accounts</text>
+    </g>
+    <g>
+      <rect x="683" y="236" width="160" height="42" rx="8" fill="#ffffff06" stroke="#ffffff0a" stroke-width="0.5"/>
+      <text x="763" y="254" text-anchor="middle" fill="#ffffff90" font-family="system-ui,sans-serif" font-size="9" font-weight="600">Models &amp; Workflows</text>
+      <text x="763" y="268" text-anchor="middle" fill="#ffffff40" font-family="system-ui,sans-serif" font-size="7">Ollama, ComfyUI, pipelines</text>
+    </g>
+
+    <!-- Account Switch -->
+    <g>
+      <rect x="515" y="290" width="330" height="36" rx="10" fill="#ffffff06" stroke="#ffffff0a" stroke-width="0.5"/>
+      <text x="570" y="313" text-anchor="middle" fill="#ffffff50" font-family="system-ui,sans-serif" font-size="9">Switch accounts</text>
+      <text x="700" y="313" text-anchor="middle" fill="#06b6d4" font-family="system-ui,sans-serif" font-size="9" font-weight="600">Instant — no page reload</text>
+      <circle cy="312" r="5" fill="none" stroke-width="1.2">
+        <animate attributeName="cx" values="620;750;620" dur="4s" repeatCount="indefinite"/>
+        <animate attributeName="stroke" values="#a78bfa;#34d399;#a78bfa" dur="4s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+
+    <!-- Onboarding steps (bottom) -->
+    <text x="450" y="374" font-family="system-ui,sans-serif" font-size="10" fill="#475569" text-anchor="middle">3-step onboarding wizard — avatar upload — enterprise account menu with keyboard navigation</text>
+  </g>
+</svg>
