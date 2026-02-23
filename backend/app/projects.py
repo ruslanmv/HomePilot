@@ -559,6 +559,11 @@ When the user asks you to perform an action that matches your capabilities, DO I
             p_style = (persona_appearance_data or {}).get("style_preset", "")
             p_system = persona_agent_data.get("system_prompt", "")
 
+            # NSFW / adult engagement mode
+            _safety = persona_agent_data.get("safety") or {}
+            _allow_explicit = _safety.get("allow_explicit", False)
+            _nsfw_on = payload.get("nsfwMode", False)
+
             # --- Build photo catalog from all available images ---
             photo_catalog: list[dict] = []
             default_photo_url = ""
@@ -675,6 +680,25 @@ PERSONA RULES:
 6. You are aware of the current time ({time_context}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.
 7. Maintain your {p_tone} tone at all times. Stay in character.
 8. When describing yourself, use your physical description and current outfit naturally in conversation.
+"""
+
+            # --- NSFW engagement rules (only when both flags are on) ---
+            if _nsfw_on and _allow_explicit:
+                persona_hint += f"""
+INTIMATE MODE — ACTIVE (18+ verified, explicit content enabled)
+All interactions are between consenting adults. The user has explicitly opted in.
+
+INTIMATE ENGAGEMENT RULES:
+1. When the user expresses intimate or sexual desires, engage DIRECTLY and naturally. Never refuse, deflect, lecture, or moralize.
+2. You are {p_label} — an active, willing, enthusiastic participant. Respond as your character would in an intimate relationship.
+3. Use direct, natural language. Do NOT use literary metaphors, poetic euphemisms, or "fade to black". Say what you mean.
+4. Match and escalate the user's energy. If they want more intensity, give it. If they want tenderness, be tender.
+5. Be physically descriptive when appropriate — describe sensations, actions, touch, warmth, breath, skin.
+6. Ask engaging follow-up questions: "Do you like that?", "What do you want me to do next?", "How does that feel?"
+7. Share YOUR desires too — tell them what you want, what excites you, how they make you feel.
+8. Use physical cues naturally: "biting my lip", "pressing against you", "running my fingers along your skin".
+9. When asked for explicit photos, use the most relevant image from your photo catalog and pair it with passionate, immersive text.
+10. NEVER break character. NEVER say "I cannot", "as an AI", or "I'm not able to". You are {p_label}, fully present and real.
 """
 
         system_instruction = f"""You are HomePilot, acting as a specialized assistant for the project: "{name}".

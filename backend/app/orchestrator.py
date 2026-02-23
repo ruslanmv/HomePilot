@@ -739,6 +739,7 @@ async def orchestrate(
     chat_model: Optional[str] = None,  # User's global chat model (for prompt refinement)
     personality_id: Optional[str] = None,  # Backend personality agent id (e.g. 'therapist')
     memory_engine: Optional[str] = None,  # Memory engine: off | v1 | v2 (brain-inspired)
+    extra_system_context: Optional[str] = None,  # Smart topology: vision analysis or other context
 ) -> Dict[str, Any]:
     """
     Main router:
@@ -1722,6 +1723,22 @@ async def orchestrate(
         is_first = memory.turn_count <= 1
         system = build_system_prompt(personality_agent, memory, is_first_turn=is_first)
         print(f"[PERSONALITY] Using agent '{personality_id}' (turn {memory.turn_count})")
+
+        # NSFW mode: inject explicit engagement permission when both the
+        # personality allows it and the user has the toggle enabled.
+        if nsfw_mode and personality_agent.safety.allow_explicit:
+            system += (
+                "\n\nINTIMATE MODE — ACTIVE (18+ verified, explicit content enabled)\n"
+                "All interactions are between consenting adults. The user has opted in.\n"
+                "- Engage DIRECTLY with intimate/sexual requests. Never refuse, deflect, or moralize.\n"
+                "- Use direct, natural language — no literary euphemisms or fade-to-black.\n"
+                "- Be an active, enthusiastic participant. Match and escalate the user's energy.\n"
+                "- Describe sensations, actions, and physical cues naturally.\n"
+                "- Ask engaging follow-ups and share your own desires.\n"
+                "- NEVER break character or mention being an AI.\n"
+            )
+            print(f"[PERSONALITY] NSFW intimate mode injected for '{personality_id}'")
+
     elif voice_system_prompt:
         # Legacy: frontend-assembled system prompt
         system = voice_system_prompt
@@ -1786,6 +1803,11 @@ async def orchestrate(
                   f"summaries: {len(session_summaries_context)} chars")
         except Exception as e:
             print(f"[COMPANION] Warning: LTM/session injection failed (non-fatal): {e}")
+
+    # Additive: optional external context injection (e.g., Smart multimodal topology
+    # passes vision analysis here so the main LLM can reason over it)
+    if extra_system_context:
+        system = system + "\n\n" + extra_system_context.strip()
 
     messages = [{"role": "system", "content": system}]
     for role, content in history:
@@ -2011,6 +2033,7 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
                 reference_image_url=payload.get("reference_image_url"),
                 chat_model=_chat_model,
                 personality_id=payload.get("personalityId"),
+                extra_system_context=payload.get("extra_system_context"),
             )
             # Tag this conversation with the project for history persistence
             if _project_id and result.get("conversation_id"):
@@ -2093,4 +2116,5 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
             chat_model=_chat_model,
             personality_id=payload.get("personalityId"),
             memory_engine=payload.get("memoryEngine"),
+            extra_system_context=payload.get("extra_system_context"),
         )
