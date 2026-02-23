@@ -672,9 +672,20 @@ def _get_knowledge_hint(project_id: Optional[str]) -> str:
     try:
         from .vectordb import get_project_document_count, CHROMADB_AVAILABLE
         if CHROMADB_AVAILABLE:
-            count = get_project_document_count(project_id)
-            if count > 0:
-                parts.append(f"[This project has {count} document chunks in its knowledge base. Use knowledge.search to find relevant information.]")
+            chunk_count = get_project_document_count(project_id)
+            if chunk_count > 0:
+                # For persona projects, show the actual number of unique attached
+                # documents so the LLM doesn't confuse chunks with documents.
+                doc_label = f"{chunk_count} document chunks"
+                try:
+                    from .persona_attachments import list_persona_documents as _pa_docs
+                    pa_docs = _pa_docs(project_id)
+                    if pa_docs:
+                        n_docs = len({d.get("id") or d.get("item_id") for d in pa_docs})
+                        doc_label = f"{n_docs} document{'s' if n_docs != 1 else ''} ({chunk_count} chunks)"
+                except Exception:
+                    pass
+                parts.append(f"[This project has {doc_label} in its knowledge base. Use knowledge.search to find relevant information.]")
     except Exception:
         pass
 
