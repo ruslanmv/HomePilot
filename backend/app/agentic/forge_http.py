@@ -6,6 +6,7 @@ doesn't handle, and tries multiple path patterns for cross-deployment
 compatibility.
 
 Phase 8 fix: auto-acquire JWT token when basic auth is rejected.
+Phase 9 addition: registry proxy methods for MCP catalog browsing.
 """
 
 from __future__ import annotations
@@ -82,6 +83,25 @@ class ForgeHttp:
             logger.debug("forge_http GET %s failed: %s", path, exc)
             return None
 
+    async def post_json(self, path: str, body: Optional[Dict[str, Any]] = None) -> Any:
+        """Best-effort POST with JSON body."""
+        await self._ensure_token()
+        url = f"{self.base_url}{path}"
+        headers, auth = self._auth_headers_and_auth()
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(max(self.timeout_seconds, 15.0)),
+                follow_redirects=True,
+            ) as c:
+                r = await c.post(url, headers=headers, auth=auth, json=body or {})
+                try:
+                    return {"_status": r.status_code, **(r.json())}
+                except Exception:
+                    return {"_status": r.status_code}
+        except Exception as exc:
+            logger.debug("forge_http POST %s failed: %s", path, exc)
+            return None
+
     async def health(self) -> Tuple[bool, Optional[str]]:
         data = await self.get_json("/health")
         if data is None:
@@ -99,3 +119,53 @@ class ForgeHttp:
         if data is None:
             data = await self.get_json("/admin/gateways")
         return data
+
+    async def list_server_tools(self, server_id: str) -> Any:
+        """Fetch full tool objects for a virtual server via Forge's
+        GET /servers/{id}/tools endpoint (joins through server_tool_association).
+        Returns a list of ToolRead dicts or None on failure."""
+        data = await self.get_json(f"/servers/{server_id}/tools")
+        if data is None:
+            data = await self.get_json(f"/admin/servers/{server_id}/tools")
+        return data
+
+    # ── Registry proxy methods (Phase 9) ─────────────────────────────────
+
+    async def registry_list_servers(
+        self,
+        category: Optional[str] = None,
+        auth_type: Optional[str] = None,
+        provider: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Any:
+        """Proxy GET /admin/mcp-registry/servers with optional filters."""
+        params = []
+        if category:
+            params.append(f"category={category}")
+        if auth_type:
+            params.append(f"auth_type={auth_type}")
+        if provider:
+            params.append(f"provider={provider}")
+        if search:
+            params.append(f"search={search}")
+        params.append(f"limit={limit}")
+        params.append(f"offset={offset}")
+        params.append("show_available_only=false")
+        qs = "&".join(params)
+        return await self.get_json(f"/admin/mcp-registry/servers?{qs}")
+
+    async def registry_register_server(
+        self,
+        server_id: str,
+        api_key: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Any:
+        """Proxy POST /admin/mcp-registry/{server_id}/register."""
+        body: Dict[str, Any] = {"server_id": server_id}
+        if api_key:
+            body["api_key"] = api_key
+        if name:
+            body["name"] = name
+        return await self.post_json(f"/admin/mcp-registry/{server_id}/register", body)

@@ -1,11 +1,12 @@
 """Sync HomePilot MCP servers, tools, A2A agents into Context Forge.
 
 Reusable async service that discovers tools from running MCP servers,
-registers them in Forge, registers A2A agents, and creates virtual
+registers them in Forge, registers A2A agents, and creates/updates virtual
 servers.  Designed to be called from the backend API (POST /v1/agentic/sync)
 or from CLI scripts.
 
-Idempotent: skips items that already exist (matched by name).
+Idempotent: creates new items or upserts existing virtual server tool
+associations so that tool bundles stay current even after restart.
 """
 
 from __future__ import annotations
@@ -113,6 +114,15 @@ async def _post(client: httpx.AsyncClient, base_url: str, path: str, json: Any =
     r = await client.post(f"{base_url}{path}", json=json)
     if r.status_code == 409:
         return r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    r.raise_for_status()
+    if r.headers.get("content-type", "").startswith("application/json"):
+        return r.json()
+    return r.text
+
+
+async def _put(client: httpx.AsyncClient, base_url: str, path: str, json: Any = None) -> Any:
+    """PUT request for updating existing Forge resources."""
+    r = await client.put(f"{base_url}{path}", json=json)
     r.raise_for_status()
     if r.headers.get("content-type", "").startswith("application/json"):
         return r.json()
@@ -293,19 +303,69 @@ async def sync_homepilot(
             except Exception:
                 pass  # gateways are optional
 
-        # 4. Create virtual servers
+        # 4. Create or update virtual servers (upsert tool associations)
         vservers_created = 0
-        vservers_skipped = 0
+        vservers_updated = 0
+        vservers_unchanged = 0
+
+        logger.info(
+            "tool_id_map has %d entries before virtual server upsert",
+            len(tool_id_map),
+        )
 
         for spec in templates_servers.get("servers", []):
             name = spec["name"]
-            if name in existing_servers:
-                vservers_skipped += 1
-                continue
-
             include = spec.get("include_tool_prefixes", [])
             exclude = spec.get("exclude_tool_prefixes", [])
             tool_ids = _tool_ids_by_prefix(tool_id_map, include, exclude)
+
+            logger.info(
+                "vserver '%s': include=%s exclude=%s → matched %d tools",
+                name, include, exclude, len(tool_ids),
+            )
+
+            if name in existing_servers:
+                # Upsert: update tool associations for existing server
+                server_id = existing_servers[name]
+                updated = False
+                # Try multiple payload shapes that different Forge versions accept
+                payloads_to_try = [
+                    {"associated_tools": tool_ids},
+                    {"server": {"associated_tools": tool_ids}},
+                ]
+                for payload in payloads_to_try:
+                    try:
+                        await _put(client, base_url, f"/servers/{server_id}", json=payload)
+                        updated = True
+                        break
+                    except Exception:
+                        continue
+                if updated:
+                    vservers_updated += 1
+                    log.append(f"vserver '{name}': updated ({len(tool_ids)} tools)")
+                else:
+                    # Last resort: delete + recreate
+                    try:
+                        await client.delete(f"{base_url}/servers/{server_id}")
+                        create_payload = {
+                            "server": {
+                                "name": name,
+                                "description": spec.get("description", ""),
+                                "associated_tools": tool_ids,
+                                "tags": ["homepilot"],
+                            },
+                            "visibility": "public",
+                        }
+                        result = await _post(client, base_url, "/servers", json=create_payload)
+                        new_id = result.get("id") if isinstance(result, dict) else None
+                        if new_id:
+                            existing_servers[name] = new_id
+                        vservers_updated += 1
+                        log.append(f"vserver '{name}': recreated ({len(tool_ids)} tools)")
+                    except Exception as exc:
+                        vservers_unchanged += 1
+                        logger.warning("vserver '%s': all update methods failed: %s", name, exc)
+                continue
 
             payload = {
                 "server": {
@@ -319,6 +379,7 @@ async def sync_homepilot(
             try:
                 await _post(client, base_url, "/servers", json=payload)
                 vservers_created += 1
+                log.append(f"vserver '{name}': created ({len(tool_ids)} tools)")
             except Exception as exc:
                 errors.append(f"server '{name}': {exc}")
 
@@ -332,7 +393,8 @@ async def sync_homepilot(
         "agents_skipped": agents_skipped,
         "gateways_registered": gateways_registered,
         "virtual_servers_created": vservers_created,
-        "virtual_servers_skipped": vservers_skipped,
+        "virtual_servers_updated": vservers_updated,
+        "virtual_servers_unchanged": vservers_unchanged,
         "log": log,
         "errors": errors,
     }

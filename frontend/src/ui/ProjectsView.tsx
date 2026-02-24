@@ -33,6 +33,8 @@ import { PersonaSettingsPanel } from './components/PersonaSettingsPanel';
 import { PersonaWizard } from './PersonaWizard';
 import { PersonaImportModal, PersonaExportButton } from './PersonaImportExport';
 import { CommunityGallery } from './CommunityGallery';
+import { ToolsTab } from './tools';
+import { McpServersTab } from './mcp';
 
 // --- Components ---
 
@@ -64,14 +66,17 @@ const ProjectCard = ({
   <div className="relative group">
     <div
       onClick={onClick}
-      className="flex flex-col gap-3 p-5 rounded-2xl bg-white/5 hover:bg-white/10 transition-all duration-200 cursor-pointer border border-white/10 hover:border-white/20 h-full"
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick() } }}
+      tabIndex={0}
+      role="button"
+      className="flex flex-col gap-3 p-5 rounded-2xl bg-white/5 hover:bg-white/10 transition-all duration-200 cursor-pointer border border-white/10 hover:border-white/20 h-full focus:outline-none focus:ring-2 focus:ring-[var(--hp-focus-ring)] focus:ring-offset-2 focus:ring-offset-black"
     >
       {/* Header */}
       <div className="flex justify-between items-start gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {avatarUrl ? (
-            <div className="w-10 h-10 shrink-0 rounded-xl overflow-hidden border border-pink-500/30">
-              <img src={resolveFileUrl(avatarUrl)} alt="" className="block w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+            <div className="shrink-0 hp-persona-thumb border border-pink-500/30 transition-transform duration-200 group-hover:scale-[1.02]">
+              <img src={resolveFileUrl(avatarUrl)} alt="" className="block w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
             </div>
           ) : (
             <div
@@ -2053,7 +2058,7 @@ export default function ProjectsView({
       {/* Tabs */}
       <div className="px-6 border-b border-white/10">
         <div className="flex items-center gap-1">
-          {['My Projects', 'Shared with me', 'Examples'].map(tab => (
+          {['My Projects', 'Shared with me', 'Examples', 'Tools', 'MCP Servers'].map(tab => (
             <TabButton key={tab} label={tab} active={activeTab === tab} onClick={() => setActiveTab(tab)} />
           ))}
         </div>
@@ -2149,6 +2154,22 @@ export default function ProjectsView({
         )}
 
         {activeTab === 'Examples' && <ExamplesGrid />}
+
+        {activeTab === 'Tools' && (
+          <ToolsTab
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+            onGoToMcpServers={() => setActiveTab('MCP Servers')}
+          />
+        )}
+
+        {activeTab === 'MCP Servers' && (
+          <McpServersTab
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+            onGoToTools={() => setActiveTab('Tools')}
+          />
+        )}
       </div>
 
       <style>{`

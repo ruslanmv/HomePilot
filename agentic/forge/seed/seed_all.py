@@ -287,15 +287,51 @@ async def ensure_virtual_server(
     tool_id_map: Dict[str, str],
     existing_servers: Dict[str, str],
 ) -> None:
-    """Create a virtual server if it doesn't exist."""
+    """Create or update a virtual server's tool associations."""
     name = spec["name"]
-    if name in existing_servers:
-        print(f"  virtual server: {name} (exists)")
-        return
-
     include = spec.get("include_tool_prefixes", [])
     exclude = spec.get("exclude_tool_prefixes", [])
     tool_ids = _tool_ids_by_prefix(tool_id_map, include, exclude)
+
+    if name in existing_servers:
+        # Upsert: update tool associations for existing server.
+        # Try multiple payload shapes for cross-version Forge compatibility.
+        server_id = existing_servers[name]
+        updated = False
+        for payload in [
+            {"associated_tools": tool_ids},
+            {"server": {"associated_tools": tool_ids}},
+        ]:
+            try:
+                r = await client.put(
+                    f"{BASE_URL}/servers/{server_id}",
+                    json=payload,
+                )
+                r.raise_for_status()
+                updated = True
+                break
+            except Exception:
+                continue
+        if updated:
+            print(f"  virtual server: {name} (updated, {len(tool_ids)} tools)")
+        else:
+            # Last resort: delete + recreate
+            try:
+                await client.delete(f"{BASE_URL}/servers/{server_id}")
+                create_payload = {
+                    "server": {
+                        "name": name,
+                        "description": spec.get("description", ""),
+                        "associated_tools": tool_ids,
+                        "tags": ["homepilot"],
+                    },
+                    "visibility": "public",
+                }
+                await _post(client, "/servers", json=create_payload)
+                print(f"  virtual server: {name} (recreated, {len(tool_ids)} tools)")
+            except Exception as exc:
+                print(f"  virtual server: {name} (exists, all update methods failed: {exc})")
+        return
 
     payload = {
         "server": {
