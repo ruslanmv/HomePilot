@@ -380,6 +380,30 @@ async def agentic_register_gateway(body: RegisterGatewayIn, _key: str = Depends(
     )
 
 
+@router.get("/servers/{server_id}/tools")
+async def agentic_server_tools(server_id: str, _key: str = Depends(require_api_key)):
+    """Return the full tool objects associated with a virtual server.
+
+    Proxies Forge's GET /servers/{id}/tools which joins through the
+    server_tool_association table and returns ToolRead objects with
+    id, name, description, enabled, etc.  This avoids the name-vs-UUID
+    confusion in the list endpoint's associated_tools field.
+    """
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    data = await _catalog_service.http.list_server_tools(server_id)
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return data
+    # Forge may wrap in {"tools": [...]} or {"data": [...]}
+    for key in ("tools", "data", "items"):
+        if isinstance(data.get(key), list):
+            return data[key]
+    return []
+
+
 @router.post("/register/server", response_model=RegisterOut)
 async def agentic_register_server(body: CreateServerIn, _key: str = Depends(require_api_key)):
     """Create a new virtual server in Context Forge from the wizard."""
@@ -405,6 +429,73 @@ async def agentic_register_server(body: CreateServerIn, _key: str = Depends(requ
         name=str(result.get("name", body.name)),
         detail="Virtual server created successfully",
     )
+
+
+# ── GET /v1/agentic/registry/servers ──────────────────────────────────────────
+# Phase 9: Proxy to Forge's MCP Registry catalog so the HomePilot frontend
+# can browse & install public MCP servers without opening the Forge admin UI.
+
+
+@router.get("/registry/servers")
+async def agentic_registry_servers(
+    category: str = "",
+    auth_type: str = "",
+    provider: str = "",
+    search: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    _key: str = Depends(require_api_key),
+):
+    """Return the Forge MCP Registry catalog (81+ public servers, 38 categories).
+
+    Proxies GET /admin/mcp-registry/servers from Context Forge with filters.
+    """
+    if not _ENABLED:
+        return {
+            "servers": [], "total": 0, "categories": [], "auth_types": [],
+            "providers": [], "all_tags": [],
+        }
+
+    data = await _catalog_service.http.registry_list_servers(
+        category=category or None,
+        auth_type=auth_type or None,
+        provider=provider or None,
+        search=search or None,
+        limit=limit,
+        offset=offset,
+    )
+    if data is None:
+        return {
+            "servers": [], "total": 0, "categories": [], "auth_types": [],
+            "providers": [], "all_tags": [],
+        }
+    return data
+
+
+@router.post("/registry/{server_id}/register")
+async def agentic_registry_register(
+    server_id: str,
+    _key: str = Depends(require_api_key),
+):
+    """Register a public MCP server from the Forge catalog into Context Forge.
+
+    Proxies POST /admin/mcp-registry/{server_id}/register.
+    After success, the server appears as a gateway in the installed catalog.
+    """
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    result = await _catalog_service.http.registry_register_server(server_id)
+    if result is None:
+        raise HTTPException(status_code=502, detail="Forge not reachable")
+
+    status_code = result.pop("_status", 200)
+    if status_code >= 400:
+        detail = result.get("message") or result.get("error") or result.get("detail") or "Registration failed"
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    _catalog_service.invalidate()
+    return result
 
 
 # ── POST /v1/agentic/invoke ──────────────────────────────────────────────────
