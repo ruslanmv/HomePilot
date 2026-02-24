@@ -33,6 +33,8 @@ import { PersonaSettingsPanel } from './components/PersonaSettingsPanel';
 import { PersonaWizard } from './PersonaWizard';
 import { PersonaImportModal, PersonaExportButton } from './PersonaImportExport';
 import { CommunityGallery } from './CommunityGallery';
+import { ToolsTab } from './tools';
+import { McpServersTab } from './mcp';
 
 // --- Components ---
 
@@ -2053,7 +2055,7 @@ export default function ProjectsView({
       {/* Tabs */}
       <div className="px-6 border-b border-white/10">
         <div className="flex items-center gap-1">
-          {['My Projects', 'Shared with me', 'Examples'].map(tab => (
+          {['My Projects', 'Shared with me', 'Examples', 'Tools', 'MCP Servers'].map(tab => (
             <TabButton key={tab} label={tab} active={activeTab === tab} onClick={() => setActiveTab(tab)} />
           ))}
         </div>
@@ -2149,6 +2151,22 @@ export default function ProjectsView({
         )}
 
         {activeTab === 'Examples' && <ExamplesGrid />}
+
+        {activeTab === 'Tools' && (
+          <ToolsTab
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+            onGoToMcpServers={() => setActiveTab('MCP Servers')}
+          />
+        )}
+
+        {activeTab === 'MCP Servers' && (
+          <McpServersTab
+            backendUrl={backendUrl}
+            apiKey={apiKey}
+            onGoToTools={() => setActiveTab('Tools')}
+          />
+        )}
       </div>
 
       <style>{`
