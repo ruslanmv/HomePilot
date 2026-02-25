@@ -89,6 +89,9 @@ from .personas.avatar_assets import commit_persona_avatar, commit_persona_image
 from .personas.export_import import export_persona_project, import_persona_package, preview_persona_package
 from .personas.dependency_checker import check_dependencies
 
+# MCP Marketplace — optional Matrix Hub proxy (additive)
+from .marketplace import marketplace_router
+
 # Community gallery proxy (Phase 3 — additive)
 from .community import router as community_router
 
@@ -141,6 +144,9 @@ app.include_router(capabilities_router)
 
 # Include Agentic AI routes (/v1/agentic/*)
 app.include_router(agentic_router)
+
+# Include Marketplace routes (/v1/marketplace/*)
+app.include_router(marketplace_router)
 
 # Include Agent Chat routes (/v1/agent/* — Topology 3)
 app.include_router(agent_router)

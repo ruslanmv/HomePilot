@@ -53,24 +53,31 @@ async def forge_jwt_login(
 class ContextForgeClient:
     """Async client that wraps the MCP Context Forge REST API."""
 
+    _JWT_RETRY_INTERVAL = 60.0  # retry JWT every 60s if previous attempt failed
+
     def __init__(self, base_url: str, token: str = "", auth_user: str = "admin", auth_pass: str = "changeme"):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.auth_user = auth_user
         self.auth_pass = auth_pass
-        self._jwt_attempted = False
+        self._jwt_attempted_at: float = 0.0
 
     # ── helpers ───────────────────────────────────────────────────────────
 
     async def _ensure_token(self) -> None:
         """Auto-acquire JWT token from Forge /auth/login if none is set.
 
-        Called lazily once per client instance.  Uses platform_admin_email
-        convention (auth_user@example.com) derived from BASIC_AUTH_USER.
+        Retries every 60 seconds if the previous attempt failed, so that
+        a slow Forge startup (HTTP 500 during bootstrap) doesn't permanently
+        lock out JWT acquisition for the lifetime of the process.
         """
-        if self.token or self._jwt_attempted:
+        if self.token:
             return
-        self._jwt_attempted = True
+        import time
+        now = time.monotonic()
+        if now - self._jwt_attempted_at < self._JWT_RETRY_INTERVAL:
+            return  # too soon to retry
+        self._jwt_attempted_at = now
         # Derive email: if auth_user already looks like email, use it directly
         email = self.auth_user if "@" in self.auth_user else f"{self.auth_user}@example.com"
         jwt = await forge_jwt_login(
