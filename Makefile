@@ -22,7 +22,7 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         download-edit download-enhance download-video download-verify download-health \
         download-avatar-models-basic download-avatar-models-full \
         start start-backend start-frontend start-no-agentic start-agentic-servers start-inventory \
-        install-mcp start-mcp stop-mcp mcp-status mcp-install-server verify-mcp \
+        install-mcp start-mcp stop-mcp clean-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
         mcp-inventory \
@@ -1134,6 +1134,9 @@ start-mcp: ## Start only the MCP Gateway (port 4444)
 	@echo "  MCP Gateway:  http://localhost:$(MCP_GATEWAY_PORT)"
 	@echo "  Admin UI:     http://localhost:$(MCP_GATEWAY_PORT)/admin"
 	@echo ""
+	@echo "  Auth:         disabled (AUTH_REQUIRED=false)"
+	@echo "  If enabled →  Email: admin@example.com  Password: changeme"
+	@echo ""
 	@echo "  Press Ctrl+C to stop"
 	@echo ""
 	@if [ -d "$(MCP_DIR)/.venv" ]; then \
@@ -1141,6 +1144,12 @@ start-mcp: ## Start only the MCP Gateway (port 4444)
 		HOST=0.0.0.0 \
 		BASIC_AUTH_USER=admin BASIC_AUTH_PASSWORD=changeme \
 		AUTH_REQUIRED=false \
+		SECURE_COOKIES=false \
+		PASSWORD_CHANGE_ENFORCEMENT_ENABLED=false \
+		ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP=false \
+		DETECT_DEFAULT_PASSWORD_ON_LOGIN=false \
+		REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD=false \
+		PASSWORD_POLICY_ENABLED=false \
 		MCPGATEWAY_UI_ENABLED=true \
 		MCPGATEWAY_ADMIN_API_ENABLED=true \
 		.venv/bin/python -m uvicorn mcpgateway.main:app \
@@ -1149,6 +1158,12 @@ start-mcp: ## Start only the MCP Gateway (port 4444)
 		HOST=0.0.0.0 \
 		BASIC_AUTH_USER=admin BASIC_AUTH_PASSWORD=changeme \
 		AUTH_REQUIRED=false \
+		SECURE_COOKIES=false \
+		PASSWORD_CHANGE_ENFORCEMENT_ENABLED=false \
+		ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP=false \
+		DETECT_DEFAULT_PASSWORD_ON_LOGIN=false \
+		REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD=false \
+		PASSWORD_POLICY_ENABLED=false \
 		MCPGATEWAY_UI_ENABLED=true \
 		MCPGATEWAY_ADMIN_API_ENABLED=true \
 		mcpgateway mcpgateway.main:app \
@@ -1160,6 +1175,28 @@ stop-mcp: ## Stop MCP Gateway and MCP server processes
 	@-pkill -f "mcpgateway.main:app" 2>/dev/null && echo "  Killed MCP Gateway" || echo "  MCP Gateway not running"
 	@-pkill -f "server_fastmcp" 2>/dev/null && echo "  Killed MCP servers" || echo "  No MCP servers running"
 	@echo "  Done"
+
+clean-mcp: stop-mcp ## Wipe MCP Context Forge completely and reinstall fresh (resets password/database)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Clean Reinstall: MCP Context Forge"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "  Removing $(MCP_DIR)/ (venv, database, .env, everything)..."
+	@rm -rf "$(MCP_DIR)"
+	@echo "  ✓ Removed"
+	@echo ""
+	@echo "  Reinstalling from scratch..."
+	@$(MAKE) install-mcp
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ MCP Context Forge reinstalled with default credentials"
+	@echo ""
+	@echo "  Admin UI:  http://localhost:$(MCP_GATEWAY_PORT)/admin"
+	@echo "  Auth:      disabled (AUTH_REQUIRED=false)"
+	@echo "  If enabled → Email: admin@example.com  Password: changeme"
+	@echo ""
+	@echo "  Start it:  make start-mcp"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
 
 mcp-status: ## Show status of MCP Gateway and registered tools
 	@echo "════════════════════════════════════════════════════════════════════════════════"

@@ -98,8 +98,8 @@ async def _acquire_jwt(client: httpx.AsyncClient) -> str:
 # ── Forge API helpers ──────────────────────────────────────────────────────
 
 
-async def _get(client: httpx.AsyncClient, path: str) -> Any:
-    r = await client.get(f"{BASE_URL}{path}")
+async def _get(client: httpx.AsyncClient, path: str, **params: Any) -> Any:
+    r = await client.get(f"{BASE_URL}{path}", params=params or None)
     r.raise_for_status()
     return r.json()
 
@@ -172,7 +172,9 @@ async def ensure_tool(
         if tool_id:
             return tool_id
         # On 409 conflict, try to find existing by listing again
-        refreshed = await _get(client, "/tools")
+        refreshed = await _get(client, "/tools", limit=0)
+        if not isinstance(refreshed, list):
+            refreshed = refreshed.get("tools", []) if isinstance(refreshed, dict) else []
         for t in refreshed:
             if t.get("name") == name:
                 return t.get("id")
@@ -287,15 +289,51 @@ async def ensure_virtual_server(
     tool_id_map: Dict[str, str],
     existing_servers: Dict[str, str],
 ) -> None:
-    """Create a virtual server if it doesn't exist."""
+    """Create or update a virtual server's tool associations."""
     name = spec["name"]
-    if name in existing_servers:
-        print(f"  virtual server: {name} (exists)")
-        return
-
     include = spec.get("include_tool_prefixes", [])
     exclude = spec.get("exclude_tool_prefixes", [])
     tool_ids = _tool_ids_by_prefix(tool_id_map, include, exclude)
+
+    if name in existing_servers:
+        # Upsert: update tool associations for existing server.
+        # Try multiple payload shapes for cross-version Forge compatibility.
+        server_id = existing_servers[name]
+        updated = False
+        for payload in [
+            {"associated_tools": tool_ids},
+            {"server": {"associated_tools": tool_ids}},
+        ]:
+            try:
+                r = await client.put(
+                    f"{BASE_URL}/servers/{server_id}",
+                    json=payload,
+                )
+                r.raise_for_status()
+                updated = True
+                break
+            except Exception:
+                continue
+        if updated:
+            print(f"  virtual server: {name} (updated, {len(tool_ids)} tools)")
+        else:
+            # Last resort: delete + recreate
+            try:
+                await client.delete(f"{BASE_URL}/servers/{server_id}")
+                create_payload = {
+                    "server": {
+                        "name": name,
+                        "description": spec.get("description", ""),
+                        "associated_tools": tool_ids,
+                        "tags": ["homepilot"],
+                    },
+                    "visibility": "public",
+                }
+                await _post(client, "/servers", json=create_payload)
+                print(f"  virtual server: {name} (recreated, {len(tool_ids)} tools)")
+            except Exception as exc:
+                print(f"  virtual server: {name} (exists, all update methods failed: {exc})")
+        return
 
     payload = {
         "server": {
@@ -338,18 +376,41 @@ async def main() -> int:
             return 1
 
         # ── Pre-fetch existing items to make idempotent ────────────────
+        # Use limit=0 to bypass Forge default pagination (50 items/page)
+        # and retrieve all items in a single request.
         try:
-            existing_tools_list = await _get(client, "/tools")
+            existing_tools_list = await _get(client, "/tools", limit=0)
+            if not isinstance(existing_tools_list, list):
+                existing_tools_list = existing_tools_list.get("tools", []) if isinstance(existing_tools_list, dict) else []
         except Exception:
             existing_tools_list = []
-        existing_tools: Dict[str, str] = {
-            t["name"]: t["id"]
-            for t in (existing_tools_list or [])
-            if t.get("name") and t.get("id")
-        }
+
+        # Deduplicate: prior seed runs may have created duplicate tools
+        # (same name, different UUIDs) due to broken pagination.
+        seen_tool_names: Dict[str, str] = {}
+        dedup_count = 0
+        for t in (existing_tools_list or []):
+            tname = t.get("name", "")
+            tid = t.get("id", "")
+            if not tname or not tid:
+                continue
+            if tname in seen_tool_names:
+                try:
+                    await client.delete(f"{BASE_URL}/tools/{tid}")
+                    dedup_count += 1
+                except Exception:
+                    pass
+            else:
+                seen_tool_names[tname] = tid
+        if dedup_count:
+            print(f"  Removed {dedup_count} duplicate tools from Forge")
+
+        existing_tools: Dict[str, str] = dict(seen_tool_names)
 
         try:
-            existing_agents_list = await _get(client, "/a2a")
+            existing_agents_list = await _get(client, "/a2a", limit=0)
+            if not isinstance(existing_agents_list, list):
+                existing_agents_list = existing_agents_list.get("agents", []) if isinstance(existing_agents_list, dict) else []
         except Exception:
             existing_agents_list = []
         existing_agents: Dict[str, str] = {
@@ -359,9 +420,9 @@ async def main() -> int:
         }
 
         try:
-            existing_gateways_list = await _get(client, "/gateways")
+            existing_gateways_list = await _get(client, "/gateways", limit=0)
             if not isinstance(existing_gateways_list, list):
-                existing_gateways_list = []
+                existing_gateways_list = existing_gateways_list.get("gateways", []) if isinstance(existing_gateways_list, dict) else []
         except Exception:
             existing_gateways_list = []
         existing_gateways: Dict[str, str] = {
@@ -371,9 +432,9 @@ async def main() -> int:
         }
 
         try:
-            existing_servers_list = await _get(client, "/servers")
+            existing_servers_list = await _get(client, "/servers", limit=0)
             if not isinstance(existing_servers_list, list):
-                existing_servers_list = []
+                existing_servers_list = existing_servers_list.get("servers", []) if isinstance(existing_servers_list, dict) else []
         except Exception:
             existing_servers_list = []
         existing_servers: Dict[str, str] = {
@@ -419,6 +480,20 @@ async def main() -> int:
             print(f"  gateway: {gw['name']}")
 
         # ── 4. Create virtual servers ──────────────────────────────────
+        # Re-fetch all tools from Forge to ensure tool_id_map has current
+        # UUIDs, especially if tools were created by a previous run or
+        # if 409 conflicts were resolved above.
+        try:
+            refreshed_tools = await _get(client, "/tools", limit=0)
+            if not isinstance(refreshed_tools, list):
+                refreshed_tools = refreshed_tools.get("tools", []) if isinstance(refreshed_tools, dict) else []
+            for t in refreshed_tools:
+                if t.get("name") and t.get("id"):
+                    tool_id_map[t["name"]] = t["id"]
+            print(f"  tool_id_map refreshed: {len(tool_id_map)} tools available for virtual servers")
+        except Exception as exc:
+            print(f"  ⚠ Could not refresh tool list: {exc}")
+
         for server_spec in templates_servers.get("servers", []):
             await ensure_virtual_server(client, server_spec, tool_id_map, existing_servers)
 
