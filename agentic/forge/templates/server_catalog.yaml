@@ -1,0 +1,138 @@
+version: 1
+
+# Server catalog: defines all HomePilot MCP servers.
+# "core" servers start automatically and cannot be uninstalled.
+# "optional" servers can be installed/uninstalled via the UI.
+
+core:
+  - id: hp-personal-assistant
+    port: 9101
+    module: "agentic.integrations.mcp.personal_assistant_server:app"
+    label: "Personal Assistant"
+    description: "Search personal notes/memory, plan your day"
+    category: core
+
+  - id: hp-knowledge
+    port: 9102
+    module: "agentic.integrations.mcp.knowledge_server:app"
+    label: "Knowledge"
+    description: "Search workspace, fetch documents, answer with sources"
+    category: core
+
+  - id: hp-decision-copilot
+    port: 9103
+    module: "agentic.integrations.mcp.decision_copilot_server:app"
+    label: "Decision Copilot"
+    description: "Generate options, assess risks, recommend next steps"
+    category: core
+
+  - id: hp-executive-briefing
+    port: 9104
+    module: "agentic.integrations.mcp.executive_briefing_server:app"
+    label: "Executive Briefing"
+    description: "Daily/weekly digests, change summaries"
+    category: core
+
+  - id: hp-web-search
+    port: 9105
+    module: "agentic.integrations.mcp.web_search_server:app"
+    label: "Web Search"
+    description: "Web search via SearXNG or Tavily, URL fetch"
+    category: core
+
+  - id: hp-inventory
+    port: 9120
+    module: "agentic.integrations.mcp.inventory_server:app"
+    label: "Inventory"
+    description: "Browse outfits, photos, documents"
+    category: core
+
+optional:
+  # ── Local Tools ──────────────────────────────────────────────────────
+  - id: hp-local-notes
+    port: 9110
+    module: "agentic.integrations.mcp.local_notes_server:app"
+    label: "Local Notes"
+    description: "Search, read, create, append, update, delete notes"
+    category: local
+    icon: file-text
+
+  - id: hp-local-projects
+    port: 9111
+    module: "agentic.integrations.mcp.local_projects_server:app"
+    label: "Local Projects"
+    description: "List, read, search, write project files"
+    category: local
+    icon: folder-open
+
+  - id: hp-web-fetch
+    port: 9112
+    module: "agentic.integrations.mcp.web_mcp_server:app"
+    label: "Web Fetch"
+    description: "Fetch and extract text from any URL"
+    category: local
+    icon: globe
+
+  - id: hp-shell-safe
+    port: 9113
+    module: "agentic.integrations.mcp.shell_safe_server:app"
+    label: "Shell (Safe)"
+    description: "Execute allowlisted shell commands (read-first)"
+    category: local
+    icon: terminal
+
+  # ── Communication ────────────────────────────────────────────────────
+  - id: hp-gmail
+    port: 9114
+    module: "agentic.integrations.mcp.gmail_server:app"
+    label: "Gmail"
+    description: "Search, read, draft, and send Gmail messages"
+    category: communication
+    icon: mail
+    requires_config: GOOGLE_OAUTH
+
+  - id: hp-google-calendar
+    port: 9115
+    module: "agentic.integrations.mcp.google_calendar_server:app"
+    label: "Google Calendar"
+    description: "List, create, and manage Google Calendar events"
+    category: communication
+    icon: calendar
+    requires_config: GOOGLE_OAUTH
+
+  - id: hp-microsoft-graph
+    port: 9116
+    module: "agentic.integrations.mcp.microsoft_graph_server:app"
+    label: "Microsoft Graph"
+    description: "Outlook mail, calendar, OneDrive via Microsoft Graph"
+    category: communication
+    icon: cloud
+    requires_config: MS_GRAPH_TOKEN
+
+  - id: hp-slack
+    port: 9117
+    module: "agentic.integrations.mcp.slack_server:app"
+    label: "Slack"
+    description: "Search messages, read channels, post updates"
+    category: communication
+    icon: message-square
+    requires_config: SLACK_TOKEN
+
+  # ── Developer ────────────────────────────────────────────────────────
+  - id: hp-github
+    port: 9118
+    module: "agentic.integrations.mcp.github_server:app"
+    label: "GitHub"
+    description: "Repos, issues, PRs, and release notes"
+    category: developer
+    icon: github
+    requires_config: GITHUB_TOKEN
+
+  - id: hp-notion
+    port: 9119
+    module: "agentic.integrations.mcp.notion_server:app"
+    label: "Notion"
+    description: "Search pages, read databases, create content"
+    category: developer
+    icon: book-open
+    requires_config: NOTION_TOKEN

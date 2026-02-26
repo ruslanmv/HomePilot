@@ -117,6 +117,7 @@ class AgenticCatalogService:
                     name=name,
                     description=str(t.get("description") or ""),
                     enabled=t.get("enabled"),
+                    url=t.get("url") or None,
                     raw=t,
                 )
             )
@@ -140,6 +141,15 @@ class AgenticCatalogService:
             )
 
         # Servers (virtual servers via best-effort HTTP)
+        # Build name→id lookup so we can normalise tool names returned by
+        # Forge's GET /servers (which uses tool.name) into the UUIDs that
+        # the frontend expects to match against catalog.tools[].id.
+        tool_name_to_id: Dict[str, str] = {
+            str(t.get("name") or ""): str(t.get("id") or "")
+            for t in tools_raw
+            if t.get("name") and t.get("id")
+        }
+
         servers_payload = await self.http.list_servers_best_effort()
         servers: List[CatalogServer] = []
         for s in _as_list(servers_payload):
@@ -147,16 +157,33 @@ class AgenticCatalogService:
             name = str(s.get("name") or "")
             if not sid or not name:
                 continue
-            tool_ids = s.get("tool_ids") or s.get("associated_tools") or s.get("tools") or []
-            if not isinstance(tool_ids, list):
-                tool_ids = []
+            raw_tools = (
+                s.get("tool_ids")
+                or s.get("associated_tools")
+                or s.get("associatedTools")
+                or s.get("tools")
+                or []
+            )
+            if not isinstance(raw_tools, list):
+                raw_tools = []
+            # Normalise: values may be tool names (Forge list endpoint) or
+            # UUIDs (Forge create response).  Resolve names → IDs.
+            resolved_ids: List[str] = []
+            for val in raw_tools:
+                val_str = str(val) if val is not None else ""
+                if not val_str:
+                    continue
+                if val_str in tool_name_to_id:
+                    resolved_ids.append(tool_name_to_id[val_str])
+                else:
+                    resolved_ids.append(val_str)  # already a UUID
             servers.append(
                 CatalogServer(
                     id=sid,
                     name=name,
                     description=str(s.get("description") or ""),
                     enabled=s.get("enabled"),
-                    tool_ids=[str(x) for x in tool_ids if x is not None],
+                    tool_ids=resolved_ids,
                     sse_url=f"{self.forge_base_url}/servers/{sid}/sse",
                     raw=s,
                 )

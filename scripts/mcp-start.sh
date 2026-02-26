@@ -63,6 +63,12 @@ if [ "$FORGE_MODE" = "repo" ]; then
     HOST="0.0.0.0" \
         BASIC_AUTH_USER="$AUTH_USER" BASIC_AUTH_PASSWORD="$AUTH_PASS" \
         AUTH_REQUIRED=false \
+        SECURE_COOKIES=false \
+        PASSWORD_CHANGE_ENFORCEMENT_ENABLED=false \
+        ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP=false \
+        DETECT_DEFAULT_PASSWORD_ON_LOGIN=false \
+        REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD=false \
+        PASSWORD_POLICY_ENABLED=false \
         MCPGATEWAY_UI_ENABLED=true \
         MCPGATEWAY_ADMIN_API_ENABLED=true \
         .venv/bin/python -m uvicorn mcpgateway.main:app \
@@ -76,6 +82,12 @@ else
     HOST="0.0.0.0" \
         BASIC_AUTH_USER="$AUTH_USER" BASIC_AUTH_PASSWORD="$AUTH_PASS" \
         AUTH_REQUIRED=false \
+        SECURE_COOKIES=false \
+        PASSWORD_CHANGE_ENFORCEMENT_ENABLED=false \
+        ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP=false \
+        DETECT_DEFAULT_PASSWORD_ON_LOGIN=false \
+        REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD=false \
+        PASSWORD_POLICY_ENABLED=false \
         MCPGATEWAY_UI_ENABLED=true \
         MCPGATEWAY_ADMIN_API_ENABLED=true \
         mcpgateway mcpgateway.main:app \
