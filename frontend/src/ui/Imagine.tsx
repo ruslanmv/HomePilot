@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
-import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film, Check, ArrowUp, Loader2 } from 'lucide-react'
+import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, Copy, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film, Check, ArrowUp, Loader2, Sparkles } from 'lucide-react'
 import { upscaleImage } from './enhance/upscaleApi'
 import { resolveFileUrl } from './resolveFileUrl'
 
@@ -300,6 +300,7 @@ export default function ImagineView(props: ImagineParams) {
 
   // Reference Image state (for img2img similar generation)
   const referenceInputRef = useRef<HTMLInputElement>(null)
+  const promptInputRef = useRef<HTMLInputElement>(null)
   const [referenceUrl, setReferenceUrl] = useState<string | null>(null)
   const [referenceStrength, setReferenceStrength] = useState(0.35) // 0=very similar, 1=more creative
   const [isUploadingReference, setIsUploadingReference] = useState(false)
@@ -1584,9 +1585,24 @@ export default function ImagineView(props: ImagineParams) {
 
           {/* Empty hint */}
           {items.length === 0 && !isGenerating ? (
-            <div className="col-span-full rounded-2xl border border-white/10 bg-white/5 p-6 text-white/70">
-              <div className="text-sm font-semibold">Your gallery is empty</div>
-              <div className="text-xs text-white/45 mt-1">Type a prompt below and hit Generate.</div>
+            <div className="col-span-full rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
+              <div className="mx-auto mb-4 size-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                <Sparkles size={24} className="text-purple-400/60" />
+              </div>
+              <div className="text-lg font-semibold text-white/90 mb-2">Your gallery is empty</div>
+              <div className="text-sm text-white/45 mb-4">
+                Type a prompt below and hit Generate.
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  promptInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  promptInputRef.current?.focus()
+                }}
+                className="px-4 py-2 bg-purple-500/20 text-purple-200 rounded-xl border border-purple-500/30 hover:bg-purple-500/30 transition-colors"
+              >
+                Start with a prompt
+              </button>
             </div>
           ) : null}
 
@@ -1850,6 +1866,7 @@ export default function ImagineView(props: ImagineParams) {
               </button>
 
               <input
+                ref={promptInputRef}
                 type="text"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}

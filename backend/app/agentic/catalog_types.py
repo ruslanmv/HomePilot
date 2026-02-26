@@ -28,6 +28,7 @@ class CatalogTool(BaseModel):
     name: str
     description: str = ""
     enabled: Optional[bool] = None
+    url: Optional[str] = None
     raw: Dict[str, Any] = Field(default_factory=dict)
 
 
