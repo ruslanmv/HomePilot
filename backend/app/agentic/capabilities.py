@@ -247,6 +247,7 @@ async def discover_catalog(client: ContextForgeClient) -> AgenticCatalogOut:
                 name=name,
                 description=str(t.get("description") or ""),
                 enabled=t.get("enabled"),
+                url=t.get("url") or None,
             )
         )
 

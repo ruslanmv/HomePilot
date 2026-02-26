@@ -89,6 +89,9 @@ from .personas.avatar_assets import commit_persona_avatar, commit_persona_image
 from .personas.export_import import export_persona_project, import_persona_package, preview_persona_package
 from .personas.dependency_checker import check_dependencies
 
+# MCP Marketplace — optional Matrix Hub proxy (additive)
+from .marketplace import marketplace_router
+
 # Community gallery proxy (Phase 3 — additive)
 from .community import router as community_router
 
@@ -141,6 +144,9 @@ app.include_router(capabilities_router)
 
 # Include Agentic AI routes (/v1/agentic/*)
 app.include_router(agentic_router)
+
+# Include Marketplace routes (/v1/marketplace/*)
+app.include_router(marketplace_router)
 
 # Include Agent Chat routes (/v1/agent/* — Topology 3)
 app.include_router(agent_router)
@@ -481,6 +487,34 @@ def _startup() -> None:
         print(f"Warning: Failed to run migrations: {e}")
     # Files mount
     _ensure_static_mount()
+
+    # Start MCP core + installed optional servers in the background.
+    # This ensures core services are always on even if agentic-start.sh
+    # didn't run or failed.  Runs as a background task so it doesn't
+    # block the rest of startup.
+    if os.getenv("AGENTIC_ENABLED", "true").lower() in ("1", "true", "yes"):
+        asyncio.get_event_loop().create_task(_start_agentic_servers())
+
+
+async def _start_agentic_servers() -> None:
+    """Background task: ensure core + installed MCP servers are running."""
+    # Brief delay to let Forge gateway finish initializing
+    await asyncio.sleep(5)
+    try:
+        from .agentic.server_manager import get_server_manager
+        mgr = get_server_manager()
+        result = await mgr.ensure_all_running()
+        import logging
+        _logger = logging.getLogger("homepilot.startup")
+        core = result.get("core", [])
+        optional = result.get("optional", [])
+        if core or optional:
+            _logger.info("Agentic auto-start: %d core, %d optional servers started", len(core), len(optional))
+        else:
+            _logger.info("Agentic auto-start: all servers already running")
+    except Exception as exc:
+        import logging
+        logging.getLogger("homepilot.startup").warning("Agentic auto-start failed: %s", exc)
 
 
 # Ensure local storage is ready even when lifespan events are not executed

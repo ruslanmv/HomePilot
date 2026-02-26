@@ -2,15 +2,15 @@
 # ==============================================================================
 #  HomePilot Agentic Servers — start + seed
 #
-#  Starts the 6 MCP servers + 2 A2A agents from agentic/integrations/,
-#  then seeds Context Forge with gateways, A2A agents, and virtual servers
-#  so they appear in the wizard's catalog.
+#  Starts 6 core MCP servers + 2 A2A agents.  Optional servers (local-notes,
+#  gmail, github, etc.) are managed by the backend's ServerManager and can
+#  be installed/uninstalled via the UI (POST /v1/agentic/servers/{id}/install).
 #
 #  Usage:
-#    ./scripts/agentic-start.sh              # start servers + seed
-#    ./scripts/agentic-start.sh --no-seed    # start servers only
+#    ./scripts/agentic-start.sh              # start core + seed
+#    ./scripts/agentic-start.sh --no-seed    # start core only
 #
-#  Ports (hardcoded to match agentic/forge/templates/*.yaml):
+#  Core servers (always started):
 #    MCP  9101  personal-assistant
 #    MCP  9102  knowledge
 #    MCP  9103  decision-copilot
@@ -19,6 +19,13 @@
 #    MCP  9120  inventory
 #    A2A  9201  everyday-assistant
 #    A2A  9202  chief-of-staff
+#
+#  Optional servers (install via UI):
+#    MCP  9110  local-notes         MCP  9114  gmail
+#    MCP  9111  local-projects      MCP  9115  google-calendar
+#    MCP  9112  web-fetch           MCP  9116  microsoft-graph
+#    MCP  9113  shell-safe          MCP  9117  slack
+#    MCP  9118  github              MCP  9119  notion
 #
 #  Environment:
 #    MCPGATEWAY_URL        (default: http://localhost:4444)
@@ -33,7 +40,7 @@ AGENTIC_DIR="$ROOT/agentic"
 # Python — prefer the backend venv (has httpx, pyyaml, fastapi, uvicorn)
 PYTHON="${AGENTIC_PYTHON:-$ROOT/backend/.venv/bin/python}"
 if [ ! -x "$PYTHON" ]; then
-    echo "  ❌ Backend venv not found at $PYTHON — run: make install"
+    echo "  Backend venv not found at $PYTHON — run: make install"
     exit 1
 fi
 
@@ -59,9 +66,10 @@ start_server() {
     PIDS="$PIDS $!"
 }
 
-# ── Start MCP servers ────────────────────────────────────────────────────────
+# ── Start core MCP servers ───────────────────────────────────────────────────
 echo ""
-echo "  Starting HomePilot MCP servers..."
+echo "  Starting HomePilot core MCP servers..."
+
 start_server "MCP personal-assistant" \
     "agentic.integrations.mcp.personal_assistant_server:app" 9101
 start_server "MCP knowledge" \
@@ -82,23 +90,25 @@ start_server "A2A everyday-assistant" \
 start_server "A2A chief-of-staff" \
     "agentic.integrations.a2a.chief_of_staff_agent:app" 9202
 
-# ── Wait for servers to be healthy ───────────────────────────────────────────
-echo "  Waiting for servers to be ready..."
+# ── Wait for core servers to be healthy ──────────────────────────────────────
+echo "  Waiting for core servers to be ready..."
 
-# Retry health checks for up to 10 seconds (servers need a moment to boot)
+CORE_PORTS="9101 9102 9103 9104 9105 9120 9201 9202"
+TOTAL_CORE=8
+
 for attempt in $(seq 1 10); do
     ok=0
-    for port in 9101 9102 9103 9104 9105 9120 9201 9202; do
+    for port in $CORE_PORTS; do
         if curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
             ok=$((ok + 1))
         fi
     done
-    if [ "$ok" -eq 8 ]; then
+    if [ "$ok" -eq "$TOTAL_CORE" ]; then
         break
     fi
     sleep 1
 done
-echo "  $ok/8 agentic servers healthy"
+echo "  $ok/$TOTAL_CORE core servers healthy"
 
 # ── Seed Context Forge ───────────────────────────────────────────────────────
 if [ "$SEED" = true ]; then
@@ -111,7 +121,7 @@ if [ "$SEED" = true ]; then
             break
         fi
         if [ "$i" = "15" ]; then
-            echo "  ⚠  Forge gateway not reachable at ${MCPGATEWAY_URL} — skipping seed"
+            echo "  Forge gateway not reachable at ${MCPGATEWAY_URL} — skipping seed"
             echo "$PIDS"
             exit 0
         fi
@@ -121,23 +131,24 @@ if [ "$SEED" = true ]; then
     MCPGATEWAY_URL="$MCPGATEWAY_URL" \
         "$PYTHON" "$AGENTIC_DIR/forge/seed/seed_all.py" 2>&1 \
         | while IFS= read -r line; do echo "    $line"; done \
-        || echo "  ⚠  Seed script had errors (non-fatal)"
+        || echo "  Seed script had errors (non-fatal)"
 
-    echo "  ✓ Forge seeded — tools, agents, and virtual servers registered"
+    echo "  Forge seeded — core tools, agents, and virtual servers registered"
+    echo "  Optional servers can be installed via the UI (MCP Servers tab)"
 
     # ── Final verification ────────────────────────────────────────────────
     echo ""
-    echo "  Verifying all services..."
+    echo "  Verifying core services..."
     if curl -sf "${MCPGATEWAY_URL}/health" >/dev/null 2>&1; then
-        echo "    ✓ Context Forge (${MCPGATEWAY_URL}): healthy"
+        echo "    Context Forge (${MCPGATEWAY_URL}): healthy"
     else
-        echo "    ⚠ Context Forge (${MCPGATEWAY_URL}): not responding"
+        echo "    Context Forge (${MCPGATEWAY_URL}): not responding"
     fi
-    for port in 9101 9102 9103 9104 9105 9120; do
+    for port in $CORE_PORTS; do
         if curl -sf "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
-            echo "    ✓ MCP server on port ${port}: healthy"
+            echo "    Server on port ${port}: healthy"
         else
-            echo "    ⚠ MCP server on port ${port}: not responding"
+            echo "    Server on port ${port}: not responding"
         fi
     done
 fi

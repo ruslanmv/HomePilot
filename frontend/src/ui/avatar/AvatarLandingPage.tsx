@@ -182,9 +182,9 @@ export function AvatarLandingPage({
           {/* Empty state */}
           {rootCharacters.length === 0 && (
             <div className="col-span-full">
-              <div className="rounded-2xl border bg-white/[0.03] border-white/[0.08] p-12 text-center max-w-lg mx-auto">
-                <div className="mx-auto size-14 rounded-2xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center">
-                  <Sparkles size={24} className="text-white/40" />
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-12 text-center max-w-lg mx-auto">
+                <div className="mx-auto size-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                  <Sparkles size={24} className="text-purple-400/60" />
                 </div>
 
                 <h2 className="mt-5 text-lg font-bold text-white/90">
