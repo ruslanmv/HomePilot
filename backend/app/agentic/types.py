@@ -54,6 +54,7 @@ class CatalogTool(BaseModel):
     name: str = Field(description="Tool name")
     description: str = Field(default="")
     enabled: Optional[bool] = Field(default=None)
+    url: Optional[str] = Field(default=None, description="Tool endpoint URL (used to derive source MCP server)")
 
 
 class CatalogA2AAgent(BaseModel):
