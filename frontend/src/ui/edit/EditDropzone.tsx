@@ -63,7 +63,7 @@ export function EditDropzone({ onPickFile, disabled }: EditDropzoneProps) {
         'rounded-2xl border bg-white/5 transition-all duration-200',
         'p-10 text-center shadow-2xl ring-1',
         isDragging
-          ? 'border-blue-500/50 ring-blue-500/30 bg-blue-500/5'
+          ? 'border-purple-500/50 ring-purple-500/30 bg-purple-500/5'
           : 'border-white/10 ring-white/10',
         disabled ? 'opacity-50 cursor-not-allowed' : '',
       ].join(' ')}
@@ -73,10 +73,10 @@ export function EditDropzone({ onPickFile, disabled }: EditDropzoneProps) {
         className={[
           'mx-auto size-14 rounded-2xl bg-white/5 border border-white/10',
           'flex items-center justify-center transition-colors',
-          isDragging ? 'bg-blue-500/10 border-blue-500/30' : '',
+          isDragging ? 'bg-purple-500/10 border-purple-500/30' : '',
         ].join(' ')}
       >
-        <ImageIcon size={24} className={isDragging ? 'text-blue-400' : 'text-white/80'} />
+        <ImageIcon size={24} className={isDragging ? 'text-purple-400' : 'text-white/80'} />
       </div>
 
       {/* Title */}
@@ -94,9 +94,9 @@ export function EditDropzone({ onPickFile, disabled }: EditDropzoneProps) {
         <label
           className={[
             'cursor-pointer inline-flex items-center gap-2',
-            'px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/15',
-            'border border-white/10 hover:border-white/20 transition-all',
-            'text-sm font-semibold text-white',
+            'px-5 py-2.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30',
+            'border border-purple-500/30 transition-colors',
+            'text-sm font-semibold text-purple-100',
             disabled ? 'pointer-events-none opacity-50' : '',
           ].join(' ')}
           aria-label="Upload an image to edit"

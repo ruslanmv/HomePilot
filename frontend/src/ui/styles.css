@@ -5,6 +5,31 @@
 :root {
 --bg: 0 0% 4%;
 --fg: 0 0% 98%;
+
+/* Persona thumbnails */
+--hp-persona-thumb-sm: 48px;
+--hp-persona-thumb-md: 72px;
+--hp-persona-thumb-lg: 88px;
+--hp-persona-thumb-xl: 112px;
+
+/* Focus ring */
+--hp-focus-ring: rgba(168, 85, 247, 0.55);
+}
+
+/* Persona thumbnail utilities */
+.hp-persona-thumb {
+  width: var(--hp-persona-thumb-lg);
+  height: var(--hp-persona-thumb-lg);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.hp-persona-thumb--md {
+  width: var(--hp-persona-thumb-md);
+  height: var(--hp-persona-thumb-md);
+}
+.hp-persona-thumb--xl {
+  width: var(--hp-persona-thumb-xl);
+  height: var(--hp-persona-thumb-xl);
 }
 
 body {
