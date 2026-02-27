@@ -74,7 +74,12 @@ export function useInstalledServers({ backendUrl, apiKey }: Args) {
     const gateways = (catalog.gateways || []).map((g) => gatewayToInstalled(g, toolMap))
     const virtualServers = (catalog.servers || []).map(serverToInstalled)
 
-    let combined = [...gateways, ...virtualServers]
+    // Only show servers that have tools (i.e. actually installed).
+    // Servers with 0 tools are available in Forge but not set up locally —
+    // the user can install them from the Manage tab.
+    let combined = [...gateways, ...virtualServers].filter(
+      (s) => s.kind === 'gateway' || s.toolCount > 0,
+    )
 
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -91,8 +96,17 @@ export function useInstalledServers({ backendUrl, apiKey }: Args) {
 
   const counts = useMemo(() => {
     const gateways = catalog?.gateways?.length || 0
-    const virtualServers = catalog?.servers?.length || 0
-    return { gateways, virtualServers, total: gateways + virtualServers }
+    const allVirtualServers = catalog?.servers?.length || 0
+    // Only count virtual servers that have tools (installed)
+    const installedVirtualServers = (catalog?.servers || []).filter(
+      (s) => (s.tool_ids || []).length > 0,
+    ).length
+    return {
+      gateways,
+      virtualServers: installedVirtualServers,
+      totalVirtualServers: allVirtualServers,
+      total: gateways + installedVirtualServers,
+    }
   }, [catalog])
 
   return {
