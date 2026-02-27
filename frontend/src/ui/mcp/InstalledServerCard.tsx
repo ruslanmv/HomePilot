@@ -11,31 +11,34 @@ export function InstalledServerCard({ server, onClick }: Props) {
   const isGateway = server.kind === 'gateway'
   const Icon = isGateway ? Radio : Boxes
 
-  // Derive accurate status: virtual servers with 0 tools are "empty", not "connected"
+  // Status logic:
+  // - connected: has tools and is enabled (normal active server)
+  // - offline: has tools but is disabled (was installed, now unreachable)
+  // - not-installed: 0 tools (shouldn't normally appear — filtered out upstream)
   const hasTools = server.toolCount > 0
-  const isEnabled = server.enabled === true
-  const status = !isEnabled
-    ? ('disconnected' as const)
-    : server.kind === 'server' && !hasTools
-      ? ('empty' as const)
-      : ('connected' as const)
+  const isEnabled = server.enabled !== false
+  const status = hasTools && isEnabled
+    ? ('connected' as const)
+    : hasTools && !isEnabled
+      ? ('offline' as const)
+      : ('not-installed' as const)
 
   const statusColor = {
     connected: 'text-emerald-300',
-    empty: 'text-amber-300',
-    disconnected: 'text-yellow-300',
+    offline: 'text-amber-300',
+    'not-installed': 'text-white/30',
   }[status] ?? 'text-white/40'
 
   const dotColor = {
     connected: 'bg-emerald-400',
-    empty: 'bg-amber-400',
-    disconnected: 'bg-yellow-400',
+    offline: 'bg-amber-400',
+    'not-installed': 'bg-white/20',
   }[status] ?? 'bg-white/30'
 
   const statusLabel = {
-    connected: hasTools ? `${server.toolCount} tool${server.toolCount !== 1 ? 's' : ''}` : 'Connected',
-    empty: 'Offline',
-    disconnected: 'Disconnected',
+    connected: `${server.toolCount} tool${server.toolCount !== 1 ? 's' : ''}`,
+    offline: 'Offline',
+    'not-installed': 'Not installed',
   }[status] ?? 'Unknown'
 
   return (
@@ -82,15 +85,16 @@ export function InstalledServerCard({ server, onClick }: Props) {
             {server.transport}
           </span>
         )}
-        {server.toolCount > 0 ? (
+        {server.toolCount > 0 && (
           <span className="text-xs text-white/40">
             {server.toolCount} tool{server.toolCount !== 1 ? 's' : ''}
           </span>
-        ) : server.kind === 'server' ? (
+        )}
+        {status === 'offline' && (
           <span className="text-xs text-amber-400/70">
-            MCP services not installed
+            Server unreachable
           </span>
-        ) : null}
+        )}
       </div>
     </div>
   )
