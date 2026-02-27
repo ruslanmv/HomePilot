@@ -144,7 +144,9 @@ export function McpServersTab({ backendUrl, apiKey, onGoToTools }: Props) {
                 <div className="flex items-center gap-3 text-xs text-white/40">
                   <span>{counts.gateways} gateway{counts.gateways !== 1 ? 's' : ''}</span>
                   <span className="w-px h-3 bg-white/10" />
-                  <span>{counts.virtualServers} virtual server{counts.virtualServers !== 1 ? 's' : ''}</span>
+                  <span>
+                    {counts.virtualServers} of {counts.totalVirtualServers} virtual server{counts.totalVirtualServers !== 1 ? 's' : ''} active
+                  </span>
                 </div>
 
                 {forgeHealthy !== null && (
