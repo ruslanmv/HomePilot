@@ -1,0 +1,348 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <!-- Gradients -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a0a"/>
+      <stop offset="100%" style="stop-color:#111"/>
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#06b6d4"/>
+      <stop offset="100%" style="stop-color:#3b82f6"/>
+    </linearGradient>
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#34d399"/>
+      <stop offset="100%" style="stop-color:#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="amberGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f59e0b"/>
+      <stop offset="100%" style="stop-color:#ef4444"/>
+    </linearGradient>
+    <linearGradient id="violetGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#ec4899"/>
+    </linearGradient>
+
+    <!-- Glow filter -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <!-- Animated dash for data flow -->
+    <style>
+      @keyframes flowRight {
+        from { stroke-dashoffset: 24; }
+        to { stroke-dashoffset: 0; }
+      }
+      @keyframes flowDown {
+        from { stroke-dashoffset: 24; }
+        to { stroke-dashoffset: 0; }
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 0.6; }
+        50% { opacity: 1; }
+      }
+      @keyframes speakGlow {
+        0%, 100% { r: 22; opacity: 0.15; }
+        50% { r: 28; opacity: 0.3; }
+      }
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes handWave {
+        0%, 100% { transform: rotate(0deg); }
+        25% { transform: rotate(12deg); }
+        75% { transform: rotate(-12deg); }
+      }
+      .flow-line { animation: flowRight 0.8s linear infinite; }
+      .flow-down { animation: flowDown 0.8s linear infinite; }
+      .pulse { animation: pulse 2s ease-in-out infinite; }
+      .speak-glow { animation: speakGlow 2s ease-in-out infinite; }
+      .hand-wave { animation: handWave 1.5s ease-in-out infinite; transform-origin: center; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="900" height="620" fill="url(#bgGrad)" rx="16"/>
+  <rect width="900" height="620" fill="none" stroke="#ffffff" stroke-opacity="0.06" rx="16"/>
+
+  <!-- Title -->
+  <text x="450" y="38" text-anchor="middle" fill="#ffffff" font-size="18" font-weight="700" opacity="0.9">HomePilot Teams — Multi-Persona Meeting Architecture</text>
+  <line x1="300" y1="48" x2="600" y2="48" stroke="url(#cyanGrad)" stroke-width="2" opacity="0.4"/>
+
+  <!-- ═══════════ HEADER BAR ═══════════ -->
+  <rect x="20" y="60" width="860" height="36" rx="8" fill="#ffffff" fill-opacity="0.03" stroke="#ffffff" stroke-opacity="0.06"/>
+  <circle cx="42" cy="78" r="8" fill="#06b6d4" fill-opacity="0.2" stroke="#06b6d4" stroke-opacity="0.4"/>
+  <text x="42" y="82" text-anchor="middle" fill="#06b6d4" font-size="9" font-weight="700">T</text>
+  <text x="58" y="82" fill="#ffffff" font-size="11" font-weight="600" opacity="0.7">Meeting Room</text>
+  <!-- Live pill -->
+  <rect x="150" y="70" width="44" height="16" rx="8" fill="#34d399" fill-opacity="0.12" stroke="#34d399" stroke-opacity="0.25"/>
+  <circle cx="162" cy="78" r="3" fill="#34d399" class="pulse"/>
+  <text x="177" y="82" fill="#34d399" font-size="8" font-weight="600">Live</text>
+  <!-- Toolbar buttons -->
+  <rect x="730" y="70" width="56" height="16" rx="6" fill="#06b6d4" fill-opacity="0.08" stroke="#06b6d4" stroke-opacity="0.2"/>
+  <text x="758" y="82" text-anchor="middle" fill="#06b6d4" font-size="8" font-weight="500">People</text>
+  <rect x="794" y="70" width="58" height="16" rx="6" fill="#ffffff" fill-opacity="0.03" stroke="#ffffff" stroke-opacity="0.06"/>
+  <text x="823" y="82" text-anchor="middle" fill="#ffffff" fill-opacity="0.4" font-size="8" font-weight="500">Agenda</text>
+
+  <!-- ═══════════ LEFT RAIL ═══════════ -->
+  <rect x="20" y="100" width="130" height="420" rx="0" fill="#ffffff" fill-opacity="0.01" stroke="#ffffff" stroke-opacity="0.04"/>
+  <text x="40" y="120" fill="#ffffff" font-size="9" font-weight="600" opacity="0.4">PEOPLE</text>
+
+  <!-- In Meeting -->
+  <text x="30" y="142" fill="#ffffff" font-size="7" font-weight="600" opacity="0.25" letter-spacing="1">IN MEETING (3)</text>
+
+  <!-- Persona 1 - Speaking -->
+  <g transform="translate(30, 150)">
+    <circle cx="14" cy="14" r="14" fill="#ffffff" fill-opacity="0.05" stroke="#34d399" stroke-opacity="0.5" stroke-width="1.5"/>
+    <circle cx="14" cy="14" fill="#34d399" fill-opacity="0.15" class="speak-glow"/>
+    <text x="14" y="18" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700">A</text>
+    <circle cx="24" cy="24" r="3.5" fill="#34d399" stroke="#0a0a0a" stroke-width="1.5"/>
+    <text x="36" y="12" fill="#ffffff" font-size="9" font-weight="500" opacity="0.7">Analyst</text>
+    <text x="36" y="22" fill="#34d399" font-size="7" opacity="0.6">Speaking</text>
+  </g>
+
+  <!-- Persona 2 - Wants to speak -->
+  <g transform="translate(30, 188)">
+    <circle cx="14" cy="14" r="14" fill="#ffffff" fill-opacity="0.05" stroke="#f59e0b" stroke-opacity="0.4" stroke-width="1.5"/>
+    <text x="14" y="18" text-anchor="middle" fill="#f59e0b" font-size="10" font-weight="700">E</text>
+    <circle cx="24" cy="24" r="3.5" fill="#f59e0b" stroke="#0a0a0a" stroke-width="1.5"/>
+    <text x="36" y="12" fill="#ffffff" font-size="9" font-weight="500" opacity="0.7">Engineer</text>
+    <text x="36" y="22" fill="#f59e0b" font-size="7" opacity="0.5">Wants to speak</text>
+    <!-- Hand raise icon -->
+    <g transform="translate(110, 4)" class="hand-wave">
+      <text fill="#f59e0b" font-size="10" opacity="0.6">&#9995;</text>
+    </g>
+  </g>
+
+  <!-- Persona 3 - Listening -->
+  <g transform="translate(30, 226)">
+    <circle cx="14" cy="14" r="14" fill="#ffffff" fill-opacity="0.05" stroke="#ffffff" stroke-opacity="0.1" stroke-width="1"/>
+    <text x="14" y="18" text-anchor="middle" fill="#ffffff" font-size="10" font-weight="700" opacity="0.3">S</text>
+    <circle cx="24" cy="24" r="3.5" fill="#ffffff" fill-opacity="0.2" stroke="#0a0a0a" stroke-width="1.5"/>
+    <text x="36" y="12" fill="#ffffff" font-size="9" font-weight="500" opacity="0.5">Secretary</text>
+    <text x="36" y="22" fill="#ffffff" font-size="7" opacity="0.2">Listening</text>
+  </g>
+
+  <!-- Available label -->
+  <text x="30" y="275" fill="#ffffff" font-size="7" font-weight="600" opacity="0.25" letter-spacing="1">AVAILABLE (47)</text>
+  <!-- Search box -->
+  <rect x="30" y="282" width="110" height="18" rx="6" fill="#ffffff" fill-opacity="0.02" stroke="#ffffff" stroke-opacity="0.06"/>
+  <text x="42" y="294" fill="#ffffff" font-size="7" opacity="0.15">Search...</text>
+
+  <!-- Available personas (faded) -->
+  <g opacity="0.4">
+    <g transform="translate(30, 308)"><circle cx="10" cy="10" r="10" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/><text x="10" y="14" text-anchor="middle" fill="#ffffff" font-size="7" font-weight="600" opacity="0.3">C</text><text x="26" y="13" fill="#ffffff" font-size="8" opacity="0.4">Creative</text></g>
+    <g transform="translate(30, 334)"><circle cx="10" cy="10" r="10" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/><text x="10" y="14" text-anchor="middle" fill="#ffffff" font-size="7" font-weight="600" opacity="0.3">L</text><text x="26" y="13" fill="#ffffff" font-size="8" opacity="0.4">Legal</text></g>
+    <g transform="translate(30, 360)"><circle cx="10" cy="10" r="10" fill="#ffffff" fill-opacity="0.04" stroke="#ffffff" stroke-opacity="0.08"/><text x="10" y="14" text-anchor="middle" fill="#ffffff" font-size="7" font-weight="600" opacity="0.3">P</text><text x="26" y="13" fill="#ffffff" font-size="8" opacity="0.4">Product</text></g>
+  </g>
+
+  <!-- ═══════════ CENTER STAGE ═══════════ -->
+  <!-- Meeting Table (oval) -->
+  <ellipse cx="430" cy="250" rx="180" ry="120" fill="none" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1.5"/>
+  <ellipse cx="430" cy="250" rx="180" ry="120" fill="#34d399" fill-opacity="0.008"/>
+
+  <!-- Center label -->
+  <text x="430" y="248" text-anchor="middle" fill="#ffffff" font-size="8" opacity="0.1">Sprint Planning</text>
+  <text x="430" y="260" text-anchor="middle" fill="#ffffff" font-size="7" opacity="0.07">R3</text>
+
+  <!-- Human seat (top) -->
+  <g transform="translate(430, 130)">
+    <circle cx="0" cy="0" r="24" fill="#06b6d4" fill-opacity="0.12" stroke="#06b6d4" stroke-opacity="0.35" stroke-width="2"/>
+    <text x="0" y="5" text-anchor="middle" fill="#06b6d4" font-size="16" font-weight="700">Y</text>
+    <text x="0" y="36" text-anchor="middle" fill="#06b6d4" font-size="8" font-weight="600" opacity="0.5">You (Host)</text>
+  </g>
+
+  <!-- Persona seat - Analyst (right, speaking) -->
+  <g transform="translate(590, 210)">
+    <circle cx="0" cy="0" r="30" fill="#34d399" fill-opacity="0.08" class="speak-glow" filter="url(#softGlow)"/>
+    <circle cx="0" cy="0" r="24" fill="#ffffff" fill-opacity="0.04" stroke="#34d399" stroke-opacity="0.6" stroke-width="2"/>
+    <text x="0" y="5" text-anchor="middle" fill="#34d399" font-size="16" font-weight="700">A</text>
+    <text x="0" y="36" text-anchor="middle" fill="#34d399" font-size="8" font-weight="600" opacity="0.7">Analyst</text>
+    <text x="0" y="46" text-anchor="middle" fill="#34d399" font-size="6" opacity="0.4">Speaking</text>
+    <!-- Intent badge -->
+    <rect x="-16" y="-38" width="32" height="14" rx="7" fill="#8b5cf6" fill-opacity="0.2" stroke="#8b5cf6" stroke-opacity="0.35"/>
+    <text x="0" y="-28" text-anchor="middle" fill="#8b5cf6" font-size="7" font-weight="600">Idea</text>
+  </g>
+
+  <!-- Persona seat - Engineer (bottom-right, wants to speak) -->
+  <g transform="translate(540, 340)">
+    <circle cx="0" cy="0" r="24" fill="#ffffff" fill-opacity="0.04" stroke="#f59e0b" stroke-opacity="0.4" stroke-width="1.5"/>
+    <text x="0" y="5" text-anchor="middle" fill="#f59e0b" font-size="16" font-weight="700">E</text>
+    <text x="0" y="36" text-anchor="middle" fill="#ffffff" font-size="8" font-weight="500" opacity="0.5">Engineer</text>
+    <!-- Hand badge -->
+    <rect x="-12" y="-38" width="24" height="14" rx="7" fill="#f59e0b" fill-opacity="0.2" stroke="#f59e0b" stroke-opacity="0.3"/>
+    <text x="0" y="-28" text-anchor="middle" fill="#f59e0b" font-size="8" class="hand-wave">&#9995;</text>
+  </g>
+
+  <!-- Persona seat - Secretary (bottom-left, listening) -->
+  <g transform="translate(320, 340)">
+    <circle cx="0" cy="0" r="24" fill="#ffffff" fill-opacity="0.03" stroke="#ffffff" stroke-opacity="0.1" stroke-width="1"/>
+    <text x="0" y="5" text-anchor="middle" fill="#ffffff" font-size="16" font-weight="700" opacity="0.25">S</text>
+    <text x="0" y="36" text-anchor="middle" fill="#ffffff" font-size="8" font-weight="500" opacity="0.3">Secretary</text>
+  </g>
+
+  <!-- Persona seat - Creative (left, listening) -->
+  <g transform="translate(270, 210)">
+    <circle cx="0" cy="0" r="24" fill="#ffffff" fill-opacity="0.03" stroke="#ffffff" stroke-opacity="0.1" stroke-width="1"/>
+    <text x="0" y="5" text-anchor="middle" fill="#ffffff" font-size="16" font-weight="700" opacity="0.25">C</text>
+    <text x="0" y="36" text-anchor="middle" fill="#ffffff" font-size="8" font-weight="500" opacity="0.3">Creative</text>
+  </g>
+
+  <!-- ═══════════ TRANSCRIPT ═══════════ -->
+  <rect x="155" y="400" width="500" height="120" rx="0" fill="#ffffff" fill-opacity="0.01"/>
+  <line x1="155" y1="400" x2="655" y2="400" stroke="#ffffff" stroke-opacity="0.03"/>
+  <text x="170" y="416" fill="#ffffff" font-size="7" font-weight="600" opacity="0.2" letter-spacing="1">TRANSCRIPT</text>
+
+  <!-- Message bubbles -->
+  <!-- Human message (right-aligned) -->
+  <g transform="translate(500, 425)">
+    <rect x="0" y="0" width="140" height="28" rx="12" fill="#06b6d4" fill-opacity="0.12" stroke="#06b6d4" stroke-opacity="0.15"/>
+    <text x="12" y="13" fill="#06b6d4" font-size="7" font-weight="500" opacity="0.5">You</text>
+    <text x="12" y="23" fill="#ffffff" font-size="8" opacity="0.7">What's our sprint velocity?</text>
+  </g>
+
+  <!-- Analyst response (left-aligned) -->
+  <g transform="translate(170, 460)">
+    <circle cx="12" cy="12" r="12" fill="#34d399" fill-opacity="0.1" stroke="#34d399" stroke-opacity="0.3"/>
+    <text x="12" y="16" text-anchor="middle" fill="#34d399" font-size="8" font-weight="700">A</text>
+    <rect x="30" y="0" width="200" height="28" rx="12" fill="#ffffff" fill-opacity="0.03" stroke="#ffffff" stroke-opacity="0.05"/>
+    <text x="42" y="13" fill="#ffffff" font-size="7" font-weight="500" opacity="0.4">Analyst</text>
+    <text x="42" y="23" fill="#ffffff" font-size="8" opacity="0.65">Based on the last 3 sprints, we...</text>
+  </g>
+
+  <!-- Thinking indicator -->
+  <g transform="translate(170, 495)">
+    <circle cx="12" cy="12" r="12" fill="#34d399" fill-opacity="0.08" stroke="#34d399" stroke-opacity="0.2"/>
+    <text x="12" y="16" text-anchor="middle" fill="#34d399" font-size="8" font-weight="700" opacity="0.5">E</text>
+    <rect x="30" y="0" width="100" height="22" rx="11" fill="#ffffff" fill-opacity="0.02" stroke="#34d399" stroke-opacity="0.1"/>
+    <g transform="translate(48, 11)">
+      <circle cx="0" cy="0" r="2.5" fill="#34d399" opacity="0.5" class="pulse"/>
+      <circle cx="10" cy="0" r="2.5" fill="#34d399" opacity="0.5" class="pulse" style="animation-delay:0.2s"/>
+      <circle cx="20" cy="0" r="2.5" fill="#34d399" opacity="0.5" class="pulse" style="animation-delay:0.4s"/>
+    </g>
+    <text x="82" y="15" fill="#34d399" font-size="7" opacity="0.35" class="pulse">Thinking...</text>
+  </g>
+
+  <!-- ═══════════ RIGHT RAIL ═══════════ -->
+  <rect x="660" y="100" width="220" height="420" rx="0" fill="#ffffff" fill-opacity="0.01" stroke="#ffffff" stroke-opacity="0.04"/>
+
+  <!-- Orchestration Engine -->
+  <text x="680" y="120" fill="#ffffff" font-size="9" font-weight="600" opacity="0.4">ORCHESTRATION</text>
+
+  <!-- Intent Scoring Box -->
+  <rect x="672" y="130" width="196" height="110" rx="8" fill="#8b5cf6" fill-opacity="0.04" stroke="#8b5cf6" stroke-opacity="0.12"/>
+  <text x="682" y="148" fill="#8b5cf6" font-size="8" font-weight="600" opacity="0.7">Intent Scoring</text>
+
+  <!-- Score bars -->
+  <g transform="translate(682, 156)">
+    <text x="0" y="8" fill="#ffffff" font-size="7" opacity="0.35">Analyst</text>
+    <rect x="52" y="2" width="80" height="6" rx="3" fill="#ffffff" fill-opacity="0.04"/>
+    <rect x="52" y="2" width="68" height="6" rx="3" fill="url(#emeraldGrad)" opacity="0.7"/>
+    <text x="138" y="8" fill="#34d399" font-size="7" opacity="0.6">0.85</text>
+  </g>
+  <g transform="translate(682, 172)">
+    <text x="0" y="8" fill="#ffffff" font-size="7" opacity="0.35">Engineer</text>
+    <rect x="52" y="2" width="80" height="6" rx="3" fill="#ffffff" fill-opacity="0.04"/>
+    <rect x="52" y="2" width="52" height="6" rx="3" fill="url(#amberGrad)" opacity="0.6"/>
+    <text x="138" y="8" fill="#f59e0b" font-size="7" opacity="0.6">0.65</text>
+  </g>
+  <g transform="translate(682, 188)">
+    <text x="0" y="8" fill="#ffffff" font-size="7" opacity="0.35">Secretary</text>
+    <rect x="52" y="2" width="80" height="6" rx="3" fill="#ffffff" fill-opacity="0.04"/>
+    <rect x="52" y="2" width="20" height="6" rx="3" fill="#ffffff" fill-opacity="0.15"/>
+    <text x="138" y="8" fill="#ffffff" font-size="7" opacity="0.3">0.25</text>
+  </g>
+  <g transform="translate(682, 204)">
+    <text x="0" y="8" fill="#ffffff" font-size="7" opacity="0.35">Creative</text>
+    <rect x="52" y="2" width="80" height="6" rx="3" fill="#ffffff" fill-opacity="0.04"/>
+    <rect x="52" y="2" width="28" height="6" rx="3" fill="#ffffff" fill-opacity="0.15"/>
+    <text x="138" y="8" fill="#ffffff" font-size="7" opacity="0.3">0.35</text>
+  </g>
+  <!-- Threshold line -->
+  <line x1="768" y1="155" x2="768" y2="215" stroke="#f59e0b" stroke-width="1" stroke-dasharray="3,3" opacity="0.35"/>
+  <text x="772" y="220" fill="#f59e0b" font-size="6" opacity="0.4">0.45</text>
+
+  <!-- Gates Box -->
+  <rect x="672" y="250" width="196" height="70" rx="8" fill="#06b6d4" fill-opacity="0.04" stroke="#06b6d4" stroke-opacity="0.12"/>
+  <text x="682" y="268" fill="#06b6d4" font-size="8" font-weight="600" opacity="0.7">Gates</text>
+  <g transform="translate(682, 276)">
+    <rect x="0" y="0" width="60" height="14" rx="4" fill="#34d399" fill-opacity="0.1" stroke="#34d399" stroke-opacity="0.2"/>
+    <text x="30" y="10" text-anchor="middle" fill="#34d399" font-size="6" font-weight="500">Redundancy</text>
+  </g>
+  <g transform="translate(752, 276)">
+    <rect x="0" y="0" width="50" height="14" rx="4" fill="#f59e0b" fill-opacity="0.1" stroke="#f59e0b" stroke-opacity="0.2"/>
+    <text x="25" y="10" text-anchor="middle" fill="#f59e0b" font-size="6" font-weight="500">Diversity</text>
+  </g>
+  <g transform="translate(812, 276)">
+    <rect x="0" y="0" width="48" height="14" rx="4" fill="#ef4444" fill-opacity="0.1" stroke="#ef4444" stroke-opacity="0.2"/>
+    <text x="24" y="10" text-anchor="middle" fill="#ef4444" font-size="6" font-weight="500">Cooldown</text>
+  </g>
+  <g transform="translate(682, 296)">
+    <rect x="0" y="0" width="54" height="14" rx="4" fill="#8b5cf6" fill-opacity="0.1" stroke="#8b5cf6" stroke-opacity="0.2"/>
+    <text x="27" y="10" text-anchor="middle" fill="#8b5cf6" font-size="6" font-weight="500">Dominance</text>
+  </g>
+  <g transform="translate(746, 296)">
+    <rect x="0" y="0" width="52" height="14" rx="4" fill="#06b6d4" fill-opacity="0.1" stroke="#06b6d4" stroke-opacity="0.2"/>
+    <text x="26" y="10" text-anchor="middle" fill="#06b6d4" font-size="6" font-weight="500">Authority</text>
+  </g>
+
+  <!-- Stats Box -->
+  <rect x="672" y="330" width="196" height="80" rx="8" fill="#ffffff" fill-opacity="0.02" stroke="#ffffff" stroke-opacity="0.06"/>
+  <text x="682" y="348" fill="#ffffff" font-size="8" font-weight="600" opacity="0.4">Stats</text>
+  <g transform="translate(682, 356)">
+    <text x="0" y="8" fill="#ffffff" font-size="7" opacity="0.3">Analyst</text>
+    <rect x="52" y="2" width="80" height="6" rx="3" fill="#ffffff" fill-opacity="0.04"/>
+    <rect x="52" y="2" width="36" height="6" rx="3" fill="url(#emeraldGrad)" opacity="0.5"/>
+    <text x="138" y="8" fill="#ffffff" font-size="7" opacity="0.3">45%</text>
+  </g>
+  <g transform="translate(682, 372)">
+    <text x="0" y="8" fill="#ffffff" font-size="7" opacity="0.3">Engineer</text>
+    <rect x="52" y="2" width="80" height="6" rx="3" fill="#ffffff" fill-opacity="0.04"/>
+    <rect x="52" y="2" width="28" height="6" rx="3" fill="url(#cyanGrad)" opacity="0.5"/>
+    <text x="138" y="8" fill="#ffffff" font-size="7" opacity="0.3">35%</text>
+  </g>
+  <g transform="translate(682, 388)">
+    <text x="0" y="8" fill="#ffffff" font-size="7" opacity="0.3">Others</text>
+    <rect x="52" y="2" width="80" height="6" rx="3" fill="#ffffff" fill-opacity="0.04"/>
+    <rect x="52" y="2" width="16" height="6" rx="3" fill="#ffffff" fill-opacity="0.15"/>
+    <text x="138" y="8" fill="#ffffff" font-size="7" opacity="0.3">20%</text>
+  </g>
+
+  <!-- ═══════════ INPUT BAR ═══════════ -->
+  <rect x="155" y="530" width="500" height="42" rx="21" fill="#101010" stroke="#ffffff" stroke-opacity="0.12"/>
+  <text x="185" y="555" fill="#ffffff" font-size="10" opacity="0.3">Type a message to the meeting...</text>
+  <!-- Send button -->
+  <circle cx="625" cy="551" r="16" fill="#ffffff"/>
+  <polygon points="621,545 631,551 621,557" fill="#0a0a0a"/>
+
+  <!-- Action buttons above input -->
+  <rect x="350" y="530" width="66" height="20" rx="10" fill="#06b6d4" fill-opacity="0.08" stroke="#06b6d4" stroke-opacity="0.15" transform="translate(0,-28)"/>
+  <text x="383" y="518" text-anchor="middle" fill="#06b6d4" font-size="8" font-weight="500">Call On</text>
+  <rect x="424" y="530" width="68" height="20" rx="10" fill="#ffffff" fill-opacity="0.03" stroke="#ffffff" stroke-opacity="0.08" transform="translate(0,-28)"/>
+  <text x="458" y="518" text-anchor="middle" fill="#ffffff" font-size="8" font-weight="500" opacity="0.4">Run Turn</text>
+
+  <!-- Helper text -->
+  <text x="405" y="590" text-anchor="middle" fill="#ffffff" font-size="7" opacity="0.15">Enter to send  ·  Drag personas onto the table  ·  Double-click seat to pin</text>
+
+  <!-- ═══════════ DATA FLOW ARROWS ═══════════ -->
+  <!-- Human message → Orchestrator -->
+  <path d="M 655 545 Q 670 545 670 400 Q 670 300 672 270" fill="none" stroke="#06b6d4" stroke-width="1.5" stroke-dasharray="6,6" class="flow-line" opacity="0.3"/>
+  <!-- Orchestrator → Table seats -->
+  <path d="M 672 200 Q 650 200 620 210" fill="none" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="6,6" class="flow-line" opacity="0.25"/>
+  <path d="M 672 180 Q 650 170 590 170" fill="none" stroke="#34d399" stroke-width="1" stroke-dasharray="4,4" class="flow-line" opacity="0.2"/>
+
+  <!-- ═══════════ LEGEND ═══════════ -->
+  <g transform="translate(20, 540)">
+    <text x="0" y="10" fill="#ffffff" font-size="8" font-weight="600" opacity="0.35">Legend</text>
+    <circle cx="8" cy="24" r="4" fill="#34d399" opacity="0.7"/><text x="18" y="27" fill="#ffffff" font-size="7" opacity="0.4">Speaking</text>
+    <circle cx="78" cy="24" r="4" fill="#f59e0b" opacity="0.7"/><text x="88" y="27" fill="#ffffff" font-size="7" opacity="0.4">Wants to speak</text>
+    <circle cx="8" cy="40" r="4" fill="#ffffff" opacity="0.2"/><text x="18" y="43" fill="#ffffff" font-size="7" opacity="0.4">Listening</text>
+    <circle cx="78" cy="40" r="4" fill="#8b5cf6" opacity="0.7"/><text x="88" y="43" fill="#ffffff" font-size="7" opacity="0.4">Intent type</text>
+  </g>
+</svg>

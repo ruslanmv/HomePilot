@@ -22,6 +22,12 @@ export type DependencyItem = {
   source_type: string
   required: boolean
   fallback: string | null
+  /** Forge registry server ID — used for auto-install from Discover tab */
+  registry_id?: string
+  /** Auth type for registry servers (open, api_key, oauth2.1, etc.) */
+  auth_type?: string
+  /** Endpoint URL for registry servers */
+  url?: string
 }
 
 export type DependencyReport = {

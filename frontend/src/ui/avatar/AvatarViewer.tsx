@@ -245,7 +245,7 @@ export function AvatarViewer({
       })
       if (result?.results?.length) {
         // Tag each result with the scenario tag + ensure parentId resolves to root
-        onOutfitResults?.(result.results, { ...item, scenarioTag, parentId: item.parentId || undefined })
+        onOutfitResults?.(result.results, { ...item, scenarioTag, parentId: rootCharacterId })
       }
     } catch {
       // Error captured in hook state

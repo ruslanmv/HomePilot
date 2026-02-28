@@ -26,7 +26,7 @@ import os
 from typing import Any, Dict, List
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from ..auth import require_api_key
 from ..defaults import DEFAULT_NEGATIVE_PROMPT
@@ -476,17 +476,36 @@ async def agentic_registry_servers(
 @router.post("/registry/{server_id}/register")
 async def agentic_registry_register(
     server_id: str,
+    request: Request,
     _key: str = Depends(require_api_key),
 ):
     """Register a public MCP server from the Forge catalog into Context Forge.
 
     Proxies POST /admin/mcp-registry/{server_id}/register.
     After success, the server appears as a gateway in the installed catalog.
+
+    Accepts an optional JSON body with:
+      - api_key: credential for API Key / OAuth2.1 & API Key servers
+      - name: optional display name override
     """
     if not _ENABLED:
         raise HTTPException(status_code=503, detail="Agentic features are disabled")
 
-    result = await _catalog_service.http.registry_register_server(server_id)
+    # Parse optional body (may be empty for Open / OAuth servers)
+    api_key_for_server = None
+    name_override = None
+    try:
+        body = await request.json()
+        api_key_for_server = body.get("api_key")
+        name_override = body.get("name")
+    except Exception:
+        pass  # No body or invalid JSON — fine for Open / OAuth
+
+    result = await _catalog_service.http.registry_register_server(
+        server_id,
+        api_key=api_key_for_server,
+        name=name_override,
+    )
     if result is None:
         raise HTTPException(status_code=502, detail="Forge not reachable")
 
@@ -497,6 +516,143 @@ async def agentic_registry_register(
 
     _catalog_service.invalidate()
     return result
+
+
+@router.post("/registry/{server_id}/unregister")
+async def agentic_registry_unregister(
+    server_id: str,
+    _key: str = Depends(require_api_key),
+):
+    """Unregister (remove) a catalog MCP server from Context Forge.
+
+    Works with the original Context Forge — no custom endpoints required.
+    Uses multiple strategies to find and delete the matching gateway:
+      1. Search gateways by name via /admin/gateways/search
+      2. List all gateways via /admin/gateways and match by URL/name/hostname
+    Then deletes via the standard POST /admin/gateways/{id}/delete.
+    """
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    http = _catalog_service.http
+
+    # Step 1: find the catalog server details from registry listing.
+    # Note: Forge search matches name/description, not ID. IDs use hyphens
+    # (e.g., "cloudflare-docs") while names use spaces ("Cloudflare Docs").
+    # We fetch all servers and match by ID locally.
+    registry_data = await http.registry_list_servers(limit=200)
+    if registry_data is None:
+        raise HTTPException(status_code=502, detail="Forge not reachable")
+
+    target_url = None
+    target_name = server_id
+    for s in registry_data.get("servers", []):
+        if s.get("id") == server_id:
+            target_url = s.get("url", "")
+            target_name = s.get("name", server_id)
+            break
+
+    if not target_url:
+        # Retry with higher limit in case of pagination
+        registry_data2 = await http.registry_list_servers(limit=500)
+        if registry_data2:
+            for s in registry_data2.get("servers", []):
+                if s.get("id") == server_id:
+                    target_url = s.get("url", "")
+                    target_name = s.get("name", server_id)
+                    break
+
+    if not target_url:
+        raise HTTPException(status_code=404, detail=f"Server '{server_id}' not found in catalog")
+
+    logger.info(
+        "Unregister %s: target_url=%s target_name=%s",
+        server_id, target_url, target_name,
+    )
+
+    # Step 2: find the matching gateway — try multiple approaches
+    gateway_id = None
+    from urllib.parse import urlparse
+
+    # ── Approach A: search gateways by name (fast, targeted) ──
+    search_result = await http.search_gateways(target_name, include_inactive=True)
+    if search_result and isinstance(search_result.get("gateways"), list):
+        target_url_stripped = target_url.rstrip("/")
+        target_host = urlparse(target_url).hostname or ""
+        for gw in search_result["gateways"]:
+            gw_url = (gw.get("url") or "").rstrip("/")
+            gw_name = (gw.get("name") or "").lower()
+            gw_host = urlparse(gw.get("url") or "").hostname or ""
+            if (
+                gw_url == target_url_stripped
+                or gw_name == target_name.lower()
+                or (target_host and gw_host == target_host)
+            ):
+                gateway_id = gw.get("id")
+                logger.info("Unregister: found via search: gw_id=%s name=%s url=%s", gateway_id, gw.get("name"), gw.get("url"))
+                break
+
+    # ── Approach B: list all gateways (paginated) and match ──
+    if not gateway_id:
+        gateways_data = await http.list_gateways_best_effort()
+        if gateways_data is not None:
+            # Extract gateway list from paginated response
+            gw_list = []
+            if isinstance(gateways_data, list):
+                gw_list = gateways_data
+            else:
+                for key in ("data", "gateways", "items", "results"):
+                    if isinstance(gateways_data.get(key), list):
+                        gw_list = gateways_data[key]
+                        break
+
+            logger.info("Unregister %s: listing found %d gateways", server_id, len(gw_list))
+
+            target_url_stripped = target_url.rstrip("/")
+            target_name_lower = target_name.lower()
+            target_host = urlparse(target_url).hostname or ""
+            sid_lower = server_id.lower()
+
+            for gw in gw_list:
+                gw_url = (gw.get("url") or "").rstrip("/")
+                gw_name = (gw.get("name") or "").lower()
+                gw_host = urlparse(gw.get("url") or "").hostname or ""
+
+                if (
+                    gw_url == target_url_stripped                 # exact URL
+                    or gw_name == target_name_lower               # exact name
+                    or (target_host and gw_host == target_host)   # hostname
+                    or sid_lower in gw_name                       # partial server_id
+                    or target_name_lower in gw_name               # partial catalog name
+                ):
+                    gateway_id = gw.get("id")
+                    logger.info("Unregister: found via listing: gw_id=%s name=%s url=%s", gateway_id, gw.get("name"), gw.get("url"))
+                    break
+
+            if not gateway_id:
+                gw_debug = [(gw.get("name", "?"), gw.get("url", "?")) for gw in gw_list[:20]]
+                logger.warning("Unregister %s: no match in %d gateways. First 20: %s", server_id, len(gw_list), gw_debug)
+        else:
+            logger.warning("Unregister %s: gateway listing returned None (auth or network issue)", server_id)
+
+    if not gateway_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Server '{target_name}' is not currently registered (no matching gateway found)",
+        )
+
+    # Step 3: delete via the standard gateway delete endpoint
+    del_result = await http.delete_gateway(gateway_id)
+    if del_result is None:
+        raise HTTPException(status_code=502, detail="Forge not reachable for gateway deletion")
+
+    del_status = del_result.get("_status", 200)
+    if del_status >= 400:
+        detail = del_result.get("message") or del_result.get("error") or del_result.get("detail") or "Gateway deletion failed"
+        raise HTTPException(status_code=del_status, detail=detail)
+
+    _catalog_service.invalidate()
+    return {"success": True, "message": f"Successfully unregistered {target_name}"}
 
 
 # ── MCP Server Management ────────────────────────────────────────────────────

@@ -51,6 +51,7 @@ import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
 import { AvatarStudio } from './avatar'
+import { TeamsView } from './teams'
 import type { GalleryItem } from './avatar/galleryTypes'
 import { SaveAsPersonaModal } from './avatar/SaveAsPersonaModal'
 import { PersonaWizard } from './PersonaWizard'
@@ -103,7 +104,7 @@ export type Msg = {
   }
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio' | 'avatar'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio' | 'avatar' | 'teams'
 type Provider = 'backend' | 'ollama'
 
 type HardwarePreset = '4060' | '4080' | 'a100' | 'custom'
@@ -941,6 +942,14 @@ function Sidebar({
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} />
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} />
+        </div>
+
+        {/* Divider */}
+        <div className="border-t border-white/5" />
+
+        {/* Teams */}
+        <div className="flex flex-col gap-px">
+          <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} />
         </div>
 
         {/* Divider */}
@@ -2045,7 +2054,7 @@ export default function App() {
     const baseUrlChat = localStorage.getItem('homepilot_base_url_chat') || ''
     const baseUrlImages = localStorage.getItem('homepilot_base_url_images') || ''
     const baseUrlVideo = localStorage.getItem('homepilot_base_url_video') || ''
-    const modelChat = localStorage.getItem('homepilot_model_chat') || 'local-model'
+    const modelChat = localStorage.getItem('homepilot_model_chat') || ''
     const modelImages = localStorage.getItem('homepilot_model_images') || ''
     const modelVideo = localStorage.getItem('homepilot_model_video') || ''
     const preset = (localStorage.getItem('homepilot_preset_v2') as HardwarePresetUI) || 'med'
@@ -2099,6 +2108,55 @@ export default function App() {
 
   const endRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Zero-config auto-detect on first boot ─────────────────────────────
+  // Like a game: detect available services & models, populate settings automatically.
+  // Only runs once when no settings have been saved yet (virgin install).
+  const autoDetectRanRef = useRef(false)
+  useEffect(() => {
+    if (autoDetectRanRef.current) return
+    const hasExistingSettings = localStorage.getItem('homepilot_model_chat')
+    if (hasExistingSettings) return  // User already has saved settings
+    autoDetectRanRef.current = true
+
+    const backendUrl = settingsDraft.backendUrl || 'http://localhost:8000'
+    fetch(`${backendUrl}/auto-detect`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!data.ok) return
+        const updates: Partial<SettingsModelV2> = {}
+
+        if (data.providerChat) updates.providerChat = data.providerChat
+        if (data.providerImages) updates.providerImages = data.providerImages
+        if (data.providerVideo) updates.providerVideo = data.providerVideo
+        if (data.providerMultimodal) updates.providerMultimodal = data.providerMultimodal
+        if (data.modelChat) updates.modelChat = data.modelChat
+        if (data.modelImages) updates.modelImages = data.modelImages
+        if (data.modelVideo) updates.modelVideo = data.modelVideo
+        if (data.modelMultimodal) updates.modelMultimodal = data.modelMultimodal
+
+        // Only apply if we detected something useful
+        if (Object.keys(updates).length > 0) {
+          console.log('[AutoDetect] First boot — applying detected settings:', updates)
+          setSettingsDraft((prev) => {
+            const next = { ...prev, ...updates }
+            // Persist immediately so settings survive refresh
+            if (next.providerChat) localStorage.setItem('homepilot_provider_chat', next.providerChat)
+            if (next.providerImages) localStorage.setItem('homepilot_provider_images', next.providerImages)
+            if (next.providerVideo) localStorage.setItem('homepilot_provider_video', next.providerVideo)
+            if (next.modelChat) localStorage.setItem('homepilot_model_chat', next.modelChat)
+            if (next.modelImages) localStorage.setItem('homepilot_model_images', next.modelImages)
+            if (next.modelVideo) localStorage.setItem('homepilot_model_video', next.modelVideo)
+            if (next.providerMultimodal) localStorage.setItem('homepilot_provider_multimodal', next.providerMultimodal)
+            if (next.modelMultimodal) localStorage.setItem('homepilot_model_multimodal', next.modelMultimodal)
+            return next
+          })
+        }
+      })
+      .catch((err) => {
+        console.warn('[AutoDetect] Backend not reachable yet, using defaults:', err?.message)
+      })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist chat conversation (not voice - voice is ephemeral)
   useEffect(() => localStorage.setItem('homepilot_conversation', chatConversationId), [chatConversationId])
@@ -2281,6 +2339,9 @@ export default function App() {
     localStorage.setItem('homepilot_civitai_api_key', settingsDraft.civitaiApiKey || '')
     localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
 
+    // Teams settings
+    localStorage.setItem('homepilot_teams_concurrent_calls', String(settingsDraft.teamsConcurrentCalls ?? 1))
+
     // Multimodal (Vision) settings
     localStorage.setItem('homepilot_provider_multimodal', settingsDraft.providerMultimodal || 'ollama')
     localStorage.setItem('homepilot_base_url_multimodal', settingsDraft.baseUrlMultimodal || '')
@@ -2362,6 +2423,8 @@ export default function App() {
         vidSeconds: parseInt(localStorage.getItem('homepilot_vid_seconds') || '4'),
         vidFps: parseInt(localStorage.getItem('homepilot_vid_fps') || '8'),
         vidMotion: localStorage.getItem('homepilot_vid_motion') || 'medium',
+        // Teams settings
+        teamsConcurrentCalls: parseInt(localStorage.getItem('homepilot_teams_concurrent_calls') || '1'),
         // Multimodal (Vision) settings
         providerMultimodal: localStorage.getItem('homepilot_provider_multimodal') || 'ollama',
         baseUrlMultimodal: localStorage.getItem('homepilot_base_url_multimodal') || '',
@@ -4368,6 +4431,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           <ProjectsView
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
+            matrixHubUrl={settingsDraft.matrixHubEnabled ? settingsDraft.matrixHubUrl : undefined}
             onProjectSelect={async (projectId) => {
               try {
                 // Fetch project info to get instructions and document count
@@ -4605,6 +4669,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             }}
             onOpenLightbox={(url) => setLightbox(url)}
             onSaveAsPersonaAvatar={(item, outfits, batchSiblings) => setSaveAsPersonaData({ item, outfits, batchSiblings })}
+          />
+        ) : mode === 'teams' ? (
+          // Teams: virtual meeting rooms for persona collaboration
+          <TeamsView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
           />
         ) : mode === 'animate' ? (
           // Animate mode: Grok-style video generation gallery
