@@ -308,10 +308,58 @@ await client.invoke_tool()      # POST /rpc (or /tools/{id}/invoke)
 | POST | `/v1/agentic/register/server` | Register a virtual server |
 | GET | `/v1/agentic/registry/servers` | Browse Forge MCP Registry (81+ public servers) |
 | POST | `/v1/agentic/registry/{id}/register` | Install a server from the Forge catalog |
+| POST | `/v1/agentic/registry/{id}/unregister` | Remove an installed server |
 
 The `/v1/agentic/catalog` endpoint is what the frontend's **Tools tab** consumes -- it aggregates tools, A2A agents, servers, and gateways into a single JSON response.
 
 The `/v1/agentic/registry/*` endpoints proxy the Forge admin MCP Registry so the frontend **Discover** sub-tab can browse and install public MCP servers without opening the Forge admin UI. Supports query params: `category`, `auth_type`, `provider`, `search`, `limit`, `offset`.
+
+---
+
+## Discover MCP Servers (Setup Wizard)
+
+<p align="center">
+  <img src="../assets/blog/discover-mcp-servers.svg" alt="Discover MCP Servers — browse 81+ servers, install with one click, manage from the UI" width="900" /><br>
+  <em>The Discover tab: browse a catalog of 81 verified MCP servers, install with one click, and manage everything from the UI.</em>
+</p>
+
+The **Discover** tab lets you browse, install, and remove 81+ public MCP servers directly from the HomePilot UI -- no command line needed.
+
+### What it does
+
+- **Browse a catalog** of 81 verified MCP servers organized by category (Productivity, Software Development, Communication, AI, etc.)
+- **One-click install** for servers that need no credentials (marked "Open")
+- **Guided setup** for servers that require an API key or OAuth login
+- **One-click uninstall** to cleanly remove any installed server (your external account is never affected)
+- **Editable server URL** in the details drawer, so you can fix or customize endpoints after installation
+
+### How to use it
+
+1. Open the **MCP Servers** tab in your project
+2. Click the **Discover** sub-tab
+3. Browse or search for a server (e.g., "GitHub", "Slack", "Asana")
+4. Click **Install** -- the Setup Wizard walks you through any required configuration
+5. To remove a server, click the installed server card and choose **Uninstall**
+
+### Auth types explained
+
+| Type | What you need | Examples |
+| :--- | :--- | :--- |
+| **Open** | Nothing -- just click Install | DeepWiki, Cloudflare Docs, Semgrep |
+| **API Key** | Paste your API key from the service's dashboard | Stripe, HubSpot, GitHub |
+| **OAuth2.1** | Click Install, then complete the login flow on the service's website | Asana, Linear, Notion, Slack |
+
+### MatrixHub (optional secondary catalog)
+
+You can enable an additional catalog source called **MatrixHub** in Settings:
+
+1. Go to **Settings** (gear icon)
+2. Scroll to **MatrixHub Catalog** at the bottom
+3. Toggle **Enable MatrixHub** on
+4. Enter the MatrixHub URL (e.g., `http://localhost:8080`)
+5. A new **MatrixHub** tab appears in the Discover view
+
+MatrixHub is disabled by default. When enabled, it adds a second tab alongside the main Forge catalog.
 
 ---
 

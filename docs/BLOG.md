@@ -437,6 +437,22 @@ You control autonomy per tool, per Persona, or globally.
 
 > The full integration guide is at [docs/INTEGRATIONS.md](INTEGRATIONS.md).
 
+### Discover: 81+ Public MCP Servers, One Click Away
+
+<p align="center">
+  <img src="../assets/blog/discover-mcp-servers.svg" alt="Discover MCP Servers — browse, install, and manage 81+ servers from the UI" width="900" /><br>
+  <em>The Discover tab lets you browse 81 verified MCP servers, install them with one click, and manage everything without touching the command line.</em>
+</p>
+
+Beyond the built-in tool servers, HomePilot ships with a curated catalog of **81 public MCP servers** from companies like GitHub, Asana, Slack, Notion, Stripe, HubSpot, and more. The **Discover** tab in the MCP Servers panel lets you:
+
+- **Browse by category** — Productivity, Software Development, Communication, AI, Security, and 33 more
+- **Install with one click** — servers marked "Open" need zero configuration; API Key servers ask for your key; OAuth servers walk you through login
+- **Uninstall cleanly** — your external accounts are never affected; re-add any server from the Discover tab at any time
+- **Edit server URLs** — fix or customize endpoints directly from the details drawer
+
+An optional **MatrixHub** catalog can be enabled in Settings for teams that run their own MCP server registry.
+
 ---
 
 ## Multi-User Accounts: Shared Hardware, Private Data
@@ -463,6 +479,34 @@ The auth layer uses bearer tokens with per-session scoping. Everything stays loc
   <img src="../assets/users-session-architecture.svg" alt="Multi-User Technical Architecture" width="820" /><br>
   <em>Auth layer scopes all data access — private data per user, shared infrastructure for everyone.</em>
 </p>
+
+---
+
+## Teams: Multi-Persona Meeting Rooms
+
+Your Personas are individuals. But real work happens in teams. HomePilot's **Teams** tab lets you bring multiple Personas together in a virtual meeting room — think Microsoft Teams, but with AI participants.
+
+### How It Works
+
+1. **Create a session** — name, description, pick Personas, choose an orchestration mode
+2. **You are the host** — type messages from the center of an oval meeting table
+3. **The orchestrator decides who speaks** — an intent scoring pipeline evaluates topic relevance, role match, cooldowns, and dominance to select the most relevant responders
+4. **Personas collaborate** — each one replies using its own personality, knowledge, and tools
+
+### Orchestration Modes
+
+| Mode | Behavior |
+| :--- | :--- |
+| **Reactive** (default) | Intent scoring picks the best speakers per round |
+| **Round Robin** | Every participant speaks in order |
+| **Moderated** | Host calls on specific Personas |
+| **Free Form** | Low threshold — everyone can chime in |
+
+### The Profile Panel
+
+Click any participant to open a slide-over character sheet showing real project data — class, role, stats (Depth, Versatility, Personality, Visual), skills, tools, wardrobe, and quest objective.
+
+> See [docs/TEAMS.md](TEAMS.md) for the full architecture diagram and scoring pipeline details.
 
 ---
 

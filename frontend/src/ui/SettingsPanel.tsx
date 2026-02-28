@@ -86,6 +86,13 @@ export type SettingsModelV2 = {
   vidCfg?: number;
   vidDenoise?: number;
   vidPreset?: string;  // Backend preset name: 'low', 'medium', 'high', 'ultra'
+
+  // MatrixHub integration (optional secondary MCP catalog)
+  matrixHubEnabled?: boolean;
+  matrixHubUrl?: string;
+
+  // Teams concurrent LLM calls (1-3, default 1)
+  teamsConcurrentCalls?: number;
 };
 
 // ── Agentic Status sub-component (Phase 1, additive) ─────────────────────────
@@ -359,6 +366,61 @@ export default function SettingsPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value.modelVideo]);
+
+  // ── Auto-fetch models on panel open (zero-config UX) ──────────────────
+  // When providers load, automatically fetch model lists for the active providers
+  // and auto-select the first model if none is currently set.
+  const autoFetchedRef = React.useRef(false);
+  useEffect(() => {
+    if (autoFetchedRef.current || Object.keys(providers).length === 0) return;
+    autoFetchedRef.current = true;
+
+    // Auto-fetch chat models
+    if (value.providerChat) {
+      const base = value.baseUrlChat || providers?.[value.providerChat]?.base_url || "";
+      fetchModelsFor(value.providerChat, base).then(() => {
+        // model selection handled by the effect below
+      });
+    }
+    // Auto-fetch image models
+    if (value.providerImages) {
+      const base = value.baseUrlImages || providers?.[value.providerImages]?.base_url || "";
+      const modelType = value.providerImages === 'comfyui' ? 'image' as const : undefined;
+      fetchModelsFor(value.providerImages, base, modelType);
+    }
+    // Auto-fetch video models
+    if (value.providerVideo) {
+      const base = value.baseUrlVideo || providers?.[value.providerVideo]?.base_url || "";
+      const modelType = value.providerVideo === 'comfyui' ? 'video' as const : undefined;
+      fetchModelsFor(value.providerVideo, base, modelType);
+    }
+    // Auto-fetch multimodal models
+    if (value.providerMultimodal) {
+      const base = value.baseUrlMultimodal || providers?.[value.providerMultimodal]?.base_url || "";
+      fetchModelsFor(value.providerMultimodal, base, 'multimodal');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providers]);
+
+  // Auto-select first available model when models arrive and current selection is empty
+  useEffect(() => {
+    const chatKey = value.providerChat;
+    const imgKey = value.providerImages === 'comfyui' ? `${value.providerImages}_image` : value.providerImages;
+    const vidKey = value.providerVideo === 'comfyui' ? `${value.providerVideo}_video` : value.providerVideo;
+    const mmKey = value.providerMultimodal ? `${value.providerMultimodal}_multimodal` : '';
+
+    const updates: Partial<typeof value> = {};
+    if (!value.modelChat && models[chatKey]?.length) updates.modelChat = models[chatKey][0];
+    if (!value.modelImages && models[imgKey]?.length) updates.modelImages = models[imgKey][0];
+    if (!value.modelVideo && models[vidKey]?.length) updates.modelVideo = models[vidKey][0];
+    if (!value.modelMultimodal && mmKey && models[mmKey]?.length) updates.modelMultimodal = models[mmKey][0];
+
+    if (Object.keys(updates).length > 0) {
+      console.log('[SettingsPanel] Auto-selecting models:', updates);
+      onChangeDraft({ ...value, ...updates });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [models]);
 
   const providerOptions = useMemo(() => Object.entries(providers), [providers]);
 
@@ -1107,10 +1169,78 @@ export default function SettingsPanel({
           </div>
         </div>
 
+        {/* Teams Settings */}
+        <div className="border-t border-white/5 pt-3">
+          <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">Teams</div>
+          <div className="space-y-2">
+            <div>
+              <div className="text-xs text-white/70 mb-1">Concurrent LLM Calls</div>
+              <div className="text-[10px] text-white/35 mb-1.5">Max parallel requests to your LLM provider during team meetings</div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={1}
+                  value={value.teamsConcurrentCalls ?? 1}
+                  onChange={(e) => onChangeDraft({ ...value, teamsConcurrentCalls: parseInt(e.target.value) })}
+                  className="flex-1 h-1.5 rounded-full appearance-none bg-white/10 accent-cyan-500"
+                />
+                <span className="text-sm font-mono text-white/70 w-6 text-center">{value.teamsConcurrentCalls ?? 1}</span>
+              </div>
+              <div className="text-[10px] text-white/30 mt-1">
+                Use 1 for single-GPU setups (Ollama default). Increase to 2-3 if your provider supports parallel inference.
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Advanced Tools (Agentic AI) */}
         <div className="border-t border-white/5 pt-3">
           <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">Advanced Tools</div>
           <AgenticStatus backendUrl={value.backendUrl} apiKey={value.apiKey} />
+        </div>
+
+        {/* MatrixHub Integration */}
+        <div className="border-t border-white/5 pt-3">
+          <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">MatrixHub Catalog</div>
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs text-white/70">Enable MatrixHub</div>
+                <div className="text-[10px] text-white/40 mt-0.5">
+                  Browse MCP servers from the MatrixHub public catalog
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onChangeDraft({ ...value, matrixHubEnabled: !value.matrixHubEnabled })}
+                className={`w-9 h-5 rounded-full transition-colors relative ${
+                  value.matrixHubEnabled ? 'bg-violet-500' : 'bg-white/20'
+                }`}
+              >
+                <span className={`block w-3.5 h-3.5 rounded-full bg-white shadow transition-transform absolute top-[3px] ${
+                  value.matrixHubEnabled ? 'left-[19px]' : 'left-[3px]'
+                }`} />
+              </button>
+            </div>
+
+            {value.matrixHubEnabled && (
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-white/50 block">MatrixHub URL</label>
+                <input
+                  type="text"
+                  value={value.matrixHubUrl || ''}
+                  onChange={(e) => onChangeDraft({ ...value, matrixHubUrl: e.target.value })}
+                  placeholder="http://localhost:8080"
+                  className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/25 focus:outline-none focus:border-violet-500/50 transition-colors font-mono"
+                />
+                <div className="text-[10px] text-white/30">
+                  The endpoint URL for your MatrixHub instance. When enabled, a MatrixHub tab appears in Discover MCP Servers.
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Bottom actions */}

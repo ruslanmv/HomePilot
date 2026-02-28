@@ -150,9 +150,24 @@ Create intelligent **AI Agents** that can use tools, access knowledge bases, and
 - **Dynamic Capabilities** - Agents discover available tools at runtime (image generation, video creation, document analysis, external automation)
 - **MCP Gateway** - Powered by [MCP Context Forge](https://github.com/ruslanmv/mcp-context-forge), a local gateway that connects your agents to 20+ tool servers
 - **Built-in MCP Servers** - 5 MCP tool servers (Personal Assistant, Knowledge, Decision Copilot, Executive Briefing, Web Search) and 2 A2A agents (Everyday Assistant, Chief of Staff) launch automatically with `make start`
+- **Discover MCP Servers** - Browse and install 81+ public MCP servers (Asana, GitHub, Slack, Notion, Stripe, and more) directly from the UI with a guided Setup Wizard -- no command line needed
+
+<p align="center">
+  <img src="assets/blog/discover-mcp-servers.svg" alt="Discover MCP Servers" width="820" /><br>
+  <em>Browse a catalog of 81+ public MCP servers, install with one click, and manage authentication — all from the Discover tab.</em>
+</p>
 - **Web Search** - SearXNG for home users (no API key) or Tavily for enterprise, providing real-time web research tools
 - **Ask-Before-Acting** - Safety-first execution with configurable autonomy levels
 - **Voice Mode Media** - Generated images and videos now render directly in Voice mode conversations
+
+### 👥 Teams — Multi-Persona Meeting Rooms
+Bring your AI personas together in a virtual meeting room where they collaborate, debate, and build on each other's ideas:
+- **Oval Meeting Table** with up to 6 visible seats + paginated overflow strip for larger teams
+- **Reactive Orchestration** — intent scoring decides who speaks based on relevance, role, and conversation dynamics (not rigid round-robin)
+- **Persona Profile Panel** — click any avatar to see their character sheet (class, stats, skills, tools, wardrobe)
+- **Chat-Style Input** — pill-shaped input bar with Call On and Run Turn controls
+- **Hand-Raise System** — auto-raised when confidence exceeds threshold, with TTL countdown and intent type badges
+- See [docs/TEAMS.md](docs/TEAMS.md) for the full specification
 
 ### 🎮 Play Story Mode
 Simple, relaxing story creation for beginners:

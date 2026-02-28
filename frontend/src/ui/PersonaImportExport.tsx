@@ -60,6 +60,15 @@ function DependencyRow({ item }: { item: DependencyItem }) {
           Built-in
         </span>
       )}
+      {item.source_type === 'registry' && (
+        <span className={`text-[10px] px-2 py-0.5 rounded-full shrink-0 ${
+          item.status === 'available'
+            ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20'
+            : 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/20'
+        }`}>
+          {item.status === 'available' ? 'Installed' : 'Discover'}
+        </span>
+      )}
       {item.source_type === 'external' && (
         <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/20 shrink-0">
           External
@@ -473,6 +482,17 @@ export function PersonaImportModal({
                   <div className="flex items-center gap-2">
                     <Check size={14} className="text-emerald-400" />
                     {preview!.dependency_check.mcp_servers.length} MCP server(s) referenced
+                  </div>
+                )}
+                {(preview?.dependency_check?.mcp_servers || []).some(
+                  (s) => s.source_type === 'registry' && s.status === 'missing'
+                ) && (
+                  <div className="flex items-start gap-2 mt-2 p-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20">
+                    <Server size={14} className="text-cyan-400 mt-0.5 shrink-0" />
+                    <span className="text-xs text-cyan-300 leading-relaxed">
+                      Some MCP servers need to be installed from the <strong>Discover</strong> tab
+                      before this persona can use all its tools.
+                    </span>
                   </div>
                 )}
                 <div className="flex items-center gap-2">
