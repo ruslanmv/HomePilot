@@ -93,7 +93,15 @@ def _gc_stale_memories() -> None:
     if stale:
         print(f"[MEMORY] GC evicted {len(stale)} stale memories, {len(_conversation_memories)} remaining")
 
-IMAGE_RE = re.compile(r"\b(imagine|generate|create|draw|make)\b.*\b(image|picture|photo|art)\b", re.I)
+# Match "generate a photo", "create an image", "make art", etc.
+# Also handles common typos like "generate aphoto" where the article
+# is glued to the noun (no word boundary between 'a' and 'photo').
+IMAGE_RE = re.compile(
+    r"\b(imagine|generate|create|draw|make)\b"
+    r".*?"
+    r"(?:\ba\s*)?(?:photo|picture|image|pic|art)\b",
+    re.I,
+)
 EDIT_RE = re.compile(r"\b(edit|inpaint|replace|remove|change)\b", re.I)
 ANIM_RE = re.compile(r"\b(animate|make (a )?video|image\s*to\s*video)\b", re.I)
 URL_RE = re.compile(r"(https?://\S+)")
@@ -2088,7 +2096,11 @@ async def handle_request(mode: Optional[str], payload: Dict[str, Any]) -> Dict[s
         _caps = _agentic.get("capabilities") or []
         _has_images = "generate_images" in _caps
         _has_videos = "generate_videos" in _caps
-        _wants_image = _has_images and (mode == "imagine" or IMAGE_RE.search(_msg))
+        # Detect image/video generation intent from message text.
+        # Use regex as primary intent signal — don't hard-gate on
+        # agentic.capabilities because project metadata may not have
+        # persisted them yet (the UI shows the skill as enabled).
+        _wants_image = mode == "imagine" or IMAGE_RE.search(_msg)
         _wants_video = _has_videos and (mode == "animate" or ANIM_RE.search(_msg))
 
         if _wants_image or _wants_video:
