@@ -185,7 +185,7 @@ export function MeetingRoom({
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false)
 
   // ── Per-persona voice + meeting TTS ──
-  const { getPersonaVoice, setPersonaVoice } = usePersonaVoices()
+  const { getPersonaVoice, setPersonaVoice, map: personaVoiceMap } = usePersonaVoices()
   const { meetingTtsEnabled, setMeetingTtsEnabled, speakingPersonaId, stopSpeaking } = useMeetingTts(
     room.messages || [],
     getPersonaVoice,
@@ -217,6 +217,23 @@ export function MeetingRoom({
     () => room.participant_ids.map((id) => personaMap.get(id)).filter(Boolean) as PersonaSummary[],
     [room.participant_ids, personaMap],
   )
+
+  // Auto-seed voice map from persona project data (persona_appearance.persona_voice).
+  // Only runs once per persona — skips if user already has a manual override.
+  useEffect(() => {
+    for (const p of participantPersonas) {
+      if (personaVoiceMap[p.id]) continue
+      const pv = p.persona_appearance?.persona_voice
+      if (pv?.voiceURI) {
+        setPersonaVoice(p.id, {
+          voiceURI: pv.voiceURI,
+          rate: pv.rate,
+          pitch: pv.pitch,
+          volume: pv.volume,
+        })
+      }
+    }
+  }, [participantPersonas, personaVoiceMap, setPersonaVoice])
 
   const intents = room.intents || {}
   const handRaises = useMemo(() => new Set(room.hand_raises || []), [room.hand_raises])
@@ -838,7 +855,11 @@ export function MeetingRoom({
                             ? 'bg-emerald-500/[0.06] border border-emerald-500/20 text-white/80 rounded-tl-md'
                             : 'bg-white/[0.04] border border-white/[0.06] text-white/80 rounded-tl-md'
                       }`}>
-                        {msg.content.replace(/^\[.*?\]:\s*/, '')}
+                        {msg.content
+                          .replace(/<think>[\s\S]*?<\/think>/g, '')
+                          .replace(/<\/think>\s*/g, '')
+                          .replace(/^\[.*?\]:\s*/, '')
+                          .trim()}
                       </div>
                     </div>
                   </div>

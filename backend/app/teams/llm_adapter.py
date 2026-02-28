@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from ..config import (
@@ -24,7 +25,7 @@ from ..config import (
     LLM_BASE_URL,
     TEAMS_MAX_CONCURRENT_LLM,
 )
-from ..llm import chat as llm_chat
+from ..llm import chat as llm_chat, strip_think_tags
 
 logger = logging.getLogger("homepilot.teams.llm_adapter")
 
@@ -142,7 +143,15 @@ async def llm_text(
             raise
 
     try:
-        return (resp["choices"][0]["message"]["content"] or "").strip()
+        content = (resp["choices"][0]["message"]["content"] or "").strip()
+        # Layer 1: Strip paired reasoning blocks (matches orchestrator.py:1981)
+        content = strip_think_tags(content)
+        # Layer 2: Remove orphaned closing tags from malformed/truncated output
+        content = re.sub(
+            r"</(?:think|thinking|reasoning|reflection)>\s*",
+            "", content, flags=re.IGNORECASE,
+        ).strip()
+        return content
     except Exception:
         logger.warning("Unexpected LLM response shape: %s", resp)
         return ""

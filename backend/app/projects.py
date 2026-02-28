@@ -906,6 +906,31 @@ You have access to the project's context. When relevant context from the knowled
         except Exception:
             pass
 
+        # 6b. Fallback: small LLMs (e.g. Qwen 4B) sometimes hallucinate
+        # <start_of_image> tokens instead of producing valid media:// refs.
+        # When we detect these tokens and have no resolved media, strip
+        # the tokens and attach the next photo from the catalog.
+        if not text_media and "<start_of_image>" in text:
+            import re as _re
+            text = _re.sub(r"<start_of_image>\s*", "", text).strip()
+            text = text or "Here you go!"
+            try:
+                from .media_resolver import _build_label_index
+                idx = _build_label_index(project_id)
+                _urls = list(dict.fromkeys(
+                    v for k, v in idx.items() if k != "default"
+                ))
+                if idx.get("default"):
+                    _urls.insert(0, idx["default"])
+                if _urls:
+                    if not hasattr(run_project_chat, "_photo_ctr"):
+                        run_project_chat._photo_ctr = {}  # type: ignore[attr-defined]
+                    _c = run_project_chat._photo_ctr.get(project_id, 0)  # type: ignore[attr-defined]
+                    text_media = {"images": [_urls[_c % len(_urls)]]}
+                    run_project_chat._photo_ctr[project_id] = _c + 1  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
         # 7. Add assistant message to storage (tagged with project_id)
         add_message(conversation_id, "assistant", text, media=text_media, project_id=project_id)
 
