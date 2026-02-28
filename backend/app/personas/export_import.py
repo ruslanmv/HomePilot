@@ -490,6 +490,7 @@ def _build_preview_card(project: Dict[str, Any]) -> Dict[str, Any]:
         "capabilities_count": len(agentic.get("capabilities") or []),
         "tools_count": len(persona_agent.get("allowed_tools") or []),
         "has_avatar": bool(persona_appearance.get("selected_filename")),
+        "has_voice": bool(persona_appearance.get("persona_voice")),
         "content_rating": "nsfw" if persona_appearance.get("nsfwMode") else "sfw",
         "memory_mode": persona_agent.get("memory_mode") or "adaptive",
     }
@@ -518,6 +519,7 @@ def _manifest(project: Dict[str, Any]) -> Dict[str, Any]:
             "has_avatar": bool(persona_appearance.get("selected_filename")),
             "has_outfits": bool(persona_appearance.get("outfits")),
             "outfit_count": len(persona_appearance.get("outfits") or []),
+            "has_voice": bool(persona_appearance.get("persona_voice")),
             "has_tool_dependencies": bool(persona_agent.get("allowed_tools")),
             "has_mcp_servers": bool(agentic.get("tool_details")),
             "has_a2a_agents": bool(agentic.get("a2a_agent_ids")),

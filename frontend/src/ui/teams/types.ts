@@ -132,6 +132,15 @@ export type PersonaSummary = {
     selected_thumb_filename?: string
     sets?: Array<{ set_id: string; images: unknown[] }>
     outfits?: unknown[]
+    persona_voice?: {
+      provider?: string
+      voiceURI?: string
+      name?: string
+      lang?: string
+      rate?: number
+      pitch?: number
+      volume?: number
+    }
   }
   agentic?: {
     goal?: string
