@@ -94,7 +94,7 @@ function MarkdownImage({ src, alt, rawSrc, onImageClick }: {
       src={finalSrc}
       alt={alt || 'Photo'}
       onClick={src ? () => onImageClick?.(src) : undefined}
-      className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
+      className="w-72 max-h-96 h-auto object-contain rounded-xl my-2 cursor-zoom-in hover:opacity-90 transition-opacity"
       loading="lazy"
       onLoad={() => setState('loaded')}
       onError={handleError}

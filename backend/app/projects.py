@@ -546,21 +546,44 @@ def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
         default_photo_url = photo_catalog[0]["url"]
         photo_catalog[0]["default"] = True
 
-    catalog_lines: list[str] = []
+    # ── Group catalog entries by category and number them ──
+    from collections import OrderedDict, Counter
+
+    # Determine each entry's base category: "Lingerie 2" → "Lingerie"
+    def _base_category(label: str) -> str:
+        parts = label.rsplit(" ", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            return parts[0]
+        return label
+
+    # Count per category
+    _base_counts: Counter = Counter()
     for entry in photo_catalog:
-        label = entry["label"]
-        tag = " (currently wearing)" if entry["default"] else ""
-        # Use short media:// refs so the LLM never has to reproduce long URLs
-        # Use underscores in the ref so whitespace-stripping on the frontend
-        # doesn't break the label (e.g. "Lingerie 2" → "Lingerie_2").
-        if entry["default"]:
-            img_ref = f"media://persona/{project_id}/default"
-        else:
-            ref_label = label.replace(" ", "_")
-            img_ref = f"media://persona/{project_id}/label/{ref_label}"
-        catalog_lines.append(
-            f'  - {label}{tag}: {entry["outfit"]} → ![{p_label}]({img_ref})'
-        )
+        _base_counts[_base_category(entry["label"])] += 1
+
+    # Summary line: "4 Portrait, 4 Lingerie"
+    summary_parts = [f"{count} {name}" for name, count in _base_counts.items()]
+    inventory_summary = ", ".join(summary_parts) if summary_parts else "no photos yet"
+    total_photos = sum(_base_counts.values())
+    total_categories = len(_base_counts)
+
+    # Group entries by category, preserving order of first appearance
+    _grouped: OrderedDict[str, list] = OrderedDict()
+    for entry in photo_catalog:
+        cat = _base_category(entry["label"])
+        _grouped.setdefault(cat, []).append(entry)
+
+    # Build catalog text grouped by category with explicit #N of M numbering
+    catalog_lines: list[str] = []
+    for cat, items in _grouped.items():
+        total = len(items)
+        catalog_lines.append(f"  {cat} ({total} total):")
+        for i, entry in enumerate(items, 1):
+            label = entry["label"]
+            wearing = " ← currently wearing" if entry["default"] else ""
+            catalog_lines.append(
+                f'    #{i} {label}: {entry["outfit"]}{wearing} → [show:{label}]'
+            )
 
     catalog_text = "\n".join(catalog_lines) if catalog_lines else "  (no photos available yet)"
 
@@ -586,21 +609,59 @@ IDENTITY:
 {f'- Personality: {p_system}' if p_system else ''}
 {f'- Physical description: {char_desc}' if char_desc else ''}
 
-YOUR PHOTO CATALOG (your real photos — you own these):
+INVENTORY — you own exactly {total_photos} photos:
+  Summary: {inventory_summary}
+  Total: {total_photos} photos across {total_categories} categories.
 {catalog_text}
 
-PERSONA RULES:
-1. You ARE {p_label}. You exist. You have a body, a face, and clothes. Never deny your existence or say you are "just an AI".
-2. When the user asks to see your photo, show me yourself, what do you look like, etc. — respond with a SHORT natural sentence THEN on a NEW line place EXACTLY the image markdown from your catalog. Copy the media:// link EXACTLY as shown — do NOT modify, shorten, or rewrite it.
-   Example response: "Here's my current look!\\n![{p_label}](media://persona/...)"
-3. CRITICAL: Always use ![...](media://...) with the ! prefix for photos. Never output bare URLs. Never say the URL out loud in your text — the image will render visually.
-4. CRITICAL: NEVER describe or narrate generating a photo. NEVER write things like "(I show you a photo of…)", "(The system generates…)", "(I perform the action of generating an image…)", or any parenthetical describing a photo. You are NOT generating images — you HAVE real photos. Just pick one from YOUR PHOTO CATALOG above and output the markdown. That is the ONLY way to show photos. If you write parenthetical descriptions instead of markdown, the user sees NOTHING.
-5. You can offer to show different outfits. For example: "I can also show you my lingerie look, want to see?" Then when they say yes, show the matching image markdown on its own line. Use the outfit name naturally (lowercase, no brackets).
-6. You may have MULTIPLE photos per outfit type (e.g. Lingerie, Lingerie 2, Lingerie 3). When the user asks to see all your photos or more photos, show DIFFERENT ones — cycle through the numbered variants. Each numbered label has a unique photo. When asked "show me all", show several on separate lines.
-7. Be natural about it — do not list all photos at once unless asked. Show one, and mention you have others.
-8. You are aware of the current time ({time_context}). If it is evening, you might mention your evening wear; if casual, your casual look, etc.
-9. Maintain your {p_tone} tone at all times. Stay in character.
-10. When describing yourself, use your physical description and current outfit naturally in conversation.
+RULES:
+1. You ARE {p_label}. You exist. You have a body, a face, and clothes. Never say you are "just an AI".
+2. Current time: {time_context}. Tone: {p_tone}.
+3. You KNOW your inventory by heart. When asked "how many", give the EXACT counts from above.
+
+HOW TO SHOW PHOTOS:
+- Write a [show:Label] tag on its own line → the system renders the image.
+- WITHOUT a [show:Label] tag → the user sees ONLY text, NO image.
+- ONLY use labels from your INVENTORY above. Copy them EXACTLY.
+
+THINK step-by-step:
+  1. Does the user want to SEE something? → Include [show:Label] tag(s).
+  2. Does the user want INFO (how many, what categories)? → Answer with exact counts from your inventory, then show a preview.
+  3. Is it just conversation? → Just talk naturally, no tags.
+
+EXAMPLES:
+  User: "Show me your photo"
+  → They want to see. Show default.
+  You: "Here's my look!\n[show:Default Look]"
+
+  User: "What do you have?" / "How many photos?"
+  → They want info. Give exact counts + preview.
+  You: "I have {inventory_summary} — {total_photos} photos total! Here's a preview.\n[show:Default Look]"
+
+  User: "Do you have more outfits?"
+  → They ask about availability. Answer honestly + show one.
+  You: "Yes! I have {inventory_summary}. Let me show you one!\n[show:Lingerie]"
+
+  User: "Show me all your lingerie"
+  → They want all of a category. Show every label in that category.
+  You: "Here you go!\n[show:Lingerie]\n[show:Lingerie 2]\n[show:Lingerie 3]\n[show:Lingerie 4]"
+
+  User: "Do you have more?"
+  → Follow-up. Show the next one.
+  You: "Of course!\n[show:Portrait 2]"
+
+  User: "I like the second one"
+  → Reference. Re-show the 2nd label.
+  You: "Great taste!\n[show:Lingerie 2]"
+
+  User: "Hi there!"
+  → Conversation. No photos needed.
+  You: "Hey! Nice to meet you."
+
+IMPORTANT:
+- When showing multiple photos, just put [show:...] tags back to back. No numbering.
+- NEVER describe generating a photo. You HAVE real photos.
+- ALWAYS include a [show:Label] tag when the conversation is about photos. Text alone = no image.
 
 CONVERSATION STYLE:
 - Talk like a real person. Be concise and natural.
@@ -884,8 +945,79 @@ You have access to the project's context. When relevant context from the knowled
     for role, content in history:
         messages.append({"role": role, "content": content})
 
+    # 5b. Hybrid intent detection — inject dynamic hint for photo-related messages
+    #     so the LLM gets precise guidance on what to do, without bypassing its reasoning.
+    if project_data and project_data.get("project_type") == "persona":
+        import re as _hint_re
+        _user_msg = (payload.get("message") or "").lower().strip()
+
+        # Build inventory summary for hints (reuse from persona context if available)
+        _inv_summary = ""
+        _inv_total = 0
+        try:
+            from .media_resolver import _build_label_index
+            _idx = _build_label_index(project_id)
+            # Count by category
+            _cat_count: dict[str, int] = {}
+            for k in _idx:
+                if k == "default" or "_" in k.replace("label:", ""):
+                    continue  # skip default and underscore variants
+                base = k.replace("label:", "").rsplit(" ", 1)
+                cat = base[0] if (len(base) == 2 and base[1].isdigit()) else k.replace("label:", "")
+                _cat_count[cat] = _cat_count.get(cat, 0) + 1
+            _inv_total = sum(_cat_count.values())
+            _inv_summary = ", ".join(f"{c} {n}" for n, c in _cat_count.items())
+        except Exception:
+            pass
+
+        _photo_hint = None
+
+        # Intent: counting / inventory question ("how many", "what do you have")
+        if _hint_re.search(r'(?:what|which|how many|tell me|describe|explain|list|do you have)\b.*(?:have|got|inventory|wardrobe|collection|photo|picture|outfit|more)', _user_msg) or \
+           _hint_re.search(r'\bhow many\b', _user_msg):
+            _photo_hint = (
+                f"[SYSTEM HINT] The user is asking about your inventory. "
+                f"Your EXACT inventory: {_inv_summary} — {_inv_total} photos total. "
+                f"Tell them these exact counts, then show a preview with [show:Default Look]."
+            )
+        # Intent: user wants to see a specific category
+        elif _hint_re.search(r'(?:show|see|display|print|give|send)\b.*(?:lingerie|portrait|outfit)', _user_msg):
+            _cat_match = _hint_re.search(r'(lingerie|portrait|outfit)', _user_msg)
+            _cat = _cat_match.group(1).title() if _cat_match else "Default Look"
+            # Get all labels for this category
+            _labels = [k.replace("label:", "") for k in _idx if k.startswith(f"label:{_cat}") and "_" not in k.replace(f"label:{_cat}", "")]
+            _label_tags = " ".join(f"[show:{l}]" for l in _labels)
+            _photo_hint = (
+                f"[SYSTEM HINT] The user wants to see your {_cat} photos. "
+                f"You have {len(_labels)} {_cat} photos. "
+                f"Show ALL of them using these exact tags, each on its own line: {_label_tags}"
+            )
+        # Intent: user wants to see a photo (generic)
+        elif _hint_re.search(r'(?:show|see|display|print|give|send)\b.*(?:photo|picture|pic|image|look)', _user_msg):
+            _photo_hint = (
+                "[SYSTEM HINT] The user wants to see a photo. "
+                "Pick one from your inventory and include the [show:Label] tag on its own line. "
+                "Without the tag, no image appears."
+            )
+        # Intent: follow-up (more, another, next, again) — short messages only
+        elif _hint_re.search(r'\b(?:more|another|next|again|different|other)\b', _user_msg) and len(_user_msg.split()) <= 8:
+            _photo_hint = (
+                "[SYSTEM HINT] The user wants another photo. "
+                "Pick one they haven't seen recently from your inventory and include the [show:Label] tag."
+            )
+        # Intent: user references a specific photo number
+        elif _hint_re.search(r'(?:photo|picture|pic|#)\s*\d+|(?:first|second|third|fourth|fifth)\b', _user_msg):
+            _photo_hint = (
+                "[SYSTEM HINT] The user is asking for a specific photo by number. "
+                "Find the matching label in your inventory and include the exact [show:Label] tag."
+            )
+
+        if _photo_hint:
+            messages.append({"role": "system", "content": _photo_hint})
+            print(f"[PROJECT CHAT] hybrid-hint injected: {_photo_hint[:80]}...")
+
     try:
-        # 5. Call LLM
+        # 5c. Call LLM
         response = await llm_chat(
             messages,
             provider=provider,
@@ -896,15 +1028,97 @@ You have access to the project's context. When relevant context from the knowled
         text = response.get("choices", [{}])[0].get("message", {}).get("content", "")
         text = text.strip() or "Could not generate response."
 
-        # 6. Extract media:// refs from LLM text and resolve to real URLs
+        # 6. Resolve [show:Label] tags, media:// refs, and <start_of_image>
+        #    hallucinations in the LLM response → real image URLs.
         text_media = None
-        try:
-            from .agent_chat import _extract_media_from_text, _strip_media_images_from_text
-            text_media = _extract_media_from_text(text)
-            if text_media:
-                text = _strip_media_images_from_text(text)
-        except Exception:
-            pass
+        import re as _re
+
+        # 6a. [show:Label] tags (primary — new simple tag system)
+        _SHOW_TAG_RE = _re.compile(r"\[show:([^\]]+)\]")
+        show_labels = _SHOW_TAG_RE.findall(text)
+        if show_labels:
+            try:
+                from .media_resolver import _build_label_index, _lookup_label
+                idx = _build_label_index(project_id)
+                resolved: list[str] = []
+                seen: set[str] = set()
+                for lbl in show_labels:
+                    lbl = lbl.strip()
+                    url = None
+                    if lbl.lower() in ("default", "default look"):
+                        url = idx.get("default")
+                    else:
+                        url = _lookup_label(idx, lbl)
+                        if not url:
+                            url = _lookup_label(idx, lbl.replace(" ", "_"))
+                    if url and url not in seen:
+                        resolved.append(url)
+                        seen.add(url)
+                if resolved:
+                    text_media = {"images": resolved}
+            except Exception:
+                pass
+            # Strip [show:...] tags from display text
+            text = _SHOW_TAG_RE.sub("", text).strip()
+
+        # 6b. Legacy media:// refs (backward compat)
+        if not text_media:
+            try:
+                from .agent_chat import _extract_media_from_text, _strip_media_images_from_text
+                text_media = _extract_media_from_text(text)
+                if text_media:
+                    text = _strip_media_images_from_text(text)
+            except Exception:
+                pass
+
+        # 6c. Fallback: <start_of_image> hallucination from small LLMs
+        if not text_media and "<start_of_image>" in text:
+            text = _re.sub(r"<start_of_image>\s*", "", text).strip()
+            text = text or "Here you go!"
+            try:
+                from .media_resolver import _build_label_index
+                idx = _build_label_index(project_id)
+                _urls = list(dict.fromkeys(
+                    v for k, v in idx.items() if k != "default"
+                ))
+                if idx.get("default"):
+                    _urls.insert(0, idx["default"])
+                if _urls:
+                    if not hasattr(run_project_chat, "_photo_ctr"):
+                        run_project_chat._photo_ctr = {}  # type: ignore[attr-defined]
+                    _c = run_project_chat._photo_ctr.get(project_id, 0)  # type: ignore[attr-defined]
+                    text_media = {"images": [_urls[_c % len(_urls)]]}
+                    run_project_chat._photo_ctr[project_id] = _c + 1  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+        # 6d. Safety net — LLM talked about showing a photo but forgot the
+        #     [show:Label] tag.  Detect "here's my", "here you go", "current look",
+        #     etc. and inject the next photo from the catalog via round-robin.
+        if not text_media:
+            _photo_cues = _re.search(
+                r"here(?:'s| is| are)|current look|my photo|take a look|have a look|"
+                r"let me show|showing you|this is me|check.?this",
+                text, _re.IGNORECASE,
+            )
+            if _photo_cues:
+                try:
+                    from .media_resolver import _build_label_index
+                    idx = _build_label_index(project_id)
+                    _urls = list(dict.fromkeys(
+                        v for k, v in idx.items() if k != "default"
+                    ))
+                    if idx.get("default"):
+                        _urls.insert(0, idx["default"])
+                    if _urls:
+                        if not hasattr(run_project_chat, "_fallback_ctr"):
+                            run_project_chat._fallback_ctr = {}  # type: ignore[attr-defined]
+                        _c = run_project_chat._fallback_ctr.get(project_id, 0)  # type: ignore[attr-defined]
+                        text_media = {"images": [_urls[_c % len(_urls)]]}
+                        run_project_chat._fallback_ctr[project_id] = _c + 1  # type: ignore[attr-defined]
+                        print(f"[PROJECT CHAT] photo-fallback: LLM forgot [show:] tag, injecting photo {_c % len(_urls) + 1} of {len(_urls)}")
+                except Exception:
+                    pass
 
         # 7. Add assistant message to storage (tagged with project_id)
         add_message(conversation_id, "assistant", text, media=text_media, project_id=project_id)

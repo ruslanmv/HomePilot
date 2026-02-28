@@ -1,13 +1,14 @@
 /**
  * PersonaWizard — Phase 2
  *
- * A 4-step wizard for creating Persona projects with class-based blueprints.
+ * A 5-step wizard for creating Persona projects with class-based blueprints.
  *
  * Steps:
  *   0. Choose Class  — Secretary, Assistant, Companion, NSFW classes (if enabled), Custom
  *   1. Identity      — name, role, system prompt, tone, goal, skills (pre-filled from class)
  *   2. Appearance    — style preset, generate 4 looks, pick avatar (stores avatar_settings)
- *   3. Review        — summary card with class badge, skills, and create button
+ *   3. Voice         — choose browser TTS voice, rate/pitch/volume, test preview
+ *   4. Review        — summary card with class badge, skills, and create button
  *
  * NSFW classes and appearance options are shown dynamically based on global Spice Mode
  * setting — no explicit banner or callout.
@@ -27,12 +28,15 @@ import type {
   AvatarGenerationSettings,
   MemoryMode,
   GenerationMode,
+  PersonaVoiceConfig,
 } from './personaTypes'
 import { PERSONA_BLUEPRINTS } from './personaTypes'
 import { createPersonaProject, generatePersonaImages } from './personaApi'
 import { commitPersonaAvatar } from './personaPortability'
 import { useAvatarCapabilities } from './useAvatarCapabilities'
 import { resolveFileUrl } from './resolveFileUrl'
+import { PersonaVoiceStep } from './persona/voice/PersonaVoiceStep'
+import { PersonaVoiceChip } from './persona/voice/PersonaVoiceChip'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -203,7 +207,7 @@ const CLASS_COLORS: Record<string, { bg: string; border: string; text: string; r
 
 export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialDraft }: Props) {
   // If an initialDraft with a selected avatar is provided, skip to Step 1 (Identity)
-  const [step, setStep] = useState<0 | 1 | 2 | 3>(() => {
+  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(() => {
     if (initialDraft?.persona_appearance?.selected) return 1
     return 0
   })
@@ -264,6 +268,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
     if (step === 0) return draft.persona_class !== undefined
     if (step === 1) return (draft.persona_agent?.label ?? '').trim().length > 0
     if (step === 2) return !!draft.persona_appearance.selected?.image_id
+    if (step === 3) return true // Voice is always optional
     return true
   }, [step, draft])
 
@@ -465,7 +470,10 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
           persona_class: draft.persona_class,
           memory_mode: draft.memory_mode,
         },
-        persona_appearance: draft.persona_appearance,
+        persona_appearance: {
+          ...draft.persona_appearance,
+          persona_voice: draft.persona_voice || undefined,
+        },
         agentic: {
           goal: draft.agentic.goal,
           capabilities: draft.agentic.capabilities,
@@ -530,7 +538,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
   // Step labels
   // -------------------------------------------------------------------------
 
-  const STEP_LABELS = ['Choose Class', 'Identity & Skills', 'Appearance', 'Review'] as const
+  const STEP_LABELS = ['Choose Class', 'Identity & Skills', 'Appearance', 'Voice', 'Review'] as const
 
   // -------------------------------------------------------------------------
   // Render
@@ -1122,8 +1130,18 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
             </div>
           )}
 
-          {/* ===== STEP 3: Review ===== */}
+          {/* ===== STEP 3: Voice ===== */}
           {step === 3 && (
+            <PersonaVoiceStep
+              gender={draft.persona_appearance.gender ?? 'female'}
+              personaName={draft.persona_agent?.label || 'Persona'}
+              value={draft.persona_voice}
+              onChange={(v) => setDraft((d) => ({ ...d, persona_voice: v }))}
+            />
+          )}
+
+          {/* ===== STEP 4: Review ===== */}
+          {step === 4 && (
             <div className="space-y-5">
               <div className="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">
                 <div className="flex items-center gap-3 mb-2">
@@ -1269,6 +1287,17 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
                 </div>
               </div>
 
+              {/* Voice chip */}
+              {draft.persona_voice?.voiceURI && (
+                <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+                  <div className="text-xs text-white/40 mb-2">Voice</div>
+                  <PersonaVoiceChip
+                    personaName={draft.persona_agent?.label || 'Persona'}
+                    voice={draft.persona_voice}
+                  />
+                </div>
+              )}
+
               <div className="bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-white/60">
                 Tools, Knowledge Base, and Outfit Variations can be configured later by editing this persona
                 project.
@@ -1294,7 +1323,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
           </button>
 
           <div className="flex gap-2">
-            {step > 0 && step < 3 && (
+            {step > 0 && step < 4 && (
               <button
                 disabled={!canNext}
                 onClick={() => setStep((step + 1) as any)}
@@ -1304,7 +1333,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
               </button>
             )}
 
-            {step === 3 && (
+            {step === 4 && (
               <button
                 disabled={saving || !draft.persona_appearance.selected?.image_id}
                 onClick={onCreate}
