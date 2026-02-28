@@ -6,7 +6,7 @@ Given a PreviewResult from a .hpersona package, checks what's available
 on the receiving machine and what's missing:
   - Image models (checkpoint files in ComfyUI)
   - Personality tools (from TOOL_CATALOG)
-  - MCP servers (health check on known ports)
+  - MCP servers (health check on known ports + registry catalog lookup)
   - A2A agents (health check on known ports)
 
 Returns a structured report for the import preview UI.
@@ -28,9 +28,13 @@ class DependencyItem:
     status: str  # "available", "missing", "degraded", "unknown"
     description: str = ""
     detail: str = ""
-    source_type: str = ""  # "builtin", "forge", "external"
+    source_type: str = ""  # "builtin", "forge", "external", "registry"
     required: bool = False
     fallback: Optional[str] = None
+    # Registry metadata for auto-install
+    registry_id: str = ""
+    auth_type: str = ""
+    url: str = ""
 
 
 @dataclass
@@ -56,6 +60,9 @@ class DependencyReport:
                     "source_type": d.source_type,
                     "required": d.required,
                     "fallback": d.fallback,
+                    "registry_id": d.registry_id,
+                    "auth_type": d.auth_type,
+                    "url": d.url,
                 }
                 for d in getattr(self, section)
             ]
@@ -64,14 +71,34 @@ class DependencyReport:
         return items
 
 
-def check_dependencies(dependencies: Dict[str, Any]) -> DependencyReport:
+def check_dependencies(
+    dependencies: Dict[str, Any],
+    *,
+    installed_gateways: Optional[List[Dict[str, Any]]] = None,
+) -> DependencyReport:
     """
     Check which dependencies from a .hpersona package are available locally.
 
     This is a best-effort check — it doesn't require network access or
     running services, just checks for file existence and known catalogs.
+
+    Args:
+        dependencies: The ``dependencies`` dict from the .hpersona package.
+        installed_gateways: Optional list of currently installed gateways
+            from Context Forge (used to check registry server availability).
     """
     report = DependencyReport()
+
+    # Build a set of installed gateway names/URLs for quick lookups
+    _installed_names: set = set()
+    _installed_urls: set = set()
+    for gw in installed_gateways or []:
+        n = (gw.get("name") or "").lower().strip()
+        if n:
+            _installed_names.add(n)
+        u = (gw.get("url") or gw.get("endpoint_url") or "").strip().rstrip("/")
+        if u:
+            _installed_urls.add(u)
 
     # 1. Check image models
     models_dep = dependencies.get("models") or {}
@@ -134,13 +161,16 @@ def check_dependencies(dependencies: Dict[str, Any]) -> DependencyReport:
                 source_type="builtin",
             ))
 
-    # 3. Check MCP servers (by known port / builtin ID)
+    # 3. Check MCP servers (by known port / builtin ID / registry lookup)
     mcp_dep = dependencies.get("mcp_servers") or {}
     for server_info in mcp_dep.get("servers", []):
         name = server_info.get("name") or "unknown"
         source = server_info.get("source") or {}
         source_type = source.get("type", "unknown")
         port = server_info.get("default_port")
+        registry_id = source.get("registry_id") or server_info.get("registry_id") or ""
+        auth_type = server_info.get("auth_type") or ""
+        url = server_info.get("url") or ""
 
         if source_type == "builtin":
             # Built-in servers are always "available" (can be started)
@@ -152,6 +182,38 @@ def check_dependencies(dependencies: Dict[str, Any]) -> DependencyReport:
                 detail=f"Built-in (port {port})" if port else "Built-in",
                 source_type="builtin",
             ))
+        elif source_type == "registry":
+            # Registry (Discover-installed) servers: check if already installed
+            is_installed = (
+                name.lower().strip() in _installed_names
+                or (url and url.rstrip("/") in _installed_urls)
+            )
+            if is_installed:
+                report.mcp_servers.append(DependencyItem(
+                    name=name,
+                    kind="mcp_server",
+                    status="available",
+                    description=server_info.get("description") or name,
+                    detail=f"Installed via Discover ({auth_type or 'open'})",
+                    source_type="registry",
+                    registry_id=registry_id,
+                    auth_type=auth_type,
+                    url=url,
+                ))
+            else:
+                report.mcp_servers.append(DependencyItem(
+                    name=name,
+                    kind="mcp_server",
+                    status="missing",
+                    description=server_info.get("description") or name,
+                    detail=f"Install from Discover tab ({auth_type or 'open'})"
+                           if registry_id
+                           else "External server — install from Discover tab",
+                    source_type="registry",
+                    registry_id=registry_id,
+                    auth_type=auth_type,
+                    url=url,
+                ))
         else:
             report.mcp_servers.append(DependencyItem(
                 name=name,

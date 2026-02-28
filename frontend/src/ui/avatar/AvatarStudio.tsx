@@ -44,6 +44,18 @@ import type { AvatarMode, AvatarSettings } from './types'
 import type { GalleryItem, AvatarVibePreset, CharacterGender } from './galleryTypes'
 import { AVATAR_VIBE_PRESETS, GENDER_OPTIONS, CHARACTER_STYLE_PRESETS, buildCharacterPrompt } from './galleryTypes'
 import { resolveFileUrl } from '../resolveFileUrl'
+import {
+  DEFAULT_AVATAR_PREFS,
+  buildGeneticsPromptFragment,
+  SKIN_TONE_OPTIONS,
+  FACE_BASE_OPTIONS,
+  HAIR_TYPE_OPTIONS,
+  HAIR_COLOR_OPTIONS,
+  AGE_RANGE_OPTIONS,
+  REALISM_OPTIONS,
+  ETHNICITY_OPTIONS,
+} from './avatarPrompt'
+import type { AvatarPreferences, SkinTone, FaceBase, HairType, HairColor, AgeRange, RealismLevel, EthnicityPreset } from './avatarPrompt'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -126,6 +138,10 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const [selectedStyle, setSelectedStyle] = useState<string | null>('executive')
   const [characterDescription, setCharacterDescription] = useState('')
 
+  // MMORPG Genetics & Features (additive — enhances character prompt)
+  const [showGenetics, setShowGenetics] = useState(false)
+  const [geneticsPrefs, setGeneticsPrefs] = useState<AvatarPreferences>(DEFAULT_AVATAR_PREFS)
+
   // Toast
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' | 'info' } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout>>()
@@ -148,17 +164,27 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
     vibeTab === 'standard' ? s.category === 'standard' : s.category === 'spicy',
   )
 
-  // Auto-fill character description when gender or style changes
+  // Auto-fill character description when gender, style, or genetics changes
   useEffect(() => {
     if (mode !== 'studio_random') return
     const style = CHARACTER_STYLE_PRESETS.find((s) => s.id === selectedStyle)
+    let baseDesc: string
     if (selectedGender && style) {
-      setCharacterDescription(buildCharacterPrompt(selectedGender, style))
+      baseDesc = buildCharacterPrompt(selectedGender, style)
     } else if (selectedGender) {
       const word = selectedGender === 'neutral' ? 'An androgynous' : `A ${selectedGender}`
-      setCharacterDescription(`Solo portrait of a single ${word} character, front-facing, looking at camera, highly detailed, studio lighting, 8k resolution`)
+      baseDesc = `Solo portrait of a single ${word} character, front-facing, looking at camera, highly detailed, studio lighting, 8k resolution`
+    } else {
+      return
     }
-  }, [mode, selectedGender, selectedStyle])
+    // Append genetics tokens when the genetics panel is open
+    if (showGenetics) {
+      const geneticsFragment = buildGeneticsPromptFragment(geneticsPrefs)
+      setCharacterDescription(`${baseDesc}, ${geneticsFragment}`)
+    } else {
+      setCharacterDescription(baseDesc)
+    }
+  }, [mode, selectedGender, selectedStyle, showGenetics, geneticsPrefs])
 
   // Reset style selection when switching tabs (if selected style doesn't match new tab)
   useEffect(() => {
@@ -253,17 +279,24 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
         checkpoint_override: checkpoint,
       })
       if (result?.results?.length) {
-        gallery.addBatch(
-          result.results,
-          mode,
-          effectivePrompt || undefined,
-          referenceUrl || undefined,
-          undefined,
-          { vibeTag: vibeTagForGallery || undefined, nsfw: isSpicyContent || undefined },
-        )
-        // Reset selection for new batch — user must choose again
-        setSelectedResultIndex(null)
-        showToast(`${result.results.length} avatar${result.results.length > 1 ? 's' : ''} created`, 'success')
+        if (result.results.length === 1) {
+          // Single result — commit directly to gallery
+          gallery.addBatch(
+            result.results,
+            mode,
+            effectivePrompt || undefined,
+            referenceUrl || undefined,
+            undefined,
+            { vibeTag: vibeTagForGallery || undefined, nsfw: isSpicyContent || undefined },
+          )
+          setSelectedResultIndex(null)
+          showToast('Avatar created', 'success')
+        } else {
+          // Multiple results — user must choose one first.
+          // Only the chosen avatar is committed to gallery via "Create Avatar" button.
+          setSelectedResultIndex(null)
+          showToast(`${result.results.length} avatars generated — pick your favourite`, 'success')
+        }
       }
     } catch {
       showToast('Oops, the servers are a bit busy. Click Generate to try again.', 'error')
@@ -458,10 +491,121 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                 </div>
               </div>
 
-              {/* Step 2: Style & Role Preset */}
+              {/* Step 2: Genetics & Features (collapsible MMORPG panel) */}
+              <div className="mb-6">
+                <button
+                  onClick={() => setShowGenetics(!showGenetics)}
+                  className="flex items-center gap-2 text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider hover:text-white/60 transition-colors"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${showGenetics ? 'rotate-90' : ''}`}><path d="m9 18 6-6-6-6"/></svg>
+                  2. Genetics &amp; Features
+                  <span className="text-white/15 normal-case tracking-normal font-normal">(MMORPG Creator)</span>
+                </button>
+
+                {showGenetics && (
+                  <div className="space-y-4 animate-fadeSlideIn">
+                    {/* Age Range + Realism row */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-[10px] text-white/30 mb-1.5 font-medium">Age Range</div>
+                        <div className="flex gap-1.5">
+                          {AGE_RANGE_OPTIONS.map((o) => (
+                            <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, ageRange: o.key as AgeRange }))}
+                              className={`flex-1 px-2 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.ageRange === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
+                            >{o.label}</button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-white/30 mb-1.5 font-medium">Realism</div>
+                        <div className="flex gap-1.5">
+                          {REALISM_OPTIONS.map((o) => (
+                            <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, realism: Number(o.key) as RealismLevel }))}
+                              className={`flex-1 px-2 py-2 rounded-xl text-[11px] font-medium border transition-colors ${String(geneticsPrefs.realism) === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
+                            >{o.label}</button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Skin Tone */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-1.5 font-medium">Skin Tone</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {SKIN_TONE_OPTIONS.map((o) => (
+                          <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, skinTone: o.key as SkinTone }))}
+                            className={`px-3 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.skinTone === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
+                          >{o.label}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Face Base */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-1.5 font-medium">Face Structure</div>
+                      <div className="flex gap-1.5">
+                        {FACE_BASE_OPTIONS.map((o) => (
+                          <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, faceBase: o.key as FaceBase }))}
+                            className={`flex-1 px-3 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.faceBase === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
+                          >{o.label}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Hair Type + Color row */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-[10px] text-white/30 mb-1.5 font-medium">Hair Type</div>
+                        <div className="flex gap-1.5">
+                          {HAIR_TYPE_OPTIONS.map((o) => (
+                            <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, hairType: o.key as HairType }))}
+                              className={`flex-1 px-2 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.hairType === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
+                            >{o.label}</button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-white/30 mb-1.5 font-medium">Hair Color</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {HAIR_COLOR_OPTIONS.map((o) => (
+                            <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, hairColor: o.key as HairColor }))}
+                              className={`px-2.5 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.hairColor === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
+                            >{o.label}</button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Ethnicity Baseline */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-1.5 font-medium">
+                        Ethnicity Baseline
+                        <span className="text-white/15 ml-1.5 font-normal">(for consistent diffusion output)</span>
+                      </div>
+                      <div className="flex gap-1.5">
+                        {ETHNICITY_OPTIONS.map((o) => (
+                          <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: o.key as EthnicityPreset }))}
+                            className={`px-3 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.baseEthnicityPreset === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
+                          >{o.label}</button>
+                        ))}
+                      </div>
+                      {geneticsPrefs.baseEthnicityPreset === 'custom' && (
+                        <input
+                          value={geneticsPrefs.customEthnicityHint || ''}
+                          onChange={(e) => setGeneticsPrefs((p) => ({ ...p, customEthnicityHint: e.target.value }))}
+                          className="mt-2 w-full px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white/70 placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
+                          placeholder="Custom hint (e.g., Mediterranean, Nordic, etc.)"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Step 3: Style & Role Preset */}
               <div className="mb-6">
                 <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
-                  2. Style &amp; Role Preset
+                  3. Style &amp; Role Preset
                 </div>
 
                 {/* Tabs: Standard / Spicy */}
@@ -520,11 +664,11 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                 </div>
               </div>
 
-              {/* Step 3: Character Description (Identity Anchor) — hidden by default, toggle in Settings */}
+              {/* Step 4: Character Description (Identity Anchor) — hidden by default, toggle in Settings */}
               {avatarSettings.showCharacterDescription && (
                 <div className="mb-6">
                   <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
-                    3. Character Description
+                    4. Character Description
                     <span className="text-white/20 normal-case tracking-normal font-normal ml-1.5">(Your Identity Anchor)</span>
                   </div>
                   <div className={[
@@ -852,20 +996,18 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                   <button
                     onClick={() => {
                       const chosen = gen.result!.results[selectedResultIndex!]
-                      // Find the gallery item that was just added for this result
-                      const chosenUrl = chosen.url?.startsWith('http') ? chosen.url : `${(backendUrl || '').replace(/\/+$/, '')}${chosen.url}`
-                      const match = gallery.items.find((g) => {
-                        const gUrl = g.url?.startsWith('http') ? g.url : `${(backendUrl || '').replace(/\/+$/, '')}${g.url}`
-                        return gUrl === chosenUrl
-                      })
-                      if (match) {
-                        setViewerItem(match)
-                        setViewMode('viewer')
-                      } else {
-                        // Fallback — go to gallery landing
-                        setViewMode('gallery')
-                      }
+                      // Commit only the chosen avatar to the gallery (not all results)
+                      gallery.addBatch(
+                        [chosen],
+                        mode,
+                        effectivePrompt || undefined,
+                        referenceUrl || undefined,
+                        undefined,
+                        { vibeTag: vibeTagForGallery || undefined, nsfw: isSpicyContent || undefined },
+                      )
                       setSelectedResultIndex(null)
+                      // Navigate to gallery — the chosen avatar will be the newest item
+                      setViewMode('gallery')
                     }}
                     className="flex items-center gap-3 px-8 py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-semibold text-sm shadow-[0_0_30px_rgba(34,211,238,0.25)] hover:shadow-[0_0_40px_rgba(34,211,238,0.4)] hover:scale-[1.03] active:scale-[0.98] transition-all duration-200"
                   >

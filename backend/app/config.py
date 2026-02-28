@@ -51,6 +51,10 @@ LLM_MODEL = os.getenv("LLM_MODEL", "local-model").strip()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()  # empty => backend can auto-pick
 
+# Teams — concurrent LLM calls (how many persona responses generate in parallel)
+# Default: 1 (sequential, safest for single-GPU Ollama). Set to 2-3 for faster meetings.
+TEAMS_MAX_CONCURRENT_LLM = int(os.getenv("TEAMS_MAX_CONCURRENT_LLM", "1"))
+
 # OpenAI / Anthropic base URLs (keys come from env)
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()

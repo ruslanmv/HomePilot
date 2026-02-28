@@ -50,6 +50,26 @@ SCHEMA_VERSION = 2
 _MAX_IMPORT_SCHEMA = SCHEMA_VERSION
 
 
+def _normalize_details_to_dict(
+    details: Any,
+) -> Dict[str, Dict[str, Any]]:
+    """Normalize tool_details / agent_details to {id: {name, description, ...}}.
+
+    The frontend saves these as a list of ``{id, name, description}`` objects,
+    but some export helpers iterate them as a dict keyed by ``id``.  This
+    helper accepts **either** format and always returns a dict.
+    """
+    if isinstance(details, dict):
+        return details
+    if isinstance(details, list):
+        out: Dict[str, Dict[str, Any]] = {}
+        for item in details:
+            if isinstance(item, dict) and item.get("id"):
+                out[item["id"]] = item
+        return out
+    return {}
+
+
 @dataclass(frozen=True)
 class ExportResult:
     """Result of exporting a persona project."""
@@ -106,9 +126,9 @@ def _build_tools_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
     except ImportError:
         pass
 
-    # Forge tool IDs from agentic config
+    # Forge tool IDs from agentic config (list or dict format)
     forge_tool_ids = []
-    tool_details = agentic.get("tool_details") or {}
+    tool_details = _normalize_details_to_dict(agentic.get("tool_details"))
     for tid, detail in tool_details.items():
         forge_tool_ids.append({
             "id": tid,
@@ -139,11 +159,17 @@ def _build_tools_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _build_mcp_servers_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
-    """Build mcp_servers.json from project's agentic configuration."""
-    agentic = project.get("agentic") or {}
-    tool_details = agentic.get("tool_details") or {}
+    """Build mcp_servers.json from project's agentic configuration.
 
-    # Detect MCP servers from tool prefixes
+    Captures both built-in ``hp.*`` servers detected via tool-name prefixes
+    AND Discover-installed external MCP servers stored in the project's
+    ``agentic.registry_servers`` list (added when a user installs a server
+    from the Discover tab and assigns it to a persona/agent).
+    """
+    agentic = project.get("agentic") or {}
+    tool_details = _normalize_details_to_dict(agentic.get("tool_details"))
+
+    # Detect built-in MCP servers from tool prefixes
     server_prefixes = set()
     for tid, detail in tool_details.items():
         name = detail.get("name") or tid
@@ -154,7 +180,7 @@ def _build_mcp_servers_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
 
     # Map known prefixes to built-in servers
     _KNOWN_SERVERS = {
-        # Core (9101–9105)
+        # Core (9101-9105)
         "hp.personal": {
             "name": "hp-personal-assistant",
             "description": "Personal notes search and day planning",
@@ -185,7 +211,7 @@ def _build_mcp_servers_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
             "default_port": 9105,
             "source": {"type": "builtin", "builtin_id": "hp-web-search"},
         },
-        # Local (9110–9113)
+        # Local (9110-9113)
         "hp.notes": {
             "name": "hp-local-notes",
             "description": "Local notes storage and retrieval",
@@ -222,7 +248,7 @@ def _build_mcp_servers_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
             "default_port": 9113,
             "source": {"type": "builtin", "builtin_id": "hp-shell-safe"},
         },
-        # Communication (9114–9117)
+        # Communication (9114-9117)
         "hp.gmail": {
             "name": "hp-gmail",
             "description": "Gmail integration (search, read, draft, send)",
@@ -253,7 +279,7 @@ def _build_mcp_servers_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
             "default_port": 9117,
             "source": {"type": "builtin", "builtin_id": "hp-slack"},
         },
-        # Dev & Knowledge (9118–9119)
+        # Dev & Knowledge (9118-9119)
         "hp.github": {
             "name": "hp-github",
             "description": "GitHub integration (repos, issues, PRs)",
@@ -269,9 +295,11 @@ def _build_mcp_servers_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
     }
 
     servers = []
+    seen_names: set = set()
     for prefix in sorted(server_prefixes):
         if prefix in _KNOWN_SERVERS:
             info = _KNOWN_SERVERS[prefix]
+            seen_names.add(info["name"])
             # Collect tools that belong to this server
             tool_names = [
                 (detail.get("name") or tid)
@@ -290,13 +318,66 @@ def _build_mcp_servers_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
                 },
             })
 
+    # Discover-installed external MCP servers (from the Discover tab).
+    # These are stored in agentic.registry_servers when the user installs
+    # a public MCP server from the catalog and links it to a project.
+    for rs in agentic.get("registry_servers") or []:
+        if not isinstance(rs, dict):
+            continue
+        name = rs.get("name") or rs.get("id") or ""
+        if not name or name in seen_names:
+            continue
+        seen_names.add(name)
+        servers.append({
+            "name": name,
+            "description": rs.get("description") or "",
+            "default_port": None,
+            "url": rs.get("url") or "",
+            "auth_type": rs.get("auth_type") or "open",
+            "registry_id": rs.get("id") or rs.get("registry_id") or "",
+            "source": {
+                "type": "registry",
+                "registry_id": rs.get("id") or rs.get("registry_id") or "",
+            },
+            "transport": rs.get("transport") or "SSE",
+            "protocol": "MCP",
+            "tools_provided": rs.get("tools_provided") or [],
+        })
+
+    # Also capture gateways from the catalog that are currently registered.
+    # When tool_source is "all", the persona uses all enabled tools — which
+    # may include tools from Discover-installed gateways.  Persist these so
+    # the importing machine knows which external servers are required.
+    for gw in agentic.get("gateway_servers") or []:
+        if not isinstance(gw, dict):
+            continue
+        name = gw.get("name") or gw.get("id") or ""
+        if not name or name in seen_names:
+            continue
+        seen_names.add(name)
+        servers.append({
+            "name": name,
+            "description": gw.get("description") or "",
+            "default_port": None,
+            "url": gw.get("url") or "",
+            "auth_type": gw.get("auth_type") or "open",
+            "registry_id": gw.get("registry_id") or "",
+            "source": {
+                "type": "registry",
+                "registry_id": gw.get("registry_id") or "",
+            },
+            "transport": gw.get("transport") or "SSE",
+            "protocol": "MCP",
+            "tools_provided": gw.get("tools_provided") or [],
+        })
+
     return {"schema_version": 1, "servers": servers}
 
 
 def _build_a2a_agents_manifest(project: Dict[str, Any]) -> Dict[str, Any]:
     """Build a2a_agents.json from project's agentic configuration."""
     agentic = project.get("agentic") or {}
-    agent_details = agentic.get("agent_details") or {}
+    agent_details = _normalize_details_to_dict(agentic.get("agent_details"))
     agent_ids = agentic.get("a2a_agent_ids") or []
 
     _KNOWN_AGENTS = {

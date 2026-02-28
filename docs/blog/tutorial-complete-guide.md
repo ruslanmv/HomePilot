@@ -31,9 +31,10 @@
 17. [The Safety Model](#17-the-safety-model)
 18. [External Service Connectors](#18-external-service-connectors)
 19. [Agent Projects](#19-agent-projects)
-20. [End-to-End Walkthrough](#20-end-to-end-walkthrough)
-21. [Reference Tables](#21-reference-tables)
-22. [Next Steps](#22-next-steps)
+20. [Teams: Multi-Persona Meeting Rooms](#20-teams-multi-persona-meeting-rooms)
+21. [End-to-End Walkthrough](#21-end-to-end-walkthrough)
+22. [Reference Tables](#22-reference-tables)
+23. [Next Steps](#23-next-steps)
 
 ---
 
@@ -782,6 +783,21 @@ curl -X POST http://localhost:4444/api/register \
 
 Browse the [MCP server directory](https://github.com/modelcontextprotocol/servers) for 1,000+ community-maintained servers.
 
+### Discover MCP Servers — Setup Wizard
+
+HomePilot includes a built-in **Discover** tab that lets you browse, install, and configure 81+ public MCP servers without touching the command line. The Setup Wizard handles six authentication types (Open, API Key, OAuth 2.1, HTTP Header, Query Parameter, and Custom) and guides you through each step.
+
+<p align="center">
+  <img src="../../assets/blog/discover-mcp-servers.svg" alt="Discover MCP Servers" width="820" /><br>
+  <em>Browse the catalog, install with one click, follow the guided auth wizard, and your agent has new tools instantly.</em>
+</p>
+
+- **Browse** — search by name, filter by category, auth type, or provider
+- **One-click install** — select a server, click Install, and the gateway registers it automatically
+- **Guided auth setup** — for servers that need an API key or OAuth, the wizard walks you through each field
+- **Uninstall** — remove any server with one click; the gateway cleans up the registration
+- **MatrixHub** — optional community catalog with additional servers (enable in Settings)
+
 ---
 
 ## 19. Agent Projects
@@ -810,7 +826,45 @@ The agent orchestrates web searches, cross-references your knowledge base, and d
 
 ---
 
-## 20. End-to-End Walkthrough
+## 20. Teams: Multi-Persona Meeting Rooms
+
+Your Personas are individuals. But real work happens in collaboration. The **Teams** tab lets you seat multiple Personas around a virtual meeting table and orchestrate a multi-agent conversation.
+
+### Creating a meeting
+
+1. Navigate to **Teams** in the sidebar
+2. Click **New Session**
+3. Name the meeting, add a description, pick participants from your Persona roster, choose an orchestration mode (Reactive, Round Robin, Moderated, or Free Form), and optionally set an agenda
+4. Click **Create** — you enter the meeting room
+
+### The meeting room
+
+The UI follows a 3-column layout:
+
+- **Left Rail** — People panel showing In Meeting participants and Available personas. Drag personas onto the table to add them.
+- **Center Stage** — Oval meeting table with up to 6 visible seats, overflow strip for extras, scrollable transcript, and a chat-style input bar.
+- **Right Rail** — Agenda checklist, action items, and orchestration stats.
+
+### How orchestration works
+
+When you send a message, the **intent scoring pipeline** evaluates every participant:
+
+- Topic relevance (role tags match the conversation topic)
+- Name mentions (+0.35 if you address someone directly)
+- Cooldown penalty (recently-spoken personas wait)
+- Dominance suppression (prevents one persona from monopolizing)
+
+Personas that score above the threshold automatically raise their hand. The orchestrator picks the top speakers and sends their responses to the transcript.
+
+### Profile Panel
+
+Click any participant's avatar to open their **character sheet** — a slide-over panel showing class, level, stats (Depth, Versatility, Personality, Visual), skills, tools, wardrobe, and quest objective. All values are synced from the real persona project.
+
+> Full specification: [docs/TEAMS.md](../../docs/TEAMS.md)
+
+---
+
+## 21. End-to-End Walkthrough
 
 This walkthrough verifies your entire stack by running a realistic multi-step scenario in a single Persona conversation.
 
@@ -843,7 +897,7 @@ This walkthrough verifies your entire stack by running a realistic multi-step sc
 
 ---
 
-## 21. Reference Tables
+## 22. Reference Tables
 
 ### All access points
 
@@ -900,7 +954,7 @@ This walkthrough verifies your entire stack by running a realistic multi-step sc
 
 ---
 
-## 22. Next Steps
+## 23. Next Steps
 
 You now have a fully operational HomePilot instance with Personas, creative tools, and agentic capabilities. Here is where to go next:
 

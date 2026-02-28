@@ -81,33 +81,56 @@ class ForgeHttp:
                 follow_redirects=True,
             ) as c:
                 r = await c.get(url, headers=headers, auth=auth)
+                if r.status_code == 401:
+                    # Token may be expired — force refresh and retry once
+                    logger.info("forge_http GET %s → 401, refreshing JWT", path)
+                    self.bearer_token = None
+                    self._jwt_attempted_at = 0.0
+                    await self._ensure_token()
+                    headers, auth = self._auth_headers_and_auth()
+                    r = await c.get(url, headers=headers, auth=auth)
                 if r.status_code != 200:
+                    logger.warning("forge_http GET %s → %d", path, r.status_code)
                     return None
                 try:
                     return r.json()
                 except Exception:
+                    logger.warning("forge_http GET %s → 200 but non-JSON body", path)
                     return None
         except Exception as exc:
-            logger.debug("forge_http GET %s failed: %s", path, exc)
+            logger.warning("forge_http GET %s failed: %s", path, exc)
             return None
 
     async def post_json(self, path: str, body: Optional[Dict[str, Any]] = None) -> Any:
-        """Best-effort POST with JSON body."""
+        """Best-effort POST with JSON body.
+
+        Does NOT follow redirects — Forge admin endpoints return 303
+        redirects to HTML pages on success (e.g., gateway delete).
+        We treat 2xx and 3xx as success.
+        """
         await self._ensure_token()
         url = f"{self.base_url}{path}"
         headers, auth = self._auth_headers_and_auth()
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(max(self.timeout_seconds, 15.0)),
-                follow_redirects=True,
+                follow_redirects=False,
             ) as c:
                 r = await c.post(url, headers=headers, auth=auth, json=body or {})
+                if r.status_code == 401:
+                    # Token may be expired — force refresh and retry once
+                    logger.info("forge_http POST %s → 401, refreshing JWT", path)
+                    self.bearer_token = None
+                    self._jwt_attempted_at = 0.0
+                    await self._ensure_token()
+                    headers, auth = self._auth_headers_and_auth()
+                    r = await c.post(url, headers=headers, auth=auth, json=body or {})
                 try:
                     return {"_status": r.status_code, **(r.json())}
                 except Exception:
                     return {"_status": r.status_code}
         except Exception as exc:
-            logger.debug("forge_http POST %s failed: %s", path, exc)
+            logger.warning("forge_http POST %s failed: %s", path, exc)
             return None
 
     async def health(self) -> Tuple[bool, Optional[str]]:
@@ -123,9 +146,14 @@ class ForgeHttp:
         return data
 
     async def list_gateways_best_effort(self) -> Any:
-        data = await self.get_json("/gateways")
+        """List all gateways.
+
+        Forge's GET /admin/gateways returns PaginatedResponse: {data: [...], pagination: {...}}.
+        We request a large per_page and include_inactive to get everything.
+        """
+        data = await self.get_json("/admin/gateways?per_page=500&include_inactive=true")
         if data is None:
-            data = await self.get_json("/admin/gateways")
+            data = await self.get_json("/gateways?per_page=500&include_inactive=true")
         return data
 
     async def list_server_tools(self, server_id: str) -> Any:
@@ -177,3 +205,31 @@ class ForgeHttp:
         if name:
             body["name"] = name
         return await self.post_json(f"/admin/mcp-registry/{server_id}/register", body)
+
+    async def search_gateways(self, query: str, include_inactive: bool = True) -> Any:
+        """Search gateways by name/description via /admin/gateways/search.
+
+        Returns {gateways: [{id, name, url, description}], count: N} on success.
+        """
+        from urllib.parse import quote
+        qs = f"q={quote(query)}&include_inactive={'true' if include_inactive else 'false'}&limit=50"
+        return await self.get_json(f"/admin/gateways/search?{qs}")
+
+    async def get_gateway_by_id(self, gateway_id: str) -> Any:
+        """Fetch a single gateway by ID via /admin/gateways/{id}."""
+        return await self.get_json(f"/admin/gateways/{gateway_id}")
+
+    async def delete_gateway(self, gateway_id: str) -> Any:
+        """Delete a gateway via POST /admin/gateways/{id}/delete (standard Forge API).
+
+        The Forge admin delete endpoint returns a 303 redirect to the admin HTML page.
+        We treat 2xx and 3xx as success.
+        """
+        result = await self.post_json(f"/admin/gateways/{gateway_id}/delete", {})
+        if result is None:
+            return None
+        status = result.get("_status", 0)
+        # 303 (See Other) is the expected success response from Forge gateway delete
+        if status in (200, 201, 204, 303):
+            result["_status"] = 200  # Normalize to 200 for callers
+        return result

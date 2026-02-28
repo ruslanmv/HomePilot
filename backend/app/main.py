@@ -145,6 +145,10 @@ app.include_router(capabilities_router)
 # Include Agentic AI routes (/v1/agentic/*)
 app.include_router(agentic_router)
 
+# Include Teams routes (/v1/teams/*)
+from .teams.routes import router as teams_router
+app.include_router(teams_router)
+
 # Include Marketplace routes (/v1/marketplace/*)
 app.include_router(marketplace_router)
 
@@ -751,6 +755,188 @@ async def settings(request: Request) -> JSONResponse:
             "max_upload_mb": int(MAX_UPLOAD_MB),
         },
     )
+
+
+@app.get("/auto-detect")
+async def auto_detect() -> JSONResponse:
+    """
+    Probe running services and return smart defaults — zero-config first boot.
+
+    Like a game: detect what hardware/services are available, pick the best
+    settings automatically so the user never has to configure anything manually.
+    """
+    from .providers import scan_installed_models
+
+    result: Dict[str, Any] = {
+        "ok": True,
+        "providerChat": "ollama",
+        "providerImages": "comfyui",
+        "providerVideo": "comfyui",
+        "providerMultimodal": "ollama",
+        "baseUrlChat": "",
+        "baseUrlImages": "",
+        "baseUrlVideo": "",
+        "baseUrlMultimodal": "",
+        "modelChat": "",
+        "modelImages": "",
+        "modelVideo": "",
+        "modelMultimodal": "",
+        "detected": {},
+    }
+
+    # ── 1. Probe Ollama ──────────────────────────────────────────────────
+    ollama_models: list[str] = []
+    ollama_ok = False
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags")
+            if r.status_code == 200:
+                ollama_ok = True
+                ollama_models = [
+                    m.get("name", "") for m in r.json().get("models", [])
+                ]
+    except Exception:
+        pass
+
+    result["detected"]["ollama"] = {
+        "ok": ollama_ok,
+        "url": OLLAMA_BASE_URL,
+        "models": ollama_models,
+    }
+
+    # ── 2. Probe vLLM / OpenAI-compatible ────────────────────────────────
+    vllm_ok = False
+    vllm_models: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{LLM_BASE_URL.rstrip('/')}/models")
+            if r.status_code == 200:
+                vllm_ok = True
+                data = r.json()
+                vllm_models = [
+                    m.get("id", "") for m in data.get("data", [])
+                ] if isinstance(data, dict) else []
+    except Exception:
+        pass
+
+    result["detected"]["vllm"] = {
+        "ok": vllm_ok,
+        "url": LLM_BASE_URL,
+        "models": vllm_models,
+    }
+
+    # ── 3. Probe ComfyUI ────────────────────────────────────────────────
+    comfy_ok = False
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{COMFY_BASE_URL.rstrip('/')}/system_stats")
+            comfy_ok = r.status_code == 200
+    except Exception:
+        pass
+
+    result["detected"]["comfyui"] = {"ok": comfy_ok, "url": COMFY_BASE_URL}
+
+    # ── 4. Pick best chat provider + model ───────────────────────────────
+    # Priority: Ollama (local, free) > vLLM > fallback
+    CHAT_MODEL_PRIORITY = [
+        "llama3.2:3b", "llama3.2", "llama3.1", "llama3:8b",
+        "mistral-nemo", "qwen2.5", "gemma2", "mistral:7b",
+        "phi4", "deepseek-r1:latest",
+    ]
+
+    if ollama_ok and ollama_models:
+        result["providerChat"] = "ollama"
+        result["baseUrlChat"] = ""
+        # Pick best available chat model by priority
+        picked = ""
+        for preferred in CHAT_MODEL_PRIORITY:
+            for available in ollama_models:
+                if available == preferred or available.startswith(preferred + ":"):
+                    picked = available
+                    break
+            if picked:
+                break
+        result["modelChat"] = picked or ollama_models[0]
+    elif vllm_ok and vllm_models:
+        result["providerChat"] = "openai_compat"
+        result["baseUrlChat"] = LLM_BASE_URL
+        result["modelChat"] = vllm_models[0]
+    else:
+        # Nothing running yet — set sensible defaults the user will see
+        result["providerChat"] = "ollama"
+        result["modelChat"] = ""
+
+    # ── 5. Pick best multimodal (vision) model ──────────────────────────
+    VISION_PRIORITY = [
+        "moondream", "gemma3:4b", "gemma3", "llava:7b", "llava",
+        "minicpm-v", "llama3.2-vision",
+    ]
+    if ollama_ok:
+        vision_models = [
+            m for m in ollama_models
+            if any(p in m.lower() for p in VISION_MODEL_PATTERNS)
+        ]
+        if vision_models:
+            picked_v = ""
+            for preferred in VISION_PRIORITY:
+                for available in vision_models:
+                    if available == preferred or available.startswith(preferred + ":") or preferred in available.lower():
+                        picked_v = available
+                        break
+                if picked_v:
+                    break
+            result["modelMultimodal"] = picked_v or vision_models[0]
+        result["detected"]["multimodal"] = {
+            "ok": len(vision_models) > 0,
+            "models": vision_models,
+        }
+
+    # ── 6. Pick best image model (ComfyUI) ──────────────────────────────
+    IMAGE_PRIORITY = [
+        "flux1-schnell.safetensors",
+        "sd_xl_base_1.0.safetensors",
+        "flux1-dev.safetensors",
+    ]
+    if comfy_ok:
+        result["providerImages"] = "comfyui"
+        try:
+            installed_img = scan_installed_models("image")
+            result["detected"]["comfyui_image_models"] = installed_img
+            if installed_img:
+                picked_i = ""
+                for preferred in IMAGE_PRIORITY:
+                    if preferred in installed_img:
+                        picked_i = preferred
+                        break
+                result["modelImages"] = picked_i or installed_img[0]
+        except Exception:
+            pass
+    else:
+        result["providerImages"] = "comfyui"
+        result["modelImages"] = ""
+
+    # ── 7. Pick best video model (ComfyUI) ──────────────────────────────
+    VIDEO_PRIORITY = [
+        "ltx-video-2b-v0.9.1.safetensors",
+        "svd_xt_1_1.safetensors",
+        "svd.safetensors",
+    ]
+    if comfy_ok:
+        result["providerVideo"] = "comfyui"
+        try:
+            installed_vid = scan_installed_models("video")
+            result["detected"]["comfyui_video_models"] = installed_vid
+            if installed_vid:
+                picked_vid = ""
+                for preferred in VIDEO_PRIORITY:
+                    if preferred in installed_vid:
+                        picked_vid = preferred
+                        break
+                result["modelVideo"] = picked_vid or installed_vid[0]
+        except Exception:
+            pass
+
+    return JSONResponse(status_code=200, content=result)
 
 
 @app.get("/video-presets")
@@ -4484,6 +4670,35 @@ async def persona_export(project_id: str, mode: str = Query("blueprint")) -> Res
                 project_id, {"persona_appearance": appearance},
             )
 
+    # Enrich project with currently registered gateways from Forge so the
+    # export can capture Discover-installed MCP servers as dependencies.
+    try:
+        from .agentic.routes import _catalog_service
+        if _catalog_service is not None:
+            gw_payload = await _catalog_service.http.list_gateways_best_effort()
+            gw_list = []
+            if isinstance(gw_payload, dict):
+                gw_list = gw_payload.get("data") or []
+            elif isinstance(gw_payload, list):
+                gw_list = gw_payload
+            if gw_list:
+                agentic_data = dict(p.get("agentic") or {})
+                agentic_data["gateway_servers"] = [
+                    {
+                        "id": g.get("id") or "",
+                        "name": g.get("name") or "",
+                        "description": g.get("description") or "",
+                        "url": g.get("url") or g.get("endpoint_url") or "",
+                        "transport": g.get("transport") or "SSE",
+                        "auth_type": g.get("auth_type") or "open",
+                    }
+                    for g in gw_list
+                    if isinstance(g, dict) and g.get("name")
+                ]
+                p = {**p, "agentic": agentic_data}
+    except Exception as gw_err:
+        logger.debug("Export: could not enrich gateways: %s", gw_err)
+
     try:
         out = export_persona_project(UPLOAD_PATH, p, mode=mode)
     except ValueError as e:
@@ -4540,8 +4755,25 @@ async def persona_import_preview(file: UploadFile = File(...)) -> JSONResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Preview failed: {e}")
 
+    # Fetch installed gateways from Forge (best-effort) so the dependency
+    # checker can determine whether registry servers are already installed.
+    installed_gateways: list = []
+    try:
+        from .agentic.routes import _catalog_service
+        if _catalog_service is not None:
+            gw_payload = await _catalog_service.http.list_gateways_best_effort()
+            if isinstance(gw_payload, dict):
+                installed_gateways = gw_payload.get("data", [])
+            elif isinstance(gw_payload, list):
+                installed_gateways = gw_payload
+    except Exception:
+        pass  # non-critical — checker falls back to "unknown" status
+
     # Run dependency check
-    dep_report = check_dependencies(preview.dependencies)
+    dep_report = check_dependencies(
+        preview.dependencies,
+        installed_gateways=installed_gateways,
+    )
 
     return JSONResponse(
         status_code=200,
