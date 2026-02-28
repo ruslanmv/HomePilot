@@ -33,10 +33,11 @@ type SyncResult = {
 type Props = {
   backendUrl: string
   apiKey?: string
+  matrixHubUrl?: string
   onGoToTools?: () => void
 }
 
-export function McpServersTab({ backendUrl, apiKey, onGoToTools }: Props) {
+export function McpServersTab({ backendUrl, apiKey, matrixHubUrl, onGoToTools }: Props) {
   const {
     servers,
     counts,
@@ -333,6 +334,7 @@ export function McpServersTab({ backendUrl, apiKey, onGoToTools }: Props) {
         <RegistryDiscoverPanel
           backendUrl={backendUrl}
           apiKey={apiKey}
+          matrixHubUrl={matrixHubUrl || import.meta.env.VITE_MATRIX_HUB_URL || undefined}
           onInstalled={() => {
             void refresh()
           }}

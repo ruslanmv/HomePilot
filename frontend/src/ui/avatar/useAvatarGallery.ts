@@ -18,12 +18,46 @@ function loadFromStorage(): GalleryItem[] {
     const stored = localStorage.getItem(GALLERY_STORAGE_KEY)
     if (stored) {
       const parsed = JSON.parse(stored)
-      return Array.isArray(parsed) ? parsed : []
+      if (!Array.isArray(parsed)) return []
+      return migrateOrphanOutfits(parsed)
     }
   } catch {
     // Corrupt or missing — start fresh
   }
   return []
+}
+
+/**
+ * Migration: re-parent orphaned outfit items.
+ *
+ * Before this fix, outfits generated from the Character Sheet were saved
+ * without parentId, so they appeared as separate avatars on the landing page.
+ * This migration finds items that have a referenceUrl but no parentId,
+ * and links them to the root character whose url matches their referenceUrl.
+ */
+function migrateOrphanOutfits(items: GalleryItem[]): GalleryItem[] {
+  // Build a map: url → id for root characters (items without parentId)
+  const rootUrlToId = new Map<string, string>()
+  for (const item of items) {
+    if (!item.parentId && item.url) {
+      rootUrlToId.set(item.url, item.id)
+    }
+  }
+
+  let changed = false
+  const migrated = items.map((item) => {
+    // Skip items that already have a parentId or have no referenceUrl
+    if (item.parentId || !item.referenceUrl) return item
+    // If this item's referenceUrl matches a root character's url, re-parent it
+    const rootId = rootUrlToId.get(item.referenceUrl)
+    if (rootId && rootId !== item.id) {
+      changed = true
+      return { ...item, parentId: rootId }
+    }
+    return item
+  })
+
+  return changed ? migrated : items
 }
 
 function galleryId(): string {

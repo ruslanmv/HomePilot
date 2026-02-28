@@ -1694,10 +1694,12 @@ const SearchModal = ({ onClose, projects, exampleProjects, onSelectProject, onCr
 export default function ProjectsView({
   backendUrl,
   apiKey,
+  matrixHubUrl,
   onProjectSelect
 }: {
   backendUrl: string
   apiKey?: string
+  matrixHubUrl?: string
   onProjectSelect?: (projectId: string) => void
 }) {
   const [activeTab, setActiveTab] = useState('My Projects');
@@ -2168,6 +2170,7 @@ export default function ProjectsView({
           <McpServersTab
             backendUrl={backendUrl}
             apiKey={apiKey}
+            matrixHubUrl={matrixHubUrl}
             onGoToTools={() => setActiveTab('Tools')}
           />
         )}
