@@ -43,6 +43,7 @@ import {
   Pin,
   X,
   Settings,
+  Volume2,
 } from 'lucide-react'
 import type { MeetingRoom as MeetingRoomT, MeetingMessage, PersonaSummary, IntentSnapshot, HandRaiseMeta } from './types'
 import { MeetingLeftRail } from './MeetingLeftRail'
@@ -50,6 +51,9 @@ import { MeetingRightRail } from './MeetingRightRail'
 import { MeetingOverflowStrip } from './MeetingOverflowStrip'
 import { PersonaProfilePanel } from './PersonaProfilePanel'
 import { TeamsSettingsDrawer } from './TeamsSettingsDrawer'
+import { MeetingVoiceSettings } from './MeetingVoiceSettings'
+import { usePersonaVoices } from './usePersonaVoices'
+import { useMeetingTts } from './useMeetingTts'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -178,6 +182,18 @@ export function MeetingRoom({
   const [callOnOpen, setCallOnOpen] = useState(false)
   const [profilePersonaId, setProfilePersonaId] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false)
+
+  // ── Per-persona voice + meeting TTS ──
+  const { getPersonaVoice, setPersonaVoice } = usePersonaVoices()
+  const { meetingTtsEnabled, setMeetingTtsEnabled, speakingPersonaId, stopSpeaking } = useMeetingTts(
+    room.messages || [],
+    getPersonaVoice,
+  )
+
+  // ── STT mic state (additive) ──
+  const [sttActive, setSttActive] = useState(false)
+  const [sttInterim, setSttInterim] = useState('')
 
   // ── Seat paging state ──
   const [visibleSeatIds, setVisibleSeatIds] = useState<string[]>([])
@@ -347,6 +363,33 @@ export function MeetingRoom({
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }, [handleSend])
 
+  // ── Mic STT for Teams (additive) ──
+  const startTeamsStt = useCallback(async () => {
+    if (!window.SpeechService?.startSTT || sttActive) return
+    setSttActive(true)
+    setSttInterim('')
+    await (window.SpeechService as any).startSTT({
+      onInterim: (t: string) => setSttInterim(t),
+      onResult: async (t: string) => {
+        setSttInterim('')
+        setSttActive(false)
+        if (t.trim()) {
+          setSending(true)
+          setMessage('')
+          try { await onSendMessage(t.trim()) } catch (e) { console.error('STT send error:', e) } finally { setSending(false) }
+        }
+      },
+      onError: () => setSttActive(false),
+      onEnd: () => setSttActive(false),
+    })
+  }, [sttActive, onSendMessage])
+
+  const stopTeamsStt = useCallback(() => {
+    (window.SpeechService as any)?.stopSTT?.()
+    setSttActive(false)
+    setSttInterim('')
+  }, [])
+
   const togglePin = useCallback((personaId: string) => {
     setPinnedIds((prev) => {
       const next = new Set(prev)
@@ -477,6 +520,22 @@ export function MeetingRoom({
           >
             <ListChecks size={14} />
             Agenda
+          </button>
+          <button
+            onClick={() => setVoiceSettingsOpen(!voiceSettingsOpen)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+              voiceSettingsOpen
+                ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                : meetingTtsEnabled
+                  ? 'bg-emerald-500/[0.06] text-emerald-300/60 border border-emerald-500/15 hover:border-emerald-500/25'
+                  : 'bg-white/[0.03] text-white/40 hover:text-white/60 border border-white/[0.06] hover:border-white/12'
+            }`}
+            title="Meeting voice settings"
+          >
+            <Volume2 size={14} />
+            {meetingTtsEnabled && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-glow-pulse" />
+            )}
           </button>
           <button
             onClick={() => setSettingsOpen(!settingsOpen)}
@@ -775,7 +834,9 @@ export function MeetingRoom({
                       <div className={`px-3.5 py-2.5 rounded-2xl text-base leading-relaxed ${
                         isHuman
                           ? 'bg-cyan-500/15 border border-cyan-500/20 text-white/90 rounded-tr-md'
-                          : 'bg-white/[0.04] border border-white/[0.06] text-white/80 rounded-tl-md'
+                          : speakingPersonaId === msg.sender_id
+                            ? 'bg-emerald-500/[0.06] border border-emerald-500/20 text-white/80 rounded-tl-md'
+                            : 'bg-white/[0.04] border border-white/[0.06] text-white/80 rounded-tl-md'
                       }`}>
                         {msg.content.replace(/^\[.*?\]:\s*/, '')}
                       </div>
@@ -883,13 +944,30 @@ export function MeetingRoom({
             'rounded-[10rem]',
             'transition-[background-color,box-shadow,border-color] duration-100 ease-in-out',
           ].join(' ')}>
+            {/* Mic button (additive STT) */}
+            <div className="absolute left-2.5 top-1/2 -translate-y-1/2 z-20">
+              <button
+                type="button"
+                onClick={sttActive ? stopTeamsStt : startTeamsStt}
+                className={`h-9 w-9 rounded-full grid place-items-center transition-all ${
+                  sttActive
+                    ? 'bg-red-500/20 text-red-300 ring-1 ring-red-500/40 animate-glow-pulse'
+                    : 'bg-white/[0.04] text-white/30 hover:text-white/50 hover:bg-white/[0.06]'
+                }`}
+                aria-label={sttActive ? 'Stop listening' : 'Speak into meeting'}
+                title={sttActive ? 'Stop listening' : 'Speak into meeting (STT)'}
+              >
+                {sttActive ? <MicOff size={16} /> : <Mic size={16} />}
+              </button>
+            </div>
+
             {/* Textarea */}
-            <div className="ps-5 pe-16">
+            <div className="ps-14 pe-16">
               <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type a message to the meeting..."
+                placeholder={sttInterim || 'Type a message to the meeting...'}
                 rows={1}
                 className="w-full bg-transparent text-white placeholder:text-white/40 focus:outline-none resize-none min-h-[52px] py-3.5 px-1 max-h-[200px] overflow-y-auto text-[15px] leading-relaxed"
               />
@@ -918,7 +996,7 @@ export function MeetingRoom({
 
         {/* Helper text */}
         <div className="text-[11px] text-white/20 mt-2 text-center">
-          Enter to send · Drag personas onto the table · Double-click seat to pin
+          Enter to send · Mic to dictate · Drag personas onto the table · Double-click seat to pin
         </div>
       </div>
 
@@ -937,6 +1015,18 @@ export function MeetingRoom({
         room={room}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+      />
+
+      {/* Voice settings drawer (additive) */}
+      <MeetingVoiceSettings
+        open={voiceSettingsOpen}
+        onClose={() => setVoiceSettingsOpen(false)}
+        participants={participantPersonas}
+        backendUrl={backendUrl}
+        meetingTtsEnabled={meetingTtsEnabled}
+        onToggleTts={setMeetingTtsEnabled}
+        getPersonaVoice={getPersonaVoice}
+        setPersonaVoice={setPersonaVoice}
       />
 
       <style>{`
