@@ -351,9 +351,13 @@ def _safe_err(message: str, *, code: str = "error") -> Dict[str, Any]:
 
 
 def _is_photo_intent(msg: str) -> bool:
-    """Detect deterministic 'show me your photo' intent for persona projects."""
+    """Detect deterministic 'show me your photo / another / more' intent for
+    persona projects.  Returns True for first-show AND follow-up requests so
+    the deterministic handler can cycle through the catalog instead of letting
+    the small LLM hallucinate ``<start_of_image>`` tokens."""
     m = (msg or "").lower().strip()
     triggers = [
+        # First-show triggers
         "show me your photo",
         "show me your picture",
         "show your photo",
@@ -362,6 +366,30 @@ def _is_photo_intent(msg: str) -> bool:
         "your picture",
         "what do you look like",
         "how do you look",
+        # Follow-up / "show more" triggers
+        "show me another",
+        "another photo",
+        "another picture",
+        "more photo",
+        "more picture",
+        "next photo",
+        "next picture",
+        "other photo",
+        "other picture",
+        "show me more",
+        "show more",
+        "different photo",
+        "different picture",
+        "show me all",
+        "all your photo",
+        "all your picture",
+        "do you have other",
+        "have other photo",
+        "have more photo",
+        "show again",
+        "show me again",
+        "see more",
+        "see another",
     ]
     return any(t in m for t in triggers)
 
@@ -3700,21 +3728,51 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     if _photo_project_id and _is_photo_intent(inp.message):
         proj = projects.get_project_by_id(_photo_project_id)
         if proj and proj.get("project_type") == "persona":
-            appearance = proj.get("persona_appearance") or {}
-            sel = appearance.get("selected_filename")
-            if isinstance(sel, str) and sel:
-                base = _base_url_from_request(
-                    # ChatIn doesn't carry a Request; use PUBLIC_BASE_URL fallback
-                    type("_R", (), {"base_url": PUBLIC_BASE_URL or "http://localhost:8000/"})()
-                )
+            # Build the full photo catalog using the same resolver the LLM
+            # would use, then cycle through it deterministically so each
+            # "show me another" returns the NEXT photo in the catalog.
+            try:
+                from .media_resolver import _build_label_index
+                idx = _build_label_index(_photo_project_id)
+            except Exception:
+                idx = {}
+            # Collect all unique image URLs (preserving catalog order)
+            all_urls: list[str] = []
+            seen_urls: set[str] = set()
+            # Default first
+            if idx.get("default") and idx["default"] not in seen_urls:
+                all_urls.append(idx["default"])
+                seen_urls.add(idx["default"])
+            for k, v in idx.items():
+                if k != "default" and v not in seen_urls:
+                    all_urls.append(v)
+                    seen_urls.add(v)
+            # Fallback: use selected_filename if catalog is empty
+            if not all_urls:
+                appearance = proj.get("persona_appearance") or {}
+                sel = appearance.get("selected_filename")
+                if isinstance(sel, str) and sel:
+                    base = _base_url_from_request(
+                        type("_R", (), {"base_url": PUBLIC_BASE_URL or "http://localhost:8000/"})()
+                    )
+                    all_urls.append(f"{base}/files/{sel}")
+            if all_urls:
+                # Round-robin: track which photo to show next per project
+                if not hasattr(_is_photo_intent, "_counters"):
+                    _is_photo_intent._counters = {}  # type: ignore[attr-defined]
+                ctr = _is_photo_intent._counters.get(_photo_project_id, 0)  # type: ignore[attr-defined]
+                photo_url = all_urls[ctr % len(all_urls)]
+                _is_photo_intent._counters[_photo_project_id] = ctr + 1  # type: ignore[attr-defined]
                 cid = inp.conversation_id or str(uuidlib.uuid4())
-                print(f"[CHAT ENDPOINT] photo-intent: returning deterministic avatar for project {_photo_project_id}")
+                label = f"photo {ctr % len(all_urls) + 1} of {len(all_urls)}"
+                print(f"[CHAT ENDPOINT] photo-intent: returning {label} for project {_photo_project_id}")
+                text = "Here's my current photo." if ctr == 0 else f"Here's another one! ({label})"
                 return JSONResponse(
                     status_code=200,
                     content={
                         "conversation_id": cid,
-                        "text": "Here's my current photo.",
-                        "media": {"images": [f"{base}/files/{sel}"]},
+                        "text": text,
+                        "media": {"images": [photo_url]},
                     },
                 )
 
