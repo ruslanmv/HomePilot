@@ -523,6 +523,106 @@ class SpeechService {
         }
     }
 
+    // ============================================================================
+    // Per-Persona Voice (Additive — does NOT modify existing speak() behavior)
+    // ============================================================================
+
+    /**
+     * Speak using an explicit voiceURI + optional overrides WITHOUT
+     * modifying the global voiceConfig. This enables per-persona voices
+     * for Teams meetings while keeping the existing global voice intact.
+     *
+     * @param {string} text - Text to speak
+     * @param {string} voiceURI - Explicit voiceURI to use (fallback to current selected)
+     * @param {Object} overrides - Optional { rate, pitch, volume } overrides
+     * @param {Object} callbacks - Event callbacks { onStart, onEnd, onError, onProgress }
+     * @returns {Promise<boolean>} - Whether speaking completed successfully
+     */
+    speakWithVoice(text, voiceURI, overrides = {}, callbacks = {}) {
+        return new Promise((resolve) => {
+            if (!this.isSynthesisSupported || !this.voiceConfig.enabled) {
+                resolve(false);
+                return;
+            }
+
+            this.stopSpeaking();
+
+            const utterance = new SpeechSynthesisUtterance(text);
+
+            // Choose voice by explicit voiceURI, fallback to current selected
+            const voices = this.getVoices();
+            const explicit = voiceURI ? voices.find(v => v.voiceURI === voiceURI) : null;
+            const voice = explicit || this.getSelectedVoice();
+
+            if (voice) {
+                utterance.voice = voice;
+                utterance.lang = voice.lang || 'en-US';
+            } else {
+                utterance.lang = 'en-US';
+            }
+
+            // Use current config as base, apply overrides without persisting
+            utterance.rate = overrides.rate ?? this.voiceConfig.rate ?? 1.0;
+            utterance.pitch = overrides.pitch ?? this.voiceConfig.pitch ?? 1.0;
+            utterance.volume = overrides.volume ?? this.voiceConfig.volume ?? 1.0;
+
+            this.currentUtterance = utterance;
+
+            utterance.onstart = () => {
+                this.isSpeaking = true;
+                this.isPaused = false;
+                if (callbacks.onStart) callbacks.onStart();
+            };
+
+            utterance.onend = () => {
+                this.isSpeaking = false;
+                this.isPaused = false;
+                if (callbacks.onEnd) callbacks.onEnd();
+                resolve(true);
+            };
+
+            utterance.onerror = (event) => {
+                this.isSpeaking = false;
+                this.isPaused = false;
+                if (event.error !== 'interrupted' && callbacks.onError) {
+                    callbacks.onError(event.error);
+                }
+                resolve(event.error === 'interrupted');
+            };
+
+            utterance.onboundary = (event) => {
+                if (callbacks.onProgress) {
+                    callbacks.onProgress({
+                        charIndex: event.charIndex,
+                        charLength: event.charLength || 0,
+                        name: event.name,
+                        elapsedTime: event.elapsedTime,
+                    });
+                }
+            };
+
+            try {
+                this.synthesis.speak(utterance);
+            } catch (error) {
+                if (callbacks.onError) callbacks.onError('Failed to speak');
+                resolve(false);
+            }
+        });
+    }
+
+    /**
+     * Convenience wrapper: speak using a config object.
+     * Useful for per-persona voice configurations stored in localStorage.
+     *
+     * @param {string} text - Text to speak
+     * @param {Object} cfg - Voice config { voiceURI, rate, pitch, volume }
+     * @param {Object} callbacks - Event callbacks
+     * @returns {Promise<boolean>}
+     */
+    speakWithConfig(text, cfg = {}, callbacks = {}) {
+        return this.speakWithVoice(text, cfg.voiceURI || "", cfg, callbacks);
+    }
+
     /**
      * Check if TTS is enabled
      */

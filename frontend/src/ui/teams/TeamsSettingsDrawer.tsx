@@ -97,7 +97,7 @@ const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ReactNode }> =
 // ---------------------------------------------------------------------------
 
 export function TeamsSettingsDrawer({ room, open, onClose, onSave }: TeamsSettingsDrawerProps) {
-  const [expandedSections, setExpandedSections] = useState<Set<SectionId>>(new Set(['general', 'orchestration']))
+  const [expandedSections, setExpandedSections] = useState<Set<SectionId>>(new Set(['general']))
   const [draft, setDraft] = useState<TeamsRoomPolicy>({ ...DEFAULT_POLICY })
 
   // Sync draft from room.policy + global LLM settings when drawer opens
