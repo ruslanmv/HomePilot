@@ -13,6 +13,20 @@
 export type PersonaGender = 'neutral' | 'female' | 'male'
 
 // ---------------------------------------------------------------------------
+// Voice Configuration (additive — used in wizard, export/import, Teams, Voice)
+// ---------------------------------------------------------------------------
+
+export type PersonaVoiceConfig = {
+  provider?: 'web_speech'
+  voiceURI?: string
+  name?: string
+  lang?: string
+  rate?: number
+  pitch?: number
+  volume?: number
+}
+
+// ---------------------------------------------------------------------------
 // Image Reference
 // ---------------------------------------------------------------------------
 
@@ -296,6 +310,7 @@ export type PersonaWizardDraft = {
   persona_class: PersonaClassId
   persona_agent: any
   persona_appearance: PersonaAppearance
+  persona_voice?: PersonaVoiceConfig
   memory_mode: MemoryMode
   agentic: {
     goal: string

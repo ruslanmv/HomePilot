@@ -350,20 +350,92 @@ def _safe_err(message: str, *, code: str = "error") -> Dict[str, Any]:
     return {"ok": False, "code": code, "message": message}
 
 
-def _is_photo_intent(msg: str) -> bool:
-    """Detect deterministic 'show me your photo' intent for persona projects."""
+import re as _re
+
+# Ordinal words -> 1-based index
+_ORDINAL_MAP = {
+    "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5,
+    "sixth": 6, "seventh": 7, "eighth": 8, "ninth": 9, "tenth": 10,
+}
+
+
+def _extract_photo_number(msg: str) -> int | None:
+    """Extract a specific 1-based photo number from the user message.
+
+    Returns the number if the user is asking for a specific photo (e.g. "photo 2",
+    "the second one", "show me #3"), or None if no specific number is requested.
+    """
     m = (msg or "").lower().strip()
-    triggers = [
-        "show me your photo",
-        "show me your picture",
-        "show your photo",
-        "show your picture",
-        "your photo",
-        "your picture",
-        "what do you look like",
-        "how do you look",
-    ]
-    return any(t in m for t in triggers)
+
+    # Match patterns like "photo 2", "photo #3", "picture 5", "#2"
+    num_match = _re.search(r'(?:photo|picture|pic|image|#)\s*#?(\d+)', m)
+    if num_match:
+        return int(num_match.group(1))
+
+    # Match patterns like "the second one", "second photo", "the 2nd"
+    for word, idx in _ORDINAL_MAP.items():
+        if word in m:
+            return idx
+
+    # Match patterns like "the 2nd", "the 3rd", "the 1st"
+    ord_match = _re.search(r'(?:the\s+)?(\d+)(?:st|nd|rd|th)', m)
+    if ord_match:
+        return int(ord_match.group(1))
+
+    return None
+
+
+def _is_photo_intent(msg: str) -> bool:
+    """Detect deterministic 'show me a photo' intent for persona projects.
+
+    Design philosophy: be a FAST PATH for obvious display commands only.
+    Anything conversational, questions, or nuanced → let the LLM reason.
+    The LLM has a strong system prompt + post-processing fallback, so it's
+    safe to let most messages through.
+
+    Deterministic handler catches:
+      1. Explicit display commands: "show me your photo", "print all photos"
+      2. Specific photo by number: "photo 2", "the second one"
+      3. Short follow-ups: "more", "another", "next", "again"
+
+    LLM handles (NOT caught here):
+      - Questions: "what do you have?", "describe your inventory"
+      - Conversation: "hi there", "I like it", "tell me about yourself"
+      - Nuanced: "do you have something sexy?", "surprise me"
+    """
+    m = (msg or "").lower().strip()
+    if not m:
+        return False
+
+    # ---- PASS-THROUGH: let the LLM handle questions and conversation ----
+    # Questions starting with question words → LLM reasons
+    if _re.search(r'^(?:what|explain|describe|tell|list|how many|which|why|who|where|when|do you|can you|have you|are you|could you|would you)\b', m):
+        return False
+    # Conversational messages without any photo/show words → LLM
+    if not _re.search(r'(?:show|print|display|photo|picture|pic|image|lingerie|portrait|outfit|more|another|next|again|all)', m):
+        return False
+
+    # ---- Specific photo by number: "photo 2", "the second one", "#3" ----
+    if _extract_photo_number(m) is not None:
+        return True
+
+    # ---- Explicit display commands: verb + photo noun ----
+    if _re.search(r'(?:show|print|display|send|give)\b.*(?:photo|picture|pic|image|lingerie|portrait|outfit)', m):
+        return True
+
+    # ---- Short follow-ups (2-5 words, clearly about photos) ----
+    word_count = len(m.split())
+    if word_count <= 5:
+        _followups = [
+            "show me another", "show me more", "show more", "show me all",
+            "show me again", "show again", "print all", "see more",
+            "see another", "have more", "got more", "any more",
+            "anything else", "next one", "another one",
+        ]
+        if any(t in m for t in _followups):
+            return True
+
+    return False
 
 
 def _compute_upload_dir() -> Path:
@@ -3700,21 +3772,129 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
     if _photo_project_id and _is_photo_intent(inp.message):
         proj = projects.get_project_by_id(_photo_project_id)
         if proj and proj.get("project_type") == "persona":
-            appearance = proj.get("persona_appearance") or {}
-            sel = appearance.get("selected_filename")
-            if isinstance(sel, str) and sel:
-                base = _base_url_from_request(
-                    # ChatIn doesn't carry a Request; use PUBLIC_BASE_URL fallback
-                    type("_R", (), {"base_url": PUBLIC_BASE_URL or "http://localhost:8000/"})()
-                )
+            # Build the full photo catalog using the same resolver the LLM
+            # would use, then cycle through it deterministically so each
+            # "show me another" returns the NEXT photo in the catalog.
+            try:
+                from .media_resolver import _build_label_index
+                idx = _build_label_index(_photo_project_id)
+            except Exception:
+                idx = {}
+            # Collect all unique image URLs (preserving catalog order)
+            all_urls: list[str] = []
+            seen_urls: set[str] = set()
+            # Default first
+            if idx.get("default") and idx["default"] not in seen_urls:
+                all_urls.append(idx["default"])
+                seen_urls.add(idx["default"])
+            for k, v in idx.items():
+                if k != "default" and v not in seen_urls:
+                    all_urls.append(v)
+                    seen_urls.add(v)
+            # Fallback: use selected_filename if catalog is empty
+            if not all_urls:
+                appearance = proj.get("persona_appearance") or {}
+                sel = appearance.get("selected_filename")
+                if isinstance(sel, str) and sel:
+                    base = _base_url_from_request(
+                        type("_R", (), {"base_url": PUBLIC_BASE_URL or "http://localhost:8000/"})()
+                    )
+                    all_urls.append(f"{base}/files/{sel}")
+            if all_urls:
                 cid = inp.conversation_id or str(uuidlib.uuid4())
-                print(f"[CHAT ENDPOINT] photo-intent: returning deterministic avatar for project {_photo_project_id}")
+                msg_lower = (inp.message or "").lower().strip()
+
+                # Build a category→urls mapping from the label index
+                # so we can filter by category (e.g. only lingerie)
+                _cat_urls: dict[str, list[str]] = {}
+                for k, v in idx.items():
+                    if k == "default":
+                        continue
+                    # k is "label:Lingerie", "label:Portrait 2", etc.
+                    base = k.replace("label:", "").rsplit(" ", 1)
+                    cat = base[0].lower() if (len(base) == 2 and base[1].isdigit()) else k.replace("label:", "").lower()
+                    # Skip underscore variants (they're duplicates)
+                    if "_" in cat:
+                        continue
+                    _cat_urls.setdefault(cat, []).append(v)
+
+                # --- Detect requested category ---
+                _requested_cat = None
+                for cat_name in _cat_urls:
+                    if cat_name in msg_lower:
+                        _requested_cat = cat_name
+                        break
+
+                # --- Case 1: show ALL or show all of a CATEGORY ---
+                _all_triggers = ["show me all", "all your", "all my",
+                                 "all photo", "all picture", "print all",
+                                 "show all", "all of them", "everything"]
+                _is_show_all = any(t in msg_lower for t in _all_triggers)
+
+                # "show me your lingerie" / "display lingerie" = show all of that category
+                if not _is_show_all and _requested_cat:
+                    _is_show_all = True
+
+                if _is_show_all:
+                    if _requested_cat and _requested_cat in _cat_urls:
+                        # Category-specific: only photos in that category
+                        urls_to_show = _cat_urls[_requested_cat]
+                        text = f"Here's my {_requested_cat}!"
+                        print(f"[CHAT ENDPOINT] photo-intent: returning {len(urls_to_show)} {_requested_cat} photos for project {_photo_project_id}")
+                    else:
+                        # All photos
+                        urls_to_show = all_urls
+                        text = "Here are all my photos!"
+                        print(f"[CHAT ENDPOINT] photo-intent: returning ALL {len(all_urls)} photos for project {_photo_project_id}")
+                    return JSONResponse(
+                        status_code=200,
+                        content={
+                            "conversation_id": cid,
+                            "text": text,
+                            "media": {"images": urls_to_show},
+                        },
+                    )
+
+                # --- Case 2: user asks for a SPECIFIC photo by number ---
+                requested_num = _extract_photo_number(inp.message)
+                if requested_num is not None:
+                    idx_0 = requested_num - 1  # convert to 0-based
+                    if 0 <= idx_0 < len(all_urls):
+                        photo_url = all_urls[idx_0]
+                        print(f"[CHAT ENDPOINT] photo-intent: returning photo {requested_num} of {len(all_urls)} for project {_photo_project_id}")
+                        return JSONResponse(
+                            status_code=200,
+                            content={
+                                "conversation_id": cid,
+                                "text": f"Here's photo {requested_num}!",
+                                "media": {"images": [photo_url]},
+                            },
+                        )
+                    else:
+                        print(f"[CHAT ENDPOINT] photo-intent: requested #{requested_num} but only {len(all_urls)} photos available")
+                        return JSONResponse(
+                            status_code=200,
+                            content={
+                                "conversation_id": cid,
+                                "text": f"I only have {len(all_urls)} photos. Which one would you like to see?",
+                                "media": {"images": []},
+                            },
+                        )
+
+                # --- Case 3: round-robin (show another / next / etc.) ---
+                if not hasattr(_is_photo_intent, "_counters"):
+                    _is_photo_intent._counters = {}  # type: ignore[attr-defined]
+                ctr = _is_photo_intent._counters.get(_photo_project_id, 0)  # type: ignore[attr-defined]
+                photo_url = all_urls[ctr % len(all_urls)]
+                _is_photo_intent._counters[_photo_project_id] = ctr + 1  # type: ignore[attr-defined]
+                print(f"[CHAT ENDPOINT] photo-intent: returning photo {ctr % len(all_urls) + 1} of {len(all_urls)} for project {_photo_project_id}")
+                text = "Here's my photo!" if ctr == 0 else "Here's another one!"
                 return JSONResponse(
                     status_code=200,
                     content={
                         "conversation_id": cid,
-                        "text": "Here's my current photo.",
-                        "media": {"images": [f"{base}/files/{sel}"]},
+                        "text": text,
+                        "media": {"images": [photo_url]},
                     },
                 )
 
