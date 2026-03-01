@@ -213,8 +213,8 @@ export function MeetingLeftRail({
     <div className="flex-shrink-0 w-56 border-r border-white/[0.04] bg-white/[0.01] flex flex-col animate-rail-slide-left overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2.5 border-b border-white/[0.04]">
-        <span className="text-sm font-semibold text-white/50 flex items-center gap-1.5">
-          <Users size={15} />
+        <span className="text-[15px] font-semibold text-white/55 flex items-center gap-1.5">
+          <Users size={16} />
           People
         </span>
         <button
@@ -277,7 +277,7 @@ export function MeetingLeftRail({
 
       {/* In Meeting section */}
       <div className="px-3 pt-3 pb-1">
-        <div className="text-xs font-semibold text-white/30 uppercase tracking-wider mb-2">
+        <div className="text-[12px] font-semibold text-white/35 uppercase tracking-wider mb-2">
           In Meeting ({inMeeting.length})
         </div>
         <div className="space-y-1 max-h-[240px] overflow-y-auto scrollbar-hide">
@@ -309,9 +309,9 @@ export function MeetingLeftRail({
                   <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-black ${STATUS_DOT[status]}`} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm text-white/70 font-medium truncate">{p.name}</div>
+                  <div className="text-[14px] text-white/70 font-medium truncate">{p.name}</div>
                   <div className="flex items-center gap-1">
-                    <span className={`text-xs ${STATUS_TEXT_COLOR[status]}`}>{STATUS_LABEL[status]}</span>
+                    <span className={`text-[11px] ${STATUS_TEXT_COLOR[status]}`}>{STATUS_LABEL[status]}</span>
                     {intentPill && (
                       <span className={`text-[9px] px-1.5 py-px rounded ${intentPill.bg} ${intentPill.text}`}>{intentPill.label}</span>
                     )}
@@ -358,7 +358,7 @@ export function MeetingLeftRail({
 
       {/* Available section */}
       <div className="px-3 flex-1 min-h-0 flex flex-col">
-        <div className="text-xs font-semibold text-white/30 uppercase tracking-wider mb-2">
+        <div className="text-[12px] font-semibold text-white/35 uppercase tracking-wider mb-2">
           Available ({available.length})
         </div>
         {/* Search */}
@@ -398,7 +398,7 @@ export function MeetingLeftRail({
                     </div>
                   )}
                 </div>
-                <span className="text-xs text-white/50 truncate flex-1">{p.name}</span>
+                <span className="text-[13px] text-white/50 truncate flex-1">{p.name}</span>
                 <button
                   onClick={() => onAddParticipant(p.id)}
                   className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-cyan-500/15 text-cyan-400/60 hover:text-cyan-300 transition-all"
