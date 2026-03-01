@@ -25,7 +25,7 @@ from ..config import (
     LLM_BASE_URL,
     TEAMS_MAX_CONCURRENT_LLM,
 )
-from ..llm import chat as llm_chat, strip_think_tags
+from ..llm import chat as llm_chat, strip_think_tags, _is_reasoning_text, recover_from_reasoning
 
 logger = logging.getLogger("homepilot.teams.llm_adapter")
 
@@ -151,7 +151,122 @@ async def llm_text(
             r"</(?:think|thinking|reasoning|reflection)>\s*",
             "", content, flags=re.IGNORECASE,
         ).strip()
+        # Layer 3: Detect leaked reasoning / meta-commentary and recover
+        # This catches "But the user is the host, so maybe…" style leaks
+        # that slip through tag-based stripping.
+        if content and _is_reasoning_text(content):
+            recovered = recover_from_reasoning(content)
+            if recovered:
+                logger.info("Teams LLM: recovered spoken text from reasoning leak")
+                content = recovered
+            else:
+                logger.warning(
+                    "Teams LLM: reasoning leak detected, no recoverable text. "
+                    "Returning empty to trigger retry. Leaked: %.120s",
+                    content,
+                )
+                content = ""
+        # Layer 4: Strip speaker-label prefixes the model may emit
+        # e.g. "Partner: Hello there" → "Hello there"
+        content = _strip_speaker_label(content)
+        # Layer 5: Strip multi-speaker scripts (model writing both sides)
+        content = _strip_multi_speaker_script(content)
+        # Layer 6: Collapse repeated sentences / paragraphs
+        content = _collapse_repetitions(content)
         return content
     except Exception:
         logger.warning("Unexpected LLM response shape: %s", resp)
         return ""
+
+
+# ── Speaker label stripping ──────────────────────────────────────────────
+
+_SPEAKER_LABEL_RE = re.compile(
+    r"^[A-Z][A-Za-z\s]{0,30}:\s+",  # "Partner: " or "Girlfriend: "
+)
+
+# Internal label pattern: matches "Name:" at the start of a line mid-text
+_INTERNAL_LABEL_RE = re.compile(
+    r"^\s*[A-Z][A-Za-z\s]{0,30}:\s+",
+    re.MULTILINE,
+)
+
+
+def _strip_speaker_label(text: str) -> str:
+    """Remove a leading speaker label if the LLM emitted one.
+
+    Models sometimes prefix output with the persona's own name or another
+    participant's name followed by a colon (e.g. "Partner: I think...").
+    The UI already labels speakers, so this is redundant and confusing.
+    """
+    if not text:
+        return text
+    m = _SPEAKER_LABEL_RE.match(text)
+    if m:
+        stripped = text[m.end():]
+        return stripped if stripped else text
+    return text
+
+
+def _strip_multi_speaker_script(text: str) -> str:
+    """If the model produced a multi-speaker script, keep only the first block.
+
+    Detects patterns like:
+        Some text here.
+        Partner: More text.
+        Girlfriend: Even more.
+
+    Keeps only the text before the first internal speaker label.
+    """
+    if not text:
+        return text
+    lines = text.split("\n")
+    kept: list[str] = []
+    for i, line in enumerate(lines):
+        if i > 0 and _INTERNAL_LABEL_RE.match(line):
+            # Found an internal speaker label — stop here
+            logger.info("Multi-speaker script detected, truncating at line %d", i)
+            break
+        kept.append(line)
+    result = "\n".join(kept).strip()
+    return result if result else text
+
+
+def _collapse_repetitions(text: str) -> str:
+    """Remove repeated sentences and paragraphs from LLM output.
+
+    Catches the common failure mode where the model loops and repeats
+    the same sentence or paragraph multiple times.
+    """
+    if not text or len(text) < 50:
+        return text
+
+    # Split into sentences and remove consecutive duplicates
+    # Use a pattern that splits on sentence boundaries
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    if len(sentences) < 2:
+        return text
+
+    deduped: list[str] = []
+    seen_normalized: set[str] = set()
+
+    for sent in sentences:
+        # Normalize for comparison: lowercase, strip punctuation
+        norm = re.sub(r'[^\w\s]', '', sent.lower()).strip()
+        if len(norm) < 10:
+            # Too short to meaningfully compare — keep it
+            deduped.append(sent)
+            continue
+        if norm in seen_normalized:
+            logger.debug("Collapsed repeated sentence: %.60s...", sent)
+            continue
+        seen_normalized.add(norm)
+        deduped.append(sent)
+
+    result = " ".join(deduped).strip()
+    if len(result) < len(text) * 0.5 and result:
+        logger.info(
+            "Repetition scrubber: %.0f%% reduction (%d→%d chars)",
+            (1 - len(result) / len(text)) * 100, len(text), len(result),
+        )
+    return result if result else text

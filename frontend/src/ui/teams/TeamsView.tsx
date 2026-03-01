@@ -7,8 +7,8 @@
  *   3. Active meeting room
  */
 
-import React, { useState, useCallback, useEffect, useMemo } from 'react'
-import type { MeetingRoom as MeetingRoomT, PersonaSummary } from './types'
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import type { MeetingRoom as MeetingRoomT, PersonaSummary, PlayModeStyle } from './types'
 import { useTeamsRooms } from './useTeamsRooms'
 import { TeamsLandingPage } from './TeamsLandingPage'
 import { CreateSessionWizard } from './CreateSessionWizard'
@@ -40,15 +40,23 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
     refresh,
     createRoom,
     deleteRoom,
+    updateRoom,
     addParticipant,
     removeParticipant,
     sendMessage,
     runTurn,
     reactStep,
+    previewTurn,
     callOn,
     toggleHandRaise,
     toggleMute,
     getRoom,
+    // Play Mode
+    startPlayMode,
+    stopPlayMode,
+    pausePlayMode,
+    resumePlayMode,
+    getPlayStatus,
   } = useTeamsRooms({ backendUrl, apiKey })
 
   // Fetch personas (projects of type 'persona')
@@ -107,15 +115,16 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
       const updated = await sendMessage(activeRoom.id, content)
       setActiveRoom(updated)
 
-      // 2. Trigger persona responses — use reactive orchestrator (intent-based)
-      //    for reactive/free-form/moderated modes, fall back to round-robin for legacy
+      // 2. Trigger persona responses — branch by turn_mode
       setRunningTurn(true)
       try {
-        const mode = activeRoom.turn_mode || 'reactive'
+        const mode = updated.turn_mode || 'reactive'
         if (mode === 'round-robin') {
+          // Initiative mode: deterministic turn via /run-turn
           const afterTurn = await runTurn(activeRoom.id, 'You')
           setActiveRoom(afterTurn)
         } else {
+          // Reactive mode: intent-scored via /react
           const afterReact = await reactStep(activeRoom.id)
           setActiveRoom(afterReact)
         }
@@ -195,6 +204,145 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
     [activeRoom, toggleMute, getRoom],
   )
 
+  // ── Initiative preview + "Run Turn (continue)" ──
+
+  const handlePreviewTurn = useCallback(
+    async () => {
+      if (!activeRoom) return null
+      return await previewTurn(activeRoom.id)
+    },
+    [activeRoom, previewTurn],
+  )
+
+  const handleRunTurnContinue = useCallback(
+    async () => {
+      if (!activeRoom) return
+      setRunningTurn(true)
+      try {
+        const mode = activeRoom.turn_mode || 'reactive'
+        if (mode === 'round-robin') {
+          const after = await runTurn(activeRoom.id, 'You')
+          setActiveRoom(after)
+        } else {
+          const after = await reactStep(activeRoom.id)
+          setActiveRoom(after)
+        }
+      } catch (e) {
+        console.warn('Run turn (continue) failed:', e)
+      } finally {
+        setRunningTurn(false)
+      }
+    },
+    [activeRoom, runTurn, reactStep],
+  )
+
+  // ── Agenda / Topic editing ──
+
+  const handleUpdateAgenda = useCallback(
+    async (agenda: string[]) => {
+      if (!activeRoom) return
+      const updated = await updateRoom(activeRoom.id, { agenda })
+      setActiveRoom(updated)
+    },
+    [activeRoom, updateRoom],
+  )
+
+  const handleUpdateTopic = useCallback(
+    async (topic: string) => {
+      if (!activeRoom) return
+      const updated = await updateRoom(activeRoom.id, { topic })
+      setActiveRoom(updated)
+    },
+    [activeRoom, updateRoom],
+  )
+
+  // ── Room settings handlers ──
+
+  const handleChangeTurnMode = useCallback(
+    async (turnMode: 'reactive' | 'round-robin') => {
+      if (!activeRoom) return
+      const updated = await updateRoom(activeRoom.id, { turn_mode: turnMode })
+      setActiveRoom(updated)
+    },
+    [activeRoom, updateRoom],
+  )
+
+  const handleSavePolicy = useCallback(
+    async (policy: any) => {
+      if (!activeRoom) return
+      const updated = await updateRoom(activeRoom.id, { policy })
+      setActiveRoom(updated)
+    },
+    [activeRoom, updateRoom],
+  )
+
+  // ── Play Mode handlers ──
+
+  const handleStartPlayMode = useCallback(
+    async (opts: { style: PlayModeStyle; interval_ms: number; max_rounds: number }) => {
+      if (!activeRoom) return
+      await startPlayMode(activeRoom.id, opts)
+      // Refresh to get play_mode state
+      try {
+        const fresh = await getRoom(activeRoom.id)
+        setActiveRoom(fresh)
+      } catch { /* ignore */ }
+    },
+    [activeRoom, startPlayMode, getRoom],
+  )
+
+  const handleStopPlayMode = useCallback(
+    async () => {
+      if (!activeRoom) return
+      await stopPlayMode(activeRoom.id)
+      try {
+        const fresh = await getRoom(activeRoom.id)
+        setActiveRoom(fresh)
+      } catch { /* ignore */ }
+    },
+    [activeRoom, stopPlayMode, getRoom],
+  )
+
+  const handlePausePlayMode = useCallback(
+    async () => {
+      if (!activeRoom) return
+      await pausePlayMode(activeRoom.id)
+      try {
+        const fresh = await getRoom(activeRoom.id)
+        setActiveRoom(fresh)
+      } catch { /* ignore */ }
+    },
+    [activeRoom, pausePlayMode, getRoom],
+  )
+
+  const handleResumePlayMode = useCallback(
+    async () => {
+      if (!activeRoom) return
+      await resumePlayMode(activeRoom.id)
+      try {
+        const fresh = await getRoom(activeRoom.id)
+        setActiveRoom(fresh)
+      } catch { /* ignore */ }
+    },
+    [activeRoom, resumePlayMode, getRoom],
+  )
+
+  // Poll room state during active play mode (to see new messages + round count)
+  useEffect(() => {
+    if (!activeRoom?.play_mode?.enabled) return
+    const interval = setInterval(async () => {
+      try {
+        const fresh = await getRoom(activeRoom.id)
+        setActiveRoom(fresh)
+        // Auto-stop polling if play mode ended
+        if (!fresh.play_mode?.enabled) {
+          clearInterval(interval)
+        }
+      } catch { /* ignore */ }
+    }, 2000) // poll every 2s
+    return () => clearInterval(interval)
+  }, [activeRoom?.id, activeRoom?.play_mode?.enabled, getRoom])
+
   // --- Render ---
 
   if (viewMode === 'wizard') {
@@ -222,6 +370,16 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
         onCallOn={handleCallOn}
         onToggleHandRaise={handleToggleHandRaise}
         onToggleMute={handleToggleMute}
+        onPreviewTurn={handlePreviewTurn}
+        onRunTurnContinue={handleRunTurnContinue}
+        onUpdateAgenda={handleUpdateAgenda}
+        onUpdateTopic={handleUpdateTopic}
+        onStartPlayMode={handleStartPlayMode}
+        onStopPlayMode={handleStopPlayMode}
+        onPausePlayMode={handlePausePlayMode}
+        onResumePlayMode={handleResumePlayMode}
+        onChangeTurnMode={handleChangeTurnMode}
+        onSavePolicy={handleSavePolicy}
       />
     )
   }

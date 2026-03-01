@@ -644,3 +644,163 @@ class TestFullPipeline:
         ]
         speakers = select_speakers(room, intents, participants)
         assert speakers == []
+
+
+# ===========================================================================
+# 6. New fixes: task boost, anti-monologue, dominance policy, scrubbers
+# ===========================================================================
+
+class TestTaskRequestBoost:
+    """Task-directive words should boost all personas' intent scores."""
+
+    def test_plan_triggers_boost(self):
+        """Task words like 'plan' add +0.15 to baseline, making score=0.30."""
+        room = _make_room(policy={"speak_threshold": 0.30})
+        intent = compute_intent(room, "p1", "Alice", [], "Please plan a dinner for tonight")
+        assert intent.wants_to_speak
+        assert "task request" in intent.reason
+
+    def test_step_by_step_triggers_boost(self):
+        room = _make_room(policy={"speak_threshold": 0.30})
+        intent = compute_intent(room, "p1", "Alice", [], "Give me a step-by-step guide")
+        assert intent.wants_to_speak
+        assert "task request" in intent.reason
+
+    def test_create_triggers_boost(self):
+        room = _make_room(policy={"speak_threshold": 0.30})
+        intent = compute_intent(room, "p1", "Alice", [], "Let's create a schedule")
+        assert intent.wants_to_speak
+        assert "task request" in intent.reason
+
+    def test_task_with_question_exceeds_default_threshold(self):
+        """Task + question together should exceed default threshold.
+
+        baseline 0.15 + task 0.15 + question 0.15 = ~0.45
+        Use threshold 0.44 to account for floating-point rounding.
+        """
+        room = _make_room(policy={"speak_threshold": 0.44})
+        intent = compute_intent(room, "p1", "Alice", [], "Can you plan this step-by-step?")
+        assert intent.wants_to_speak
+        assert "task request" in intent.reason
+        assert "question" in intent.reason
+
+
+class TestDominancePenaltyPolicy:
+    """Dominance penalty should read from room policy."""
+
+    def test_default_penalty_is_015(self):
+        """Default penalty when policy has no dominance_penalty field."""
+        room = _make_room(messages=[
+            _make_message("p1", "msg 1", ts=1),
+            _make_message("p1", "msg 2", ts=2),
+            _make_message("p1", "msg 3", ts=3),
+            _make_message("p2", "msg 4", ts=4),
+        ])
+        pen = _dominance_penalty(room, "p1", lookback=10)
+        # p1 has 3/4 = 75% > 40% → default penalty 0.15
+        assert pen == pytest.approx(0.15)
+
+    def test_custom_penalty_from_policy(self):
+        """Policy dominance_penalty=0.25 should be respected."""
+        room = _make_room(
+            policy={"dominance_penalty": 0.25},
+            messages=[
+                _make_message("p1", "msg 1", ts=1),
+                _make_message("p1", "msg 2", ts=2),
+                _make_message("p1", "msg 3", ts=3),
+                _make_message("p2", "msg 4", ts=4),
+            ],
+        )
+        pen = _dominance_penalty(room, "p1", lookback=10)
+        assert pen == pytest.approx(0.25)
+
+
+class TestAntiMonologue:
+    """Anti-monologue gate should demote the last speaker."""
+
+    def test_last_speaker_demoted(self):
+        """If the last speaker is the top candidate, they should be demoted."""
+        room = _make_room(
+            turn_mode="reactive",
+            messages=[
+                _make_message("p1", "I just spoke", role="assistant", ts=1),
+            ],
+        )
+        ensure_defaults(room)
+        intents = [
+            SpeakIntent("p1", True, 0.7, "engaged", "idea", 0.5, ["topic"]),
+            SpeakIntent("p2", True, 0.65, "engaged", "idea", 0.5, ["topic2"]),
+        ]
+        participants = [
+            _make_participant("p1", "Alice"),
+            _make_participant("p2", "Bob"),
+        ]
+        speakers = select_speakers(room, intents, participants)
+        # p2 should be first since p1 just spoke
+        assert speakers[0] == "p2"
+
+    def test_only_one_candidate_no_demotion(self):
+        """With only one candidate, anti-monologue doesn't drop them."""
+        room = _make_room(
+            turn_mode="reactive",
+            messages=[
+                _make_message("p1", "I just spoke", role="assistant", ts=1),
+            ],
+        )
+        ensure_defaults(room)
+        intents = [
+            SpeakIntent("p1", True, 0.7, "engaged", "idea", 0.5, ["topic"]),
+            SpeakIntent("p2", False, 0.1, "quiet", "idea", 0.3, []),
+        ]
+        participants = [
+            _make_participant("p1", "Alice"),
+            _make_participant("p2", "Bob"),
+        ]
+        speakers = select_speakers(room, intents, participants)
+        assert "p1" in speakers
+
+
+class TestRepetitionScrubber:
+    """Repetition scrubber in llm_adapter should collapse repeated sentences."""
+
+    def test_collapse_repeated_sentences(self):
+        from app.teams.llm_adapter import _collapse_repetitions
+        text = (
+            "I love this idea. Let's go to the restaurant. "
+            "I love this idea. Maybe we should pick a different place. "
+            "I love this idea."
+        )
+        result = _collapse_repetitions(text)
+        # "I love this idea" should appear only once
+        assert result.count("I love this idea") == 1
+        assert "restaurant" in result
+        assert "different place" in result
+
+    def test_short_text_unchanged(self):
+        from app.teams.llm_adapter import _collapse_repetitions
+        assert _collapse_repetitions("Hello.") == "Hello."
+
+    def test_no_repetitions_unchanged(self):
+        from app.teams.llm_adapter import _collapse_repetitions
+        text = "First point here. Second point there. Third idea now."
+        result = _collapse_repetitions(text)
+        assert "First point" in result
+        assert "Second point" in result
+        assert "Third idea" in result
+
+
+class TestMultiSpeakerScript:
+    """Multi-speaker script detection should truncate at internal labels."""
+
+    def test_strips_second_speaker(self):
+        from app.teams.llm_adapter import _strip_multi_speaker_script
+        text = "I think we should go to the park.\nPartner: That sounds great!\nGirlfriend: I agree!"
+        result = _strip_multi_speaker_script(text)
+        assert result == "I think we should go to the park."
+        assert "Partner" not in result
+
+    def test_clean_text_unchanged(self):
+        from app.teams.llm_adapter import _strip_multi_speaker_script
+        text = "I think we should go to the park.\nIt would be really fun."
+        result = _strip_multi_speaker_script(text)
+        assert result == text

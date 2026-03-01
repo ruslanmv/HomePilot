@@ -44,6 +44,8 @@ export type MeetingPolicy = {
   redundancy_threshold?: number
   dominance_lookback?: number
   dominance_penalty?: number
+  // Observer mode (human watches, personas talk to each other)
+  observer_mode?: boolean
 }
 
 /** Shared document attached to a meeting room. */
@@ -78,12 +80,27 @@ export type TeamsRoomPolicy = MeetingPolicy & {
   memory_depth?: number
 }
 
+/** Play Mode conversation style presets. */
+export type PlayModeStyle = 'discussion' | 'debate' | 'roundtable' | 'roleplay' | 'simulation'
+
+/** Play Mode state stored on the room. */
+export type PlayModeState = {
+  enabled: boolean
+  style: PlayModeStyle
+  interval_ms: number      // pause between auto-steps (ms)
+  max_rounds: number        // hard stop after N rounds
+  round_count: number       // rounds completed in this session
+  paused_by_user: boolean   // user manually paused
+  show_facilitator?: boolean // debug toggle for facilitator messages
+}
+
 export type MeetingRoom = {
   id: string
   name: string
   description: string
   participant_ids: string[]
   turn_mode: 'round-robin' | 'free-form' | 'moderated' | 'reactive'
+  topic?: string  // Main discussion topic
   agenda: string[]
   messages: MeetingMessage[]
   documents?: TeamDocument[]
@@ -103,6 +120,8 @@ export type MeetingRoom = {
   cooldowns?: Record<string, number>
   called_on?: string
   round?: number
+  // Play Mode (autonomous AI conversation)
+  play_mode?: PlayModeState
 }
 
 export type PersonaSummary = {

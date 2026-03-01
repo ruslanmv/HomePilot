@@ -124,6 +124,18 @@ export function MeetingRoomV2({
 
   const seats = useMemo(() => seatPositions(1 + inMeeting.length), [inMeeting.length])
 
+  // Scale avatar size inversely with participant count
+  const totalSeats = 1 + inMeeting.length
+  const v2AvatarSize = totalSeats <= 2 ? 'w-36 h-36 lg:w-44 lg:h-44'
+    : totalSeats <= 3 ? 'w-28 h-28 lg:w-36 lg:h-36'
+    : totalSeats <= 4 ? 'w-24 h-24 lg:w-28 lg:h-28'
+    : 'w-16 h-16 lg:w-20 lg:h-20'
+  const v2HostSize = totalSeats <= 2 ? 'w-24 h-24 lg:w-28 lg:h-28'
+    : totalSeats <= 3 ? 'w-20 h-20 lg:w-24 lg:h-24'
+    : totalSeats <= 4 ? 'w-16 h-16 lg:w-20 lg:h-20'
+    : 'w-14 h-14 lg:w-16 lg:h-16'
+  const v2HostIcon = totalSeats <= 3 ? 28 : 20
+
   const lastMsg = (room.messages || []).slice(-1)[0]
 
   // Keep transcript pinned to bottom
@@ -256,7 +268,7 @@ export function MeetingRoomV2({
 
                   {inMeeting.map((p) => {
                     const avatarUrl = resolveAvatarUrl(p, backendUrl)
-                    const isSpeaking = lastMsg?.sender_id === p.id && lastMsg?.role === 'assistant'
+                    const isSpeaking = sending && lastMsg?.sender_id === p.id && lastMsg?.role === 'assistant'
                     return (
                       <div
                         key={p.id}
@@ -361,8 +373,8 @@ export function MeetingRoomV2({
                   style={{ left: `${seats[0].x}%`, top: `${seats[0].y}%` }}
                 >
                   <div className="flex flex-col items-center gap-1">
-                    <div className="w-16 h-16 lg:w-20 lg:h-20 rounded-full bg-cyan-500/15 border-2 border-cyan-500/35 flex items-center justify-center shadow-lg shadow-cyan-500/10">
-                      <User size={24} className="text-cyan-300" />
+                    <div className={`${v2HostSize} rounded-full bg-cyan-500/15 border-2 border-cyan-500/35 flex items-center justify-center shadow-lg shadow-cyan-500/10`}>
+                      <User size={v2HostIcon} className="text-cyan-300" />
                     </div>
                     <span className="text-[10px] text-cyan-300/60 font-medium">You</span>
                   </div>
@@ -374,7 +386,7 @@ export function MeetingRoomV2({
                 const pos = seats[i + 1]
                 if (!pos) return null
                 const avatarUrl = resolveAvatarUrl(p, backendUrl)
-                const isSpeaking = lastMsg?.sender_id === p.id && lastMsg?.role === 'assistant'
+                const isSpeaking = sending && lastMsg?.sender_id === p.id && lastMsg?.role === 'assistant'
 
                 return (
                   <div
@@ -384,7 +396,7 @@ export function MeetingRoomV2({
                   >
                     <div className="flex flex-col items-center gap-1">
                       <div
-                        className={`w-16 h-16 lg:w-20 lg:h-20 rounded-full border-2 overflow-hidden flex items-center justify-center transition-all ${
+                        className={`${v2AvatarSize} rounded-full border-2 overflow-hidden flex items-center justify-center transition-all ${
                           isSpeaking
                             ? 'border-emerald-400 shadow-lg shadow-emerald-500/20'
                             : 'border-white/15 hover:border-white/25'
