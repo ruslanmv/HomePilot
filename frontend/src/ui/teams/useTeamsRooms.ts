@@ -95,6 +95,22 @@ export function useTeamsRooms({ backendUrl, apiKey }: Args) {
     [backendUrl, apiKey],
   )
 
+  /** Update room metadata (name, description, topic, agenda, etc.). */
+  const updateRoom = useCallback(
+    async (roomId: string, updates: { name?: string; description?: string; topic?: string; agenda?: string[] }): Promise<MeetingRoom> => {
+      const res = await fetch(`${backendUrl}/v1/teams/rooms/${roomId}`, {
+        method: 'PUT',
+        headers: headers(apiKey),
+        body: JSON.stringify(updates),
+      })
+      if (!res.ok) throw new Error('Failed to update room')
+      const room = await res.json()
+      setRooms((prev) => prev.map((r) => (r.id === roomId ? room : r)))
+      return room
+    },
+    [backendUrl, apiKey],
+  )
+
   const addParticipant = useCallback(
     async (roomId: string, personaId: string): Promise<MeetingRoom> => {
       const res = await fetch(`${backendUrl}/v1/teams/rooms/${roomId}/participants`, {
@@ -195,6 +211,18 @@ export function useTeamsRooms({ backendUrl, apiKey }: Args) {
     [backendUrl, apiKey],
   )
 
+  /** Preview next turn (dry-run: who would speak, with scores + reasons). */
+  const previewTurn = useCallback(
+    async (roomId: string): Promise<any> => {
+      const res = await fetch(`${backendUrl}/v1/teams/rooms/${roomId}/preview-turn`, {
+        headers: headers(apiKey),
+      })
+      if (!res.ok) throw new Error('Failed to preview turn')
+      return await res.json()
+    },
+    [backendUrl, apiKey],
+  )
+
   /** Call on a specific persona to speak next (moderated mode). */
   const callOn = useCallback(
     async (roomId: string, personaId: string): Promise<void> => {
@@ -218,6 +246,77 @@ export function useTeamsRooms({ backendUrl, apiKey }: Args) {
     [backendUrl, apiKey],
   )
 
+  // ── Play Mode API ────────────────────────────────────────────────────
+
+  /** Start autonomous Play Mode for a room. */
+  const startPlayMode = useCallback(
+    async (roomId: string, opts: { style?: string; interval_ms?: number; max_rounds?: number } = {}): Promise<any> => {
+      const llm = readLLMSettings()
+      const res = await fetch(`${backendUrl}/v1/teams/rooms/${roomId}/play-mode/start`, {
+        method: 'POST',
+        headers: headers(apiKey),
+        body: JSON.stringify({ ...opts, ...llm }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
+        throw new Error(err.detail || 'Failed to start play mode')
+      }
+      return await res.json()
+    },
+    [backendUrl, apiKey],
+  )
+
+  /** Stop Play Mode. */
+  const stopPlayMode = useCallback(
+    async (roomId: string): Promise<any> => {
+      const res = await fetch(`${backendUrl}/v1/teams/rooms/${roomId}/play-mode/stop`, {
+        method: 'POST',
+        headers: headers(apiKey),
+      })
+      if (!res.ok) throw new Error('Failed to stop play mode')
+      return await res.json()
+    },
+    [backendUrl, apiKey],
+  )
+
+  /** Pause Play Mode. */
+  const pausePlayMode = useCallback(
+    async (roomId: string): Promise<any> => {
+      const res = await fetch(`${backendUrl}/v1/teams/rooms/${roomId}/play-mode/pause`, {
+        method: 'POST',
+        headers: headers(apiKey),
+      })
+      if (!res.ok) throw new Error('Failed to pause play mode')
+      return await res.json()
+    },
+    [backendUrl, apiKey],
+  )
+
+  /** Resume Play Mode. */
+  const resumePlayMode = useCallback(
+    async (roomId: string): Promise<any> => {
+      const res = await fetch(`${backendUrl}/v1/teams/rooms/${roomId}/play-mode/resume`, {
+        method: 'POST',
+        headers: headers(apiKey),
+      })
+      if (!res.ok) throw new Error('Failed to resume play mode')
+      return await res.json()
+    },
+    [backendUrl, apiKey],
+  )
+
+  /** Get Play Mode status. */
+  const getPlayStatus = useCallback(
+    async (roomId: string): Promise<any> => {
+      const res = await fetch(`${backendUrl}/v1/teams/rooms/${roomId}/play-mode/status`, {
+        headers: headers(apiKey),
+      })
+      if (!res.ok) throw new Error('Failed to get play status')
+      return await res.json()
+    },
+    [backendUrl, apiKey],
+  )
+
   /** Toggle mute for a persona (muted personas are skipped by orchestrator). */
   const toggleMute = useCallback(
     async (roomId: string, personaId: string): Promise<void> => {
@@ -236,14 +335,22 @@ export function useTeamsRooms({ backendUrl, apiKey }: Args) {
     refresh: fetchRooms,
     createRoom,
     deleteRoom,
+    updateRoom,
     addParticipant,
     removeParticipant,
     sendMessage,
     runTurn,
     reactStep,
+    previewTurn,
     callOn,
     toggleHandRaise,
     toggleMute,
     getRoom,
+    // Play Mode
+    startPlayMode,
+    stopPlayMode,
+    pausePlayMode,
+    resumePlayMode,
+    getPlayStatus,
   }
 }

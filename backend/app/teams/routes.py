@@ -24,8 +24,20 @@ from .meeting_engine import (
 )
 from .llm_adapter import llm_text, LLMConnectionError
 from .locks import get_room_lock
-from .orchestrator import run_reactive_step
+from .orchestrator import run_reactive_step, preview_next_turn
 from .participants_resolver import resolve_participants
+from .continuation import (
+    generate_smart_trigger,
+    needs_continuation,
+    inject_continuation_message,
+)
+from .play_mode import (
+    start_play_mode,
+    stop_play_mode,
+    pause_play_mode,
+    resume_play_mode,
+    get_play_status,
+)
 
 logger = logging.getLogger("homepilot.teams.routes")
 
@@ -47,6 +59,7 @@ class UpdateRoomIn(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     turn_mode: Optional[str] = None
+    topic: Optional[str] = None
     agenda: Optional[List[str]] = None
 
 
@@ -102,7 +115,7 @@ async def get_room(room_id: str, _key: str = Depends(require_api_key)):
 
 @router.put("/rooms/{room_id}")
 async def update_room(room_id: str, body: UpdateRoomIn, _key: str = Depends(require_api_key)):
-    """Update room metadata (name, description, turn mode, agenda)."""
+    """Update room metadata (name, description, turn mode, topic, agenda)."""
     updates: Dict[str, Any] = {}
     if body.name is not None:
         updates["name"] = body.name
@@ -110,6 +123,8 @@ async def update_room(room_id: str, body: UpdateRoomIn, _key: str = Depends(requ
         updates["description"] = body.description
     if body.turn_mode is not None:
         updates["turn_mode"] = body.turn_mode
+    if body.topic is not None:
+        updates["topic"] = body.topic
     if body.agenda is not None:
         updates["agenda"] = body.agenda
 
@@ -283,14 +298,28 @@ async def react(room_id: str, body: ReactIn, _key: str = Depends(require_api_key
     if not participants:
         raise HTTPException(status_code=400, detail="No valid participants")
 
-    # Find the last human message to react to
+    # Find trigger message: last human message, or smart continuation
     human_message = ""
     for msg in reversed(room.get("messages", [])):
         if msg.get("sender_id") == "human" and msg.get("role") == "user":
             human_message = (msg.get("content") or "").strip()
             break
     if not human_message:
-        raise HTTPException(status_code=400, detail="No human message to react to")
+        # No fresh human input — use the smart continuation engine.
+        # Generates a context-aware trigger from topic/agenda/conversation
+        # and injects a facilitator message so the LLM has new input.
+        if needs_continuation(room):
+            human_message = generate_smart_trigger(room, participants)
+            inject_continuation_message(room_id, room, human_message)
+            # Reload room after injection
+            room = rooms.get_room(room_id) or room
+            logger.info("Smart continuation injected for /react on %s", room_id)
+        else:
+            all_msgs = room.get("messages") or []
+            if all_msgs:
+                human_message = (all_msgs[-1].get("content") or "").strip()
+            if not human_message:
+                human_message = generate_smart_trigger(room, participants)
 
     # Capture LLM settings from request body
     _provider = body.provider
@@ -315,7 +344,9 @@ async def react(room_id: str, body: ReactIn, _key: str = Depends(require_api_key
         system_prompt = build_persona_prompt(
             proj, room_state, others, knowledge_query=knowledge_query,
         )
-        chat_messages = build_chat_messages(room_state, system_prompt)
+        chat_messages = build_chat_messages(
+            room_state, system_prompt, current_persona_id=pid,
+        )
         return await llm_text(
             chat_messages,
             provider=_provider,
@@ -325,10 +356,14 @@ async def react(room_id: str, body: ReactIn, _key: str = Depends(require_api_key
         )
 
     # Multi-round orchestration loop
+    # Round 1 uses the human message for intent scoring.
+    # Rounds 2+ use the most recent persona message so that other personas
+    # can *react* to what was just said (BG3-style companion reactions).
     max_rounds = int((room.get("policy") or {}).get("max_rounds_per_event", 3))
     all_new_messages: list = []
     all_speakers: list = []
     final_result: Dict[str, Any] = {}
+    trigger_message = human_message
 
     lock = get_room_lock(room_id)
     try:
@@ -336,17 +371,23 @@ async def react(room_id: str, body: ReactIn, _key: str = Depends(require_api_key
             for _round in range(max_rounds):
                 result = await run_reactive_step(
                     room_id,
-                    last_human_message=human_message,
+                    last_human_message=trigger_message,
                     participants=participants,
                     generate_fn=generate_fn,
                 )
-                all_new_messages.extend(result.get("new_messages", []))
+                round_msgs = result.get("new_messages", [])
+                all_new_messages.extend(round_msgs)
                 all_speakers.extend(result.get("speakers", []))
                 final_result = result
 
                 # Stop if no speakers were selected this round
                 if not result.get("speakers"):
                     break
+
+                # For subsequent rounds, score intent based on what was
+                # just said — this lets personas react to each other.
+                if round_msgs:
+                    trigger_message = round_msgs[-1].get("content", human_message)
     except LLMConnectionError as exc:
         logger.error("LLM connection failed in react: %s", exc)
         raise HTTPException(
@@ -372,6 +413,42 @@ async def get_intents(room_id: str, _key: str = Depends(require_api_key)):
         "muted": room.get("muted", []),
         "called_on": room.get("called_on"),
     }
+
+
+@router.get("/rooms/{room_id}/preview-turn")
+async def preview_turn(room_id: str, _key: str = Depends(require_api_key)):
+    """Preview who would speak next (dry-run, no side effects).
+
+    Returns BG3-style initiative order with per-candidate scores and reasons.
+    Use this for the "Preview Next Turn" UI before actually running a turn.
+    """
+    room = rooms.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    participant_ids = room.get("participant_ids") or []
+    participants = resolve_participants(participant_ids)
+    if not participants:
+        raise HTTPException(status_code=400, detail="No valid participants")
+
+    # Find trigger message (same logic as /react, with smart continuation)
+    trigger = ""
+    for msg in reversed(room.get("messages", [])):
+        if msg.get("sender_id") == "human" and msg.get("role") == "user":
+            trigger = (msg.get("content") or "").strip()
+            break
+    if not trigger:
+        # Use smart trigger for preview too (no injection — preview is read-only)
+        trigger = generate_smart_trigger(room, participants)
+
+    try:
+        return preview_next_turn(
+            room_id,
+            trigger_message=trigger,
+            participants=participants,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.post("/rooms/{room_id}/moderation/call-on")
@@ -416,6 +493,110 @@ async def toggle_mute(
         muted.append(persona_id)
     rooms.update_room(room_id, {"muted": muted})
     return {"muted": muted}
+
+
+# ── Play Mode (Autonomous AI conversation) ─────────────────────────────────
+
+
+class PlayModeStartIn(BaseModel):
+    """Body for POST /rooms/{id}/play-mode/start."""
+    style: str = Field("discussion", description="Conversation style: discussion|debate|roundtable|roleplay|simulation")
+    interval_ms: int = Field(3000, ge=1000, le=15000, description="Pause between auto-steps (ms)")
+    max_rounds: int = Field(50, ge=0, le=500, description="Max autonomous rounds (0=infinite)")
+    # LLM settings
+    provider: Optional[str] = Field(None)
+    model: Optional[str] = Field(None)
+    base_url: Optional[str] = Field(None)
+    max_concurrent: Optional[int] = Field(None)
+
+
+@router.post("/rooms/{room_id}/play-mode/start")
+async def start_play(room_id: str, body: PlayModeStartIn, _key: str = Depends(require_api_key)):
+    """Start autonomous Play Mode — personas converse without human input."""
+    room = rooms.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    participant_ids = room.get("participant_ids") or []
+    if len(participant_ids) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 participants for Play Mode")
+
+    # Build generate_fn (same pattern as /react)
+    _provider = body.provider
+    _model = body.model
+    _base_url = body.base_url
+    _max_concurrent = max(1, body.max_concurrent or 1)  # enforce max 1 for play mode
+
+    from .meeting_engine import build_persona_prompt, build_chat_messages, _recent_conversation_query
+
+    async def generate_fn(pid: str, room_state: Dict[str, Any]) -> str:
+        proj = projects.get_project_by_id(pid)
+        if not proj:
+            return ""
+        all_ids = room_state.get("participant_ids") or []
+        all_projects = [projects.get_project_by_id(p) for p in all_ids]
+        all_projects = [p for p in all_projects if p]
+        others = [p for p in all_projects if p.get("id") != pid]
+
+        knowledge_query = _recent_conversation_query(room_state)
+        system_prompt = build_persona_prompt(
+            proj, room_state, others, knowledge_query=knowledge_query,
+        )
+        chat_messages = build_chat_messages(
+            room_state, system_prompt, current_persona_id=pid,
+        )
+        return await llm_text(
+            chat_messages,
+            provider=_provider,
+            model=_model,
+            base_url=_base_url,
+            max_concurrent=_max_concurrent,
+        )
+
+    try:
+        pm = start_play_mode(
+            room_id,
+            generate_fn=generate_fn,
+            style=body.style,
+            interval_ms=body.interval_ms,
+            max_rounds=body.max_rounds,
+        )
+        return {"ok": True, "play_mode": pm}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/rooms/{room_id}/play-mode/stop")
+async def stop_play(room_id: str, _key: str = Depends(require_api_key)):
+    """Stop Play Mode."""
+    pm = stop_play_mode(room_id)
+    return {"ok": True, "play_mode": pm}
+
+
+@router.post("/rooms/{room_id}/play-mode/pause")
+async def pause_play(room_id: str, _key: str = Depends(require_api_key)):
+    """Pause Play Mode (user wants to intervene)."""
+    try:
+        pm = pause_play_mode(room_id)
+        return {"ok": True, "play_mode": pm}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/rooms/{room_id}/play-mode/resume")
+async def resume_play(room_id: str, _key: str = Depends(require_api_key)):
+    """Resume paused Play Mode."""
+    try:
+        pm = resume_play_mode(room_id)
+        return {"ok": True, "play_mode": pm}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/rooms/{room_id}/play-mode/status")
+async def play_status(room_id: str, _key: str = Depends(require_api_key)):
+    """Get current Play Mode status."""
+    return get_play_status(room_id)
 
 
 # ── Shared Documents (Additive) ───────────────────────────────────────────

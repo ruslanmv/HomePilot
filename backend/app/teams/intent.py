@@ -186,11 +186,26 @@ def compute_intent(
     score = 0.15  # baseline "present in meeting"
     reason_parts: List[str] = []
 
-    # ── Name mention ──────────────────────────────────────────────
+    # ── Name mention in human message ─────────────────────────────
     name_lower = _normalize(display_name)
     if name_lower and name_lower in text:
         score += 0.35
         reason_parts.append("mentioned by name")
+
+    # ── Name mention in recent persona messages (inter-persona) ───
+    # If another persona just spoke and mentioned this persona by name,
+    # this persona should want to respond.
+    recent_persona_msgs = [
+        m for m in _last_messages(room, k=4)
+        if m.get("role") == "assistant" and m.get("sender_id") != persona_id
+    ]
+    for m in recent_persona_msgs:
+        m_text = _normalize(m.get("content", ""))
+        if name_lower and name_lower in m_text:
+            score += 0.30
+            sender = m.get("sender_name", "someone")
+            reason_parts.append(f"addressed by {sender}")
+            break  # one boost is enough
 
     # ── Question or decision request ──────────────────────────────
     question_words = ["should we", "what do", "decide", "choose", "priority", "opinion", "think"]
