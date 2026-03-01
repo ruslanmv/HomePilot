@@ -233,34 +233,44 @@ def _strip_multi_speaker_script(text: str) -> str:
 
 
 def _collapse_repetitions(text: str) -> str:
-    """Remove repeated sentences and paragraphs from LLM output.
+    """Remove repeated and near-repeated sentences from LLM output.
 
     Catches the common failure mode where the model loops and repeats
-    the same sentence or paragraph multiple times.
+    the same sentence or paragraph multiple times, including slight
+    variations (e.g. "the creamy custard" vs "the creamy cust and").
+
+    Uses word-overlap matching (>=80% shared words = near-duplicate).
     """
     if not text or len(text) < 50:
         return text
 
-    # Split into sentences and remove consecutive duplicates
-    # Use a pattern that splits on sentence boundaries
+    # Split into sentences
     sentences = re.split(r'(?<=[.!?])\s+', text)
     if len(sentences) < 2:
         return text
 
     deduped: list[str] = []
-    seen_normalized: set[str] = set()
+    seen_word_sets: list[set[str]] = []
 
     for sent in sentences:
-        # Normalize for comparison: lowercase, strip punctuation
         norm = re.sub(r'[^\w\s]', '', sent.lower()).strip()
         if len(norm) < 10:
-            # Too short to meaningfully compare — keep it
             deduped.append(sent)
             continue
-        if norm in seen_normalized:
-            logger.debug("Collapsed repeated sentence: %.60s...", sent)
+        words = set(norm.split())
+        # Fuzzy match: >=80% word overlap with any previously seen sentence
+        is_dup = False
+        for seen_words in seen_word_sets:
+            if not seen_words:
+                continue
+            overlap = len(words & seen_words) / max(len(words), len(seen_words))
+            if overlap >= 0.80:
+                is_dup = True
+                break
+        if is_dup:
+            logger.debug("Collapsed near-duplicate sentence: %.60s...", sent)
             continue
-        seen_normalized.add(norm)
+        seen_word_sets.append(words)
         deduped.append(sent)
 
     result = " ".join(deduped).strip()

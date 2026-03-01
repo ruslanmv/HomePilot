@@ -88,26 +88,21 @@ _REASONING_PHRASES = [
     "would be something like",
     "i would say",
 ]
-# Scoring-based indicators: each match adds 1 point, threshold ≥ 2 = reasoning
+# Scoring-based indicators: each match adds 1 point, threshold ≥ 3 = reasoning
+# Only clearly meta-commentary signals — removed natural-speech phrases
+# ("make sure", "let me", "because the", "keep it", etc.) that cause
+# false positives in cooking/planning/casual conversation.
 _REASONING_SIGNALS = [
     "the user",           # 3rd person reference
     "their message",      # 3rd person reference
     "the human",          # 3rd person reference
     "i should",           # self-instruction
     "i need to",          # self-instruction
-    "let me ",            # self-instruction (mid-text)
     "i'll respond",       # response planning
     "direct question",    # meta-commentary
     "a metaphor",         # meta-commentary about technique
     "double entendre",    # meta-commentary about technique
-    "alternatively",      # deliberation
-    "this means",         # analysis
-    "since they",         # analysis
-    "because the",        # analysis
-    "keep it",            # self-instruction
-    "make sure",          # self-instruction
-    "effectively",        # meta-evaluation
-    "appropriate",        # meta-evaluation
+    "since they",         # analysis (about 3rd person)
 ]
 
 
@@ -130,9 +125,9 @@ def _is_reasoning_text(text: str) -> bool:
     # Layer 2: Strong reasoning phrases (any single match = reasoning)
     if any(phrase in lower for phrase in _REASONING_PHRASES):
         return True
-    # Layer 3: Scoring — accumulate weak signals, threshold ≥ 2
+    # Layer 3: Scoring — accumulate weak signals, threshold ≥ 3
     score = sum(1 for signal in _REASONING_SIGNALS if signal in lower)
-    return score >= 2
+    return score >= 3
 
 
 # Regex to extract a quoted "actual response" from leaked reasoning.

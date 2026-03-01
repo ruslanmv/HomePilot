@@ -97,6 +97,7 @@ export interface MeetingRoomProps {
   // Room settings
   onChangeTurnMode?: (turnMode: 'reactive' | 'round-robin') => Promise<void>
   onSavePolicy?: (policy: any) => Promise<void>
+  onChangeEngine?: (engine: 'native' | 'crew', crewProfileId?: string, budgetLimit?: number) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -201,6 +202,7 @@ export function MeetingRoom({
   onResumePlayMode,
   onChangeTurnMode,
   onSavePolicy,
+  onChangeEngine,
 }: MeetingRoomProps) {
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
@@ -287,14 +289,16 @@ export function MeetingRoom({
     return assistants.length > 0 ? assistants[assistants.length - 1].sender_id : undefined
   }, [room.messages])
 
-  // ── Seat status ──
+  // ── Seat status (synced with TTS speaking state) ──
   const getSeatStatus = useCallback((personaId: string): SeatStatus => {
     if (mutedSet.has(personaId)) return 'muted'
+    // TTS is actively reading this persona's message — show speaking animation
+    if (speakingPersonaId === personaId) return 'speaking'
     if (runningTurn && intents[personaId]?.wants_to_speak) return 'speaking'
     if (runningTurn && lastSpeakerId === personaId) return 'speaking'
     if (handRaises.has(personaId) || intents[personaId]?.wants_to_speak) return 'wants-to-speak'
     return 'listening'
-  }, [intents, handRaises, mutedSet, runningTurn, lastSpeakerId])
+  }, [intents, handRaises, mutedSet, runningTurn, lastSpeakerId, speakingPersonaId])
 
   const seatClasses = (status: SeatStatus): string => {
     switch (status) {
@@ -1394,6 +1398,7 @@ export function MeetingRoom({
         onClose={() => setSettingsOpen(false)}
         onChangeTurnMode={onChangeTurnMode}
         onSave={onSavePolicy}
+        onChangeEngine={onChangeEngine}
       />
 
       {/* Voice settings drawer (additive) */}

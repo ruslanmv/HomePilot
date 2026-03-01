@@ -101,9 +101,13 @@ def _extract_keywords(text: str) -> List[str]:
 
 
 def _cooldown_penalty(room: Dict[str, Any], persona_id: str) -> float:
-    """Penalize if persona spoke recently."""
+    """Penalize if persona spoke recently.
+
+    With cooldown_turns=2 (play mode default), the penalty stays active
+    for 1 tick after speaking, giving other participants priority.
+    """
     cd = (room.get("cooldowns") or {}).get(persona_id, 0)
-    return 0.35 if cd and cd > 0 else 0.0
+    return 0.50 if cd and cd > 0 else 0.0
 
 
 def _redundancy_penalty(

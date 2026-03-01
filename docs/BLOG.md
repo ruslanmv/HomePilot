@@ -493,7 +493,16 @@ Your Personas are individuals. But real work happens in teams. HomePilot's **Tea
 3. **The orchestrator decides who speaks** — an intent scoring pipeline evaluates topic relevance, role match, cooldowns, and dominance to select the most relevant responders
 4. **Personas collaborate** — each one replies using its own personality, knowledge, and tools
 
-### Orchestration Modes
+### Orchestration Engines
+
+Teams now ships with **two orchestration engines** — pick the right one for each room:
+
+| Engine | When to Use |
+| :--- | :--- |
+| **Native** (default) | Open discussion — reactive intent scoring, round-robin, moderated, or free-form |
+| **Crew** (new) | Structured task collaboration — stage-based workflows with output contracts and checklist tracking |
+
+#### Native Engine Modes
 
 | Mode | Behavior |
 | :--- | :--- |
@@ -502,11 +511,22 @@ Your Personas are individuals. But real work happens in teams. HomePilot's **Tea
 | **Moderated** | Host calls on specific Personas |
 | **Free Form** | Low threshold — everyone can chime in |
 
+#### Crew Workflow Engine
+
+The **Crew engine** (`engine: "crew"`) is a CrewAI-inspired workflow engine that drives structured, stage-based collaboration. Instead of free-form conversation, personas work through a defined pipeline — like planning a date night, brainstorming product ideas, or writing content.
+
+**Three built-in profiles:**
+- **Task Planner** — 5 stages: Gather Requirements → Draft Plan → Budget Check → Write Message → Finalize
+- **Brainstorm** — 3 stages: Ideate → Evaluate → Final Recommendation
+- **Draft & Edit** — 3 stages: Outline → Full Draft → Edit & Polish
+
+Each stage has an **output contract** (required sections like PLAN, BUDGET, MESSAGE), **role-tag preference** for speaker selection, and **checklist heuristics** that auto-detect progress. Stop rules prevent loops: the workflow ends when the checklist is complete, novelty drops, or no progress is made. Fully additive — existing native modes are untouched.
+
 ### The Profile Panel
 
 Click any participant to open a slide-over character sheet showing real project data — class, role, stats (Depth, Versatility, Personality, Visual), skills, tools, wardrobe, and quest objective.
 
-> See [docs/TEAMS.md](TEAMS.md) for the full architecture diagram and scoring pipeline details.
+> See [docs/TEAMS.md](TEAMS.md) for the full architecture diagram, scoring pipeline, and Crew engine specification.
 
 ---
 
