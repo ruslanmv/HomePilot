@@ -8,7 +8,7 @@
  * Collapsible — when collapsed, hidden entirely.
  */
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useCallback } from 'react'
 import {
   X,
   ListChecks,
@@ -20,6 +20,11 @@ import {
   CheckCircle2,
   Circle,
   FileText,
+  Plus,
+  Pencil,
+  Trash2,
+  Check,
+  Target,
 } from 'lucide-react'
 import type { MeetingRoom, PersonaSummary, MeetingMessage, IntentSnapshot } from './types'
 import { DocumentsPanel } from './DocumentsPanel'
@@ -34,6 +39,8 @@ export interface MeetingRightRailProps {
   backendUrl: string
   apiKey?: string
   onClose: () => void
+  onUpdateAgenda?: (agenda: string[]) => Promise<void>
+  onUpdateTopic?: (topic: string) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -91,9 +98,18 @@ const TABS: Array<{ id: Tab; label: string; icon: React.ReactNode }> = [
 // Component
 // ---------------------------------------------------------------------------
 
-export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose }: MeetingRightRailProps) {
+export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, onUpdateAgenda, onUpdateTopic }: MeetingRightRailProps) {
   const [activeTab, setActiveTab] = useState<Tab>('agenda')
   const [checkedAgenda, setCheckedAgenda] = useState<Set<number>>(new Set())
+
+  // ── Agenda editing state ──
+  const [editingIdx, setEditingIdx] = useState<number | null>(null)
+  const [editText, setEditText] = useState('')
+  const [addingNew, setAddingNew] = useState(false)
+  const [newItemText, setNewItemText] = useState('')
+  // ── Topic editing state ──
+  const [editingTopic, setEditingTopic] = useState(false)
+  const [topicText, setTopicText] = useState(room.topic || '')
 
   const messages = room.messages || []
   const personaMap = useMemo(() => new Map(personas.map((p) => [p.id, p])), [personas])
@@ -154,43 +170,220 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose }
       <div className="flex-1 overflow-y-auto scrollbar-hide px-3 py-3">
         {/* ═══ AGENDA ═══ */}
         {activeTab === 'agenda' && (
-          <div className="space-y-1.5">
-            {(!room.agenda || room.agenda.length === 0) ? (
-              <div className="text-center py-6">
-                <ListChecks size={20} className="mx-auto text-white/10 mb-2" />
-                <p className="text-xs text-white/20">No agenda items set</p>
-                <p className="text-[10px] text-white/12 mt-1">Add agenda items when creating a session</p>
-              </div>
-            ) : (
-              room.agenda.map((item, i) => {
-                const done = checkedAgenda.has(i)
-                return (
+          <div className="space-y-3">
+            {/* ── Main Topic ── */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Target size={10} className="text-cyan-400/60" />
+                  <span className="text-[9px] font-semibold text-white/30 uppercase tracking-wider">Main Topic</span>
+                </div>
+                {onUpdateTopic && !editingTopic && (
                   <button
-                    key={i}
-                    onClick={() => toggleAgenda(i)}
-                    className={`w-full flex items-start gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
-                      done
-                        ? 'bg-emerald-500/[0.04] border border-emerald-500/10'
-                        : 'bg-white/[0.02] border border-white/[0.04] hover:border-white/[0.08]'
-                    }`}
+                    onClick={() => { setEditingTopic(true); setTopicText(room.topic || '') }}
+                    className="p-0.5 rounded hover:bg-white/5 text-white/20 hover:text-white/40 transition-colors"
+                    title="Edit topic"
                   >
-                    {done ? (
-                      <CheckCircle2 size={13} className="text-emerald-400/70 flex-shrink-0 mt-0.5 animate-agenda-check" />
-                    ) : (
-                      <Circle size={13} className="text-white/15 flex-shrink-0 mt-0.5" />
-                    )}
-                    <span className={`text-xs leading-relaxed ${done ? 'text-white/30 line-through' : 'text-white/55'}`}>
-                      {item}
-                    </span>
+                    <Pencil size={10} />
                   </button>
-                )
-              })
-            )}
-            {room.agenda && room.agenda.length > 0 && (
-              <div className="text-[9px] text-white/15 text-center mt-3">
-                {checkedAgenda.size}/{room.agenda.length} completed
+                )}
               </div>
-            )}
+              {editingTopic && onUpdateTopic ? (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={topicText}
+                    onChange={(e) => setTopicText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        onUpdateTopic(topicText.trim())
+                        setEditingTopic(false)
+                      }
+                      if (e.key === 'Escape') setEditingTopic(false)
+                    }}
+                    autoFocus
+                    placeholder="What is this discussion about?"
+                    className="flex-1 bg-white/[0.04] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/70 placeholder:text-white/20 focus:outline-none focus:border-cyan-500/30"
+                  />
+                  <button
+                    onClick={() => { onUpdateTopic(topicText.trim()); setEditingTopic(false) }}
+                    className="p-1 rounded hover:bg-cyan-500/10 text-cyan-400/60 hover:text-cyan-300 transition-colors"
+                  >
+                    <Check size={12} />
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className={`px-2.5 py-2 rounded-lg text-xs leading-relaxed ${
+                    room.topic
+                      ? 'bg-cyan-500/[0.04] border border-cyan-500/10 text-white/55'
+                      : 'bg-white/[0.02] border border-white/[0.04] text-white/20 italic'
+                  }`}
+                  onClick={onUpdateTopic ? () => { setEditingTopic(true); setTopicText(room.topic || '') } : undefined}
+                  style={onUpdateTopic ? { cursor: 'pointer' } : undefined}
+                >
+                  {room.topic || 'No topic set — click to add'}
+                </div>
+              )}
+            </div>
+
+            {/* ── Divider ── */}
+            <div className="border-t border-white/[0.04]" />
+
+            {/* ── Agenda Items ── */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[9px] font-semibold text-white/30 uppercase tracking-wider">Agenda Items</span>
+                {onUpdateAgenda && (
+                  <button
+                    onClick={() => { setAddingNew(true); setNewItemText('') }}
+                    className="p-0.5 rounded hover:bg-white/5 text-white/20 hover:text-white/40 transition-colors"
+                    title="Add agenda item"
+                  >
+                    <Plus size={12} />
+                  </button>
+                )}
+              </div>
+
+              {/* Add new item input */}
+              {addingNew && onUpdateAgenda && (
+                <div className="flex items-center gap-1.5 animate-msg-slide-in">
+                  <input
+                    type="text"
+                    value={newItemText}
+                    onChange={(e) => setNewItemText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && newItemText.trim()) {
+                        onUpdateAgenda([...(room.agenda || []), newItemText.trim()])
+                        setNewItemText('')
+                        setAddingNew(false)
+                      }
+                      if (e.key === 'Escape') setAddingNew(false)
+                    }}
+                    autoFocus
+                    placeholder="New agenda item..."
+                    className="flex-1 bg-white/[0.04] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/70 placeholder:text-white/20 focus:outline-none focus:border-cyan-500/30"
+                  />
+                  <button
+                    onClick={() => {
+                      if (newItemText.trim()) {
+                        onUpdateAgenda([...(room.agenda || []), newItemText.trim()])
+                        setNewItemText('')
+                        setAddingNew(false)
+                      }
+                    }}
+                    className="p-1 rounded hover:bg-cyan-500/10 text-cyan-400/60 hover:text-cyan-300 transition-colors"
+                  >
+                    <Check size={12} />
+                  </button>
+                </div>
+              )}
+
+              {(!room.agenda || room.agenda.length === 0) && !addingNew ? (
+                <div className="text-center py-4">
+                  <ListChecks size={18} className="mx-auto text-white/10 mb-1.5" />
+                  <p className="text-[10px] text-white/20">No agenda items</p>
+                  {onUpdateAgenda && (
+                    <button
+                      onClick={() => { setAddingNew(true); setNewItemText('') }}
+                      className="mt-2 text-[10px] text-cyan-400/50 hover:text-cyan-300/70 transition-colors"
+                    >
+                      + Add first item
+                    </button>
+                  )}
+                </div>
+              ) : (
+                (room.agenda || []).map((item, i) => {
+                  const done = checkedAgenda.has(i)
+                  const isEditing = editingIdx === i
+
+                  if (isEditing && onUpdateAgenda) {
+                    return (
+                      <div key={i} className="flex items-center gap-1.5 animate-msg-slide-in">
+                        <input
+                          type="text"
+                          value={editText}
+                          onChange={(e) => setEditText(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && editText.trim()) {
+                              const updated = [...(room.agenda || [])]
+                              updated[i] = editText.trim()
+                              onUpdateAgenda(updated)
+                              setEditingIdx(null)
+                            }
+                            if (e.key === 'Escape') setEditingIdx(null)
+                          }}
+                          autoFocus
+                          className="flex-1 bg-white/[0.04] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white/70 focus:outline-none focus:border-cyan-500/30"
+                        />
+                        <button
+                          onClick={() => {
+                            if (editText.trim()) {
+                              const updated = [...(room.agenda || [])]
+                              updated[i] = editText.trim()
+                              onUpdateAgenda(updated)
+                              setEditingIdx(null)
+                            }
+                          }}
+                          className="p-1 rounded hover:bg-cyan-500/10 text-cyan-400/60 hover:text-cyan-300 transition-colors"
+                        >
+                          <Check size={12} />
+                        </button>
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div
+                      key={i}
+                      className={`group w-full flex items-start gap-2 px-2.5 py-2 rounded-lg text-left transition-all ${
+                        done
+                          ? 'bg-emerald-500/[0.04] border border-emerald-500/10'
+                          : 'bg-white/[0.02] border border-white/[0.04] hover:border-white/[0.08]'
+                      }`}
+                    >
+                      <button onClick={() => toggleAgenda(i)} className="flex-shrink-0 mt-0.5">
+                        {done ? (
+                          <CheckCircle2 size={13} className="text-emerald-400/70 animate-agenda-check" />
+                        ) : (
+                          <Circle size={13} className="text-white/15" />
+                        )}
+                      </button>
+                      <span className={`flex-1 text-xs leading-relaxed ${done ? 'text-white/30 line-through' : 'text-white/55'}`}>
+                        {item}
+                      </span>
+                      {/* Edit/Remove controls */}
+                      {onUpdateAgenda && (
+                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => { setEditingIdx(i); setEditText(item) }}
+                            className="p-0.5 rounded hover:bg-white/5 text-white/15 hover:text-white/40 transition-colors"
+                            title="Edit"
+                          >
+                            <Pencil size={10} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              const updated = (room.agenda || []).filter((_, idx) => idx !== i)
+                              onUpdateAgenda(updated)
+                            }}
+                            className="p-0.5 rounded hover:bg-red-500/10 text-white/15 hover:text-red-300/60 transition-colors"
+                            title="Remove"
+                          >
+                            <Trash2 size={10} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+              {room.agenda && room.agenda.length > 0 && (
+                <div className="text-[9px] text-white/15 text-center mt-2">
+                  {checkedAgenda.size}/{room.agenda.length} completed
+                </div>
+              )}
+            </div>
           </div>
         )}
 

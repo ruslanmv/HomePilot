@@ -75,7 +75,7 @@ const DEFAULT_POLICY: TeamsRoomPolicy = {
   view_layout: 'oval',
   view_show_labels: true,
   view_show_animations: true,
-  memory_depth: 20,
+  memory_depth: 50,
 }
 
 // ---------------------------------------------------------------------------
@@ -582,10 +582,10 @@ function AdvancedSection({ draft, onChange }: { draft: TeamsRoomPolicy; onChange
     <>
       <SliderField
         label="Memory Depth"
-        hint="Messages in context window"
-        value={draft.memory_depth ?? 20}
+        hint="Messages each participant reads from chat history"
+        value={draft.memory_depth ?? 50}
         min={5}
-        max={100}
+        max={200}
         step={5}
         onChange={(v) => onChange('memory_depth', v)}
       />

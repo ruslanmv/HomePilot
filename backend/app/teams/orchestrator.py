@@ -60,6 +60,8 @@ def ensure_defaults(room: Dict[str, Any]) -> Dict[str, Any]:
     p.setdefault("redundancy_threshold", 0.7)
     p.setdefault("dominance_lookback", 10)
     p.setdefault("dominance_penalty", 0.15)
+    # Context depth (how many messages each persona sees)
+    p.setdefault("memory_depth", 50)
 
     room.setdefault("round", 0)
     room.setdefault("speaker_queue", [])
@@ -374,7 +376,26 @@ async def run_reactive_step(
     for pid in speakers:
         text = (await generate_fn(pid, room)).strip()
         if not text:
-            continue
+            # Retry once: inject a temporary nudge message so the LLM
+            # has fresh input to respond to, then clean up.
+            logger.warning("Empty response from %s, retrying with nudge", pid)
+            nudge_id = str(uuid.uuid4())
+            nudge = {
+                "id": nudge_id,
+                "sender_id": "facilitator",
+                "sender_name": "Facilitator",
+                "content": "Please share your perspective on the discussion so far.",
+                "role": "user",
+                "tools_used": [],
+                "timestamp": _now(),
+            }
+            room.setdefault("messages", []).append(nudge)
+            text = (await generate_fn(pid, room)).strip()
+            # Remove the temporary nudge (keep transcript clean)
+            room["messages"] = [m for m in room.get("messages", []) if m.get("id") != nudge_id]
+            if not text:
+                logger.warning("Empty response from %s after retry, skipping", pid)
+                continue
 
         display_name = _display_name_for(pid, participants)
         msg = {
@@ -427,3 +448,83 @@ def _display_name_for(
         if p["persona_id"] == persona_id:
             return p.get("display_name", persona_id)
     return persona_id
+
+
+# ── Preview (dry-run, no side effects) ───────────────────────────────────
+
+
+def preview_next_turn(
+    room_id: str,
+    *,
+    trigger_message: str,
+    participants: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Preview who would speak next WITHOUT executing anything.
+    Returns explainable candidate list (BG3-style initiative order).
+
+    No side effects: does not modify room state, messages, or cooldowns.
+    """
+    room = rooms.get_room(room_id)
+    if not room:
+        raise ValueError("Room not found")
+
+    # Work on a shallow copy to avoid side effects
+    import copy
+    room = copy.deepcopy(room)
+    ensure_defaults(room)
+
+    # Compute intents (no persistence)
+    intents = compute_all_intents(room, participants, trigger_message)
+
+    # Build candidate list with scores + reasons
+    hrs_set = set(room.get("hand_raises") or [])
+    called = room.get("called_on")
+
+    candidates = []
+    for intent in intents:
+        pid = intent.persona_id
+        reasons: List[str] = []
+        if called and pid == called:
+            reasons.append("called_on")
+        if pid in hrs_set:
+            reasons.append("hand_raise")
+        if intent.wants_to_speak:
+            reasons.append("wants_to_speak")
+        if intent.reason and intent.reason != "listening":
+            reasons.extend(intent.reason.split(", "))
+
+        status = "called_on" if (called and pid == called) else \
+                 "hand_raise" if pid in hrs_set else \
+                 "auto" if intent.wants_to_speak else "waiting"
+
+        candidates.append({
+            "persona_id": pid,
+            "display_name": _display_name_for(pid, participants),
+            "score": intent.confidence,
+            "urgency": intent.urgency,
+            "intent_type": intent.intent_type,
+            "reasons": list(set(reasons)),
+            "status": status,
+        })
+
+    # Sort: called_on first, then hand_raisers, then by score
+    candidates.sort(
+        key=lambda c: (
+            c["status"] == "called_on",
+            c["status"] == "hand_raise",
+            c["score"],
+        ),
+        reverse=True,
+    )
+
+    # Determine who would be selected
+    selected = select_speakers(room, intents, participants)
+
+    return {
+        "candidates": candidates,
+        "selected": selected,
+        "selected_names": [_display_name_for(pid, participants) for pid in selected],
+        "turn_mode": room.get("turn_mode", "reactive"),
+        "round": room.get("round", 0),
+    }

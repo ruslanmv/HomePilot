@@ -17,6 +17,19 @@ except ImportError:
     Settings = None
     print("Warning: chromadb package not installed. Install with: pip install chromadb")
 
+# Optional document format support (additive)
+try:
+    import docx as _docx_lib  # python-docx
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
+try:
+    import openpyxl as _openpyxl_lib
+    XLSX_AVAILABLE = True
+except ImportError:
+    XLSX_AVAILABLE = False
+
 from .config import UPLOAD_DIR
 
 # Export for use in other modules
@@ -204,6 +217,37 @@ def extract_text_from_file(file_path: Path) -> str:
                     return text
             except ImportError:
                 return f"[PDF file: {file_path.name} - PyPDF2 not installed for text extraction]"
+
+        elif ext == '.docx':
+            if not DOCX_AVAILABLE:
+                return f"[DOCX file: {file_path.name} - python-docx not installed. pip install python-docx]"
+            doc = _docx_lib.Document(str(file_path))
+            parts: list[str] = []
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    parts.append(para.text)
+            # Also extract text from tables
+            for table in doc.tables:
+                for row in table.rows:
+                    cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if cells:
+                        parts.append(" | ".join(cells))
+            return "\n".join(parts)
+
+        elif ext == '.xlsx':
+            if not XLSX_AVAILABLE:
+                return f"[XLSX file: {file_path.name} - openpyxl not installed. pip install openpyxl]"
+            wb = _openpyxl_lib.load_workbook(str(file_path), read_only=True, data_only=True)
+            parts: list[str] = []
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                parts.append(f"--- Sheet: {sheet_name} ---")
+                for row in ws.iter_rows(values_only=True):
+                    cells = [str(c) for c in row if c is not None]
+                    if cells:
+                        parts.append(" | ".join(cells))
+            wb.close()
+            return "\n".join(parts)
 
         else:
             return f"[Unsupported file type: {ext}]"

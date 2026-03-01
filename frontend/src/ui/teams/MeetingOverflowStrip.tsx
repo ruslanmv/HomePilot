@@ -61,7 +61,7 @@ function getSeatStatus(
 ): SeatStatus {
   if (mutedSet.has(personaId)) return 'muted'
   if (runningTurn && intents[personaId]?.wants_to_speak) return 'speaking'
-  if (lastSpeakerId === personaId) return 'speaking'
+  if (runningTurn && lastSpeakerId === personaId) return 'speaking'
   if (handRaises.has(personaId) || intents[personaId]?.wants_to_speak) return 'wants-to-speak'
   return 'listening'
 }
