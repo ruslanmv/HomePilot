@@ -39,11 +39,16 @@ import {
   VolumeX,
   ListChecks,
   Play,
+  Pause,
+  Square,
   ChevronDown,
   Pin,
   X,
   Settings,
   Volume2,
+  Gamepad2,
+  Eye,
+  Bot,
 } from 'lucide-react'
 import type { MeetingRoom as MeetingRoomT, MeetingMessage, PersonaSummary, IntentSnapshot, HandRaiseMeta } from './types'
 import { MeetingLeftRail } from './MeetingLeftRail'
@@ -52,8 +57,10 @@ import { MeetingOverflowStrip } from './MeetingOverflowStrip'
 import { PersonaProfilePanel } from './PersonaProfilePanel'
 import { TeamsSettingsDrawer } from './TeamsSettingsDrawer'
 import { MeetingVoiceSettings } from './MeetingVoiceSettings'
+import { MeetingPlayMode } from './MeetingPlayMode'
 import { usePersonaVoices } from './usePersonaVoices'
 import { useMeetingTts } from './useMeetingTts'
+import type { PlayModeStyle, PlayModeState } from './types'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -77,6 +84,19 @@ export interface MeetingRoomProps {
   onCallOn?: (personaId: string) => Promise<void>
   onToggleHandRaise?: (personaId: string) => Promise<void>
   onToggleMute?: (personaId: string) => Promise<void>
+  onPreviewTurn?: () => Promise<any>
+  onRunTurnContinue?: () => Promise<void>
+  // Agenda / Topic editing
+  onUpdateAgenda?: (agenda: string[]) => Promise<void>
+  onUpdateTopic?: (topic: string) => Promise<void>
+  // Play Mode
+  onStartPlayMode?: (opts: { style: PlayModeStyle; interval_ms: number; max_rounds: number }) => Promise<void>
+  onStopPlayMode?: () => Promise<void>
+  onPausePlayMode?: () => Promise<void>
+  onResumePlayMode?: () => Promise<void>
+  // Room settings
+  onChangeTurnMode?: (turnMode: 'reactive' | 'round-robin') => Promise<void>
+  onSavePolicy?: (policy: any) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -171,10 +191,30 @@ export function MeetingRoom({
   onCallOn,
   onToggleHandRaise,
   onToggleMute,
+  onPreviewTurn,
+  onRunTurnContinue,
+  onUpdateAgenda,
+  onUpdateTopic,
+  onStartPlayMode,
+  onStopPlayMode,
+  onPausePlayMode,
+  onResumePlayMode,
+  onChangeTurnMode,
+  onSavePolicy,
 }: MeetingRoomProps) {
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
   const transcriptRef = useRef<HTMLDivElement>(null)
+
+  // ── Initiative preview ──
+  const [turnPreview, setTurnPreview] = useState<{
+    candidates: Array<{ persona_id: string; display_name: string; score: number; status: string; reasons: string[]; intent_type: string }>
+    selected: string[]
+    selected_names: string[]
+    turn_mode: string
+    round: number
+  } | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   // ── Panel state ──
   const [leftRailOpen, setLeftRailOpen] = useState(false)
@@ -186,7 +226,7 @@ export function MeetingRoom({
 
   // ── Per-persona voice + meeting TTS ──
   const { getPersonaVoice, setPersonaVoice, map: personaVoiceMap } = usePersonaVoices()
-  const { meetingTtsEnabled, setMeetingTtsEnabled, speakingPersonaId, stopSpeaking } = useMeetingTts(
+  const { meetingTtsEnabled, setMeetingTtsEnabled, speakingPersonaId, stopSpeaking, revealedIds } = useMeetingTts(
     room.messages || [],
     getPersonaVoice,
   )
@@ -251,7 +291,7 @@ export function MeetingRoom({
   const getSeatStatus = useCallback((personaId: string): SeatStatus => {
     if (mutedSet.has(personaId)) return 'muted'
     if (runningTurn && intents[personaId]?.wants_to_speak) return 'speaking'
-    if (lastSpeakerId === personaId) return 'speaking'
+    if (runningTurn && lastSpeakerId === personaId) return 'speaking'
     if (handRaises.has(personaId) || intents[personaId]?.wants_to_speak) return 'wants-to-speak'
     return 'listening'
   }, [intents, handRaises, mutedSet, runningTurn, lastSpeakerId])
@@ -325,6 +365,18 @@ export function MeetingRoom({
   )
 
   const allSeats = useMemo(() => seatPositions(1 + visiblePersonas.length), [visiblePersonas.length])
+
+  // Scale avatar size inversely with participant count — bigger when fewer people
+  const totalSeats = 1 + visiblePersonas.length
+  const avatarSize = totalSeats <= 2 ? 'w-44 h-44 lg:w-52 lg:h-52'
+    : totalSeats <= 3 ? 'w-40 h-40 lg:w-48 lg:h-48'
+    : totalSeats <= 4 ? 'w-36 h-36 lg:w-40 lg:h-40'
+    : 'w-32 h-32 lg:w-36 lg:h-36'
+  const hostAvatarSize = totalSeats <= 2 ? 'w-28 h-28 lg:w-32 lg:h-32'
+    : totalSeats <= 3 ? 'w-24 h-24 lg:w-28 lg:h-28'
+    : totalSeats <= 4 ? 'w-20 h-20 lg:w-24 lg:h-24'
+    : 'w-18 h-18 lg:w-20 lg:h-20'
+  const hostIconSize = totalSeats <= 3 ? 36 : 28
 
   // ── Newly joined animation ──
   useEffect(() => {
@@ -459,14 +511,45 @@ export function MeetingRoom({
     promoteToSeat(personaId)
   }, [room.participant_ids, onAddParticipant, promoteToSeat])
 
-  // ── Message grouping: detect if previous message was from same sender ──
-  const messages = room.messages || []
+  // ── Auto-fetch initiative preview when messages change ──
+  useEffect(() => {
+    if (!onPreviewTurn || runningTurn || room.participant_ids.length === 0) return
+    let cancelled = false
+    const fetchPreview = async () => {
+      try {
+        const preview = await onPreviewTurn()
+        if (!cancelled) setTurnPreview(preview)
+      } catch { /* ignore */ }
+    }
+    fetchPreview()
+    return () => { cancelled = true }
+  }, [onPreviewTurn, room.messages?.length, room.participant_ids.length, runningTurn])
+
+  // ── Message filtering: TTS reveal gating + facilitator filtering ──
+  const allMessages = room.messages || []
+  const messages = allMessages.filter((msg) => {
+    // Hide facilitator debug messages unless play mode has show_facilitator enabled
+    if (msg.sender_id === 'facilitator') {
+      return room.play_mode?.show_facilitator ?? false
+    }
+    // Gate assistant messages behind TTS reveal queue
+    if (msg.role === 'assistant' && meetingTtsEnabled && !revealedIds.has(msg.id)) {
+      return false
+    }
+    return true
+  })
+  // Deduplicate: skip consecutive messages from the same sender with identical content
+  .filter((msg, idx, arr) => {
+    if (idx === 0) return true
+    const prev = arr[idx - 1]
+    return !(prev.sender_id === msg.sender_id && prev.content === msg.content)
+  })
 
   return (
     <div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col">
 
       {/* ═══════════════════════ HEADER ═══════════════════════ */}
-      <div className="flex-shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-white/[0.06] bg-black/50 backdrop-blur-sm">
+      <div className="flex-shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-white/[0.06] bg-black/50 backdrop-blur-sm relative z-30">
         {/* Left: back + room info */}
         <div className="flex items-center gap-3">
           <button onClick={onBack} className="p-1.5 rounded-lg hover:bg-white/5 text-white/40 hover:text-white/60 transition-colors">
@@ -484,7 +567,41 @@ export function MeetingRoom({
                 <span className={`w-1.5 h-1.5 rounded-full ${runningTurn ? 'bg-emerald-400 animate-glow-pulse' : 'bg-white/20'}`} />
                 {runningTurn ? 'Live' : 'Idle'}
               </span>
+              {/* Play Mode consolidated status pill */}
+              {room.play_mode?.enabled && (
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-semibold ${
+                  room.play_mode.paused_by_user
+                    ? 'bg-amber-500/15 text-amber-300 border border-amber-500/20'
+                    : 'bg-purple-500/15 text-purple-300 border border-purple-500/20'
+                }`}>
+                  <Gamepad2 size={9} />
+                  {room.play_mode.paused_by_user ? 'Paused' : 'Play'}
+                  <span className="text-[8px] opacity-60">·</span>
+                  <span className="text-[8px] opacity-60 font-mono">R{room.play_mode.round_count}/{room.play_mode.max_rounds || '∞'}</span>
+                  {/* Next speaker from preview */}
+                  {turnPreview?.selected_names?.[0] && !room.play_mode.paused_by_user && (
+                    <>
+                      <span className="text-[8px] opacity-40">·</span>
+                      <span className="text-[8px] opacity-70">Next: {turnPreview.selected_names[0]}</span>
+                    </>
+                  )}
+                  {/* Mini progress bar (hidden when infinite) */}
+                  {(room.play_mode.max_rounds || 0) > 0 && (
+                    <span className="w-8 h-1 rounded-full bg-white/[0.08] overflow-hidden inline-flex">
+                      <span
+                        className="h-full rounded-full bg-purple-400/50 transition-all duration-500"
+                        style={{ width: `${Math.min(100, ((room.play_mode.round_count || 0) / room.play_mode.max_rounds) * 100)}%` }}
+                      />
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
+            {room.topic && (
+              <div className="text-[10px] text-cyan-300/40 mt-0.5 max-w-[320px] truncate" title={room.topic}>
+                {room.topic}
+              </div>
+            )}
             <div className="text-[10px] text-white/30 flex items-center gap-2 mt-0.5">
               <span className="flex items-center gap-1">
                 <Users size={9} />
@@ -513,6 +630,43 @@ export function MeetingRoom({
             </div>
           </div>
         </div>
+
+        {/* Center: Initiative bar (BG3-style next speakers preview) */}
+        {turnPreview && turnPreview.candidates.length > 0 && !runningTurn && (
+          <div className="flex items-center gap-1.5 px-2">
+            <span className="text-[8px] text-white/20 font-medium uppercase tracking-wider mr-1">Next:</span>
+            {turnPreview.candidates.slice(0, 4).map((c) => {
+              const isSelected = turnPreview.selected.includes(c.persona_id)
+              const persona = personaMap.get(c.persona_id)
+              const avatarUrl = persona ? resolveAvatarUrl(persona, backendUrl) : null
+              return (
+                <div
+                  key={c.persona_id}
+                  className={`flex items-center gap-1 px-1.5 py-1 rounded-full text-[9px] transition-all ${
+                    isSelected
+                      ? 'bg-cyan-500/10 border border-cyan-500/20 text-cyan-300/70'
+                      : 'bg-white/[0.02] border border-white/[0.04] text-white/30'
+                  }`}
+                  title={`${c.display_name}: ${(c.score * 100).toFixed(0)}% — ${c.reasons.join(', ')}`}
+                >
+                  <div className="w-4 h-4 rounded-full overflow-hidden flex-shrink-0">
+                    {avatarUrl ? (
+                      <img src={avatarUrl} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full bg-white/5 flex items-center justify-center text-[7px] text-white/20">
+                        {c.display_name[0]?.toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <span className="max-w-[48px] truncate">{c.display_name.split(' ')[0]}</span>
+                  {c.status === 'called_on' && <Mic size={7} className="text-cyan-400/60" />}
+                  {c.status === 'hand_raise' && <Hand size={7} className="text-amber-300/60" />}
+                  {isSelected && c.status === 'auto' && <span className="w-1 h-1 rounded-full bg-cyan-400/40" />}
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         {/* Right: toolbar */}
         <div className="flex items-center gap-2">
@@ -554,6 +708,18 @@ export function MeetingRoom({
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-glow-pulse" />
             )}
           </button>
+          {/* Play Mode button */}
+          {onStartPlayMode && onStopPlayMode && onPausePlayMode && onResumePlayMode && (
+            <MeetingPlayMode
+              playMode={room.play_mode}
+              participantCount={room.participant_ids.length}
+              turnMode={room.turn_mode}
+              onStart={onStartPlayMode}
+              onStop={onStopPlayMode}
+              onPause={onPausePlayMode}
+              onResume={onResumePlayMode}
+            />
+          )}
           <button
             onClick={() => setSettingsOpen(!settingsOpen)}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
@@ -629,8 +795,8 @@ export function MeetingRoom({
             {allSeats.length > 0 && (
               <div className="absolute -translate-x-1/2 -translate-y-1/2" style={{ left: `${allSeats[0].x}%`, top: `${allSeats[0].y}%` }}>
                 <div className="flex flex-col items-center gap-1">
-                  <div className="w-28 h-28 lg:w-32 lg:h-32 rounded-full bg-cyan-500/15 border-2 border-cyan-500/40 flex items-center justify-center shadow-lg shadow-cyan-500/10 transition-all duration-300">
-                    <User size={42} className="text-cyan-300" />
+                  <div className={`${hostAvatarSize} rounded-full bg-cyan-500/15 border-2 border-cyan-500/40 flex items-center justify-center shadow-lg shadow-cyan-500/10 transition-all duration-300`}>
+                    <User size={hostIconSize} className="text-cyan-300" />
                   </div>
                   <span className="text-sm text-cyan-300/60 font-semibold">You (Host)</span>
                   <span className="text-xs text-cyan-300/30">Speaking</span>
@@ -649,6 +815,7 @@ export function MeetingRoom({
               const isNewlyJoined = newlyJoined.has(p.id)
               const isSwapped = swappedId === p.id
               const isPinned = pinnedIds.has(p.id)
+              const isNextSpeaker = room.play_mode?.enabled && !room.play_mode?.paused_by_user && turnPreview?.selected?.[0] === p.id
 
               return (
                 <div
@@ -661,10 +828,14 @@ export function MeetingRoom({
                     {status === 'speaking' && (
                       <div className="absolute inset-0 -m-4 rounded-full bg-emerald-400/10 blur-xl animate-glow-pulse pointer-events-none" />
                     )}
+                    {/* Next speaker glow (play mode only) */}
+                    {isNextSpeaker && status !== 'speaking' && (
+                      <div className="absolute inset-0 -m-3 rounded-full bg-purple-400/10 blur-lg animate-glow-pulse pointer-events-none" />
+                    )}
 
                     {/* Avatar */}
                     <div
-                      className={`w-32 h-32 lg:w-36 lg:h-36 rounded-full border-2 overflow-hidden flex items-center justify-center transition-all duration-300 cursor-pointer ${seatClasses(status)}`}
+                      className={`${avatarSize} rounded-full border-2 overflow-hidden flex items-center justify-center transition-all duration-300 cursor-pointer ${isNextSpeaker && status !== 'speaking' ? 'border-purple-400/50 shadow-md shadow-purple-500/20' : seatClasses(status)}`}
                       onClick={() => setProfilePersonaId(p.id)}
                       onDoubleClick={() => togglePin(p.id)}
                       title={`${p.name} — click for profile · double-click to ${isPinned ? 'unpin' : 'pin'}`}
@@ -691,8 +862,8 @@ export function MeetingRoom({
                     </span>
 
                     {/* Status text label with reason tooltip */}
-                    <span className={`text-xs ${statusLabelClass(status)} cursor-default`} title={intent?.reason || ''}>
-                      {STATUS_LABEL[status]}
+                    <span className={`text-xs ${isNextSpeaker && status !== 'speaking' ? 'text-purple-300/70' : statusLabelClass(status)} cursor-default`} title={intent?.reason || ''}>
+                      {isNextSpeaker && status !== 'speaking' ? 'Next up' : STATUS_LABEL[status]}
                     </span>
 
                     {/* Status badge + intent type */}
@@ -797,7 +968,8 @@ export function MeetingRoom({
 
               {/* Messages with grouping */}
               {messages.map((msg, idx) => {
-                const isHuman = msg.role === 'user'
+                const isHuman = msg.role === 'user' && msg.sender_id === 'human'
+                const isFacilitator = msg.sender_id === 'facilitator' || msg.sender_id === 'system'
                 const persona = personaMap.get(msg.sender_id)
                 const avatarUrl = persona ? resolveAvatarUrl(persona, backendUrl) : null
                 const isNew = newMsgIds.has(msg.id)
@@ -807,6 +979,24 @@ export function MeetingRoom({
                 const isGrouped = prevMsg
                   && prevMsg.sender_id === msg.sender_id
                   && (msg.timestamp - prevMsg.timestamp) < 120
+
+                // Facilitator/system messages: render as subtle centered notices
+                if (isFacilitator) {
+                  return (
+                    <div key={msg.id} className={`flex justify-center ${isNew ? 'animate-msg-slide-in' : ''}`}>
+                      <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-purple-500/[0.06] border border-purple-500/[0.08]">
+                        <Bot size={12} className="text-purple-400/50" />
+                        <span className="text-[11px] text-purple-300/40 leading-relaxed">
+                          {msg.content
+                            .replace(/<think>[\s\S]*?<\/think>/g, '')
+                            .replace(/<\/think>\s*/g, '')
+                            .replace(/^\[.*?\]:\s*/, '')
+                            .trim()}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                }
 
                 return (
                   <div
@@ -894,66 +1084,229 @@ export function MeetingRoom({
             personas={personas}
             backendUrl={backendUrl}
             onClose={() => setRightRailOpen(false)}
+            onUpdateAgenda={onUpdateAgenda}
+            onUpdateTopic={onUpdateTopic}
           />
         )}
       </div>
 
       {/* ═══════════════════════ INPUT BAR (Chat-style pill) ═══════════════════════ */}
       <div className="flex-shrink-0 px-4 py-3 border-t border-white/[0.04]">
-        {/* Meeting action buttons row */}
+
+        {/* Meeting action buttons row — switches between manual and play mode controls */}
         <div className="flex items-center justify-center gap-2 mb-2.5">
-          {/* Call On dropdown */}
-          {onCallOn && participantPersonas.length > 0 && (
-            <div className="relative">
+
+          {/* ── PLAY MODE ACTIVE: compact control strip ── */}
+          {room.play_mode?.enabled ? (
+            <>
+              {/* Pause / Resume */}
               <button
-                onClick={() => setCallOnOpen(!callOnOpen)}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium transition-all ${
-                  callOnOpen
-                    ? 'bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-500/30'
-                    : 'bg-white/[0.04] text-white/45 hover:text-white/65 ring-1 ring-white/[0.08] hover:ring-white/15'
+                onClick={() => {
+                  if (room.play_mode?.paused_by_user) onResumePlayMode?.()
+                  else onPausePlayMode?.()
+                }}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium transition-all ring-1 ${
+                  room.play_mode.paused_by_user
+                    ? 'bg-emerald-500/15 text-emerald-300 ring-emerald-500/30 hover:bg-emerald-500/25'
+                    : 'bg-amber-500/15 text-amber-300 ring-amber-500/30 hover:bg-amber-500/25'
                 }`}
+                title={room.play_mode.paused_by_user ? 'Resume' : 'Pause'}
               >
-                <Mic size={14} />
-                Call On
-                <ChevronDown size={11} />
+                {room.play_mode.paused_by_user ? <Play size={13} /> : <Pause size={13} />}
+                {room.play_mode.paused_by_user ? 'Resume' : 'Pause'}
               </button>
-              {callOnOpen && (
-                <div className="absolute bottom-full left-0 mb-1.5 w-52 py-1.5 rounded-xl bg-[#111] border border-white/[0.08] shadow-2xl z-50 animate-msg-slide-in">
-                  {participantPersonas.filter((p) => !mutedSet.has(p.id)).map((p) => (
-                    <button
-                      key={p.id}
-                      onClick={() => { onCallOn(p.id); setCallOnOpen(false) }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] transition-colors text-left"
-                    >
-                      <div className="w-10 h-10 rounded-full overflow-hidden bg-white/5 border border-white/10">
-                        {resolveAvatarUrl(p, backendUrl) ? (
-                          <img src={resolveAvatarUrl(p, backendUrl)!} alt={p.name} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-[10px] text-white/30 font-bold">{p.name[0]?.toUpperCase()}</div>
-                        )}
-                      </div>
-                      <span className="text-xs text-white/60">{p.name}</span>
-                    </button>
-                  ))}
+
+              {/* Stop */}
+              <button
+                onClick={() => onStopPlayMode?.()}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium transition-all bg-red-500/10 text-red-300 ring-1 ring-red-500/20 hover:bg-red-500/20"
+                title="End Play Mode"
+              >
+                <Square size={13} />
+                End
+              </button>
+
+              {/* Observer indicator */}
+              <span className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs text-purple-300/60 bg-purple-500/[0.06] ring-1 ring-purple-500/15">
+                <Eye size={12} />
+                Observing
+              </span>
+            </>
+          ) : (
+            <>
+              {/* ── MANUAL MODE: Call On + Run Turn ── */}
+
+              {/* Call On dropdown */}
+              {onCallOn && participantPersonas.length > 0 && (
+                <div className="relative">
+                  <button
+                    onClick={() => setCallOnOpen(!callOnOpen)}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium transition-all ${
+                      callOnOpen
+                        ? 'bg-cyan-500/15 text-cyan-300 ring-1 ring-cyan-500/30'
+                        : 'bg-white/[0.04] text-white/45 hover:text-white/65 ring-1 ring-white/[0.08] hover:ring-white/15'
+                    }`}
+                  >
+                    <Mic size={14} />
+                    Call On
+                    <ChevronDown size={11} />
+                  </button>
+                  {callOnOpen && (
+                    <div className="absolute bottom-full left-0 mb-1.5 w-52 py-1.5 rounded-xl bg-[#111] border border-white/[0.08] shadow-2xl z-50 animate-msg-slide-in">
+                      {participantPersonas.filter((p) => !mutedSet.has(p.id)).map((p) => (
+                        <button
+                          key={p.id}
+                          onClick={() => { onCallOn(p.id); setCallOnOpen(false) }}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-white/[0.04] transition-colors text-left"
+                        >
+                          <div className="w-10 h-10 rounded-full overflow-hidden bg-white/5 border border-white/10">
+                            {resolveAvatarUrl(p, backendUrl) ? (
+                              <img src={resolveAvatarUrl(p, backendUrl)!} alt={p.name} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-[10px] text-white/30 font-bold">{p.name[0]?.toUpperCase()}</div>
+                            )}
+                          </div>
+                          <span className="text-xs text-white/60">{p.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
 
-          {/* Run Turn button */}
-          <button
-            onClick={() => { if (onCallOn && participantPersonas.length > 0) onCallOn(participantPersonas[0].id) }}
-            disabled={runningTurn}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium transition-all ${
-              runningTurn
-                ? 'bg-white/[0.02] text-white/10 cursor-default'
-                : 'bg-white/[0.04] text-white/45 hover:text-white/65 ring-1 ring-white/[0.08] hover:ring-white/15'
-            }`}
-            title="Trigger next persona turn"
-          >
-            <Play size={13} />
-            Run Turn
-          </button>
+              {/* Run Turn button with initiative preview */}
+              <div className="relative">
+                <div className="flex items-center">
+                  <button
+                    onClick={async () => {
+                      if (onRunTurnContinue) await onRunTurnContinue()
+                      else if (onCallOn && participantPersonas.length > 0) await onCallOn(participantPersonas[0].id)
+                    }}
+                    disabled={runningTurn || sending}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-l-full text-xs font-medium transition-all ${
+                      runningTurn
+                        ? 'bg-white/[0.02] text-white/10 cursor-default'
+                        : 'bg-white/[0.04] text-white/45 hover:text-white/65 ring-1 ring-white/[0.08] hover:ring-white/15'
+                    }`}
+                    title={turnPreview?.selected_names?.length
+                      ? `Run Turn → ${turnPreview.selected_names.join(', ')}`
+                      : 'Advance meeting by one step'
+                    }
+                  >
+                    <Play size={13} />
+                    Run Turn
+                    {turnPreview?.selected_names?.length ? (
+                      <span className="text-[10px] text-cyan-300/50 ml-0.5">
+                        ({turnPreview.selected_names.slice(0, 2).join(', ')})
+                      </span>
+                    ) : null}
+                  </button>
+                  {/* Preview dropdown toggle */}
+                  <button
+                    onClick={() => setPreviewOpen(!previewOpen)}
+                    disabled={runningTurn}
+                    className={`flex items-center px-1.5 py-2 rounded-r-full text-xs transition-all border-l border-white/[0.06] ${
+                      previewOpen
+                        ? 'bg-cyan-500/15 text-cyan-300'
+                        : runningTurn
+                          ? 'bg-white/[0.02] text-white/10 cursor-default'
+                          : 'bg-white/[0.04] text-white/45 hover:text-white/65 ring-1 ring-white/[0.08]'
+                    }`}
+                    title="Preview initiative order"
+                  >
+                    <ChevronDown size={11} />
+                  </button>
+                </div>
+
+                {/* Initiative preview dropdown */}
+                {previewOpen && turnPreview && (
+                  <div className="absolute bottom-full left-0 mb-1.5 w-72 py-2 rounded-xl bg-[#111] border border-white/[0.08] shadow-2xl z-50 animate-msg-slide-in">
+                    <div className="px-3 pb-2 border-b border-white/[0.04] mb-2">
+                      <div className="text-[9px] font-semibold text-white/30 uppercase tracking-wider">Initiative Order</div>
+                      <div className="text-[9px] text-white/20 mt-0.5">
+                        Mode: {turnPreview.turn_mode?.replace('-', ' ')} · Round {turnPreview.round || 0}
+                      </div>
+                    </div>
+                    {turnPreview.candidates.slice(0, 6).map((c, idx) => {
+                      const isSelected = turnPreview.selected.includes(c.persona_id)
+                      const persona = personaMap.get(c.persona_id)
+                      const avatarUrl = persona ? resolveAvatarUrl(persona, backendUrl) : null
+                      return (
+                        <div
+                          key={c.persona_id}
+                          className={`flex items-center gap-2.5 px-3 py-1.5 transition-colors ${
+                            isSelected ? 'bg-cyan-500/[0.06]' : ''
+                          }`}
+                        >
+                          {/* Rank */}
+                          <span className={`text-[9px] w-3 text-right font-mono ${isSelected ? 'text-cyan-300/60' : 'text-white/15'}`}>
+                            {idx + 1}
+                          </span>
+                          {/* Avatar */}
+                          <div className="w-6 h-6 rounded-full overflow-hidden border border-white/10 flex-shrink-0">
+                            {avatarUrl ? (
+                              <img src={avatarUrl} alt={c.display_name} className="w-full h-full object-cover" />
+                            ) : (
+                              <div className="w-full h-full bg-white/5 flex items-center justify-center text-[8px] text-white/25">
+                                {c.display_name[0]?.toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          {/* Info */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`text-[10px] font-medium truncate ${isSelected ? 'text-cyan-300/80' : 'text-white/50'}`}>
+                                {c.display_name}
+                              </span>
+                              {c.status === 'called_on' && (
+                                <span className="text-[8px] px-1 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">called</span>
+                              )}
+                              {c.status === 'hand_raise' && (
+                                <Hand size={8} className="text-amber-300/60" />
+                              )}
+                              {isSelected && c.status === 'auto' && (
+                                <span className="w-1 h-1 rounded-full bg-cyan-400/50" />
+                              )}
+                            </div>
+                            <div className="text-[8px] text-white/20 truncate">
+                              {c.reasons.slice(0, 3).join(' · ')}
+                            </div>
+                          </div>
+                          {/* Score */}
+                          <div className="flex items-center gap-1">
+                            <div className="w-10 h-1 rounded-full bg-white/[0.04] overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${isSelected ? 'bg-cyan-400/50' : 'bg-white/10'}`}
+                                style={{ width: `${Math.round(c.score * 100)}%` }}
+                              />
+                            </div>
+                            <span className={`text-[8px] font-mono w-5 text-right ${isSelected ? 'text-cyan-300/50' : 'text-white/20'}`}>
+                              {(c.score * 100).toFixed(0)}
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {turnPreview.selected.length > 0 && (
+                      <div className="px-3 pt-2 mt-1 border-t border-white/[0.04]">
+                        <button
+                          onClick={() => {
+                            setPreviewOpen(false)
+                            if (onRunTurnContinue) onRunTurnContinue()
+                            else if (onCallOn && turnPreview.selected[0]) onCallOn(turnPreview.selected[0])
+                          }}
+                          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300/80 text-[10px] font-medium transition-all"
+                        >
+                          <Play size={10} />
+                          Run ({turnPreview.selected_names.join(', ')})
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Chat-style pill input — matches HomePilot Chat QueryBar */}
@@ -988,7 +1341,7 @@ export function MeetingRoom({
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={sttInterim || 'Type a message to the meeting...'}
+                placeholder={sttInterim || (room.play_mode?.enabled ? 'Send a message to join the discussion — personas will respond to you...' : 'Type a message to the meeting...')}
                 rows={1}
                 className="w-full bg-transparent text-white placeholder:text-white/40 focus:outline-none resize-none min-h-[52px] py-3.5 px-1 max-h-[200px] overflow-y-auto text-[15px] leading-relaxed"
               />
@@ -1017,7 +1370,10 @@ export function MeetingRoom({
 
         {/* Helper text */}
         <div className="text-[11px] text-white/20 mt-2 text-center">
-          Enter to send · Mic to dictate · Drag personas onto the table · Double-click seat to pin
+          {room.play_mode?.enabled
+            ? 'Sending a message joins you into the conversation · Personas will acknowledge and respond'
+            : 'Enter to send · Mic to dictate · Drag personas onto the table · Double-click seat to pin'
+          }
         </div>
       </div>
 
@@ -1036,6 +1392,8 @@ export function MeetingRoom({
         room={room}
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        onChangeTurnMode={onChangeTurnMode}
+        onSave={onSavePolicy}
       />
 
       {/* Voice settings drawer (additive) */}

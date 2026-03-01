@@ -83,7 +83,7 @@ function getSeatStatus(
     const intent = intents[personaId]
     if (intent?.wants_to_speak) return 'speaking'
   }
-  if (lastSpeakerId === personaId) return 'speaking'
+  if (runningTurn && lastSpeakerId === personaId) return 'speaking'
   if (handRaises.has(personaId) || intents[personaId]?.wants_to_speak) return 'wants-to-speak'
   return 'listening'
 }

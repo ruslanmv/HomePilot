@@ -27,6 +27,12 @@ _ROLE_PATTERNS: Dict[str, List[str]] = {
     "legal": ["legal", "compliance", "lawyer", "attorney", "regulation"],
     "finance": ["finance", "budget", "accounting", "cfo", "treasurer"],
     "support": ["support", "customer", "helpdesk", "service", "success"],
+    # Relationship / companion personas (so diversity gate can distinguish them)
+    "romantic": ["girlfriend", "boyfriend", "romantic", "lover", "partner", "wife", "husband", "dating"],
+    "companion": ["friend", "buddy", "companion", "confidant", "bestie"],
+    "mentor": ["mentor", "coach", "advisor", "counselor", "guide", "therapist"],
+    "critic": ["critic", "reviewer", "editor", "proofreader", "devil's advocate"],
+    "entertainer": ["entertainer", "comedian", "storyteller", "performer", "fun"],
 }
 
 

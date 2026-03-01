@@ -39,6 +39,12 @@ avatar = [
     # Use onnxruntime-gpu for GPU acceleration if your platform supports it:
     # "onnxruntime-gpu>=1.16",
 ]
+# Additive: opt-in via `pip install .[docs]` or `uv pip install -e ".[docs]"`
+# Enables DOCX and XLSX file extraction for the RAG knowledge base.
+docs = [
+    "python-docx>=0.8.11",
+    "openpyxl>=3.1.0",
+]
 
 [dependency-groups]
 dev = [

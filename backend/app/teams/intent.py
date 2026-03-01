@@ -128,10 +128,11 @@ def _dominance_penalty(
 ) -> float:
     """Penalize personas who dominated recent conversation (>40% of messages).
 
-    If a persona has spoken more than 40% of the last `lookback` assistant
-    messages, add +0.15 to the speak threshold — they must have stronger
-    relevance to intervene again.
+    Uses ``policy.dominance_penalty`` (default 0.15) so Play Mode styles
+    like Debate (0.25) actually take effect.
     """
+    policy = room.get("policy") or {}
+    penalty = float(policy.get("dominance_penalty", 0.15))
     msgs = (room.get("messages") or [])[-lookback:]
     assistant_msgs = [m for m in msgs if m.get("role") == "assistant"]
     if len(assistant_msgs) < 3:
@@ -139,7 +140,7 @@ def _dominance_penalty(
     persona_count = sum(1 for m in assistant_msgs if m.get("sender_id") == persona_id)
     ratio = persona_count / len(assistant_msgs)
     if ratio > 0.4:
-        return 0.15
+        return penalty
     return 0.0
 
 
@@ -186,11 +187,26 @@ def compute_intent(
     score = 0.15  # baseline "present in meeting"
     reason_parts: List[str] = []
 
-    # ── Name mention ──────────────────────────────────────────────
+    # ── Name mention in human message ─────────────────────────────
     name_lower = _normalize(display_name)
     if name_lower and name_lower in text:
         score += 0.35
         reason_parts.append("mentioned by name")
+
+    # ── Name mention in recent persona messages (inter-persona) ───
+    # If another persona just spoke and mentioned this persona by name,
+    # this persona should want to respond.
+    recent_persona_msgs = [
+        m for m in _last_messages(room, k=4)
+        if m.get("role") == "assistant" and m.get("sender_id") != persona_id
+    ]
+    for m in recent_persona_msgs:
+        m_text = _normalize(m.get("content", ""))
+        if name_lower and name_lower in m_text:
+            score += 0.30
+            sender = m.get("sender_name", "someone")
+            reason_parts.append(f"addressed by {sender}")
+            break  # one boost is enough
 
     # ── Question or decision request ──────────────────────────────
     question_words = ["should we", "what do", "decide", "choose", "priority", "opinion", "think"]
@@ -203,6 +219,16 @@ def compute_intent(
     if any(w in text for w in brainstorm_words):
         score += 0.15
         reason_parts.append("brainstorm prompt")
+
+    # ── Task / directive triggers ───────────────────────────────
+    task_words = [
+        "plan", "step-by-step", "step by step", "outline", "draft",
+        "write", "create", "design", "build", "organize", "prepare",
+        "arrange", "set up", "help me", "let's",
+    ]
+    if any(w in text for w in task_words):
+        score += 0.15
+        reason_parts.append("task request")
 
     # ── Role-relevance triggers ───────────────────────────────────
     role_hit = 0.0
