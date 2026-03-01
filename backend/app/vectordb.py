@@ -184,7 +184,9 @@ def get_project_document_count(project_id: str) -> int:
     try:
         collection = get_or_create_collection(project_id)
         return collection.count()
-    except Exception:
+    except BaseException:
+        # BaseException catches pyo3_runtime.PanicException from ChromaDB's
+        # Rust bindings (e.g. corrupted SQLite after version upgrade).
         return 0
 
 # Text extraction utilities

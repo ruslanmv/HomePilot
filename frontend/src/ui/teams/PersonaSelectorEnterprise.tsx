@@ -103,7 +103,7 @@ export function PersonaSelectorEnterprise({
 }: PersonaSelectorEnterpriseProps) {
   const [query, setQuery] = useState('')
   const [role, setRole] = useState<RoleFilter>('all')
-  const [sort, setSort] = useState<'az' | 'recent'>('az')
+  const [sort, setSort] = useState<'az' | 'recent'>('recent')
 
   const personaProjects = useMemo(
     () => personas.filter((p) => p.project_type === 'persona'),
@@ -126,6 +126,8 @@ export function PersonaSelectorEnterprise({
 
     if (sort === 'az') {
       items = [...items].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+    } else if (sort === 'recent') {
+      items = [...items].sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))
     }
     return items
   }, [personaProjects, query, role, sort])

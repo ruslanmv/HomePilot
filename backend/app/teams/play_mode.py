@@ -34,6 +34,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 from . import rooms
 from .continuation import generate_smart_trigger
+from .crew_runner import run_crew_turn
 from .locks import get_room_lock
 from .orchestrator import run_reactive_step, run_initiative_step, ensure_defaults
 from .participants_resolver import resolve_participants
@@ -49,32 +50,31 @@ _play_tasks: Dict[str, asyncio.Task] = {}
 
 STYLE_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "discussion": {
-        "max_speakers_per_event": 2,
+        "max_speakers_per_event": 1,
         "speak_threshold": 0.35,
-        "max_rounds_per_event": 2,
+        "cooldown_turns": 2,
     },
     "debate": {
         "max_speakers_per_event": 1,
         "speak_threshold": 0.30,
-        "max_rounds_per_event": 2,
+        "cooldown_turns": 2,
         "redundancy_threshold": 0.5,
         "dominance_penalty": 0.25,
     },
     "roundtable": {
         "max_speakers_per_event": 1,
         "speak_threshold": 0.20,
-        "max_rounds_per_event": 1,
         "cooldown_turns": 2,
     },
     "roleplay": {
-        "max_speakers_per_event": 2,
+        "max_speakers_per_event": 1,
         "speak_threshold": 0.25,
-        "max_rounds_per_event": 3,
+        "cooldown_turns": 2,
     },
     "simulation": {
-        "max_speakers_per_event": 2,
+        "max_speakers_per_event": 1,
         "speak_threshold": 0.30,
-        "max_rounds_per_event": 3,
+        "cooldown_turns": 2,
     },
 }
 
@@ -117,19 +117,21 @@ def _is_low_novelty(
     room_id: str,
     new_messages: list,
     lookback: int = 6,
-    threshold: float = 0.45,
+    threshold: float = 0.55,
 ) -> bool:
     """Check if new messages are too similar to recent history.
 
-    Computes Jaccard similarity between new message tokens and the
-    combined tokens from the last `lookback` assistant messages.
-    Returns True if similarity exceeds threshold (low novelty).
+    Uses **pairwise** Jaccard similarity: compares each new message against
+    each individual history message and returns True if any pair exceeds
+    the threshold.  This avoids false positives from same-topic conversations
+    (where combined history tokens inflate overlap) and only catches actual
+    near-identical repetition.
     """
     room = rooms.get_room(room_id)
     if not room:
         return False
 
-    # Collect tokens from recent assistant messages (excluding new ones)
+    # Collect recent assistant messages (excluding new ones)
     new_ids = {m.get("id") for m in new_messages}
     all_msgs = room.get("messages") or []
     recent_asst = [
@@ -140,28 +142,43 @@ def _is_low_novelty(
     if len(recent_asst) < 2:
         return False  # Not enough history to compare
 
-    history_tokens = set()
-    for m in recent_asst:
-        history_tokens |= _tokenize_for_novelty(m.get("content", ""))
+    # Pairwise comparison: each new msg vs each history msg individually
+    max_similarity = 0.0
+    for new_msg in new_messages:
+        new_tokens = _tokenize_for_novelty(new_msg.get("content", ""))
+        if not new_tokens:
+            continue
+        for hist_msg in recent_asst:
+            hist_tokens = _tokenize_for_novelty(hist_msg.get("content", ""))
+            if not hist_tokens:
+                continue
+            jaccard = len(new_tokens & hist_tokens) / max(1, len(new_tokens | hist_tokens))
+            max_similarity = max(max_similarity, jaccard)
 
-    new_tokens = set()
-    for m in new_messages:
-        new_tokens |= _tokenize_for_novelty(m.get("content", ""))
-
-    if not history_tokens or not new_tokens:
-        return False
-
-    jaccard = len(history_tokens & new_tokens) / max(1, len(history_tokens | new_tokens))
-    if jaccard >= threshold:
+    if max_similarity >= threshold:
         logger.debug(
-            "Low novelty detected for %s: Jaccard=%.2f (threshold=%.2f)",
-            room_id, jaccard, threshold,
+            "Low novelty detected for %s: max pairwise Jaccard=%.2f (threshold=%.2f)",
+            room_id, max_similarity, threshold,
         )
         return True
     return False
 
 
 # ── Core loop ────────────────────────────────────────────────────────────
+
+_CONVERGENCE_SIGNALS = frozenset({
+    "recap", "finalize", "wrap up", "here's the plan", "here's our plan",
+    "here is the plan", "let's get baking", "let's get started",
+    "voilà", "voila", "that's it!", "ready to go",
+    "final summary", "final plan", "in summary",
+})
+
+
+def _looks_like_convergence(text: str) -> bool:
+    """Detect recap / finalization signals that indicate the task is done."""
+    lower = text.lower()
+    return sum(1 for s in _CONVERGENCE_SIGNALS if s in lower) >= 2
+
 
 async def _play_loop(
     room_id: str,
@@ -172,12 +189,22 @@ async def _play_loop(
     Cancellation-safe: handles asyncio.CancelledError gracefully.
     Style overrides are applied per-iteration and restored on stop
     to prevent permanent policy mutation.
+
+    Anti-monologue: tracks who spoke last tick and excludes them from
+    the next tick so personas must alternate (Fix A+B).
+    Convergence: auto-stops when personas start recap/finalize loops (Fix D).
     """
     silence_streak = 0
     low_novelty_streak = 0
-    MAX_SILENCE = 3  # stop after 3 rounds with no speakers
-    MAX_LOW_NOVELTY = 3  # stop after 3 rounds with low novelty
+    convergence_streak = 0
+    MAX_SILENCE = 3       # stop after 3 rounds with no speakers
+    MAX_LOW_NOVELTY = 3   # stop after 3 rounds with low novelty
+    MAX_CONVERGENCE = 2   # stop after 2 rounds of recap/finalize signals
     _base_policy_snapshot: Optional[Dict[str, Any]] = None
+
+    # Cross-tick anti-monologue: track who spoke last tick so we
+    # can exclude them from the next tick, forcing alternation.
+    last_tick_speakers: set = set()
 
     try:
         while True:
@@ -244,12 +271,15 @@ async def _play_loop(
                 msgs.append(debug_msg)
                 rooms.update_room(room_id, {"messages": msgs})
 
-            # Run one orchestration step — branch by turn_mode
+            # Run one orchestration step — branch by engine then turn_mode
+            engine = (room.get("policy") or {}).get("engine", "native")
             turn_mode = room.get("turn_mode", "reactive")
             lock = get_room_lock(room_id)
             try:
                 async with lock:
-                    if turn_mode == "round-robin":
+                    if engine == "crew":
+                        result = await run_crew_turn(room_id=room_id)
+                    elif turn_mode == "round-robin":
                         result = await run_initiative_step(
                             room_id,
                             participants=participants,
@@ -261,6 +291,7 @@ async def _play_loop(
                             last_human_message=trigger,
                             participants=participants,
                             generate_fn=generate_fn,
+                            exclude_speakers=last_tick_speakers or None,
                         )
             except Exception as exc:
                 logger.error("Play loop step failed for %s: %s", room_id, exc)
@@ -279,18 +310,44 @@ async def _play_loop(
                 pm["round_count"] = pm.get("round_count", 0) + 1
                 rooms.update_room(room_id, {"play_mode": pm})
 
-            # Check for silence
-            if not speakers:
+            # Check for silence — use new_messages (actual output), not
+            # speakers (selected).  Ollama may return empty content causing
+            # all selected speakers to be skipped.
+            new_messages = result.get("new_messages", [])
+            if not new_messages:
                 silence_streak += 1
+                # If silence was caused by exclusion, reset exclusion
+                # so the excluded persona gets another chance next tick.
+                last_tick_speakers = set()
                 if silence_streak >= MAX_SILENCE:
                     logger.info("Play loop: %d silent rounds, stopping %s", MAX_SILENCE, room_id)
                     _stop_play_mode(room_id, reason="silence")
                     break
             else:
                 silence_streak = 0
+                # Update cross-tick anti-monologue tracker
+                last_tick_speakers = {m.get("sender_id") for m in new_messages}
+
+            # Check for convergence (recap/finalize loops → task complete)
+            if new_messages:
+                last_content = new_messages[-1].get("content", "")
+                if _looks_like_convergence(last_content):
+                    convergence_streak += 1
+                    logger.debug(
+                        "Play loop: convergence signal #%d in %s",
+                        convergence_streak, room_id,
+                    )
+                    if convergence_streak >= MAX_CONVERGENCE:
+                        logger.info(
+                            "Play loop: task appears complete, stopping %s",
+                            room_id,
+                        )
+                        _stop_play_mode(room_id, reason="completed")
+                        break
+                else:
+                    convergence_streak = 0
 
             # Check for novelty collapse (repetitive content)
-            new_messages = result.get("new_messages", [])
             if new_messages and _is_low_novelty(room_id, new_messages):
                 low_novelty_streak += 1
                 if low_novelty_streak >= MAX_LOW_NOVELTY:
@@ -356,20 +413,20 @@ def start_play_mode(
     }
     rooms.update_room(room_id, {"play_mode": pm})
 
-    # If there are no messages yet, inject a seed message
+    # Always inject a "Play Mode started" indicator message so the
+    # user can see when autonomous conversation began in the transcript.
     msgs = room.get("messages") or []
-    if not msgs:
-        seed = {
-            "id": str(uuid.uuid4()),
-            "sender_id": "system",
-            "sender_name": "System",
-            "content": f"[Play Mode started — {style} mode. Personas, begin your conversation.]",
-            "role": "user",
-            "tools_used": [],
-            "timestamp": time.time(),
-        }
-        msgs.append(seed)
-        rooms.update_room(room_id, {"messages": msgs})
+    seed = {
+        "id": str(uuid.uuid4()),
+        "sender_id": "system",
+        "sender_name": "System",
+        "content": f"[Play Mode started — {style} mode. Personas, begin your conversation.]",
+        "role": "user",
+        "tools_used": [],
+        "timestamp": time.time(),
+    }
+    msgs.append(seed)
+    rooms.update_room(room_id, {"messages": msgs})
 
     task = asyncio.create_task(_play_loop(room_id, generate_fn))
     _play_tasks[room_id] = task

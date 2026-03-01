@@ -50,6 +50,7 @@ def ensure_defaults(room: Dict[str, Any]) -> Dict[str, Any]:
     """
     room.setdefault("policy", {})
     p = room["policy"]
+    p.setdefault("engine", "native")
     p.setdefault("max_speakers_per_event", 2)
     p.setdefault("max_rounds_per_event", 3)
     p.setdefault("speak_threshold", 0.45)
@@ -143,6 +144,9 @@ def auto_hand_raises(room: Dict[str, Any], intents: List[SpeakIntent]) -> None:
     ]
     for pid in expired:
         meta.pop(pid, None)
+        # Clear stale wants_to_speak flag when hand-raise expires
+        if pid in room.get("intents", {}):
+            room["intents"][pid]["wants_to_speak"] = False
     room["hand_raises"] = [pid for pid in hrs if pid not in expired]
     hrs = room["hand_raises"]
 
@@ -308,6 +312,12 @@ def select_speakers(
 
     # ── Reactive / free-form: score-based ──────────────────────────
     else:
+        # For 2-participant rooms, cap to 1 speaker per event to enable
+        # natural ping-pong alternation instead of both speaking at once.
+        n_participants = len([i for i in intents])  # unmuted count
+        if n_participants <= 2:
+            max_speakers = min(max_speakers, 1)
+
         # Default reactive: prioritize hand-raisers, then high-confidence
         hrs_set = set(room.get("hand_raises") or [])
         hand_raisers = [i for i in intents if i.persona_id in hrs_set and i.wants_to_speak]
@@ -316,7 +326,9 @@ def select_speakers(
         reactive_candidates = [i for i in intents if i.wants_to_speak and i.persona_id not in hrs_set]
         reactive_candidates.sort(key=lambda x: (x.confidence, x.urgency), reverse=True)
 
-        raw = [c.persona_id for c in hand_raisers + reactive_candidates][:max_speakers]
+        # Build full candidate list BEFORE trimming to max_speakers so
+        # anti-monologue demotion can reorder first.
+        raw = [c.persona_id for c in hand_raisers + reactive_candidates]
 
     # ── Fallback: if nobody passed threshold but someone wants to speak,
     #    the top persona still responds.  This ensures greetings like "Hello"
@@ -333,20 +345,31 @@ def select_speakers(
             raw = [all_sorted[0].persona_id]
             logger.debug("Fallback speaker (human prompt): %s (score=%.2f)", raw[0], all_sorted[0].confidence)
 
-    # ── Anti-monologue gate: demote the last speaker ─────────────
-    # If the most recent assistant message was from a persona that's in
-    # our candidate list AND there are other candidates, push the last
-    # speaker to the end so someone else gets priority.
+    # ── Anti-monologue gate ──────────────────────────────────────
+    # Prevents the same persona from speaking back-to-back.
+    # In observer_mode (play mode): hard-exclude the last speaker
+    #   so someone else MUST speak (forced alternation).
+    # In manual mode: soft-demote (move to end of candidate list)
+    #   so they can still speak if nobody else qualifies.
     last_speaker_id = None
     for m in reversed(room.get("messages") or []):
         if m.get("role") == "assistant":
             last_speaker_id = m.get("sender_id")
             break
 
-    if last_speaker_id and len(raw) > 1 and raw[0] == last_speaker_id:
-        # Move last speaker to end of candidate list
-        raw = [pid for pid in raw if pid != last_speaker_id] + [last_speaker_id]
-        logger.debug("Anti-monologue: demoted %s (spoke last)", last_speaker_id)
+    observer_mode = bool(policy.get("observer_mode", False))
+    if last_speaker_id and len(raw) > 1:
+        if observer_mode:
+            # Hard exclude in play mode — force alternation
+            raw = [pid for pid in raw if pid != last_speaker_id]
+            logger.debug("Anti-monologue (play): excluded %s", last_speaker_id)
+        elif raw[0] == last_speaker_id:
+            # Soft demote in manual mode
+            raw = [pid for pid in raw if pid != last_speaker_id] + [last_speaker_id]
+            logger.debug("Anti-monologue: demoted %s (spoke last)", last_speaker_id)
+
+    # ── Trim to max_speakers (after demotion) ─────────────────────
+    raw = raw[:max_speakers]
 
     # ── Apply gates ───────────────────────────────────────────────
     selected = redundancy_gate(intents, raw, red_threshold)
@@ -409,9 +432,22 @@ async def run_reactive_step(
     # 3. Select who speaks (with gates)
     speakers = select_speakers(room, intents, participants)
 
-    # Filter out personas that already spoke (multi-round dedup)
+    # Filter out personas that already spoke (multi-round / play-mode dedup)
     if exclude_speakers:
         speakers = [s for s in speakers if s not in exclude_speakers]
+        # If exclusion removed everyone, pick the best non-excluded persona
+        # so conversation always progresses (forced alternation).
+        if not speakers:
+            non_excluded = [
+                i for i in intents if i.persona_id not in exclude_speakers
+            ]
+            if non_excluded:
+                best = max(non_excluded, key=lambda x: x.confidence)
+                speakers = [best.persona_id]
+                logger.debug(
+                    "Exclude fallback: %s (forced after exclusion, score=%.2f)",
+                    best.persona_id, best.confidence,
+                )
 
     # 4. Generate content for each speaker
     new_messages: List[Dict[str, Any]] = []
@@ -481,6 +517,10 @@ async def run_reactive_step(
         room.setdefault("messages", []).append(msg)
         new_messages.append(msg)
         set_cooldown(room, pid, cd_turns)
+
+        # Clear stale wants_to_speak flag now that persona has spoken
+        if pid in room.get("intents", {}):
+            room["intents"][pid]["wants_to_speak"] = False
 
         # Consume hand raise when they speak
         hrs = room.get("hand_raises") or []

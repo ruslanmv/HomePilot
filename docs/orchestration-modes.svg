@@ -1,0 +1,200 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a0a"/>
+      <stop offset="100%" style="stop-color:#111"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#06b6d4"/>
+      <stop offset="100%" style="stop-color:#3b82f6"/>
+    </linearGradient>
+    <linearGradient id="emerald" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#34d399"/>
+      <stop offset="100%" style="stop-color:#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f59e0b"/>
+      <stop offset="100%" style="stop-color:#ef4444"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#ec4899"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      @keyframes flowRight { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
+      @keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+      .flow { animation: flowRight 0.8s linear infinite; }
+      .pulse { animation: pulse 2s ease-in-out infinite; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="520" fill="url(#bg)" rx="16"/>
+  <rect width="960" height="520" fill="none" stroke="#fff" stroke-opacity="0.06" rx="16"/>
+
+  <!-- Title -->
+  <text x="480" y="36" text-anchor="middle" fill="#fff" font-size="18" font-weight="700" opacity="0.9">HomePilot Teams — Orchestration Modes</text>
+  <line x1="340" y1="46" x2="620" y2="46" stroke="url(#cyan)" stroke-width="2" opacity="0.4"/>
+  <text x="480" y="66" text-anchor="middle" fill="#fff" font-size="10" opacity="0.35">Three engines, one room — pick the right mode for every workflow</text>
+
+  <!-- ═══ MODE 1: REACTIVE (Native) ═══ -->
+  <rect x="20" y="85" width="290" height="410" rx="12" fill="#34d399" fill-opacity="0.03" stroke="#34d399" stroke-opacity="0.15"/>
+  <rect x="20" y="85" width="290" height="36" rx="12" fill="#34d399" fill-opacity="0.08"/>
+  <text x="165" y="108" text-anchor="middle" fill="#34d399" font-size="13" font-weight="700">Reactive Mode</text>
+  <text x="165" y="140" text-anchor="middle" fill="#fff" font-size="9" opacity="0.5">engine: "native" · turn_mode: "reactive"</text>
+
+  <!-- Flow diagram -->
+  <text x="165" y="165" text-anchor="middle" fill="#fff" font-size="9" opacity="0.4">Human sends message</text>
+  <line x1="165" y1="172" x2="165" y2="188" stroke="#34d399" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <!-- Intent scoring box -->
+  <rect x="60" y="190" width="210" height="80" rx="8" fill="#8b5cf6" fill-opacity="0.06" stroke="#8b5cf6" stroke-opacity="0.2"/>
+  <text x="165" y="210" text-anchor="middle" fill="#8b5cf6" font-size="9" font-weight="600">Intent Scoring</text>
+  <text x="75" y="228" fill="#fff" font-size="7" opacity="0.4">Topic relevance</text>
+  <text x="75" y="240" fill="#fff" font-size="7" opacity="0.4">Role match</text>
+  <text x="75" y="252" fill="#fff" font-size="7" opacity="0.4">Name mention</text>
+  <text x="185" y="228" fill="#fff" font-size="7" opacity="0.4">Cooldown gate</text>
+  <text x="185" y="240" fill="#fff" font-size="7" opacity="0.4">Dominance penalty</text>
+  <text x="185" y="252" fill="#fff" font-size="7" opacity="0.4">Redundancy filter</text>
+
+  <line x1="165" y1="275" x2="165" y2="295" stroke="#34d399" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <!-- Speaker selection -->
+  <rect x="70" y="297" width="190" height="40" rx="8" fill="#34d399" fill-opacity="0.06" stroke="#34d399" stroke-opacity="0.2"/>
+  <text x="165" y="314" text-anchor="middle" fill="#34d399" font-size="9" font-weight="600">Top scorers speak</text>
+  <text x="165" y="328" text-anchor="middle" fill="#fff" font-size="7" opacity="0.35">1-3 personas above threshold</text>
+
+  <line x1="165" y1="342" x2="165" y2="358" stroke="#34d399" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <!-- Output -->
+  <rect x="70" y="360" width="190" height="36" rx="8" fill="#fff" fill-opacity="0.03" stroke="#fff" stroke-opacity="0.08"/>
+  <text x="165" y="380" text-anchor="middle" fill="#fff" font-size="8" opacity="0.5">Free-form conversation reply</text>
+
+  <!-- Best for -->
+  <rect x="50" y="415" width="230" height="60" rx="8" fill="#fff" fill-opacity="0.02"/>
+  <text x="165" y="434" text-anchor="middle" fill="#34d399" font-size="8" font-weight="600">Best for:</text>
+  <text x="165" y="450" text-anchor="middle" fill="#fff" font-size="8" opacity="0.45">Open discussion, brainstorming,</text>
+  <text x="165" y="462" text-anchor="middle" fill="#fff" font-size="8" opacity="0.45">team meetings, Q&amp;A sessions</text>
+
+  <!-- ═══ MODE 2: INITIATIVE (Native) ═══ -->
+  <rect x="335" y="85" width="290" height="410" rx="12" fill="#f59e0b" fill-opacity="0.03" stroke="#f59e0b" stroke-opacity="0.15"/>
+  <rect x="335" y="85" width="290" height="36" rx="12" fill="#f59e0b" fill-opacity="0.08"/>
+  <text x="480" y="108" text-anchor="middle" fill="#f59e0b" font-size="13" font-weight="700">Initiative Mode</text>
+  <text x="480" y="140" text-anchor="middle" fill="#fff" font-size="9" opacity="0.5">engine: "native" · turn_mode: "round-robin"</text>
+
+  <!-- Flow diagram -->
+  <text x="480" y="165" text-anchor="middle" fill="#fff" font-size="9" opacity="0.4">Round counter increments</text>
+  <line x1="480" y1="172" x2="480" y2="188" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <!-- Queue box -->
+  <rect x="375" y="190" width="210" height="80" rx="8" fill="#f59e0b" fill-opacity="0.06" stroke="#f59e0b" stroke-opacity="0.2"/>
+  <text x="480" y="210" text-anchor="middle" fill="#f59e0b" font-size="9" font-weight="600">Speaker Queue</text>
+
+  <!-- Round robin visual -->
+  <g transform="translate(400, 220)">
+    <circle cx="0" cy="14" r="12" fill="#f59e0b" fill-opacity="0.15" stroke="#f59e0b" stroke-opacity="0.4"/>
+    <text x="0" y="18" text-anchor="middle" fill="#f59e0b" font-size="9" font-weight="700">A</text>
+    <text x="0" y="38" text-anchor="middle" fill="#fff" font-size="6" opacity="0.3">R1</text>
+  </g>
+  <text x="437" y="234" fill="#f59e0b" font-size="14" opacity="0.4">→</text>
+  <g transform="translate(460, 220)">
+    <circle cx="0" cy="14" r="12" fill="#fff" fill-opacity="0.05" stroke="#fff" stroke-opacity="0.15"/>
+    <text x="0" y="18" text-anchor="middle" fill="#fff" font-size="9" font-weight="700" opacity="0.4">B</text>
+    <text x="0" y="38" text-anchor="middle" fill="#fff" font-size="6" opacity="0.3">R2</text>
+  </g>
+  <text x="497" y="234" fill="#f59e0b" font-size="14" opacity="0.4">→</text>
+  <g transform="translate(520, 220)">
+    <circle cx="0" cy="14" r="12" fill="#fff" fill-opacity="0.05" stroke="#fff" stroke-opacity="0.15"/>
+    <text x="0" y="18" text-anchor="middle" fill="#fff" font-size="9" font-weight="700" opacity="0.4">C</text>
+    <text x="0" y="38" text-anchor="middle" fill="#fff" font-size="6" opacity="0.3">R3</text>
+  </g>
+
+  <line x1="480" y1="275" x2="480" y2="295" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <!-- Single speaker -->
+  <rect x="385" y="297" width="190" height="40" rx="8" fill="#f59e0b" fill-opacity="0.06" stroke="#f59e0b" stroke-opacity="0.2"/>
+  <text x="480" y="314" text-anchor="middle" fill="#f59e0b" font-size="9" font-weight="600">1 persona per round</text>
+  <text x="480" y="328" text-anchor="middle" fill="#fff" font-size="7" opacity="0.35">Deterministic rotation</text>
+
+  <line x1="480" y1="342" x2="480" y2="358" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <!-- Output -->
+  <rect x="385" y="360" width="190" height="36" rx="8" fill="#fff" fill-opacity="0.03" stroke="#fff" stroke-opacity="0.08"/>
+  <text x="480" y="380" text-anchor="middle" fill="#fff" font-size="8" opacity="0.5">Free-form conversation reply</text>
+
+  <!-- Best for -->
+  <rect x="365" y="415" width="230" height="60" rx="8" fill="#fff" fill-opacity="0.02"/>
+  <text x="480" y="434" text-anchor="middle" fill="#f59e0b" font-size="8" font-weight="600">Best for:</text>
+  <text x="480" y="450" text-anchor="middle" fill="#fff" font-size="8" opacity="0.45">Structured debates, presentations,</text>
+  <text x="480" y="462" text-anchor="middle" fill="#fff" font-size="8" opacity="0.45">equal-time discussions</text>
+
+  <!-- ═══ MODE 3: CREW (Task Collaboration) ═══ -->
+  <rect x="650" y="85" width="290" height="410" rx="12" fill="#8b5cf6" fill-opacity="0.03" stroke="#8b5cf6" stroke-opacity="0.15"/>
+  <rect x="650" y="85" width="290" height="36" rx="12" fill="#8b5cf6" fill-opacity="0.08"/>
+  <text x="795" y="108" text-anchor="middle" fill="#8b5cf6" font-size="13" font-weight="700">Crew Mode</text>
+  <text x="795" y="136" text-anchor="middle" fill="#fff" font-size="9" opacity="0.5">engine: "crew"</text>
+  <text x="795" y="148" text-anchor="middle" fill="#ec4899" font-size="7" opacity="0.5">NEW — Task Collaboration</text>
+
+  <!-- Flow diagram -->
+  <text x="795" y="168" text-anchor="middle" fill="#fff" font-size="9" opacity="0.4">Workflow profile drives stages</text>
+  <line x1="795" y1="175" x2="795" y2="188" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <!-- Stage pipeline box -->
+  <rect x="690" y="190" width="210" height="80" rx="8" fill="#8b5cf6" fill-opacity="0.06" stroke="#8b5cf6" stroke-opacity="0.2"/>
+  <text x="795" y="210" text-anchor="middle" fill="#8b5cf6" font-size="9" font-weight="600">Stage Pipeline</text>
+
+  <!-- Stage progression -->
+  <g transform="translate(705, 222)">
+    <rect x="0" y="0" width="42" height="18" rx="4" fill="#8b5cf6" fill-opacity="0.2" stroke="#8b5cf6" stroke-opacity="0.4"/>
+    <text x="21" y="13" text-anchor="middle" fill="#8b5cf6" font-size="6" font-weight="600">Gather</text>
+  </g>
+  <text x="755" y="235" fill="#8b5cf6" font-size="10" opacity="0.5">→</text>
+  <g transform="translate(765, 222)">
+    <rect x="0" y="0" width="36" height="18" rx="4" fill="#fff" fill-opacity="0.04" stroke="#8b5cf6" stroke-opacity="0.2"/>
+    <text x="18" y="13" text-anchor="middle" fill="#fff" font-size="6" opacity="0.4">Draft</text>
+  </g>
+  <text x="810" y="235" fill="#8b5cf6" font-size="10" opacity="0.5">→</text>
+  <g transform="translate(820, 222)">
+    <rect x="0" y="0" width="42" height="18" rx="4" fill="#fff" fill-opacity="0.04" stroke="#8b5cf6" stroke-opacity="0.2"/>
+    <text x="21" y="13" text-anchor="middle" fill="#fff" font-size="6" opacity="0.4">Budget</text>
+  </g>
+  <g transform="translate(705, 248)">
+    <rect x="0" y="0" width="48" height="14" rx="3" fill="#34d399" fill-opacity="0.1" stroke="#34d399" stroke-opacity="0.2"/>
+    <text x="24" y="10" text-anchor="middle" fill="#34d399" font-size="5" font-weight="500">Validate</text>
+  </g>
+  <g transform="translate(760, 248)">
+    <rect x="0" y="0" width="48" height="14" rx="3" fill="#ec4899" fill-opacity="0.1" stroke="#ec4899" stroke-opacity="0.2"/>
+    <text x="24" y="10" text-anchor="middle" fill="#ec4899" font-size="5" font-weight="500">Checklist</text>
+  </g>
+  <g transform="translate(815, 248)">
+    <rect x="0" y="0" width="48" height="14" rx="3" fill="#06b6d4" fill-opacity="0.1" stroke="#06b6d4" stroke-opacity="0.2"/>
+    <text x="24" y="10" text-anchor="middle" fill="#06b6d4" font-size="5" font-weight="500">Novelty</text>
+  </g>
+
+  <line x1="795" y1="275" x2="795" y2="295" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <!-- Role tag speaker -->
+  <rect x="700" y="297" width="190" height="40" rx="8" fill="#8b5cf6" fill-opacity="0.06" stroke="#8b5cf6" stroke-opacity="0.2"/>
+  <text x="795" y="314" text-anchor="middle" fill="#8b5cf6" font-size="9" font-weight="600">Role-tag speaker pick</text>
+  <text x="795" y="328" text-anchor="middle" fill="#fff" font-size="7" opacity="0.35">Best-fit persona per stage</text>
+
+  <line x1="795" y1="342" x2="795" y2="358" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <!-- Output -->
+  <rect x="700" y="360" width="190" height="36" rx="8" fill="#8b5cf6" fill-opacity="0.06" stroke="#8b5cf6" stroke-opacity="0.15"/>
+  <text x="795" y="376" text-anchor="middle" fill="#8b5cf6" font-size="8" font-weight="500">Structured output</text>
+  <text x="795" y="388" text-anchor="middle" fill="#fff" font-size="7" opacity="0.35">PLAN · BUDGET · MESSAGE</text>
+
+  <!-- Best for -->
+  <rect x="680" y="415" width="230" height="60" rx="8" fill="#fff" fill-opacity="0.02"/>
+  <text x="795" y="434" text-anchor="middle" fill="#8b5cf6" font-size="8" font-weight="600">Best for:</text>
+  <text x="795" y="450" text-anchor="middle" fill="#fff" font-size="8" opacity="0.45">Task planning, deliverables,</text>
+  <text x="795" y="462" text-anchor="middle" fill="#fff" font-size="8" opacity="0.45">writing, structured workflows</text>
+
+  <!-- ═══ BOTTOM: Profile badges ═══ -->
+  <text x="795" y="490" text-anchor="middle" fill="#fff" font-size="7" opacity="0.25">Profiles: task_planner_v1 · brainstorm_v1 · draft_and_edit_v1</text>
+</svg>
