@@ -243,6 +243,24 @@ export const CHARACTER_STYLE_PRESETS: CharacterStylePreset[] = [
 // Gallery Item
 // ---------------------------------------------------------------------------
 
+/** Gallery item role — distinguishes the selected anchor from portrait alternatives. */
+export type GalleryItemRole = 'anchor' | 'portrait'
+
+/** Wizard metadata stored on a GalleryItem so persona export can access profession data. */
+export interface WizardMeta {
+  professionId?: string
+  professionLabel?: string
+  professionDescription?: string
+  tools?: string[]
+  memoryEngine?: string
+  autonomy?: number
+  tone?: string
+  systemPrompt?: string
+  responseStyle?: string
+  gender?: string
+  ageRange?: string
+}
+
 export interface GalleryItem {
   /** Unique ID (uuid-style) */
   id: string
@@ -273,6 +291,12 @@ export interface GalleryItem {
   batchId?: string
   /** Set when "Save as Persona Avatar" is used */
   personaProjectId?: string
+  /** Role: 'anchor' = the chosen avatar, 'portrait' = non-selected alternatives
+   *  stored in the Portrait Gallery. Undefined treated as 'anchor' for backwards compat. */
+  role?: GalleryItemRole
+  /** Wizard metadata — profession, tools, tone, etc. from the Character Wizard.
+   *  Used by persona export to pre-populate role, description, system prompt. */
+  wizardMeta?: WizardMeta
 }
 
 // ---------------------------------------------------------------------------

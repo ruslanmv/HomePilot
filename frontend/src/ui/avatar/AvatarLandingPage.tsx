@@ -98,14 +98,26 @@ export function AvatarLandingPage({
     try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false }
   })
 
-  // Only show root characters (no parentId) — outfits live inside the Character Sheet
-  const rootCharacters = useMemo(() => items.filter((i) => !i.parentId), [items])
+  // Root characters: items without parentId (anchors). Portraits are now children
+  // of anchors (linked via parentId) and only visible in the Character Sheet.
+  const rootCharacters = useMemo(() => items.filter((i) => !i.parentId && i.role !== 'portrait'), [items])
 
-  // Count outfits per root character
+  // Count outfits + portraits per root character
   const outfitCounts = useMemo(() => {
     const counts: Record<string, number> = {}
     for (const item of items) {
-      if (item.parentId) {
+      if (item.parentId && item.role !== 'portrait') {
+        counts[item.parentId] = (counts[item.parentId] || 0) + 1
+      }
+    }
+    return counts
+  }, [items])
+
+  // Count portraits per root character (shown as badge on card)
+  const portraitCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const item of items) {
+      if (item.parentId && item.role === 'portrait') {
         counts[item.parentId] = (counts[item.parentId] || 0) + 1
       }
     }
@@ -226,6 +238,7 @@ export function AvatarLandingPage({
           {rootCharacters.map((item) => {
             const imgUrl = resolveUrl(item.url, backendUrl)
             const oCount = outfitCounts[item.id] || 0
+            const pCount = portraitCounts[item.id] || 0
             return (
               <div
                 key={item.id}
@@ -257,18 +270,26 @@ export function AvatarLandingPage({
                   </div>
                 </div>
 
-                {/* Outfit count badge (top right) */}
-                {oCount > 0 && (
-                  <div className="absolute top-2.5 right-2.5 z-10">
-                    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-cyan-500/30 backdrop-blur-sm border border-cyan-500/20 text-[9px] text-cyan-200 font-medium">
-                      <Shirt size={9} />
-                      {oCount}
-                    </div>
+                {/* Outfit + portrait count badges (top right) */}
+                {(oCount > 0 || pCount > 0) && (
+                  <div className="absolute top-2.5 right-2.5 z-10 flex gap-1">
+                    {oCount > 0 && (
+                      <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-purple-500/30 backdrop-blur-sm border border-purple-500/20 text-[9px] text-purple-200 font-medium">
+                        <Shirt size={9} />
+                        {oCount}
+                      </div>
+                    )}
+                    {pCount > 0 && (
+                      <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-pink-500/30 backdrop-blur-sm border border-pink-500/20 text-[9px] text-pink-200 font-medium">
+                        <ImageIcon size={9} />
+                        {pCount}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* Persona badge (when no outfits) */}
-                {item.personaProjectId && oCount === 0 && (
+                {/* Persona badge (when no outfits or portraits) */}
+                {item.personaProjectId && oCount === 0 && pCount === 0 && (
                   <div className="absolute top-2.5 right-2.5 z-10">
                     <div className="px-1.5 py-0.5 rounded-md bg-purple-500/30 backdrop-blur-sm text-purple-200 text-[9px] font-medium">
                       Persona
@@ -302,7 +323,7 @@ export function AvatarLandingPage({
                     )}
                     {onGenerateOutfits && (
                       <button
-                        className="bg-cyan-500/20 backdrop-blur-md hover:bg-cyan-500/40 p-2 rounded-lg text-cyan-300 transition-colors"
+                        className="bg-purple-500/20 backdrop-blur-md hover:bg-purple-500/40 p-2 rounded-lg text-purple-300 transition-colors"
                         type="button"
                         title="Open Character Sheet"
                         onClick={(e) => { e.stopPropagation(); onGenerateOutfits(item) }}
@@ -353,6 +374,9 @@ export function AvatarLandingPage({
             )
           })}
         </div>
+
+        {/* Portraits are now stored as children of anchors and accessible
+            via the Character Sheet's "Alternatives" strip — no separate section needed. */}
       </div>
 
       {/* Floating New Avatar FAB */}
