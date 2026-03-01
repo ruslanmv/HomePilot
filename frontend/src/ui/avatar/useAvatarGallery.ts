@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { AvatarResult, AvatarMode } from './types'
-import type { GalleryItem, OutfitScenarioTag } from './galleryTypes'
+import type { GalleryItem, GalleryItemRole, OutfitScenarioTag } from './galleryTypes'
 import { GALLERY_STORAGE_KEY, GALLERY_MAX_ITEMS } from './galleryTypes'
 
 // ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ export function useAvatarGallery() {
       prompt?: string,
       referenceUrl?: string,
       scenarioTag?: OutfitScenarioTag,
-      extra?: { vibeTag?: string; nsfw?: boolean; parentId?: string },
+      extra?: { vibeTag?: string; nsfw?: boolean; parentId?: string; role?: GalleryItemRole },
     ) => {
       setItems((prev) => {
         const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -122,6 +122,7 @@ export function useAvatarGallery() {
           nsfw: extra?.nsfw,
           parentId: extra?.parentId,
           batchId,
+          role: extra?.role,
         }))
         const updated = [...newItems, ...prev]
         return updated.slice(0, GALLERY_MAX_ITEMS)
@@ -129,6 +130,79 @@ export function useAvatarGallery() {
     },
     [],
   )
+
+  /** Add an anchor avatar + its alternative portraits in one atomic operation.
+   *  Portraits get parentId pointing to the anchor so they're grouped together. */
+  const addAnchorWithPortraits = useCallback(
+    (
+      anchor: AvatarResult,
+      portraits: AvatarResult[],
+      mode: AvatarMode,
+      prompt?: string,
+      referenceUrl?: string,
+      extra?: { vibeTag?: string; nsfw?: boolean },
+    ) => {
+      setItems((prev) => {
+        const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        const anchorId = galleryId()
+        const anchorItem: GalleryItem = {
+          id: anchorId,
+          url: anchor.url,
+          seed: anchor.seed,
+          prompt,
+          mode,
+          referenceUrl,
+          createdAt: Date.now(),
+          vibeTag: extra?.vibeTag,
+          nsfw: extra?.nsfw,
+          batchId,
+          role: 'anchor',
+        }
+        const portraitItems: GalleryItem[] = portraits.map((r) => ({
+          id: galleryId(),
+          url: r.url,
+          seed: r.seed,
+          prompt,
+          mode,
+          referenceUrl,
+          createdAt: Date.now(),
+          vibeTag: extra?.vibeTag,
+          nsfw: extra?.nsfw,
+          parentId: anchorId,
+          batchId,
+          role: 'portrait',
+        }))
+        const updated = [anchorItem, ...portraitItems, ...prev]
+        return updated.slice(0, GALLERY_MAX_ITEMS)
+      })
+    },
+    [],
+  )
+
+  /** Swap an anchor with one of its portraits.
+   *  The portrait becomes the new anchor; the old anchor becomes a portrait. */
+  const swapAnchor = useCallback((anchorId: string, portraitId: string) => {
+    setItems((prev) => {
+      const anchor = prev.find((i) => i.id === anchorId)
+      const portrait = prev.find((i) => i.id === portraitId)
+      if (!anchor || !portrait) return prev
+      return prev.map((item) => {
+        if (item.id === anchorId) {
+          // Old anchor → becomes portrait, linked to the new anchor
+          return { ...item, role: 'portrait' as GalleryItemRole, parentId: portraitId }
+        }
+        if (item.id === portraitId) {
+          // Portrait → becomes anchor, no parentId
+          return { ...item, role: 'anchor' as GalleryItemRole, parentId: undefined }
+        }
+        if (item.parentId === anchorId) {
+          // Other portraits/outfits linked to old anchor → re-link to new anchor
+          return { ...item, parentId: portraitId }
+        }
+        return item
+      })
+    })
+  }, [])
 
   /** Remove a single item by ID */
   const removeItem = useCallback((id: string) => {
@@ -160,6 +234,8 @@ export function useAvatarGallery() {
     items,
     addItem,
     addBatch,
+    addAnchorWithPortraits,
+    swapAnchor,
     removeItem,
     clearAll,
     tagItem,

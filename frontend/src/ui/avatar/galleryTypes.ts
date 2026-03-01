@@ -243,6 +243,9 @@ export const CHARACTER_STYLE_PRESETS: CharacterStylePreset[] = [
 // Gallery Item
 // ---------------------------------------------------------------------------
 
+/** Gallery item role — distinguishes the selected anchor from portrait alternatives. */
+export type GalleryItemRole = 'anchor' | 'portrait'
+
 export interface GalleryItem {
   /** Unique ID (uuid-style) */
   id: string
@@ -273,6 +276,9 @@ export interface GalleryItem {
   batchId?: string
   /** Set when "Save as Persona Avatar" is used */
   personaProjectId?: string
+  /** Role: 'anchor' = the chosen avatar, 'portrait' = non-selected alternatives
+   *  stored in the Portrait Gallery. Undefined treated as 'anchor' for backwards compat. */
+  role?: GalleryItemRole
 }
 
 // ---------------------------------------------------------------------------
