@@ -324,13 +324,23 @@ export function InventoryView({ projectId, backendUrl, apiKey, onBack, onShowInC
   // -----------------------------------------------------------------------
   const handleDelete = useCallback(async (item: InventoryItem) => {
     if (deleting) return
+    // Prevent deleting the active look from the UI side
+    if (item.is_active_look) {
+      setError('Cannot delete the active look. Change the active look first.')
+      return
+    }
     if (!confirm(`Delete "${item.label}"? This cannot be undone.`)) return
     setDeleting(item.id)
     try {
       await deleteInventoryItem(backendUrl, projectId, item.id, { apiKey })
       setRefreshKey((k) => k + 1)
     } catch (e: any) {
-      setError(`Delete failed: ${e.message}`)
+      const msg = e.message || ''
+      if (msg.includes('409') || msg.includes('active look')) {
+        setError('Cannot delete the active look. Change the active look first.')
+      } else {
+        setError(`Delete failed: ${msg}`)
+      }
     } finally {
       setDeleting(null)
     }

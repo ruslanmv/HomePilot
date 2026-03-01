@@ -144,10 +144,10 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, 
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 flex items-center justify-center gap-1 py-2.5 text-xs font-medium transition-colors relative ${
+            className={`flex-1 flex items-center justify-center gap-1 py-2.5 text-[13px] font-medium transition-colors relative ${
               activeTab === tab.id
                 ? 'text-cyan-300'
-                : 'text-white/30 hover:text-white/50'
+                : 'text-white/35 hover:text-white/50'
             }`}
           >
             {tab.icon}
@@ -175,8 +175,8 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
-                  <Target size={10} className="text-cyan-400/60" />
-                  <span className="text-[9px] font-semibold text-white/30 uppercase tracking-wider">Main Topic</span>
+                  <Target size={11} className="text-cyan-400/60" />
+                  <span className="text-[11px] font-semibold text-white/35 uppercase tracking-wider">Main Topic</span>
                 </div>
                 {onUpdateTopic && !editingTopic && (
                   <button
@@ -233,7 +233,7 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, 
             {/* ── Agenda Items ── */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <span className="text-[9px] font-semibold text-white/30 uppercase tracking-wider">Agenda Items</span>
+                <span className="text-[11px] font-semibold text-white/35 uppercase tracking-wider">Agenda Items</span>
                 {onUpdateAgenda && (
                   <button
                     onClick={() => { setAddingNew(true); setNewItemText('') }}
@@ -282,7 +282,7 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, 
               {(!room.agenda || room.agenda.length === 0) && !addingNew ? (
                 <div className="text-center py-4">
                   <ListChecks size={18} className="mx-auto text-white/10 mb-1.5" />
-                  <p className="text-[10px] text-white/20">No agenda items</p>
+                  <p className="text-[11px] text-white/25">No agenda items</p>
                   {onUpdateAgenda && (
                     <button
                       onClick={() => { setAddingNew(true); setNewItemText('') }}
@@ -349,7 +349,7 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, 
                           <Circle size={13} className="text-white/15" />
                         )}
                       </button>
-                      <span className={`flex-1 text-xs leading-relaxed ${done ? 'text-white/30 line-through' : 'text-white/55'}`}>
+                      <span className={`flex-1 text-[13px] leading-relaxed ${done ? 'text-white/30 line-through' : 'text-white/55'}`}>
                         {item}
                       </span>
                       {/* Edit/Remove controls */}
@@ -379,7 +379,7 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, 
                 })
               )}
               {room.agenda && room.agenda.length > 0 && (
-                <div className="text-[9px] text-white/15 text-center mt-2">
+                <div className="text-[10px] text-white/20 text-center mt-2">
                   {checkedAgenda.size}/{room.agenda.length} completed
                 </div>
               )}
@@ -460,7 +460,7 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, 
 
             {/* Speaking distribution with dominance indicators */}
             <div>
-              <div className="text-[9px] font-semibold text-white/30 uppercase tracking-wider mb-2">
+              <div className="text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-2">
                 Speaking Distribution
               </div>
               <div className="space-y-1.5">
@@ -491,7 +491,7 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, 
             {/* Orchestration Policy */}
             {room.policy && (
               <div>
-                <div className="text-[9px] font-semibold text-white/30 uppercase tracking-wider mb-2">
+                <div className="text-[11px] font-semibold text-white/35 uppercase tracking-wider mb-2">
                   Policy
                 </div>
                 <div className="space-y-1">
