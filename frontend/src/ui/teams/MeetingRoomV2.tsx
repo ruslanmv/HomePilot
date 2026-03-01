@@ -211,10 +211,10 @@ export function MeetingRoomV2({
             <ArrowLeft size={16} />
           </button>
           <div>
-            <h2 className="text-sm font-semibold text-white">{room.name}</h2>
-            <div className="text-[10px] text-white/30 flex items-center gap-2">
+            <h2 className="text-base font-semibold text-white">{room.name}</h2>
+            <div className="text-[11px] text-white/35 flex items-center gap-2">
               <span className="flex items-center gap-1">
-                <Users size={9} />
+                <Users size={10} />
                 {room.participant_ids.length + 1} participants
               </span>
               <span className="text-white/20">&middot;</span>
