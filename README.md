@@ -164,10 +164,16 @@ Create intelligent **AI Agents** that can use tools, access knowledge bases, and
 Bring your AI personas together in a virtual meeting room where they collaborate, debate, and build on each other's ideas:
 - **Oval Meeting Table** with up to 6 visible seats + paginated overflow strip for larger teams
 - **Reactive Orchestration** — intent scoring decides who speaks based on relevance, role, and conversation dynamics (not rigid round-robin)
+- **Crew Workflow Engine** — stage-based task collaboration with structured output contracts, checklist tracking, and budget validation (3 built-in profiles: task planner, brainstorm, draft & edit)
 - **Persona Profile Panel** — click any avatar to see their character sheet (class, stats, skills, tools, wardrobe)
 - **Chat-Style Input** — pill-shaped input bar with Call On and Run Turn controls
 - **Hand-Raise System** — auto-raised when confidence exceeds threshold, with TTL countdown and intent type badges
 - See [docs/TEAMS.md](docs/TEAMS.md) for the full specification
+
+<p align="center">
+  <img src="docs/orchestration-modes.svg" alt="Orchestration Modes" width="820" /><br>
+  <em>Three orchestration engines — Reactive, Initiative, and Crew — each optimized for a different collaboration style.</em>
+</p>
 
 ### 🎮 Play Story Mode
 Simple, relaxing story creation for beginners:

@@ -138,12 +138,21 @@ export function MeetingRoomV2({
 
   const lastMsg = (room.messages || []).slice(-1)[0]
 
-  // Keep transcript pinned to bottom
+  // Keep transcript pinned to bottom — double scroll for long messages
   useEffect(() => {
     if (rightTab !== 'transcript') return
     const el = transcriptRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
+    const raf = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+    const timer = setTimeout(() => {
+      el.scrollTop = el.scrollHeight
+    }, 150)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(timer)
+    }
   }, [rightTab, room.messages?.length])
 
   const handleSend = useCallback(async () => {
