@@ -26,7 +26,8 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("homepilot.teams.meeting_engine")
 
-# Maximum messages to include in the shared context window
+# Default maximum messages to include in the shared context window.
+# Can be overridden per-room via room.policy.memory_depth.
 MAX_CONTEXT_MESSAGES = 50
 # Maximum knowledge-base chunks to inject per persona per turn
 MAX_KNOWLEDGE_CHUNKS = 3
@@ -118,7 +119,12 @@ def build_persona_prompt(
     # ── Meeting context ──────────────────────────────────────────────
     meeting_name = room.get("name") or "Meeting"
     meeting_desc = room.get("description") or ""
+    meeting_topic = room.get("topic") or ""
     agenda = room.get("agenda") or []
+
+    # ── Observer mode detection ──────────────────────────────────────
+    policy = room.get("policy") or {}
+    observer_mode = bool(policy.get("observer_mode", False))
 
     # Build rich "other participants" list with roles
     others_lines: List[str] = []
@@ -150,12 +156,17 @@ def build_persona_prompt(
     lines.append("Other participants in this meeting:")
     if others_lines:
         lines.extend(others_lines)
-    lines.append("  - A human user (the host)")
+    if observer_mode:
+        lines.append("  - A human observer (listening only — do not address them unless they speak)")
+    else:
+        lines.append("  - A human participant")
     lines.append("")
 
     # Meeting context
     if meeting_desc:
         lines.append(f"Meeting purpose: {meeting_desc}")
+    if meeting_topic and meeting_topic != meeting_desc:
+        lines.append(f"Current discussion topic: {meeting_topic}")
     if agenda:
         lines.append("Agenda:")
         for i, item in enumerate(agenda, 1):
@@ -175,6 +186,20 @@ def build_persona_prompt(
             lines.append(kb_context)
             lines.append("")
 
+    # ── Strict voice directives (prevent identity drift + meta-reasoning) ─
+    lines.append(
+        "[CRITICAL — Voice & Identity Rules]\n"
+        f"- You ARE \"{label}\" and may ONLY speak as yourself.\n"
+        "- Output ONLY your spoken words. Nothing else.\n"
+        "- NEVER output planning, reasoning, analysis, or meta-commentary.\n"
+        "- NEVER narrate what you are thinking or what you plan to say.\n"
+        f"- NEVER output speaker labels like \"Partner:\" or \"Girlfriend:\" or \"{label}:\" — the UI labels speakers.\n"
+        "- NEVER speak for, impersonate, or put words in the mouth of another participant.\n"
+        "- NEVER mention system mechanics: 'host', 'orchestrator', 'policy', 'turn order', 'speaker selection', 'round'.\n"
+        "- NEVER refer to the human in third person ('the user', 'the host', 'they').\n"
+        "- Keep responses concise: 1-3 sentences for voice conversations, up to a short paragraph for detailed topics.\n"
+    )
+
     # Meeting behavior rules
     lines.append(
         "MEETING BEHAVIOR:\n"
@@ -183,7 +208,69 @@ def build_persona_prompt(
         "- Address other participants by name when appropriate.\n"
         "- Draw on your specific knowledge and experience when contributing.\n"
         "- You can agree, disagree, add information, ask questions, or build on others' ideas.\n"
-        "- If a topic is outside your expertise, acknowledge it and defer to the right participant."
+        "- If a topic is outside your expertise, acknowledge it and defer to the right participant.\n"
+        "- Offer a DIFFERENT perspective than what has already been said — do not repeat or paraphrase earlier points.\n"
+    )
+
+    # Inter-participant communication (mode-aware)
+    if observer_mode:
+        lines.append(
+            "INTER-PARTICIPANT COMMUNICATION:\n"
+            "- Address other participants directly — use their name and second person.\n"
+            "- React to what other participants actually said — quote or reference their words.\n"
+            "- Ask other participants questions, respond to their ideas, or build on them.\n"
+            "- The human is observing. Do NOT address them unless they send a message first.\n"
+            "- This is a conversation between participants. Talk to each other."
+        )
+    else:
+        lines.append(
+            "INTER-PARTICIPANT COMMUNICATION:\n"
+            "- When asked to speak to or address another participant, "
+            "speak DIRECTLY TO them — use their name and second person.\n"
+            "- When another participant says something, you may respond to them directly — "
+            "you are all in the same room and can hear each other.\n"
+            "- React to what other participants actually said — quote or reference their words.\n"
+            "- Do NOT address everything to one person. This is a group conversation.\n"
+            "- You may ask other participants questions, respond to their ideas, or build on them."
+        )
+
+    # ── Task-mode contract (auto-detected from topic / agenda) ─────────
+    # When the meeting is about a concrete deliverable (plan, draft, etc.),
+    # constrain personas to produce structured contributions instead of
+    # drifting into roleplay or mutual flattery loops.
+    _task_indicators = [
+        "plan", "step-by-step", "step by step", "draft", "design",
+        "outline", "create", "organize", "prepare", "budget",
+        "schedule", "proposal", "strategy", "build",
+    ]
+    combined_context = f"{meeting_topic} {meeting_desc}".lower()
+    # Also check recent human messages for task directives
+    recent_human = ""
+    for m in reversed(room.get("messages") or []):
+        if m.get("role") == "user" and m.get("sender_id") != "system":
+            recent_human = (m.get("content") or "").lower()
+            break
+    is_task_mode = any(w in combined_context or w in recent_human for w in _task_indicators)
+
+    if is_task_mode:
+        lines.append(
+            "\n[TASK MODE — Structured Contributions Required]\n"
+            "This meeting is working toward a concrete deliverable.\n"
+            "- Each message MUST add new, concrete information: a step, detail, cost, time, or improvement.\n"
+            "- Do NOT mirror or paraphrase what another participant just said.\n"
+            "- Do NOT engage in mutual flattery, romantic back-and-forth, or poetic escalation.\n"
+            "- If the plan is complete, say so and suggest next steps or ask a specific question.\n"
+            "- Stay grounded: use specifics (names, prices, times) not vague metaphors.\n"
+            "- NEVER repeat the same idea across multiple messages.\n"
+        )
+
+    # ── Anti-repetition rules (always active) ──────────────────────────
+    lines.append(
+        "\n[ANTI-REPETITION]\n"
+        "- NEVER repeat sentences or phrases from your own previous messages.\n"
+        "- NEVER write both sides of a conversation — only YOUR words.\n"
+        "- If you have nothing new to add, say a single short sentence like "
+        "\"I agree with [name]'s point\" or \"Nothing to add here.\"\n"
     )
 
     return "\n".join(lines)
@@ -192,23 +279,45 @@ def build_persona_prompt(
 def build_chat_messages(
     room: Dict[str, Any],
     persona_system_prompt: str,
+    *,
+    current_persona_id: str = "",
 ) -> List[Dict[str, str]]:
-    """Build the messages array for an LLM call from the meeting transcript."""
+    """Build the messages array for an LLM call from the meeting transcript.
+
+    Key design: only this persona's own past messages get ``role: assistant``.
+    Messages from the human AND from other personas both get ``role: user``
+    so the LLM treats them as input from other speakers — not its own words.
+    This is what allows personas to genuinely respond to each other.
+    """
     messages: List[Dict[str, str]] = [
         {"role": "system", "content": persona_system_prompt},
     ]
 
-    # Add recent transcript as conversation history
-    recent = (room.get("messages") or [])[-MAX_CONTEXT_MESSAGES:]
+    # Add recent transcript as conversation history.
+    # Context depth is configurable via room.policy.memory_depth.
+    ctx_depth = int((room.get("policy") or {}).get("memory_depth", MAX_CONTEXT_MESSAGES))
+    ctx_depth = max(5, min(200, ctx_depth))  # clamp to sensible range
+    # Filter out facilitator/system debug messages — the LLM should only
+    # see real participant messages (human + other personas + own history).
+    _SKIP_SENDERS = {"facilitator", "system"}
+    recent = (room.get("messages") or [])[-ctx_depth:]
     for msg in recent:
-        role = msg.get("role", "user")
         sender = msg.get("sender_name") or "Unknown"
+        sender_id = msg.get("sender_id") or ""
         content = msg.get("content") or ""
 
-        if role == "user":
-            messages.append({"role": "user", "content": f"[{sender}]: {content}"})
+        # Skip facilitator/system debug messages
+        if sender_id in _SKIP_SENDERS:
+            continue
+
+        # Only THIS persona's own past messages are "assistant"; everything
+        # else (human + other personas) is "user" so the LLM engages with it.
+        if sender_id == current_persona_id and current_persona_id:
+            messages.append({"role": "assistant", "content": content})
         else:
-            messages.append({"role": "assistant", "content": f"[{sender}]: {content}"})
+            # Use prose attribution instead of bracket labels like "[Partner]: ..."
+            # to prevent the LLM from mimicking the label format in its output.
+            messages.append({"role": "user", "content": f"{sender} said: {content}"})
 
     return messages
 
@@ -254,7 +363,9 @@ async def run_persona_turn(
     system_prompt = build_persona_prompt(
         persona_project, room, other, knowledge_query=knowledge_query,
     )
-    chat_messages = build_chat_messages(room, system_prompt)
+    chat_messages = build_chat_messages(
+        room, system_prompt, current_persona_id=persona_id,
+    )
 
     try:
         response_text = await llm_fn(chat_messages)

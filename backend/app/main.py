@@ -2678,13 +2678,13 @@ async def upload_to_project(project_id: str, file: UploadFile = File(...)) -> JS
         ext = os.path.splitext(filename)[1].lower()[:10]
 
         # Supported file types: documents + images (T4 multimodal knowledge)
-        _SUPPORTED_DOC_EXTS = {".pdf", ".txt", ".md"}
+        _SUPPORTED_DOC_EXTS = {".pdf", ".txt", ".md", ".docx", ".xlsx"}
         _SUPPORTED_IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
         if ext not in _SUPPORTED_DOC_EXTS and ext not in _SUPPORTED_IMG_EXTS:
             return JSONResponse(
                 status_code=400,
                 content=_safe_err(
-                    "Supported file types: PDF, TXT, MD, PNG, JPG, JPEG, WEBP, GIF, BMP",
+                    "Supported file types: PDF, TXT, MD, DOCX, XLSX, PNG, JPG, JPEG, WEBP, GIF, BMP",
                     code="invalid_file_type",
                 )
             )

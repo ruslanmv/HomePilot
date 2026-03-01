@@ -28,6 +28,8 @@ import time
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Set
 
+import re
+
 from .intent import SpeakIntent, compute_intent, tick_cooldowns, set_cooldown
 from . import rooms
 
@@ -60,6 +62,8 @@ def ensure_defaults(room: Dict[str, Any]) -> Dict[str, Any]:
     p.setdefault("redundancy_threshold", 0.7)
     p.setdefault("dominance_lookback", 10)
     p.setdefault("dominance_penalty", 0.15)
+    # Context depth (how many messages each persona sees)
+    p.setdefault("memory_depth", 50)
 
     room.setdefault("round", 0)
     room.setdefault("speaker_queue", [])
@@ -227,10 +231,12 @@ def diversity_gate(
 
     for pid in selected:
         tags = tuple(sorted(p_map.get(pid, {}).get("role_tags", [])))
-        if tags and tags in seen_roles:
-            logger.debug("Diversity gate: dropped %s (duplicate role tags %s)", pid, tags)
-            continue
+        # Empty tags = no role info; let all untagged personas through.
+        # Only deduplicate when we have actual role tags to compare.
         if tags:
+            if tags in seen_roles:
+                logger.debug("Diversity gate: dropped %s (duplicate role tags %s)", pid, tags)
+                continue
             seen_roles.add(tags)
         keep.append(pid)
 
@@ -278,10 +284,29 @@ def select_speakers(
             return speakers
         # Fall through to reactive if queue is empty
 
-    # ── Reactive / free-form / round-robin: score-based ───────────
+    # ── Round-robin (BG3 Initiative): deterministic queue rotation ──
     if mode == "round-robin":
-        candidates = sorted(intents, key=lambda x: x.confidence, reverse=True)
-        raw = [c.persona_id for c in candidates[:max_speakers]]
+        participant_ids = room.get("participant_ids") or []
+        # Initiative = 1 speaker per step (BG3-style), regardless of max_speakers policy.
+        initiative_count = 1
+        if participant_ids:
+            queue_idx = room.get("round", 0) % len(participant_ids)
+            raw = []
+            muted_set = set(room.get("muted") or [])
+            for offset in range(len(participant_ids)):
+                idx = (queue_idx + offset) % len(participant_ids)
+                pid = participant_ids[idx]
+                if pid not in muted_set:
+                    raw.append(pid)
+                    if len(raw) >= initiative_count:
+                        break
+        else:
+            raw = []
+        # Skip redundancy + diversity gates for initiative mode —
+        # the fixed order IS the design. Return immediately.
+        return raw
+
+    # ── Reactive / free-form: score-based ──────────────────────────
     else:
         # Default reactive: prioritize hand-raisers, then high-confidence
         hrs_set = set(room.get("hand_raises") or [])
@@ -308,6 +333,21 @@ def select_speakers(
             raw = [all_sorted[0].persona_id]
             logger.debug("Fallback speaker (human prompt): %s (score=%.2f)", raw[0], all_sorted[0].confidence)
 
+    # ── Anti-monologue gate: demote the last speaker ─────────────
+    # If the most recent assistant message was from a persona that's in
+    # our candidate list AND there are other candidates, push the last
+    # speaker to the end so someone else gets priority.
+    last_speaker_id = None
+    for m in reversed(room.get("messages") or []):
+        if m.get("role") == "assistant":
+            last_speaker_id = m.get("sender_id")
+            break
+
+    if last_speaker_id and len(raw) > 1 and raw[0] == last_speaker_id:
+        # Move last speaker to end of candidate list
+        raw = [pid for pid in raw if pid != last_speaker_id] + [last_speaker_id]
+        logger.debug("Anti-monologue: demoted %s (spoke last)", last_speaker_id)
+
     # ── Apply gates ───────────────────────────────────────────────
     selected = redundancy_gate(intents, raw, red_threshold)
     selected = diversity_gate(selected, participants)
@@ -324,6 +364,7 @@ async def run_reactive_step(
     last_human_message: str,
     participants: List[Dict[str, Any]],
     generate_fn: Callable[[str, Dict[str, Any]], Awaitable[str]],
+    exclude_speakers: Set[str] | None = None,
 ) -> Dict[str, Any]:
     """
     Run one realistic meeting step:
@@ -342,6 +383,8 @@ async def run_reactive_step(
         last_human_message: The human message triggering this step.
         participants: Normalized participant dicts (from resolve_participants).
         generate_fn: async (persona_id, room_dict) -> str
+        exclude_speakers: Persona IDs to exclude from speaker selection
+                          (e.g. those who already spoke in a previous round).
 
     Returns:
         {"room": updated_room, "new_messages": [...], "speakers": [...]}
@@ -366,16 +409,65 @@ async def run_reactive_step(
     # 3. Select who speaks (with gates)
     speakers = select_speakers(room, intents, participants)
 
+    # Filter out personas that already spoke (multi-round dedup)
+    if exclude_speakers:
+        speakers = [s for s in speakers if s not in exclude_speakers]
+
     # 4. Generate content for each speaker
     new_messages: List[Dict[str, Any]] = []
     policy = room.get("policy") or {}
     cd_turns = int(policy.get("cooldown_turns", 1))
+    # Collect texts generated this step for post-generation dedup
+    step_texts: List[str] = []
 
     for pid in speakers:
         text = (await generate_fn(pid, room)).strip()
         if not text:
+            # Retry once: inject a temporary nudge message so the LLM
+            # has fresh input to respond to, then clean up.
+            logger.warning("Empty response from %s, retrying with nudge", pid)
+            nudge_id = str(uuid.uuid4())
+            nudge = {
+                "id": nudge_id,
+                "sender_id": "system",
+                "sender_name": "System",
+                "content": "Please share your perspective on the discussion so far.",
+                "role": "user",
+                "tools_used": [],
+                "timestamp": _now(),
+            }
+            room.setdefault("messages", []).append(nudge)
+            text = (await generate_fn(pid, room)).strip()
+            # Remove the temporary nudge (keep transcript clean)
+            room["messages"] = [m for m in room.get("messages", []) if m.get("id") != nudge_id]
+            if not text:
+                logger.warning("Empty response from %s after retry, skipping", pid)
+                continue
+
+        # Post-generation dedup: skip if too similar to what another
+        # speaker already said in this same step (paraphrase echo).
+        if step_texts and _is_duplicate_of_prior(text, step_texts):
+            logger.info(
+                "Post-generation dedup: skipped %s (too similar to prior speaker)",
+                _display_name_for(pid, participants),
+            )
             continue
 
+        # History novelty check: skip if too similar to recent transcript.
+        # This catches the "romantic mirroring loop" where each turn
+        # paraphrases the previous one with slightly different words.
+        recent_history = [
+            m.get("content", "") for m in (room.get("messages") or [])[-6:]
+            if m.get("role") == "assistant"
+        ]
+        if recent_history and _is_duplicate_of_prior(text, recent_history, threshold=0.50):
+            logger.info(
+                "History novelty: skipped %s (too similar to recent transcript)",
+                _display_name_for(pid, participants),
+            )
+            continue
+
+        step_texts.append(text)
         display_name = _display_name_for(pid, participants)
         msg = {
             "id": str(uuid.uuid4()),
@@ -420,6 +512,69 @@ async def run_reactive_step(
     }
 
 
+async def run_initiative_step(
+    room_id: str,
+    *,
+    participants: List[Dict[str, Any]],
+    generate_fn: Callable[[str, Dict[str, Any]], Awaitable[str]],
+) -> Dict[str, Any]:
+    """Run one BG3-style initiative step: deterministic queue rotation.
+
+    Picks the next participant(s) in round-robin order, generates their
+    spoken text, and appends to transcript. No intent scoring needed.
+
+    Returns:
+        {"room": updated_room, "new_messages": [...], "speakers": [...]}
+    """
+    room = rooms.get_room(room_id)
+    if not room:
+        raise ValueError("Room not found")
+
+    ensure_defaults(room)
+    room["round"] = room.get("round", 0) + 1
+
+    # Deterministic speaker selection via round-robin index
+    speakers = select_speakers(room, [], participants)
+
+    new_messages: List[Dict[str, Any]] = []
+    policy = room.get("policy") or {}
+    cd_turns = int(policy.get("cooldown_turns", 1))
+
+    for pid in speakers:
+        text = (await generate_fn(pid, room)).strip()
+        if not text:
+            logger.warning("Empty response from %s in initiative step, skipping", pid)
+            continue
+        display_name = _display_name_for(pid, participants)
+        msg = {
+            "id": str(uuid.uuid4()),
+            "sender_id": pid,
+            "sender_name": display_name,
+            "content": text,
+            "role": "assistant",
+            "tools_used": [],
+            "timestamp": _now(),
+        }
+        room.setdefault("messages", []).append(msg)
+        new_messages.append(msg)
+        set_cooldown(room, pid, cd_turns)
+
+    room["updated_at"] = _now()
+    rooms.update_room(room_id, {
+        "messages": room.get("messages", []),
+        "cooldowns": room.get("cooldowns", {}),
+        "policy": room.get("policy", {}),
+        "round": room.get("round", 0),
+        "updated_at": room["updated_at"],
+    })
+
+    return {
+        "room": rooms.get_room(room_id),
+        "new_messages": new_messages,
+        "speakers": speakers,
+    }
+
+
 def _display_name_for(
     persona_id: str, participants: List[Dict[str, Any]],
 ) -> str:
@@ -427,3 +582,151 @@ def _display_name_for(
         if p["persona_id"] == persona_id:
             return p.get("display_name", persona_id)
     return persona_id
+
+
+# ── Post-generation dedup ────────────────────────────────────────────────
+
+_STOP_WORDS = frozenset({
+    "that", "this", "with", "from", "have", "been", "were", "will",
+    "what", "when", "where", "which", "about", "their", "there",
+    "would", "could", "should", "other", "just", "like", "more",
+    "they", "them", "your", "also", "than", "then", "very", "some",
+    "into", "over", "only", "even", "most", "such", "each",
+})
+
+
+def _tokenize(text: str) -> Set[str]:
+    """Extract meaningful word tokens (lowercase, no stop-words)."""
+    words = set(re.findall(r"[a-zA-Z]{3,}", text.lower()))
+    return words - _STOP_WORDS
+
+
+def _jaccard_similarity(a: Set[str], b: Set[str]) -> float:
+    """Compute Jaccard similarity between two token sets."""
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def _is_duplicate_of_prior(
+    new_text: str,
+    prior_texts: List[str],
+    threshold: float = 0.45,
+) -> bool:
+    """Check if new_text is too similar to any prior text (token Jaccard)."""
+    new_tokens = _tokenize(new_text)
+    if len(new_tokens) < 3:
+        return False  # too short to judge
+    for prior in prior_texts:
+        prior_tokens = _tokenize(prior)
+        if _jaccard_similarity(new_tokens, prior_tokens) >= threshold:
+            return True
+    return False
+
+
+# ── Preview (dry-run, no side effects) ───────────────────────────────────
+
+
+def preview_next_turn(
+    room_id: str,
+    *,
+    trigger_message: str,
+    participants: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Preview who would speak next WITHOUT executing anything.
+    Returns explainable candidate list (BG3-style initiative order).
+
+    No side effects: does not modify room state, messages, or cooldowns.
+    """
+    room = rooms.get_room(room_id)
+    if not room:
+        raise ValueError("Room not found")
+
+    # Work on a shallow copy to avoid side effects
+    import copy
+    room = copy.deepcopy(room)
+    ensure_defaults(room)
+
+    mode = room.get("turn_mode", "reactive")
+
+    # ── Initiative / round-robin: show deterministic queue order ──
+    if mode == "round-robin":
+        participant_ids = room.get("participant_ids") or []
+        current_round = room.get("round", 0) + 1  # preview is for the NEXT round
+        muted_set = set(room.get("muted") or [])
+        candidates = []
+        for offset in range(len(participant_ids)):
+            idx = (current_round % max(1, len(participant_ids)) + offset) % max(1, len(participant_ids))
+            pid = participant_ids[idx]
+            is_muted = pid in muted_set
+            candidates.append({
+                "persona_id": pid,
+                "display_name": _display_name_for(pid, participants),
+                "score": 1.0 if offset == 0 and not is_muted else 0.0,
+                "urgency": 0,
+                "intent_type": "queue",
+                "reasons": ["next_in_queue"] if offset == 0 else ["queued"],
+                "status": "muted" if is_muted else ("next" if offset == 0 else "queued"),
+            })
+
+        selected = select_speakers(room, [], participants)
+        return {
+            "candidates": candidates,
+            "selected": selected,
+            "selected_names": [_display_name_for(pid, participants) for pid in selected],
+            "turn_mode": mode,
+            "round": room.get("round", 0),
+        }
+
+    # ── Reactive / free-form: intent-scored candidates ──
+    intents = compute_all_intents(room, participants, trigger_message)
+
+    hrs_set = set(room.get("hand_raises") or [])
+    called = room.get("called_on")
+
+    candidates = []
+    for intent in intents:
+        pid = intent.persona_id
+        reasons: List[str] = []
+        if called and pid == called:
+            reasons.append("called_on")
+        if pid in hrs_set:
+            reasons.append("hand_raise")
+        if intent.wants_to_speak:
+            reasons.append("wants_to_speak")
+        if intent.reason and intent.reason != "listening":
+            reasons.extend(intent.reason.split(", "))
+
+        status = "called_on" if (called and pid == called) else \
+                 "hand_raise" if pid in hrs_set else \
+                 "auto" if intent.wants_to_speak else "waiting"
+
+        candidates.append({
+            "persona_id": pid,
+            "display_name": _display_name_for(pid, participants),
+            "score": intent.confidence,
+            "urgency": intent.urgency,
+            "intent_type": intent.intent_type,
+            "reasons": list(set(reasons)),
+            "status": status,
+        })
+
+    candidates.sort(
+        key=lambda c: (
+            c["status"] == "called_on",
+            c["status"] == "hand_raise",
+            c["score"],
+        ),
+        reverse=True,
+    )
+
+    selected = select_speakers(room, intents, participants)
+
+    return {
+        "candidates": candidates,
+        "selected": selected,
+        "selected_names": [_display_name_for(pid, participants) for pid in selected],
+        "turn_mode": mode,
+        "round": room.get("round", 0),
+    }
