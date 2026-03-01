@@ -496,6 +496,13 @@ export function MeetingRightRail({ room, personas, backendUrl, apiKey, onClose, 
                 </div>
                 <div className="space-y-1">
                   {[
+                    { label: 'Engine', value: room.policy.engine === 'crew' ? 'Task Workflow' : (room.policy.engine || 'Native') },
+                    ...(room.policy.engine === 'crew' && room.policy.crew?.profile_id
+                      ? [{ label: 'Profile', value: room.policy.crew.profile_id.replace(/_/g, ' ') }]
+                      : []),
+                    ...(room.policy.engine === 'crew' && room.policy.crew?.budget_limit_eur
+                      ? [{ label: 'Budget', value: `${room.policy.crew.budget_limit_eur} EUR` }]
+                      : []),
                     { label: 'Speak threshold', value: room.policy.speak_threshold },
                     { label: 'Hand-raise threshold', value: room.policy.hand_raise_threshold },
                     { label: 'Hand-raise TTL', value: room.policy.hand_raise_ttl_rounds ? `${room.policy.hand_raise_ttl_rounds} rounds` : undefined },

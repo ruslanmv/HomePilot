@@ -21,6 +21,8 @@ import {
   MessageSquare,
   Crown,
   Activity,
+  Workflow,
+  DollarSign,
 } from 'lucide-react'
 import type { PersonaSummary } from './types'
 import { PersonaSelectorEnterprise } from './PersonaSelectorEnterprise'
@@ -40,6 +42,7 @@ export interface CreateSessionWizardProps {
     participant_ids: string[]
     turn_mode: string
     agenda: string[]
+    policy?: { engine?: string; crew?: { profile_id?: string; budget_limit_eur?: number } }
   }) => Promise<void>
 }
 
@@ -74,6 +77,27 @@ const TURN_MODES = [
   },
 ]
 
+const ENGINE_OPTIONS = [
+  {
+    value: 'native' as const,
+    label: 'Conversation',
+    description: 'Free-form discussion with smart speaker selection',
+    icon: <MessageSquare size={16} />,
+  },
+  {
+    value: 'crew' as const,
+    label: 'Task Workflow',
+    description: 'Stage-based collaboration with structured output',
+    icon: <Workflow size={16} />,
+  },
+]
+
+const CREW_PROFILES = [
+  { id: 'task_planner_v1', label: 'Task Planner', description: 'Steps, details, review, and finalize' },
+  { id: 'brainstorm_v1', label: 'Brainstorm', description: 'Ideate, evaluate, and recommend' },
+  { id: 'draft_and_edit_v1', label: 'Draft & Edit', description: 'Outline, draft, and refine content' },
+]
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -95,6 +119,9 @@ export function CreateSessionWizard({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   // Step 3
+  const [engine, setEngine] = useState<'native' | 'crew'>('native')
+  const [crewProfileId, setCrewProfileId] = useState('task_planner_v1')
+  const [budgetLimit, setBudgetLimit] = useState('')
   const [turnMode, setTurnMode] = useState('reactive')
   const [agendaText, setAgendaText] = useState('')
 
@@ -121,19 +148,30 @@ export function CreateSessionWizard({
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean)
+      const policy = engine === 'crew'
+        ? {
+            engine: 'crew' as const,
+            crew: {
+              profile_id: crewProfileId,
+              ...(budgetLimit ? { budget_limit_eur: parseFloat(budgetLimit) } : {}),
+            },
+          }
+        : { engine: 'native' as const }
+
       await onCreate({
         name: name.trim(),
         description: description.trim(),
         participant_ids: Array.from(selectedIds),
         turn_mode: turnMode,
         agenda,
+        policy,
       })
     } catch (e) {
       console.error('Failed to create session:', e)
     } finally {
       setCreating(false)
     }
-  }, [creating, name, description, selectedIds, turnMode, agendaText, onCreate])
+  }, [creating, name, description, selectedIds, turnMode, agendaText, engine, crewProfileId, budgetLimit, onCreate])
 
   return (
     <div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col min-h-0">
@@ -237,7 +275,90 @@ export function CreateSessionWizard({
               <p className="text-xs text-white/35">Choose how the conversation flows and set an optional agenda.</p>
             </div>
 
-            {/* Turn mode */}
+            {/* Engine type */}
+            <div>
+              <label className="block text-xs text-white/50 mb-2">Session Type</label>
+              <div className="flex gap-2">
+                {ENGINE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setEngine(opt.value)}
+                    className={`flex-1 flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
+                      engine === opt.value
+                        ? 'bg-cyan-500/[0.08] border-cyan-500/30'
+                        : 'bg-white/[0.02] border-white/[0.06] hover:border-white/15'
+                    }`}
+                  >
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                      engine === opt.value ? 'bg-cyan-500/20 text-cyan-300' : 'bg-white/5 text-white/30'
+                    }`}>
+                      {opt.icon}
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-white">{opt.label}</div>
+                      <div className="text-[10px] text-white/35">{opt.description}</div>
+                    </div>
+                    {engine === opt.value && (
+                      <div className="w-5 h-5 rounded-full bg-cyan-500 flex items-center justify-center">
+                        <Check size={12} className="text-white" />
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Crew workflow settings (only when engine === 'crew') */}
+            {engine === 'crew' && (
+              <div className="space-y-3 rounded-xl border border-cyan-500/15 bg-cyan-500/[0.03] p-4">
+                <div>
+                  <label className="block text-xs text-white/50 mb-2">Workflow Profile</label>
+                  <div className="space-y-2">
+                    {CREW_PROFILES.map((profile) => (
+                      <button
+                        key={profile.id}
+                        type="button"
+                        onClick={() => setCrewProfileId(profile.id)}
+                        className={`w-full flex items-center gap-3 p-2.5 rounded-lg border transition-all text-left ${
+                          crewProfileId === profile.id
+                            ? 'bg-cyan-500/[0.08] border-cyan-500/25'
+                            : 'bg-white/[0.02] border-white/[0.06] hover:border-white/15'
+                        }`}
+                      >
+                        <div className="flex-1">
+                          <div className="text-sm font-medium text-white">{profile.label}</div>
+                          <div className="text-[10px] text-white/35">{profile.description}</div>
+                        </div>
+                        {crewProfileId === profile.id && (
+                          <div className="w-4 h-4 rounded-full bg-cyan-500 flex items-center justify-center">
+                            <Check size={10} className="text-white" />
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-1.5">Budget Limit (optional)</label>
+                  <div className="flex items-center gap-2">
+                    <DollarSign size={14} className="text-white/30" />
+                    <input
+                      type="number"
+                      value={budgetLimit}
+                      onChange={(e) => setBudgetLimit(e.target.value)}
+                      placeholder="No limit"
+                      min="0"
+                      step="5"
+                      className="flex-1 px-3 py-2 rounded-lg bg-white/[0.04] border border-white/[0.08] text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-cyan-500/40 transition-colors"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Turn mode (only visible for native engine) */}
+            {engine === 'native' && (
             <div>
               <label className="block text-xs text-white/50 mb-2">Conversation Style</label>
               <div className="space-y-2">
@@ -270,6 +391,7 @@ export function CreateSessionWizard({
                 ))}
               </div>
             </div>
+            )}
 
             {/* Agenda */}
             <div>
@@ -293,9 +415,21 @@ export function CreateSessionWizard({
                   {selectedIds.size} persona{selectedIds.size !== 1 ? 's' : ''} + You
                 </span>
                 <span className="flex items-center gap-1">
-                  {TURN_MODES.find((t) => t.value === turnMode)?.icon}
-                  {TURN_MODES.find((t) => t.value === turnMode)?.label}
+                  {ENGINE_OPTIONS.find((e) => e.value === engine)?.icon}
+                  {ENGINE_OPTIONS.find((e) => e.value === engine)?.label}
                 </span>
+                {engine === 'native' && (
+                  <span className="flex items-center gap-1">
+                    {TURN_MODES.find((t) => t.value === turnMode)?.icon}
+                    {TURN_MODES.find((t) => t.value === turnMode)?.label}
+                  </span>
+                )}
+                {engine === 'crew' && (
+                  <span className="flex items-center gap-1 text-cyan-300/50">
+                    <Workflow size={10} />
+                    {CREW_PROFILES.find((p) => p.id === crewProfileId)?.label}
+                  </span>
+                )}
               </div>
             </div>
           </div>

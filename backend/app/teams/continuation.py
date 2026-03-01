@@ -210,7 +210,29 @@ def _task_anchor_trigger(topic: str, agenda: List[str], msgs: List[Dict[str, Any
     elif agenda and not uncovered:
         parts.append("All agenda items covered. What concrete next steps should we take?")
 
-    parts.append("Add a NEW specific detail, step, or alternative — do NOT repeat what was already said.")
+    parts.append("Add a NEW specific detail, step, or alternative — do NOT repeat or recap what was already said.")
+    return " ".join(parts)
+
+
+def _play_anchor_trigger(topic: str, msgs: List[Dict[str, Any]]) -> str:
+    """Build a topic-anchored trigger for general play mode conversations.
+
+    Prevents trigger chaining (where the last recap becomes the next trigger)
+    by always anchoring to the original topic.
+    """
+    parts: List[str] = []
+    if topic:
+        parts.append(f"The topic is: {topic}.")
+    else:
+        parts.append("Continue the conversation naturally.")
+
+    # Mention what was discussed so far to encourage NEW angles
+    recent_topics = _extract_topics(
+        " ".join(m.get("content", "") for m in msgs[-3:] if m.get("role") == "assistant")
+    )
+    if recent_topics:
+        parts.append(f"Already discussed: {', '.join(recent_topics[:4])}.")
+    parts.append("Respond with a NEW thought, question, or perspective — do NOT summarize or recap.")
     return " ".join(parts)
 
 
@@ -233,9 +255,9 @@ def generate_smart_trigger(
     agenda = room.get("agenda") or []
     phase = _conversation_phase(msgs)
 
-    # ── Task-mode detection ────────────────────────────────────────
-    # When Play Mode is active on a task topic, anchor triggers to the
-    # topic/agenda instead of letting the last assistant message dominate.
+    # ── Play Mode: always use topic-anchored triggers ─────────────
+    # Prevents trigger chaining where the last assistant message's recap
+    # becomes the next trigger, causing runaway repetition loops.
     _task_indicators = [
         "plan", "step-by-step", "step by step", "draft", "design",
         "outline", "create", "organize", "prepare", "budget",
@@ -251,16 +273,19 @@ def generate_smart_trigger(
             break
     is_task = any(w in combined for w in _task_indicators)
 
-    # In Play Mode with a task topic, prefer topic-anchored triggers
-    # to prevent romantic mirroring / poetic escalation loops.
-    if is_playing and is_task and phase != "opening":
-        trigger = _task_anchor_trigger(topic, agenda, msgs)
+    # In Play Mode, ALWAYS use topic-anchored triggers (not just tasks)
+    # to prevent recap/mirroring loops from trigger chaining.
+    if is_playing and phase != "opening":
+        if is_task:
+            trigger = _task_anchor_trigger(topic, agenda, msgs)
+        else:
+            trigger = _play_anchor_trigger(topic, msgs)
         # Still invite quiet participants
         quiet = _find_quiet_participants(msgs, participants)
         if quiet and random.random() < 0.4:
             p = random.choice(quiet)
             trigger += f" {p.get('display_name', 'someone')}, what's your input?"
-        logger.debug("Continuation: task-anchor trigger (play mode)")
+        logger.debug("Continuation: anchored trigger (play mode, task=%s)", is_task)
         return trigger
 
     trigger = ""
