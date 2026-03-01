@@ -1,0 +1,193 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 480" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a0a"/>
+      <stop offset="100%" style="stop-color:#111"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#8b5cf6"/>
+      <stop offset="100%" style="stop-color:#ec4899"/>
+    </linearGradient>
+    <linearGradient id="emerald" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#34d399"/>
+      <stop offset="100%" style="stop-color:#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#06b6d4"/>
+      <stop offset="100%" style="stop-color:#3b82f6"/>
+    </linearGradient>
+    <style>
+      @keyframes flowRight { from { stroke-dashoffset: 20; } to { stroke-dashoffset: 0; } }
+      @keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+      .flow { animation: flowRight 0.8s linear infinite; }
+      .pulse { animation: pulse 2s ease-in-out infinite; }
+    </style>
+  </defs>
+
+  <rect width="900" height="480" fill="url(#bg)" rx="16"/>
+  <rect width="900" height="480" fill="none" stroke="#fff" stroke-opacity="0.06" rx="16"/>
+
+  <!-- Title -->
+  <text x="450" y="32" text-anchor="middle" fill="#fff" font-size="16" font-weight="700" opacity="0.9">Crew Workflow Engine — Task Collaboration Mode</text>
+  <line x1="280" y1="42" x2="620" y2="42" stroke="url(#violet)" stroke-width="2" opacity="0.4"/>
+
+  <!-- ═══ LEFT: Profile Registry ═══ -->
+  <rect x="20" y="60" width="180" height="160" rx="10" fill="#8b5cf6" fill-opacity="0.04" stroke="#8b5cf6" stroke-opacity="0.15"/>
+  <text x="110" y="82" text-anchor="middle" fill="#8b5cf6" font-size="10" font-weight="700">Workflow Profiles</text>
+
+  <!-- Profile cards -->
+  <rect x="32" y="94" width="156" height="28" rx="6" fill="#8b5cf6" fill-opacity="0.1" stroke="#8b5cf6" stroke-opacity="0.3"/>
+  <text x="40" y="112" fill="#8b5cf6" font-size="8" font-weight="600">task_planner_v1</text>
+  <text x="165" y="112" text-anchor="end" fill="#fff" font-size="7" opacity="0.35">5 stages</text>
+
+  <rect x="32" y="128" width="156" height="28" rx="6" fill="#fff" fill-opacity="0.03" stroke="#fff" stroke-opacity="0.08"/>
+  <text x="40" y="146" fill="#fff" font-size="8" opacity="0.5">brainstorm_v1</text>
+  <text x="165" y="146" text-anchor="end" fill="#fff" font-size="7" opacity="0.35">3 stages</text>
+
+  <rect x="32" y="162" width="156" height="28" rx="6" fill="#fff" fill-opacity="0.03" stroke="#fff" stroke-opacity="0.08"/>
+  <text x="40" y="180" fill="#fff" font-size="8" opacity="0.5">draft_and_edit_v1</text>
+  <text x="165" y="180" text-anchor="end" fill="#fff" font-size="7" opacity="0.35">3 stages</text>
+
+  <text x="110" y="210" text-anchor="middle" fill="#fff" font-size="7" opacity="0.25">Extensible registry</text>
+
+  <!-- ═══ CENTER: Stage Pipeline (example: task_planner_v1) ═══ -->
+  <text x="460" y="72" text-anchor="middle" fill="#fff" font-size="9" opacity="0.35">Example: task_planner_v1 — "Date Night Planning"</text>
+
+  <!-- Stage boxes -->
+  <g transform="translate(220, 90)">
+    <rect x="0" y="0" width="90" height="50" rx="8" fill="#8b5cf6" fill-opacity="0.12" stroke="#8b5cf6" stroke-opacity="0.35"/>
+    <text x="45" y="20" text-anchor="middle" fill="#8b5cf6" font-size="8" font-weight="700">1. Gather</text>
+    <text x="45" y="32" text-anchor="middle" fill="#fff" font-size="6" opacity="0.4">Requirements</text>
+    <text x="45" y="44" text-anchor="middle" fill="#ec4899" font-size="6" opacity="0.5">romantic, support</text>
+  </g>
+  <path d="M 315 115 L 335 115" fill="none" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <g transform="translate(340, 90)">
+    <rect x="0" y="0" width="90" height="50" rx="8" fill="#fff" fill-opacity="0.04" stroke="#8b5cf6" stroke-opacity="0.2"/>
+    <text x="45" y="20" text-anchor="middle" fill="#8b5cf6" font-size="8" font-weight="600">2. Draft</text>
+    <text x="45" y="32" text-anchor="middle" fill="#fff" font-size="6" opacity="0.4">Plan</text>
+    <text x="45" y="44" text-anchor="middle" fill="#ec4899" font-size="6" opacity="0.4">creative, product</text>
+  </g>
+  <path d="M 435 115 L 455 115" fill="none" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <g transform="translate(460, 90)">
+    <rect x="0" y="0" width="90" height="50" rx="8" fill="#fff" fill-opacity="0.04" stroke="#8b5cf6" stroke-opacity="0.2"/>
+    <text x="45" y="20" text-anchor="middle" fill="#8b5cf6" font-size="8" font-weight="600">3. Budget</text>
+    <text x="45" y="32" text-anchor="middle" fill="#fff" font-size="6" opacity="0.4">Check</text>
+    <text x="45" y="44" text-anchor="middle" fill="#ec4899" font-size="6" opacity="0.4">finance, analyst</text>
+  </g>
+  <path d="M 555 115 L 575 115" fill="none" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <g transform="translate(580, 90)">
+    <rect x="0" y="0" width="90" height="50" rx="8" fill="#fff" fill-opacity="0.04" stroke="#8b5cf6" stroke-opacity="0.2"/>
+    <text x="45" y="20" text-anchor="middle" fill="#8b5cf6" font-size="8" font-weight="600">4. Write</text>
+    <text x="45" y="32" text-anchor="middle" fill="#fff" font-size="6" opacity="0.4">Message</text>
+    <text x="45" y="44" text-anchor="middle" fill="#ec4899" font-size="6" opacity="0.4">creative, romantic</text>
+  </g>
+  <path d="M 675 115 L 695 115" fill="none" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.5"/>
+
+  <g transform="translate(700, 90)">
+    <rect x="0" y="0" width="90" height="50" rx="8" fill="#34d399" fill-opacity="0.08" stroke="#34d399" stroke-opacity="0.3"/>
+    <text x="45" y="20" text-anchor="middle" fill="#34d399" font-size="8" font-weight="700">5. Finalize</text>
+    <text x="45" y="32" text-anchor="middle" fill="#fff" font-size="6" opacity="0.4">Review All</text>
+    <text x="45" y="44" text-anchor="middle" fill="#ec4899" font-size="6" opacity="0.4">product, secretary</text>
+  </g>
+
+  <!-- Arrow from profiles to pipeline -->
+  <path d="M 200 130 L 218 115" fill="none" stroke="#8b5cf6" stroke-width="1.5" stroke-dasharray="4,3" class="flow" opacity="0.4"/>
+
+  <!-- ═══ MIDDLE: Core Engine ═══ -->
+  <rect x="220" y="160" width="580" height="140" rx="10" fill="#fff" fill-opacity="0.02" stroke="#fff" stroke-opacity="0.06"/>
+  <text x="510" y="180" text-anchor="middle" fill="#fff" font-size="10" font-weight="700" opacity="0.5">run_crew_turn()</text>
+
+  <!-- Engine components -->
+  <rect x="240" y="192" width="130" height="44" rx="6" fill="#06b6d4" fill-opacity="0.06" stroke="#06b6d4" stroke-opacity="0.2"/>
+  <text x="305" y="210" text-anchor="middle" fill="#06b6d4" font-size="8" font-weight="600">Speaker Selection</text>
+  <text x="305" y="224" text-anchor="middle" fill="#fff" font-size="7" opacity="0.35">Role-tag preference</text>
+
+  <rect x="390" y="192" width="130" height="44" rx="6" fill="#34d399" fill-opacity="0.06" stroke="#34d399" stroke-opacity="0.2"/>
+  <text x="455" y="210" text-anchor="middle" fill="#34d399" font-size="8" font-weight="600">Output Validation</text>
+  <text x="455" y="224" text-anchor="middle" fill="#fff" font-size="7" opacity="0.35">Contract + retry</text>
+
+  <rect x="540" y="192" width="130" height="44" rx="6" fill="#ec4899" fill-opacity="0.06" stroke="#ec4899" stroke-opacity="0.2"/>
+  <text x="605" y="210" text-anchor="middle" fill="#ec4899" font-size="8" font-weight="600">Progress Tracking</text>
+  <text x="605" y="224" text-anchor="middle" fill="#fff" font-size="7" opacity="0.35">Checklist + novelty</text>
+
+  <rect x="690" y="192" width="100" height="44" rx="6" fill="#f59e0b" fill-opacity="0.06" stroke="#f59e0b" stroke-opacity="0.2"/>
+  <text x="740" y="210" text-anchor="middle" fill="#f59e0b" font-size="8" font-weight="600">Stop Rules</text>
+  <text x="740" y="224" text-anchor="middle" fill="#fff" font-size="7" opacity="0.35">Convergence</text>
+
+  <!-- LLM call -->
+  <rect x="240" y="248" width="550" height="36" rx="8" fill="#8b5cf6" fill-opacity="0.04" stroke="#8b5cf6" stroke-opacity="0.12"/>
+  <text x="515" y="264" text-anchor="middle" fill="#8b5cf6" font-size="8" font-weight="600">LLM Call: persona prompt + task anchor + stage instruction + output contract</text>
+  <text x="515" y="278" text-anchor="middle" fill="#fff" font-size="7" opacity="0.3">Uses existing llm_adapter.py → Ollama / OpenAI / Claude / any provider</text>
+
+  <!-- ═══ BOTTOM LEFT: Output Contract ═══ -->
+  <rect x="20" y="320" width="260" height="140" rx="10" fill="#34d399" fill-opacity="0.03" stroke="#34d399" stroke-opacity="0.15"/>
+  <text x="150" y="342" text-anchor="middle" fill="#34d399" font-size="10" font-weight="700">Output Contract</text>
+
+  <text x="36" y="364" fill="#fff" font-size="8" opacity="0.5">Required sections:</text>
+  <rect x="36" y="372" width="50" height="16" rx="4" fill="#8b5cf6" fill-opacity="0.15" stroke="#8b5cf6" stroke-opacity="0.3"/>
+  <text x="61" y="384" text-anchor="middle" fill="#8b5cf6" font-size="7" font-weight="600">PLAN</text>
+  <rect x="94" y="372" width="60" height="16" rx="4" fill="#34d399" fill-opacity="0.15" stroke="#34d399" stroke-opacity="0.3"/>
+  <text x="124" y="384" text-anchor="middle" fill="#34d399" font-size="7" font-weight="600">BUDGET</text>
+  <rect x="162" y="372" width="66" height="16" rx="4" fill="#ec4899" fill-opacity="0.15" stroke="#ec4899" stroke-opacity="0.3"/>
+  <text x="195" y="384" text-anchor="middle" fill="#ec4899" font-size="7" font-weight="600">MESSAGE</text>
+
+  <text x="36" y="408" fill="#fff" font-size="7" opacity="0.4">Validation rules:</text>
+  <text x="36" y="422" fill="#fff" font-size="7" opacity="0.3">• Max 250 words per section</text>
+  <text x="36" y="434" fill="#fff" font-size="7" opacity="0.3">• MESSAGE ≤ 40 words</text>
+  <text x="36" y="446" fill="#fff" font-size="7" opacity="0.3">• Budget total ≤ limit</text>
+
+  <!-- ═══ BOTTOM CENTER: Checklist ═══ -->
+  <rect x="300" y="320" width="200" height="140" rx="10" fill="#ec4899" fill-opacity="0.03" stroke="#ec4899" stroke-opacity="0.15"/>
+  <text x="400" y="342" text-anchor="middle" fill="#ec4899" font-size="10" font-weight="700">Checklist Heuristics</text>
+
+  <g transform="translate(316, 356)">
+    <rect x="0" y="0" width="14" height="14" rx="3" fill="#34d399" fill-opacity="0.2" stroke="#34d399" stroke-opacity="0.4"/>
+    <text x="7" y="11" text-anchor="middle" fill="#34d399" font-size="8">✓</text>
+    <text x="22" y="11" fill="#fff" font-size="8" opacity="0.5">Food planned</text>
+  </g>
+  <g transform="translate(316, 378)">
+    <rect x="0" y="0" width="14" height="14" rx="3" fill="#34d399" fill-opacity="0.2" stroke="#34d399" stroke-opacity="0.4"/>
+    <text x="7" y="11" text-anchor="middle" fill="#34d399" font-size="8">✓</text>
+    <text x="22" y="11" fill="#fff" font-size="8" opacity="0.5">Activity selected</text>
+  </g>
+  <g transform="translate(316, 400)">
+    <rect x="0" y="0" width="14" height="14" rx="3" fill="#fff" fill-opacity="0.05" stroke="#fff" stroke-opacity="0.15"/>
+    <text x="22" y="11" fill="#fff" font-size="8" opacity="0.35">Budget verified</text>
+  </g>
+  <g transform="translate(316, 422)">
+    <rect x="0" y="0" width="14" height="14" rx="3" fill="#fff" fill-opacity="0.05" stroke="#fff" stroke-opacity="0.15"/>
+    <text x="22" y="11" fill="#fff" font-size="8" opacity="0.35">Message written</text>
+  </g>
+
+  <text x="400" y="454" text-anchor="middle" fill="#fff" font-size="7" opacity="0.25">Auto-detected from section content</text>
+
+  <!-- ═══ BOTTOM RIGHT: Stop Rules ═══ -->
+  <rect x="520" y="320" width="280" height="140" rx="10" fill="#f59e0b" fill-opacity="0.03" stroke="#f59e0b" stroke-opacity="0.15"/>
+  <text x="660" y="342" text-anchor="middle" fill="#f59e0b" font-size="10" font-weight="700">Stop Rules</text>
+
+  <g transform="translate(536, 358)">
+    <circle cx="6" cy="6" r="6" fill="#34d399" fill-opacity="0.2" stroke="#34d399" stroke-opacity="0.4"/>
+    <text x="6" y="10" text-anchor="middle" fill="#34d399" font-size="7">✓</text>
+    <text x="20" y="10" fill="#fff" font-size="8" opacity="0.5">Checklist complete at final stage</text>
+  </g>
+  <g transform="translate(536, 382)">
+    <circle cx="6" cy="6" r="6" fill="#06b6d4" fill-opacity="0.2" stroke="#06b6d4" stroke-opacity="0.4"/>
+    <text x="6" y="9" text-anchor="middle" fill="#06b6d4" font-size="6">~</text>
+    <text x="20" y="10" fill="#fff" font-size="8" opacity="0.5">Low novelty (Jaccard &lt; 0.25 for 4 turns)</text>
+  </g>
+  <g transform="translate(536, 406)">
+    <circle cx="6" cy="6" r="6" fill="#f59e0b" fill-opacity="0.2" stroke="#f59e0b" stroke-opacity="0.4"/>
+    <text x="6" y="10" text-anchor="middle" fill="#f59e0b" font-size="8">!</text>
+    <text x="20" y="10" fill="#fff" font-size="8" opacity="0.5">No progress for 3 consecutive steps</text>
+  </g>
+  <g transform="translate(536, 430)">
+    <circle cx="6" cy="6" r="6" fill="#ec4899" fill-opacity="0.2" stroke="#ec4899" stroke-opacity="0.4"/>
+    <text x="6" y="10" text-anchor="middle" fill="#ec4899" font-size="7">⏹</text>
+    <text x="20" y="10" fill="#fff" font-size="8" opacity="0.5">Safe fallback after 2 validation failures</text>
+  </g>
+
+  <text x="660" y="454" text-anchor="middle" fill="#fff" font-size="7" opacity="0.25">Prevents infinite loops and drift</text>
+</svg>

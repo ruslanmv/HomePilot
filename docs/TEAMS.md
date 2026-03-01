@@ -59,7 +59,16 @@ real data from their persona project:
 - **Equipment** — Tool bundles and MCP servers
 - **Quest Objective** — The persona's agentic goal
 
-## Orchestration Modes
+## Orchestration Engines
+
+HomePilot Teams supports two orchestration engines:
+
+| Engine | Policy key | Description |
+|--------|-----------|-------------|
+| **Native** (default) | `engine: "native"` | Free-form conversation with intent scoring, round-robin, or moderated modes |
+| **Crew** | `engine: "crew"` | Stage-based task collaboration with structured output contracts, checklist tracking, and budget validation |
+
+### Orchestration Modes (Native Engine)
 
 | Mode | Behavior |
 |------|----------|
@@ -67,6 +76,10 @@ real data from their persona project:
 | **Round Robin** | Every persona speaks in sequence. Legacy mode. |
 | **Moderated** | Host uses **Call On** to pick the next speaker. |
 | **Free Form** | All participants may speak freely (low threshold). |
+
+<p align="center">
+  <img src="./orchestration-modes.svg" alt="Orchestration Modes" width="800" />
+</p>
 
 ### Intent Scoring Pipeline
 
@@ -102,6 +115,67 @@ The input bar adapts to the current mode:
 - **Call On** — Dropdown to pick a specific persona to speak
 - **Run Turn** — Trigger the next orchestration round manually
 - **Mute/Unmute** — Muted personas are skipped by the orchestrator
+
+## Crew Workflow Engine (Task Collaboration Mode)
+
+The **Crew engine** (`engine: "crew"`) drives structured, stage-based workflows
+where personas collaborate on a concrete deliverable — like planning a date night,
+brainstorming product ideas, or drafting a document.
+
+<p align="center">
+  <img src="./crew-workflow.svg" alt="Crew Workflow Engine" width="800" />
+</p>
+
+### How It Works
+
+1. **Set the engine**: `room.policy.engine = "crew"` and choose a workflow profile
+2. **Each turn advances one stage** — the engine selects the best persona per stage
+   based on role-tag matching (e.g. "romantic" for a date planning stage)
+3. **Output contract** — every response must include required sections (e.g. PLAN,
+   BUDGET, MESSAGE). Invalid output is retried once, then a safe fallback is used
+4. **Checklist tracking** — progress items (food, activity, budget, message) are
+   auto-detected from section content
+5. **Stop rules** — the workflow stops when the checklist is complete at the final
+   stage, novelty drops below threshold, or no progress is made
+
+### Workflow Profiles
+
+| Profile | Stages | Output Sections | Use Case |
+|---------|--------|-----------------|----------|
+| `task_planner_v1` | Gather → Draft → Budget → Message → Finalize | PLAN, BUDGET, MESSAGE | Date planning, event organization, task management |
+| `brainstorm_v1` | Ideate → Evaluate → Finalize | IDEAS, EVALUATION, RECOMMENDATION | Open-ended ideation and idea comparison |
+| `draft_and_edit_v1` | Outline → Draft → Edit | OUTLINE, NOTES, DRAFT | Collaborative writing, email drafts, content creation |
+
+### Room Policy Example
+
+```json
+{
+  "policy": {
+    "engine": "crew",
+    "crew": {
+      "profile_id": "task_planner_v1",
+      "budget_limit_eur": 30
+    }
+  }
+}
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/teams/workflow/profiles` | GET | List available workflow profiles |
+| `/v1/teams/rooms/{id}/crew-status` | GET | Get current stage, checklist, progress |
+| `/v1/teams/rooms/{id}/react` | POST | Run next crew turn (auto-detects engine) |
+| `/v1/teams/rooms/{id}/run-turn` | POST | Run next crew turn (auto-detects engine) |
+
+### Backend Files
+
+| File | Purpose |
+|------|---------|
+| `crew_profiles.py` | WorkflowProfile registry with built-in profiles |
+| `crew_engine.py` | `run_crew_turn()` — stage execution, validation, checklist, novelty |
+| `participants_resolver.py` | Role-tag inference for speaker selection |
 
 ## Files
 

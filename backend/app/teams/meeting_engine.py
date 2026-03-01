@@ -77,7 +77,9 @@ def _query_persona_knowledge(
             "\n\nRELEVANT KNOWLEDGE FROM YOUR TRAINING:\n"
             + "\n---\n".join(chunks)
         )
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException catches pyo3_runtime.PanicException from ChromaDB's
+        # Rust bindings (e.g. corrupted SQLite after version upgrade).
         logger.debug("Knowledge base query skipped for %s: %s", project_id, exc)
         return ""
 

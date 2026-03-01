@@ -99,6 +99,7 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
       participant_ids: string[]
       turn_mode: string
       agenda: string[]
+      policy?: { engine?: string; crew?: { profile_id?: string; budget_limit_eur?: number } }
     }) => {
       const room = await createRoom(params)
       setActiveRoom(room)
@@ -276,6 +277,23 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
     [activeRoom, updateRoom],
   )
 
+  const handleChangeEngine = useCallback(
+    async (engine: 'native' | 'crew', crewProfileId?: string, budgetLimit?: number) => {
+      if (!activeRoom) return
+      const existingPolicy = activeRoom.policy || {}
+      const newPolicy = {
+        ...existingPolicy,
+        engine,
+        ...(engine === 'crew'
+          ? { crew: { profile_id: crewProfileId, ...(budgetLimit ? { budget_limit_eur: budgetLimit } : {}) } }
+          : { crew: undefined }),
+      }
+      const updated = await updateRoom(activeRoom.id, { policy: newPolicy })
+      setActiveRoom(updated)
+    },
+    [activeRoom, updateRoom],
+  )
+
   // ── Play Mode handlers ──
 
   const handleStartPlayMode = useCallback(
@@ -380,6 +398,7 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
         onResumePlayMode={handleResumePlayMode}
         onChangeTurnMode={handleChangeTurnMode}
         onSavePolicy={handleSavePolicy}
+        onChangeEngine={handleChangeEngine}
       />
     )
   }

@@ -126,6 +126,7 @@ def create_room(
     turn_mode: str = "reactive",
     agenda: Optional[List[str]] = None,
     topic: Optional[str] = None,
+    policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Create a new meeting room and return it."""
     room: Dict[str, Any] = {
@@ -142,8 +143,14 @@ def create_room(
         "updated_at": time.time(),
         "status": "active",
     }
+    if policy:
+        room["policy"] = policy
     _write(room)
-    logger.info("Created room %s: %s (%d personas)", room["id"], name, len(room["participant_ids"]))
+    engine = (policy or {}).get("engine", "native")
+    logger.info(
+        "Created room %s: %s (%d personas, engine=%s)",
+        room["id"], name, len(room["participant_ids"]), engine,
+    )
     return room
 
 

@@ -10,13 +10,13 @@ license = { text = "MIT" }
 authors = [{ name = "HomePilot" }]
 
 dependencies = [
-  "fastapi==0.111.0",
-  "uvicorn[standard]==0.30.1",
-  "pydantic==2.7.4",
-  "httpx==0.27.0",
-  "requests==2.32.3",
-  "python-multipart==0.0.9",
-  "starlette==0.37.2",
+  "fastapi>=0.111.0",
+  "uvicorn[standard]>=0.30.1",
+  "pydantic>=2.7.4",
+  "httpx>=0.27.1",
+  "requests>=2.32.3",
+  "python-multipart>=0.0.9",
+  "starlette>=0.37.2",
   "chromadb>=0.4.0",
   "PyPDF2>=3.0.0",
   "Pillow>=10.0.0",
@@ -44,6 +44,12 @@ avatar = [
 docs = [
     "python-docx>=0.8.11",
     "openpyxl>=3.1.0",
+]
+# CrewAI integration — opt-in via `pip install .[crewai]` or `uv pip install -e ".[crewai]"`
+# Enables real CrewAI Agent/Task/Crew orchestration for the Teams crew workflow engine.
+# Also set TEAMS_CREWAI_ENABLED=true at runtime.
+crewai = [
+    "crewai[litellm]>=1.9.0,<2.0",
 ]
 
 [dependency-groups]

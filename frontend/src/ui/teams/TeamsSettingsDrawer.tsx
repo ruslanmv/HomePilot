@@ -23,6 +23,8 @@ import {
   Eye,
   Wrench,
   Info,
+  Workflow,
+  MessageSquare,
 } from 'lucide-react'
 import type { MeetingRoom, TeamsRoomPolicy } from './types'
 
@@ -38,6 +40,8 @@ export interface TeamsSettingsDrawerProps {
   onSave?: (policy: TeamsRoomPolicy) => void
   /** Called when the user switches turn mode (Reactive / Initiative). */
   onChangeTurnMode?: (turnMode: 'reactive' | 'round-robin') => Promise<void>
+  /** Called when the user switches engine (native / crew) or crew settings. */
+  onChangeEngine?: (engine: 'native' | 'crew', crewProfileId?: string, budgetLimit?: number) => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +102,7 @@ const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ReactNode }> =
 // Component
 // ---------------------------------------------------------------------------
 
-export function TeamsSettingsDrawer({ room, open, onClose, onSave, onChangeTurnMode }: TeamsSettingsDrawerProps) {
+export function TeamsSettingsDrawer({ room, open, onClose, onSave, onChangeTurnMode, onChangeEngine }: TeamsSettingsDrawerProps) {
   const [expandedSections, setExpandedSections] = useState<Set<SectionId>>(new Set(['general']))
   const [draft, setDraft] = useState<TeamsRoomPolicy>({ ...DEFAULT_POLICY })
 
@@ -175,7 +179,7 @@ export function TeamsSettingsDrawer({ room, open, onClose, onSave, onChangeTurnM
                 {expanded && (
                   <div className="px-3 pb-3 space-y-3">
                     {section.id === 'general' && (
-                      <GeneralSection room={room} onChangeTurnMode={onChangeTurnMode} />
+                      <GeneralSection room={room} onChangeTurnMode={onChangeTurnMode} onChangeEngine={onChangeEngine} />
                     )}
                     {section.id === 'orchestration' && (
                       <OrchestrationSection draft={draft} onChange={updateDraft} />
@@ -335,8 +339,28 @@ function ToggleField({
 // Section: General (read-only room info)
 // ---------------------------------------------------------------------------
 
-function GeneralSection({ room, onChangeTurnMode }: { room: MeetingRoom; onChangeTurnMode?: (turnMode: 'reactive' | 'round-robin') => Promise<void> }) {
+const ENGINE_OPTIONS: Array<{ value: 'native' | 'crew'; label: string; desc: string }> = [
+  { value: 'native', label: 'Conversation', desc: 'Intent-scored speaker selection' },
+  { value: 'crew', label: 'Task Workflow', desc: 'CrewAI-style stage pipeline' },
+]
+
+const CREW_PROFILES: Array<{ id: string; label: string }> = [
+  { id: 'task_planner_v1', label: 'Task Planner' },
+  { id: 'brainstorm_v1', label: 'Brainstorm' },
+  { id: 'draft_and_edit_v1', label: 'Draft & Edit' },
+]
+
+function GeneralSection({
+  room,
+  onChangeTurnMode,
+  onChangeEngine,
+}: {
+  room: MeetingRoom
+  onChangeTurnMode?: (turnMode: 'reactive' | 'round-robin') => Promise<void>
+  onChangeEngine?: (engine: 'native' | 'crew', crewProfileId?: string, budgetLimit?: number) => Promise<void>
+}) {
   const [switching, setSwitching] = useState(false)
+  const [switchingEngine, setSwitchingEngine] = useState(false)
 
   const TURN_MODES = [
     { value: 'reactive' as const, label: 'Reactive', desc: 'Orchestrator selects speakers by relevance' },
@@ -352,6 +376,51 @@ function GeneralSection({ room, onChangeTurnMode }: { room: MeetingRoom; onChang
       console.warn('Failed to switch turn mode:', e)
     } finally {
       setSwitching(false)
+    }
+  }
+
+  const engine = room.policy?.engine || 'native'
+  const crewProfileId = room.policy?.crew?.profile_id
+  const budgetLimit = room.policy?.crew?.budget_limit_eur
+
+  // Local state for crew settings editing
+  const [localProfileId, setLocalProfileId] = useState(crewProfileId || 'task_planner_v1')
+  const [localBudget, setLocalBudget] = useState(budgetLimit?.toString() || '')
+
+  // Sync local state when room changes
+  useEffect(() => {
+    setLocalProfileId(room.policy?.crew?.profile_id || 'task_planner_v1')
+    setLocalBudget(room.policy?.crew?.budget_limit_eur?.toString() || '')
+  }, [room.policy?.crew?.profile_id, room.policy?.crew?.budget_limit_eur])
+
+  const handleEngineSwitch = async (newEngine: 'native' | 'crew') => {
+    if (newEngine === engine || !onChangeEngine || switchingEngine) return
+    setSwitchingEngine(true)
+    try {
+      if (newEngine === 'crew') {
+        const profileId = localProfileId || 'task_planner_v1'
+        const budget = localBudget ? parseFloat(localBudget) : undefined
+        await onChangeEngine('crew', profileId, budget)
+      } else {
+        await onChangeEngine('native')
+      }
+    } catch (e) {
+      console.warn('Failed to switch engine:', e)
+    } finally {
+      setSwitchingEngine(false)
+    }
+  }
+
+  const handleCrewSettingsSave = async () => {
+    if (!onChangeEngine || switchingEngine || engine !== 'crew') return
+    setSwitchingEngine(true)
+    try {
+      const budget = localBudget ? parseFloat(localBudget) : undefined
+      await onChangeEngine('crew', localProfileId, budget)
+    } catch (e) {
+      console.warn('Failed to update crew settings:', e)
+    } finally {
+      setSwitchingEngine(false)
     }
   }
 
@@ -371,32 +440,114 @@ function GeneralSection({ room, onChangeTurnMode }: { room: MeetingRoom; onChang
           </div>
         </div>
       )}
+
+      {/* Engine selector */}
       <div>
-        <FieldLabel label="Conversation Mode" hint="How speakers are selected" />
+        <FieldLabel label="Session Engine" hint="Switch between conversation and task workflow" />
         <div className="flex gap-1.5">
-          {TURN_MODES.map((mode) => (
+          {ENGINE_OPTIONS.map((opt) => (
             <button
-              key={mode.value}
-              onClick={() => handleSwitch(mode.value)}
-              disabled={switching}
+              key={opt.value}
+              onClick={() => handleEngineSwitch(opt.value)}
+              disabled={switchingEngine}
               className={`flex-1 px-2.5 py-2 rounded-lg text-left transition-all border ${
-                room.turn_mode === mode.value
-                  ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300'
+                engine === opt.value
+                  ? opt.value === 'crew'
+                    ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300'
+                    : 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300'
                   : 'bg-white/[0.03] border-white/[0.06] text-white/30 hover:text-white/50 cursor-pointer'
-              } ${switching ? 'opacity-50' : ''}`}
-              title={mode.desc}
+              } ${switchingEngine ? 'opacity-50' : ''}`}
+              title={opt.desc}
             >
-              <div className="text-[10px] font-medium">{mode.label}</div>
-              <div className="text-[9px] text-white/20 mt-0.5">{mode.desc}</div>
+              <div className="flex items-center gap-1.5">
+                {opt.value === 'crew' ? (
+                  <Workflow size={11} className={engine === 'crew' ? 'text-cyan-400/60' : 'text-white/20'} />
+                ) : (
+                  <MessageSquare size={11} className={engine === 'native' ? 'text-cyan-400/60' : 'text-white/20'} />
+                )}
+                <span className="text-[10px] font-medium">{opt.label}</span>
+              </div>
+              <div className="text-[9px] text-white/20 mt-0.5">{opt.desc}</div>
             </button>
           ))}
         </div>
-        <p className="text-[9px] text-white/15 mt-1">
-          {room.turn_mode === 'reactive'
-            ? 'Intent scoring, hand-raise, and gates decide who speaks.'
-            : 'Deterministic turn order — one speaker per click.'}
-        </p>
       </div>
+
+      {/* Crew settings (visible when engine is crew) */}
+      {engine === 'crew' && (
+        <div className="rounded-lg border border-cyan-500/10 bg-cyan-500/[0.03] p-2.5 space-y-2">
+          <div>
+            <FieldLabel label="Workflow Profile" />
+            <div className="flex gap-1">
+              {CREW_PROFILES.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => setLocalProfileId(p.id)}
+                  className={`flex-1 px-2 py-1.5 rounded-md text-[9px] font-medium border transition-colors ${
+                    localProfileId === p.id
+                      ? 'bg-cyan-500/15 border-cyan-500/25 text-cyan-300'
+                      : 'bg-white/[0.03] border-white/[0.06] text-white/30 hover:text-white/50 cursor-pointer'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <FieldLabel label="Budget Limit (EUR)" hint="Optional" />
+            <input
+              type="number"
+              value={localBudget}
+              placeholder="No limit"
+              onChange={(e) => setLocalBudget(e.target.value)}
+              className="w-full px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-[10px] text-white/60 placeholder:text-white/15 focus:outline-none focus:border-cyan-500/30 transition-colors"
+            />
+          </div>
+          {/* Show Apply button if local crew settings differ from saved */}
+          {(localProfileId !== (crewProfileId || 'task_planner_v1') ||
+            localBudget !== (budgetLimit?.toString() || '')) && (
+            <button
+              onClick={handleCrewSettingsSave}
+              disabled={switchingEngine}
+              className="w-full px-2.5 py-1.5 rounded-lg bg-cyan-600/60 hover:bg-cyan-500/70 text-white text-[10px] font-medium transition-colors disabled:opacity-50"
+            >
+              {switchingEngine ? 'Applying...' : 'Apply Crew Settings'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Conversation mode (only for native engine) */}
+      {engine === 'native' && (
+        <div>
+          <FieldLabel label="Conversation Mode" hint="How speakers are selected" />
+          <div className="flex gap-1.5">
+            {TURN_MODES.map((mode) => (
+              <button
+                key={mode.value}
+                onClick={() => handleSwitch(mode.value)}
+                disabled={switching}
+                className={`flex-1 px-2.5 py-2 rounded-lg text-left transition-all border ${
+                  room.turn_mode === mode.value
+                    ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300'
+                    : 'bg-white/[0.03] border-white/[0.06] text-white/30 hover:text-white/50 cursor-pointer'
+                } ${switching ? 'opacity-50' : ''}`}
+                title={mode.desc}
+              >
+                <div className="text-[10px] font-medium">{mode.label}</div>
+                <div className="text-[9px] text-white/20 mt-0.5">{mode.desc}</div>
+              </button>
+            ))}
+          </div>
+          <p className="text-[9px] text-white/15 mt-1">
+            {room.turn_mode === 'reactive'
+              ? 'Intent scoring, hand-raise, and gates decide who speaks.'
+              : 'Deterministic turn order — one speaker per click.'}
+          </p>
+        </div>
+      )}
+
       <div>
         <FieldLabel label="Participants" />
         <div className="px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-[10px] text-white/50">

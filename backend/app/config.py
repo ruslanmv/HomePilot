@@ -55,6 +55,13 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()  # empty => backend can aut
 # Default: 1 (sequential, safest for single-GPU Ollama). Set to 2-3 for faster meetings.
 TEAMS_MAX_CONCURRENT_LLM = int(os.getenv("TEAMS_MAX_CONCURRENT_LLM", "1"))
 
+# CrewAI integration — opt-in via TEAMS_CREWAI_ENABLED=true
+# When enabled AND the crewai package is installed, the crew workflow engine
+# uses real CrewAI Agent/Task/Crew primitives instead of the custom runner.
+TEAMS_CREWAI_ENABLED = os.getenv("TEAMS_CREWAI_ENABLED", "false").lower() in ("1", "true", "yes")
+TEAMS_CREWAI_PROCESS = os.getenv("TEAMS_CREWAI_PROCESS", "sequential").strip().lower()
+TEAMS_CREWAI_MEMORY = os.getenv("TEAMS_CREWAI_MEMORY", "false").lower() in ("1", "true", "yes")
+
 # OpenAI / Anthropic base URLs (keys come from env)
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
