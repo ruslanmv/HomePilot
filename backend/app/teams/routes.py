@@ -27,6 +27,8 @@ from .locks import get_room_lock
 from .orchestrator import run_reactive_step, run_initiative_step, preview_next_turn
 from .participants_resolver import resolve_participants
 from .continuation import generate_smart_trigger
+from .crew_runner import run_crew_turn
+from .crew_profiles import list_profiles as list_workflow_profiles
 from .play_mode import (
     start_play_mode,
     stop_play_mode,
@@ -51,6 +53,7 @@ class CreateRoomIn(BaseModel):
     turn_mode: str = Field("reactive")
     agenda: List[str] = Field(default_factory=list)
     topic: Optional[str] = Field(None, description="Initial topic (defaults to description if omitted)")
+    policy: Optional[Dict[str, Any]] = Field(None, description="Room policy (engine, crew settings, etc.)")
 
 
 class UpdateRoomIn(BaseModel):
@@ -94,6 +97,7 @@ async def create_room(body: CreateRoomIn, _key: str = Depends(require_api_key)):
         turn_mode=body.turn_mode,
         agenda=body.agenda,
         topic=body.topic,
+        policy=body.policy,
     )
     return room
 
@@ -229,6 +233,26 @@ async def run_turn(room_id: str, body: RunTurnIn, _key: str = Depends(require_ap
             max_concurrent=_max_concurrent,
         )
 
+    # ── Crew workflow engine dispatch (additive) ─────────────────────
+    engine = (room.get("policy") or {}).get("engine", "native")
+    if engine == "crew":
+        lock = get_room_lock(room_id)
+        try:
+            async with lock:
+                result = await run_crew_turn(
+                    room_id=room_id,
+                    provider=body.provider,
+                    model=body.model,
+                    base_url=body.base_url,
+                    max_concurrent=body.max_concurrent,
+                )
+            return result
+        except LLMConnectionError as exc:
+            logger.error("LLM connection failed in run-turn (crew): %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     # Branch by turn_mode: initiative uses deterministic queue,
     # legacy/reactive uses run_persona_responses.
     turn_mode = room.get("turn_mode", "reactive")
@@ -327,6 +351,26 @@ async def react(room_id: str, body: ReactIn, _key: str = Depends(require_api_key
     if not participants:
         raise HTTPException(status_code=400, detail="No valid participants")
 
+    # ── Crew workflow engine dispatch (additive) ─────────────────────
+    engine = (room.get("policy") or {}).get("engine", "native")
+    if engine == "crew":
+        lock = get_room_lock(room_id)
+        try:
+            async with lock:
+                result = await run_crew_turn(
+                    room_id=room_id,
+                    provider=body.provider,
+                    model=body.model,
+                    base_url=body.base_url,
+                    max_concurrent=body.max_concurrent,
+                )
+            return result
+        except LLMConnectionError as exc:
+            logger.error("LLM connection failed in react (crew): %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     # Find trigger: last human message, or fallback to last message content.
     # This allows "Run Turn" / "Continue" without new human input.
     human_message = ""
@@ -424,6 +468,22 @@ async def react(room_id: str, body: ReactIn, _key: str = Depends(require_api_key
             status_code=503,
             detail=str(exc),
         )
+
+    # Clean up stale wants_to_speak flags for personas that were excluded
+    # by already_spoke but still have a persisted intent snapshot.
+    # Without this, the UI shows "Wants to speak" forever after a react cycle.
+    room = rooms.get_room(room_id)
+    if room:
+        intents = room.get("intents", {})
+        changed = False
+        for pid in already_spoke:
+            if pid in intents and intents[pid].get("wants_to_speak"):
+                intents[pid]["wants_to_speak"] = False
+                changed = True
+        if changed:
+            rooms.update_room(room_id, {"intents": intents})
+            # Refresh final_result with clean room state
+            final_result["room"] = rooms.get_room(room_id)
 
     # Return aggregated result
     final_result["new_messages"] = all_new_messages
@@ -733,3 +793,32 @@ async def delete_document(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
     return room
+
+
+# ── Workflow Profiles (CrewAI-style) ─────────────────────────────────────
+
+
+@router.get("/workflow/profiles")
+async def get_workflow_profiles(_key: str = Depends(require_api_key)):
+    """List available workflow profiles for Crew engine mode."""
+    return list_workflow_profiles()
+
+
+@router.get("/rooms/{room_id}/crew-status")
+async def get_crew_status(room_id: str, _key: str = Depends(require_api_key)):
+    """Get current Crew workflow status (stage, checklist, progress)."""
+    room = rooms.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    state = room.get("state") or {}
+    crew_state = state.get("crew") or {}
+    engine = (room.get("policy") or {}).get("engine", "native")
+    return {
+        "engine": engine,
+        "active": engine == "crew" and bool(crew_state.get("run_id")),
+        "run_id": crew_state.get("run_id"),
+        "current_stage": crew_state.get("current_stage"),
+        "stage_index": crew_state.get("stage_index"),
+        "checklist": crew_state.get("checklist", {}),
+        "progress": crew_state.get("progress", {}),
+    }

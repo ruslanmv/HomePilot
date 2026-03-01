@@ -2503,7 +2503,7 @@ async def create_project(data: ProjectCreateIn) -> JSONResponse:
     """Create a new project context."""
     try:
         # Convert pydantic model to dict for storage
-        project_dict = data.dict()
+        project_dict = data.model_dump()
         result = projects.create_new_project(project_dict)
 
         # --------------------------------------------------------------

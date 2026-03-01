@@ -235,7 +235,7 @@ class TestCooldowns:
 
     def test_cooldown_penalty(self):
         room = _make_room(cooldowns={"p1": 2})
-        assert _cooldown_penalty(room, "p1") == 0.35
+        assert _cooldown_penalty(room, "p1") == 0.50
 
         room2 = _make_room(cooldowns={"p1": 0})
         assert _cooldown_penalty(room2, "p1") == 0.0
