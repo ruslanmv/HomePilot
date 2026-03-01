@@ -30,6 +30,14 @@ export type HandRaiseMeta = {
   intent_type: string
 }
 
+/** Crew workflow engine settings (used when engine === 'crew'). */
+export type CrewPolicy = {
+  profile_id?: string            // Workflow profile: "task_planner_v1", "brainstorm_v1", "draft_and_edit_v1"
+  visible_agents?: string[]      // Restrict which personas participate (null = all)
+  controller_visibility?: 'hidden' | 'visible' // Show/hide facilitator messages
+  budget_limit_eur?: number      // Budget cap for task_planner profiles
+}
+
 /** Meeting participation policy (room-level defaults). */
 export type MeetingPolicy = {
   max_speakers_per_event?: number
@@ -46,6 +54,10 @@ export type MeetingPolicy = {
   dominance_penalty?: number
   // Observer mode (human watches, personas talk to each other)
   observer_mode?: boolean
+  // Engine selection: "native" (default) or "crew" (task collaboration mode)
+  engine?: 'native' | 'crew'
+  // Crew engine settings (only used when engine === 'crew')
+  crew?: CrewPolicy
 }
 
 /** Shared document attached to a meeting room. */

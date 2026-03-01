@@ -50,6 +50,7 @@ def ensure_defaults(room: Dict[str, Any]) -> Dict[str, Any]:
     """
     room.setdefault("policy", {})
     p = room["policy"]
+    p.setdefault("engine", "native")
     p.setdefault("max_speakers_per_event", 2)
     p.setdefault("max_rounds_per_event", 3)
     p.setdefault("speak_threshold", 0.45)

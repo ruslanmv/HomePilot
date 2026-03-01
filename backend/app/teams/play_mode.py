@@ -34,6 +34,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional
 
 from . import rooms
 from .continuation import generate_smart_trigger
+from .crew_engine import run_crew_turn
 from .locks import get_room_lock
 from .orchestrator import run_reactive_step, run_initiative_step, ensure_defaults
 from .participants_resolver import resolve_participants
@@ -244,12 +245,15 @@ async def _play_loop(
                 msgs.append(debug_msg)
                 rooms.update_room(room_id, {"messages": msgs})
 
-            # Run one orchestration step — branch by turn_mode
+            # Run one orchestration step — branch by engine then turn_mode
+            engine = (room.get("policy") or {}).get("engine", "native")
             turn_mode = room.get("turn_mode", "reactive")
             lock = get_room_lock(room_id)
             try:
                 async with lock:
-                    if turn_mode == "round-robin":
+                    if engine == "crew":
+                        result = await run_crew_turn(room_id=room_id)
+                    elif turn_mode == "round-robin":
                         result = await run_initiative_step(
                             room_id,
                             participants=participants,

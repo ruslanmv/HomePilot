@@ -66,6 +66,7 @@ export function useTeamsRooms({ backendUrl, apiKey }: Args) {
       participant_ids?: string[]
       turn_mode?: string
       agenda?: string[]
+      policy?: { engine?: string; crew?: { profile_id?: string; budget_limit_eur?: number } }
     }): Promise<MeetingRoom> => {
       const res = await fetch(`${backendUrl}/v1/teams/rooms`, {
         method: 'POST',
