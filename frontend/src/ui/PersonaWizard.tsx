@@ -460,6 +460,20 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
       const name = draft.persona_agent.label
       const description = draft.persona_agent.role ?? ''
 
+      // Strip unselected images — only keep the chosen photo so we don't
+      // persist garbage from the wizard exploration phase.
+      const sel = draft.persona_appearance.selected
+      const trimmedSets = sel
+        ? draft.persona_appearance.sets
+            .map((s) => ({
+              ...s,
+              images: s.set_id === sel.set_id
+                ? s.images.filter((img) => img.id === sel.image_id)
+                : [],
+            }))
+            .filter((s) => s.images.length > 0)
+        : []
+
       const result = await createPersonaProject({
         backendUrl,
         apiKey,
@@ -472,6 +486,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
         },
         persona_appearance: {
           ...draft.persona_appearance,
+          sets: trimmedSets,
           persona_voice: draft.persona_voice || undefined,
         },
         agentic: {
