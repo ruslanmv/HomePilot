@@ -13,7 +13,7 @@ import { X, Sparkles, User, Loader2, ChevronRight, Shirt, Camera } from 'lucide-
 import type { GalleryItem } from './galleryTypes'
 import type { PersonaClassId, PersonaWizardDraft } from '../personaTypes'
 import { PERSONA_BLUEPRINTS } from '../personaTypes'
-import { draftFromGalleryItem, getVisibleBlueprints } from './personaBridge'
+import { draftFromGalleryItem, getVisibleBlueprints, professionToPersonaClass } from './personaBridge'
 import { createPersonaProject } from '../personaApi'
 import { resolveFileUrl } from '../resolveFileUrl'
 
@@ -67,7 +67,10 @@ export function SaveAsPersonaModal({
   onCreated,
 }: SaveAsPersonaModalProps) {
   const [name, setName] = useState('')
-  const [classId, setClassId] = useState<PersonaClassId>('custom')
+  // Auto-select persona class from wizard profession if available
+  const [classId, setClassId] = useState<PersonaClassId>(() =>
+    item.wizardMeta?.professionId ? professionToPersonaClass(item.wizardMeta.professionId) : 'custom'
+  )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -88,11 +91,17 @@ export function SaveAsPersonaModal({
 
     try {
       const draft = draftFromGalleryItem(item, name.trim(), classId, outfitItems, batchSiblings)
+      const description = draft.persona_agent.role || item.wizardMeta?.professionDescription || ''
       const result = await createPersonaProject({
         backendUrl,
         apiKey,
         name: name.trim(),
-        persona_agent: draft.persona_agent,
+        description,
+        persona_agent: {
+          ...draft.persona_agent,
+          persona_class: draft.persona_class,
+          memory_mode: draft.memory_mode,
+        },
         persona_appearance: draft.persona_appearance as Record<string, unknown>,
         agentic: draft.agentic as Record<string, unknown>,
       })
@@ -148,13 +157,27 @@ export function SaveAsPersonaModal({
                 </div>
               )}
               {outfitItems && outfitItems.length > 0 && (
-                <div className="flex items-center gap-1 text-cyan-400/70">
+                <div className="flex items-center gap-1 text-purple-400/70">
                   <Shirt size={11} />
                   {outfitItems.length} outfit{outfitItems.length !== 1 ? 's' : ''} included
                 </div>
               )}
             </div>
           </div>
+
+          {/* Wizard profession info (if available) */}
+          {item.wizardMeta?.professionLabel && (
+            <div className="rounded-xl bg-white/[0.03] border border-white/[0.06] p-3 space-y-1">
+              <div className="text-[9px] text-white/25 font-medium uppercase tracking-wider">From Avatar Wizard</div>
+              <div className="text-xs text-white/60 font-medium">{item.wizardMeta.professionLabel}</div>
+              {item.wizardMeta.professionDescription && (
+                <div className="text-[10px] text-white/30">{item.wizardMeta.professionDescription}</div>
+              )}
+              {item.wizardMeta.tone && (
+                <div className="text-[10px] text-white/20">Tone: {item.wizardMeta.tone}</div>
+              )}
+            </div>
+          )}
 
           {/* Name input */}
           <div>

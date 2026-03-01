@@ -44,6 +44,7 @@ import type { AvatarMode, AvatarSettings } from './types'
 import type { GalleryItem, AvatarVibePreset, CharacterGender } from './galleryTypes'
 import { AVATAR_VIBE_PRESETS, GENDER_OPTIONS, CHARACTER_STYLE_PRESETS, buildCharacterPrompt } from './galleryTypes'
 import { resolveFileUrl } from '../resolveFileUrl'
+import { CharacterWizard } from './wizard'
 import {
   DEFAULT_AVATAR_PREFS,
   buildGeneticsPromptFragment,
@@ -98,7 +99,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const gen = useGenerateAvatars(backendUrl, apiKey)
   const gallery = useAvatarGallery()
 
-  const [viewMode, setViewMode] = useState<'gallery' | 'designer' | 'viewer'>('gallery')
+  const [viewMode, setViewMode] = useState<'gallery' | 'designer' | 'wizard' | 'viewer'>('gallery')
   const [viewerItem, setViewerItem] = useState<GalleryItem | null>(null)
   const [avatarSettings, setAvatarSettings] = useState<AvatarSettings>(loadAvatarSettings)
 
@@ -317,7 +318,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
         <AvatarLandingPage
           items={gallery.items}
           backendUrl={backendUrl}
-          onNewAvatar={() => setViewMode('designer')}
+          onNewAvatar={() => setViewMode('wizard')}
           onOpenItem={(item) => { setViewerItem(item); setViewMode('viewer') }}
           onDeleteItem={gallery.removeItem}
           onOpenLightbox={onOpenLightbox}
@@ -343,6 +344,24 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   }
 
   // ==========================================================================
+  // RENDER — Character Wizard (new 7-step professional wizard)
+  // ==========================================================================
+  if (viewMode === 'wizard') {
+    return (
+      <CharacterWizard
+        backendUrl={backendUrl}
+        apiKey={apiKey}
+        globalModelImages={globalModelImages}
+        nsfwEnabled={readNsfwMode()}
+        onClose={() => setViewMode('gallery')}
+        onSaveGeneration={(anchor, portraits, genMode, prompt, refUrl, nsfw, wizardMeta) => {
+          gallery.addAnchorWithPortraits(anchor, portraits, genMode, prompt, refUrl, { nsfw: nsfw || undefined, wizardMeta })
+        }}
+      />
+    )
+  }
+
+  // ==========================================================================
   // RENDER — Viewer (Character Sheet)
   // ==========================================================================
   if (viewMode === 'viewer' && viewerItem) {
@@ -356,6 +375,13 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
         onDeleteItem={(id) => {
           gallery.removeItem(id)
           if (id === viewerItem.id) { setViewerItem(null); setViewMode('gallery') }
+        }}
+        onSwapAnchor={(anchorId, portraitId) => {
+          // Grab portrait data before swap (setItems is async)
+          const portrait = gallery.items.find((i) => i.id === portraitId)
+          gallery.swapAnchor(anchorId, portraitId)
+          // Update viewer to show the new anchor (portrait promoted)
+          if (portrait) setViewerItem({ ...portrait, role: 'anchor', parentId: undefined })
         }}
         onOutfitResults={(results, anchor) => {
           const rootId = anchor.parentId || anchor.id
@@ -949,7 +975,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                       className={[
                         'group relative rounded-xl overflow-hidden border-2 bg-white/[0.02] transition-all duration-300 cursor-pointer',
                         isSelected
-                          ? 'border-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.3)] scale-[1.02] z-10'
+                          ? 'border-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.3)] scale-[1.02] z-10'
                           : hasSelection
                             ? 'border-white/[0.04] opacity-50 grayscale-[30%] hover:opacity-70 hover:grayscale-0'
                             : 'border-white/[0.06] hover:border-white/20 hover:shadow-lg',
@@ -972,7 +998,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                         )}
                         {/* Selected checkmark badge */}
                         {isSelected && !blurred && (
-                          <div className="absolute top-2 right-2 w-7 h-7 rounded-full bg-cyan-500 flex items-center justify-center shadow-lg animate-scaleIn">
+                          <div className="absolute top-2 right-2 w-7 h-7 rounded-full bg-purple-500 flex items-center justify-center shadow-lg animate-scaleIn">
                             <CheckCircle2 size={16} className="text-white" />
                           </div>
                         )}
@@ -987,27 +1013,26 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                 <div className="flex flex-col items-center mt-6 animate-fadeSlideIn">
                   <button
                     onClick={() => {
-                      const chosen = gen.result!.results[selectedResultIndex!]
-                      // Commit only the chosen avatar to the gallery (not all results)
-                      gallery.addBatch(
-                        [chosen],
-                        mode,
+                      const allResults = gen.result!.results
+                      const chosen = allResults[selectedResultIndex!]
+                      const portraits = allResults.filter((_, i) => i !== selectedResultIndex!)
+                      // Save anchor + linked portraits in one atomic operation
+                      gallery.addAnchorWithPortraits(
+                        chosen, portraits, mode,
                         effectivePrompt || undefined,
                         referenceUrl || undefined,
-                        undefined,
                         { vibeTag: vibeTagForGallery || undefined, nsfw: isSpicyContent || undefined },
                       )
                       setSelectedResultIndex(null)
-                      // Navigate to gallery — the chosen avatar will be the newest item
                       setViewMode('gallery')
                     }}
-                    className="flex items-center gap-3 px-8 py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-semibold text-sm shadow-[0_0_30px_rgba(34,211,238,0.25)] hover:shadow-[0_0_40px_rgba(34,211,238,0.4)] hover:scale-[1.03] active:scale-[0.98] transition-all duration-200"
+                    className="flex items-center gap-3 px-8 py-3.5 rounded-2xl bg-gradient-to-r from-purple-600 to-pink-600 text-white font-semibold text-sm shadow-[0_0_30px_rgba(168,85,247,0.25)] hover:shadow-[0_0_40px_rgba(168,85,247,0.4)] hover:scale-[1.03] active:scale-[0.98] transition-all duration-200"
                   >
                     <User size={18} />
                     Create Avatar
                   </button>
                   <p className="text-[10px] text-white/20 mt-2">
-                    Opens your new character's profile
+                    Saves avatar to gallery — alternatives saved as portraits
                   </p>
                 </div>
               )}
