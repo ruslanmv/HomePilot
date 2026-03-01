@@ -23,6 +23,8 @@ import {
   Eye,
   Wrench,
   Info,
+  Workflow,
+  MessageSquare,
 } from 'lucide-react'
 import type { MeetingRoom, TeamsRoomPolicy } from './types'
 
@@ -335,6 +337,12 @@ function ToggleField({
 // Section: General (read-only room info)
 // ---------------------------------------------------------------------------
 
+const CREW_PROFILE_LABELS: Record<string, string> = {
+  task_planner_v1: 'Task Planner',
+  brainstorm_v1: 'Brainstorm',
+  draft_and_edit_v1: 'Draft & Edit',
+}
+
 function GeneralSection({ room, onChangeTurnMode }: { room: MeetingRoom; onChangeTurnMode?: (turnMode: 'reactive' | 'round-robin') => Promise<void> }) {
   const [switching, setSwitching] = useState(false)
 
@@ -355,6 +363,10 @@ function GeneralSection({ room, onChangeTurnMode }: { room: MeetingRoom; onChang
     }
   }
 
+  const engine = room.policy?.engine || 'native'
+  const crewProfileId = room.policy?.crew?.profile_id
+  const budgetLimit = room.policy?.crew?.budget_limit_eur
+
   return (
     <>
       <div>
@@ -371,6 +383,46 @@ function GeneralSection({ room, onChangeTurnMode }: { room: MeetingRoom; onChang
           </div>
         </div>
       )}
+
+      {/* Engine type display */}
+      <div>
+        <FieldLabel label="Session Engine" hint="Set during creation" />
+        <div className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border ${
+          engine === 'crew'
+            ? 'bg-cyan-500/[0.06] border-cyan-500/15'
+            : 'bg-white/[0.03] border-white/[0.04]'
+        }`}>
+          {engine === 'crew' ? (
+            <Workflow size={12} className="text-cyan-400/60" />
+          ) : (
+            <MessageSquare size={12} className="text-white/30" />
+          )}
+          <span className="text-[10px] text-white/50 font-medium">
+            {engine === 'crew' ? 'Task Workflow' : 'Conversation'}
+          </span>
+        </div>
+      </div>
+
+      {/* Crew settings (visible when engine is crew) */}
+      {engine === 'crew' && (
+        <div className="rounded-lg border border-cyan-500/10 bg-cyan-500/[0.03] p-2.5 space-y-2">
+          <div>
+            <FieldLabel label="Workflow Profile" />
+            <div className="px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-[10px] text-cyan-300/60 font-medium">
+              {crewProfileId ? (CREW_PROFILE_LABELS[crewProfileId] || crewProfileId) : 'Not set'}
+            </div>
+          </div>
+          {budgetLimit !== undefined && budgetLimit !== null && (
+            <div>
+              <FieldLabel label="Budget Limit" />
+              <div className="px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-[10px] text-white/50">
+                {budgetLimit} EUR
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div>
         <FieldLabel label="Conversation Mode" hint="How speakers are selected" />
         <div className="flex gap-1.5">

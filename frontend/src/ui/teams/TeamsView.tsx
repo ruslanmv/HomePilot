@@ -99,6 +99,7 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
       participant_ids: string[]
       turn_mode: string
       agenda: string[]
+      policy?: { engine?: string; crew?: { profile_id?: string; budget_limit_eur?: number } }
     }) => {
       const room = await createRoom(params)
       setActiveRoom(room)
