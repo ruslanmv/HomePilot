@@ -35,6 +35,8 @@ import {
   AlertTriangle,
   Filter,
   X,
+  ArrowRightLeft,
+  Image as ImageIcon,
 } from 'lucide-react'
 
 import type { GalleryItem, OutfitScenarioTag, ScenarioTagMeta } from './galleryTypes'
@@ -61,6 +63,7 @@ export interface AvatarViewerProps {
   onSendToEdit?: (url: string) => void
   onSaveAsPersonaAvatar?: (item: GalleryItem) => void
   onDeleteItem?: (id: string) => void
+  onSwapAnchor?: (anchorId: string, portraitId: string) => void
   onOutfitResults?: (results: AvatarResult[], anchorItem: GalleryItem) => void
 }
 
@@ -112,6 +115,7 @@ export function AvatarViewer({
   onSendToEdit,
   onSaveAsPersonaAvatar,
   onDeleteItem,
+  onSwapAnchor,
   onOutfitResults,
 }: AvatarViewerProps) {
   const [copiedSeed, setCopiedSeed] = useState(false)
@@ -163,15 +167,13 @@ export function AvatarViewer({
   // Root character ID — if viewing an outfit, resolve to its parent
   const rootCharacterId = item.parentId || item.id
 
-  // Find outfits: gallery items that belong to this character (via parentId or URL fallback)
-  const outfits = useMemo(() => {
+  // Children of this character — items with parentId pointing here
+  const children = useMemo(() => {
     return allItems.filter(
       (g) =>
         g.id !== item.id &&
         (
-          // Primary: parentId-based grouping
           g.parentId === rootCharacterId ||
-          // Fallback: URL-based matching for items created before parentId existed
           (!g.parentId && g.referenceUrl && (
             g.referenceUrl === item.url ||
             resolveUrl(g.referenceUrl, backendUrl) === heroUrl
@@ -179,6 +181,10 @@ export function AvatarViewer({
         ),
     )
   }, [allItems, item, rootCharacterId, heroUrl, backendUrl])
+
+  // Split: portraits (alternative face photos) vs outfits (generated clothing/scenes)
+  const portraits = useMemo(() => children.filter((g) => g.role === 'portrait'), [children])
+  const outfits = useMemo(() => children.filter((g) => g.role !== 'portrait'), [children])
 
   // Filtered outfits for wardrobe display
   const filteredOutfits = useMemo(() => {
@@ -461,6 +467,32 @@ export function AvatarViewer({
                       <img src={resolveUrl(r.url, backendUrl)} alt={`Result ${i + 1}`} className="w-full h-full object-cover" />
                     </button>
                   ))}
+                </div>
+              )}
+
+              {/* ── Alternative Portraits strip (swap anchor) ── */}
+              {portraits.length > 0 && stageTab === 'anchor' && (
+                <div className="flex-shrink-0">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <ImageIcon size={10} className="text-purple-400/60" />
+                    <span className="text-[9px] text-white/30 font-medium uppercase tracking-wider">Alternatives</span>
+                    <span className="text-[9px] text-white/15">— click to swap</span>
+                  </div>
+                  <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
+                    {portraits.map((p) => (
+                      <button
+                        key={p.id}
+                        onClick={() => onSwapAnchor?.(rootCharacterId, p.id)}
+                        className="flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden border-2 border-white/10 hover:border-purple-500/50 hover:ring-1 hover:ring-purple-500/20 transition-all group relative"
+                        title="Set as main portrait"
+                      >
+                        <img src={resolveUrl(p.url, backendUrl)} alt="Portrait" className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <ArrowRightLeft size={12} className="text-purple-300" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
