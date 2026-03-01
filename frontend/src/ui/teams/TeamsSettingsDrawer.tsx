@@ -36,6 +36,8 @@ export interface TeamsSettingsDrawerProps {
   onClose: () => void
   /** If provided, enables the Save button. Called with the draft policy. */
   onSave?: (policy: TeamsRoomPolicy) => void
+  /** Called when the user switches turn mode (Reactive / Initiative). */
+  onChangeTurnMode?: (turnMode: 'reactive' | 'round-robin') => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +77,7 @@ const DEFAULT_POLICY: TeamsRoomPolicy = {
   view_layout: 'oval',
   view_show_labels: true,
   view_show_animations: true,
-  memory_depth: 20,
+  memory_depth: 50,
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +98,7 @@ const SECTIONS: Array<{ id: SectionId; label: string; icon: React.ReactNode }> =
 // Component
 // ---------------------------------------------------------------------------
 
-export function TeamsSettingsDrawer({ room, open, onClose, onSave }: TeamsSettingsDrawerProps) {
+export function TeamsSettingsDrawer({ room, open, onClose, onSave, onChangeTurnMode }: TeamsSettingsDrawerProps) {
   const [expandedSections, setExpandedSections] = useState<Set<SectionId>>(new Set(['general']))
   const [draft, setDraft] = useState<TeamsRoomPolicy>({ ...DEFAULT_POLICY })
 
@@ -173,7 +175,7 @@ export function TeamsSettingsDrawer({ room, open, onClose, onSave }: TeamsSettin
                 {expanded && (
                   <div className="px-3 pb-3 space-y-3">
                     {section.id === 'general' && (
-                      <GeneralSection room={room} />
+                      <GeneralSection room={room} onChangeTurnMode={onChangeTurnMode} />
                     )}
                     {section.id === 'orchestration' && (
                       <OrchestrationSection draft={draft} onChange={updateDraft} />
@@ -333,7 +335,26 @@ function ToggleField({
 // Section: General (read-only room info)
 // ---------------------------------------------------------------------------
 
-function GeneralSection({ room }: { room: MeetingRoom }) {
+function GeneralSection({ room, onChangeTurnMode }: { room: MeetingRoom; onChangeTurnMode?: (turnMode: 'reactive' | 'round-robin') => Promise<void> }) {
+  const [switching, setSwitching] = useState(false)
+
+  const TURN_MODES = [
+    { value: 'reactive' as const, label: 'Reactive', desc: 'Orchestrator selects speakers by relevance' },
+    { value: 'round-robin' as const, label: 'Initiative', desc: 'Fixed turn order (BG3-style)' },
+  ]
+
+  const handleSwitch = async (mode: 'reactive' | 'round-robin') => {
+    if (mode === room.turn_mode || !onChangeTurnMode || switching) return
+    setSwitching(true)
+    try {
+      await onChangeTurnMode(mode)
+    } catch (e) {
+      console.warn('Failed to switch turn mode:', e)
+    } finally {
+      setSwitching(false)
+    }
+  }
+
   return (
     <>
       <div>
@@ -351,15 +372,35 @@ function GeneralSection({ room }: { room: MeetingRoom }) {
         </div>
       )}
       <div>
-        <FieldLabel label="Turn Mode" />
-        <div className="px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-[10px] text-white/50">
-          {room.turn_mode.replace('-', ' ')}
+        <FieldLabel label="Conversation Mode" hint="How speakers are selected" />
+        <div className="flex gap-1.5">
+          {TURN_MODES.map((mode) => (
+            <button
+              key={mode.value}
+              onClick={() => handleSwitch(mode.value)}
+              disabled={switching}
+              className={`flex-1 px-2.5 py-2 rounded-lg text-left transition-all border ${
+                room.turn_mode === mode.value
+                  ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-300'
+                  : 'bg-white/[0.03] border-white/[0.06] text-white/30 hover:text-white/50 cursor-pointer'
+              } ${switching ? 'opacity-50' : ''}`}
+              title={mode.desc}
+            >
+              <div className="text-[10px] font-medium">{mode.label}</div>
+              <div className="text-[9px] text-white/20 mt-0.5">{mode.desc}</div>
+            </button>
+          ))}
         </div>
+        <p className="text-[9px] text-white/15 mt-1">
+          {room.turn_mode === 'reactive'
+            ? 'Intent scoring, hand-raise, and gates decide who speaks.'
+            : 'Deterministic turn order — one speaker per click.'}
+        </p>
       </div>
       <div>
         <FieldLabel label="Participants" />
         <div className="px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] text-[10px] text-white/50">
-          {room.participant_ids.length} persona(s) + You (Host)
+          {room.participant_ids.length} persona(s) + You
         </div>
       </div>
     </>
@@ -582,10 +623,10 @@ function AdvancedSection({ draft, onChange }: { draft: TeamsRoomPolicy; onChange
     <>
       <SliderField
         label="Memory Depth"
-        hint="Messages in context window"
-        value={draft.memory_depth ?? 20}
+        hint="Messages each participant reads from chat history"
+        value={draft.memory_depth ?? 50}
         min={5}
-        max={100}
+        max={200}
         step={5}
         onChange={(v) => onChange('memory_depth', v)}
       />

@@ -123,14 +123,16 @@ def create_room(
     name: str,
     description: str = "",
     participant_ids: Optional[List[str]] = None,
-    turn_mode: str = "round-robin",
+    turn_mode: str = "reactive",
     agenda: Optional[List[str]] = None,
+    topic: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create a new meeting room and return it."""
     room: Dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "name": name,
         "description": description,
+        "topic": topic or description or "",
         "participant_ids": participant_ids or [],
         "turn_mode": turn_mode,
         "agenda": agenda or [],
