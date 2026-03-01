@@ -14,7 +14,7 @@ import type {
   PersonaBlueprint,
 } from '../personaTypes'
 import { PERSONA_BLUEPRINTS } from '../personaTypes'
-import type { GalleryItem } from './galleryTypes'
+import type { GalleryItem, WizardMeta } from './galleryTypes'
 import { SCENARIO_TAG_META } from './galleryTypes'
 
 // ---------------------------------------------------------------------------
@@ -52,6 +52,28 @@ function defaultPersonaAgent() {
 // ---------------------------------------------------------------------------
 // Bridge function
 // ---------------------------------------------------------------------------
+
+/**
+ * Map an avatar wizard profession to a suggested persona class.
+ */
+export function professionToPersonaClass(professionId?: string): PersonaClassId {
+  switch (professionId) {
+    case 'executive_secretary':
+    case 'office_administrator':
+      return 'secretary'
+    case 'project_manager':
+    case 'research_analyst':
+    case 'customer_support':
+    case 'automation_operator':
+    case 'code_architect':
+      return 'assistant'
+    case 'product_designer':
+    case 'creative_director':
+      return 'companion'
+    default:
+      return 'custom'
+  }
+}
 
 /**
  * Resolve a human-readable label for an outfit's scenario tag.
@@ -117,7 +139,42 @@ export function draftFromGalleryItem(
   const agent = defaultPersonaAgent()
   agent.label = personaName
 
-  if (blueprint) {
+  // Use wizard metadata (profession/tools/tone) to populate agent fields
+  const meta = item.wizardMeta
+  if (meta) {
+    // Profession description → role
+    if (meta.professionLabel) {
+      agent.role = meta.professionLabel
+    }
+    // Profession system prompt → system_prompt
+    if (meta.systemPrompt) {
+      agent.system_prompt = meta.systemPrompt
+    }
+    // Tone from wizard
+    if (meta.tone) {
+      agent.response_style = { ...agent.response_style, tone: meta.tone }
+    }
+    // Tools from wizard → allowed_tools
+    if (meta.tools && meta.tools.length > 0) {
+      agent.allowed_tools = meta.tools
+    }
+    // Gender for appearance
+    if (meta.gender) {
+      appearance.gender = meta.gender as any
+    }
+  }
+
+  // Blueprint overrides wizard defaults when a specific persona class is chosen
+  // (user explicitly picked Secretary/Assistant/etc. in the export dialog)
+  if (blueprint && classId !== 'custom') {
+    agent.role = blueprint.defaults.role
+    agent.system_prompt = blueprint.defaults.system_prompt
+    agent.response_style = { ...agent.response_style, tone: blueprint.defaults.tone }
+    agent.image_style_hint = blueprint.defaults.image_style_hint
+    agent.safety = { ...blueprint.defaults.safety }
+    appearance.style_preset = blueprint.defaults.style_preset
+  } else if (!meta && blueprint) {
+    // No wizard meta and a blueprint was selected — use blueprint defaults
     agent.role = blueprint.defaults.role
     agent.system_prompt = blueprint.defaults.system_prompt
     agent.response_style = { ...agent.response_style, tone: blueprint.defaults.tone }
@@ -161,9 +218,9 @@ export function draftFromGalleryItem(
     persona_class: classId,
     persona_agent: agent,
     persona_appearance: appearance,
-    memory_mode: blueprint?.defaults.memory_mode || 'adaptive',
+    memory_mode: meta?.memoryEngine as any || blueprint?.defaults.memory_mode || 'adaptive',
     agentic: {
-      goal: blueprint?.defaults.goal || '',
+      goal: blueprint?.defaults.goal || (meta?.professionDescription || ''),
       capabilities: blueprint?.defaults.capabilities || [],
     },
   }
