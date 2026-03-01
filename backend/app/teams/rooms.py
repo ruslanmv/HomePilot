@@ -272,6 +272,24 @@ def _safe_filename(name: str) -> str:
     return name[:120] if name else "document"
 
 
+def _room_collection_id(room_id: str) -> str:
+    """Return the pseudo-project-id used for the room-level ChromaDB collection."""
+    return f"team_room_{room_id}"
+
+
+def _index_room_document(room_id: str, file_path: Path) -> int:
+    """Index a room document into ChromaDB so all participants can RAG-retrieve it."""
+    try:
+        from ..projects import RAG_ENABLED
+        if not RAG_ENABLED:
+            return 0
+        from ..vectordb import process_and_add_file
+        return process_and_add_file(_room_collection_id(room_id), file_path)
+    except Exception as exc:
+        logger.debug("Room doc RAG indexing skipped for %s: %s", room_id, exc)
+        return 0
+
+
 def _infer_doc_type(filename: str) -> str:
     lower = filename.lower()
     if lower.endswith(".pdf"):
@@ -334,6 +352,10 @@ def add_document_upload(
     room.setdefault("documents", []).append(doc)
     room["updated_at"] = time.time()
     _write(room)
+
+    # ── Index into ChromaDB for RAG retrieval by all participants ──
+    _index_room_document(room_id, docs_dir / stored_name)
+
     return room, doc
 
 
@@ -407,11 +429,23 @@ def get_document_preview(room_id: str, doc_id: str) -> Optional[str]:
         return d.get("url") or ""
     if d.get("kind") == "file":
         doc_type = d.get("type")
-        if doc_type not in ("txt", "md"):
-            return f"[{(doc_type or 'file').upper()} uploaded — preview not available for this format]"
         p = get_document_file_path(room_id, doc_id)
         if not p:
             return None
+
+        # For PDFs and other rich formats, use vectordb text extraction
+        if doc_type not in ("txt", "md"):
+            try:
+                from ..vectordb import extract_text_from_file
+                text = extract_text_from_file(p)
+                if text and not text.startswith("["):
+                    if len(text) > _PREVIEW_CHARS:
+                        return text[:_PREVIEW_CHARS] + "\n\n...(truncated)..."
+                    return text
+            except Exception:
+                pass
+            return f"[{(doc_type or 'file').upper()} uploaded — preview not available for this format]"
+
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
             if len(text) > _PREVIEW_CHARS:

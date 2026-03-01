@@ -724,9 +724,19 @@ async def inventory_delete_item(
             "deleted_type": "outfit",
         })
 
-    # Try deleting an image from sets or standalone
+    # ── Check if this is the currently active look (equipped) ──
+    active_sel = appearance.get("selected") or {}
+    active_set_id = str(active_sel.get("set_id") or "").strip()
+    active_image_id = str(active_sel.get("image_id") or "").strip()
+
+    def _is_active_image(img_id: str, set_id: str) -> bool:
+        return bool(active_image_id and active_set_id
+                     and img_id == active_image_id and set_id == active_set_id)
+
+    # Try deleting an image from sets (portrait photos)
     sets = appearance.get("sets") or []
     for s in sets:
+        s_id = str(s.get("set_id") or "").strip()
         images = s.get("images") or []
         new_images = []
         for img in images:
@@ -736,6 +746,10 @@ async def inventory_delete_item(
             if not img_id:
                 img_id = _sha_id("img", f"{project_id}|set|{rel_path}")
             if img_id == item_id:
+                if _is_active_image(img_id, s_id):
+                    return JSONResponse(status_code=409, content={
+                        "ok": False, "message": "Cannot delete the active look. Change the active look first."
+                    })
                 deleted = True
                 deleted_label = str(img.get("label") or "").strip() or "Image"
                 if rel_path:
@@ -752,7 +766,61 @@ async def inventory_delete_item(
         s["images"] = new_images
 
     if deleted:
-        appearance["sets"] = sets
+        # Remove empty sets
+        appearance["sets"] = [s for s in sets if s.get("images")]
+        proj["persona_appearance"] = appearance
+        meta[project_id] = proj
+        try:
+            _projects_metadata_path().write_text(
+                json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception as e:
+            return JSONResponse(status_code=500, content={
+                "ok": False, "message": f"Failed to save metadata: {e}"
+            })
+        return JSONResponse(content={
+            "ok": True,
+            "project_id": project_id,
+            "deleted_id": item_id,
+            "deleted_label": deleted_label,
+            "deleted_type": "image",
+        })
+
+    # Try deleting an individual image from outfit photos
+    outfits_for_img = appearance.get("outfits") or []
+    for o in outfits_for_img:
+        o_id = str(o.get("id") or "").strip()
+        images = o.get("images") or []
+        new_images = []
+        for img in images:
+            img_id = str(img.get("id") or "").strip()
+            url = str(img.get("url") or "").strip()
+            rel_path = _extract_rel_path(url)
+            if not img_id:
+                outfit_label = str(o.get("label") or "").strip() or "Outfit"
+                img_id = _sha_id("img", f"{project_id}|outfit|{outfit_label}|{rel_path}")
+            if img_id == item_id:
+                if _is_active_image(img_id, o_id):
+                    return JSONResponse(status_code=409, content={
+                        "ok": False, "message": "Cannot delete the active look. Change the active look first."
+                    })
+                deleted = True
+                deleted_label = str(img.get("label") or "").strip() or str(o.get("label") or "") + " photo"
+                if rel_path:
+                    rp = _safe_rel_path(rel_path)
+                    if rp:
+                        full_path = _upload_root() / rp
+                        if full_path.exists():
+                            try:
+                                full_path.unlink()
+                            except Exception:
+                                pass
+            else:
+                new_images.append(img)
+        o["images"] = new_images
+
+    if deleted:
+        appearance["outfits"] = outfits_for_img
         proj["persona_appearance"] = appearance
         meta[project_id] = proj
         try:

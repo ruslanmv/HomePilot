@@ -226,8 +226,8 @@ export function DocumentsPanel({
             <div className="flex items-start gap-2">
               <div className="mt-0.5 flex-shrink-0">{iconFor(d)}</div>
               <div className="flex-1 min-w-0">
-                <div className="text-[10px] text-white/65 font-medium truncate">{d.name}</div>
-                <div className="text-[9px] text-white/25 mt-0.5">
+                <div className="text-[11px] text-white/65 font-medium truncate">{d.name}</div>
+                <div className="text-[10px] text-white/25 mt-0.5">
                   {d.kind === 'url' ? 'Link' : (d.type || 'file').toUpperCase()}
                   {d.size_bytes ? ` · ${sizeLabel(d.size_bytes)}` : ''}
                   {d.uploaded_by ? ` · ${d.uploaded_by}` : ''}
@@ -268,15 +268,28 @@ export function DocumentsPanel({
       {selected && previewText && (
         <div className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5">
           <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[9px] text-white/30 font-medium truncate">{selected.name}</span>
-            <button
-              onClick={() => { setSelectedId(null); setPreviewText('') }}
-              className="p-0.5 rounded hover:bg-white/5 text-white/20 hover:text-white/40"
-            >
-              <X size={10} />
-            </button>
+            <span className="text-[10px] text-white/40 font-medium truncate">{selected.name}</span>
+            <div className="flex items-center gap-1">
+              {selected.kind === 'file' && selected.type === 'pdf' && (
+                <a
+                  href={`${backendUrl}/v1/teams/rooms/${roomId}/documents/${selected.id}/download`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-1.5 py-0.5 rounded text-[9px] text-cyan-300/60 hover:text-cyan-200 hover:bg-cyan-500/10 transition-colors"
+                  title="Open PDF in new tab"
+                >
+                  Open PDF
+                </a>
+              )}
+              <button
+                onClick={() => { setSelectedId(null); setPreviewText('') }}
+                className="p-0.5 rounded hover:bg-white/5 text-white/20 hover:text-white/40"
+              >
+                <X size={10} />
+              </button>
+            </div>
           </div>
-          <pre className="text-[10px] leading-relaxed text-white/55 whitespace-pre-wrap max-h-32 overflow-y-auto scrollbar-hide font-mono">
+          <pre className="text-[11px] leading-relaxed text-white/55 whitespace-pre-wrap max-h-48 overflow-y-auto scrollbar-hide font-mono">
             {previewText}
           </pre>
         </div>

@@ -279,22 +279,12 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
         checkpoint_override: checkpoint,
       })
       if (result?.results?.length) {
+        // Always show the selection UI — user must click "Create Avatar" to commit.
+        // No auto-commit, even for single results.
+        setSelectedResultIndex(null)
         if (result.results.length === 1) {
-          // Single result — commit directly to gallery
-          gallery.addBatch(
-            result.results,
-            mode,
-            effectivePrompt || undefined,
-            referenceUrl || undefined,
-            undefined,
-            { vibeTag: vibeTagForGallery || undefined, nsfw: isSpicyContent || undefined },
-          )
-          setSelectedResultIndex(null)
-          showToast('Avatar created', 'success')
+          showToast('Avatar generated — click to select, then Create Avatar', 'success')
         } else {
-          // Multiple results — user must choose one first.
-          // Only the chosen avatar is committed to gallery via "Create Avatar" button.
-          setSelectedResultIndex(null)
           showToast(`${result.results.length} avatars generated — pick your favourite`, 'success')
         }
       }
@@ -939,10 +929,12 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           {gen.result?.results?.length ? (
             <div className="max-w-2xl mx-auto mb-8 animate-fadeSlideIn">
               <div className="text-xs text-white/30 mb-2 font-medium uppercase tracking-wider text-center">
-                Choose Your Avatar
+                {gen.result.results.length === 1 ? 'Your Avatar' : 'Choose Your Avatar'}
               </div>
               <p className="text-[11px] text-white/20 text-center mb-4">
-                Select the character that speaks to you
+                {gen.result.results.length === 1
+                  ? 'Click to select, then Create Avatar to save'
+                  : 'Select the character that speaks to you'}
               </p>
 
               {/* Result grid — select one, dim the rest */}

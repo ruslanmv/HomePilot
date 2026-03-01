@@ -84,6 +84,53 @@ def _query_persona_knowledge(
         return ""
 
 
+def _query_room_knowledge(
+    room_id: str,
+    query: str,
+    n_results: int = MAX_KNOWLEDGE_CHUNKS,
+) -> str:
+    """
+    Query the room's shared documents (uploaded in the Docs tab) for RAG context.
+
+    All participants share access to these documents. Returns a formatted
+    string of relevant chunks, or empty string if nothing is indexed.
+    """
+    try:
+        from ..projects import RAG_ENABLED
+        if not RAG_ENABLED:
+            return ""
+
+        from ..vectordb import query_project_knowledge, get_project_document_count
+        from .rooms import _room_collection_id
+
+        collection_id = _room_collection_id(room_id)
+        if get_project_document_count(collection_id) == 0:
+            return ""
+
+        results = query_project_knowledge(collection_id, query, n_results=n_results)
+        if not results:
+            return ""
+
+        chunks: List[str] = []
+        for r in results:
+            content = r.get("content", "").strip()
+            source = (r.get("metadata") or {}).get("source", "")
+            if content:
+                label = f"[{source}] " if source else ""
+                chunks.append(f"  {label}{content}")
+
+        if not chunks:
+            return ""
+
+        return (
+            "\n\nRELEVANT CONTEXT FROM SHARED MEETING DOCUMENTS:\n"
+            + "\n---\n".join(chunks)
+        )
+    except BaseException as exc:
+        logger.debug("Room knowledge query skipped for %s: %s", room_id, exc)
+        return ""
+
+
 # ── Persona prompt builder ────────────────────────────────────────────────
 
 
@@ -181,11 +228,19 @@ def build_persona_prompt(
         lines.append(system_prompt)
         lines.append("")
 
-    # Knowledge base context (RAG)
+    # Knowledge base context (RAG) — persona-level
     if knowledge_query and project_id:
         kb_context = _query_persona_knowledge(project_id, knowledge_query)
         if kb_context:
             lines.append(kb_context)
+            lines.append("")
+
+    # Shared meeting documents context (RAG) — room-level
+    room_id = room.get("id") or ""
+    if knowledge_query and room_id:
+        room_kb = _query_room_knowledge(room_id, knowledge_query)
+        if room_kb:
+            lines.append(room_kb)
             lines.append("")
 
     # ── Strict voice directives (prevent identity drift + meta-reasoning) ─
