@@ -150,6 +150,8 @@ export default function VoiceSettingsPanel({
             role: p.persona_agent?.role || '',
             tone: p.persona_agent?.response_style?.tone || '',
             system_prompt: p.persona_agent?.system_prompt || '',
+            persona_class: p.persona_agent?.persona_class || 'custom',
+            goal: p.agentic?.goal || '',
             style_preset: pap.style_preset || '',
             character_desc: avatarSettings.character_prompt || '',
             created_at: p.created_at || 0,
