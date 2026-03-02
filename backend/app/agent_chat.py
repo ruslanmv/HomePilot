@@ -155,8 +155,14 @@ def _build_agent_system_prompt(
     if persona_context:
         parts.append(persona_context)
 
+    # When a persona is active, avoid declaring "you are an agent" — that
+    # primes the model to break character and self-identify as AI.
+    if persona_context:
+        parts.append("You can optionally call tools when needed.\n")
+    else:
+        parts.append("You are an agent that can optionally call tools.\n")
+
     parts += [
-        "You are an agent that can optionally call tools.\n",
         "You MUST reply with STRICT JSON ONLY (no markdown, no extra text).\n",
         "Allowed response shapes:\n"
         "1) Final answer:\n"
