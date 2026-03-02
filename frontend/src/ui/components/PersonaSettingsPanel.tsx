@@ -1456,7 +1456,6 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                           )
                         })}
                       </div>
-                      <div className="text-[10px] text-white/30">{outfit.outfit_prompt}</div>
                     </div>
                   ))}
                 </div>
