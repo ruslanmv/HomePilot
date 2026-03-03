@@ -4095,65 +4095,18 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     setInput('')
   }, [input, sendTextOrIntent, pendingFile, pendingPreviewUrl, uploadAndSend])
 
-  // Handle edit from image viewer
+  // Handle edit from image viewer — navigate to Edit Studio with the image
   const handleEditFromViewer = useCallback(
-    async (imageUrl: string) => {
+    (imageUrl: string) => {
       setLightbox(null)
+      // Hand off image URL + source metadata to Edit Studio via sessionStorage
+      sessionStorage.setItem('homepilot_edit_from_avatar', JSON.stringify({
+        url: imageUrl,
+        source_type: 'viewer',
+      }))
       setMode('edit')
-
-      const tmpId = uuid()
-      const userMsg: Msg = { id: uuid(), role: 'user', text: `Edit image: ${imageUrl}` }
-      const pendingMsg: Msg = { id: tmpId, role: 'assistant', text: 'Preparing to edit...', pending: true }
-      setMessages((prev) => [...prev, userMsg, pendingMsg])
-
-      try {
-        // Fetch the image and convert to File
-        const response = await fetch(imageUrl)
-        const blob = await response.blob()
-        const filename = imageUrl.split('/').pop() || 'image.png'
-        const file = new File([blob], filename, { type: blob.type })
-
-        // Upload the file
-        const fd = new FormData()
-        fd.append('file', file)
-        const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
-        const uploadedUrl = up.url as string
-
-        // Trigger edit workflow with default prompt
-        const editPrompt = 'make it more vibrant and detailed'
-        const data = await postJson<any>(
-          settings.backendUrl,
-          '/chat',
-          {
-            message: `edit ${uploadedUrl} ${editPrompt}`,
-            conversation_id: conversationId,
-            fun_mode: settings.funMode,
-            mode: 'edit',
-            provider: settingsDraft.providerChat,
-            provider_base_url: settingsDraft.baseUrlChat || undefined,
-            provider_model: settingsDraft.modelChat,
-          },
-          authHeaders
-        )
-
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tmpId
-              ? { ...msg, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null }
-              : msg
-          )
-        )
-      } catch (error: any) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tmpId
-              ? { ...msg, pending: false, text: `Edit failed: ${error.message || 'Unknown error'}` }
-              : msg
-          )
-        )
-      }
     },
-    [authHeaders, conversationId, settings, settingsDraft]
+    []
   )
 
   return (
@@ -4693,11 +4646,13 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             globalModelImages={settingsDraft.modelImages}
             onSendToEdit={(imageUrl) => {
               // Navigate to Edit mode — the EditTab will pick up the image
-              // via upload flow similar to handleEditFromViewer
               setLightbox(null)
               setMode('edit')
-              // Store the URL so EditTab can auto-load it
-              sessionStorage.setItem('homepilot_edit_from_avatar', imageUrl)
+              // Store the URL + source metadata so EditTab can auto-load it
+              sessionStorage.setItem('homepilot_edit_from_avatar', JSON.stringify({
+                url: imageUrl,
+                source_type: 'avatar',
+              }))
             }}
             onOpenLightbox={(url) => setLightbox(url)}
             onSaveAsPersonaAvatar={(item, outfits, batchSiblings) => setSaveAsPersonaData({ item, outfits, batchSiblings })}
