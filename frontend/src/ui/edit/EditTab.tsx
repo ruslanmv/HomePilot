@@ -39,6 +39,7 @@ import {
 } from 'lucide-react'
 
 import { EditDropzone } from './EditDropzone'
+import { LoraManager, type ActiveLora } from './LoraManager'
 import { MaskCanvas } from './MaskCanvas'
 import { upscaleImage } from '../enhance/upscaleApi'
 import { QuickActions } from './QuickActions'
@@ -50,11 +51,13 @@ import type { IdentityToolType } from '../enhance/identityApi'
 import { useAvatarCapabilities } from '../useAvatarCapabilities'
 import {
   uploadToEditSession,
+  uploadToEditSessionByUrl,
   sendEditMessage,
   selectActiveImage,
   clearEditSession,
   getEditSession,
   extractImages,
+  deleteVersion,
 } from './editApi'
 import type { EditTabProps, VersionEntry } from './types'
 import { resolveFileUrl } from '../resolveFileUrl'
@@ -62,6 +65,12 @@ import { resolveFileUrl } from '../resolveFileUrl'
 // -----------------------------------------------------------------------------
 // Types
 // -----------------------------------------------------------------------------
+
+type EditItemSource = {
+  type?: string     // 'avatar' | 'chat' | 'room' | etc.
+  id?: string       // entity ID (avatar_id, project_id, etc.)
+  url?: string      // original source URL for export-back
+}
 
 type EditItem = {
   id: string
@@ -71,6 +80,7 @@ type EditItem = {
   instruction: string
   conversationId: string
   settings?: Record<string, unknown>
+  source?: EditItemSource
 }
 
 // -----------------------------------------------------------------------------
@@ -155,6 +165,9 @@ export function EditTab({
   const [useCN, setUseCN] = useState(false)
   const [cnStrength, setCnStrength] = useState(1.0)
 
+  // State - LoRA Add-ons (additive — Golden Rule 1.0)
+  const [activeLoras, setActiveLoras] = useState<ActiveLora[]>([])
+
   // State - Inpainting Mask
   const [showMaskCanvas, setShowMaskCanvas] = useState(false)
   const [maskDataUrl, setMaskDataUrl] = useState<string | null>(null)
@@ -231,30 +244,84 @@ export function EditTab({
     }
   }, [results])
 
-  // Auto-import image from Avatar Studio (via sessionStorage handoff)
+  // Auto-import image from Avatar Studio or ImageViewer (via sessionStorage handoff)
   useEffect(() => {
-    const avatarUrl = sessionStorage.getItem('homepilot_edit_from_avatar')
-    if (!avatarUrl || viewMode !== 'gallery') return
+    const raw = sessionStorage.getItem('homepilot_edit_from_avatar')
+    if (!raw || viewMode !== 'gallery') return
 
     // Clear immediately to prevent re-processing
     sessionStorage.removeItem('homepilot_edit_from_avatar')
 
-    // Fetch the image and upload it into an edit session
-    const importAvatar = async () => {
+    // Parse source metadata if available, or treat as plain URL
+    let sourceUrl: string
+    let sourceType: string | undefined
+    let sourceId: string | undefined
+    try {
+      const parsed = JSON.parse(raw)
+      sourceUrl = parsed.url || raw
+      sourceType = parsed.source_type
+      sourceId = parsed.source_id
+    } catch {
+      sourceUrl = raw
+    }
+
+    // Entirely server-side: backend resolves the URL to a file on disk
+    // and forwards it to the edit session sidecar — no browser fetch needed
+    const importImage = async () => {
       setBusy(true)
+      setError(null)
       try {
-        const response = await fetch(avatarUrl)
-        const blob = await response.blob()
-        const filename = avatarUrl.split('/').pop() || 'avatar.png'
-        const file = new File([blob], filename, { type: blob.type || 'image/png' })
-        await handleUploadNew(file)
+        const newConversationId = uid()
+
+        // Backend loads the image from /comfy/view/... or /files/... and
+        // sends it directly to the edit session sidecar
+        const data = await uploadToEditSessionByUrl({
+          backendUrl,
+          apiKey,
+          conversationId: newConversationId,
+          imageUrl: sourceUrl,
+        })
+
+        const uploadedUrl = data.active_image_url
+        if (!uploadedUrl) {
+          throw new Error('No image URL returned from edit session')
+        }
+
+        const newItem: EditItem = {
+          id: uid(),
+          url: uploadedUrl,
+          createdAt: Date.now(),
+          originalUrl: uploadedUrl,
+          instruction: '[Imported]',
+          conversationId: newConversationId,
+          source: sourceType ? {
+            type: sourceType,
+            id: sourceId,
+            url: sourceUrl,
+          } : undefined,
+        }
+
+        setGalleryItems((prev) => [newItem, ...prev].slice(0, 100))
+        setCurrentEditItem(newItem)
+        setActive(uploadedUrl)
+        setVersions([{
+          url: uploadedUrl,
+          instruction: '[Imported]',
+          created_at: Date.now() / 1000,
+          parent_url: null,
+          settings: {},
+        }])
+        setInitialized(true)
+        setViewMode('editor')
+
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to import avatar from Avatar Studio')
+        setError(e instanceof Error ? e.message : 'Failed to import image')
+      } finally {
         setBusy(false)
       }
     }
 
-    importAvatar()
+    importImage()
   }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ==========================================================================
@@ -271,6 +338,11 @@ export function EditTab({
     }
 
     if (!advancedMode) {
+      // Still inject LoRA flags even without advanced mode
+      const enabledLorasBasic = activeLoras.filter((l) => l.enabled)
+      for (const lora of enabledLorasBasic) {
+        parts.push(`--lora ${lora.id}:${lora.weight.toFixed(2)}`)
+      }
       return parts.join(' ')
     }
 
@@ -288,8 +360,15 @@ export function EditTab({
       parts.push(`--cn on`)
       parts.push(`--cn-strength ${cnStrength}`)
     }
+
+    // Inject active LoRA flags (additive — works even without advanced mode)
+    const enabledLoras = activeLoras.filter((l) => l.enabled)
+    for (const lora of enabledLoras) {
+      parts.push(`--lora ${lora.id}:${lora.weight.toFixed(2)}`)
+    }
+
     return parts.join(' ')
-  }, [advancedMode, editMode, steps, cfg, denoise, seedLock, seed, useCN, cnStrength])
+  }, [advancedMode, editMode, steps, cfg, denoise, seedLock, seed, useCN, cnStrength, activeLoras])
 
   // Upload mask data URL to server and get a URL
   const uploadMask = useCallback(async (dataUrl: string): Promise<string | null> => {
@@ -326,7 +405,10 @@ export function EditTab({
   // HANDLERS - Gallery
   // ==========================================================================
 
-  const handleUploadNew = useCallback(async (file: File) => {
+  const handleUploadNew = useCallback(async (
+    file: File,
+    sourceInfo?: { sourceType?: string; sourceId?: string; sourceUrl?: string },
+  ) => {
     setError(null)
     setBusy(true)
 
@@ -352,6 +434,11 @@ export function EditTab({
         originalUrl: uploadedUrl,
         instruction: '[Original Upload]',
         conversationId: newConversationId,
+        source: sourceInfo ? {
+          type: sourceInfo.sourceType,
+          id: sourceInfo.sourceId,
+          url: sourceInfo.sourceUrl,
+        } : undefined,
       }
 
       setGalleryItems((prev) => [newItem, ...prev].slice(0, 100))
@@ -882,13 +969,50 @@ export function EditTab({
 
     console.log('[EditTab] Deleting version:', versionUrl)
 
+    // Delete from backend first, then update frontend state
+    const conversationId = currentEditItem?.conversationId
+    if (conversationId) {
+      deleteVersion({
+        backendUrl,
+        apiKey,
+        conversationId,
+        imageUrl: versionUrl,
+      }).catch(err => console.warn('Failed to delete version from backend:', err))
+    }
+
     setVersions((prev) => {
       const filtered = prev.filter(v => v.url !== versionUrl)
       console.log('[EditTab] Versions after delete:', filtered.length)
 
-      // If we deleted the active version, select the next available
+      // If this was the last version, delete the entire edit project
+      if (filtered.length === 0 && currentEditItem) {
+        console.log('[EditTab] Last version deleted — removing edit project')
+        // Remove from gallery
+        setGalleryItems((items) => items.filter((i) => i.id !== currentEditItem.id))
+        // Clear backend session
+        clearEditSession({
+          backendUrl,
+          apiKey,
+          conversationId: currentEditItem.conversationId,
+        }).catch(err => console.warn('Failed to clear backend session:', err))
+        // Fully reset editor state and return to gallery
+        setActive(null)
+        setCurrentEditItem(null)
+        setResults([])
+        setPrompt('')
+        setError(null)
+        setInitialized(false)
+        setViewMode('gallery')
+        return filtered
+      }
+
+      // If we deleted the active version, navigate to the nearest alive photo
       if (active === versionUrl && filtered.length > 0) {
-        const newActive = filtered[0].url
+        // Find where the deleted version was in the original list
+        const oldIndex = prev.findIndex(v => v.url === versionUrl)
+        // Pick the previous version (older), or the next one if at start
+        const newIndex = Math.min(oldIndex, filtered.length - 1)
+        const newActive = filtered[Math.max(0, newIndex)].url
         setActive(newActive)
 
         // Persist the new active to backend
@@ -1435,6 +1559,15 @@ export function EditTab({
                 </div>
               )}
             </div>
+
+            {/* LoRA Add-ons (additive — Golden Rule 1.0) */}
+            <LoraManager
+              backendUrl={backendUrl}
+              apiKey={apiKey}
+              activeLoras={activeLoras}
+              onLorasChange={setActiveLoras}
+              disabled={busy}
+            />
 
             {/* Quick Enhancement Actions */}
             <QuickActions

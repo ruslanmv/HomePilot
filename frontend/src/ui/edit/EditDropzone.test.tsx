@@ -60,9 +60,9 @@ describe('EditDropzone', () => {
     const dropzone = container.firstChild as HTMLElement
 
     fireEvent.dragOver(dropzone, { dataTransfer: { files: [] } })
-    expect(dropzone.className).toContain('border-blue-500')
+    expect(dropzone.className).toContain('border-purple-500')
 
     fireEvent.dragLeave(dropzone, { dataTransfer: { files: [] } })
-    expect(dropzone.className).not.toContain('border-blue-500')
+    expect(dropzone.className).not.toContain('border-purple-500')
   })
 })

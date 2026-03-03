@@ -178,6 +178,22 @@ class BaseStore:
         """
         return self.push_version(conversation_id, image_url)
 
+    def remove_version(self, conversation_id: str, image_url: str) -> SessionRecord:
+        """
+        Remove a single version from the session history.
+
+        If the removed version was the active image, the active image is
+        updated to the next available version (or cleared if none remain).
+
+        Args:
+            conversation_id: Unique session identifier
+            image_url: URL of the version to remove
+
+        Returns:
+            Updated SessionRecord
+        """
+        raise NotImplementedError
+
     def clear(self, conversation_id: str) -> None:
         """
         Clear all session data for a conversation.
@@ -411,6 +427,30 @@ class SQLiteStore(BaseStore):
         self._save(rec)
         return rec
 
+    def remove_version(self, conversation_id: str, image_url: str) -> SessionRecord:
+        """Remove a single version and update active if needed."""
+        rec = self.get(conversation_id)
+        filtered = [v for v in rec.versions if v.url != image_url]
+
+        # If nothing was removed, return as-is
+        if len(filtered) == len(rec.versions):
+            return rec
+
+        # If the active image was the one removed, pick the next best
+        new_active = rec.active_image_url
+        if rec.active_image_url == image_url:
+            new_active = filtered[0].url if filtered else None
+
+        rec = SessionRecord(
+            conversation_id=conversation_id,
+            active_image_url=new_active,
+            versions=filtered,
+            updated_at=time.time(),
+            original_image_url=rec.original_image_url,
+        )
+        self._save(rec)
+        return rec
+
     def clear(self, conversation_id: str) -> None:
         """Clear session data."""
         con = self._conn()
@@ -585,6 +625,28 @@ class RedisStore(BaseStore):
             conversation_id=conversation_id,
             active_image_url=rec.active_image_url,
             versions=versions,
+            updated_at=time.time(),
+            original_image_url=rec.original_image_url,
+        )
+        self._save(rec)
+        return rec
+
+    def remove_version(self, conversation_id: str, image_url: str) -> SessionRecord:
+        """Remove a single version and update active if needed."""
+        rec = self.get(conversation_id)
+        filtered = [v for v in rec.versions if v.url != image_url]
+
+        if len(filtered) == len(rec.versions):
+            return rec
+
+        new_active = rec.active_image_url
+        if rec.active_image_url == image_url:
+            new_active = filtered[0].url if filtered else None
+
+        rec = SessionRecord(
+            conversation_id=conversation_id,
+            active_image_url=new_active,
+            versions=filtered,
             updated_at=time.time(),
             original_image_url=rec.original_image_url,
         )

@@ -3,10 +3,10 @@
  *
  * Tests the two-view architecture:
  *   1. Gallery view (landing) — default, shows avatar library
- *   2. Designer view — accessible via "New Avatar" button
+ *   2. Wizard view — accessible via "New Avatar" button (CharacterWizard)
  *
- * Also tests mode selection, generate button states,
- * and action callbacks without real API calls.
+ * Also tests mode selection, navigation, and action callbacks
+ * without real API calls.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -59,16 +59,30 @@ vi.mock('./useGenerateAvatars', () => ({
   }),
 }))
 
+vi.mock('./useAvatarGallery', () => ({
+  useAvatarGallery: () => ({
+    items: [],
+    addItem: vi.fn(),
+    addBatch: vi.fn(),
+    addAnchorWithPortraits: vi.fn(),
+    swapAnchor: vi.fn(),
+    removeItem: vi.fn(),
+    clearAll: vi.fn(),
+    tagItem: vi.fn(),
+    linkToPersona: vi.fn(),
+  }),
+}))
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Render AvatarStudio and click "New Avatar" to enter designer view. */
-function renderDesignerView(props?: Partial<React.ComponentProps<typeof AvatarStudio>>) {
+/** Render AvatarStudio and click "New Avatar" to enter wizard view. */
+function renderWizardView(props?: Partial<React.ComponentProps<typeof AvatarStudio>>) {
   const result = render(
     <AvatarStudio backendUrl="http://localhost:8000" {...props} />,
   )
-  // Navigate to designer view
+  // Navigate to wizard view
   fireEvent.click(screen.getByText('New Avatar'))
   return result
 }
@@ -98,14 +112,14 @@ describe('AvatarStudio — Gallery View', () => {
   it('clicking "New Avatar" navigates to designer view', () => {
     render(<AvatarStudio backendUrl="http://localhost:8000" />)
     fireEvent.click(screen.getByText('New Avatar'))
-    // Should now see designer header with back button
+    // Should now see wizard header with back button
     expect(screen.getByText('Avatar Studio')).toBeInTheDocument()
     expect(screen.getByTitle('Back to Gallery')).toBeInTheDocument()
   })
 })
 
 // ---------------------------------------------------------------------------
-// Tests — Designer View
+// Tests — Wizard View (CharacterWizard)
 // ---------------------------------------------------------------------------
 
 describe('AvatarStudio — Designer View', () => {
@@ -114,72 +128,64 @@ describe('AvatarStudio — Designer View', () => {
   })
 
   it('renders the designer header with back button', () => {
-    renderDesignerView()
+    renderWizardView()
     expect(screen.getByTitle('Back to Gallery')).toBeInTheDocument()
     expect(screen.getByText('Avatar Studio')).toBeInTheDocument()
   })
 
-  it('renders all three mode pills', () => {
-    renderDesignerView()
-    // In designer view: mode pills as radio buttons
-    expect(screen.getByRole('radio', { name: /Design Character/ })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: /From Reference/ })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: /Face \+ Style/ })).toBeInTheDocument()
+  it('renders Quick Create and Studio mode pills', () => {
+    renderWizardView()
+    // The wizard shows Quick Create / Studio toggle in the header
+    expect(screen.getByText('Quick Create')).toBeInTheDocument()
+    expect(screen.getByText('Studio')).toBeInTheDocument()
   })
 
-  it('default mode is Design Character', () => {
-    renderDesignerView()
-    const designBtn = screen.getByRole('radio', { name: /Design Character/ })
-    expect(designBtn).toHaveAttribute('aria-checked', 'true')
+  it('default mode is Studio with Identity step active', () => {
+    renderWizardView()
+    // Studio is the default mode — it should have active styling
+    const studioBtn = screen.getByText('Studio').closest('button')!
+    expect(studioBtn.className).toContain('bg-white/10')
+    // Identity step heading should be visible (first step of the wizard)
+    expect(screen.getByRole('heading', { name: 'Identity' })).toBeInTheDocument()
   })
 
-  it('renders the generate button with count', () => {
-    renderDesignerView()
-    // Default count is 1
-    expect(screen.getByText(/Generate \(1\)/)).toBeInTheDocument()
+  it('renders wizard step navigation', () => {
+    renderWizardView()
+    // Wizard sidebar shows numbered steps
+    expect(screen.getByRole('heading', { name: 'Identity' })).toBeInTheDocument()
+    expect(screen.getByText('Body')).toBeInTheDocument()
+    expect(screen.getByText('Face')).toBeInTheDocument()
+    expect(screen.getByText('Hair')).toBeInTheDocument()
+    // Next button for step navigation
+    expect(screen.getByText('Next')).toBeInTheDocument()
   })
 
-  it('switching mode changes active pill', () => {
-    renderDesignerView()
-    const refBtn = screen.getByRole('radio', { name: /From Reference/ })
-    fireEvent.click(refBtn)
-    expect(refBtn).toHaveAttribute('aria-checked', 'true')
-    // Previous mode should be deselected
-    const designBtn = screen.getByRole('radio', { name: /Design Character/ })
-    expect(designBtn).toHaveAttribute('aria-checked', 'false')
+  it('switching to Quick Create mode changes view', () => {
+    renderWizardView()
+    // Default is Studio mode — sidebar steps and heading visible
+    expect(screen.getByRole('heading', { name: 'Identity' })).toBeInTheDocument()
+
+    // Switch to Quick Create — use button role to avoid matching the heading
+    const quickBtn = screen.getByRole('button', { name: /Quick Create/ })
+    fireEvent.click(quickBtn)
+    expect(quickBtn.className).toContain('bg-white/10')
+    // Quick Create mode shows its own heading
+    expect(screen.getByRole('heading', { name: /Quick Create/ })).toBeInTheDocument()
+
+    // Switch back to Studio — sidebar steps reappear
+    fireEvent.click(screen.getByRole('button', { name: /Studio/ }))
+    expect(screen.getByRole('heading', { name: 'Identity' })).toBeInTheDocument()
   })
 
-  it('shows upload section when mode requires it', () => {
-    renderDesignerView()
-    // Default mode is Design Character — should NOT show upload
-    expect(screen.queryByTitle('Upload a reference photo')).not.toBeInTheDocument()
-
-    // Switch to From Reference — should show upload area
-    fireEvent.click(screen.getByRole('radio', { name: /From Reference/ }))
-    expect(screen.getByText('1. Upload a face')).toBeInTheDocument()
-    expect(screen.getByTitle('Upload a reference photo')).toBeInTheDocument()
-
-    // Switch back to Design Character — should hide upload
-    fireEvent.click(screen.getByRole('radio', { name: /Design Character/ }))
-    expect(screen.queryByText('1. Upload a face')).not.toBeInTheDocument()
-  })
-
-  it('clicking generate calls gen.run', async () => {
-    renderDesignerView()
-    fireEvent.click(screen.getByText(/Generate \(1\)/))
-
-    await waitFor(() => {
-      expect(mockRun).toHaveBeenCalledWith(
-        expect.objectContaining({
-          mode: 'creative',
-          count: 1,
-        }),
-      )
-    })
+  it('shows gender selection in Identity step', () => {
+    renderWizardView()
+    // Identity step includes gender selection by default
+    expect(screen.getByText(/Female/)).toBeInTheDocument()
+    expect(screen.getByText(/Male/)).toBeInTheDocument()
   })
 
   it('back button returns to gallery view', () => {
-    renderDesignerView()
+    renderWizardView()
     fireEvent.click(screen.getByTitle('Back to Gallery'))
     // Should see gallery landing again
     expect(screen.getByText('New Avatar')).toBeInTheDocument()
@@ -187,13 +193,13 @@ describe('AvatarStudio — Designer View', () => {
 
   it('onSendToEdit callback is passed to AvatarStudio', () => {
     const onSendToEdit = vi.fn()
-    renderDesignerView({ onSendToEdit })
+    renderWizardView({ onSendToEdit })
     expect(onSendToEdit).not.toHaveBeenCalled()
   })
 
   it('onOpenLightbox callback is passed to AvatarStudio', () => {
     const onOpenLightbox = vi.fn()
-    renderDesignerView({ onOpenLightbox })
+    renderWizardView({ onOpenLightbox })
     expect(onOpenLightbox).not.toHaveBeenCalled()
   })
 })
