@@ -529,6 +529,44 @@ async def clear_session(conversation_id: str):
     return {"ok": True}
 
 
+@app.delete(
+    "/v1/edit-sessions/{conversation_id}/version",
+    dependencies=[Depends(enforce_security)],
+    summary="Delete a single version",
+    description="Remove one image version from the session history.",
+)
+async def delete_version(conversation_id: str, image_url: str):
+    """
+    Delete a single version from the edit session.
+
+    Removes the version from history and, if it was the active image,
+    switches to the next available version.
+    """
+    if not image_url:
+        raise HTTPException(status_code=400, detail="image_url is required")
+
+    store = get_store()
+    rec = store.remove_version(conversation_id, image_url)
+
+    return {
+        "ok": True,
+        "conversation_id": conversation_id,
+        "active_image_url": rec.active_image_url,
+        "original_image_url": rec.original_image_url,
+        "versions": [
+            VersionEntryModel(
+                url=v.url,
+                instruction=v.instruction,
+                created_at=v.created_at,
+                parent_url=v.parent_url,
+                settings=v.settings,
+            ).model_dump()
+            for v in rec.versions
+        ],
+        "history": rec.history,
+    }
+
+
 # =============================================================================
 # UTILITY ENDPOINTS
 # =============================================================================

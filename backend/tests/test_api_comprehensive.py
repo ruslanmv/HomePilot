@@ -65,9 +65,11 @@ def test_models_ollama_down(mock_client_class, client, mock_outbound):
     mock_client_class.return_value = mock_client
 
     r = client.get("/models?provider=ollama")
-    assert r.status_code in [500, 503]  # May be 500 or 503 depending on error handling
+    # Ollama down returns 200 with empty list (graceful degradation)
+    assert r.status_code == 200
     data = r.json()
-    assert data["ok"] is False
+    assert data["ok"] is True
+    assert data["models"] == []
 
 
 @patch("app.orchestrator.llm_chat")
