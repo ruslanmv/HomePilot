@@ -12,12 +12,13 @@ ADDITIVE ONLY — does not modify any existing module.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .config import SQLITE_PATH
@@ -409,3 +410,154 @@ def delete_user_memory_item(
     con.commit()
     con.close()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Auto-sync helpers (additive — meta + PATCH + ETag)
+# ---------------------------------------------------------------------------
+
+def _get_user_profile_with_updated_at(user_id: str) -> Tuple[Dict[str, Any], str]:
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute("SELECT data, updated_at FROM user_profiles WHERE user_id = ?", (user_id,))
+    row = cur.fetchone()
+    con.close()
+    if not row:
+        return {}, ""
+    try:
+        data = json.loads(row[0] or "{}")
+    except Exception:
+        data = {}
+    updated_at = row[1] or ""
+    return data, updated_at
+
+
+def _user_profile_etag(profile: Dict[str, Any], updated_at: str) -> str:
+    payload = json.dumps(
+        {"profile": profile, "updated_at": updated_at},
+        sort_keys=True, ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _normalize_user_profile_fields(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize fields for safe merge (same rules as PUT)."""
+    for k in (
+        "likes", "dislikes", "favorite_persona_tags",
+        "preferred_terms_of_endearment", "hard_boundaries",
+        "sensitive_topics", "allowed_content_tags", "blocked_content_tags",
+    ):
+        if k in p:
+            p[k] = _norm_list(p.get(k, []))
+
+    if "affection_level" in p and p.get("affection_level") not in ("friendly", "affectionate", "romantic"):
+        p["affection_level"] = "friendly"
+    if "preferred_tone" in p and p.get("preferred_tone") not in ("neutral", "friendly", "formal"):
+        p["preferred_tone"] = "neutral"
+
+    if "default_spicy_strength" in p:
+        try:
+            s = float(p.get("default_spicy_strength", 0.30))
+        except Exception:
+            s = 0.30
+        p["default_spicy_strength"] = max(0.0, min(1.0, s))
+
+    return p
+
+
+def _merge_user_profile(existing: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Shallow merge (field-level). Lists replaced, not concatenated."""
+    merged = dict(existing or {})
+    for k, v in (patch or {}).items():
+        merged[k] = v
+    defaults = UserProfileData().model_dump()
+    merged = {**defaults, **merged}
+    return _normalize_user_profile_fields(merged)
+
+
+# ---------------------------------------------------------------------------
+# Additive endpoints (meta + PATCH + integrations)
+# ---------------------------------------------------------------------------
+
+@router.get("/v1/user-profile/meta")
+def get_user_profile_meta(user: Dict[str, Any] = Depends(require_current_user)):
+    ensure_user_profile_tables()
+    data, updated_at = _get_user_profile_with_updated_at(user["id"])
+    defaults = UserProfileData().model_dump()
+    merged = {**defaults, **data}
+    etag = _user_profile_etag(merged, updated_at)
+    return {"ok": True, "updated_at": updated_at, "etag": etag}
+
+
+@router.patch("/v1/user-profile")
+def patch_user_profile(
+    patch: Dict[str, Any] = Body(default_factory=dict),
+    if_match: Optional[str] = Header(default=None, convert_underscores=False),
+    user: Dict[str, Any] = Depends(require_current_user),
+):
+    """
+    Partial update (auto-sync safe).
+    Optional concurrency: client may send If-Match: <etag>.
+    If mismatch → 409.
+    """
+    ensure_user_profile_tables()
+
+    if not isinstance(patch, dict):
+        raise HTTPException(status_code=400, detail="Patch body must be an object")
+
+    current_data, updated_at = _get_user_profile_with_updated_at(user["id"])
+    defaults = UserProfileData().model_dump()
+    current_merged = {**defaults, **current_data}
+    current_etag = _user_profile_etag(current_merged, updated_at)
+
+    if if_match and if_match.strip() and if_match.strip() != current_etag:
+        raise HTTPException(status_code=409, detail="Profile changed; refresh and retry")
+
+    merged = _merge_user_profile(current_merged, patch)
+    _save_user_profile(user["id"], merged)
+
+    new_data, new_updated_at = _get_user_profile_with_updated_at(user["id"])
+    new_merged = {**defaults, **new_data}
+    new_etag = _user_profile_etag(new_merged, new_updated_at)
+
+    return {"ok": True, "profile": new_merged, "updated_at": new_updated_at, "etag": new_etag}
+
+
+@router.get("/v1/user-integrations")
+def list_user_integrations(user: Dict[str, Any] = Depends(require_current_user)):
+    """List configured integration keys (no secret values)."""
+    ensure_user_profile_tables()
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    cur.execute(
+        "SELECT key, description, updated_at FROM user_secrets WHERE user_id = ? ORDER BY key ASC",
+        (user["id"],),
+    )
+    rows = cur.fetchall()
+    con.close()
+    items = [{"key": r["key"], "description": r["description"] or "", "updated_at": r["updated_at"] or ""} for r in rows]
+    return {"ok": True, "integrations": items}
+
+
+@router.get("/v1/user-integrations/meta")
+def user_integrations_meta(user: Dict[str, Any] = Depends(require_current_user)):
+    """Polling endpoint: return a hash of keys+updated_at to detect changes quickly."""
+    ensure_user_profile_tables()
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "SELECT key, updated_at FROM user_secrets WHERE user_id = ? ORDER BY key ASC",
+        (user["id"],),
+    )
+    rows = cur.fetchall()
+    con.close()
+    payload = json.dumps(
+        [{"key": r[0], "updated_at": r[1] or ""} for r in rows],
+        ensure_ascii=False,
+    ).encode("utf-8")
+    etag = hashlib.sha256(payload).hexdigest()
+    return {"ok": True, "etag": etag, "count": len(rows)}

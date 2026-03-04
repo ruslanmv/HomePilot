@@ -12,13 +12,15 @@ Storage: local JSON files next to the DB (profile.json, profile_secrets.json).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .auth import require_api_key
@@ -227,3 +229,116 @@ def delete_secret(key: str) -> Dict[str, Any]:
         secrets.pop(key, None)
         _atomic_write_json(path, secrets)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Auto-sync helpers (additive — read_profile, meta, PATCH)
+# ---------------------------------------------------------------------------
+
+def read_profile() -> Dict[str, Any]:
+    """Instance-wide profile reader used by agent context builders."""
+    root = _data_root()
+    path = root / PROFILE_FILE
+    defaults = UserProfile().model_dump()
+    data = _read_json(path, default=defaults)
+    return {**defaults, **(data or {})}
+
+
+def _profile_etag(profile: Dict[str, Any], updated_at: str) -> str:
+    """Stable ETag for polling / concurrency."""
+    payload = json.dumps(
+        {"profile": profile, "updated_at": updated_at},
+        sort_keys=True, ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _profile_updated_at(path: Path) -> str:
+    """File mtime as monotonic updated_at."""
+    try:
+        st = path.stat()
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime))
+    except Exception:
+        return ""
+
+
+def _normalize_profile_fields(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize fields for safe merge (same rules as PUT)."""
+    for k in (
+        "likes", "dislikes", "favorite_persona_tags",
+        "preferred_terms_of_endearment", "hard_boundaries",
+        "sensitive_topics", "allowed_content_tags", "blocked_content_tags",
+    ):
+        if k in p:
+            p[k] = _norm_list(p.get(k, []))
+
+    if "affection_level" in p and p.get("affection_level") not in ("friendly", "affectionate", "romantic"):
+        p["affection_level"] = "friendly"
+    if "preferred_tone" in p and p.get("preferred_tone") not in ("neutral", "friendly", "formal"):
+        p["preferred_tone"] = "neutral"
+
+    if "default_spicy_strength" in p:
+        try:
+            s = float(p.get("default_spicy_strength", 0.30))
+        except Exception:
+            s = 0.30
+        p["default_spicy_strength"] = max(0.0, min(1.0, s))
+
+    return p
+
+
+def _merge_profile(existing: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Shallow merge (field-level). Lists replaced, not concatenated."""
+    merged = dict(existing or {})
+    for k, v in (patch or {}).items():
+        merged[k] = v
+    defaults = UserProfile().model_dump()
+    merged = {**defaults, **merged}
+    return _normalize_profile_fields(merged)
+
+
+def _get_profile_with_meta() -> Dict[str, Any]:
+    root = _data_root()
+    path = root / PROFILE_FILE
+    profile = read_profile()
+    updated_at = _profile_updated_at(path) if path.exists() else ""
+    etag = _profile_etag(profile, updated_at)
+    return {"profile": profile, "updated_at": updated_at, "etag": etag}
+
+
+# ---------------------------------------------------------------------------
+# Additive endpoints (meta + PATCH)
+# ---------------------------------------------------------------------------
+
+@router.get("/meta", dependencies=[Depends(require_api_key)])
+def get_profile_meta() -> Dict[str, Any]:
+    """Lightweight polling endpoint for real-time freshness checks."""
+    meta = _get_profile_with_meta()
+    return {"ok": True, "updated_at": meta["updated_at"], "etag": meta["etag"]}
+
+
+@router.patch("", dependencies=[Depends(require_api_key)])
+def patch_profile(
+    patch: Dict[str, Any] = Body(default_factory=dict),
+    if_match: Optional[str] = Header(default=None, convert_underscores=False),
+) -> Dict[str, Any]:
+    """
+    Partial update (auto-sync safe).
+    Optional concurrency: client may send If-Match: <etag>.
+    If mismatch → 409.
+    """
+    if not isinstance(patch, dict):
+        raise HTTPException(status_code=400, detail="Patch body must be an object")
+
+    root = _data_root()
+    path = root / PROFILE_FILE
+
+    current = _get_profile_with_meta()
+    if if_match and if_match.strip() and if_match.strip() != current["etag"]:
+        raise HTTPException(status_code=409, detail="Profile changed; refresh and retry")
+
+    merged = _merge_profile(current["profile"], patch)
+    _atomic_write_json(path, merged)
+
+    out = _get_profile_with_meta()
+    return {"ok": True, "profile": out["profile"], "updated_at": out["updated_at"], "etag": out["etag"]}

@@ -8,7 +8,7 @@
  *   Personalization
  *   Settings
  *   ─────────────────────────
- *   Help
+ *   About
  *   ─────────────────────────
  *   Log out
  *
@@ -20,7 +20,7 @@
  *  - Identity at top, exit at bottom
  */
 import React, { useEffect, useRef, useCallback } from 'react'
-import { Settings, HelpCircle, LogOut, Palette } from 'lucide-react'
+import { Settings, LogOut, Palette, Info } from 'lucide-react'
 import UserAvatar from './UserAvatar'
 
 export interface AccountMenuUser {
@@ -36,6 +36,7 @@ interface AccountMenuProps {
   onClose: () => void
   onOpenSettings: () => void
   onOpenProfile: () => void
+  onOpenAbout: () => void
   onLogout: () => void
 }
 
@@ -44,6 +45,7 @@ export default function AccountMenu({
   onClose,
   onOpenSettings,
   onOpenProfile,
+  onOpenAbout,
   onLogout,
 }: AccountMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -165,19 +167,16 @@ export default function AccountMenu({
         </button>
       </div>
 
-      {/* Help */}
+      {/* About */}
       <div className="border-t border-white/5 px-2 py-1.5">
         <button
           ref={setItemRef(2)}
           role="menuitem"
           className={menuItemClass}
-          onClick={() => {
-            onClose()
-            window.open('https://github.com/ruslanmv/HomePilot', '_blank')
-          }}
+          onClick={() => { onClose(); onOpenAbout() }}
         >
-          <HelpCircle size={15} className="text-white/40 shrink-0" />
-          Help
+          <Info size={15} className="text-white/40 shrink-0" />
+          About
         </button>
       </div>
 

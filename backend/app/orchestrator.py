@@ -1327,6 +1327,7 @@ async def orchestrate(
             prompt=clean_prompt,
             flags=flags,
             negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+            img_model=img_model or "",
         )
 
         # Determine which workflow to use based on flags
@@ -1337,6 +1338,9 @@ async def orchestrate(
         print(f"[EDIT] Cleaned prompt: '{clean_prompt[:100]}...'")
         print(f"[EDIT] Workflow: {workflow_name}")
         print(f"[EDIT] Mode: {flags.mode}, Steps: {flags.steps}, CFG: {flags.cfg}, Denoise: {flags.denoise}")
+        if flags.loras:
+            lora_desc = [lr["id"] + "@" + f"{lr.get('weight', 0.8):.2f}" for lr in flags.loras]
+            print(f"[EDIT] LoRAs: {lora_desc}")
 
         try:
             res = run_workflow(workflow_name, workflow_vars)

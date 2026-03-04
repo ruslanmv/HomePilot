@@ -19,7 +19,6 @@ import {
   Palette,
   Maximize2,
   PenLine,
-  Download,
   Shirt,
   UserPlus,
   Image as ImageIcon,
@@ -299,7 +298,7 @@ export function AvatarLandingPage({
 
                 {/* Hover overlay */}
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-between p-3">
-                  {/* Top actions */}
+                  {/* Top-right actions */}
                   <div className="flex justify-end gap-1.5">
                     {onOpenLightbox && (
                       <button
@@ -341,6 +340,10 @@ export function AvatarLandingPage({
                         <UserPlus size={14} />
                       </button>
                     )}
+                  </div>
+
+                  {/* Bottom row: delete (left) + meta info (right) */}
+                  <div className="flex items-end justify-between">
                     <button
                       className="backdrop-blur-md p-2 rounded-lg transition-colors bg-red-500/20 text-red-400 hover:bg-red-500/40 hover:text-red-300"
                       type="button"
@@ -349,13 +352,6 @@ export function AvatarLandingPage({
                     >
                       <Trash2 size={14} />
                     </button>
-                  </div>
-
-                  {/* Bottom info */}
-                  <div>
-                    {item.prompt && (
-                      <div className="text-xs text-white/80 line-clamp-2 mb-1">{item.prompt}</div>
-                    )}
                     <div className="text-[10px] text-white/45 flex items-center gap-2">
                       <span className="flex items-center gap-1">
                         <Clock size={9} />

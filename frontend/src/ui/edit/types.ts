@@ -45,6 +45,8 @@ export type EditTabProps = {
   providerModel?: string
   /** Navigate to Avatar Studio to create a new avatar */
   onNavigateToAvatar?: () => void
+  /** Whether NSFW/spicy mode is enabled globally */
+  nsfwMode?: boolean
 }
 
 /**

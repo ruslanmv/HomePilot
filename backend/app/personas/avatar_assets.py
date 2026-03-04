@@ -98,6 +98,40 @@ def commit_persona_avatar(
     # Return relative-to-upload-root paths so /files can serve them
     rel_avatar = str(avatar_path.relative_to(upload_root))
     rel_thumb = str(thumb_path.relative_to(upload_root))
+
+    # Register in asset registry for durability
+    try:
+        from ..asset_registry import register_asset
+        # Extract project_id from path: projects/<project_id>/persona/appearance/...
+        project_id = ""
+        parts = Path(rel_avatar).parts
+        if "projects" in parts:
+            idx = list(parts).index("projects")
+            if idx + 1 < len(parts):
+                project_id = parts[idx + 1]
+        register_asset(
+            storage_key=rel_avatar,
+            kind="image",
+            mime="image/png",
+            size_bytes=avatar_path.stat().st_size,
+            origin="comfy",
+            source_hint=source_filename,
+            feature="avatar",
+            project_id=project_id,
+        )
+        register_asset(
+            storage_key=rel_thumb,
+            kind="thumbnail",
+            mime="image/webp",
+            size_bytes=thumb_path.stat().st_size,
+            origin="comfy",
+            source_hint=f"thumb of {source_filename}",
+            feature="thumbnail",
+            project_id=project_id,
+        )
+    except Exception as e:
+        print(f"[ASSET_REGISTRY] Warning: avatar registration failed: {e}")
+
     return AvatarCommitResult(selected_filename=rel_avatar, thumb_filename=rel_thumb)
 
 
