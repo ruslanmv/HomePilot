@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
-from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -187,6 +187,10 @@ app.include_router(media_router)
 # Include Inventory Core routes (/v1/inventory/*)
 from .inventory import router as inventory_router
 app.include_router(inventory_router)
+
+# Include LoRA management routes (/v1/lora/* — additive, Golden Rule 1.0)
+from .models import lora_router
+app.include_router(lora_router)
 
 
 # ----------------------------
@@ -438,38 +442,12 @@ def _is_photo_intent(msg: str) -> bool:
     return False
 
 
-def _compute_upload_dir() -> Path:
-    """
-    Production-safe upload dir resolution:
-
-    - If UPLOAD_DIR is absolute and writable => use it (e.g. Docker /app/data)
-    - Otherwise fall back to a repo-local writable path: backend/data/uploads
-    - Supports overriding via env var UPLOAD_DIR (common in docker-compose/k8s)
-    """
-    env_dir = os.getenv("UPLOAD_DIR")
-    cfg_dir = env_dir or (str(UPLOAD_DIR) if UPLOAD_DIR else "")
-    candidate = Path(cfg_dir) if cfg_dir else Path()
-
-    # Absolute candidate first (Docker/Prod)
-    if candidate.is_absolute():
-        try:
-            candidate.mkdir(parents=True, exist_ok=True)
-            testfile = candidate / ".write_test"
-            testfile.write_text("ok")
-            testfile.unlink(missing_ok=True)
-            return candidate
-        except Exception:
-            # Not writable in this environment (common on local/WSL)
-            pass
-
-    # Local dev fallback (always writable)
-    backend_dir = Path(__file__).resolve().parents[1]  # .../backend
-    fallback = backend_dir / "data" / "uploads"
-    fallback.mkdir(parents=True, exist_ok=True)
-    return fallback
-
-
-UPLOAD_PATH: Path = _compute_upload_dir()
+# Use files._upload_root() as the single source of truth for the upload
+# directory.  Both the upload handler and file-serving handler MUST agree
+# on the same path, otherwise files are written to one place and served
+# from another → 404.
+from .files import _upload_root as _files_upload_root  # already imported at top via router
+UPLOAD_PATH: Path = _files_upload_root()
 
 
 def _ensure_db_path_is_writable():
@@ -561,6 +539,12 @@ def _startup() -> None:
         run_migrations()
     except Exception as e:
         print(f"Warning: Failed to run migrations: {e}")
+    # Asset registry: reconcile from disk if DB is fresh
+    try:
+        from .asset_registry import startup_reconcile
+        startup_reconcile()
+    except Exception as e:
+        print(f"Warning: Asset registry reconcile failed: {e}")
     # Files mount
     _ensure_static_mount()
 
@@ -2491,6 +2475,13 @@ async def _download_comfy_image(url: str, upload_root: Path) -> str:
         resp.raise_for_status()
         dest.write_bytes(resp.content)
 
+    # Register in asset registry for durability
+    try:
+        from .asset_registry import register_comfy_output
+        register_comfy_output(filename=filename, dest_path=str(dest))
+    except Exception as e:
+        print(f"[ASSET_REGISTRY] Warning: failed to register {filename}: {e}")
+
     return filename
 
 
@@ -4075,8 +4066,10 @@ async def upload(request: Request, file: UploadFile = File(...), authorization: 
     written = 0
     chunk_size = 1024 * 1024  # 1MB
 
+    # Atomic write: write to .tmp first, then rename on success
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
     try:
-        with path.open("wb") as f:
+        with tmp_path.open("wb") as f:
             while True:
                 chunk = await file.read(chunk_size)
                 if not chunk:
@@ -4088,6 +4081,17 @@ async def upload(request: Request, file: UploadFile = File(...), authorization: 
                         detail=f"File too large. Max {MAX_UPLOAD_MB}MB.",
                     )
                 f.write(chunk)
+            f.flush()
+            os.fsync(f.fileno())
+        # Atomic rename
+        tmp_path.rename(path)
+    except OSError as e:
+        # Clean up partial file
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Upload storage error: {e}. Upload dir: {path.parent}",
+        )
     finally:
         await file.close()
 
@@ -4110,6 +4114,124 @@ async def upload(request: Request, file: UploadFile = File(...), authorization: 
         return JSONResponse(status_code=201, content={"url": f"{base}/files/{asset_id}"})
     else:
         return JSONResponse(status_code=201, content={"url": f"{base}/files/{name}"})
+
+
+# ----------------------------
+# Server-side Image Import
+# ----------------------------
+
+@app.post("/v1/import-image", dependencies=[Depends(require_api_key)])
+async def import_image(
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """
+    Import an existing image by URL — server-side copy, no browser round-trip.
+
+    Accepts:
+      { "url": "/files/f_abc123" }       — existing asset
+      { "url": "/comfy/view/foo.png" }    — ComfyUI output
+      { "url": "http://localhost:8188/view?filename=foo.png" }  — ComfyUI absolute
+
+    Returns:
+      { "ok": true, "asset_id": "f_...", "url": "/files/f_..." }
+
+    This eliminates the client download-then-reupload pattern that fails on
+    WSL mounted filesystems and is wasteful for images already on the server.
+    """
+    import shutil as _sh
+    import mimetypes as _mt
+
+    source_url = (body.get("url") or "").strip()
+    if not source_url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    # Normalize: strip backend's own origin so "http://localhost:8000/comfy/view/x.png"
+    # becomes "/comfy/view/x.png" and "http://localhost:8000/files/f_abc" becomes "/files/f_abc"
+    from urllib.parse import urlparse as _urlparse
+    _req_host = f"{request.url.scheme}://{request.url.netloc}"
+    if source_url.startswith(_req_host):
+        source_url = source_url[len(_req_host):]
+
+    # Resolve authenticated user
+    _uid = None
+    try:
+        user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+        _uid = user["id"] if user else None
+    except Exception:
+        pass
+
+    abs_source: Path | None = None
+
+    # --- Case 1: /files/{asset_id} — resolve from asset DB or filesystem ---
+    if "/files/" in source_url:
+        from .files import get_asset, _upload_root
+        files_idx = source_url.index("/files/") + len("/files/")
+        file_ref = source_url[files_idx:].split("?")[0]
+
+        if ".." in file_ref:
+            raise HTTPException(status_code=400, detail="Invalid path")
+
+        # Try asset DB first
+        asset = get_asset(file_ref)
+        if asset and asset.get("rel_path"):
+            candidate = _upload_root() / asset["rel_path"]
+            if candidate.is_file():
+                abs_source = candidate
+
+        # Fallback: flat file in UPLOAD_PATH
+        if not abs_source:
+            candidate = UPLOAD_PATH / file_ref
+            if candidate.is_file():
+                abs_source = candidate
+
+    # --- Case 2: /comfy/view/... or ComfyUI absolute URL ---
+    elif source_url.startswith("/comfy/view/") or source_url.startswith(COMFY_BASE_URL):
+        try:
+            fname = await _download_comfy_image(source_url, UPLOAD_PATH)
+            abs_source = UPLOAD_PATH / fname
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to fetch ComfyUI image: {e}")
+
+    if not abs_source or not abs_source.is_file():
+        raise HTTPException(status_code=404, detail="Source image not found")
+
+    # Copy into user storage and register as a new asset
+    base = _base_url_from_request(request)
+    ext = abs_source.suffix or ".png"
+
+    if _uid:
+        from .files import _ensure_user_dir, _upload_root, insert_asset
+        folder = _ensure_user_dir(_uid, "upload")
+        dest_name = f"{uuidlib.uuid4().hex}{ext}"
+        dest = folder / dest_name
+        _sh.copy2(abs_source, dest)
+
+        rel_path = str(dest.relative_to(_upload_root()))
+        mime = _mt.guess_type(str(dest))[0] or "image/png"
+        asset_id = insert_asset(
+            user_id=_uid,
+            kind="upload",
+            rel_path=rel_path,
+            mime=mime,
+            size_bytes=dest.stat().st_size,
+            original_name=abs_source.name,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "asset_id": asset_id, "url": f"{base}/files/{asset_id}"},
+        )
+    else:
+        # Legacy: copy to flat UPLOAD_PATH
+        dest_name = f"{uuidlib.uuid4().hex}{ext}"
+        dest = UPLOAD_PATH / dest_name
+        _sh.copy2(abs_source, dest)
+        return JSONResponse(
+            status_code=200,
+            content={"ok": True, "url": f"{base}/files/{dest_name}"},
+        )
 
 
 # ----------------------------
@@ -4420,8 +4542,88 @@ async def delete_edit_session(request: Request, conversation_id: str) -> JSONRes
 async def upload_edit_image(request: Request, conversation_id: str) -> JSONResponse:
     """
     Upload an image to start/update an edit session (proxied to sidecar).
-    Handles multipart form data.
+
+    Accepts either:
+      - Multipart form with 'file' field (standard upload)
+      - JSON body with 'image_url' field (server-side import from /files/ or /comfy/view/)
     """
+    content_type = request.headers.get("content-type", "")
+
+    # --- JSON body with image_url: server-side load + forward to sidecar ---
+    if "application/json" in content_type:
+        import shutil as _sh
+        body_json = await request.json()
+        image_url = (body_json.get("image_url") or "").strip()
+        if not image_url:
+            return JSONResponse(status_code=400, content={"ok": False, "error": "image_url is required"})
+
+        # Normalize: strip backend origin prefix
+        _req_host = f"{request.url.scheme}://{request.url.netloc}"
+        if image_url.startswith(_req_host):
+            image_url = image_url[len(_req_host):]
+
+        # Resolve to a file on disk
+        abs_path: Path | None = None
+
+        if "/files/" in image_url:
+            from .files import get_asset, _upload_root
+            file_ref = image_url[image_url.index("/files/") + len("/files/"):].split("?")[0]
+            if ".." not in file_ref:
+                asset = get_asset(file_ref)
+                if asset and asset.get("rel_path"):
+                    candidate = _upload_root() / asset["rel_path"]
+                    if candidate.is_file():
+                        abs_path = candidate
+                if not abs_path:
+                    candidate = UPLOAD_PATH / file_ref
+                    if candidate.is_file():
+                        abs_path = candidate
+
+        elif image_url.startswith("/comfy/view/") or image_url.startswith(COMFY_BASE_URL):
+            try:
+                fname = await _download_comfy_image(image_url, UPLOAD_PATH)
+                abs_path = UPLOAD_PATH / fname
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"ok": False, "error": f"Failed to fetch: {e}"})
+
+        if not abs_path or not abs_path.is_file():
+            return JSONResponse(status_code=404, content={"ok": False, "error": "Image not found on server"})
+
+        # Build multipart form and forward to sidecar
+        import mimetypes as _mt
+        mime = _mt.guess_type(str(abs_path))[0] or "image/png"
+        file_bytes = abs_path.read_bytes()
+
+        client = get_edit_session_client()
+        url = f"/v1/edit-sessions/{conversation_id}/image"
+        headers = {}
+        if "authorization" in request.headers:
+            headers["authorization"] = request.headers["authorization"]
+        if "x-api-key" in request.headers:
+            headers["x-api-key"] = request.headers["x-api-key"]
+
+        try:
+            response = await client.post(
+                url,
+                files={"file": (abs_path.name, file_bytes, mime)},
+                headers=headers,
+            )
+            return JSONResponse(
+                status_code=response.status_code,
+                content=response.json() if response.content else None,
+            )
+        except httpx.ConnectError:
+            return JSONResponse(
+                status_code=503,
+                content={"ok": False, "error": "Edit session service unavailable", "code": "edit_session_unavailable"},
+            )
+        except Exception as e:
+            return JSONResponse(
+                status_code=500,
+                content={"ok": False, "error": f"Edit session proxy error: {e}", "code": "edit_session_proxy_error"},
+            )
+
+    # --- Standard multipart file upload: proxy raw body to sidecar ---
     client = get_edit_session_client()
     url = f"/v1/edit-sessions/{conversation_id}/image"
 
@@ -4485,6 +4687,12 @@ async def select_edit_image(request: Request, conversation_id: str) -> JSONRespo
 async def revert_edit_session(request: Request, conversation_id: str) -> JSONResponse:
     """Revert to a previous state in the edit session history (proxied to sidecar)."""
     return await _proxy_to_edit_session(request, f"{conversation_id}/revert", "POST")
+
+
+@app.delete("/v1/edit-sessions/{conversation_id}/version")
+async def delete_edit_version(request: Request, conversation_id: str) -> JSONResponse:
+    """Delete a single version from an edit session (proxied to sidecar)."""
+    return await _proxy_to_edit_session(request, f"{conversation_id}/version", "DELETE")
 
 
 # ============================================================================
@@ -4624,6 +4832,116 @@ async def persona_commit_avatar(project_id: str, body: dict) -> JSONResponse:
         status_code=200,
         content={"ok": True, "project": updated, "selected": appearance},
     )
+
+
+# ---------------------------------------------------------------------------
+# Avatar history — edit, list, revert (additive, non-destructive)
+# ---------------------------------------------------------------------------
+
+@app.post("/projects/{project_id}/persona/avatar/commit_edit", dependencies=[Depends(require_api_key)])
+async def persona_commit_avatar_edit(
+    project_id: str,
+    body: dict = Body(default_factory=dict),
+) -> JSONResponse:
+    """
+    Commit an edited image as the new selected avatar, keeping the old one in history.
+
+    Body: { "source_filename": "<filename in UPLOAD_PATH>", "note": "edited" }
+    """
+    from .personas.avatar_history import append_previous_avatar_if_needed, list_avatar_history
+
+    p = projects.get_project_by_id(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if p.get("project_type") != "persona":
+        raise HTTPException(status_code=400, detail="Not a persona project")
+
+    source_filename = (body.get("source_filename") or "").strip()
+    note = (body.get("note") or "edited").strip()
+
+    if not source_filename:
+        raise HTTPException(status_code=400, detail="source_filename is required")
+
+    try:
+        project_root = UPLOAD_PATH / "projects" / project_id
+        result = commit_persona_avatar(UPLOAD_PATH, project_root, source_filename)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    appearance = dict(p.get("persona_appearance") or {})
+
+    # Record previous avatar in history before replacing (non-destructive)
+    append_previous_avatar_if_needed(
+        appearance,
+        note=note,
+        replaced_by=result.selected_filename,
+    )
+
+    appearance["selected_filename"] = result.selected_filename
+    appearance["selected_thumb_filename"] = result.thumb_filename
+
+    updated = projects.update_project(project_id, {"persona_appearance": appearance})
+    return JSONResponse({
+        "ok": True,
+        "selected_filename": result.selected_filename,
+        "selected_thumb_filename": result.thumb_filename,
+        "avatar_history_count": len(list_avatar_history(appearance)),
+        "persona_appearance": appearance,
+    })
+
+
+@app.get("/projects/{project_id}/persona/avatar/history", dependencies=[Depends(require_api_key)])
+async def persona_avatar_history(project_id: str) -> JSONResponse:
+    """Return avatar version history for the Character Sheet Versions UI."""
+    from .personas.avatar_history import list_avatar_history
+
+    p = projects.get_project_by_id(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if p.get("project_type") != "persona":
+        raise HTTPException(status_code=400, detail="Not a persona project")
+
+    appearance = dict(p.get("persona_appearance") or {})
+    hist = list_avatar_history(appearance)
+    return JSONResponse({"ok": True, "history": hist, "count": len(hist)})
+
+
+@app.post("/projects/{project_id}/persona/avatar/revert", dependencies=[Depends(require_api_key)])
+async def persona_avatar_revert(
+    project_id: str,
+    body: dict = Body(default_factory=dict),
+) -> JSONResponse:
+    """
+    Revert selected avatar to a history item.
+    Body: { "index": 0 }
+    """
+    from .personas.avatar_history import revert_to_history_index, list_avatar_history
+
+    p = projects.get_project_by_id(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if p.get("project_type") != "persona":
+        raise HTTPException(status_code=400, detail="Not a persona project")
+
+    try:
+        index = int(body.get("index"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="index must be an integer")
+
+    appearance = dict(p.get("persona_appearance") or {})
+    try:
+        appearance = revert_to_history_index(appearance, index)
+    except (IndexError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    updated = projects.update_project(project_id, {"persona_appearance": appearance})
+    return JSONResponse({
+        "ok": True,
+        "persona_appearance": appearance,
+        "avatar_history_count": len(list_avatar_history(appearance)),
+    })
 
 
 @app.post("/projects/{project_id}/persona/appearance/commit_generated", dependencies=[Depends(require_api_key)])
@@ -5144,3 +5462,47 @@ async def multimodal_status() -> JSONResponse:
             "recommended_default": vision_models[0] if vision_models else None,
         },
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Asset Registry API — durable media tracking
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/v1/assets", dependencies=[Depends(require_api_key)])
+async def assets_list(
+    feature: str = Query("", description="Filter: avatar, imagine, animate, outfit"),
+    kind: str = Query("", description="Filter: image, video"),
+    project_id: str = Query("", description="Filter by project"),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+) -> JSONResponse:
+    """List registered assets with optional filters."""
+    from .asset_registry import list_assets, count_assets
+    items = list_assets(feature=feature, kind=kind, project_id=project_id, limit=limit, offset=offset)
+    total = count_assets(feature=feature, kind=kind)
+    # Add serving URLs
+    for item in items:
+        item["url"] = f"/files/{item['storage_key']}"
+    return JSONResponse({"ok": True, "items": items, "total": total})
+
+
+@app.get("/v1/assets/{asset_id}", dependencies=[Depends(require_api_key)])
+async def assets_get(asset_id: str) -> JSONResponse:
+    """Get a single asset by ID."""
+    from .asset_registry import get_asset
+    asset = get_asset(asset_id)
+    if not asset:
+        raise HTTPException(404, "Asset not found")
+    asset["url"] = f"/files/{asset['storage_key']}"
+    return JSONResponse({"ok": True, "asset": asset})
+
+
+@app.post("/v1/assets/reconcile", dependencies=[Depends(require_api_key)])
+async def assets_reconcile() -> JSONResponse:
+    """
+    Trigger a full disk reconciliation.
+    Scans UPLOAD_DIR for media files and registers any missing ones.
+    """
+    from .asset_registry import reconcile
+    stats = reconcile(verbose=True)
+    return JSONResponse({"ok": True, "stats": stats})
