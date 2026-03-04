@@ -14,7 +14,7 @@ Example:
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Dict, Any
 
 # Pattern to match flags like --key value
 FLAG_RE = re.compile(r"(--[a-zA-Z0-9_-]+)\s+([^\s-][^\n\r]*?)(?=\s+--|$)")
@@ -53,6 +53,9 @@ class EditFlags:
     # Optional mask (URL or filename; backend will preprocess)
     mask_url: Optional[str] = None
 
+    # LoRA adapters: list of {"id": str, "weight": float}
+    loras: List[Dict[str, Any]] = field(default_factory=list)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for workflow variables."""
         return {
@@ -68,6 +71,7 @@ class EditFlags:
             "controlnet_strength": self.controlnet_strength,
             "cn_enabled": self.cn_enabled,
             "mask_url": self.mask_url,
+            "loras": self.loras,
         }
 
 
@@ -121,6 +125,21 @@ def parse_edit_flags(text: str) -> Tuple[str, EditFlags]:
                 flags.controlnet_name = value
             elif key == "--mask":
                 flags.mask_url = value
+            elif key == "--lora":
+                # Format: "lora_id:weight" or just "lora_id" (default weight 0.8)
+                for lora_token in value.split():
+                    if ":" in lora_token:
+                        lora_id, lora_w = lora_token.rsplit(":", 1)
+                        try:
+                            w = float(lora_w)
+                        except ValueError:
+                            w = 0.8
+                    else:
+                        lora_id = lora_token
+                        w = 0.8
+                    lora_id = lora_id.strip()
+                    if lora_id:
+                        flags.loras.append({"id": lora_id, "weight": w, "enabled": True})
         except (ValueError, TypeError):
             # Skip invalid flag values
             pass
@@ -242,6 +261,25 @@ def build_edit_workflow_vars(
     else:
         # Global edit (img2img) - no mask needed
         vars_dict["ckpt_name"] = flags.ckpt_name or ckpt_default_global
+
+    # Pass LoRA list (will be consumed by comfy.py to inject LoraLoader nodes)
+    if flags.loras:
+        vars_dict["_loras"] = flags.loras
+
+        # Inject trigger words into prompt (industry best practice for LoRA activation)
+        try:
+            from .models.lora_registry import get_lora_by_id
+            trigger_parts: list[str] = []
+            for lr in flags.loras:
+                entry = get_lora_by_id(lr["id"])
+                if entry and entry.trigger_words:
+                    for tw in entry.trigger_words:
+                        if tw.lower() not in vars_dict["prompt"].lower():
+                            trigger_parts.append(tw)
+            if trigger_parts:
+                vars_dict["prompt"] = ", ".join(trigger_parts) + ", " + vars_dict["prompt"]
+        except ImportError:
+            pass
 
     return vars_dict
 
