@@ -280,21 +280,37 @@ def _get_local_file_path(url: str) -> Path | None:
     """
     Extract the local file path from a backend /files/ URL.
     Returns None if not a valid local backend URL.
+
+    Handles both:
+    - Legacy flat filenames:  /files/some_image.png  → UPLOAD_DIR/some_image.png
+    - Asset IDs (f_...):      /files/f_abc123        → UPLOAD_DIR/<rel_path from DB>
     """
     try:
         parsed = urlparse(url)
         if not parsed.path.startswith('/files/'):
             return None
 
-        # Extract filename from /files/<filename>
-        filename = parsed.path.replace('/files/', '', 1)
-        if not filename:
+        # Extract filename / asset_id from /files/<ref>
+        file_ref = parsed.path.replace('/files/', '', 1).split('?')[0]
+        if not file_ref or '..' in file_ref:
             return None
 
-        # Build the local path from UPLOAD_DIR
-        local_path = Path(UPLOAD_DIR) / filename
+        # 1) Try direct file in UPLOAD_DIR (legacy flat layout)
+        local_path = Path(UPLOAD_DIR) / file_ref
         if local_path.exists():
             return local_path
+
+        # 2) Try resolving as an asset_id via the file_assets DB table
+        try:
+            from .files import get_asset, _upload_root
+            asset = get_asset(file_ref)
+            if asset and asset.get("rel_path"):
+                asset_path = _upload_root() / asset["rel_path"]
+                if asset_path.exists():
+                    return asset_path
+        except Exception:
+            pass
+
         return None
     except Exception:
         return None
@@ -398,17 +414,27 @@ def _preprocess_image_paths(variables: Dict[str, Any]) -> Dict[str, Any]:
             # Handle local /files/... paths from backend uploads
             elif value.startswith('/files/'):
                 try:
-                    filename = value.replace('/files/', '', 1)
-                    local_path = Path(UPLOAD_DIR) / filename
+                    file_ref = value.replace('/files/', '', 1).split('?')[0]
+                    # Try direct file first, then asset DB lookup
+                    local_path = Path(UPLOAD_DIR) / file_ref
+                    if not local_path.exists():
+                        try:
+                            from .files import get_asset, _upload_root
+                            asset = get_asset(file_ref)
+                            if asset and asset.get("rel_path"):
+                                local_path = _upload_root() / asset["rel_path"]
+                        except Exception:
+                            pass
+
                     if local_path.exists():
                         # Copy to ComfyUI's input directory
                         input_dir = _get_comfyui_input_dir()
                         input_dir.mkdir(parents=True, exist_ok=True)
-                        dest_path = input_dir / filename
-                        import shutil
+                        dest_name = os.path.basename(str(local_path))
+                        dest_path = input_dir / dest_name
                         shutil.copy2(local_path, dest_path)
-                        processed[key] = filename
-                        print(f"[COMFY] Copied {key} to ComfyUI input: {filename}")
+                        processed[key] = dest_name
+                        print(f"[COMFY] Copied {key} to ComfyUI input: {dest_name}")
                     else:
                         print(f"[COMFY] WARNING: Local file not found: {local_path}")
                 except Exception as e:
@@ -764,9 +790,200 @@ def _extract_media(history: Dict[str, Any], prompt_id: str) -> Tuple[List[str], 
     return images, videos
 
 
+def _inject_lora_loaders(
+    workflow: Dict[str, Any],
+    loras: List[Dict[str, Any]],
+    ckpt_name: str = "",
+) -> Dict[str, Any]:
+    """Dynamically inject LoraLoader nodes between CheckpointLoader and consumers.
+
+    Industry best practice: chain LoraLoader nodes so each one takes the
+    MODEL+CLIP output of the previous one, forming a pipeline:
+        CheckpointLoader → LoRA1 → LoRA2 → ... → KSampler / CLIPTextEncode
+
+    Architecture compatibility:
+        - sd1.5 LoRAs  → sd15 checkpoints
+        - sdxl LoRAs   → sdxl, pony_xl, noobai_xl checkpoints
+        - pony LoRAs   → pony_xl, sdxl checkpoints (Pony is SDXL-based)
+        - flux LoRAs   → flux_schnell, flux_dev checkpoints
+
+    Args:
+        workflow: The workflow dict (node_id → node_def).
+        loras:   List of {"id": str, "weight": float, "enabled": bool}.
+        ckpt_name: Checkpoint filename for architecture checking.
+
+    Returns:
+        Modified workflow with LoraLoader nodes injected.
+    """
+    if not loras:
+        return workflow
+
+    # Filter to enabled only, cap at 4
+    active = [lr for lr in loras if lr.get("enabled", True)][:4]
+    if not active:
+        return workflow
+
+    # --- Architecture compatibility filter ---
+    arch = get_architecture(ckpt_name) if ckpt_name else ""
+    # Map LoRA base → compatible checkpoint architectures
+    COMPAT = {
+        "sd1.5": {"sd15"},
+        "sdxl": {"sdxl", "pony_xl", "noobai_xl", "noobai_xl_vpred"},
+        "pony": {"pony_xl", "sdxl", "noobai_xl"},
+        "flux": {"flux_schnell", "flux_dev"},
+    }
+
+    # Optionally check per-LoRA registry metadata for base field
+    try:
+        from .models.lora_registry import get_lora_by_id
+    except ImportError:
+        get_lora_by_id = None
+
+    # Pre-flight: validate LoRA files are healthy (not corrupt/truncated)
+    try:
+        from .models.lora_loader import validate_safetensors_file, get_lora_dir, detect_lora_architecture
+        _lora_dir = get_lora_dir()
+    except ImportError:
+        _lora_dir = None
+        validate_safetensors_file = None  # type: ignore[assignment]
+        detect_lora_architecture = None  # type: ignore[assignment]
+
+    compatible = []
+    for lr in active:
+        lora_base = ""
+        if get_lora_by_id:
+            entry = get_lora_by_id(lr["id"])
+            if entry:
+                lora_base = entry.base  # "sd1.5", "sdxl", "pony", "flux"
+
+        if lora_base and arch:
+            allowed = COMPAT.get(lora_base, set())
+            if arch not in allowed:
+                print(
+                    f"[LORA] Skipping '{lr['id']}' (base={lora_base}) — "
+                    f"incompatible with checkpoint architecture '{arch}'"
+                )
+                continue
+
+        # Resolve LoRA file path for health + architecture checks
+        lora_file = None
+        if _lora_dir and _lora_dir.exists():
+            lora_fname = f"{lr['id']}.safetensors"
+            if entry and hasattr(entry, "filename") and entry.filename:
+                lora_fname = entry.filename
+            lora_file = _lora_dir / lora_fname
+
+        # File health check: skip corrupt/truncated LoRA files
+        if validate_safetensors_file and lora_file and lora_file.exists():
+            health = validate_safetensors_file(lora_file)
+            if not health["healthy"]:
+                print(
+                    f"[LORA] Skipping '{lr['id']}' — CORRUPT FILE: {health['error']}. "
+                    f"Delete and re-download this LoRA."
+                )
+                continue
+
+        # Runtime architecture check: inspect actual tensor keys in the
+        # safetensors file to detect mismatches between registry metadata
+        # and the real LoRA architecture (e.g. SDXL file labeled as sd1.5).
+        if detect_lora_architecture and lora_file and lora_file.exists() and arch:
+            detected = detect_lora_architecture(lora_file)
+            if detected and detected != lora_base:
+                print(
+                    f"[LORA] Architecture mismatch for '{lr['id']}': "
+                    f"registry says '{lora_base}' but file is '{detected}'"
+                )
+                # Use the detected architecture for compatibility check
+                lora_base = detected
+                allowed = COMPAT.get(lora_base, set())
+                if arch not in allowed:
+                    print(
+                        f"[LORA] Skipping '{lr['id']}' (detected={detected}) — "
+                        f"incompatible with checkpoint architecture '{arch}'. "
+                        f"Re-download the correct version for your checkpoint."
+                    )
+                    continue
+
+        compatible.append(lr)
+
+    if not compatible:
+        print("[LORA] No compatible LoRAs after architecture filtering")
+        return workflow
+
+    # --- Find the CheckpointLoaderSimple node ---
+    ckpt_node_id = None
+    for nid, node in workflow.items():
+        if isinstance(node, dict) and node.get("class_type") == "CheckpointLoaderSimple":
+            ckpt_node_id = nid
+            break
+
+    if not ckpt_node_id:
+        print("[LORA] No CheckpointLoaderSimple found — cannot inject LoRAs")
+        return workflow
+
+    # --- Find all consumers of the checkpoint MODEL [ckpt, 0] and CLIP [ckpt, 1] ---
+    model_ref = [ckpt_node_id, 0]
+    clip_ref = [ckpt_node_id, 1]
+
+    # We'll insert LoraLoader nodes with IDs starting at 900 to avoid collisions
+    base_id = 900
+    prev_model_src = model_ref
+    prev_clip_src = clip_ref
+
+    # Chain LoraLoader nodes
+    for i, lr in enumerate(compatible):
+        lora_node_id = str(base_id + i)
+        lora_filename = lr["id"]
+        # Ensure .safetensors extension
+        if not lora_filename.endswith((".safetensors", ".pt", ".ckpt")):
+            lora_filename += ".safetensors"
+
+        weight = float(lr.get("weight", 0.8))
+
+        workflow[lora_node_id] = {
+            "class_type": "LoraLoader",
+            "inputs": {
+                "lora_name": lora_filename,
+                "strength_model": weight,
+                "strength_clip": weight,
+                "model": list(prev_model_src),
+                "clip": list(prev_clip_src),
+            },
+        }
+
+        print(f"[LORA] Injected LoraLoader node {lora_node_id}: {lora_filename} @ {weight:.2f}")
+        prev_model_src = [lora_node_id, 0]
+        prev_clip_src = [lora_node_id, 1]
+
+    # --- Rewire all original consumers of checkpoint MODEL/CLIP to use the last LoRA ---
+    last_lora_model = list(prev_model_src)
+    last_lora_clip = list(prev_clip_src)
+    injected_ids = {str(base_id + i) for i in range(len(compatible))}
+
+    for nid, node in workflow.items():
+        if not isinstance(node, dict) or nid in injected_ids or nid == ckpt_node_id:
+            continue
+
+        inputs = node.get("inputs", {})
+        for key, val in inputs.items():
+            if isinstance(val, list) and len(val) == 2:
+                if str(val[0]) == str(ckpt_node_id) and val[1] == 0:
+                    # MODEL output — rewire to last LoRA's MODEL
+                    inputs[key] = last_lora_model
+                elif str(val[0]) == str(ckpt_node_id) and val[1] == 1:
+                    # CLIP output — rewire to last LoRA's CLIP
+                    inputs[key] = last_lora_clip
+                # VAE [ckpt, 2] stays connected to checkpoint — LoRA doesn't modify VAE
+
+    return workflow
+
+
 def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
     print(f"[COMFY] Running workflow: {name}")
     print(f"[COMFY] Variables: {variables}")
+
+    # Extract LoRA list before variable substitution (prefixed with _ to avoid template collision)
+    loras = variables.pop("_loras", None) or []
 
     # Preprocess image paths: download URLs to ComfyUI's input directory
     # ComfyUI's LoadImage node expects local filenames, not URLs
@@ -775,6 +992,12 @@ def run_workflow(name: str, variables: Dict[str, Any]) -> Dict[str, Any]:
         print(f"[COMFY] Processed variables: {processed_vars}")
 
     workflow = _load_workflow(name)
+
+    # Inject LoRA loader nodes (before variable substitution so refs are stable)
+    if loras:
+        ckpt_name = processed_vars.get("ckpt_name", "")
+        workflow = _inject_lora_loaders(workflow, loras, ckpt_name=ckpt_name)
+
     prompt_graph = _deep_replace(workflow, processed_vars)
 
     # ── Pre-flight node availability check ───────────────────────

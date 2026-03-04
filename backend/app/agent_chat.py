@@ -86,6 +86,21 @@ _register_tool(
     "  key: short label (e.g. 'favorite_color'). value: the fact. importance: 0.0-1.0 (default 0.5).\n"
     "  Use this when you learn something important the user would want remembered long-term.",
 )
+_register_tool(
+    "user.profile.get",
+    "user.profile.get(): returns the latest user profile/preferences + user-approved memory context.\n"
+    "  Use this if the user says they changed settings, or you need the freshest preferences in real time.",
+)
+_register_tool(
+    "user.integrations.list",
+    "user.integrations.list(): lists configured integration keys (no secret values).\n"
+    "  Use this to know which services are connected before recommending actions.",
+)
+_register_tool(
+    "persona.avatar.get",
+    "persona.avatar.get(project_id): returns the current selected avatar + thumbnail URLs for the persona.\n"
+    "  Use this when you need the latest avatar image path.",
+)
 
 
 @dataclass
@@ -644,6 +659,142 @@ async def _run_image_generate(
 
 
 # ---------------------------------------------------------------------------
+# user.profile.get / user.integrations.list / persona.avatar.get handlers
+# ---------------------------------------------------------------------------
+
+async def _run_user_profile_get(
+    *,
+    project_id: Optional[str],
+    user_id: Optional[str],
+    nsfw_mode: bool,
+) -> Tuple[str, Dict[str, Any]]:
+    """Return a human-readable user context block for real-time profile reads."""
+    try:
+        from .user_context import build_user_context_for_ai
+        from .config import NSFW_MODE as GLOBAL_NSFW
+
+        effective_nsfw = bool(nsfw_mode) if nsfw_mode is not None else bool(GLOBAL_NSFW)
+
+        profile: Dict[str, Any] = {}
+        memory: Dict[str, Any] = {"items": []}
+
+        if user_id:
+            try:
+                from .user_profile_store import _get_user_profile, _get_db_path
+                import sqlite3
+
+                profile = _get_user_profile(user_id)
+
+                path = _get_db_path()
+                con = sqlite3.connect(path)
+                con.row_factory = sqlite3.Row
+                cur = con.cursor()
+                cur.execute(
+                    "SELECT * FROM user_memory_items WHERE user_id = ? ORDER BY pinned DESC, importance DESC",
+                    (user_id,),
+                )
+                rows = cur.fetchall()
+                con.close()
+                memory = {"items": [dict(r) for r in rows]}
+            except Exception:
+                profile = {}
+
+        if not profile:
+            try:
+                from .profile import read_profile
+                from .user_memory import _read as read_memory
+                profile = read_profile()
+                memory = read_memory()
+            except Exception:
+                profile = {}
+                memory = {"items": []}
+
+        if not profile.get("personalization_enabled", True):
+            return "(Personalization is disabled in user preferences.)", {"personalization_enabled": False}
+
+        ctx = build_user_context_for_ai(profile, memory, nsfw_mode=effective_nsfw)
+        return (ctx or "").strip(), {"personalization_enabled": True}
+    except Exception as e:
+        return "(Could not load user profile context.)", {"error": str(e)}
+
+
+async def _run_user_integrations_list(
+    *,
+    user_id: Optional[str],
+) -> Tuple[str, Dict[str, Any]]:
+    """Safe integration listing: returns only keys/descriptions, never secret values."""
+    try:
+        items: list[dict] = []
+
+        if user_id:
+            try:
+                from .user_profile_store import _get_db_path, ensure_user_profile_tables
+                import sqlite3
+                ensure_user_profile_tables()
+                path = _get_db_path()
+                con = sqlite3.connect(path)
+                con.row_factory = sqlite3.Row
+                cur = con.cursor()
+                cur.execute(
+                    "SELECT key, description, updated_at FROM user_secrets WHERE user_id = ? ORDER BY key ASC",
+                    (user_id,),
+                )
+                rows = cur.fetchall()
+                con.close()
+                for r in rows:
+                    items.append({"key": r["key"], "description": r["description"] or "", "updated_at": r["updated_at"] or ""})
+            except Exception:
+                items = []
+        else:
+            try:
+                from .profile import _data_root, SECRETS_FILE, _read_json
+                root = _data_root()
+                secrets = _read_json(root / SECRETS_FILE, default={})
+                for k, v in (secrets or {}).items():
+                    items.append({"key": k, "description": (v or {}).get("description", "")})
+                items.sort(key=lambda x: (x.get("key") or "").lower())
+            except Exception:
+                items = []
+
+        if not items:
+            return "No integrations are configured.", {"count": 0, "integrations": []}
+
+        lines = ["Configured integrations (keys only, no secret values):"]
+        for it in items[:50]:
+            desc = (it.get("description") or "").strip()
+            lines.append(f"- {it['key']}: {desc}" if desc else f"- {it['key']}")
+        return "\n".join(lines), {"count": len(items), "integrations": items}
+    except Exception as e:
+        return "(Could not list integrations.)", {"error": str(e)}
+
+
+async def _run_persona_avatar_get(
+    *,
+    project_id: Optional[str],
+) -> Tuple[str, Dict[str, Any]]:
+    """Return current persona avatar URL for real-time tool access."""
+    if not project_id:
+        return "(No project context available.)", {"ok": False}
+    try:
+        from . import projects
+        p = projects.get_project_by_id(project_id)
+        if not p:
+            return "(Persona not found.)", {"ok": False}
+        appearance = p.get("persona_appearance") or {}
+        sel = appearance.get("selected_filename") or ""
+        th = appearance.get("selected_thumb_filename") or ""
+        if not sel:
+            return "(No avatar selected.)", {"ok": True, "selected": None}
+
+        text = f"Current avatar:\n- image: /files/{sel}"
+        if th:
+            text += f"\n- thumb: /files/{th}"
+        return text, {"ok": True, "selected_filename": sel, "selected_thumb_filename": th}
+    except Exception as e:
+        return f"(Could not load persona avatar: {e})", {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # Memory V2 context builder (injected into system prompt)
 # ---------------------------------------------------------------------------
 
@@ -922,6 +1073,22 @@ async def _dispatch_tool(
             importance=importance,
             project_id=project_id,
         )
+        return text, meta, None
+
+    elif tool == "user.profile.get":
+        text, meta = await _run_user_profile_get(
+            project_id=project_id,
+            user_id=user_id,
+            nsfw_mode=nsfw_mode,
+        )
+        return text, meta, None
+
+    elif tool == "user.integrations.list":
+        text, meta = await _run_user_integrations_list(user_id=user_id)
+        return text, meta, None
+
+    elif tool == "persona.avatar.get":
+        text, meta = await _run_persona_avatar_get(project_id=project_id)
         return text, meta, None
 
     else:

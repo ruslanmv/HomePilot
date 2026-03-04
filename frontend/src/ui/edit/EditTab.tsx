@@ -14,7 +14,7 @@
  * - Horizontal Filmstrip for version history with metadata
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Sparkles,
   Trash2,
@@ -36,9 +36,11 @@ import {
   Edit3,
   Plus,
   PaintBucket,
+  Info,
 } from 'lucide-react'
 
 import { EditDropzone } from './EditDropzone'
+import { LoraManager, type ActiveLora } from './LoraManager'
 import { MaskCanvas } from './MaskCanvas'
 import { upscaleImage } from '../enhance/upscaleApi'
 import { QuickActions } from './QuickActions'
@@ -50,11 +52,13 @@ import type { IdentityToolType } from '../enhance/identityApi'
 import { useAvatarCapabilities } from '../useAvatarCapabilities'
 import {
   uploadToEditSession,
+  uploadToEditSessionByUrl,
   sendEditMessage,
   selectActiveImage,
   clearEditSession,
   getEditSession,
   extractImages,
+  deleteVersion,
 } from './editApi'
 import type { EditTabProps, VersionEntry } from './types'
 import { resolveFileUrl } from '../resolveFileUrl'
@@ -62,6 +66,12 @@ import { resolveFileUrl } from '../resolveFileUrl'
 // -----------------------------------------------------------------------------
 // Types
 // -----------------------------------------------------------------------------
+
+type EditItemSource = {
+  type?: string     // 'avatar' | 'chat' | 'room' | etc.
+  id?: string       // entity ID (avatar_id, project_id, etc.)
+  url?: string      // original source URL for export-back
+}
 
 type EditItem = {
   id: string
@@ -71,6 +81,7 @@ type EditItem = {
   instruction: string
   conversationId: string
   settings?: Record<string, unknown>
+  source?: EditItemSource
 }
 
 // -----------------------------------------------------------------------------
@@ -102,6 +113,7 @@ export function EditTab({
   providerBaseUrl,
   providerModel,
   onNavigateToAvatar,
+  nsfwMode,
 }: EditTabProps) {
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -155,6 +167,9 @@ export function EditTab({
   const [useCN, setUseCN] = useState(false)
   const [cnStrength, setCnStrength] = useState(1.0)
 
+  // State - LoRA Add-ons (additive — Golden Rule 1.0)
+  const [activeLoras, setActiveLoras] = useState<ActiveLora[]>([])
+
   // State - Inpainting Mask
   const [showMaskCanvas, setShowMaskCanvas] = useState(false)
   const [maskDataUrl, setMaskDataUrl] = useState<string | null>(null)
@@ -164,6 +179,15 @@ export function EditTab({
   const [isUpscaling, setIsUpscaling] = useState(false)
 
   const hasImage = Boolean(active)
+
+  // Info overlay state (top-right ℹ button on main image)
+  const [showInfo, setShowInfo] = useState(false)
+
+  // Look up the version entry for the currently active image
+  const activeVersionInfo = useMemo(() => {
+    if (!active) return null
+    return versions.find(v => v.url === active) || null
+  }, [active, versions])
 
   // ==========================================================================
   // EFFECTS
@@ -231,30 +255,84 @@ export function EditTab({
     }
   }, [results])
 
-  // Auto-import image from Avatar Studio (via sessionStorage handoff)
+  // Auto-import image from Avatar Studio or ImageViewer (via sessionStorage handoff)
   useEffect(() => {
-    const avatarUrl = sessionStorage.getItem('homepilot_edit_from_avatar')
-    if (!avatarUrl || viewMode !== 'gallery') return
+    const raw = sessionStorage.getItem('homepilot_edit_from_avatar')
+    if (!raw || viewMode !== 'gallery') return
 
     // Clear immediately to prevent re-processing
     sessionStorage.removeItem('homepilot_edit_from_avatar')
 
-    // Fetch the image and upload it into an edit session
-    const importAvatar = async () => {
+    // Parse source metadata if available, or treat as plain URL
+    let sourceUrl: string
+    let sourceType: string | undefined
+    let sourceId: string | undefined
+    try {
+      const parsed = JSON.parse(raw)
+      sourceUrl = parsed.url || raw
+      sourceType = parsed.source_type
+      sourceId = parsed.source_id
+    } catch {
+      sourceUrl = raw
+    }
+
+    // Entirely server-side: backend resolves the URL to a file on disk
+    // and forwards it to the edit session sidecar — no browser fetch needed
+    const importImage = async () => {
       setBusy(true)
+      setError(null)
       try {
-        const response = await fetch(avatarUrl)
-        const blob = await response.blob()
-        const filename = avatarUrl.split('/').pop() || 'avatar.png'
-        const file = new File([blob], filename, { type: blob.type || 'image/png' })
-        await handleUploadNew(file)
+        const newConversationId = uid()
+
+        // Backend loads the image from /comfy/view/... or /files/... and
+        // sends it directly to the edit session sidecar
+        const data = await uploadToEditSessionByUrl({
+          backendUrl,
+          apiKey,
+          conversationId: newConversationId,
+          imageUrl: sourceUrl,
+        })
+
+        const uploadedUrl = data.active_image_url
+        if (!uploadedUrl) {
+          throw new Error('No image URL returned from edit session')
+        }
+
+        const newItem: EditItem = {
+          id: uid(),
+          url: uploadedUrl,
+          createdAt: Date.now(),
+          originalUrl: uploadedUrl,
+          instruction: '[Imported]',
+          conversationId: newConversationId,
+          source: sourceType ? {
+            type: sourceType,
+            id: sourceId,
+            url: sourceUrl,
+          } : undefined,
+        }
+
+        setGalleryItems((prev) => [newItem, ...prev].slice(0, 100))
+        setCurrentEditItem(newItem)
+        setActive(uploadedUrl)
+        setVersions([{
+          url: uploadedUrl,
+          instruction: '[Imported]',
+          created_at: Date.now() / 1000,
+          parent_url: null,
+          settings: {},
+        }])
+        setInitialized(true)
+        setViewMode('editor')
+
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to import avatar from Avatar Studio')
+        setError(e instanceof Error ? e.message : 'Failed to import image')
+      } finally {
         setBusy(false)
       }
     }
 
-    importAvatar()
+    importImage()
   }, [viewMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ==========================================================================
@@ -271,6 +349,11 @@ export function EditTab({
     }
 
     if (!advancedMode) {
+      // Still inject LoRA flags even without advanced mode
+      const enabledLorasBasic = activeLoras.filter((l) => l.enabled)
+      for (const lora of enabledLorasBasic) {
+        parts.push(`--lora ${lora.id}:${lora.weight.toFixed(2)}`)
+      }
       return parts.join(' ')
     }
 
@@ -288,8 +371,15 @@ export function EditTab({
       parts.push(`--cn on`)
       parts.push(`--cn-strength ${cnStrength}`)
     }
+
+    // Inject active LoRA flags (additive — works even without advanced mode)
+    const enabledLoras = activeLoras.filter((l) => l.enabled)
+    for (const lora of enabledLoras) {
+      parts.push(`--lora ${lora.id}:${lora.weight.toFixed(2)}`)
+    }
+
     return parts.join(' ')
-  }, [advancedMode, editMode, steps, cfg, denoise, seedLock, seed, useCN, cnStrength])
+  }, [advancedMode, editMode, steps, cfg, denoise, seedLock, seed, useCN, cnStrength, activeLoras])
 
   // Upload mask data URL to server and get a URL
   const uploadMask = useCallback(async (dataUrl: string): Promise<string | null> => {
@@ -326,7 +416,10 @@ export function EditTab({
   // HANDLERS - Gallery
   // ==========================================================================
 
-  const handleUploadNew = useCallback(async (file: File) => {
+  const handleUploadNew = useCallback(async (
+    file: File,
+    sourceInfo?: { sourceType?: string; sourceId?: string; sourceUrl?: string },
+  ) => {
     setError(null)
     setBusy(true)
 
@@ -352,6 +445,11 @@ export function EditTab({
         originalUrl: uploadedUrl,
         instruction: '[Original Upload]',
         conversationId: newConversationId,
+        source: sourceInfo ? {
+          type: sourceInfo.sourceType,
+          id: sourceInfo.sourceId,
+          url: sourceInfo.sourceUrl,
+        } : undefined,
       }
 
       setGalleryItems((prev) => [newItem, ...prev].slice(0, 100))
@@ -504,7 +602,12 @@ export function EditTab({
           instruction: trimmed,
           created_at: now / 1000,
           parent_url: active,
-          settings: advancedMode ? { steps, cfg, denoise, editMode } : {},
+          settings: {
+            steps, cfg, denoise, editMode,
+            seed: seedLock ? seed : undefined,
+            model: providerModel || undefined,
+            loras: activeLoras.filter(l => l.enabled).map(l => ({ id: l.id, weight: l.weight })),
+          },
         }))
 
         setVersions((prev) => {
@@ -530,7 +633,12 @@ export function EditTab({
             originalUrl: currentEditItem.originalUrl,
             instruction: trimmed,
             conversationId: currentEditItem.conversationId,
-            settings: advancedMode ? { steps, cfg, denoise, editMode } : undefined,
+            settings: {
+              steps, cfg, denoise, editMode,
+              seed: seedLock ? seed : undefined,
+              model: providerModel || undefined,
+              loras: activeLoras.filter(l => l.enabled).map(l => ({ id: l.id, weight: l.weight })),
+            },
           }
 
           // Add updated item at the beginning (most recent first)
@@ -572,6 +680,7 @@ export function EditTab({
 
     setError(null)
     setBusy(true)
+    setShowInfo(false)
 
     try {
       const state = await selectActiveImage({
@@ -882,24 +991,74 @@ export function EditTab({
 
     console.log('[EditTab] Deleting version:', versionUrl)
 
+    // Delete from backend first, then update frontend state
+    const conversationId = currentEditItem?.conversationId
+    if (conversationId) {
+      deleteVersion({
+        backendUrl,
+        apiKey,
+        conversationId,
+        imageUrl: versionUrl,
+      }).catch(err => console.warn('Failed to delete version from backend:', err))
+    }
+
     setVersions((prev) => {
       const filtered = prev.filter(v => v.url !== versionUrl)
       console.log('[EditTab] Versions after delete:', filtered.length)
 
-      // If we deleted the active version, select the next available
+      // If this was the last version, delete the entire edit project
+      if (filtered.length === 0 && currentEditItem) {
+        console.log('[EditTab] Last version deleted — removing edit project')
+        // Remove from gallery
+        setGalleryItems((items) => items.filter((i) => i.id !== currentEditItem.id))
+        // Clear backend session
+        clearEditSession({
+          backendUrl,
+          apiKey,
+          conversationId: currentEditItem.conversationId,
+        }).catch(err => console.warn('Failed to clear backend session:', err))
+        // Fully reset editor state and return to gallery
+        setActive(null)
+        setCurrentEditItem(null)
+        setResults([])
+        setPrompt('')
+        setError(null)
+        setInitialized(false)
+        setViewMode('gallery')
+        return filtered
+      }
+
+      // Determine new active image after deletion
+      let newActive: string | null = null
       if (active === versionUrl && filtered.length > 0) {
-        const newActive = filtered[0].url
+        // Deleted the active version — navigate to the nearest alive photo
+        const oldIndex = prev.findIndex(v => v.url === versionUrl)
+        // Pick the previous version (older), or the next one if at start
+        const newIndex = Math.min(oldIndex, filtered.length - 1)
+        newActive = filtered[Math.max(0, newIndex)].url
         setActive(newActive)
+      }
+
+      // Update the gallery thumbnail to show the latest non-deleted version.
+      // The latest version is the first entry in the filtered array (newest first).
+      const thumbnailUrl = newActive || filtered[0]?.url
+      if (thumbnailUrl && currentEditItem) {
+        setGalleryItems((items) =>
+          items.map((item) =>
+            item.conversationId === currentEditItem.conversationId
+              ? { ...item, url: thumbnailUrl }
+              : item
+          )
+        )
+        setCurrentEditItem(prev => prev ? { ...prev, url: thumbnailUrl } : prev)
 
         // Persist the new active to backend
-        if (currentEditItem) {
-          selectActiveImage({
-            backendUrl,
-            apiKey,
-            conversationId: currentEditItem.conversationId,
-            image_url: newActive,
-          }).catch(err => console.warn('Failed to persist active image:', err))
-        }
+        selectActiveImage({
+          backendUrl,
+          apiKey,
+          conversationId: currentEditItem.conversationId,
+          image_url: thumbnailUrl,
+        }).catch(err => console.warn('Failed to persist active image:', err))
       }
 
       return filtered
@@ -1143,6 +1302,109 @@ export function EditTab({
                   alt="Active Canvas"
                   className="max-w-full max-h-[65vh] object-contain rounded-sm shadow-[0_0_50px_rgba(0,0,0,0.5)] border border-white/5"
                 />
+                {/* Info icon — top-right, appears on hover */}
+                <div className="absolute top-3 right-3 z-30 pointer-events-auto">
+                  <button
+                    onClick={() => setShowInfo(!showInfo)}
+                    className={`p-2 rounded-lg transition-all duration-200 shadow-lg backdrop-blur-sm border ${
+                      showInfo
+                        ? 'bg-white/15 border-white/25 text-white'
+                        : 'bg-black/70 border-white/10 text-white/60 opacity-0 group-hover:opacity-100 hover:text-white hover:bg-black/90'
+                    }`}
+                    title="Generation details"
+                  >
+                    <Info size={16} />
+                  </button>
+
+                  {/* Info popover */}
+                  {showInfo && activeVersionInfo && (
+                    <div className="absolute top-full right-0 mt-2 w-72 bg-[#0C0C0C]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
+                      <div className="px-3.5 py-2.5 border-b border-white/[0.06] flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-white/40">Generation Info</span>
+                        <button onClick={() => setShowInfo(false)} className="text-white/30 hover:text-white/70 transition-colors">
+                          <X size={12} />
+                        </button>
+                      </div>
+                      <div className="px-3.5 py-3 space-y-2.5 text-[11px]">
+                        {/* Prompt */}
+                        {activeVersionInfo.instruction && (
+                          <div>
+                            <div className="text-white/30 text-[9px] uppercase tracking-wider mb-0.5">Prompt</div>
+                            <div className="text-white/80 leading-relaxed break-words line-clamp-4">{activeVersionInfo.instruction}</div>
+                          </div>
+                        )}
+                        {/* Settings grid */}
+                        {activeVersionInfo.settings && Object.keys(activeVersionInfo.settings).length > 0 && (
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 pt-1">
+                            {activeVersionInfo.settings.model != null && (
+                              <div className="col-span-2">
+                                <span className="text-white/30 text-[9px] uppercase tracking-wider">Model</span>
+                                <div className="text-white/70 font-mono text-[10px] truncate">{String(activeVersionInfo.settings.model).replace('.safetensors', '').replace('.ckpt', '')}</div>
+                              </div>
+                            )}
+                            {activeVersionInfo.settings.steps != null && (
+                              <div>
+                                <span className="text-white/30 text-[9px] uppercase tracking-wider">Steps</span>
+                                <div className="text-white/70 font-mono">{String(activeVersionInfo.settings.steps)}</div>
+                              </div>
+                            )}
+                            {activeVersionInfo.settings.cfg != null && (
+                              <div>
+                                <span className="text-white/30 text-[9px] uppercase tracking-wider">CFG</span>
+                                <div className="text-white/70 font-mono">{String(activeVersionInfo.settings.cfg)}</div>
+                              </div>
+                            )}
+                            {activeVersionInfo.settings.denoise != null && (
+                              <div>
+                                <span className="text-white/30 text-[9px] uppercase tracking-wider">Denoise</span>
+                                <div className="text-white/70 font-mono">{String(activeVersionInfo.settings.denoise)}</div>
+                              </div>
+                            )}
+                            {activeVersionInfo.settings.seed != null && (
+                              <div>
+                                <span className="text-white/30 text-[9px] uppercase tracking-wider">Seed</span>
+                                <div className="text-white/70 font-mono">{String(activeVersionInfo.settings.seed)}</div>
+                              </div>
+                            )}
+                            {activeVersionInfo.settings.editMode != null && (
+                              <div>
+                                <span className="text-white/30 text-[9px] uppercase tracking-wider">Mode</span>
+                                <div className="text-white/70 font-mono">{String(activeVersionInfo.settings.editMode)}</div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {/* LoRAs */}
+                        {activeVersionInfo.settings && Array.isArray(activeVersionInfo.settings.loras) && (activeVersionInfo.settings.loras as Array<{id: string; weight: number}>).length > 0 && (
+                          <div className="pt-1">
+                            <div className="text-white/30 text-[9px] uppercase tracking-wider mb-1">LoRAs</div>
+                            <div className="space-y-0.5">
+                              {(activeVersionInfo.settings.loras as Array<{id: string; weight: number}>).map((l) => (
+                                <div key={l.id} className="flex items-center justify-between">
+                                  <span className="text-white/70 font-mono text-[10px]">{l.id}</span>
+                                  <span className="text-white/40 font-mono text-[10px]">{l.weight.toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {/* Timestamp */}
+                        {activeVersionInfo.created_at > 0 && (
+                          <div className="pt-1 border-t border-white/[0.06]">
+                            <span className="text-white/25 text-[9px]">
+                              {new Date(activeVersionInfo.created_at * 1000).toLocaleString()}
+                            </span>
+                          </div>
+                        )}
+                        {/* Fallback for original / no settings */}
+                        {!activeVersionInfo.instruction && (!activeVersionInfo.settings || Object.keys(activeVersionInfo.settings).length === 0) && (
+                          <div className="text-white/30 text-center py-2">Original image — no generation data</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Invisible hover extension to keep buttons accessible */}
                 <div className="absolute -bottom-2 -right-2 -left-2 h-16 pointer-events-none" />
                 {/* Action buttons - positioned inside image bounds with z-index above bottom bar */}
@@ -1228,63 +1490,69 @@ export function EditTab({
               </form>
             </div>
 
-            {/* Filmstrip (Version History with Metadata) */}
-            <div className="w-full max-w-5xl flex gap-3 overflow-x-auto pb-4 px-2 pt-2 snap-x scrollbar-hide">
-              {results.map((url, idx) => (
-                <div key={`res-${idx}`} className="snap-center shrink-0 relative group w-24 h-24 rounded-lg overflow-hidden border-2 border-purple-500/50 cursor-pointer shadow-[0_0_20px_rgba(147,51,234,0.3)]">
-                  <img src={resolveFileUrl(url, backendUrl)} className="w-full h-full object-cover" alt="Result" />
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <button onClick={() => handleUse(url)} className="text-[10px] font-bold bg-purple-500 text-white px-2 py-1 rounded hover:bg-purple-400 hover:scale-105 transition-all">
-                      USE THIS
-                    </button>
+            {/* Filmstrip – unified rail: newest (left) → oldest (right), selected = displayed */}
+            <div className="w-full max-w-5xl flex gap-2 overflow-x-auto pb-4 px-2 pt-2 snap-x scrollbar-hide items-end">
+              {/* New results (not yet committed as versions) */}
+              {results.map((url, idx) => {
+                const isActive = active === url
+                return (
+                  <div
+                    key={`res-${idx}`}
+                    onClick={() => handleUse(url)}
+                    className={`snap-center shrink-0 relative group rounded-lg overflow-hidden cursor-pointer transition-all duration-200 ${
+                      isActive
+                        ? 'w-[72px] h-[72px] border-2 border-purple-400 ring-2 ring-purple-400/40 shadow-[0_0_16px_rgba(147,51,234,0.4)]'
+                        : 'w-16 h-16 border border-purple-500/30 hover:border-purple-400/60 opacity-70 hover:opacity-100'
+                    }`}
+                  >
+                    <img src={resolveFileUrl(url, backendUrl)} className="w-full h-full object-cover" alt="Result" />
+                    <div className="absolute top-0.5 left-0.5 px-1 py-px bg-purple-500 text-[7px] font-bold text-white rounded">NEW</div>
                   </div>
-                  <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-purple-500 text-[8px] font-bold text-white rounded">NEW</div>
-                </div>
-              ))}
+                )
+              })}
 
               {results.length > 0 && versions.length > 0 && (
-                <div className="w-px h-16 bg-white/10 shrink-0 self-center mx-2" />
+                <div className="w-px h-12 bg-white/10 shrink-0 self-center mx-1" />
               )}
 
-              {versions.map((version, idx) => (
-                <div
-                  key={`ver-${version.url}-${idx}`}
-                  onClick={() => handleUse(version.url)}
-                  className={`snap-center shrink-0 relative group w-20 h-20 rounded-lg overflow-hidden border cursor-pointer transition-all ${
-                    active === version.url
-                      ? 'border-white ring-1 ring-white'
-                      : 'border-white/10 hover:border-white/40'
-                  }`}
-                >
-                  <img src={resolveFileUrl(version.url, backendUrl)} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt="Version" />
-
-                  {/* Delete button - top right, visible on hover */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      e.preventDefault()
-                      if (window.confirm('Delete this version?')) {
-                        handleDeleteVersion(version.url, e)
-                      }
-                    }}
-                    className="absolute top-1 right-1 p-1 bg-black/60 rounded opacity-0 group-hover:opacity-100 transition-opacity text-white/50 hover:text-red-400 hover:bg-black/80"
-                    title="Delete version"
+              {/* Version history */}
+              {versions.map((version, idx) => {
+                const isActive = active === version.url
+                return (
+                  <div
+                    key={`ver-${version.url}-${idx}`}
+                    onClick={() => handleUse(version.url)}
+                    className={`snap-center shrink-0 relative group rounded-lg overflow-hidden cursor-pointer transition-all duration-200 ${
+                      isActive
+                        ? 'w-[72px] h-[72px] border-2 border-white ring-2 ring-white/30 shadow-[0_0_16px_rgba(255,255,255,0.15)]'
+                        : 'w-16 h-16 border border-white/10 hover:border-white/30 opacity-50 hover:opacity-100'
+                    }`}
                   >
-                    <Trash2 size={12} />
-                  </button>
+                    <img src={resolveFileUrl(version.url, backendUrl)} className="w-full h-full object-cover" alt="Version" />
 
-                  <div className="absolute -bottom-16 left-1/2 -translate-x-1/2 w-40 p-2 bg-black/90 border border-white/10 rounded-lg text-[10px] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 shadow-xl">
-                    <div className="text-white/80 truncate font-medium">{version.instruction || 'Original'}</div>
-                    <div className="text-white/40 flex items-center gap-1 mt-1">
-                      Version {versions.length - idx}
+                    {/* Delete button - top right, visible on hover */}
+                    <button
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        e.preventDefault()
+                        if (window.confirm('Delete this version?')) {
+                          handleDeleteVersion(version.url, e)
+                        }
+                      }}
+                      className="absolute top-0.5 right-0.5 p-0.5 bg-black/70 rounded opacity-0 group-hover:opacity-100 transition-opacity text-white/50 hover:text-red-400 hover:bg-black/90 z-10"
+                      title="Delete version"
+                    >
+                      <Trash2 size={10} />
+                    </button>
+
+                    {/* Version index label on hover (prompt hidden — use info icon on main image) */}
+                    <div className="absolute bottom-0 inset-x-0 bg-black/70 text-[8px] text-white/70 text-center py-0.5 opacity-0 group-hover:opacity-100 transition-opacity truncate px-1">
+                      {idx === versions.length - 1 ? 'Original' : `v${versions.length - idx}`}
                     </div>
                   </div>
-
-                  {active === version.url && (
-                    <div className="absolute top-1 left-1 w-2 h-2 bg-white rounded-full" />
-                  )}
-                </div>
-              ))}
+                )
+              })}
               <div ref={resultsEndRef} />
             </div>
           </div>
@@ -1435,6 +1703,17 @@ export function EditTab({
                 </div>
               )}
             </div>
+
+            {/* LoRA Add-ons (additive — Golden Rule 1.0) */}
+            <LoraManager
+              backendUrl={backendUrl}
+              apiKey={apiKey}
+              activeLoras={activeLoras}
+              onLorasChange={setActiveLoras}
+              disabled={busy}
+              currentModel={providerModel}
+              nsfwMode={nsfwMode}
+            />
 
             {/* Quick Enhancement Actions */}
             <QuickActions

@@ -3,12 +3,24 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Version-3.0.0-blueviolet?style=for-the-badge" alt="v3.0.0" />
   <img src="https://img.shields.io/badge/Status-Release-brightgreen?style=for-the-badge" alt="Release" />
   <img src="https://img.shields.io/badge/License-Apache_2.0-green?style=for-the-badge" alt="License" />
   <img src="https://img.shields.io/badge/Stack-Local_First-purple?style=for-the-badge" alt="Local First" />
   <img src="https://img.shields.io/badge/AI-Powered-cyan?style=for-the-badge" alt="AI Powered" />
   <img src="https://img.shields.io/badge/Endpoints-160+-blue?style=for-the-badge" alt="160+ Endpoints" />
   <img src="https://img.shields.io/badge/MCP-Context_Forge-orange?style=for-the-badge" alt="MCP Context Forge" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/ruslanmv/HomePilot/stargazers"><img src="https://img.shields.io/github/stars/ruslanmv/HomePilot?style=social" alt="GitHub Stars" /></a>&nbsp;&nbsp;
+  <a href="https://github.com/ruslanmv/HomePilot/network/members"><img src="https://img.shields.io/github/forks/ruslanmv/HomePilot?style=social" alt="GitHub Forks" /></a>&nbsp;&nbsp;
+  <a href="https://github.com/ruslanmv/HomePilot/issues"><img src="https://img.shields.io/github/issues/ruslanmv/HomePilot?style=social&logo=github" alt="Issues" /></a>&nbsp;&nbsp;
+  <a href="https://ruslanmv.com/HomePilot/"><img src="https://img.shields.io/badge/Docs-Website-blue?logo=readthedocs&logoColor=white" alt="Docs" /></a>
+</p>
+
+<p align="center">
+  If you find HomePilot useful, please consider giving it a ⭐ — it helps others discover the project!
 </p>
 
 **HomePilot** is an all-in-one, local-first GenAI application that unifies **chat, image generation, editing, video creation, and AI-powered storytelling** into a **single continuous conversation**. Designed to deliver a high-end experience, it remains entirely **self-hosted, auditable, and extensible**.

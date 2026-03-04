@@ -177,6 +177,35 @@ export async function clearEditSession(params: {
 }
 
 /**
+ * Delete a single version from an edit session.
+ *
+ * @param params - Delete parameters
+ * @returns Updated session state
+ */
+export async function deleteVersion(params: {
+  backendUrl: string
+  apiKey?: string
+  conversationId: string
+  imageUrl: string
+}): Promise<EditSessionState & { ok: boolean }> {
+  const { backendUrl, apiKey, conversationId, imageUrl } = params
+  const base = backendUrl.replace(/\/+$/, '')
+  const url = `${base}/v1/edit-sessions/${encodeURIComponent(conversationId)}/version?image_url=${encodeURIComponent(imageUrl)}`
+
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: { ...authHeaders(apiKey) },
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => `HTTP ${res.status}`)
+    throw new Error(text)
+  }
+
+  return res.json()
+}
+
+/**
  * Revert to a previous image from history.
  *
  * @param params - Revert parameters
@@ -247,4 +276,80 @@ export function extractImages(raw: Record<string, unknown>): string[] {
 
   // De-duplicate while preserving order
   return Array.from(new Set(out))
+}
+
+
+/**
+ * Import an existing image by URL — server-side copy, no browser round-trip.
+ *
+ * This avoids the client download → re-upload pattern that fails on WSL
+ * mounted filesystems and is wasteful for images already on the server.
+ *
+ * Accepts /files/{asset_id}, /comfy/view/..., or ComfyUI absolute URLs.
+ *
+ * @param params - Import parameters
+ * @returns New asset info with url and optional asset_id
+ */
+export async function importImageByUrl(params: {
+  backendUrl: string
+  apiKey?: string
+  url: string
+}): Promise<{ ok: boolean; url: string; asset_id?: string }> {
+  const { backendUrl, apiKey, url } = params
+  const base = backendUrl.replace(/\/+$/, '')
+  const endpoint = `${base}/v1/import-image`
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(apiKey),
+    },
+    body: JSON.stringify({ url }),
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => `HTTP ${res.status}`)
+    throw new Error(text)
+  }
+
+  return res.json()
+}
+
+
+/**
+ * Upload an image to an edit session by URL — entirely server-side.
+ *
+ * The backend resolves the image URL (/files/..., /comfy/view/...) to a file
+ * on disk and forwards it to the edit session sidecar as a multipart upload.
+ * No browser download/reupload needed.
+ *
+ * @param params - Upload parameters
+ * @returns Session state after upload
+ */
+export async function uploadToEditSessionByUrl(params: {
+  backendUrl: string
+  apiKey?: string
+  conversationId: string
+  imageUrl: string
+}): Promise<EditSessionState & { result?: Record<string, unknown> }> {
+  const { backendUrl, apiKey, conversationId, imageUrl } = params
+  const base = backendUrl.replace(/\/+$/, '')
+  const endpoint = `${base}/v1/edit-sessions/${encodeURIComponent(conversationId)}/image`
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(apiKey),
+    },
+    body: JSON.stringify({ image_url: imageUrl }),
+  })
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => `HTTP ${res.status}`)
+    throw new Error(text)
+  }
+
+  return res.json()
 }

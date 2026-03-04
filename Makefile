@@ -20,6 +20,7 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         download download-minimal download-minimum download-recommended download-full \
         download-chat download-multimodal \
         download-edit download-enhance download-video download-verify download-health \
+        download-lora \
         download-avatar-models-basic download-avatar-models-full \
         start start-backend start-frontend start-no-agentic start-agentic-servers start-inventory \
         install-mcp start-mcp stop-mcp clean-mcp mcp-status mcp-install-server verify-mcp \
@@ -199,6 +200,7 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo "    make download-chat          Pull chat model (llama3.2:3b)"
 	@echo "    make download-multimodal    Pull vision model (moondream)"
 	@echo "    make download-video         Pull video generation models"
+	@echo "    make download-lora          Download core LoRA adapter (Detail Tweaker)"
 	@if [ "$(AGENTIC)" = "1" ]; then \
 		echo ""; \
 		echo "  MCP Gateway will start on port $(MCP_GATEWAY_PORT)"; \
@@ -772,6 +774,32 @@ download-enhance: ## Download upscale/enhance models (4x-UltraSharp, RealESRGAN,
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo ""
 	@du -sh models/comfy/upscale_models/* models/comfy/gfpgan/* 2>/dev/null || true
+
+download-lora: ## Download core SFW LoRA adapter (Detail Tweaker, ~144MB — works with any SD1.5 checkpoint)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Downloading Core LoRA Adapter"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@mkdir -p models/comfy/loras
+	@echo ""
+	@echo "  LoRA: Detail Tweaker (add_detail) — 144 MB"
+	@echo "  Adds or removes fine detail in generated images."
+	@echo "  Works with any SD 1.5 checkpoint. Use weight 0.5-1.0 for best results."
+	@echo ""
+	@echo "[1/1] Downloading add_detail.safetensors..."
+	@wget -c --progress=bar:force -O models/comfy/loras/add_detail.safetensors \
+		"https://civitai.com/api/download/models/62833?type=Model&format=SafeTensor" 2>&1 || \
+		echo "  ⚠️  Download failed — you can manually download from: https://civitai.com/models/58390"
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ LoRA download complete!"
+	@echo ""
+	@echo "  The LoRA is now in: models/comfy/loras/"
+	@echo "  Enable it in Edit → Settings → LoRA Add-ons"
+	@echo ""
+	@echo "  More LoRAs available in Settings → Models → LoRA tab"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@du -sh models/comfy/loras/* 2>/dev/null || true
 
 download-avatar-models-basic: ## Download basic avatar models (~1.8GB — InsightFace + InstantID adapter + ControlNet)
 	@echo "════════════════════════════════════════════════════════════════════════════════"

@@ -184,6 +184,36 @@ def check_model_health(
     )
 
 
+def get_lora_models_to_check() -> List[tuple[str, Dict[str, Any], str, str]]:
+    """
+    Load LoRA models from the registry for health checking.
+
+    Returns: List of (model_id, model_data, provider, model_type)
+    """
+    models = []
+    try:
+        # Add backend to path so we can import the registry
+        backend_dir = PROJECT_ROOT / "backend"
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        from app.models.lora_registry import SFW_LORAS, NSFW_LORAS
+        for entry in (*SFW_LORAS, *NSFW_LORAS):
+            if entry.download_url:
+                models.append((
+                    entry.id,
+                    {
+                        "id": entry.id,
+                        "label": entry.name,
+                        "download_url": entry.download_url,
+                    },
+                    entry.source,
+                    "lora",
+                ))
+    except ImportError:
+        print("WARNING: Could not import LoRA registry — skipping LoRA health checks")
+    return models
+
+
 def get_models_to_check(
     catalog: Dict[str, Any],
     filter_type: Optional[str] = None,
@@ -386,8 +416,8 @@ def main() -> int:
 
     parser.add_argument(
         "--type", "-t",
-        choices=["chat", "image", "video", "edit", "enhance"],
-        help="Filter by model type",
+        choices=["chat", "image", "video", "edit", "enhance", "lora"],
+        help="Filter by model type (includes 'lora' for LoRA registry models)",
     )
     parser.add_argument(
         "--provider", "-p",
@@ -421,6 +451,14 @@ def main() -> int:
         filter_type=args.type,
         filter_provider=args.provider,
     )
+
+    # Include LoRA registry models when type is 'lora' or no filter
+    if args.type in (None, "lora"):
+        lora_models = get_lora_models_to_check()
+        if args.type == "lora":
+            models = lora_models  # Only LoRAs
+        else:
+            models.extend(lora_models)
 
     if not models:
         print("No downloadable models found matching criteria.")

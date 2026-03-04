@@ -578,7 +578,7 @@ export default function ModelsView(props: ModelsParams) {
   const [providers, setProviders] = useState<Provider[]>([])
   const [providersError, setProvidersError] = useState<string | null>(null)
 
-  const [modelType, setModelType] = useState<'chat' | 'multimodal' | 'image' | 'video' | 'edit' | 'enhance' | 'addons'>('chat')
+  const [modelType, setModelType] = useState<'chat' | 'multimodal' | 'image' | 'video' | 'edit' | 'enhance' | 'addons' | 'lora'>('chat')
   const [provider, setProvider] = useState<string>(props.providerChat || 'ollama')
 
   const defaultBaseUrl = useMemo(() => {
@@ -588,6 +588,7 @@ export default function ModelsView(props: ModelsParams) {
     if (modelType === 'edit') return props.baseUrlImages || ''
     if (modelType === 'enhance') return props.baseUrlImages || ''
     if (modelType === 'addons') return props.baseUrlImages || ''
+    if (modelType === 'lora') return props.baseUrlImages || ''
     return props.baseUrlVideo || ''
   }, [modelType, props.baseUrlChat, props.baseUrlImages, props.baseUrlVideo])
 
@@ -638,6 +639,17 @@ export default function ModelsView(props: ModelsParams) {
   const [avatarDeleteBusy, setAvatarDeleteBusy] = useState<string | null>(null)
   const [avatarInstallBusy, setAvatarInstallBusy] = useState<string | null>(null) // model ID being installed
 
+  // LoRA registry state (additive — Golden Rule 1.0)
+  const [loraRegistry, setLoraRegistry] = useState<any[]>([])
+  const [loraInstalled, setLoraInstalled] = useState<any[]>([])
+  const [loraLoading, setLoraLoading] = useState(false)
+  const [loraError, setLoraError] = useState<string | null>(null)
+  const [loraInstallBusy, setLoraInstallBusy] = useState<string | null>(null)
+  const [loraDownloadBusy, setLoraDownloadBusy] = useState<string | null>(null)
+  const [loraDownloadStatus, setLoraDownloadStatus] = useState<AvatarDownloadStatus | null>(null)
+  const [loraDeleteConfirm, setLoraDeleteConfirm] = useState<string | null>(null)
+  const [loraDeleteBusy, setLoraDeleteBusy] = useState<string | null>(null)
+
   // Filter providers based on model type
   const availableProviders = useMemo(() => {
     if (modelType === 'chat') {
@@ -680,6 +692,10 @@ export default function ModelsView(props: ModelsParams) {
       setBaseUrl(props.baseUrlImages || '')
     } else if (modelType === 'addons') {
       // Switch to comfyui for addons (extensions)
+      setProvider('comfyui')
+      setBaseUrl(props.baseUrlImages || '')
+    } else if (modelType === 'lora') {
+      // LoRA tab — uses own registry, no provider needed
       setProvider('comfyui')
       setBaseUrl(props.baseUrlImages || '')
     } else {
@@ -1207,6 +1223,129 @@ export default function ModelsView(props: ModelsParams) {
     }
   }, [modelType, refreshAvatarModels])
 
+  // Fetch LoRA registry + installed when LoRA tab is active (additive)
+  const refreshLoraModels = useCallback(async () => {
+    setLoraLoading(true)
+    setLoraError(null)
+    try {
+      const [registryRes, installedRes] = await Promise.all([
+        getJson<{ ok: boolean; loras: any[] }>(backendUrl, `/v1/lora/registry?spicy=${props.nsfwMode ? 'true' : 'false'}`, authKey),
+        getJson<{ ok: boolean; loras: any[] }>(backendUrl, '/v1/lora/installed', authKey),
+      ])
+      setLoraRegistry(registryRes.loras || [])
+      setLoraInstalled(installedRes.loras || [])
+    } catch (e: any) {
+      setLoraError(e?.message || String(e))
+      setLoraRegistry([])
+      setLoraInstalled([])
+    } finally {
+      setLoraLoading(false)
+    }
+  }, [backendUrl, authKey, props.nsfwMode])
+
+  useEffect(() => {
+    if (modelType === 'lora') {
+      refreshLoraModels()
+    } else {
+      // Clear stale registry when leaving LoRA tab so NSFW entries
+      // don't linger in memory after spicy mode is toggled off.
+      setLoraRegistry([])
+      setLoraInstalled([])
+    }
+  }, [modelType, refreshLoraModels])
+
+  // LoRA install — mirrors installSingleAvatarModel pattern
+  const installLora = async (loraId: string) => {
+    setLoraInstallBusy(loraId)
+    const entry = loraRegistry.find((l: any) => l.id === loraId)
+    setToast(`Installing ${entry?.name || loraId}...`)
+    try {
+      const res = await fetch(`${backendUrl}/v1/lora/${loraId}/install`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authKey ? { 'x-api-key': authKey } : {}),
+        },
+      })
+      const data = await res.json()
+      if (data.ok) {
+        if (data.already_installed) {
+          setToast(`${entry?.name || loraId} is already installed`)
+          setLoraInstallBusy(null)
+          return
+        }
+        setLoraDownloadBusy(`single:${loraId}`)
+      } else {
+        setToast(`Install failed: ${data.error || 'unknown error'}`)
+      }
+    } catch (e: any) {
+      setToast(`Install error: ${e?.message || String(e)}`)
+    } finally {
+      setLoraInstallBusy(null)
+    }
+  }
+
+  // LoRA delete — mirrors deleteAvatarModel pattern
+  const deleteLora = async (loraId: string) => {
+    setLoraDeleteBusy(loraId)
+    setLoraDeleteConfirm(null)
+    try {
+      const res = await fetch(`${backendUrl}/v1/lora/${loraId}`, {
+        method: 'DELETE',
+        headers: authKey ? { 'x-api-key': authKey } : {},
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setToast(`Deleted ${data.name || loraId} — freed ${data.freed_human || ''}`)
+        setTimeout(() => refreshLoraModels(), 500)
+      } else {
+        setToast(`Delete failed: ${data.error || 'unknown error'}`)
+      }
+    } catch (e: any) {
+      setToast(`Delete error: ${e?.message || String(e)}`)
+    } finally {
+      setLoraDeleteBusy(null)
+    }
+  }
+
+  // Poll LoRA download status — mirrors avatar download polling
+  useEffect(() => {
+    if (!loraDownloadBusy) return
+
+    let cancelled = false
+    const poll = async () => {
+      while (!cancelled) {
+        await new Promise((r) => setTimeout(r, 4000))
+        if (cancelled) break
+        try {
+          const res = await fetch(`${backendUrl}/v1/lora/download/status`, {
+            headers: authKey ? { 'x-api-key': authKey } : {},
+          })
+          if (!res.ok) continue
+          const status: AvatarDownloadStatus = await res.json()
+          if (cancelled) break
+
+          setLoraDownloadStatus(status)
+
+          if (status.finished || !status.running) {
+            const msg = `Install complete: ${status.installed_count}/${status.total_models} installed`
+              + (status.failed_count > 0 ? ` (${status.failed_count} failed)` : '')
+              + (status.downloaded_bytes > 0 ? ` — ${formatBytes(status.downloaded_bytes)} in ${Math.round(status.elapsed)}s` : '')
+            setToast(msg)
+            setLoraDownloadBusy(null)
+            setTimeout(() => refreshLoraModels(), 500)
+            break
+          }
+        } catch {
+          // Network hiccup — keep polling
+        }
+      }
+    }
+    poll()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loraDownloadBusy, backendUrl, authKey])
+
   const downloadAvatarPreset = async (preset: 'basic' | 'full') => {
     setAvatarDownloadBusy(preset)
     setAvatarDownloadStatus(null)
@@ -1584,7 +1723,7 @@ export default function ModelsView(props: ModelsParams) {
           <div>
             <label className="text-[10px] text-white/40 font-bold uppercase tracking-wider block mb-2.5">Model Type</label>
             <div className="flex flex-col gap-1.5">
-              {(['chat', 'multimodal', 'image', 'edit', 'video', 'enhance', 'addons'] as const).map((t) => (
+              {(['chat', 'multimodal', 'image', 'edit', 'video', 'enhance', 'lora', 'addons'] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -1595,7 +1734,7 @@ export default function ModelsView(props: ModelsParams) {
                       : 'bg-transparent border-white/10 text-white/60 hover:bg-white/5 hover:border-white/20 hover:text-white/80'
                   }`}
                 >
-                  {t === 'addons' ? '🧩 Add-ons' : t}
+                  {t === 'addons' ? '🧩 Add-ons' : t === 'lora' ? 'LoRA' : t}
                 </button>
               ))}
             </div>
@@ -2608,6 +2747,290 @@ export default function ModelsView(props: ModelsParams) {
                     {avatarModels.length === 0 && !avatarModelsLoading && (
                       <div className="p-8 text-center text-white/40 text-sm">
                         No avatar models registered. Check backend configuration.
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* LoRA Models Section (LoRA tab only — additive, Golden Rule 1.0) */}
+          {modelType === 'lora' && (
+            <div className="rounded-2xl border border-cyan-500/20 overflow-hidden bg-gradient-to-b from-cyan-500/[0.03] to-transparent">
+              <div className="bg-cyan-500/5 px-6 py-4 flex items-center justify-between border-b border-cyan-500/20">
+                <div className="flex items-center gap-3">
+                  <div className="text-xs font-bold text-cyan-200 uppercase tracking-wider">LoRA Models</div>
+                  <div className="px-2.5 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-[10px] font-bold text-cyan-300 uppercase tracking-wider">
+                    Lightweight Adapters
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  {loraLoading ? (
+                    <div className="text-xs text-cyan-300/50 font-semibold">Loading...</div>
+                  ) : (
+                    <div className="text-xs text-cyan-300/50 font-semibold">
+                      {loraInstalled.length} Installed / {loraRegistry.length} Available
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => refreshLoraModels()}
+                    disabled={loraLoading}
+                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-50"
+                    title="Refresh LoRA models"
+                  >
+                    <RefreshCw size={13} className={loraLoading ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+              </div>
+
+              {loraError ? (
+                <div className="p-5 text-xs text-cyan-300/60">
+                  Could not load LoRA models: {loraError}
+                </div>
+              ) : (
+                <>
+                  {/* Info banner */}
+                  <div className="px-6 py-4 border-b border-cyan-500/10">
+                    <div className="text-[11px] text-white/40 leading-relaxed">
+                      LoRA (Low-Rank Adaptation) models are lightweight adapters that modify checkpoint behavior without replacing the base model.
+                      Perfect for GPUs with less than 12 GB VRAM. Click Install to add a LoRA to your <span className="font-mono bg-white/10 px-1.5 py-0.5 rounded text-white/60">models/comfy/loras/</span> directory.
+                    </div>
+                    {!props.nsfwMode && (
+                      <div className="mt-2 text-[10px] text-white/25 flex items-center gap-1.5">
+                        <Shield size={10} />
+                        Some models are hidden. Enable Spice Mode in Settings to see all available LoRAs.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Install progress (mirrors Add-ons progress bar) */}
+                  {loraDownloadStatus && (loraDownloadStatus.running || loraDownloadStatus.finished) && (
+                    <div className="px-6 py-4 border-b border-cyan-500/10">
+                      <div className="flex items-center gap-3 mb-2">
+                        {loraDownloadStatus.running && (
+                          <svg className="animate-spin h-4 w-4 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        )}
+                        {loraDownloadStatus.finished && <CheckCircle2 size={16} className="text-emerald-400" />}
+                        <span className="text-xs font-bold text-white/70">
+                          {loraDownloadStatus.finished
+                            ? `Install Complete — ${loraDownloadStatus.installed_count}/${loraDownloadStatus.total_models} installed`
+                            : `Installing LoRA — ${loraDownloadStatus.current_index}/${loraDownloadStatus.total_models}`
+                          }
+                        </span>
+                        <span className="text-[10px] text-white/30 ml-auto">
+                          {Math.round(loraDownloadStatus.elapsed)}s
+                          {loraDownloadStatus.downloaded_bytes > 0 && (
+                            <> | {formatBytes(loraDownloadStatus.downloaded_bytes)}</>
+                          )}
+                        </span>
+                      </div>
+                      {loraDownloadStatus.total_models > 0 && (
+                        <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              loraDownloadStatus.finished ? 'bg-emerald-500' : 'bg-cyan-500'
+                            }`}
+                            style={{
+                              width: `${loraDownloadStatus.finished ? 100 :
+                                ((loraDownloadStatus.results?.length || 0) / loraDownloadStatus.total_models) * 100
+                              }%`,
+                            }}
+                          />
+                        </div>
+                      )}
+                      {loraDownloadStatus.running && loraDownloadStatus.current_model && (
+                        <div className="mt-2 flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+                          <span className="text-[10px] text-white/40">
+                            Installing: {loraRegistry.find((l: any) => l.id === loraDownloadStatus.current_model)?.name || loraDownloadStatus.current_model}
+                          </span>
+                        </div>
+                      )}
+                      {loraDownloadStatus.finished && (
+                        <button
+                          type="button"
+                          onClick={() => setLoraDownloadStatus(null)}
+                          className="mt-3 text-[10px] text-white/30 hover:text-white/50 transition-colors"
+                        >
+                          Dismiss
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Installed LoRAs */}
+                  {loraInstalled.length > 0 && (
+                    <div className="px-6 py-4 border-b border-cyan-500/10">
+                      <div className="text-[10px] text-white/40 font-bold uppercase tracking-wider mb-3">Installed LoRAs</div>
+                      <div className="flex flex-wrap gap-2">
+                        {loraInstalled.map((l: any) => (
+                          <div
+                            key={l.id}
+                            className="px-3 py-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-[11px] font-semibold text-emerald-200 flex items-center gap-2"
+                          >
+                            <CheckCircle2 size={12} className="text-emerald-400" />
+                            {l.id}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Registry LoRAs */}
+                  <div className="divide-y divide-white/5">
+                    {loraRegistry.map((lora: any) => {
+                      const isInstalled = loraInstalled.some((i: any) => i.id === lora.id)
+                      return (
+                        <div key={lora.id} className="p-5 flex items-center justify-between gap-4 hover:bg-white/[0.02] transition-all group">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2.5 mb-2 flex-wrap">
+                              <div className={`px-3 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 ${
+                                isInstalled
+                                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+                                  : 'border-white/10 bg-white/5 text-white/40'
+                              }`}>
+                                {isInstalled ? (
+                                  <><CheckCircle2 size={10} /> Installed</>
+                                ) : (
+                                  <><Download size={10} /> Available</>
+                                )}
+                              </div>
+                              <div className="px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 text-[10px] font-medium text-white/40">
+                                {lora.base}
+                              </div>
+                              {lora.recommended ? (
+                                <div className="px-3 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-[10px] font-bold uppercase tracking-wider text-blue-200">
+                                  ⭐ Recommended
+                                </div>
+                              ) : null}
+                              {lora.recommended_nsfw && props.nsfwMode ? (
+                                <div className="px-3 py-1.5 rounded-lg border border-pink-500/30 bg-pink-500/10 text-[10px] font-bold uppercase tracking-wider text-pink-200">
+                                  🔥 NSFW Pick
+                                </div>
+                              ) : null}
+                              {lora.gated ? (
+                                <div className="px-2.5 py-1 rounded-lg border border-red-500/30 bg-red-500/10 text-[10px] font-medium text-red-200">
+                                  🌶️ Adult
+                                </div>
+                              ) : null}
+                              {lora.size_mb > 0 && (
+                                <div className="text-[10px] text-white/25">{lora.size_mb} MB</div>
+                              )}
+                            </div>
+                            <div className="font-bold text-base text-white truncate group-hover:text-white transition-colors">{lora.name}</div>
+                            <div className="text-[11px] text-white/40 font-mono truncate mt-1">{lora.filename}</div>
+                            {lora.description && (
+                              <div className="text-[11px] text-white/30 mt-1">{lora.description}</div>
+                            )}
+                            {lora.trigger_words && lora.trigger_words.length > 0 && (
+                              <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                                <span className="text-[10px] text-white/25">Trigger words:</span>
+                                {lora.trigger_words.map((tw: string) => (
+                                  <span
+                                    key={tw}
+                                    className="px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider border border-cyan-500/20 bg-cyan-500/5 text-cyan-300/70"
+                                  >
+                                    {tw}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            {lora.model_url && (
+                              <a
+                                href={lora.model_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold flex items-center gap-2 transition-all text-white/50 hover:text-white/70"
+                                title="View model page"
+                              >
+                                <ExternalLink size={13} />
+                                <span>View</span>
+                              </a>
+                            )}
+
+                            {/* Install button — not installed, has download URL */}
+                            {!isInstalled && lora.download_url && (
+                              <button
+                                type="button"
+                                className="px-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-white flex items-center gap-2 transition-all hover:scale-105 active:scale-95 shadow-lg shadow-cyan-600/20 disabled:opacity-50 disabled:cursor-wait"
+                                disabled={loraInstallBusy === lora.id || loraDownloadBusy !== null}
+                                onClick={() => installLora(lora.id)}
+                                title={`Install ${lora.name}`}
+                              >
+                                {loraInstallBusy === lora.id ? (
+                                  <>
+                                    <svg className="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <span>Installing...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Download size={13} />
+                                    <span>Install</span>
+                                  </>
+                                )}
+                              </button>
+                            )}
+
+                            {/* Delete button — installed models */}
+                            {isInstalled && (
+                              loraDeleteConfirm === lora.id ? (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-xs font-bold text-white flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+                                    disabled={loraDeleteBusy === lora.id}
+                                    onClick={() => deleteLora(lora.id)}
+                                  >
+                                    {loraDeleteBusy === lora.id ? (
+                                      <>
+                                        <svg className="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                        <span>Deleting...</span>
+                                      </>
+                                    ) : (
+                                      <span>Confirm</span>
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="px-3 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold transition-all"
+                                    onClick={() => setLoraDeleteConfirm(null)}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-red-600/20 border border-white/10 hover:border-red-500/30 text-xs font-bold flex items-center gap-2 transition-all hover:scale-105 active:scale-95 text-white/60 hover:text-red-400"
+                                  onClick={() => setLoraDeleteConfirm(lora.id)}
+                                  title="Delete this LoRA to free disk space"
+                                >
+                                  <Trash2 size={13} />
+                                  <span>Delete</span>
+                                </button>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {loraRegistry.length === 0 && !loraLoading && (
+                      <div className="p-8 text-center text-white/40 text-sm">
+                        No LoRA models available. Check backend configuration.
                       </div>
                     )}
                   </div>

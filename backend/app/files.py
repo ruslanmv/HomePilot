@@ -289,6 +289,22 @@ async def persist_chat_images(
             persisted.append(result["url"])
             print(f"[PERSIST] Saved chat image: {url} → {result['url']}")
 
+            # Also register in asset registry for durability
+            try:
+                from .asset_registry import register_asset
+                register_asset(
+                    storage_key=result.get("asset_id", ""),
+                    kind="image",
+                    mime=content_type,
+                    size_bytes=len(image_bytes),
+                    origin="comfy",
+                    source_hint=url,
+                    project_id=project_id,
+                    user_id=user_id,
+                )
+            except Exception:
+                pass  # non-critical
+
         except Exception as e:
             print(f"[PERSIST] Failed to persist image {url}: {e}")
             # Keep original URL as fallback
