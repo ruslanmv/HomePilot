@@ -9,6 +9,7 @@ export { EditTab } from './EditTab'
 export { EditDropzone } from './EditDropzone'
 export { EditHistoryStrip } from './EditHistoryStrip'
 export { EditResultGrid } from './EditResultGrid'
+export { LoraManager } from './LoraManager'
 
 export * from './editApi'
 export * from './types'

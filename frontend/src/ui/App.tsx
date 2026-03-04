@@ -23,6 +23,7 @@ import {
   PenLine,
   Users,
   EyeOff,
+  BookOpen,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import ProfileSettingsModal from './ProfileSettingsModal'
@@ -56,6 +57,7 @@ import type { GalleryItem } from './avatar/galleryTypes'
 import { SaveAsPersonaModal } from './avatar/SaveAsPersonaModal'
 import { PersonaWizard } from './PersonaWizard'
 import type { PersonaWizardDraft } from './personaTypes'
+import AboutDialog from './AboutDialog'
 import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
 import {
   getVoiceLinkedProjectId,
@@ -863,6 +865,7 @@ function Sidebar({
 }) {
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
+  const [showAboutDialog, setShowAboutDialog] = useState(false)
   const { user: authUser, logout } = useAuth()
 
   // Build AccountMenuUser from auth context (fallback for pre-auth setups)
@@ -959,6 +962,14 @@ function Sidebar({
         <div className="flex flex-col gap-px">
           <NavItem icon={Clock} label="History" active={showHistory} onClick={() => setShowHistory(true)} />
         </div>
+
+        {/* Divider */}
+        <div className="border-t border-white/5" />
+
+        {/* Documentation (external) */}
+        <div className="flex flex-col gap-px">
+          <NavItem icon={BookOpen} label="Docs" active={false} onClick={() => window.open('https://ruslanmv.com/HomePilot/', '_blank')} />
+        </div>
       </div>
 
       {/* Recents list (time-bucketed from conversations) */}
@@ -1011,6 +1022,7 @@ function Sidebar({
           onClose={() => setShowAccountMenu(false)}
           onOpenSettings={() => setShowSettings(true)}
           onOpenProfile={() => setShowProfileModal(true)}
+          onOpenAbout={() => setShowAboutDialog(true)}
           onLogout={handleLogout}
         />
       )}
@@ -1033,6 +1045,11 @@ function Sidebar({
           onClose={() => setShowSettings(false)}
         />
       ) : null}
+
+      {/* About HomePilot dialog */}
+      {showAboutDialog && (
+        <AboutDialog onClose={() => setShowAboutDialog(false)} />
+      )}
     </aside>
   )
 }
@@ -2393,6 +2410,16 @@ export default function App() {
 
     setShowSettings(false)
   }, [settingsDraft, settings])
+
+  // Auto-persist toggle settings to localStorage so they survive page refresh
+  // even if the user doesn't click Save (these are live switches, not draft values)
+  useEffect(() => {
+    localStorage.setItem('homepilot_nsfw_mode', String(!!settingsDraft.nsfwMode))
+    localStorage.setItem('homepilot_memory_engine', settingsDraft.memoryEngine || 'v2')
+    localStorage.setItem('homepilot_tts_enabled', String(settingsDraft.ttsEnabled ?? true))
+    localStorage.setItem('homepilot_experimental_civitai', String(!!settingsDraft.experimentalCivitai))
+    localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
+  }, [settingsDraft.nsfwMode, settingsDraft.memoryEngine, settingsDraft.ttsEnabled, settingsDraft.experimentalCivitai, settingsDraft.promptRefinement])
 
   // When opening settings, sync draft with current
   useEffect(() => {
@@ -4095,65 +4122,18 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     setInput('')
   }, [input, sendTextOrIntent, pendingFile, pendingPreviewUrl, uploadAndSend])
 
-  // Handle edit from image viewer
+  // Handle edit from image viewer — navigate to Edit Studio with the image
   const handleEditFromViewer = useCallback(
-    async (imageUrl: string) => {
+    (imageUrl: string) => {
       setLightbox(null)
+      // Hand off image URL + source metadata to Edit Studio via sessionStorage
+      sessionStorage.setItem('homepilot_edit_from_avatar', JSON.stringify({
+        url: imageUrl,
+        source_type: 'viewer',
+      }))
       setMode('edit')
-
-      const tmpId = uuid()
-      const userMsg: Msg = { id: uuid(), role: 'user', text: `Edit image: ${imageUrl}` }
-      const pendingMsg: Msg = { id: tmpId, role: 'assistant', text: 'Preparing to edit...', pending: true }
-      setMessages((prev) => [...prev, userMsg, pendingMsg])
-
-      try {
-        // Fetch the image and convert to File
-        const response = await fetch(imageUrl)
-        const blob = await response.blob()
-        const filename = imageUrl.split('/').pop() || 'image.png'
-        const file = new File([blob], filename, { type: blob.type })
-
-        // Upload the file
-        const fd = new FormData()
-        fd.append('file', file)
-        const up = await postForm<any>(settings.backendUrl, '/upload', fd, authHeaders)
-        const uploadedUrl = up.url as string
-
-        // Trigger edit workflow with default prompt
-        const editPrompt = 'make it more vibrant and detailed'
-        const data = await postJson<any>(
-          settings.backendUrl,
-          '/chat',
-          {
-            message: `edit ${uploadedUrl} ${editPrompt}`,
-            conversation_id: conversationId,
-            fun_mode: settings.funMode,
-            mode: 'edit',
-            provider: settingsDraft.providerChat,
-            provider_base_url: settingsDraft.baseUrlChat || undefined,
-            provider_model: settingsDraft.modelChat,
-          },
-          authHeaders
-        )
-
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tmpId
-              ? { ...msg, pending: false, animate: true, text: data.text ?? 'Done.', media: data.media ?? null }
-              : msg
-          )
-        )
-      } catch (error: any) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tmpId
-              ? { ...msg, pending: false, text: `Edit failed: ${error.message || 'Unknown error'}` }
-              : msg
-          )
-        )
-      }
     },
-    [authHeaders, conversationId, settings, settingsDraft]
+    []
   )
 
   return (
@@ -4684,6 +4664,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             providerBaseUrl={settingsDraft.baseUrlImages}
             providerModel={settingsDraft.modelImages}
             onNavigateToAvatar={() => setMode('avatar')}
+            nsfwMode={!!settingsDraft.nsfwMode}
           />
         ) : mode === 'avatar' ? (
           // Avatar Studio: persona avatar generation workspace
@@ -4693,11 +4674,13 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             globalModelImages={settingsDraft.modelImages}
             onSendToEdit={(imageUrl) => {
               // Navigate to Edit mode — the EditTab will pick up the image
-              // via upload flow similar to handleEditFromViewer
               setLightbox(null)
               setMode('edit')
-              // Store the URL so EditTab can auto-load it
-              sessionStorage.setItem('homepilot_edit_from_avatar', imageUrl)
+              // Store the URL + source metadata so EditTab can auto-load it
+              sessionStorage.setItem('homepilot_edit_from_avatar', JSON.stringify({
+                url: imageUrl,
+                source_type: 'avatar',
+              }))
             }}
             onOpenLightbox={(url) => setLightbox(url)}
             onSaveAsPersonaAvatar={(item, outfits, batchSiblings) => setSaveAsPersonaData({ item, outfits, batchSiblings })}

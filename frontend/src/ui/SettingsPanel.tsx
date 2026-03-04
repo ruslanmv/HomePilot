@@ -601,18 +601,21 @@ export default function SettingsPanel({
   }
 
   return (
-    <div className="absolute bottom-16 left-0 right-0 mx-2 max-h-[70vh] overflow-y-auto bg-[#181818] border border-white/15 rounded-2xl p-4 shadow-2xl z-50">
-      <div className="flex items-center justify-between mb-4">
+    <div className="absolute bottom-16 left-0 right-0 mx-2 max-h-[70vh] bg-[#181818] border border-white/15 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden">
+      {/* Sticky header — close button always visible */}
+      <div className="sticky top-0 z-10 bg-[#181818]/95 backdrop-blur-sm border-b border-white/[0.06] px-4 py-3 flex items-center justify-between shrink-0">
         <h3 className="text-sm font-bold text-white">Enterprise Settings</h3>
         <button
           type="button"
           onClick={onClose}
-          className="text-white/50 hover:text-white p-1 rounded-lg hover:bg-white/5"
+          className="text-white/50 hover:text-white w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors"
           aria-label="Close settings"
         >
           ✕
         </button>
       </div>
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto p-4">
 
       <OllamaHealthBanner
         show={showOllamaBanner}
@@ -1274,6 +1277,7 @@ export default function SettingsPanel({
           onClose={() => setShowProfileSettings(false)}
         />
       ) : null}
+      </div>{/* end scrollable body */}
     </div>
   );
 }
