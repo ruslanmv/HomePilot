@@ -14,6 +14,9 @@ export interface ViewAngleOption {
   /** Denoise override — higher values let the text prompt control pose.
    *  Front uses default (0.85), non-front uses 1.0 for full prompt control. */
   denoise: number
+  /** When true, use 'standard' generation mode instead of 'identity' to avoid
+   *  face preservation fighting the desired pose (e.g. back view). */
+  skipIdentity?: boolean
 }
 
 export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
@@ -66,10 +69,11 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'back',
     label: 'Back',
     shortLabel: 'B',
-    prompt: 'rear view from behind, person turned completely away from camera showing their back, back of head visible, same outfit colors and silhouette, same hairstyle length and color, same body proportions',
-    negativePrompt: 'front view, facing camera, looking at camera, face visible, eyes visible, front of body',
+    prompt: 'rear view from behind, person turned completely away from camera, back of head and back of body visible, showing buttocks and back, no face visible, same outfit colors and silhouette, same hairstyle length and color from behind, same body proportions',
+    negativePrompt: 'front view, facing camera, looking at camera, face visible, eyes visible, front of body, frontal pose, turning head, looking over shoulder',
     icon: '\u25CE',
     denoise: 1.0,
+    skipIdentity: true,
   },
 ]
 

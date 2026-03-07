@@ -62,7 +62,7 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string) {
           character_prompt: params.characterPrompt,
           negative_prompt: negativePrompt,
           count: 1,
-          generation_mode: 'identity',
+          generation_mode: angleMeta.skipIdentity ? 'standard' : 'identity',
           checkpoint_override: params.checkpointOverride,
           seed: params.seed,
           // Non-front angles use denoise 1.0 so the text prompt fully controls
