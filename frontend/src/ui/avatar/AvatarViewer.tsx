@@ -598,7 +598,11 @@ export function AvatarViewer({
         basePrompt: currentViewBasePrompt,
         checkpointOverride: checkpoint,
       })
-      // Results stored in viewPack.resultsByAngle — not sent to wardrobe
+      // Show the newly generated angle on the stage
+      if (angle !== 'front') {
+        setActiveViewAngle(angle)
+        setStageTab('outfit')
+      }
     } catch {
       // hook manages error state
     }
@@ -616,9 +620,22 @@ export function AvatarViewer({
     )
 
     for (const angle of missing) {
-      await handleGenerateViewAngle(angle)
+      try {
+        await viewPack.generateAngle({
+          referenceImageUrl: currentViewReferenceUrl,
+          angle,
+          characterPrompt: currentViewCharacterPrompt,
+          basePrompt: currentViewBasePrompt,
+          checkpointOverride: checkpoint,
+        })
+        // Update stage to show each angle as it completes
+        setActiveViewAngle(angle)
+        setStageTab('outfit')
+      } catch {
+        // continue with next angle
+      }
     }
-  }, [combinedViewPreviews, handleGenerateViewAngle])
+  }, [combinedViewPreviews, viewPack, currentViewReferenceUrl, currentViewCharacterPrompt, currentViewBasePrompt, checkpoint])
 
   const handleOpenGeneratedView = useCallback((angle: ViewAngle) => {
     const url = combinedViewPreviews[angle]
