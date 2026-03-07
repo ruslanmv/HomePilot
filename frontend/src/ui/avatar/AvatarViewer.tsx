@@ -574,12 +574,23 @@ export function AvatarViewer({
     return item.prompt || 'portrait photograph of the same character'
   }, [stageTab, effectivePrompt, equippedItem, item.prompt])
 
+  // Character prompt for view pack — when showing an outfit, use the outfit's
+  // prompt so the 3D angles reproduce the outfit (e.g. Lingerie), not the anchor's
+  // clothing.  The anchor prompt is only used when viewing the anchor itself.
+  const currentViewCharacterPrompt = useMemo(() => {
+    if (stageTab === 'outfit') {
+      if (equippedItem?.prompt) return equippedItem.prompt
+      if (effectivePrompt.trim()) return effectivePrompt.trim()
+    }
+    return item.prompt || 'portrait photograph of the same character'
+  }, [stageTab, equippedItem, effectivePrompt, item.prompt])
+
   const handleGenerateViewAngle = useCallback(async (angle: ViewAngle) => {
     try {
       await viewPack.generateAngle({
         referenceImageUrl: currentViewReferenceUrl,
         angle,
-        characterPrompt: item.prompt,
+        characterPrompt: currentViewCharacterPrompt,
         basePrompt: currentViewBasePrompt,
         checkpointOverride: checkpoint,
       })
@@ -590,8 +601,8 @@ export function AvatarViewer({
   }, [
     viewPack,
     currentViewReferenceUrl,
+    currentViewCharacterPrompt,
     currentViewBasePrompt,
-    item,
     checkpoint,
   ])
 
@@ -1930,7 +1941,7 @@ export function AvatarViewer({
           </div>
 
           {/* ═══════════ WARDROBE (INVENTORY) — pinned to bottom ═══════════ */}
-          <div className="flex-shrink-0 border-t border-white/[0.06] px-5 py-2.5 overflow-hidden flex flex-col" style={{ height: '190px' }}>
+          <div className="flex-shrink-0 border-t border-white/[0.06] px-5 py-2.5 overflow-visible flex flex-col" style={{ height: '190px' }}>
             {/* Compact wardrobe header */}
             <div className="flex items-center justify-between mb-2 flex-shrink-0">
               <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
