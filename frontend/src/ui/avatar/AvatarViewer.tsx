@@ -192,11 +192,8 @@ export function AvatarViewer({
   const [equippedItem, setEquippedItem] = useState<GalleryItem | null>(null)
 
   // View Pack — multi-angle generation state
-  // Cache key: character root + optional equipped outfit → persists across equip/unequip
-  const viewCacheKey = useMemo(() => {
-    const root = item.parentId || item.id
-    return equippedItem ? `${root}__${equippedItem.id}` : root
-  }, [item.parentId, item.id, equippedItem])
+  // Single cache per character (shared across anchor + all outfits)
+  const viewCacheKey = item.parentId || item.id
   const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey)
   const [viewSource, setViewSource] = useState<ViewSource>('anchor')
   const [showViewPack, setShowViewPack] = useState(false)
