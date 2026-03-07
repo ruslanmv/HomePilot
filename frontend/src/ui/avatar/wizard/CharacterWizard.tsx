@@ -59,6 +59,8 @@ import {
   findPreset,
 } from './wizardTypes'
 import { PROFESSIONS, getProfession } from './professionRegistry'
+import { loadVibeTab, saveVibeTab } from '../vibeTabPersistence'
+import type { VibeTab } from '../vibeTabPersistence'
 import { useGenerateAvatars } from '../useGenerateAvatars'
 import { useAvatarGallery } from '../useAvatarGallery'
 import { loadAvatarSettings, resolveCheckpoint } from '../AvatarSettingsPanel'
@@ -214,6 +216,10 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
   const outfit = findPreset([...OUTFIT_STYLES_SFW, ...OUTFIT_STYLES_NSFW], d.outfitStyle)
   if (outfit) parts.push(outfit.prompt)
 
+  // Profession context (influences scene/outfit/pose)
+  const prof = getProfession(d.professionId)
+  if (prof && prof.id !== 'custom') parts.push(prof.label)
+
   // Colors
   const primC = findPreset(COLOR_PALETTE, d.outfitPrimaryColor)
   const secC = findPreset(COLOR_PALETTE, d.outfitSecondaryColor)
@@ -246,8 +252,11 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
   // NSFW modifiers (gated)
   if (nsfwEnabled && d.nsfwExposure) {
     const nsfwMap: Record<string, string> = {
-      mild: 'suggestive pose, revealing outfit, tastefully showing skin, sensual',
-      suggestive: 'partial nudity, topless, exposed skin, provocative sensual pose, alluring',
+      suggestive: 'suggestive pose, revealing outfit, tastefully showing skin, sensual',
+      clothed_revealing: 'clothed but revealing, deep neckline, exposed skin, alluring',
+      partial_nudity: 'partial nudity, exposed skin, provocative sensual pose, alluring',
+      topless: 'topless, implied nude, exposed upper body, sensual artistic pose',
+      full_nude: 'fully nude, naked body, sensual erotic pose, artistic nude',
       explicit: 'fully nude, explicit adult content, naked body, sensual erotic pose, anatomically detailed',
     }
     parts.push(nsfwMap[d.nsfwExposure] || '')
@@ -257,10 +266,14 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
     if (intensity >= 8) parts.push('extremely sensual, raw, uninhibited')
     else if (intensity >= 5) parts.push('sensual, inviting')
 
-    // Pose variation
+    // Pose — unified: quick-pick categories or specific NSFW pose presets
     if (d.nsfwPose === 'subtle') parts.push('subtle teasing pose, coy expression')
-    if (d.nsfwPose === 'confident') parts.push('confident provocative display, bold body language')
-    if (d.nsfwPose === 'intimate') parts.push('intimate close pose, bedroom eyes, inviting')
+    else if (d.nsfwPose === 'confident') parts.push('confident provocative display, bold body language')
+    else if (d.nsfwPose === 'intimate') parts.push('intimate close pose, bedroom eyes, inviting')
+    else if (d.nsfwPose) {
+      const posePreset = findPreset(NSFW_POSES, d.nsfwPose)
+      if (posePreset) parts.push(posePreset.prompt)
+    }
 
     // Fantasy tone
     if (d.nsfwFantasyTone === 'romantic') parts.push('romantic tender mood, soft warm tones')
@@ -269,6 +282,7 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
 
     // Dominance
     if (d.nsfwDominanceStyle === 'soft') parts.push('gentle submissive energy, yielding')
+    if (d.nsfwDominanceStyle === 'balanced') parts.push('balanced confident energy, natural relaxed poise')
     if (d.nsfwDominanceStyle === 'strong') parts.push('dominant commanding presence, powerful stance, in control')
   }
 
@@ -328,13 +342,14 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
     }
   }, [readNsfw])
 
-  // Standard / Spicy tab (for Step 6 outfit + Step 7 vibe selection)
-  const [vibeTab, setVibeTab] = useState<'standard' | 'spicy'>('standard')
+  // Standard / Spicy tab (for Step 6 outfit + Step 7 vibe selection) — persisted
+  const [vibeTab, _setVibeTab] = useState<VibeTab>(loadVibeTab)
+  const setVibeTab = useCallback((tab: VibeTab) => { _setVibeTab(tab); saveVibeTab(tab) }, [])
 
   // Reset to standard tab if NSFW gets disabled mid-session
   useEffect(() => {
-    if (!nsfwEnabled) setVibeTab('standard')
-  }, [nsfwEnabled])
+    if (!nsfwEnabled && vibeTab === 'spicy') setVibeTab('standard')
+  }, [nsfwEnabled, vibeTab, setVibeTab])
 
   // Hooks
   const gen = useGenerateAvatars(backendUrl, apiKey)
@@ -391,9 +406,9 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
       realism: 40 + Math.floor(Math.random() * 50),
       // NSFW-specific parameters (only meaningful when spicy)
       ...(isSpicyMode ? {
-        nsfwExposure: pick(['mild', 'suggestive', 'explicit'] as const),
+        nsfwExposure: pick(['suggestive', 'clothed_revealing', 'partial_nudity', 'topless', 'full_nude', 'explicit'] as const),
         nsfwIntensity: 2 + Math.floor(Math.random() * 8),
-        nsfwPose: pick(['subtle', 'confident', 'intimate'] as const),
+        nsfwPose: pick(['subtle', 'confident', 'intimate', 'seductive_lean', 'lying_down', 'back_arch', 'kneeling', 'over_shoulder', 'hands_above_head'] as const),
         nsfwDominanceStyle: pick(['soft', 'balanced', 'strong'] as const),
         nsfwFantasyTone: pick(['romantic', 'seductive', 'dramatic'] as const),
       } : {
@@ -483,7 +498,9 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
   const checkpoint = resolveCheckpoint(avatarSettings, globalModelImages)
 
   const onGenerate = useCallback(async () => {
-    const apiMode = draft.generationMode === 'studio_random' ? 'creative' : draft.generationMode
+    // Send the real mode to the backend — it routes studio_random to the
+    // avatar-service (StyleGAN) and other modes to ComfyUI automatically.
+    const apiMode = draft.generationMode
     try {
       const result = await gen.run({
         mode: apiMode as AvatarMode,
@@ -860,14 +877,17 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                 </div>
 
                 <div className="space-y-6">
-                  {/* Exposure Level — prominent 3-tier selector */}
+                  {/* Exposure Level — 6-tier granular selector */}
                   <div>
                     <div className="text-[10px] text-rose-400/70 font-semibold uppercase tracking-wider mb-3">Nudity / Exposure Level</div>
                     <div className="grid grid-cols-3 gap-2">
                       {([
-                        { id: 'mild' as const, label: 'Suggestive', desc: 'Clothed but revealing' },
-                        { id: 'suggestive' as const, label: 'Partial Nudity', desc: 'Topless / implied nude' },
-                        { id: 'explicit' as const, label: 'Full Nude', desc: 'Explicit adult content' },
+                        { id: 'suggestive' as const, label: 'Suggestive', desc: 'Tasteful hints' },
+                        { id: 'clothed_revealing' as const, label: 'Clothed Revealing', desc: 'Clothed but revealing' },
+                        { id: 'partial_nudity' as const, label: 'Partial Nudity', desc: 'Some exposed skin' },
+                        { id: 'topless' as const, label: 'Topless', desc: 'Topless / implied nude' },
+                        { id: 'full_nude' as const, label: 'Full Nude', desc: 'Artistic full nude' },
+                        { id: 'explicit' as const, label: 'Explicit', desc: 'Explicit adult content' },
                       ]).map((e) => (
                         <button key={e.id}
                           onClick={() => update({ nsfwExposure: e.id })}
@@ -889,23 +909,19 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                   <SliderField label="Explicitness Intensity" value={draft.nsfwIntensity ?? 5} min={0} max={10}
                     onChange={(v) => update({ nsfwIntensity: v })} />
 
-                  {/* Sensual Pose — dedicated NSFW poses */}
+                  {/* Sensual Pose — unified flat grid of all 9 poses */}
                   <div>
                     <div className="text-[10px] text-rose-400/70 font-semibold uppercase tracking-wider mb-3">Sensual Pose</div>
                     <div className="grid grid-cols-3 gap-2">
-                      {(['subtle', 'confident', 'intimate'] as const).map((p) => (
-                        <PillButton key={p}
-                          label={p === 'subtle' ? 'Subtle Tease' : p === 'confident' ? 'Confident Display' : 'Intimate Close'}
-                          selected={draft.nsfwPose === p} accent="rose"
-                          onClick={() => update({ nsfwPose: p })} />
-                      ))}
-                    </div>
-                    {/* NSFW-specific pose presets */}
-                    <div className="grid grid-cols-3 gap-1.5 mt-2">
-                      {NSFW_POSES.map((p) => (
+                      {([
+                        { id: 'subtle' as const, label: 'Subtle Tease' },
+                        { id: 'confident' as const, label: 'Confident Display' },
+                        { id: 'intimate' as const, label: 'Intimate Close' },
+                        ...NSFW_POSES.map((p) => ({ id: p.id as typeof draft.nsfwPose & string, label: p.label })),
+                      ]).map((p) => (
                         <PillButton key={p.id} label={p.label}
-                          selected={draft.pose === p.id} accent="rose"
-                          onClick={() => update({ pose: p.id })} />
+                          selected={draft.nsfwPose === p.id} accent="rose"
+                          onClick={() => update({ nsfwPose: p.id as typeof draft.nsfwPose })} />
                       ))}
                     </div>
                   </div>
@@ -1371,7 +1387,7 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
           ))}
         </div>
 
-        {/* Standard / Spicy tabs — only when NSFW globally enabled */}
+        {/* Standard / Romance & Roleplay / 18+ tabs — only when NSFW globally enabled */}
         {nsfwEnabled && (
           <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06] w-fit">
             <button onClick={() => setVibeTab('standard')}
@@ -1380,7 +1396,7 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                 vibeTab === 'standard' ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/60',
               ].join(' ')}
             >
-              <Star size={12} /> Standard
+              Standard
             </button>
             <button onClick={() => setVibeTab('spicy')}
               className={[
@@ -1391,7 +1407,16 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
               ].join(' ')}
             >
               <Flame size={12} /> Romance &amp; Roleplay
-              <span className="text-[8px] px-1 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">18+</span>
+            </button>
+            <button onClick={() => setVibeTab('spicy')}
+              className={[
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+                vibeTab === 'spicy'
+                  ? 'bg-gradient-to-r from-red-500/20 to-rose-500/20 text-red-300 border border-red-500/20 shadow-sm'
+                  : 'text-white/40 hover:text-red-300/60',
+              ].join(' ')}
+            >
+              18+
             </button>
           </div>
         )}

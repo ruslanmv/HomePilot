@@ -37,15 +37,19 @@ import {
   X,
   ArrowRightLeft,
   Image as ImageIcon,
+  Expand,
+  ChevronDown,
 } from 'lucide-react'
 
 import type { GalleryItem, OutfitScenarioTag, ScenarioTagMeta } from './galleryTypes'
 import { SCENARIO_TAG_META } from './galleryTypes'
 import type { AvatarMode, AvatarResult } from './types'
-import { OUTFIT_PRESETS } from '../personaTypes'
+import { OUTFIT_PRESETS, ACCESSORY_OPTIONS } from '../personaTypes'
 import { useOutfitGeneration } from './useOutfitGeneration'
+import { useGenerateHybridBody } from './useGenerateHybridBody'
+import { fetchAvatarCapabilities } from './avatarApi'
 import { AvatarSettingsPanel, resolveCheckpoint, loadAvatarSettings } from './AvatarSettingsPanel'
-import type { AvatarSettings } from './types'
+import type { AvatarSettings, HybridFullBodyRequest } from './types'
 import { resolveFileUrl } from '../resolveFileUrl'
 
 // ---------------------------------------------------------------------------
@@ -130,6 +134,18 @@ export function AvatarViewer({
   const [customPrompt, setCustomPrompt] = useState('')
   const [outfitCount, setOutfitCount] = useState(1)
   const [outfitCopiedSeed, setOutfitCopiedSeed] = useState<number | null>(null)
+  const [outfitTab, setOutfitTab] = useState<'standard' | 'romance' | '18+'>('standard')
+  const [showAdvancedOutfit, setShowAdvancedOutfit] = useState(false)
+  const [outfitPrimaryColor, setOutfitPrimaryColor] = useState<string | null>(null)
+  const [outfitSecondaryColor, setOutfitSecondaryColor] = useState<string | null>(null)
+  const [selectedAccessories, setSelectedAccessories] = useState<string[]>([])
+
+  // Headshot avatars lack visible torso/clothing — outfit generation produces poor results
+  const isHeadshot = item.framingType === 'headshot'
+
+  // Expand headshot → half-body via hybrid pipeline
+  const hybridBody = useGenerateHybridBody(backendUrl, apiKey)
+  const [hybridAvailable, setHybridAvailable] = useState<boolean | null>(null) // null = loading
 
   // Stage toggle: flip between anchor face, latest outfit, or equipped wardrobe item
   const [stageTab, setStageTab] = useState<'anchor' | 'outfit'>('anchor')
@@ -145,6 +161,43 @@ export function AvatarViewer({
       setEquippedItem(null) // new generation overrides equipped
     }
   }, [outfit.results])
+
+  // Check if hybrid body pipeline is available (for headshot → half-body expand)
+  useEffect(() => {
+    if (!isHeadshot) return
+    let cancelled = false
+    fetchAvatarCapabilities(backendUrl, apiKey)
+      .then((caps) => {
+        if (cancelled) return
+        const comfyOk = caps.engines?.comfyui?.available ?? false
+        const modes = caps.enabled_modes ?? []
+        // Hybrid body requires ComfyUI + identity models (studio_reference or hybrid modes)
+        const hasIdentity = modes.includes('studio_reference') || modes.includes('hybrid_body')
+        const bodyEnabled = avatarSettingsState.bodyWorkflowMethod !== 'disabled'
+        setHybridAvailable(comfyOk && hasIdentity && bodyEnabled)
+      })
+      .catch(() => {
+        if (!cancelled) setHybridAvailable(false)
+      })
+    return () => { cancelled = true }
+  }, [isHeadshot, backendUrl, apiKey, avatarSettingsState.bodyWorkflowMethod])
+
+  const handleExpandToHalfBody = useCallback(async () => {
+    if (!isHeadshot || hybridBody.loading) return
+    try {
+      const req: HybridFullBodyRequest = {
+        face_image_url: item.url,
+        count: 2,
+        workflow_method: avatarSettingsState.bodyWorkflowMethod === 'disabled' ? 'default' : avatarSettingsState.bodyWorkflowMethod,
+        outfit_style: 'casual',
+        posture: 'standing relaxed',
+        lighting: 'professional studio lighting',
+      }
+      await hybridBody.run(req)
+    } catch {
+      // Error captured in hook state
+    }
+  }, [isHeadshot, hybridBody, item.url, avatarSettingsState.bodyWorkflowMethod])
 
   // Equip handler — like clicking armor in an MMO inventory
   const handleEquip = useCallback((wardrobeItem: GalleryItem) => {
@@ -199,21 +252,36 @@ export function AvatarViewer({
     return SCENARIO_TAG_META.filter((t) => tagSet.has(t.id))
   }, [outfits])
 
-  // Presets filtered by NSFW mode
-  const presets = OUTFIT_PRESETS.filter(
-    (p) => p.category === 'sfw' || nsfwMode,
-  )
+  // Presets filtered by tab + NSFW mode
+  const presets = OUTFIT_PRESETS.filter((p) => {
+    if (p.category === 'nsfw' && !nsfwMode) return false
+    const group = p.group || (p.category === 'sfw' ? 'standard' : 'romance')
+    return group === outfitTab
+  })
 
   const effectivePrompt = (() => {
-    if (customPrompt.trim()) return customPrompt.trim()
-    if (selectedPreset) {
+    let base = ''
+    if (customPrompt.trim()) {
+      base = customPrompt.trim()
+    } else if (selectedPreset) {
       const preset = presets.find((p) => p.id === selectedPreset)
-      return preset?.prompt || ''
+      base = preset?.prompt || ''
     }
-    return ''
+    if (!base) return ''
+    // Append advanced options to the prompt
+    const extras: string[] = []
+    if (outfitPrimaryColor) extras.push(`${outfitPrimaryColor} colored outfit`)
+    if (outfitSecondaryColor) extras.push(`${outfitSecondaryColor} accents`)
+    if (selectedAccessories.length > 0) {
+      const accPrompts = selectedAccessories
+        .map((id) => ACCESSORY_OPTIONS.find((a) => a.id === id)?.prompt)
+        .filter(Boolean)
+      extras.push(...accPrompts as string[])
+    }
+    return extras.length > 0 ? `${base}, ${extras.join(', ')}` : base
   })()
 
-  const canGenerateOutfit = !outfit.loading && effectivePrompt.length > 0
+  const canGenerateOutfit = !outfit.loading && effectivePrompt.length > 0 && !isHeadshot
 
   // ---- Actions ----
   const handleCopySeed = useCallback(() => {
@@ -575,7 +643,7 @@ export function AvatarViewer({
                 {stageTab === 'anchor' ? (
                   <>
                     {onSaveAsPersonaAvatar && !item.personaProjectId && (
-                      <button onClick={() => onSaveAsPersonaAvatar(item)} className="p-1.5 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.06] text-emerald-300 hover:bg-emerald-500/10 transition-all" title="Save as Persona">
+                      <button onClick={() => onSaveAsPersonaAvatar(item)} className="p-1.5 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.06] text-emerald-300 hover:bg-emerald-500/10 transition-all" title="Export to Persona">
                         <UserPlus size={13} />
                       </button>
                     )}
@@ -653,11 +721,179 @@ export function AvatarViewer({
                 </div>
               </div>
 
-              {/* 1. Choose a Scenario — Badge Grid */}
+              {/* Headshot — expand to half-body or warning */}
+              {isHeadshot && (
+                <div className="space-y-3">
+                  {/* Info + Expand button */}
+                  <div className="px-3 py-3 rounded-xl bg-amber-500/[0.06] border border-amber-500/15">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle size={14} className="text-amber-400 mt-0.5 shrink-0" />
+                      <div className="flex-1">
+                        <div className="text-[11px] text-amber-200 font-medium">Headshot — outfit generation unavailable</div>
+                        <div className="text-[10px] text-amber-400/60 mt-0.5">
+                          Close-up headshots have no visible body. Expand to a half-body portrait to unlock outfit generation.
+                        </div>
+                      </div>
+                    </div>
+                    {hybridAvailable === null ? (
+                      <div className="flex items-center gap-2 mt-2.5 text-[10px] text-white/30">
+                        <Loader2 size={12} className="animate-spin" />
+                        Checking pipeline availability...
+                      </div>
+                    ) : hybridAvailable ? (
+                      <button
+                        onClick={handleExpandToHalfBody}
+                        disabled={hybridBody.loading}
+                        className={[
+                          'mt-2.5 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold transition-all',
+                          hybridBody.loading
+                            ? 'bg-white/[0.04] text-white/30 cursor-wait'
+                            : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-500/15 hover:shadow-emerald-500/25 hover:brightness-110 active:scale-[0.99]',
+                        ].join(' ')}
+                      >
+                        {hybridBody.loading ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Expanding to half-body...
+                          </>
+                        ) : (
+                          <>
+                            <Expand size={14} />
+                            Expand to Half-Body Portrait
+                          </>
+                        )}
+                      </button>
+                    ) : (
+                      <div className="text-[10px] text-white/25 mt-2 italic">
+                        Half-body expansion requires ComfyUI + Identity models (InstantID). Check Avatar Settings.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Hybrid body error */}
+                  {hybridBody.error && (
+                    <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-500/[0.08] border border-red-500/15 text-red-300 text-xs">
+                      <AlertTriangle size={14} />
+                      <span>{hybridBody.error}</span>
+                    </div>
+                  )}
+
+                  {/* Expand results grid */}
+                  {hybridBody.result?.results && hybridBody.result.results.length > 0 && (
+                    <div>
+                      <div className="text-[10px] text-white/40 mb-2 font-semibold uppercase tracking-wider">
+                        Half-Body Results — select to save
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {hybridBody.result.results.map((r, i) => {
+                          const imgUrl = resolveUrl(r.url, backendUrl)
+                          return (
+                            <div
+                              key={i}
+                              className="group relative rounded-xl overflow-hidden border border-white/10 bg-white/[0.02] hover:border-emerald-500/30 transition-all cursor-pointer"
+                              onClick={() => onOpenLightbox?.(imgUrl)}
+                            >
+                              <div className="aspect-[2/3] bg-white/[0.03]">
+                                <img
+                                  src={imgUrl}
+                                  alt={`Half-body ${i + 1}`}
+                                  className="w-full h-full object-cover"
+                                  loading="lazy"
+                                />
+                              </div>
+                              {/* Hover actions */}
+                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                {onSendToEdit && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); onSendToEdit(imgUrl) }}
+                                    className="p-2 bg-purple-500/30 backdrop-blur-md rounded-lg text-purple-200 hover:bg-purple-500/50 transition-colors"
+                                    title="Edit"
+                                  >
+                                    <PenLine size={14} />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    const a = document.createElement('a')
+                                    a.href = imgUrl
+                                    a.download = `halfbody_${r.seed ?? i}.png`
+                                    a.click()
+                                  }}
+                                  className="p-2 bg-white/10 backdrop-blur-md rounded-lg text-white hover:bg-white/20 transition-colors"
+                                  title="Download"
+                                >
+                                  <Download size={14} />
+                                </button>
+                              </div>
+                              {/* Seed label */}
+                              <div className="px-2 py-1.5 text-[10px] text-white/30 font-mono">
+                                seed {r.seed ?? '---'}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {/* Warnings from hybrid pipeline */}
+                      {hybridBody.result.warnings && hybridBody.result.warnings.length > 0 && (
+                        <div className="flex items-start gap-2 px-3 py-2 mt-2 rounded-lg bg-amber-500/[0.06] border border-amber-500/15 text-amber-400 text-[10px]">
+                          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                          <div>{hybridBody.result.warnings.join(' ')}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Loading skeleton for expand */}
+                  {hybridBody.loading && !hybridBody.result?.results?.length && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {[0, 1].map((i) => (
+                        <div key={i} className="rounded-xl overflow-hidden border border-white/8 bg-white/[0.02]">
+                          <div className="aspect-[2/3] bg-white/[0.03] animate-pulse flex items-center justify-center">
+                            <Loader2 size={20} className="animate-spin text-white/10" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ═══ Outfit Tabs ═══ */}
               <div>
                 <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
-                  1. Choose a Scenario
+                  Outfit Style
                 </div>
+
+                {/* Tab bar */}
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06] mb-3">
+                  {([
+                    { id: 'standard' as const, label: 'Standard' },
+                    { id: 'romance' as const, label: 'Romance & Roleplay' },
+                    ...(nsfwMode ? [{ id: '18+' as const, label: '18+' }] : []),
+                  ]).map((tab) => {
+                    const active = outfitTab === tab.id
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => {
+                          setOutfitTab(tab.id)
+                          setSelectedPreset(null)
+                        }}
+                        className={[
+                          'flex-1 px-2.5 py-2 rounded-lg text-[10px] font-medium transition-all',
+                          active
+                            ? 'bg-white/10 text-white border border-white/15 shadow-sm'
+                            : 'text-white/35 hover:text-white/55 hover:bg-white/[0.04] border border-transparent',
+                        ].join(' ')}
+                      >
+                        {tab.label}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Preset badge grid */}
                 <div className="grid grid-cols-2 gap-2">
                   {presets.map((p) => {
                     const tagMeta = SCENARIO_TAG_META.find((t) => t.id === p.id)
@@ -684,10 +920,94 @@ export function AvatarViewer({
                 </div>
               </div>
 
-              {/* 2. Or Custom Outfit Prompt */}
+              {/* ═══ Advanced Options (collapsible) ═══ */}
+              <div>
+                <button
+                  onClick={() => setShowAdvancedOutfit(!showAdvancedOutfit)}
+                  className="flex items-center gap-2 w-full text-[10px] text-white/30 hover:text-white/50 font-semibold uppercase tracking-wider transition-colors"
+                >
+                  <ChevronDown size={12} className={`transition-transform ${showAdvancedOutfit ? 'rotate-0' : '-rotate-90'}`} />
+                  Advanced Options
+                </button>
+
+                {showAdvancedOutfit && (
+                  <div className="mt-3 space-y-4">
+                    {/* Primary Color */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-2 font-medium">Primary Color</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {['black', 'white', 'red', 'navy', 'burgundy', 'emerald', 'gold', 'blush'].map((c) => (
+                          <button
+                            key={c}
+                            onClick={() => setOutfitPrimaryColor(outfitPrimaryColor === c ? null : c)}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all capitalize',
+                              outfitPrimaryColor === c
+                                ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Secondary Color */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-2 font-medium">Secondary Color</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {['black', 'white', 'silver', 'gold', 'cream', 'charcoal'].map((c) => (
+                          <button
+                            key={c}
+                            onClick={() => setOutfitSecondaryColor(outfitSecondaryColor === c ? null : c)}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all capitalize',
+                              outfitSecondaryColor === c
+                                ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Accessories */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-2 font-medium">Accessories</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {ACCESSORY_OPTIONS.map((a) => {
+                          const active = selectedAccessories.includes(a.id)
+                          return (
+                            <button
+                              key={a.id}
+                              onClick={() => setSelectedAccessories((prev) =>
+                                active ? prev.filter((x) => x !== a.id) : [...prev, a.id],
+                              )}
+                              className={[
+                                'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                                active
+                                  ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
+                                  : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                              ].join(' ')}
+                            >
+                              <span>{a.icon}</span>
+                              <span>{a.label}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ═══ Custom Outfit Prompt ═══ */}
               <div>
                 <div className="text-[10px] text-white/40 mb-2 font-semibold uppercase tracking-wider">
-                  2. Or Custom Outfit Prompt
+                  Or Custom Outfit
                 </div>
                 <div className={[
                   'flex items-center gap-2 px-3.5 py-2.5 rounded-xl border transition-all',

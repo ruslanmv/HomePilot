@@ -200,7 +200,7 @@ function GalleryThumbnail({
         )}
 
         {/* Hover overlay */}
-        <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col items-center justify-center gap-1.5 p-1.5">
+        <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col items-start justify-center gap-1.5 p-1.5">
           <div className="flex items-center gap-1">
             {onOpenLightbox && (
               <button
@@ -248,7 +248,7 @@ function GalleryThumbnail({
               <button
                 onClick={(e) => { e.stopPropagation(); onSaveAsPersonaAvatar(item) }}
                 className="p-1.5 bg-emerald-500/20 rounded-md text-emerald-200 hover:bg-emerald-500/40 transition-colors"
-                title="Save as Persona Avatar"
+                title="Export to Persona"
               >
                 <UserPlus size={12} />
               </button>

@@ -127,7 +127,7 @@ export function SaveAsPersonaModal({
               <User size={18} className="text-white" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">Save as Persona Avatar</h3>
+              <h3 className="text-sm font-semibold text-white">Export to Persona</h3>
               <p className="text-[10px] text-white/40 mt-0.5">Create a persona with this avatar</p>
             </div>
           </div>

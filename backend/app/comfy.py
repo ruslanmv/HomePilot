@@ -108,14 +108,44 @@ _NODE_PACKAGE_HINTS: Dict[str, str] = {
 }
 
 
+def get_available_controlnets() -> list[str]:
+    """Return the list of ControlNet model names available in ComfyUI.
+
+    Queries ``/object_info`` and extracts the valid values from the
+    ``ControlNetLoader`` node's ``control_net_name`` input.
+    """
+    info = _fetch_object_info()
+    cn_loader = info.get("ControlNetLoader", {})
+    input_spec = cn_loader.get("input", {})
+    # ComfyUI nests required inputs: {"required": {"control_net_name": [["a.safetensors", "b.safetensors"]]}}
+    required = input_spec.get("required", {})
+    cn_input = required.get("control_net_name", [])
+    if cn_input and isinstance(cn_input, list) and isinstance(cn_input[0], list):
+        return list(cn_input[0])
+    return []
+
+
+def openpose_available() -> bool:
+    """Check whether an SDXL-compatible OpenPose ControlNet is installed.
+
+    Looks for any ControlNet model name containing ``openpose`` (case-insensitive)
+    in the list of available ControlNet models reported by ComfyUI.
+    """
+    for name in get_available_controlnets():
+        if "openpose" in name.lower():
+            return True
+    return False
+
+
 def _check_controlnet_architecture(workflow_name: str, prompt_graph: Dict[str, Any]) -> None:
     """
-    Detect SDXL-only ControlNet models paired with SD1.5 checkpoints.
+    Detect ControlNet/checkpoint architecture mismatches.
 
-    The InstantID ControlNet (``diffusion_pytorch_model.safetensors``) is
-    SDXL-only.  When used with an SD1.5 checkpoint, ComfyUI crashes with
-    ``ValueError: y is None`` because the cross-attention dimensions don't
-    match.  This guard catches the mismatch early with a clear message.
+    Checks two directions:
+      1. SDXL-only ControlNets (e.g. InstantID) paired with SD1.5 checkpoints.
+      2. SD1.5-only ControlNets (e.g. control_v11p_sd15_*) paired with SDXL checkpoints.
+
+    Both cause dimension mismatch errors at runtime.
     """
     # ControlNet model filenames that are SDXL-only
     _SDXL_ONLY_CONTROLNETS = {
@@ -146,8 +176,8 @@ def _check_controlnet_architecture(workflow_name: str, prompt_graph: Dict[str, A
     # Determine checkpoint architecture
     arch = get_architecture(ckpt_name)
 
-    # Check for SDXL-only ControlNets with non-SDXL checkpoints
     for cn in controlnet_names:
+        # Check for SDXL-only ControlNets with SD1.5 checkpoints
         if cn in _SDXL_ONLY_CONTROLNETS and arch == "sd15":
             raise RuntimeError(
                 f"Architecture mismatch in workflow '{workflow_name}': "
@@ -159,6 +189,19 @@ def _check_controlnet_architecture(workflow_name: str, prompt_graph: Dict[str, A
                 "Fix: Use an SDXL checkpoint (e.g. sd_xl_base_1.0.safetensors) "
                 "or switch to a non-identity workflow for SD1.5 models."
             )
+
+        # Check for SD1.5-only ControlNets with SDXL checkpoints
+        cn_lower = cn.lower()
+        if "sd15" in cn_lower or "sd1.5" in cn_lower or "control_v11p_sd15" in cn_lower:
+            if arch == "sdxl":
+                raise RuntimeError(
+                    f"Architecture mismatch in workflow '{workflow_name}': "
+                    f"ControlNet '{cn}' is SD1.5-only but checkpoint "
+                    f"'{ckpt_name}' is SDXL architecture.\n\n"
+                    "SD1.5 ControlNets are incompatible with SDXL checkpoints "
+                    "due to different tensor dimensions.\n\n"
+                    "Fix: Use an SDXL-compatible ControlNet or switch to an SD1.5 checkpoint."
+                )
 
 
 def validate_workflow_nodes(workflow_name: str, prompt_graph: Dict[str, Any]) -> None:
