@@ -44,6 +44,10 @@ class OutfitRequest(BaseModel):
     character_prompt: Optional[str] = Field(
         None, description="Face/body/hair description override"
     )
+    negative_prompt: Optional[str] = Field(
+        None,
+        description="Combined negative prompt (framing + style negatives from preset)",
+    )
     count: int = Field(4, ge=1, le=8)
     seed: Optional[int] = None
     generation_mode: str = Field(
@@ -84,11 +88,14 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     allowed = enabled_modes()
     warnings: List[str] = []
 
-    # Build the combined prompt — outfit description first for maximum influence
+    # Build the combined prompt — outfit description first for maximum influence.
+    # IMPORTANT: Strip clothing/outfit tokens from character_prompt so the
+    # original outfit doesn't compete with the new outfit_prompt.  Keep only
+    # face, body, hair, and quality descriptors for identity consistency.
     parts = []
     parts.append(req.outfit_prompt)
     if req.character_prompt:
-        parts.append(req.character_prompt)
+        parts.append(_strip_outfit_tokens(req.character_prompt))
     parts.append("elegant lighting, realistic, sharp focus")
     combined_prompt = ", ".join(parts)
 
@@ -116,6 +123,20 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     # Default img2img denoise (0.65) is too conservative for outfit changes.
     outfit_denoise = 0.85
 
+    # Build the final negative prompt by combining:
+    #   1. Workflow baseline (quality/artifact prevention)
+    #   2. Frontend-supplied negatives (framing + style preset hints)
+    # This prevents wrong clothing/nudity while preserving scene coherence.
+    baseline_negative = (
+        "lowres, blurry, bad anatomy, deformed, extra fingers, "
+        "missing fingers, bad hands, disfigured face, watermark, text, "
+        "multiple people, duplicate, clone"
+    )
+    if req.negative_prompt:
+        final_negative = f"{baseline_negative}, {req.negative_prompt}"
+    else:
+        final_negative = baseline_negative
+
     try:
         results = await run_avatar_workflow(
             comfyui_base_url=CFG.comfyui_url,
@@ -126,6 +147,7 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
             seed=seeds[0] if seeds else None,
             checkpoint_override=req.checkpoint_override,
             denoise_override=outfit_denoise,
+            negative_prompt=final_negative,
         )
         return OutfitResponse(results=results, warnings=warnings)
     except ComfyUIUnavailable as exc:
@@ -134,6 +156,45 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
         raise HTTPException(
             500, f"Outfit generation failed: {exc}"
         ) from exc
+
+
+import re as _re
+
+# Phrases that describe clothing/outfit/setting — these compete with outfit_prompt
+# and must be removed from the character_prompt before combining.
+_OUTFIT_STRIP_PATTERNS: list[_re.Pattern[str]] = [
+    _re.compile(p, _re.IGNORECASE)
+    for p in [
+        # Generic outfit/clothing/fashion phrases
+        r"\b(?:wearing|dressed in|outfit|attire|wardrobe)\b[^,]*",
+        r"\b(?:stylish|contemporary|modern|smart|casual|elegant|executive)\s+(?:fashion|clothing|outfit|attire|look)\b[^,]*",
+        # Specific garment names
+        r"\b(?:blouse|shirt|top|skirt|mini skirt|pencil skirt|trousers|pants|dress|suit|blazer|jacket|coat|gown|heels|stockings|necklace|jewelry)\b[^,]*",
+        # Fashion style descriptors that anchor outfits
+        r"\b(?:fitted top|halter top|crop top|body-conscious|tailored|high-waisted)\b[^,]*",
+        r"\b(?:clean modern aesthetic|contemporary lifestyle fashion|smart modern chic)\b[^,]*",
+        # Scene/setting that should come from outfit preset instead
+        r"\b(?:office|boardroom|cafe setting|studio background|nightclub)\s+(?:setting|background|scene)\b[^,]*",
+    ]
+]
+
+
+def _strip_outfit_tokens(character_prompt: str) -> str:
+    """Remove clothing/outfit/setting phrases from a character prompt.
+
+    Keeps face, body, hair, expression, lighting, and quality descriptors
+    so identity is preserved without the original outfit competing with the
+    new outfit_prompt.
+    """
+    result = character_prompt
+    for pat in _OUTFIT_STRIP_PATTERNS:
+        result = pat.sub("", result)
+    # Clean up leftover commas and whitespace
+    result = _re.sub(r",\s*,", ",", result)
+    result = _re.sub(r"^\s*,\s*", "", result)
+    result = _re.sub(r"\s*,\s*$", "", result)
+    result = _re.sub(r"\s{2,}", " ", result)
+    return result.strip()
 
 
 def _make_seeds(seed: int | None, count: int) -> List[int]:

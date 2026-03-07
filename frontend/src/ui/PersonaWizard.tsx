@@ -214,6 +214,8 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState<string | null>(null)
+  const [faceCount, setFaceCount] = useState(1)
+  const [showFaceCountPicker, setShowFaceCountPicker] = useState(false)
 
   // Global NSFW mode — determines which classes and options are visible
   const isSpicy = readNsfwMode()
@@ -383,7 +385,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
         apiKey,
         prompt: fullPrompt,
         imgModel: draft.persona_appearance.img_model,
-        imgBatchSize: 4,
+        imgBatchSize: faceCount,
         imgAspectRatio: draft.persona_appearance.aspect_ratio,
         imgPreset: draft.persona_appearance.img_preset,
         promptRefinement: true,
@@ -1054,30 +1056,55 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
                     {generationMode === 'identity' && (
                       <p className="text-[10px] text-emerald-300/50 px-1">
                         {selectedImageUrl
-                          ? 'Face preservation active. "Generate 4 more" will keep the same identity.'
+                          ? 'Face preservation active. Generating more will keep the same identity.'
                           : 'Pick an avatar below to lock identity. First batch uses standard generation.'}
                       </p>
                     )}
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={onGenerateSet}
-                    disabled={generating}
-                    className="w-full px-6 py-3 bg-purple-500 hover:bg-purple-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
-                  >
-                    {generating ? (
-                      <>
-                        <Loader2 size={16} className="animate-spin" />
-                        Generating 4 looks...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles size={16} />
-                        {allImages.length > 0 ? 'Generate 4 more' : 'Generate 4 looks'}
-                      </>
+                  <div className="relative flex items-center gap-0">
+                    <button
+                      type="button"
+                      onClick={onGenerateSet}
+                      disabled={generating}
+                      className="flex-1 px-6 py-3 bg-purple-500 hover:bg-purple-600 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-l-xl transition-all flex items-center justify-center gap-2"
+                    >
+                      {generating ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Generating {faceCount} {faceCount === 1 ? 'look' : 'looks'}...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={16} />
+                          {allImages.length > 0 ? `Generate ${faceCount} more` : `Generate ${faceCount} ${faceCount === 1 ? 'look' : 'looks'}`}
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowFaceCountPicker(!showFaceCountPicker)}
+                      disabled={generating}
+                      className="px-3 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-r-xl border-l border-purple-400/30 transition-all"
+                      title="Change number of faces to generate"
+                    >
+                      ({faceCount})
+                    </button>
+                    {showFaceCountPicker && (
+                      <div className="absolute right-0 bottom-full mb-1 bg-gray-800 border border-white/10 rounded-lg shadow-xl z-50 flex flex-col overflow-hidden">
+                        {[1, 2, 3, 4].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => { setFaceCount(n); setShowFaceCountPicker(false) }}
+                            className={`px-4 py-2 text-sm text-white hover:bg-purple-500/40 transition-colors ${faceCount === n ? 'bg-purple-500/30 font-semibold' : ''}`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
                     )}
-                  </button>
+                  </div>
 
                   {genError && (
                     <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">

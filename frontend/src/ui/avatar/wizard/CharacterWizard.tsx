@@ -34,9 +34,10 @@ import {
   Plus,
   Settings,
   RotateCcw,
+  Search,
 } from 'lucide-react'
 
-import type { CharacterDraft, PresetOption } from './wizardTypes'
+import type { CharacterDraft, PresetOption, LingerieGarment, LingerieSelectionsMap } from './wizardTypes'
 import {
   DEFAULT_DRAFT,
   WIZARD_STEPS,
@@ -56,9 +57,16 @@ import {
   EXPRESSIONS,
   NSFW_POSES,
   NSFW_BACKGROUNDS,
+  LINGERIE_GARMENTS,
+  LINGERIE_STYLES,
+  LINGERIE_FABRICS,
+  LINGERIE_BRANDS,
+  LINGERIE_EXTRAS,
   findPreset,
 } from './wizardTypes'
 import { PROFESSIONS, getProfession } from './professionRegistry'
+import { loadVibeTab, saveVibeTab } from '../vibeTabPersistence'
+import type { VibeTab } from '../vibeTabPersistence'
 import { useGenerateAvatars } from '../useGenerateAvatars'
 import { useAvatarGallery } from '../useAvatarGallery'
 import { loadAvatarSettings, resolveCheckpoint } from '../AvatarSettingsPanel'
@@ -71,7 +79,7 @@ import {
   GENDER_OPTIONS,
   buildCharacterPrompt,
 } from '../galleryTypes'
-import type { CharacterGender } from '../galleryTypes'
+import type { CharacterGender, FramingType } from '../galleryTypes'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -101,6 +109,9 @@ function PillButton({ label, selected, onClick, icon, accent = 'purple' }: {
   }
   return (
     <button onClick={onClick}
+      role="option"
+      aria-selected={selected}
+      aria-label={label}
       className={[
         'px-3.5 py-2.5 rounded-xl text-xs font-medium transition-all border',
         selected ? colors[accent]
@@ -117,6 +128,9 @@ function ColorSwatch({ color, selected, onClick, label }: {
 }) {
   return (
     <button onClick={onClick} title={label}
+      role="option"
+      aria-selected={selected}
+      aria-label={label || color}
       className={[
         'w-7 h-7 rounded-full border-2 transition-all flex-shrink-0',
         selected
@@ -160,6 +174,24 @@ function AdvancedToggle({ open, onToggle }: { open: boolean; onToggle: () => voi
 }
 
 // ---------------------------------------------------------------------------
+// Step customization check — returns true if the user changed anything from defaults
+// ---------------------------------------------------------------------------
+
+function isStepCustomized(step: number, draft: CharacterDraft): boolean {
+  const d = DEFAULT_DRAFT
+  switch (step) {
+    case 0: return draft.gender !== d.gender || draft.ageRange !== d.ageRange || draft.name !== d.name
+    case 1: return draft.bodyType !== d.bodyType || draft.skinTone !== d.skinTone || draft.posture !== d.posture
+    case 2: return draft.facePreset !== d.facePreset || draft.eyeColor !== d.eyeColor || draft.expression !== d.expression
+    case 3: return draft.hairStyle !== d.hairStyle || draft.hairColor !== d.hairColor
+    case 4: return draft.professionId !== d.professionId
+    case 5: return draft.outfitStyle !== d.outfitStyle || draft.accessories.length > 0
+    case 6: return draft.portraitType !== d.portraitType || draft.background !== d.background
+    default: return false
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Prompt builder
 // ---------------------------------------------------------------------------
 
@@ -170,6 +202,7 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
   const framing: Record<string, string> = {
     headshot: 'headshot portrait, face closeup',
     half_body: 'upper body portrait, from waist up',
+    mid_body: 'mid-body portrait, from head to hips, upper body and hip area visible, frame ends at upper thighs',
     full_body: 'full body portrait',
   }
   parts.push(framing[d.portraitType] || framing.headshot)
@@ -194,6 +227,14 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
   const face = findPreset(FACE_PRESETS, d.facePreset)
   if (face) parts.push(face.prompt)
 
+  // Facial detail sliders (only add when notably different from default 50)
+  if (d.jawline >= 70) parts.push('strong defined jawline')
+  else if (d.jawline <= 30) parts.push('soft rounded jawline')
+  if (d.lips >= 70) parts.push('full prominent lips')
+  else if (d.lips <= 30) parts.push('thin delicate lips')
+  if (d.browDefinition >= 70) parts.push('strong defined eyebrows')
+  else if (d.browDefinition <= 30) parts.push('soft subtle eyebrows')
+
   // Eyes
   const eyeC = findPreset(EYE_COLORS, d.eyeColor)
   if (eyeC) parts.push(eyeC.prompt)
@@ -214,10 +255,59 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
   const outfit = findPreset([...OUTFIT_STYLES_SFW, ...OUTFIT_STYLES_NSFW], d.outfitStyle)
   if (outfit) parts.push(outfit.prompt)
 
-  // Colors
+  // Lingerie builder (additive — iterates over all active garments for multi-piece outfits)
+  if (d.outfitStyle === 'lingerie' || d.outfitStyle === 'boudoir_wear') {
+    const activeGarments = d.lingerieActiveGarments ?? (d.lingerieType ? [d.lingerieType as LingerieGarment] : [])
+    const selections = d.lingerieSelections ?? {}
+    for (const gId of activeGarments) {
+      const garment = LINGERIE_GARMENTS.find((g) => g.id === gId)
+      if (garment) parts.push(garment.prompt)
+      const sel = selections[gId]
+      if (sel?.style) {
+        const styles = LINGERIE_STYLES[gId]
+        const style = styles?.find((s) => s.id === sel.style)
+        if (style) parts.push(style.prompt)
+      }
+      if (sel?.fabric) {
+        const fabric = LINGERIE_FABRICS.find((f) => f.id === sel.fabric)
+        if (fabric) parts.push(fabric.prompt)
+      }
+      if (sel?.brand) {
+        const brand = LINGERIE_BRANDS.find((b) => b.id === sel.brand)
+        if (brand) parts.push(brand.prompt)
+      }
+    }
+    for (const extId of d.lingerieExtras ?? []) {
+      const ext = LINGERIE_EXTRAS.find((e) => e.id === extId)
+      if (ext) parts.push(ext.prompt)
+    }
+  }
+
+  // Profession context (influences scene/outfit/pose)
+  const prof = getProfession(d.professionId)
+  if (prof && prof.id !== 'custom') parts.push(prof.label)
+
+  // Colors — bind to specific garment pieces when lingerie multi-piece is active
   const primC = findPreset(COLOR_PALETTE, d.outfitPrimaryColor)
   const secC = findPreset(COLOR_PALETTE, d.outfitSecondaryColor)
-  if (primC && secC) parts.push(`${primC.prompt} and ${secC.prompt} color scheme`)
+  const isLingerie = d.outfitStyle === 'lingerie' || d.outfitStyle === 'boudoir_wear'
+  const activeGarmentsForColor = d.lingerieActiveGarments ?? (d.lingerieType ? [d.lingerieType as LingerieGarment] : [])
+  const hasTopPiece = isLingerie && activeGarmentsForColor.includes('top')
+  const hasBottomPiece = isLingerie && activeGarmentsForColor.includes('bottom')
+  if (hasTopPiece && hasBottomPiece && primC && secC) {
+    // Primary → top piece, Secondary → bottom piece
+    parts.push(`${primC.prompt} colored top`)
+    parts.push(`${secC.prompt} colored bottom`)
+  } else if (hasTopPiece && hasBottomPiece && primC) {
+    parts.push(`${primC.prompt} colored top`)
+  } else if (hasTopPiece && hasBottomPiece && secC) {
+    parts.push(`${secC.prompt} colored bottom`)
+  } else {
+    // Generic outfit coloring (non-lingerie, or single-piece/set)
+    if (primC && secC) parts.push(`${primC.prompt} and ${secC.prompt} color scheme`)
+    else if (primC) parts.push(`${primC.prompt} colored outfit`)
+    else if (secC) parts.push(`${secC.prompt} accents`)
+  }
 
   // Accessories
   for (const accId of d.accessories) {
@@ -246,8 +336,11 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
   // NSFW modifiers (gated)
   if (nsfwEnabled && d.nsfwExposure) {
     const nsfwMap: Record<string, string> = {
-      mild: 'suggestive pose, revealing outfit, tastefully showing skin, sensual',
-      suggestive: 'partial nudity, topless, exposed skin, provocative sensual pose, alluring',
+      suggestive: 'suggestive pose, revealing outfit, tastefully showing skin, sensual',
+      clothed_revealing: 'clothed but revealing, deep neckline, exposed skin, alluring',
+      partial_nudity: 'partial nudity, exposed skin, provocative sensual pose, alluring',
+      topless: 'topless, implied nude, exposed upper body, sensual artistic pose',
+      full_nude: 'fully nude, naked body, sensual erotic pose, artistic nude',
       explicit: 'fully nude, explicit adult content, naked body, sensual erotic pose, anatomically detailed',
     }
     parts.push(nsfwMap[d.nsfwExposure] || '')
@@ -257,10 +350,14 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
     if (intensity >= 8) parts.push('extremely sensual, raw, uninhibited')
     else if (intensity >= 5) parts.push('sensual, inviting')
 
-    // Pose variation
+    // Pose — unified: quick-pick categories or specific NSFW pose presets
     if (d.nsfwPose === 'subtle') parts.push('subtle teasing pose, coy expression')
-    if (d.nsfwPose === 'confident') parts.push('confident provocative display, bold body language')
-    if (d.nsfwPose === 'intimate') parts.push('intimate close pose, bedroom eyes, inviting')
+    else if (d.nsfwPose === 'confident') parts.push('confident provocative display, bold body language')
+    else if (d.nsfwPose === 'intimate') parts.push('intimate close pose, bedroom eyes, inviting')
+    else if (d.nsfwPose) {
+      const posePreset = findPreset(NSFW_POSES, d.nsfwPose)
+      if (posePreset) parts.push(posePreset.prompt)
+    }
 
     // Fantasy tone
     if (d.nsfwFantasyTone === 'romantic') parts.push('romantic tender mood, soft warm tones')
@@ -269,12 +366,14 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
 
     // Dominance
     if (d.nsfwDominanceStyle === 'soft') parts.push('gentle submissive energy, yielding')
+    if (d.nsfwDominanceStyle === 'balanced') parts.push('balanced confident energy, natural relaxed poise')
     if (d.nsfwDominanceStyle === 'strong') parts.push('dominant commanding presence, powerful stance, in control')
   }
 
-  // Quality
+  // Quality + detail level
   const realismWord = d.realism > 70 ? 'photorealistic' : d.realism > 40 ? 'semi-realistic' : 'stylized'
-  parts.push(`${realismWord}, highly detailed, 8k resolution`)
+  const detailWord = d.detailLevel > 75 ? 'extremely detailed, intricate textures' : d.detailLevel > 50 ? 'highly detailed' : d.detailLevel > 25 ? 'moderate detail' : 'simplified, clean lines'
+  parts.push(`${realismWord}, ${detailWord}, 8k resolution`)
 
   return parts.filter(Boolean).join(', ')
 }
@@ -284,14 +383,42 @@ function buildPrompt(d: CharacterDraft, nsfwEnabled: boolean): string {
 // ---------------------------------------------------------------------------
 
 export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose, onSaveGeneration }: CharacterWizardProps) {
+  const DRAFT_STORAGE_KEY = 'homepilot_wizard_draft'
+  const STEP_STORAGE_KEY = 'homepilot_wizard_step'
+
+  // Restore draft + step from sessionStorage (survives refresh, cleared on tab close)
+  const loadSavedDraft = useCallback((): CharacterDraft => {
+    try {
+      const raw = sessionStorage.getItem(DRAFT_STORAGE_KEY)
+      if (raw) return { ...DEFAULT_DRAFT, ...JSON.parse(raw) }
+    } catch { /* ignore corrupt data */ }
+    return { ...DEFAULT_DRAFT }
+  }, [])
+  const loadSavedStep = useCallback((): number => {
+    try {
+      const raw = sessionStorage.getItem(STEP_STORAGE_KEY)
+      if (raw) { const n = Number(raw); if (n >= 0 && n <= 6) return n }
+    } catch { /* ignore */ }
+    return 0
+  }, [])
+
   const [wizardMode, setWizardMode] = useState<'quick' | 'studio'>('studio')
-  const [step, setStep] = useState(0)
-  const [draft, setDraft] = useState<CharacterDraft>({ ...DEFAULT_DRAFT })
+  const [step, setStep] = useState(loadSavedStep)
+  const [draft, setDraft] = useState<CharacterDraft>(loadSavedDraft)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [selectedResultIndex, setSelectedResultIndex] = useState<number | null>(null)
   const [showNsfw, setShowNsfw] = useState(false)
   const [showCountMenu, setShowCountMenu] = useState(false)
   const [count, setCount] = useState(4)
+  const [professionSearch, setProfessionSearch] = useState('')
+
+  // Persist draft + step to sessionStorage on every change
+  useEffect(() => {
+    try { sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft)) } catch { /* quota */ }
+  }, [draft])
+  useEffect(() => {
+    try { sessionStorage.setItem(STEP_STORAGE_KEY, String(step)) } catch { /* quota */ }
+  }, [step])
 
   // Toast
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' | 'info' } | null>(null)
@@ -328,13 +455,14 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
     }
   }, [readNsfw])
 
-  // Standard / Spicy tab (for Step 6 outfit + Step 7 vibe selection)
-  const [vibeTab, setVibeTab] = useState<'standard' | 'spicy'>('standard')
+  // Standard / Spicy tab (for Step 6 outfit + Step 7 vibe selection) — persisted
+  const [vibeTab, _setVibeTab] = useState<VibeTab>(loadVibeTab)
+  const setVibeTab = useCallback((tab: VibeTab) => { _setVibeTab(tab); saveVibeTab(tab) }, [])
 
   // Reset to standard tab if NSFW gets disabled mid-session
   useEffect(() => {
-    if (!nsfwEnabled) setVibeTab('standard')
-  }, [nsfwEnabled])
+    if (!nsfwEnabled && vibeTab === 'spicy') setVibeTab('standard')
+  }, [nsfwEnabled, vibeTab, setVibeTab])
 
   // Hooks
   const gen = useGenerateAvatars(backendUrl, apiKey)
@@ -391,9 +519,9 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
       realism: 40 + Math.floor(Math.random() * 50),
       // NSFW-specific parameters (only meaningful when spicy)
       ...(isSpicyMode ? {
-        nsfwExposure: pick(['mild', 'suggestive', 'explicit'] as const),
+        nsfwExposure: pick(['suggestive', 'clothed_revealing', 'partial_nudity', 'topless', 'full_nude', 'explicit'] as const),
         nsfwIntensity: 2 + Math.floor(Math.random() * 8),
-        nsfwPose: pick(['subtle', 'confident', 'intimate'] as const),
+        nsfwPose: pick(['subtle', 'confident', 'intimate', 'seductive_lean', 'lying_down', 'back_arch', 'kneeling', 'over_shoulder', 'hands_above_head'] as const),
         nsfwDominanceStyle: pick(['soft', 'balanced', 'strong'] as const),
         nsfwFantasyTone: pick(['romantic', 'seductive', 'dramatic'] as const),
       } : {
@@ -483,7 +611,9 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
   const checkpoint = resolveCheckpoint(avatarSettings, globalModelImages)
 
   const onGenerate = useCallback(async () => {
-    const apiMode = draft.generationMode === 'studio_random' ? 'creative' : draft.generationMode
+    // Send the real mode to the backend — it routes studio_random to the
+    // avatar-service (StyleGAN) and other modes to ComfyUI automatically.
+    const apiMode = draft.generationMode
     try {
       const result = await gen.run({
         mode: apiMode as AvatarMode,
@@ -547,12 +677,15 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
       responseStyle: draft.responseStyle,
       gender: draft.gender,
       ageRange: draft.ageRange,
+      outfitStyle: draft.outfitStyle,
     }
 
     if (onSaveGeneration) {
       onSaveGeneration(chosen, portraits, draft.generationMode as AvatarMode, prompt, draft.referenceUrl, isSpicy, wizardMeta)
     } else {
-      gallery.addAnchorWithPortraits(chosen, portraits, draft.generationMode as AvatarMode, prompt, draft.referenceUrl, { nsfw: isSpicy || undefined, wizardMeta })
+      const framingType: FramingType = draft.portraitType === 'headshot' ? 'headshot'
+        : draft.portraitType === 'mid_body' ? 'mid_body' : 'half_body'
+      gallery.addAnchorWithPortraits(chosen, portraits, draft.generationMode as AvatarMode, prompt, draft.referenceUrl, { nsfw: isSpicy || undefined, wizardMeta, framingType })
     }
 
     const portraitCount = portraits.length
@@ -562,6 +695,8 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
         : 'Avatar created!',
       'success',
     )
+    // Clear session draft — wizard is complete
+    try { sessionStorage.removeItem(DRAFT_STORAGE_KEY); sessionStorage.removeItem(STEP_STORAGE_KEY) } catch { /* */ }
     onClose()
   }, [selectedResultIndex, gen.result, draft, prompt, isSpicy, gallery, onSaveGeneration, onClose, showToast])
 
@@ -735,16 +870,38 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
       // STEP 4 — PROFESSION
       // =====================================================================
       case 4: {
+        const q = professionSearch.toLowerCase().trim()
+        const filteredProfs = q
+          ? PROFESSIONS.filter((p) => p.label.toLowerCase().includes(q) || p.description.toLowerCase().includes(q) || p.category.toLowerCase().includes(q))
+          : PROFESSIONS
         return (
           <div className="space-y-6">
             <SectionLabel>Choose a Profession</SectionLabel>
             <p className="text-[10px] text-white/25 -mt-3">Profession influences outfit style, pose, and scene context</p>
-            <div className="space-y-2">
-              {PROFESSIONS.map((p) => {
+
+            {/* Search / filter */}
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/25" />
+              <input
+                type="text"
+                value={professionSearch}
+                onChange={(e) => setProfessionSearch(e.target.value)}
+                placeholder="Search professions..."
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white/70 placeholder-white/25 outline-none focus:border-purple-500/30 transition-colors"
+              />
+            </div>
+
+            <div className="space-y-2" role="listbox" aria-label="Profession list">
+              {filteredProfs.length === 0 && (
+                <p className="text-[10px] text-white/25 text-center py-4">No professions match &ldquo;{professionSearch}&rdquo;</p>
+              )}
+              {filteredProfs.map((p) => {
                 const active = draft.professionId === p.id
                 return (
                   <button key={p.id}
-                    onClick={() => applyProfession(p.id)}
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => { applyProfession(p.id); setProfessionSearch('') }}
                     className={[
                       'w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-all',
                       active
@@ -813,6 +970,181 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
               ))}
             </div>
 
+            {/* ── Lingerie Builder — only when lingerie/boudoir_wear is selected ── */}
+            {(draft.outfitStyle === 'lingerie' || draft.outfitStyle === 'boudoir_wear') && (() => {
+              const activeGarments = draft.lingerieActiveGarments ?? []
+              const selections: LingerieSelectionsMap = draft.lingerieSelections ?? {}
+              const viewingGarment = draft.lingerieType as LingerieGarment | null
+              const currentSel = viewingGarment ? (selections[viewingGarment] ?? {}) : {}
+              return (
+              <div className="space-y-4 p-4 rounded-xl bg-rose-500/[0.03] border border-rose-500/10">
+                {/* Garment Type — multi-select, click toggles active, also sets viewing */}
+                <div>
+                  <SectionLabel>Garment Type</SectionLabel>
+                  <div className="text-[9px] text-white/30 mb-2">Select one or more pieces. Click to toggle &amp; configure.</div>
+                  <div className="flex flex-wrap gap-2">
+                    {LINGERIE_GARMENTS.map((g) => {
+                      const isActive = activeGarments.includes(g.id)
+                      const isViewing = viewingGarment === g.id
+                      return (
+                        <PillButton key={g.id}
+                          label={`${g.icon} ${g.label}${isActive && !isViewing ? ' ✓' : ''}`}
+                          selected={isViewing}
+                          accent="rose"
+                          onClick={() => {
+                            if (isViewing) {
+                              // Second click on viewing garment → deactivate it
+                              update({
+                                lingerieType: null,
+                                lingerieActiveGarments: activeGarments.filter((x) => x !== g.id),
+                              })
+                            } else if (isActive) {
+                              // Already active but not viewing → switch to view it
+                              update({ lingerieType: g.id as LingerieGarment })
+                            } else {
+                              // Not active → activate + view, preserve previous selections
+                              update({
+                                lingerieType: g.id as LingerieGarment,
+                                lingerieActiveGarments: [...activeGarments, g.id],
+                              })
+                            }
+                          }} />
+                      )
+                    })}
+                  </div>
+                  {/* Active garment summary chips */}
+                  {activeGarments.length > 1 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {activeGarments.map((gId) => {
+                        const g = LINGERIE_GARMENTS.find((x) => x.id === gId)
+                        const sel = selections[gId]
+                        const styleLabel = sel?.style && LINGERIE_STYLES[gId]?.find((s) => s.id === sel.style)?.label
+                        return (
+                          <span key={gId}
+                            className={[
+                              'text-[9px] px-2 py-0.5 rounded-full border cursor-pointer transition-all',
+                              viewingGarment === gId
+                                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                                : 'border-white/10 bg-white/5 text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                            onClick={() => update({ lingerieType: gId as LingerieGarment })}
+                          >
+                            {g?.icon} {g?.label}{styleLabel ? `: ${styleLabel}` : ''}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Style Picker — scoped to currently viewed garment */}
+                {viewingGarment && LINGERIE_STYLES[viewingGarment] && (
+                  <div>
+                    <SectionLabel>
+                      {viewingGarment === 'bottom' ? 'Panty Style' : viewingGarment === 'top' ? 'Bra Style' : viewingGarment === 'set' ? 'Set Style' : 'Bodysuit Style'}
+                    </SectionLabel>
+                    <div className="flex flex-wrap gap-2">
+                      {LINGERIE_STYLES[viewingGarment].map((s) => (
+                        <PillButton key={s.id}
+                          label={s.label}
+                          selected={currentSel.style === s.id}
+                          accent="rose"
+                          onClick={() => {
+                            const newSel = { ...currentSel, style: currentSel.style === s.id ? null : s.id }
+                            update({ lingerieSelections: { ...selections, [viewingGarment]: newSel } })
+                          }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Fabric — scoped to currently viewed garment */}
+                {viewingGarment && (
+                <div>
+                  <SectionLabel>Fabric</SectionLabel>
+                  <div className="flex flex-wrap gap-2">
+                    {LINGERIE_FABRICS.map((f) => (
+                      <PillButton key={f.id}
+                        label={f.label}
+                        selected={currentSel.fabric === f.id}
+                        accent="rose"
+                        onClick={() => {
+                          const newSel = { ...currentSel, fabric: currentSel.fabric === f.id ? null : f.id }
+                          update({ lingerieSelections: { ...selections, [viewingGarment]: newSel } })
+                        }} />
+                    ))}
+                  </div>
+                </div>
+                )}
+
+                {/* Brand Inspired — scoped to currently viewed garment */}
+                {viewingGarment && (
+                <div>
+                  <SectionLabel>Brand Inspired</SectionLabel>
+                  <div className="flex flex-wrap gap-2">
+                    {LINGERIE_BRANDS.map((b) => (
+                      <PillButton key={b.id}
+                        label={b.label}
+                        selected={currentSel.brand === b.id}
+                        accent="rose"
+                        onClick={() => {
+                          const newSel = { ...currentSel, brand: currentSel.brand === b.id ? null : b.id }
+                          update({ lingerieSelections: { ...selections, [viewingGarment]: newSel } })
+                        }} />
+                    ))}
+                  </div>
+                </div>
+                )}
+
+                {/* Lingerie Accessories — shared across all garments */}
+                <div>
+                  <SectionLabel>Lingerie Accessories</SectionLabel>
+                  <div className="flex flex-wrap gap-2">
+                    {LINGERIE_EXTRAS.map((e) => {
+                      const active = (draft.lingerieExtras ?? []).includes(e.id)
+                      return (
+                        <PillButton key={e.id}
+                          label={`${e.icon} ${e.label}`}
+                          selected={active}
+                          accent="rose"
+                          onClick={() => {
+                            const prev = draft.lingerieExtras ?? []
+                            update({ lingerieExtras: active ? prev.filter((x) => x !== e.id) : [...prev, e.id] })
+                          }} />
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Primary & Secondary Color — inside lingerie builder for piece coloring */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <SectionLabel>{activeGarments.includes('top') && activeGarments.includes('bottom') ? 'Top Color' : 'Primary Color'}</SectionLabel>
+                    <div className="flex flex-wrap gap-1.5">
+                      {COLOR_PALETTE.map((c) => (
+                        <ColorSwatch key={c.id} color={c.color!} label={c.label}
+                          selected={draft.outfitPrimaryColor === c.id}
+                          onClick={() => update({ outfitPrimaryColor: c.id })} />
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <SectionLabel>{activeGarments.includes('top') && activeGarments.includes('bottom') ? 'Bottom Color' : 'Secondary Color'}</SectionLabel>
+                    <div className="flex flex-wrap gap-1.5">
+                      {COLOR_PALETTE.map((c) => (
+                        <ColorSwatch key={c.id} color={c.color!} label={c.label}
+                          selected={draft.outfitSecondaryColor === c.id}
+                          onClick={() => update({ outfitSecondaryColor: c.id })} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              )
+            })()}
+
+            {/* Primary & Secondary Color — shown only when NOT lingerie (lingerie has its own colors above) */}
+            {draft.outfitStyle !== 'lingerie' && draft.outfitStyle !== 'boudoir_wear' && (
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <SectionLabel>Primary Color</SectionLabel>
@@ -835,21 +1167,36 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                 </div>
               </div>
             </div>
+            )}
 
-            <SectionLabel>Accessories</SectionLabel>
-            <div className="flex flex-wrap gap-2">
-              {ACCESSORIES.map((a) => {
-                const active = draft.accessories.includes(a.id)
-                return (
-                  <PillButton key={a.id} label={a.label}
-                    selected={active}
-                    onClick={() => {
-                      const next = active ? draft.accessories.filter((x) => x !== a.id) : [...draft.accessories, a.id]
-                      update({ accessories: next })
-                    }} />
-                )
-              })}
-            </div>
+            {/* Accessories — collapsible, hidden by default */}
+            <button
+              onClick={() => setAdvancedOpen(!advancedOpen)}
+              className="flex items-center gap-1.5 text-[10px] text-white/25 hover:text-white/45 font-medium uppercase tracking-wider transition-colors mt-2"
+            >
+              <ChevronDown size={10} className={`transition-transform ${advancedOpen ? 'rotate-0' : '-rotate-90'}`} />
+              Accessories
+              {draft.accessories.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[9px] font-bold">
+                  {draft.accessories.length}
+                </span>
+              )}
+            </button>
+            {advancedOpen && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {ACCESSORIES.map((a) => {
+                  const active = draft.accessories.includes(a.id)
+                  return (
+                    <PillButton key={a.id} label={a.label}
+                      selected={active}
+                      onClick={() => {
+                        const next = active ? draft.accessories.filter((x) => x !== a.id) : [...draft.accessories, a.id]
+                        update({ accessories: next })
+                      }} />
+                  )
+                })}
+              </div>
+            )}
 
             {/* ── NSFW customization (18+ gated) ── */}
             {nsfwEnabled && vibeTab === 'spicy' && (
@@ -860,14 +1207,17 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                 </div>
 
                 <div className="space-y-6">
-                  {/* Exposure Level — prominent 3-tier selector */}
+                  {/* Exposure Level — 6-tier granular selector */}
                   <div>
                     <div className="text-[10px] text-rose-400/70 font-semibold uppercase tracking-wider mb-3">Nudity / Exposure Level</div>
                     <div className="grid grid-cols-3 gap-2">
                       {([
-                        { id: 'mild' as const, label: 'Suggestive', desc: 'Clothed but revealing' },
-                        { id: 'suggestive' as const, label: 'Partial Nudity', desc: 'Topless / implied nude' },
-                        { id: 'explicit' as const, label: 'Full Nude', desc: 'Explicit adult content' },
+                        { id: 'suggestive' as const, label: 'Suggestive', desc: 'Tasteful hints' },
+                        { id: 'clothed_revealing' as const, label: 'Clothed Revealing', desc: 'Clothed but revealing' },
+                        { id: 'partial_nudity' as const, label: 'Partial Nudity', desc: 'Some exposed skin' },
+                        { id: 'topless' as const, label: 'Topless', desc: 'Topless / implied nude' },
+                        { id: 'full_nude' as const, label: 'Full Nude', desc: 'Artistic full nude' },
+                        { id: 'explicit' as const, label: 'Explicit', desc: 'Explicit adult content' },
                       ]).map((e) => (
                         <button key={e.id}
                           onClick={() => update({ nsfwExposure: e.id })}
@@ -889,23 +1239,19 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                   <SliderField label="Explicitness Intensity" value={draft.nsfwIntensity ?? 5} min={0} max={10}
                     onChange={(v) => update({ nsfwIntensity: v })} />
 
-                  {/* Sensual Pose — dedicated NSFW poses */}
+                  {/* Sensual Pose — unified flat grid of all 9 poses */}
                   <div>
                     <div className="text-[10px] text-rose-400/70 font-semibold uppercase tracking-wider mb-3">Sensual Pose</div>
                     <div className="grid grid-cols-3 gap-2">
-                      {(['subtle', 'confident', 'intimate'] as const).map((p) => (
-                        <PillButton key={p}
-                          label={p === 'subtle' ? 'Subtle Tease' : p === 'confident' ? 'Confident Display' : 'Intimate Close'}
-                          selected={draft.nsfwPose === p} accent="rose"
-                          onClick={() => update({ nsfwPose: p })} />
-                      ))}
-                    </div>
-                    {/* NSFW-specific pose presets */}
-                    <div className="grid grid-cols-3 gap-1.5 mt-2">
-                      {NSFW_POSES.map((p) => (
+                      {([
+                        { id: 'subtle' as const, label: 'Subtle Tease' },
+                        { id: 'confident' as const, label: 'Confident Display' },
+                        { id: 'intimate' as const, label: 'Intimate Close' },
+                        ...NSFW_POSES.map((p) => ({ id: p.id as typeof draft.nsfwPose & string, label: p.label })),
+                      ]).map((p) => (
                         <PillButton key={p.id} label={p.label}
-                          selected={draft.pose === p.id} accent="rose"
-                          onClick={() => update({ pose: p.id })} />
+                          selected={draft.nsfwPose === p.id} accent="rose"
+                          onClick={() => update({ nsfwPose: p.id as typeof draft.nsfwPose })} />
                       ))}
                     </div>
                   </div>
@@ -1112,10 +1458,12 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {vibes.map((v) => (
                     <button key={v.id}
-                      onClick={() => {/* vibe selection for reference modes */}}
+                      onClick={() => update({ outfitStyle: v.id })}
                       className={[
                         'flex items-center gap-2.5 px-3.5 py-3 rounded-xl text-left transition-all border',
-                        'border-white/[0.06] bg-white/[0.02] text-white/50 hover:bg-white/[0.04]',
+                        draft.outfitStyle === v.id
+                          ? 'border-purple-500/40 bg-purple-500/10 text-white ring-1 ring-purple-500/20'
+                          : 'border-white/[0.06] bg-white/[0.02] text-white/50 hover:bg-white/[0.04]',
                       ].join(' ')}
                     >
                       <span className="text-base leading-none">{v.icon}</span>
@@ -1128,10 +1476,10 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
 
             {/* ── Portrait / Pose / Background controls ── */}
             <SectionLabel>Portrait Type</SectionLabel>
-            <div className="flex gap-2">
-              {(['headshot', 'half_body', 'full_body'] as const).map((t) => (
+            <div className="flex gap-2 flex-wrap">
+              {(['headshot', 'half_body', 'mid_body', 'full_body'] as const).map((t) => (
                 <PillButton key={t}
-                  label={t === 'half_body' ? 'Half Body' : t === 'full_body' ? 'Full Body' : 'Headshot'}
+                  label={t === 'half_body' ? 'Half Body' : t === 'mid_body' ? 'Mid Body' : t === 'full_body' ? 'Full Body' : 'Headshot'}
                   selected={draft.portraitType === t}
                   onClick={() => update({ portraitType: t })} />
               ))}
@@ -1371,7 +1719,7 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
           ))}
         </div>
 
-        {/* Standard / Spicy tabs — only when NSFW globally enabled */}
+        {/* Standard / Romance & Roleplay / 18+ tabs — only when NSFW globally enabled */}
         {nsfwEnabled && (
           <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06] w-fit">
             <button onClick={() => setVibeTab('standard')}
@@ -1380,7 +1728,7 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                 vibeTab === 'standard' ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/60',
               ].join(' ')}
             >
-              <Star size={12} /> Standard
+              Standard
             </button>
             <button onClick={() => setVibeTab('spicy')}
               className={[
@@ -1391,7 +1739,16 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
               ].join(' ')}
             >
               <Flame size={12} /> Romance &amp; Roleplay
-              <span className="text-[8px] px-1 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">18+</span>
+            </button>
+            <button onClick={() => setVibeTab('spicy')}
+              className={[
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+                vibeTab === 'spicy'
+                  ? 'bg-gradient-to-r from-red-500/20 to-rose-500/20 text-red-300 border border-red-500/20 shadow-sm'
+                  : 'text-white/40 hover:text-red-300/60',
+              ].join(' ')}
+            >
+              18+
             </button>
           </div>
         )}
@@ -1434,7 +1791,7 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
           <button onClick={async () => {
             try {
               const result = await gen.run({
-                mode: 'creative',
+                mode: 'studio_random',
                 count: 4,
                 prompt: prompt || undefined,
                 truncation: 0.7,
@@ -1517,13 +1874,15 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
       ) : (
         <div className="flex-1 flex min-h-0">
           {/* ── Sidebar ── */}
-          <div className="w-48 flex-shrink-0 border-r border-white/[0.06] py-6 px-3 overflow-y-auto">
+          <nav className="w-48 flex-shrink-0 border-r border-white/[0.06] py-6 px-3 overflow-y-auto" aria-label="Wizard steps">
             {WIZARD_STEPS.map((s, i) => {
               const active = step === i
               const completed = i < step
               return (
                 <button key={s.key}
                   onClick={() => setStep(i as any)}
+                  aria-current={active ? 'step' : undefined}
+                  aria-label={`Step ${i + 1}: ${s.label}${completed ? ' (completed)' : ''}`}
                   className={[
                     'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-medium transition-all mb-1',
                     active
@@ -1540,7 +1899,10 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                   ].join(' ')}>
                     {completed ? <Check size={10} /> : i + 1}
                   </span>
-                  <span>{s.label}</span>
+                  <span className="flex-1 text-left">{s.label}</span>
+                  {!active && !completed && !isStepCustomized(i, draft) && i > 0 && (
+                    <span className="text-[8px] text-white/15 font-medium">default</span>
+                  )}
                 </button>
               )
             })}
@@ -1558,7 +1920,7 @@ export function CharacterWizard({ backendUrl, apiKey, globalModelImages, onClose
                 <RotateCcw size={10} /> Reset Defaults
               </button>
             </div>
-          </div>
+          </nav>
 
           {/* ── Main step content ── */}
           <div className="flex-1 overflow-y-auto min-h-0 px-8 py-6">

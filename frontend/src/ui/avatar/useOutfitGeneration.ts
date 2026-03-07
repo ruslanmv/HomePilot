@@ -16,6 +16,7 @@ export interface OutfitGenerateParams {
   referenceImageUrl: string
   outfitPrompt: string
   characterPrompt?: string
+  negativePrompt?: string
   count?: number
   seed?: number
   generationMode?: 'identity' | 'standard'
@@ -57,6 +58,7 @@ export function useOutfitGeneration(backendUrl: string, apiKey?: string) {
             reference_image_url: params.referenceImageUrl,
             outfit_prompt: params.outfitPrompt,
             character_prompt: params.characterPrompt,
+            negative_prompt: params.negativePrompt,
             count: params.count ?? 4,
             seed: params.seed,
             generation_mode: params.generationMode ?? 'identity',

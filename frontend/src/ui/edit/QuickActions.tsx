@@ -10,10 +10,11 @@
  * This component is additive and can be dropped into any page.
  */
 
-import React, { useState } from 'react'
-import { Loader2, Sparkles, Wand2, User, Maximize, Info } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Loader2, Sparkles, Wand2, User, Maximize, Info, AlertTriangle } from 'lucide-react'
 import { enhanceImage, EnhanceMode, ENHANCE_MODES } from '../enhance/enhanceApi'
 import { upscaleImage } from '../enhance/upscaleApi'
+import { checkCapability } from '../enhance/capabilitiesApi'
 
 export interface QuickActionsProps {
   /** Backend URL (e.g., http://localhost:8000) */
@@ -65,8 +66,33 @@ export function QuickActions({
   const [upscaleScale, setUpscaleScale] = useState<2 | 4>(2)
   const [showInfoTip, setShowInfoTip] = useState<string | null>(null)
 
+  // Capability check for Fix Faces — avoids blind 503 errors
+  const [facesAvailable, setFacesAvailable] = useState<boolean | null>(null) // null = checking
+  const [facesReason, setFacesReason] = useState<string | null>(null)
+  const [showFacesSetup, setShowFacesSetup] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    checkCapability(backendUrl, 'enhance_faces', apiKey)
+      .then((cap) => {
+        if (cancelled) return
+        setFacesAvailable(cap.available)
+        if (!cap.available) setFacesReason(cap.reason ?? 'Face restoration nodes not installed in ComfyUI')
+      })
+      .catch(() => {
+        if (!cancelled) setFacesAvailable(null) // unknown — let user try
+      })
+    return () => { cancelled = true }
+  }, [backendUrl, apiKey])
+
   const handleEnhance = async (mode: EnhanceMode) => {
     if (!imageUrl || loading || disabled) return
+
+    // If Fix Faces is unavailable, show setup instructions instead of hitting 503
+    if (mode === 'faces' && facesAvailable === false) {
+      setShowFacesSetup(true)
+      return
+    }
 
     setLoading(mode)
 
@@ -233,8 +259,13 @@ export function QuickActions({
                   {modeInfo.label}
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-white/10 text-white/40">1-click</span>
                 </div>
-                <div className="text-[10px] text-white/40 truncate">
-                  {modeInfo.description}
+                <div className="text-[10px] text-white/40 truncate flex items-center gap-1.5">
+                  {modeInfo.id === 'faces' && facesAvailable === false && (
+                    <AlertTriangle size={10} className="text-amber-400/70 flex-shrink-0" />
+                  )}
+                  {modeInfo.id === 'faces' && facesAvailable === false
+                    ? 'Setup required — click for instructions'
+                    : modeInfo.description}
                 </div>
               </div>
             </button>
@@ -349,6 +380,90 @@ export function QuickActions({
       <p className="text-[10px] text-white/30 leading-relaxed">
         One-click AI enhancement. Results are added to your version history.
       </p>
+
+      {/* Fix Faces setup guidance modal */}
+      {showFacesSetup && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/60" onClick={() => setShowFacesSetup(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowFacesSetup(false)}>
+            <div className="bg-[#1a1a1f] border border-white/10 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center">
+                  <AlertTriangle size={20} className="text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white/90">Fix Faces — Setup Required</h3>
+                  <p className="text-[11px] text-white/40">ComfyUI face restoration nodes are not installed</p>
+                </div>
+              </div>
+
+              <div className="bg-black/40 rounded-xl p-4 space-y-3 font-mono text-[11px] text-white/70 leading-relaxed">
+                <div className="text-white/40 text-[10px] uppercase tracking-wider font-sans font-semibold">If Impact-Pack is already installed:</div>
+                <div>
+                  <span className="text-amber-400/70"># Restart ComfyUI so it registers the new nodes</span><br />
+                  <span className="text-white/50">Then click <strong className="text-purple-300">Re-check</strong> below</span>
+                </div>
+                <div className="border-t border-white/10 pt-3">
+                  <div className="text-white/40 text-[10px] uppercase tracking-wider font-sans font-semibold">If not installed yet:</div>
+                </div>
+                <div>
+                  <span className="text-amber-400/70"># 1. Install Impact-Pack custom node</span><br />
+                  <span className="text-green-400/80 select-all">cd ComfyUI/custom_nodes</span><br />
+                  <span className="text-green-400/80 select-all">git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git</span>
+                </div>
+                <div>
+                  <span className="text-amber-400/70"># 2. Install Python deps (in ComfyUI's Python env)</span><br />
+                  <span className="text-green-400/80 select-all">pip install ultralytics facexlib gfpgan</span>
+                </div>
+                <div>
+                  <span className="text-amber-400/70"># 3. Restart ComfyUI</span>
+                </div>
+              </div>
+
+              {facesReason && (
+                <p className="text-[10px] text-white/30 leading-relaxed">{facesReason}</p>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={() => setShowFacesSetup(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-medium text-white/50 hover:text-white/70 hover:bg-white/5 transition-all">
+                  Close
+                </button>
+                <button onClick={async () => {
+                  setFacesAvailable(null) // show "checking" state
+                  try {
+                    // Invalidate backend's node cache first, then re-probe
+                    const base = backendUrl.replace(/\/+$/, '')
+                    await fetch(`${base}/v1/capabilities/refresh`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+                      },
+                    })
+                  } catch { /* ignore — re-probe below will still work */ }
+                  try {
+                    const cap = await checkCapability(backendUrl, 'enhance_faces', apiKey)
+                    setFacesAvailable(cap.available)
+                    if (cap.available) {
+                      setShowFacesSetup(false)
+                      setFacesReason(null)
+                    } else {
+                      setFacesReason(cap.reason ?? 'Still not available — restart ComfyUI and try again')
+                    }
+                  } catch {
+                    setFacesAvailable(null)
+                  }
+                }}
+                  className="px-4 py-2 rounded-lg text-xs font-medium bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/20 transition-all">
+                  {facesAvailable === null ? 'Checking...' : 'Re-check'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
