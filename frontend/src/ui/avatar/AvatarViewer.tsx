@@ -290,10 +290,14 @@ export function AvatarViewer({
   const portraits = useMemo(() => children.filter((g) => g.role === 'portrait'), [children])
   const outfits = useMemo(() => children.filter((g) => g.role !== 'portrait'), [children])
 
-  // Filtered outfits for wardrobe display
+  // Filtered outfits for wardrobe display — exclude view-angle variants (they show in Quick Views)
   const filteredOutfits = useMemo(() => {
-    if (wardrobeFilter === 'all') return outfits
-    return outfits.filter((o) => o.scenarioTag === wardrobeFilter)
+    const frontOnly = outfits.filter((o) => {
+      const angle = extractViewAngle((o.metadata as Record<string, unknown> | undefined) || undefined)
+      return !angle || angle === 'front'
+    })
+    if (wardrobeFilter === 'all') return frontOnly
+    return frontOnly.filter((o) => o.scenarioTag === wardrobeFilter)
   }, [outfits, wardrobeFilter])
 
   // Available scenario tags from actual wardrobe items (for filter)
@@ -525,25 +529,14 @@ export function AvatarViewer({
 
   const handleGenerateViewAngle = useCallback(async (angle: ViewAngle) => {
     try {
-      const result = await viewPack.generateAngle({
+      await viewPack.generateAngle({
         referenceImageUrl: currentViewReferenceUrl,
         angle,
         characterPrompt: item.prompt,
         basePrompt: currentViewBasePrompt,
         checkpointOverride: checkpoint,
       })
-
-      onOutfitResults?.(
-        [{
-          ...result,
-          metadata: {
-            ...(result.metadata || {}),
-            view_angle: angle,
-            view_source: viewSource,
-          },
-        }],
-        { ...item, scenarioTag: 'custom', parentId: rootCharacterId }
-      )
+      // Results stored in viewPack.resultsByAngle — not sent to wardrobe
     } catch {
       // hook manages error state
     }
@@ -553,9 +546,6 @@ export function AvatarViewer({
     currentViewBasePrompt,
     item,
     checkpoint,
-    onOutfitResults,
-    rootCharacterId,
-    viewSource,
   ])
 
   const handleGenerateMissingViews = useCallback(async () => {

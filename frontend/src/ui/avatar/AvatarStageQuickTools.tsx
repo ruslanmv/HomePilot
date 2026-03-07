@@ -20,56 +20,50 @@ export function AvatarStageQuickTools({
   onOpenAngle,
   onGenerateMissing,
 }: AvatarStageQuickToolsProps) {
+  const missingCount = VIEW_ANGLE_OPTIONS.filter((a) => !previews[a.id]).length
+
   return (
-    <div className="space-y-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-white/40">
-          <Camera size={12} />
-          Quick Views
-        </div>
+    <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5">
+      <Camera size={11} className="text-white/30 flex-shrink-0" />
+
+      {VIEW_ANGLE_OPTIONS.map((angle) => {
+        const available = Boolean(previews[angle.id])
+        const loading = Boolean(loadingAngles[angle.id])
+
+        return (
+          <button
+            key={angle.id}
+            onClick={() => (available ? onOpenAngle(angle.id) : onGenerateAngle(angle.id))}
+            disabled={loading}
+            className={[
+              'flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-bold transition-all',
+              available
+                ? 'bg-emerald-500/[0.12] text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/[0.20]'
+                : 'bg-white/[0.04] text-white/40 border border-white/[0.08] hover:bg-white/[0.08] hover:text-white/60',
+              loading ? 'cursor-wait opacity-60' : '',
+            ].join(' ')}
+            title={available ? `View ${angle.label}` : `Generate ${angle.label}`}
+          >
+            {loading ? <Loader2 size={10} className="animate-spin" /> : angle.shortLabel}
+          </button>
+        )
+      })}
+
+      {missingCount > 0 && (
         <button
           onClick={onGenerateMissing}
           disabled={busy}
           className={[
-            'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-medium transition-all',
+            'ml-auto flex items-center gap-1 rounded-md border px-2 py-1 text-[9px] font-semibold transition-all flex-shrink-0',
             busy
-              ? 'cursor-wait border-white/[0.06] bg-white/[0.03] text-white/30'
-              : 'border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-200 hover:bg-cyan-500/[0.14]',
+              ? 'cursor-wait border-white/[0.06] bg-white/[0.03] text-white/25'
+              : 'border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-300 hover:bg-cyan-500/[0.14]',
           ].join(' ')}
         >
-          {busy ? <Loader2 size={11} className="animate-spin" /> : <PackagePlus size={11} />}
-          Generate Missing
+          {busy ? <Loader2 size={9} className="animate-spin" /> : <PackagePlus size={9} />}
+          {missingCount}
         </button>
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-        {VIEW_ANGLE_OPTIONS.map((angle) => {
-          const available = Boolean(previews[angle.id])
-          const loading = Boolean(loadingAngles[angle.id])
-
-          return (
-            <button
-              key={angle.id}
-              onClick={() => (available ? onOpenAngle(angle.id) : onGenerateAngle(angle.id))}
-              disabled={loading}
-              className={[
-                'relative rounded-xl border px-2 py-2.5 text-center transition-all',
-                available
-                  ? 'border-emerald-500/18 bg-emerald-500/[0.07] text-emerald-200 hover:bg-emerald-500/[0.12]'
-                  : 'border-white/[0.08] bg-white/[0.03] text-white/65 hover:bg-white/[0.06]',
-                loading ? 'cursor-wait opacity-80' : '',
-              ].join(' ')}
-              title={available ? `Open ${angle.label}` : `Generate ${angle.label}`}
-            >
-              <div className="mb-1 flex items-center justify-center text-sm">
-                {loading ? <Loader2 size={14} className="animate-spin" /> : <span>{angle.icon}</span>}
-              </div>
-              <div className="text-[10px] font-semibold">{angle.shortLabel}</div>
-              <div className="mt-0.5 text-[9px] opacity-60">{available ? 'Ready' : 'Missing'}</div>
-            </button>
-          )
-        })}
-      </div>
+      )}
     </div>
   )
 }
