@@ -1,5 +1,5 @@
 import React from 'react'
-import { ChevronDown, Loader2, Orbit, Sparkles } from 'lucide-react'
+import { ChevronDown, Loader2, Orbit, Sparkles, Trash2 } from 'lucide-react'
 import type { ViewAngle, ViewPreviewMap, ViewSource } from './viewPack'
 import { VIEW_ANGLE_OPTIONS } from './viewPack'
 
@@ -15,6 +15,8 @@ interface AvatarViewPackPanelProps {
   onSourceChange: (value: ViewSource) => void
   onGenerateAngle: (angle: ViewAngle) => void
   onGenerateMissing: () => void
+  onClearAll?: () => void
+  hasAnyResults?: boolean
 }
 
 const SOURCE_OPTIONS: Array<{ id: ViewSource; label: string }> = [
@@ -35,6 +37,8 @@ export function AvatarViewPackPanel({
   onSourceChange,
   onGenerateAngle,
   onGenerateMissing,
+  onClearAll,
+  hasAnyResults = false,
 }: AvatarViewPackPanelProps) {
   return (
     <div className="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]">
@@ -126,19 +130,31 @@ export function AvatarViewPackPanel({
             </div>
           </div>
 
-          <button
-            onClick={onGenerateMissing}
-            disabled={busy}
-            className={[
-              'flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold transition-all',
-              busy
-                ? 'cursor-wait bg-white/[0.04] text-white/30'
-                : 'bg-gradient-to-r from-cyan-600/90 to-blue-600/90 text-white hover:brightness-110',
-            ].join(' ')}
-          >
-            {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            Generate Missing Views
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={onGenerateMissing}
+              disabled={busy}
+              className={[
+                'flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold transition-all',
+                busy
+                  ? 'cursor-wait bg-white/[0.04] text-white/30'
+                  : 'bg-gradient-to-r from-cyan-600/90 to-blue-600/90 text-white hover:brightness-110',
+              ].join(' ')}
+            >
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              Generate Missing Views
+            </button>
+            {hasAnyResults && onClearAll && (
+              <button
+                onClick={onClearAll}
+                disabled={busy}
+                title="Clear all cached views"
+                className="flex items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-xs text-white/45 transition-all hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-35"
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

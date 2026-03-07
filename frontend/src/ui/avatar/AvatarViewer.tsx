@@ -192,7 +192,12 @@ export function AvatarViewer({
   const [equippedItem, setEquippedItem] = useState<GalleryItem | null>(null)
 
   // View Pack — multi-angle generation state
-  const viewPack = useViewPackGeneration(backendUrl, apiKey)
+  // Cache key: character root + optional equipped outfit → persists across equip/unequip
+  const viewCacheKey = useMemo(() => {
+    const root = item.parentId || item.id
+    return equippedItem ? `${root}__${equippedItem.id}` : root
+  }, [item.parentId, item.id, equippedItem])
+  const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey)
   const [viewSource, setViewSource] = useState<ViewSource>('anchor')
   const [showViewPack, setShowViewPack] = useState(false)
   const [activeViewAngle, setActiveViewAngle] = useState<ViewAngle | null>(null)
@@ -245,19 +250,18 @@ export function AvatarViewer({
   }, [isHeadshot, hybridBody, item.url, avatarSettingsState.bodyWorkflowMethod])
 
   // Equip handler — like clicking armor in an MMO inventory
+  // No viewPack.reset() — cacheKey change auto-loads persisted results for the new outfit
   const handleEquip = useCallback((wardrobeItem: GalleryItem) => {
     setEquippedItem(wardrobeItem)
     setStageTab('outfit')
     setActiveViewAngle(null)
-    viewPack.reset()
-  }, [viewPack])
+  }, [])
 
   const handleUnequip = useCallback(() => {
     setEquippedItem(null)
     setStageTab('anchor')
     setActiveViewAngle(null)
-    viewPack.reset()
-  }, [viewPack])
+  }, [])
 
   const heroUrl = resolveUrl(item.url, backendUrl)
 
@@ -1109,6 +1113,8 @@ export function AvatarViewer({
                 onSourceChange={setViewSource}
                 onGenerateAngle={handleGenerateViewAngle}
                 onGenerateMissing={handleGenerateMissingViews}
+                onClearAll={viewPack.reset}
+                hasAnyResults={Object.keys(viewPack.resultsByAngle).length > 0}
               />
 
               {viewPack.error && (

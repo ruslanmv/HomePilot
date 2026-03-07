@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AvatarResult } from './types'
 import type { ViewAngle, ViewResultMap } from './viewPack'
 import { getViewAngleOption, VIEW_ANGLE_OPTIONS } from './viewPack'
@@ -17,11 +17,82 @@ interface OutfitGenerateResult {
   warnings: string[]
 }
 
-export function useViewPackGeneration(backendUrl: string, apiKey?: string) {
-  const [resultsByAngle, setResultsByAngle] = useState<ViewResultMap>({})
+// ---------------------------------------------------------------------------
+// localStorage cache helpers
+// ---------------------------------------------------------------------------
+const CACHE_PREFIX = 'hp_viewpack_'
+
+function cacheKeyFor(key: string): string {
+  return `${CACHE_PREFIX}${key}`
+}
+
+function loadCached(key: string | undefined): ViewResultMap {
+  if (!key) return {}
+  try {
+    const raw = localStorage.getItem(cacheKeyFor(key))
+    if (raw) return JSON.parse(raw) as ViewResultMap
+  } catch { /* corrupt entry — ignore */ }
+  return {}
+}
+
+function saveCached(key: string | undefined, results: ViewResultMap): void {
+  if (!key) return
+  try {
+    const hasEntries = Object.keys(results).length > 0
+    if (hasEntries) {
+      localStorage.setItem(cacheKeyFor(key), JSON.stringify(results))
+    } else {
+      localStorage.removeItem(cacheKeyFor(key))
+    }
+  } catch { /* storage full — silently fail */ }
+}
+
+function removeCached(key: string | undefined): void {
+  if (!key) return
+  try { localStorage.removeItem(cacheKeyFor(key)) } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
+/**
+ * @param backendUrl  Backend base URL
+ * @param apiKey      Optional API key
+ * @param cacheKey    Unique key for localStorage persistence (e.g. characterId
+ *                    or characterId+outfitId). When this changes the hook
+ *                    loads the cached results for the new key.
+ */
+export function useViewPackGeneration(backendUrl: string, apiKey?: string, cacheKey?: string) {
+  const [resultsByAngle, setResultsByAngle] = useState<ViewResultMap>(() => loadCached(cacheKey))
   const [loadingAngles, setLoadingAngles] = useState<Partial<Record<ViewAngle, boolean>>>({})
   const [warnings, setWarnings] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  // Track previous cacheKey so we can save before switching
+  const prevKeyRef = useRef(cacheKey)
+
+  // When cacheKey changes, persist current results under old key and load new
+  useEffect(() => {
+    if (prevKeyRef.current === cacheKey) return
+
+    // Save current in-memory results under the *previous* key
+    // (grab current state via functional setState to avoid stale closure)
+    setResultsByAngle((current) => {
+      saveCached(prevKeyRef.current, current)
+      prevKeyRef.current = cacheKey
+      return loadCached(cacheKey)
+    })
+
+    setLoadingAngles({})
+    setWarnings([])
+    setError(null)
+  }, [cacheKey])
+
+  // Auto-persist whenever results change
+  useEffect(() => {
+    saveCached(cacheKey, resultsByAngle)
+  }, [cacheKey, resultsByAngle])
 
   const anyLoading = useMemo(() => Object.values(loadingAngles).some(Boolean), [loadingAngles])
 
@@ -102,12 +173,14 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string) {
     }
   }, [backendUrl, apiKey])
 
+  /** Clear all results for the current key (in-memory + cache). */
   const reset = useCallback(() => {
     setResultsByAngle({})
     setLoadingAngles({})
     setWarnings([])
     setError(null)
-  }, [])
+    removeCached(cacheKey)
+  }, [cacheKey])
 
   const missingAngles = useCallback((existing?: ViewResultMap) => {
     const source = existing || resultsByAngle
