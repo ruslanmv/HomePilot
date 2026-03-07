@@ -65,6 +65,10 @@ import { AvatarSettingsPanel, resolveCheckpoint, loadAvatarSettings } from './Av
 import type { AvatarSettings, HybridFullBodyRequest } from './types'
 import { resolveFileUrl } from '../resolveFileUrl'
 import { AvatarGeneratingLoader } from './AvatarGeneratingLoader'
+import { AvatarStageQuickTools } from './AvatarStageQuickTools'
+import { AvatarViewPackPanel } from './AvatarViewPackPanel'
+import { extractViewAngle, type ViewAngle, type ViewPreviewMap, type ViewSource } from './viewPack'
+import { useViewPackGeneration } from './useViewPackGeneration'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -183,6 +187,11 @@ export function AvatarViewer({
   // MMORPG "equip" — clicking a wardrobe item shows it on the stage
   const [equippedItem, setEquippedItem] = useState<GalleryItem | null>(null)
 
+  // View Pack — multi-angle generation state
+  const viewPack = useViewPackGeneration(backendUrl, apiKey)
+  const [viewSource, setViewSource] = useState<ViewSource>('anchor')
+  const [showViewPack, setShowViewPack] = useState(false)
+
   // Auto-switch to Latest Outfit tab when new results arrive
   useEffect(() => {
     if (outfit.results.length > 0) {
@@ -293,6 +302,35 @@ export function AvatarViewer({
     outfits.forEach((o) => { if (o.scenarioTag) tagSet.add(o.scenarioTag) })
     return SCENARIO_TAG_META.filter((t) => tagSet.has(t.id))
   }, [outfits])
+
+  // View Pack — merge persisted view angles from wardrobe with freshly generated ones
+  const persistedViewPreviews = useMemo<ViewPreviewMap>(() => {
+    const map: ViewPreviewMap = { front: heroUrl }
+
+    outfits.forEach((outfitItem) => {
+      const angle = extractViewAngle((outfitItem.metadata as Record<string, unknown> | undefined) || undefined)
+      if (angle) map[angle] = resolveUrl(outfitItem.url, backendUrl)
+    })
+
+    return map
+  }, [outfits, heroUrl, backendUrl])
+
+  const generatedViewPreviews = useMemo<ViewPreviewMap>(() => {
+    const map: ViewPreviewMap = {}
+
+    for (const [angle, result] of Object.entries(viewPack.resultsByAngle) as Array<
+      [ViewAngle, (typeof viewPack.resultsByAngle)[ViewAngle]]
+    >) {
+      if (result?.url) map[angle] = resolveUrl(result.url, backendUrl)
+    }
+
+    return map
+  }, [viewPack.resultsByAngle, backendUrl])
+
+  const combinedViewPreviews = useMemo<ViewPreviewMap>(
+    () => ({ ...persistedViewPreviews, ...generatedViewPreviews }),
+    [persistedViewPreviews, generatedViewPreviews]
+  )
 
   // Presets filtered by tab + NSFW mode
   const presets = OUTFIT_PRESETS.filter((p) => {
@@ -470,6 +508,70 @@ export function AvatarViewer({
   const getTagMeta = (tag?: OutfitScenarioTag): ScenarioTagMeta | undefined => {
     return SCENARIO_TAG_META.find((t) => t.id === tag)
   }
+
+  // ── View Pack handlers ──────────────────────────────────────────────────
+
+  const currentViewReferenceUrl = useMemo(() => {
+    if (viewSource === 'equipped' && equippedItem) return equippedItem.url
+    if (viewSource === 'latest' && outfit.results[selectedResultIdx]) return outfit.results[selectedResultIdx].url
+    return item.url
+  }, [viewSource, equippedItem, outfit.results, selectedResultIdx, item.url])
+
+  const currentViewBasePrompt = useMemo(() => {
+    if (viewSource === 'latest' && effectivePrompt.trim()) return effectivePrompt.trim()
+    if (viewSource === 'equipped' && equippedItem?.prompt) return equippedItem.prompt
+    return item.prompt || 'portrait photograph of the same character'
+  }, [viewSource, effectivePrompt, equippedItem, item.prompt])
+
+  const handleGenerateViewAngle = useCallback(async (angle: ViewAngle) => {
+    try {
+      const result = await viewPack.generateAngle({
+        referenceImageUrl: currentViewReferenceUrl,
+        angle,
+        characterPrompt: item.prompt,
+        basePrompt: currentViewBasePrompt,
+        checkpointOverride: checkpoint,
+      })
+
+      onOutfitResults?.(
+        [{
+          ...result,
+          metadata: {
+            ...(result.metadata || {}),
+            view_angle: angle,
+            view_source: viewSource,
+          },
+        }],
+        { ...item, scenarioTag: 'custom', parentId: rootCharacterId }
+      )
+    } catch {
+      // hook manages error state
+    }
+  }, [
+    viewPack,
+    currentViewReferenceUrl,
+    currentViewBasePrompt,
+    item,
+    checkpoint,
+    onOutfitResults,
+    rootCharacterId,
+    viewSource,
+  ])
+
+  const handleGenerateMissingViews = useCallback(async () => {
+    const missing = (['left_45', 'left', 'right_45', 'right', 'back'] as ViewAngle[]).filter(
+      (angle) => !combinedViewPreviews[angle]
+    )
+
+    for (const angle of missing) {
+      await handleGenerateViewAngle(angle)
+    }
+  }, [combinedViewPreviews, handleGenerateViewAngle])
+
+  const handleOpenGeneratedView = useCallback((angle: ViewAngle) => {
+    const url = combinedViewPreviews[angle]
+    if (url) onOpenLightbox?.(url)
+  }, [combinedViewPreviews, onOpenLightbox])
 
   return (
     <div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col">
@@ -826,6 +928,16 @@ export function AvatarViewer({
                 ) : null}
                 </div>
               </div>
+
+              {/* ──────── Quick Views — multi-angle generation ──────── */}
+              <AvatarStageQuickTools
+                previews={combinedViewPreviews}
+                loadingAngles={viewPack.loadingAngles}
+                busy={viewPack.anyLoading}
+                onGenerateAngle={handleGenerateViewAngle}
+                onOpenAngle={handleOpenGeneratedView}
+                onGenerateMissing={handleGenerateMissingViews}
+              />
             </div>
 
             {/* ──────── RIGHT PANEL: Outfit Studio (expands to fill) ──────── */}
@@ -857,6 +969,28 @@ export function AvatarViewer({
                   <div className="text-[11px] text-white/60 truncate">{item.prompt || 'Your character'}</div>
                 </div>
               </div>
+
+              {/* ──────── View Pack — multi-angle collapsible panel ──────── */}
+              <AvatarViewPackPanel
+                open={showViewPack}
+                source={viewSource}
+                disableLatest={outfit.results.length === 0}
+                disableEquipped={!equippedItem}
+                previews={combinedViewPreviews}
+                loadingAngles={viewPack.loadingAngles}
+                busy={viewPack.anyLoading}
+                onToggle={() => setShowViewPack((v) => !v)}
+                onSourceChange={setViewSource}
+                onGenerateAngle={handleGenerateViewAngle}
+                onGenerateMissing={handleGenerateMissingViews}
+              />
+
+              {viewPack.error && (
+                <div className="flex items-center gap-2 rounded-xl border border-red-500/15 bg-red-500/[0.08] px-3 py-2.5 text-xs text-red-300">
+                  <AlertTriangle size={14} />
+                  <span>{viewPack.error}</span>
+                </div>
+              )}
 
               {/* Headshot — expand to half-body or warning */}
               {isHeadshot && (
