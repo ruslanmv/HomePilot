@@ -118,8 +118,20 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     # ControlNet only anchors facial identity.  The basic img2img workflow
     # (studio_reference) bakes the reference pose into the VAE latent,
     # making non-front angles impossible.
+    #
+    # IMPORTANT: hybrid_outfit uses an SDXL workflow (CLIPTextEncodeSDXL).
+    # If a checkpoint_override is set, it's likely an SD 1.5 model which
+    # only has CLIP-L (no CLIP-G), causing a KeyError: 'g' crash.
+    # Fall back to studio_reference when a checkpoint override is active.
     if req.generation_mode == "standard":
         target_mode = "creative"
+    elif req.checkpoint_override:
+        # SD 1.5 checkpoint override → can't use SDXL workflow
+        target_mode = "studio_reference"
+        warnings.append(
+            "Using studio_reference mode because a custom checkpoint is set. "
+            "The hybrid_outfit workflow requires an SDXL model."
+        )
     else:
         # Try hybrid_outfit first (proper InstantID), fall back to studio_reference
         target_mode = "hybrid_outfit"
