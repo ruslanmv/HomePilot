@@ -477,6 +477,7 @@ AVATAR_BASIC_IDS = [
     "instantid-controlnet",
 ]
 AVATAR_FULL_IDS = AVATAR_BASIC_IDS + [
+    "openpose-controlnet-sdxl",
     "photomaker-v2",
     "pulid-flux",
     "insightface-inswapper-128",
@@ -826,3 +827,30 @@ async def set_edit_model_preference(mode: str, model_id: str):
         return {"success": True, "mode": mode, "model": model_id}
     else:
         return {"success": False, "error": error}
+
+
+@router.post("/v1/capabilities/refresh")
+async def refresh_capabilities():
+    """
+    Invalidate the ComfyUI object_info cache and re-probe node availability.
+
+    Call this after installing/removing custom nodes and restarting ComfyUI
+    so the backend immediately sees the new node classes (instead of waiting
+    for the 5-minute TTL to expire).
+
+    Returns the refreshed ``enhance_faces`` status for convenience.
+    """
+    from .comfy import _object_info_cache
+
+    _object_info_cache.invalidate()
+    # Force a fresh fetch right now
+    _object_info_cache.get_available_nodes(force=True)
+
+    # Return the refreshed face-restore status
+    from .face_restore import face_restore_ready
+
+    ready, message = face_restore_ready()
+    return {
+        "refreshed": True,
+        "enhance_faces": {"available": ready, "reason": message if not ready else None},
+    }

@@ -30,10 +30,10 @@ export type HairType = 'straight' | 'wavy' | 'curly' | 'coily'
 export type HairColor = 'black' | 'brown' | 'blonde' | 'auburn' | 'neon_blue' | 'fuchsia'
 
 export type StylePreset =
+  | 'modern'
   | 'executive'
   | 'elegant'
   | 'casual'
-  | 'soft'
   | 'fantasy'
   | 'scifi'
   | 'edgy'
@@ -155,10 +155,10 @@ function mapRealism(r: RealismLevel): string {
 
 function mapStylePreset(p: StylePreset): string {
   const m: Record<StylePreset, string> = {
-    executive: 'modern executive outfit, business attire, clean minimal style',
+    modern: 'modern stylish contemporary fashion, fitted top, mini skirt, clean modern aesthetic, confident natural pose',
+    executive: 'professional polished appearance, confident demeanor, clean minimal style',
     elegant: 'elegant outfit, refined fashion, premium look',
     casual: 'casual outfit, modern streetwear, relaxed fit',
-    soft: 'soft pastel outfit, gentle aesthetic, warm tones',
     fantasy: 'fantasy adventurer outfit, subtle armor details, rpg style',
     scifi: 'sci-fi outfit, futuristic materials, sleek design',
     edgy: 'edgy outfit, dark fashion, high contrast',
@@ -198,8 +198,10 @@ export function buildGeneticsPromptFragment(prefs: AvatarPreferences): string {
   ].join(', ')
 }
 
-/** Build a complete prompt package with 4 controlled variations. */
-export function buildAvatarPromptPackage(prefs: AvatarPreferences): AvatarPromptPackage {
+/** Build a complete prompt package with 4 controlled variations.
+ *  When nsfwEnabled is true the NSFW/nudity negative tokens are omitted
+ *  so the model is free to generate mature outfit variations later. */
+export function buildAvatarPromptPackage(prefs: AvatarPreferences, nsfwEnabled = false): AvatarPromptPackage {
   const core = [
     'single character portrait, centered composition',
     'head and shoulders, looking at camera',
@@ -219,7 +221,8 @@ export function buildAvatarPromptPackage(prefs: AvatarPreferences): AvatarPrompt
   const negative = [
     'low quality', 'blurry', 'jpeg artifacts', 'bad anatomy',
     'deformed face', 'extra limbs', 'extra fingers', 'crooked eyes',
-    'text', 'watermark', 'logo', 'nsfw', 'nudity', 'explicit content',
+    'text', 'watermark', 'logo',
+    ...(nsfwEnabled ? [] : ['nsfw', 'nudity', 'underwear', 'explicit content']),
   ]
 
   const basePrompt = core.join(', ')

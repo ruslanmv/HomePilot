@@ -37,16 +37,34 @@ import {
   X,
   ArrowRightLeft,
   Image as ImageIcon,
+  Expand,
+  ChevronDown,
+  Flame,
 } from 'lucide-react'
 
 import type { GalleryItem, OutfitScenarioTag, ScenarioTagMeta } from './galleryTypes'
 import { SCENARIO_TAG_META } from './galleryTypes'
 import type { AvatarMode, AvatarResult } from './types'
-import { OUTFIT_PRESETS } from '../personaTypes'
+import { OUTFIT_PRESETS, ACCESSORY_OPTIONS } from '../personaTypes'
+import {
+  LINGERIE_GARMENTS,
+  LINGERIE_STYLES,
+  LINGERIE_FABRICS,
+  LINGERIE_BRANDS,
+  LINGERIE_EXTRAS,
+  POSES,
+  BACKGROUNDS,
+  NSFW_POSES,
+  NSFW_BACKGROUNDS,
+} from './wizard/wizardTypes'
+import type { LingerieGarment, LingerieSelectionsMap, LingerieGarmentSelection } from './wizard/wizardTypes'
 import { useOutfitGeneration } from './useOutfitGeneration'
+import { useGenerateHybridBody } from './useGenerateHybridBody'
+import { fetchAvatarCapabilities } from './avatarApi'
 import { AvatarSettingsPanel, resolveCheckpoint, loadAvatarSettings } from './AvatarSettingsPanel'
-import type { AvatarSettings } from './types'
+import type { AvatarSettings, HybridFullBodyRequest } from './types'
 import { resolveFileUrl } from '../resolveFileUrl'
+import { AvatarGeneratingLoader } from './AvatarGeneratingLoader'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -126,10 +144,38 @@ export function AvatarViewer({
 
   // Outfit generation state
   const outfit = useOutfitGeneration(backendUrl, apiKey)
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null)
+  const [selectedPreset, setSelectedPreset] = useState<string | null>('corporate')
   const [customPrompt, setCustomPrompt] = useState('')
   const [outfitCount, setOutfitCount] = useState(1)
   const [outfitCopiedSeed, setOutfitCopiedSeed] = useState<number | null>(null)
+  const [outfitTab, setOutfitTab] = useState<'standard' | 'romance' | '18+'>('standard')
+  const [showAdvancedOutfit, setShowAdvancedOutfit] = useState(false)
+  const [outfitPrimaryColor, setOutfitPrimaryColor] = useState<string | null>(null)
+  const [outfitSecondaryColor, setOutfitSecondaryColor] = useState<string | null>(null)
+  const [selectedAccessories, setSelectedAccessories] = useState<string[]>([])
+  const [showAccessories, setShowAccessories] = useState(false)
+  // Lingerie builder — per-garment persistent selections
+  const [lingerieType, setLingerieType] = useState<LingerieGarment | null>(null) // currently viewing
+  const [lingerieActiveGarments, setLingerieActiveGarments] = useState<LingerieGarment[]>([])
+  const [lingerieSelections, setLingerieSelections] = useState<LingerieSelectionsMap>({})
+  const [lingerieExtras, setLingerieExtras] = useState<string[]>([])
+  // Standard Pose & Background
+  const [selectedPose, setSelectedPose] = useState<string | null>(null)
+  const [selectedBackground, setSelectedBackground] = useState<string | null>(null)
+  // NSFW Adult Content Controls (18+ gated)
+  const [nsfwExposure, setNsfwExposure] = useState<string | null>(null)
+  const [nsfwIntensity, setNsfwIntensity] = useState(5)
+  const [nsfwPose, setNsfwPose] = useState<string | null>(null)
+  const [nsfwDominance, setNsfwDominance] = useState<string | null>(null)
+  const [nsfwFantasyTone, setNsfwFantasyTone] = useState<string | null>(null)
+  const [nsfwScene, setNsfwScene] = useState<string | null>(null)
+
+  // Headshot avatars lack visible torso/clothing — outfit generation produces poor results
+  const isHeadshot = item.framingType === 'headshot'
+
+  // Expand headshot → half-body via hybrid pipeline
+  const hybridBody = useGenerateHybridBody(backendUrl, apiKey)
+  const [hybridAvailable, setHybridAvailable] = useState<boolean | null>(null) // null = loading
 
   // Stage toggle: flip between anchor face, latest outfit, or equipped wardrobe item
   const [stageTab, setStageTab] = useState<'anchor' | 'outfit'>('anchor')
@@ -146,6 +192,43 @@ export function AvatarViewer({
     }
   }, [outfit.results])
 
+  // Check if hybrid body pipeline is available (for headshot → half-body expand)
+  useEffect(() => {
+    if (!isHeadshot) return
+    let cancelled = false
+    fetchAvatarCapabilities(backendUrl, apiKey)
+      .then((caps) => {
+        if (cancelled) return
+        const comfyOk = caps.engines?.comfyui?.available ?? false
+        const modes = caps.enabled_modes ?? []
+        // Hybrid body requires ComfyUI + identity models (studio_reference or hybrid modes)
+        const hasIdentity = modes.includes('studio_reference') || modes.includes('hybrid_body')
+        const bodyEnabled = avatarSettingsState.bodyWorkflowMethod !== 'disabled'
+        setHybridAvailable(comfyOk && hasIdentity && bodyEnabled)
+      })
+      .catch(() => {
+        if (!cancelled) setHybridAvailable(false)
+      })
+    return () => { cancelled = true }
+  }, [isHeadshot, backendUrl, apiKey, avatarSettingsState.bodyWorkflowMethod])
+
+  const handleExpandToHalfBody = useCallback(async () => {
+    if (!isHeadshot || hybridBody.loading) return
+    try {
+      const req: HybridFullBodyRequest = {
+        face_image_url: item.url,
+        count: 2,
+        workflow_method: avatarSettingsState.bodyWorkflowMethod === 'disabled' ? 'default' : avatarSettingsState.bodyWorkflowMethod,
+        outfit_style: 'casual',
+        posture: 'standing relaxed',
+        lighting: 'professional studio lighting',
+      }
+      await hybridBody.run(req)
+    } catch {
+      // Error captured in hook state
+    }
+  }, [isHeadshot, hybridBody, item.url, avatarSettingsState.bodyWorkflowMethod])
+
   // Equip handler — like clicking armor in an MMO inventory
   const handleEquip = useCallback((wardrobeItem: GalleryItem) => {
     setEquippedItem(wardrobeItem)
@@ -160,9 +243,21 @@ export function AvatarViewer({
   const heroUrl = resolveUrl(item.url, backendUrl)
 
   const checkpoint = resolveCheckpoint(avatarSettingsState, globalModelImages)
-  const nsfwMode = (() => {
+  const readNsfw = useCallback(() => {
     try { return localStorage.getItem('homepilot_nsfw_mode') === 'true' } catch { return false }
-  })()
+  }, [])
+  const [nsfwMode, setNsfwMode] = useState(readNsfw)
+  useEffect(() => {
+    const sync = () => setNsfwMode(readNsfw())
+    window.addEventListener('focus', sync)
+    window.addEventListener('storage', sync)
+    const interval = setInterval(sync, 1000)
+    return () => {
+      window.removeEventListener('focus', sync)
+      window.removeEventListener('storage', sync)
+      clearInterval(interval)
+    }
+  }, [readNsfw])
 
   // Root character ID — if viewing an outfit, resolve to its parent
   const rootCharacterId = item.parentId || item.id
@@ -199,21 +294,128 @@ export function AvatarViewer({
     return SCENARIO_TAG_META.filter((t) => tagSet.has(t.id))
   }, [outfits])
 
-  // Presets filtered by NSFW mode
-  const presets = OUTFIT_PRESETS.filter(
-    (p) => p.category === 'sfw' || nsfwMode,
-  )
+  // Presets filtered by tab + NSFW mode
+  const presets = OUTFIT_PRESETS.filter((p) => {
+    if (p.category === 'nsfw' && !nsfwMode) return false
+    const group = p.group || (p.category === 'sfw' ? 'standard' : 'romance')
+    return group === outfitTab
+  })
+
+  const isLingerieSelected = selectedPreset === 'lingerie' || selectedPreset === 'boudoir'
 
   const effectivePrompt = (() => {
-    if (customPrompt.trim()) return customPrompt.trim()
-    if (selectedPreset) {
+    let base = ''
+    if (customPrompt.trim()) {
+      base = customPrompt.trim()
+    } else if (selectedPreset) {
       const preset = presets.find((p) => p.id === selectedPreset)
-      return preset?.prompt || ''
+      base = preset?.prompt || ''
     }
-    return ''
+    if (!base) return ''
+    // Append advanced options to the prompt
+    const extras: string[] = []
+    // Lingerie builder — iterates over all active garments for multi-piece outfits
+    if (isLingerieSelected) {
+      const garments = lingerieActiveGarments.length > 0 ? lingerieActiveGarments : (lingerieType ? [lingerieType] : [])
+      for (const gId of garments) {
+        const garment = LINGERIE_GARMENTS.find((g) => g.id === gId)
+        if (garment) extras.push(garment.prompt)
+        const sel = lingerieSelections[gId]
+        if (sel?.style) {
+          const styles = LINGERIE_STYLES[gId]
+          const style = styles?.find((s) => s.id === sel.style)
+          if (style) extras.push(style.prompt)
+        }
+        if (sel?.fabric) {
+          const fabric = LINGERIE_FABRICS.find((f) => f.id === sel.fabric)
+          if (fabric) extras.push(fabric.prompt)
+        }
+        if (sel?.brand) {
+          const brand = LINGERIE_BRANDS.find((b) => b.id === sel.brand)
+          if (brand) extras.push(brand.prompt)
+        }
+      }
+      for (const extId of lingerieExtras) {
+        const ext = LINGERIE_EXTRAS.find((e) => e.id === extId)
+        if (ext) extras.push(ext.prompt)
+      }
+    }
+    // Colors — bind to specific garment pieces when lingerie multi-piece is active
+    const hasTop = isLingerieSelected && lingerieActiveGarments.includes('top')
+    const hasBottom = isLingerieSelected && lingerieActiveGarments.includes('bottom')
+    if (hasTop && hasBottom && outfitPrimaryColor && outfitSecondaryColor) {
+      // Primary → top piece, Secondary → bottom piece
+      extras.push(`${outfitPrimaryColor} colored top`)
+      extras.push(`${outfitSecondaryColor} colored bottom`)
+    } else if (hasTop && hasBottom && outfitPrimaryColor) {
+      extras.push(`${outfitPrimaryColor} colored top`)
+    } else if (hasTop && hasBottom && outfitSecondaryColor) {
+      extras.push(`${outfitSecondaryColor} colored bottom`)
+    } else {
+      // Generic outfit coloring (non-lingerie, or single-piece/set)
+      if (outfitPrimaryColor && outfitSecondaryColor) {
+        extras.push(`${outfitPrimaryColor} and ${outfitSecondaryColor} color scheme`)
+      } else if (outfitPrimaryColor) {
+        extras.push(`${outfitPrimaryColor} colored outfit`)
+      } else if (outfitSecondaryColor) {
+        extras.push(`${outfitSecondaryColor} accents`)
+      }
+    }
+    if (selectedAccessories.length > 0) {
+      const accPrompts = selectedAccessories
+        .map((id) => ACCESSORY_OPTIONS.find((a) => a.id === id)?.prompt)
+        .filter(Boolean)
+      extras.push(...accPrompts as string[])
+    }
+    // Pose + background (check NSFW-specific first, then standard)
+    if (selectedPose) {
+      const pose = NSFW_POSES.find((p) => p.id === selectedPose) || POSES.find((p) => p.id === selectedPose)
+      if (pose) extras.push(pose.prompt)
+    }
+    if (selectedBackground) {
+      const bg = NSFW_BACKGROUNDS.find((b) => b.id === selectedBackground) || BACKGROUNDS.find((b) => b.id === selectedBackground)
+      if (bg) extras.push(bg.prompt)
+    }
+    // NSFW Scene override (from Adult Content Controls)
+    if (nsfwMode && nsfwScene) {
+      const scene = NSFW_BACKGROUNDS.find((b) => b.id === nsfwScene)
+      if (scene) extras.push(scene.prompt)
+    }
+    // NSFW modifiers (gated)
+    if (nsfwMode && nsfwExposure) {
+      const nsfwMap: Record<string, string> = {
+        suggestive: 'suggestive pose, revealing outfit, tastefully showing skin, sensual',
+        clothed_revealing: 'clothed but revealing, deep neckline, exposed skin, alluring',
+        partial_nudity: 'partial nudity, exposed skin, provocative sensual pose, alluring',
+        topless: 'topless, implied nude, exposed upper body, sensual artistic pose',
+        full_nude: 'fully nude, naked body, sensual erotic pose, artistic nude',
+        explicit: 'fully nude, explicit adult content, naked body, sensual erotic pose, anatomically detailed',
+      }
+      extras.push(nsfwMap[nsfwExposure] || '')
+      // Intensity amplifier
+      if (nsfwIntensity >= 8) extras.push('extremely sensual, raw, uninhibited')
+      else if (nsfwIntensity >= 5) extras.push('sensual, inviting')
+      // Sensual Pose
+      if (nsfwPose === 'subtle') extras.push('subtle teasing pose, coy expression')
+      else if (nsfwPose === 'confident') extras.push('confident provocative display, bold body language')
+      else if (nsfwPose === 'intimate') extras.push('intimate close pose, bedroom eyes, inviting')
+      else if (nsfwPose) {
+        const posePreset = NSFW_POSES.find((p) => p.id === nsfwPose)
+        if (posePreset) extras.push(posePreset.prompt)
+      }
+      // Fantasy tone
+      if (nsfwFantasyTone === 'romantic') extras.push('romantic tender mood, soft warm tones')
+      if (nsfwFantasyTone === 'seductive') extras.push('seductive alluring expression, smoldering gaze')
+      if (nsfwFantasyTone === 'dramatic') extras.push('dramatic intense mood, powerful commanding presence')
+      // Dominance
+      if (nsfwDominance === 'soft') extras.push('gentle submissive energy, yielding')
+      if (nsfwDominance === 'balanced') extras.push('balanced confident energy, natural relaxed poise')
+      if (nsfwDominance === 'strong') extras.push('dominant commanding presence, powerful stance, in control')
+    }
+    return extras.length > 0 ? `${base}, ${extras.join(', ')}` : base
   })()
 
-  const canGenerateOutfit = !outfit.loading && effectivePrompt.length > 0
+  const canGenerateOutfit = !outfit.loading && effectivePrompt.length > 0 && !isHeadshot
 
   // ---- Actions ----
   const handleCopySeed = useCallback(() => {
@@ -411,9 +613,12 @@ export function AvatarViewer({
 
                 if (outfit.loading && outfit.results.length === 0) {
                   return (
-                    /* ─── Loading skeleton ─── */
-                    <div className="h-full rounded-2xl bg-white/[0.03] border border-white/[0.06] animate-pulse flex items-center justify-center">
-                      <Loader2 size={32} className="animate-spin text-white/15" />
+                    /* ─── Professional generating loader ─── */
+                    <div className="h-full rounded-2xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-center">
+                      <AvatarGeneratingLoader
+                        label="Generating outfit…"
+                        hint="Creating your look"
+                      />
                     </div>
                   )
                 }
@@ -575,7 +780,7 @@ export function AvatarViewer({
                 {stageTab === 'anchor' ? (
                   <>
                     {onSaveAsPersonaAvatar && !item.personaProjectId && (
-                      <button onClick={() => onSaveAsPersonaAvatar(item)} className="p-1.5 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.06] text-emerald-300 hover:bg-emerald-500/10 transition-all" title="Save as Persona">
+                      <button onClick={() => onSaveAsPersonaAvatar(item)} className="p-1.5 rounded-lg border border-emerald-500/15 bg-emerald-500/[0.06] text-emerald-300 hover:bg-emerald-500/10 transition-all" title="Export to Persona">
                         <UserPlus size={13} />
                       </button>
                     )}
@@ -653,11 +858,176 @@ export function AvatarViewer({
                 </div>
               </div>
 
-              {/* 1. Choose a Scenario — Badge Grid */}
+              {/* Headshot — expand to half-body or warning */}
+              {isHeadshot && (
+                <div className="space-y-3">
+                  {/* Info + Expand button */}
+                  <div className="px-3 py-3 rounded-xl bg-amber-500/[0.06] border border-amber-500/15">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle size={14} className="text-amber-400 mt-0.5 shrink-0" />
+                      <div className="flex-1">
+                        <div className="text-[11px] text-amber-200 font-medium">Headshot — outfit generation unavailable</div>
+                        <div className="text-[10px] text-amber-400/60 mt-0.5">
+                          Close-up headshots have no visible body. Expand to a half-body portrait to unlock outfit generation.
+                        </div>
+                      </div>
+                    </div>
+                    {hybridAvailable === null ? (
+                      <div className="flex items-center gap-2 mt-2.5 text-[10px] text-white/30">
+                        <Loader2 size={12} className="animate-spin" />
+                        Checking pipeline availability...
+                      </div>
+                    ) : hybridAvailable ? (
+                      <button
+                        onClick={handleExpandToHalfBody}
+                        disabled={hybridBody.loading}
+                        className={[
+                          'mt-2.5 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold transition-all',
+                          hybridBody.loading
+                            ? 'bg-white/[0.04] text-white/30 cursor-wait'
+                            : 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-500/15 hover:shadow-emerald-500/25 hover:brightness-110 active:scale-[0.99]',
+                        ].join(' ')}
+                      >
+                        {hybridBody.loading ? (
+                          <>
+                            <Loader2 size={14} className="animate-spin" />
+                            Expanding to half-body...
+                          </>
+                        ) : (
+                          <>
+                            <Expand size={14} />
+                            Expand to Half-Body Portrait
+                          </>
+                        )}
+                      </button>
+                    ) : (
+                      <div className="text-[10px] text-white/25 mt-2 italic">
+                        Half-body expansion requires ComfyUI + Identity models (InstantID). Check Avatar Settings.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Hybrid body error */}
+                  {hybridBody.error && (
+                    <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-red-500/[0.08] border border-red-500/15 text-red-300 text-xs">
+                      <AlertTriangle size={14} />
+                      <span>{hybridBody.error}</span>
+                    </div>
+                  )}
+
+                  {/* Expand results grid */}
+                  {hybridBody.result?.results && hybridBody.result.results.length > 0 && (
+                    <div>
+                      <div className="text-[10px] text-white/40 mb-2 font-semibold uppercase tracking-wider">
+                        Half-Body Results — select to save
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {hybridBody.result.results.map((r, i) => {
+                          const imgUrl = resolveUrl(r.url, backendUrl)
+                          return (
+                            <div
+                              key={i}
+                              className="group relative rounded-xl overflow-hidden border border-white/10 bg-white/[0.02] hover:border-emerald-500/30 transition-all cursor-pointer"
+                              onClick={() => onOpenLightbox?.(imgUrl)}
+                            >
+                              <div className="aspect-[2/3] bg-white/[0.03]">
+                                <img
+                                  src={imgUrl}
+                                  alt={`Half-body ${i + 1}`}
+                                  className="w-full h-full object-cover"
+                                  loading="lazy"
+                                />
+                              </div>
+                              {/* Hover actions */}
+                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                {onSendToEdit && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); onSendToEdit(imgUrl) }}
+                                    className="p-2 bg-purple-500/30 backdrop-blur-md rounded-lg text-purple-200 hover:bg-purple-500/50 transition-colors"
+                                    title="Edit"
+                                  >
+                                    <PenLine size={14} />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    const a = document.createElement('a')
+                                    a.href = imgUrl
+                                    a.download = `halfbody_${r.seed ?? i}.png`
+                                    a.click()
+                                  }}
+                                  className="p-2 bg-white/10 backdrop-blur-md rounded-lg text-white hover:bg-white/20 transition-colors"
+                                  title="Download"
+                                >
+                                  <Download size={14} />
+                                </button>
+                              </div>
+                              {/* Seed label */}
+                              <div className="px-2 py-1.5 text-[10px] text-white/30 font-mono">
+                                seed {r.seed ?? '---'}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      {/* Warnings from hybrid pipeline */}
+                      {hybridBody.result.warnings && hybridBody.result.warnings.length > 0 && (
+                        <div className="flex items-start gap-2 px-3 py-2 mt-2 rounded-lg bg-amber-500/[0.06] border border-amber-500/15 text-amber-400 text-[10px]">
+                          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                          <div>{hybridBody.result.warnings.join(' ')}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Loading skeleton for expand */}
+                  {hybridBody.loading && !hybridBody.result?.results?.length && (
+                    <AvatarGeneratingLoader
+                      label="Expanding to half-body…"
+                      count={2}
+                    />
+                  )}
+                </div>
+              )}
+
+              {/* ═══ Outfit Tabs ═══ */}
               <div>
                 <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
-                  1. Choose a Scenario
+                  Outfit Style
                 </div>
+
+                {/* Tab bar */}
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06] mb-3">
+                  {([
+                    { id: 'standard' as const, label: 'Standard' },
+                    { id: 'romance' as const, label: 'Romance & Roleplay' },
+                    ...(nsfwMode ? [{ id: '18+' as const, label: '18+' }] : []),
+                  ]).map((tab) => {
+                    const active = outfitTab === tab.id
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => {
+                          setOutfitTab(tab.id)
+                          const group = tab.id === 'standard' ? 'standard' : tab.id
+                          const first = OUTFIT_PRESETS.find((p) => (p.group || (p.category === 'sfw' ? 'standard' : 'romance')) === group)
+                          setSelectedPreset(first?.id ?? null)
+                        }}
+                        className={[
+                          'flex-1 px-2.5 py-2 rounded-lg text-[10px] font-medium transition-all',
+                          active
+                            ? 'bg-white/10 text-white border border-white/15 shadow-sm'
+                            : 'text-white/35 hover:text-white/55 hover:bg-white/[0.04] border border-transparent',
+                        ].join(' ')}
+                      >
+                        {tab.label}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {/* Preset badge grid */}
                 <div className="grid grid-cols-2 gap-2">
                   {presets.map((p) => {
                     const tagMeta = SCENARIO_TAG_META.find((t) => t.id === p.id)
@@ -684,10 +1054,548 @@ export function AvatarViewer({
                 </div>
               </div>
 
-              {/* 2. Or Custom Outfit Prompt */}
+              {/* ── Lingerie Builder — only visible when lingerie/boudoir selected ── */}
+              {isLingerieSelected && (() => {
+                const currentSel: LingerieGarmentSelection = lingerieType ? (lingerieSelections[lingerieType] ?? {}) : {}
+                const updateSel = (patch: Partial<LingerieGarmentSelection>) => {
+                  if (!lingerieType) return
+                  setLingerieSelections((prev) => ({
+                    ...prev,
+                    [lingerieType]: { ...(prev[lingerieType] ?? {}), ...patch },
+                  }))
+                }
+                return (
+                <div className="space-y-3 p-3 rounded-xl bg-rose-500/[0.03] border border-rose-500/10">
+                  {/* Garment Type — multi-select, click toggles active + sets viewing */}
+                  <div>
+                    <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">Garment Type</div>
+                    <div className="text-[9px] text-white/30 mb-1.5">Select one or more pieces. Click to toggle &amp; configure.</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {LINGERIE_GARMENTS.map((g) => {
+                        const isActive = lingerieActiveGarments.includes(g.id)
+                        const isViewing = lingerieType === g.id
+                        return (
+                          <button
+                            key={g.id}
+                            onClick={() => {
+                              if (isViewing) {
+                                // Second click → deactivate
+                                setLingerieType(null)
+                                setLingerieActiveGarments((prev) => prev.filter((x) => x !== g.id))
+                              } else if (isActive) {
+                                // Already active → switch to view
+                                setLingerieType(g.id)
+                              } else {
+                                // Activate + view
+                                setLingerieType(g.id)
+                                setLingerieActiveGarments((prev) => [...prev, g.id])
+                              }
+                            }}
+                            className={[
+                              'flex items-center gap-1.5 px-3 py-2 rounded-lg text-[11px] font-medium border transition-all',
+                              isViewing
+                                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200 shadow-[0_0_8px_rgba(244,63,94,0.1)]'
+                                : isActive
+                                  ? 'border-rose-500/20 bg-rose-500/5 text-rose-300/60'
+                                  : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60 hover:border-white/10',
+                            ].join(' ')}
+                          >
+                            <span className="text-sm">{g.icon}</span>
+                            <span>{g.label}{isActive && !isViewing ? ' \u2713' : ''}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {/* Active garment summary chips */}
+                    {lingerieActiveGarments.length > 1 && (
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {lingerieActiveGarments.map((gId) => {
+                          const g = LINGERIE_GARMENTS.find((x) => x.id === gId)
+                          const sel = lingerieSelections[gId]
+                          const styleLabel = sel?.style && LINGERIE_STYLES[gId]?.find((s) => s.id === sel.style)?.label
+                          return (
+                            <span key={gId}
+                              className={[
+                                'text-[9px] px-2 py-0.5 rounded-full border cursor-pointer transition-all',
+                                lingerieType === gId
+                                  ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                                  : 'border-white/10 bg-white/5 text-white/40 hover:text-white/60',
+                              ].join(' ')}
+                              onClick={() => setLingerieType(gId)}
+                            >
+                              {g?.icon} {g?.label}{styleLabel ? `: ${styleLabel}` : ''}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Style Picker — scoped to currently viewed garment */}
+                  {lingerieType && LINGERIE_STYLES[lingerieType] && (
+                    <div>
+                      <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">
+                        {lingerieType === 'bottom' ? 'Panty Style' : lingerieType === 'top' ? 'Bra Style' : lingerieType === 'set' ? 'Set Style' : 'Bodysuit Style'}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {LINGERIE_STYLES[lingerieType].map((s) => (
+                          <button
+                            key={s.id}
+                            onClick={() => updateSel({ style: currentSel.style === s.id ? null : s.id })}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                              currentSel.style === s.id
+                                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Fabric — scoped to currently viewed garment */}
+                  {lingerieType && (
+                  <div>
+                    <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">Fabric</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {LINGERIE_FABRICS.map((f) => (
+                        <button
+                          key={f.id}
+                          onClick={() => updateSel({ fabric: currentSel.fabric === f.id ? null : f.id })}
+                          className={[
+                            'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                            currentSel.fabric === f.id
+                              ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                              : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                          ].join(' ')}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  )}
+
+                  {/* Brand Inspired — scoped to currently viewed garment */}
+                  {lingerieType && (
+                  <div>
+                    <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">Brand Inspired</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {LINGERIE_BRANDS.map((b) => (
+                        <button
+                          key={b.id}
+                          onClick={() => updateSel({ brand: currentSel.brand === b.id ? null : b.id })}
+                          className={[
+                            'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                            currentSel.brand === b.id
+                              ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                              : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                          ].join(' ')}
+                        >
+                          {b.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  )}
+
+                  {/* Lingerie Accessories — shared across all garments */}
+                  <div>
+                    <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">Lingerie Accessories</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {LINGERIE_EXTRAS.map((e) => {
+                        const active = lingerieExtras.includes(e.id)
+                        return (
+                          <button
+                            key={e.id}
+                            onClick={() => setLingerieExtras((prev) =>
+                              active ? prev.filter((x) => x !== e.id) : [...prev, e.id],
+                            )}
+                            className={[
+                              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                              active
+                                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            <span>{e.icon}</span>
+                            <span>{e.label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Primary & Secondary Color — inside lingerie builder for piece coloring */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">
+                        {lingerieActiveGarments.includes('top') && lingerieActiveGarments.includes('bottom') ? 'Top Color' : 'Primary Color'}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          { id: 'black', hex: '#1a1a1a' }, { id: 'white', hex: '#f5f5f5' },
+                          { id: 'red', hex: '#DC143C' }, { id: 'navy', hex: '#1B2A4A' },
+                          { id: 'burgundy', hex: '#6F1E38' }, { id: 'emerald', hex: '#228B22' },
+                          { id: 'gold', hex: '#CFB53B' }, { id: 'blush', hex: '#DE5D83' },
+                        ]).map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setOutfitPrimaryColor(outfitPrimaryColor === c.id ? null : c.id)}
+                            title={c.id}
+                            className={[
+                              'w-7 h-7 rounded-full border-2 transition-all flex-shrink-0',
+                              outfitPrimaryColor === c.id
+                                ? 'border-rose-400 scale-110 shadow-[0_0_8px_rgba(244,63,94,0.4)]'
+                                : 'border-white/10 hover:border-white/30 hover:scale-105',
+                            ].join(' ')}
+                            style={{ backgroundColor: c.hex }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">
+                        {lingerieActiveGarments.includes('top') && lingerieActiveGarments.includes('bottom') ? 'Bottom Color' : 'Secondary Color'}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          { id: 'black', hex: '#1a1a1a' }, { id: 'white', hex: '#f5f5f5' },
+                          { id: 'silver', hex: '#C0C0C0' }, { id: 'gold', hex: '#CFB53B' },
+                          { id: 'cream', hex: '#FFFDD0' }, { id: 'charcoal', hex: '#36454F' },
+                          { id: 'red', hex: '#DC143C' }, { id: 'blush', hex: '#DE5D83' },
+                        ]).map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setOutfitSecondaryColor(outfitSecondaryColor === c.id ? null : c.id)}
+                            title={c.id}
+                            className={[
+                              'w-7 h-7 rounded-full border-2 transition-all flex-shrink-0',
+                              outfitSecondaryColor === c.id
+                                ? 'border-rose-400 scale-110 shadow-[0_0_8px_rgba(244,63,94,0.4)]'
+                                : 'border-white/10 hover:border-white/30 hover:scale-105',
+                            ].join(' ')}
+                            style={{ backgroundColor: c.hex }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                )
+              })()}
+
+              {/* ═══ Advanced Options (collapsible) ═══ */}
+              <div>
+                <button
+                  onClick={() => setShowAdvancedOutfit(!showAdvancedOutfit)}
+                  className="flex items-center gap-2 w-full text-[10px] text-white/30 hover:text-white/50 font-semibold uppercase tracking-wider transition-colors"
+                >
+                  <ChevronDown size={12} className={`transition-transform ${showAdvancedOutfit ? 'rotate-0' : '-rotate-90'}`} />
+                  Advanced Options
+                </button>
+
+                {showAdvancedOutfit && (
+                  <div className="mt-3 space-y-4">
+                    {/* Primary & Secondary Color — hidden when lingerie (colors live inside lingerie builder) */}
+                    {!isLingerieSelected && (
+                    <>
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-2 font-medium">Primary Color</div>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          { id: 'black', hex: '#1a1a1a' }, { id: 'white', hex: '#f5f5f5' },
+                          { id: 'red', hex: '#DC143C' }, { id: 'navy', hex: '#1B2A4A' },
+                          { id: 'burgundy', hex: '#6F1E38' }, { id: 'emerald', hex: '#228B22' },
+                          { id: 'gold', hex: '#CFB53B' }, { id: 'blush', hex: '#DE5D83' },
+                        ]).map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setOutfitPrimaryColor(outfitPrimaryColor === c.id ? null : c.id)}
+                            title={c.id}
+                            className={[
+                              'w-7 h-7 rounded-full border-2 transition-all flex-shrink-0',
+                              outfitPrimaryColor === c.id
+                                ? 'border-cyan-400 scale-110 shadow-[0_0_8px_rgba(34,211,238,0.4)]'
+                                : 'border-white/10 hover:border-white/30 hover:scale-105',
+                            ].join(' ')}
+                            style={{ backgroundColor: c.hex }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-2 font-medium">Secondary Color</div>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          { id: 'black', hex: '#1a1a1a' }, { id: 'white', hex: '#f5f5f5' },
+                          { id: 'silver', hex: '#C0C0C0' }, { id: 'gold', hex: '#CFB53B' },
+                          { id: 'cream', hex: '#FFFDD0' }, { id: 'charcoal', hex: '#36454F' },
+                        ]).map((c) => (
+                          <button
+                            key={c.id}
+                            onClick={() => setOutfitSecondaryColor(outfitSecondaryColor === c.id ? null : c.id)}
+                            title={c.id}
+                            className={[
+                              'w-7 h-7 rounded-full border-2 transition-all flex-shrink-0',
+                              outfitSecondaryColor === c.id
+                                ? 'border-cyan-400 scale-110 shadow-[0_0_8px_rgba(34,211,238,0.4)]'
+                                : 'border-white/10 hover:border-white/30 hover:scale-105',
+                            ].join(' ')}
+                            style={{ backgroundColor: c.hex }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    </>
+                    )}
+
+                    {/* Accessories — collapsible, hidden by default */}
+                    <div>
+                      <button
+                        onClick={() => setShowAccessories(!showAccessories)}
+                        className="flex items-center gap-1.5 text-[10px] text-white/30 hover:text-white/50 font-medium uppercase tracking-wider transition-colors"
+                      >
+                        <ChevronDown size={10} className={`transition-transform ${showAccessories ? 'rotate-0' : '-rotate-90'}`} />
+                        Accessories
+                        {selectedAccessories.length > 0 && (
+                          <span className="px-1.5 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[9px] font-bold">
+                            {selectedAccessories.length}
+                          </span>
+                        )}
+                      </button>
+                      {showAccessories && (
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {ACCESSORY_OPTIONS.map((a) => {
+                            const active = selectedAccessories.includes(a.id)
+                            return (
+                              <button
+                                key={a.id}
+                                onClick={() => setSelectedAccessories((prev) =>
+                                  active ? prev.filter((x) => x !== a.id) : [...prev, a.id],
+                                )}
+                                className={[
+                                  'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                                  active
+                                    ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
+                                    : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                                ].join(' ')}
+                              >
+                                <span>{a.icon}</span>
+                                <span>{a.label}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Pose */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-2 font-medium">Pose</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {POSES.map((p) => (
+                          <button
+                            key={p.id}
+                            onClick={() => setSelectedPose(selectedPose === p.id ? null : p.id)}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                              selectedPose === p.id
+                                ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Background */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-2 font-medium">Background</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {BACKGROUNDS.map((b) => (
+                          <button
+                            key={b.id}
+                            onClick={() => setSelectedBackground(selectedBackground === b.id ? null : b.id)}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                              selectedBackground === b.id
+                                ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {b.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ═══ Adult Content Controls — 18+ gated ═══ */}
+              {nsfwMode && outfitTab === '18+' && (
+                <div className="pt-4 border-t border-rose-500/20">
+                  <div className="text-xs text-rose-400 font-bold uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <Flame size={14} /> Adult Content Controls
+                    <span className="text-[8px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold ml-1">18+</span>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Nudity / Exposure Level */}
+                    <div>
+                      <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">Nudity / Exposure Level</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {([
+                          { id: 'suggestive', label: 'Suggestive' },
+                          { id: 'clothed_revealing', label: 'Clothed but revealing' },
+                          { id: 'partial_nudity', label: 'Partial Nudity' },
+                          { id: 'topless', label: 'Topless / implied nude' },
+                          { id: 'full_nude', label: 'Full Nude' },
+                          { id: 'explicit', label: 'Explicit adult content' },
+                        ]).map((e) => (
+                          <button
+                            key={e.id}
+                            onClick={() => setNsfwExposure(nsfwExposure === e.id ? null : e.id)}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                              nsfwExposure === e.id
+                                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {e.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Explicitness Intensity slider */}
+                    <div>
+                      <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">
+                        Explicitness Intensity <span className="text-rose-300 ml-1">{nsfwIntensity}</span>
+                      </div>
+                      <input
+                        type="range" min={0} max={10} step={1}
+                        value={nsfwIntensity}
+                        onChange={(e) => setNsfwIntensity(Number(e.target.value))}
+                        className="w-full h-1.5 rounded-full appearance-none bg-white/10 accent-rose-500"
+                      />
+                      <div className="flex justify-between text-[8px] text-white/20 mt-1">
+                        <span>Subtle</span><span>Intense</span>
+                      </div>
+                    </div>
+
+                    {/* Sensual Pose */}
+                    <div>
+                      <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">Sensual Pose</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {([
+                          { id: 'subtle', label: 'Subtle Tease' },
+                          { id: 'confident', label: 'Confident Display' },
+                          { id: 'intimate', label: 'Intimate Close' },
+                          ...NSFW_POSES.map((p) => ({ id: p.id, label: p.label })),
+                        ]).map((p) => (
+                          <button
+                            key={p.id}
+                            onClick={() => setNsfwPose(nsfwPose === p.id ? null : p.id)}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                              nsfwPose === p.id
+                                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Power Dynamic */}
+                    <div>
+                      <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">Power Dynamic</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {([
+                          { id: 'soft', label: 'Soft & Romantic' },
+                          { id: 'balanced', label: 'Balanced' },
+                          { id: 'strong', label: 'Dominant & Bold' },
+                        ]).map((d) => (
+                          <button
+                            key={d.id}
+                            onClick={() => setNsfwDominance(nsfwDominance === d.id ? null : d.id)}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                              nsfwDominance === d.id
+                                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {d.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Fantasy Tone */}
+                    <div>
+                      <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">Fantasy Tone</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {([
+                          { id: 'romantic', label: 'Romantic & Tender' },
+                          { id: 'seductive', label: 'Seductive & Alluring' },
+                          { id: 'dramatic', label: 'Dramatic & Intense' },
+                        ]).map((t) => (
+                          <button
+                            key={t.id}
+                            onClick={() => setNsfwFantasyTone(nsfwFantasyTone === t.id ? null : t.id)}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                              nsfwFantasyTone === t.id
+                                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {t.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Scene / Setting */}
+                    <div>
+                      <div className="text-[10px] text-rose-300/50 mb-2 font-medium uppercase tracking-wider">Scene / Setting</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {NSFW_BACKGROUNDS.map((b) => (
+                          <button
+                            key={b.id}
+                            onClick={() => setNsfwScene(nsfwScene === b.id ? null : b.id)}
+                            className={[
+                              'px-2.5 py-1.5 rounded-lg text-[10px] font-medium border transition-all',
+                              nsfwScene === b.id
+                                ? 'border-rose-500/40 bg-rose-500/15 text-rose-200'
+                                : 'border-white/[0.06] bg-white/[0.02] text-white/40 hover:text-white/60',
+                            ].join(' ')}
+                          >
+                            {b.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ═══ Custom Outfit Prompt ═══ */}
               <div>
                 <div className="text-[10px] text-white/40 mb-2 font-semibold uppercase tracking-wider">
-                  2. Or Custom Outfit Prompt
+                  Or Custom Outfit
                 </div>
                 <div className={[
                   'flex items-center gap-2 px-3.5 py-2.5 rounded-xl border transition-all',
@@ -827,7 +1735,7 @@ export function AvatarViewer({
                         <span className="w-5 text-center text-sm">🎒</span>
                         All Outfits
                       </button>
-                      {SCENARIO_TAG_META.map((t) => (
+                      {availableTags.map((t) => (
                         <button
                           key={t.id}
                           onClick={() => { setWardrobeFilter(t.id); setWardrobeFilterOpen(false) }}
@@ -838,6 +1746,9 @@ export function AvatarViewer({
                         >
                           <span className="w-5 text-center text-sm">{t.icon}</span>
                           {t.label}
+                          <span className="ml-auto text-[9px] text-white/25">
+                            {outfits.filter((o) => o.scenarioTag === t.id).length}
+                          </span>
                         </button>
                       ))}
                     </div>

@@ -1,7 +1,8 @@
 """
-Placeholder PNG generator — produces labelled images for end-to-end testing.
+Avatar image storage — saves generated images to disk and returns URL dicts.
 
-Replace with real StyleGAN2 inference when GPU weights are available.
+Contains both the original placeholder generator (preserved for fallback)
+and a new ``save_pil_images()`` function for real StyleGAN2 outputs.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from PIL import Image, ImageDraw
 
-OUTPUT_DIR = Path(os.getenv("AVATAR_OUTPUT_DIR", "../backend/data/avatars"))
+OUTPUT_DIR = Path(os.getenv("AVATAR_OUTPUT_DIR", "../backend/data/uploads"))
 
 
 def save_placeholder_pngs(
@@ -47,9 +48,70 @@ def save_placeholder_pngs(
         img.save(path)
 
         results.append({
-            "url": f"/static/avatars/{name}",
+            "url": f"/files/{name}",
             "seed": s,
             "metadata": {"generator": "placeholder"},
+        })
+
+    return results
+
+
+def save_pil_images(
+    images: List[Dict[str, Any]],
+    output_size: int = 512,
+    sharpen: bool = True,
+) -> List[Dict[str, Any]]:
+    """Save PIL Images produced by a real generator (StyleGAN2, etc.).
+
+    Additive: does not modify the placeholder generator above.
+
+    Parameters
+    ----------
+    images : list[dict]
+        Each dict must contain:
+          - ``image``: PIL.Image.Image
+          - ``seed``: int
+          - ``metadata``: dict (optional)
+    output_size : int
+        Target square dimension for saved images.
+    sharpen : bool
+        Apply a mild sharpen filter (helps with upscaled StyleGAN outputs).
+
+    Returns
+    -------
+    list[dict]
+        Each dict has ``url``, ``seed``, ``metadata`` — same shape as
+        ``save_placeholder_pngs`` so the caller doesn't need to change.
+    """
+    from PIL import ImageFilter
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    results: list[dict[str, Any]] = []
+    for item in images:
+        img = item.get("image")
+        if img is None:
+            continue
+
+        seed = item.get("seed", 0)
+        meta = item.get("metadata", {})
+
+        # Resize if needed
+        if img.size != (output_size, output_size):
+            img = img.resize((output_size, output_size), Image.LANCZOS)
+
+        # Mild sharpen for upscaled outputs
+        if sharpen:
+            img = img.filter(ImageFilter.SHARPEN)
+
+        name = f"avatar_{int(time.time() * 1000)}_{seed}.png"
+        path = OUTPUT_DIR / name
+        img.save(path, format="PNG", optimize=True)
+
+        results.append({
+            "url": f"/files/{name}",
+            "seed": seed,
+            "metadata": meta,
         })
 
     return results

@@ -38,6 +38,8 @@ export interface AvatarLandingPageProps {
   items: GalleryItem[]
   backendUrl: string
   onNewAvatar: () => void
+  /** Open the Advanced Creator (multi-phase face→body→outfit pipeline). */
+  onOpenCreator?: () => void
   onOpenItem: (item: GalleryItem) => void
   onDeleteItem: (id: string) => void
   onOpenLightbox?: (url: string) => void
@@ -84,6 +86,7 @@ export function AvatarLandingPage({
   items,
   backendUrl,
   onNewAvatar,
+  onOpenCreator,
   onOpenItem,
   onDeleteItem,
   onOpenLightbox,
@@ -179,9 +182,20 @@ export function AvatarLandingPage({
             onClick={onNewAvatar}
             aria-label="Create a new avatar"
           >
-            <Sparkles size={14} />
-            <span>New Avatar</span>
+            <Plus size={14} />
+            <span>Create Avatar</span>
           </button>
+          {onOpenCreator && (
+            <button
+              className="flex items-center gap-2 border border-cyan-500/25 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2 rounded-xl text-sm font-medium text-cyan-300 transition-all"
+              type="button"
+              onClick={onOpenCreator}
+              aria-label="Open advanced avatar creator"
+            >
+              <Sparkles size={14} />
+              <span>Advanced Creator</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -207,23 +221,25 @@ export function AvatarLandingPage({
                   random faces, or face+style combinations.
                 </p>
 
-                <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
+                <div className="mt-6 flex items-center justify-center gap-3">
                   <button
                     type="button"
                     onClick={onNewAvatar}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:brightness-110 border border-purple-500/20 text-sm font-semibold text-white shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20 transition-all"
+                    className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:brightness-110 border border-purple-500/20 text-sm font-semibold text-white shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20 transition-all"
                   >
-                    <User size={16} />
-                    <span>From Reference Photo</span>
+                    <Plus size={16} />
+                    <span>Create Avatar</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={onNewAvatar}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.08] hover:border-white/15 text-sm font-semibold text-white transition-all"
-                  >
-                    <Shuffle size={16} />
-                    <span>Random Face</span>
-                  </button>
+                  {onOpenCreator && (
+                    <button
+                      type="button"
+                      onClick={onOpenCreator}
+                      className="inline-flex items-center gap-2 px-6 py-3 rounded-xl border border-cyan-500/25 bg-cyan-500/10 hover:bg-cyan-500/20 text-sm font-medium text-cyan-300 transition-all"
+                    >
+                      <Sparkles size={16} />
+                      <span>Advanced Creator</span>
+                    </button>
+                  )}
                 </div>
 
                 <p className="mt-5 text-xs text-white/20">
@@ -261,12 +277,17 @@ export function AvatarLandingPage({
                   </div>
                 )}
 
-                {/* Mode badge */}
-                <div className="absolute top-2.5 left-2.5 z-10">
+                {/* Mode badge + character name */}
+                <div className="absolute top-2.5 left-2.5 z-10 flex flex-col gap-1">
                   <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/50 backdrop-blur-sm border border-white/[0.08] text-[9px] text-white/60 font-medium">
                     {MODE_ICONS[item.mode]}
                     {MODE_LABELS[item.mode] || item.mode}
                   </div>
+                  {item.name && (
+                    <div className="px-2 py-0.5 rounded-md bg-black/50 backdrop-blur-sm border border-white/[0.08] text-[10px] text-white/80 font-medium truncate max-w-[140px]">
+                      {item.name}
+                    </div>
+                  )}
                 </div>
 
                 {/* Outfit + portrait count badges (top right) */}
@@ -298,8 +319,8 @@ export function AvatarLandingPage({
 
                 {/* Hover overlay */}
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-between p-3">
-                  {/* Top-right actions */}
-                  <div className="flex justify-end gap-1.5">
+                  {/* Top actions — left-aligned to avoid overflow */}
+                  <div className="flex justify-start gap-1.5">
                     {onOpenLightbox && (
                       <button
                         className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-lg text-white transition-colors"
@@ -334,7 +355,7 @@ export function AvatarLandingPage({
                       <button
                         className="bg-emerald-500/20 backdrop-blur-md hover:bg-emerald-500/40 p-2 rounded-lg text-emerald-300 transition-colors"
                         type="button"
-                        title="Save as Persona Avatar"
+                        title="Export to Persona"
                         onClick={(e) => { e.stopPropagation(); onSaveAsPersonaAvatar(item) }}
                       >
                         <UserPlus size={14} />
@@ -382,8 +403,8 @@ export function AvatarLandingPage({
             onClick={onNewAvatar}
             className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-600 to-pink-600 text-white hover:brightness-110 transition-all shadow-2xl shadow-purple-500/20 flex items-center justify-center"
             type="button"
-            title="Create new avatar"
-            aria-label="Create new avatar"
+            title="Create Avatar"
+            aria-label="Create Avatar"
           >
             <Plus size={24} />
           </button>

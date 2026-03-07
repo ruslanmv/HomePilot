@@ -159,7 +159,7 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	fi
 	@echo ""
 	@echo "✓ Setting up model directories..."
-	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae models/comfy/controlnet models/comfy/sams models/comfy/rembg models/comfy/upscale_models models/comfy/gfpgan models/comfy/insightface/models models/comfy/instantid models/comfy/photomaker models/comfy/pulid models/comfy/avatar models/comfy/ipadapter models/comfy/controlnet/InstantID
+	@mkdir -p models/comfy/checkpoints models/comfy/unet models/comfy/clip models/comfy/vae models/comfy/controlnet models/comfy/sams models/comfy/rembg models/comfy/upscale_models models/comfy/gfpgan models/comfy/insightface/models models/comfy/instantid models/comfy/photomaker models/comfy/pulid models/comfy/avatar models/comfy/ipadapter models/comfy/controlnet/InstantID models/comfy/controlnet/thibaud-openpose-sdxl-1.0
 	@echo "  Linking ComfyUI models to ./models/comfy..."
 	@rm -rf ComfyUI/models
 	@ln -s $$(pwd)/models/comfy ComfyUI/models
@@ -182,6 +182,16 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	else \
 		echo ""; \
 		echo "⏭  Skipping MCP Context Forge (AGENTIC=0)"; \
+	fi
+	@echo ""
+	@echo "✓ Installing avatar-service (StyleGAN face generator)..."
+	@if [ -d "avatar-service" ]; then \
+		cd avatar-service && uv venv .venv --python 3.11 2>/dev/null || uv venv .venv 2>/dev/null || python3 -m venv .venv; \
+		.venv/bin/pip install -e . >/dev/null 2>&1 && \
+		echo "  ✓ Avatar service installed (port 8020)" || \
+		echo "  ⚠ Avatar service install failed (non-fatal). Face generation uses ComfyUI fallback."; \
+	else \
+		echo "  ⏭ avatar-service/ not found (optional)"; \
 	fi
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -311,6 +321,9 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 	@if [ -f "ComfyUI/main.py" ]; then \
 		echo "  ComfyUI:      http://localhost:8188"; \
 	fi
+	@if [ -f "avatar-service/.venv/bin/uvicorn" ]; then \
+		echo "  Avatar Svc:   http://localhost:8020"; \
+	fi
 	@if [ "$(AGENTIC)" = "1" ] && ([ -d "$(MCP_DIR)/.venv" ] || command -v mcpgateway >/dev/null 2>&1); then \
 		echo "  MCP Gateway:  http://localhost:$(MCP_GATEWAY_PORT)"; \
 		echo "  MCP Servers:  http://localhost:9101-9105"; \
@@ -355,6 +368,12 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 			fi; \
 			echo "Starting ComfyUI..."; \
 			cd "$$ROOT/ComfyUI" && .venv/bin/python main.py --listen 0.0.0.0 --port 8188 & \
+			pids="$$pids $$!"; \
+		fi; \
+		\
+		if [ -f "$$ROOT/avatar-service/.venv/bin/uvicorn" ]; then \
+			echo "Starting avatar-service (port 8020)..."; \
+			cd "$$ROOT/avatar-service" && .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8020 & \
 			pids="$$pids $$!"; \
 		fi; \
 		\
@@ -836,29 +855,33 @@ download-avatar-models-full: download-avatar-models-basic ## Download full avata
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Downloading Avatar Models (Full — additive to Basic)"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
-	@mkdir -p models/comfy/photomaker models/comfy/pulid models/comfy/avatar models/comfy/insightface models/comfy/ipadapter
+	@mkdir -p models/comfy/photomaker models/comfy/pulid models/comfy/avatar models/comfy/insightface models/comfy/ipadapter models/comfy/controlnet/thibaud-openpose-sdxl-1.0
 	@echo ""
-	@echo "[1/6] Downloading PhotoMaker V2 (Apache 2.0)..."
+	@echo "[1/7] Downloading OpenPose ControlNet SDXL (~2.5GB)..."
+	@wget -c --progress=bar:force -O models/comfy/controlnet/thibaud-openpose-sdxl-1.0/diffusion_pytorch_model.safetensors \
+		"https://huggingface.co/dimitribarbot/controlnet-openpose-sdxl-1.0-safetensors/resolve/main/diffusion_pytorch_model.safetensors" 2>&1 || echo "Failed - retry or download manually"
+	@echo ""
+	@echo "[2/7] Downloading PhotoMaker V2 (Apache 2.0)..."
 	@wget -c --progress=bar:force -O models/comfy/photomaker/photomaker-v2.bin \
 		"https://huggingface.co/TencentARC/PhotoMaker-V2/resolve/main/photomaker-v2.bin" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
-	@echo "[2/6] Downloading PuLID for FLUX (Apache 2.0)..."
+	@echo "[3/7] Downloading PuLID for FLUX (Apache 2.0)..."
 	@wget -c --progress=bar:force -O models/comfy/pulid/pulid_flux_v0.9.0.safetensors \
 		"https://huggingface.co/guozinan/PuLID/resolve/main/pulid_flux_v0.9.0.safetensors" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
-	@echo "[3/6] Downloading InsightFace InSwapper 128 (ONNX)..."
+	@echo "[4/7] Downloading InsightFace InSwapper 128 (ONNX)..."
 	@wget -c --progress=bar:force -O models/comfy/insightface/inswapper_128.onnx \
 		"https://huggingface.co/ezioruan/inswapper_128.onnx/resolve/main/inswapper_128.onnx" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
-	@echo "[4/6] Downloading IP-Adapter FaceID PlusV2 SDXL (Non-Commercial)..."
+	@echo "[5/7] Downloading IP-Adapter FaceID PlusV2 SDXL (Non-Commercial)..."
 	@wget -c --progress=bar:force -O models/comfy/ipadapter/ip-adapter-faceid-plusv2_sdxl.bin \
 		"https://huggingface.co/h94/IP-Adapter-FaceID/resolve/main/ip-adapter-faceid-plusv2_sdxl.bin" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
-	@echo "[5/6] Downloading StyleGAN2 FFHQ 256 (NON-COMMERCIAL — NVIDIA)..."
+	@echo "[6/7] Downloading StyleGAN2 FFHQ 256 (NON-COMMERCIAL — NVIDIA)..."
 	@wget -c --progress=bar:force -O models/comfy/avatar/stylegan2-ffhq-256x256.pkl \
 		"https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan2/versions/1/files/stylegan2-ffhq-256x256.pkl" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
-	@echo "[6/6] Downloading StyleGAN2 FFHQ 1024 (NON-COMMERCIAL — NVIDIA)..."
+	@echo "[7/7] Downloading StyleGAN2 FFHQ 1024 (NON-COMMERCIAL — NVIDIA)..."
 	@wget -c --progress=bar:force -O models/comfy/avatar/stylegan2-ffhq-1024x1024.pkl \
 		"https://api.ngc.nvidia.com/v2/models/nvidia/research/stylegan2/versions/1/files/stylegan2-ffhq-1024x1024.pkl" 2>&1 || echo "Failed - retry or download manually"
 	@echo ""
@@ -963,7 +986,7 @@ download-verify: ## Verify downloaded models and show disk usage
 		ls -lh models/comfy/gfpgan/*.pth 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
 		echo ""; \
 		echo "  Avatar Models (identity-preserving generation):"; \
-		ls -lh models/comfy/instantid/* models/comfy/insightface/models/*.zip models/comfy/insightface/*.onnx models/comfy/photomaker/* models/comfy/pulid/* models/comfy/ipadapter/* models/comfy/avatar/* models/comfy/controlnet/InstantID/* 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
+		ls -lh models/comfy/instantid/* models/comfy/insightface/models/*.zip models/comfy/insightface/*.onnx models/comfy/photomaker/* models/comfy/pulid/* models/comfy/ipadapter/* models/comfy/avatar/* models/comfy/controlnet/InstantID/* models/comfy/controlnet/thibaud-openpose-sdxl-1.0/* 2>/dev/null | awk '{print "    " $$9 " (" $$5 ")"}' || echo "    (none)"; \
 		echo ""; \
 		echo "  Total ComfyUI storage: $$(du -sh models/comfy 2>/dev/null | cut -f1)"; \
 		echo ""; \

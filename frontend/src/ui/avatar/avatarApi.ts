@@ -6,6 +6,9 @@ import type {
   AvatarGenerateRequest,
   AvatarGenerateResponse,
   AvatarPacksResponse,
+  AvatarCapabilitiesResponse,
+  HybridFullBodyRequest,
+  HybridFullBodyResponse,
 } from './types'
 
 export async function fetchAvatarPacks(
@@ -39,6 +42,23 @@ export async function installAvatarPack(
   return res.json()
 }
 
+/**
+ * Fetch engine capabilities (ComfyUI, StyleGAN availability).
+ * Additive — does not affect existing API functions.
+ */
+export async function fetchAvatarCapabilities(
+  backendUrl: string,
+  apiKey?: string,
+): Promise<AvatarCapabilitiesResponse> {
+  const base = (backendUrl || '').replace(/\/+$/, '')
+  const headers: Record<string, string> = {}
+  if (apiKey) headers['x-api-key'] = apiKey
+
+  const res = await fetch(`${base}/v1/avatars/capabilities`, { headers })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
 export async function generateAvatars(
   backendUrl: string,
   body: AvatarGenerateRequest,
@@ -52,6 +72,32 @@ export async function generateAvatars(
   if (apiKey) headers['x-api-key'] = apiKey
 
   const res = await fetch(`${base}/v1/avatars/generate`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+/**
+ * Generate full-body images from a face reference via the hybrid pipeline.
+ * Uses ComfyUI with identity preservation (InstantID/PhotoMaker).
+ */
+export async function generateHybridFullBody(
+  backendUrl: string,
+  body: HybridFullBodyRequest,
+  apiKey?: string,
+  signal?: AbortSignal,
+): Promise<HybridFullBodyResponse> {
+  const base = (backendUrl || '').replace(/\/+$/, '')
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (apiKey) headers['x-api-key'] = apiKey
+
+  const res = await fetch(`${base}/v1/avatars/hybrid/fullbody`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
