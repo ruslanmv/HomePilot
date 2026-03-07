@@ -58,6 +58,14 @@ class OutfitRequest(BaseModel):
         default=None,
         description="Override the workflow checkpoint (model filename).",
     )
+    denoise_override: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Override denoise strength. Higher values (0.95-1.0) allow "
+                    "the text prompt to fully control pose/angle instead of "
+                    "following the reference image composition.",
+    )
 
 
 class OutfitResponse(BaseModel):
@@ -121,7 +129,10 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     # Use high denoise (0.85) so the sampler can actually change the outfit
     # instead of reproducing the reference image structure.
     # Default img2img denoise (0.65) is too conservative for outfit changes.
-    outfit_denoise = 0.85
+    # For non-front angles, callers should pass denoise_override=1.0 so
+    # the text prompt fully controls the pose/angle (the reference latent
+    # is pure noise at 1.0, letting CLIP guide the composition).
+    outfit_denoise = req.denoise_override if req.denoise_override is not None else 0.85
 
     # Build the final negative prompt by combining:
     #   1. Workflow baseline (quality/artifact prevention)

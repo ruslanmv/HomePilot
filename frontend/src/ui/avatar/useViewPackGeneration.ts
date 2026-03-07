@@ -32,11 +32,22 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string) {
 
     const angleMeta = getViewAngleOption(params.angle)
     const basePrompt = params.basePrompt?.trim() || 'portrait photograph'
+
+    // Build the positive prompt: base description + angle-specific direction + consistency phrases
     const viewPrompt = [
       basePrompt,
       angleMeta.prompt,
-      'turntable style pose, consistent studio framing, preserve identity, preserve outfit colors, preserve silhouette, clean full subject visibility',
+      'turntable style pose, consistent studio lighting, preserve identity, preserve outfit colors, preserve silhouette, clean full subject visibility',
     ].filter(Boolean).join(', ')
+
+    // Build the negative prompt: prevent front-facing bias from the reference latent
+    const negParts = [
+      'lowres, blurry, bad anatomy, deformed, extra fingers, missing fingers, bad hands, disfigured face, watermark, text, multiple people, duplicate',
+    ]
+    if (angleMeta.negativePrompt) {
+      negParts.push(angleMeta.negativePrompt)
+    }
+    const negativePrompt = negParts.join(', ')
 
     setLoadingAngles((current) => ({ ...current, [params.angle]: true }))
     setError(null)
@@ -49,10 +60,14 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string) {
           reference_image_url: params.referenceImageUrl,
           outfit_prompt: viewPrompt,
           character_prompt: params.characterPrompt,
+          negative_prompt: negativePrompt,
           count: 1,
           generation_mode: 'identity',
           checkpoint_override: params.checkpointOverride,
           seed: params.seed,
+          // Non-front angles use denoise 1.0 so the text prompt fully controls
+          // the pose/angle instead of the reference image's spatial layout.
+          denoise_override: angleMeta.denoise,
         }),
       })
 
