@@ -957,15 +957,44 @@ export function AvatarViewer({
               </div>
 
               {/* Anchor Face mini-preview (always visible as context) */}
-              <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                <div className="w-10 h-10 rounded-lg overflow-hidden border border-white/10 flex-shrink-0">
-                  <img src={heroUrl} alt="Anchor face" className="w-full h-full object-cover" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[10px] text-white/40 font-medium">Identity Anchor</div>
-                  <div className="text-[11px] text-white/60 truncate">{item.prompt || 'Your character'}</div>
-                </div>
-              </div>
+              {(() => {
+                // Show the active prompt: equipped item > latest outfit > anchor
+                const activePrompt = equippedItem?.prompt
+                  || (stageTab === 'outfit' && outfit.results[selectedResultIdx]
+                      ? (typeof outfit.results[selectedResultIdx].metadata?.prompt === 'string'
+                          ? outfit.results[selectedResultIdx].metadata!.prompt as string
+                          : undefined)
+                      : undefined)
+                  || item.prompt
+                  || 'Your character'
+                const isOutfitPrompt = activePrompt !== item.prompt && activePrompt !== 'Your character'
+                return (
+                  <div className="rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                    <div className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="w-10 h-10 rounded-lg overflow-hidden border border-white/10 flex-shrink-0">
+                        <img src={heroUrl} alt="Anchor face" className="w-full h-full object-cover" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] text-white/40 font-medium">
+                          {isOutfitPrompt ? 'Active Outfit Prompt' : 'Identity Anchor'}
+                        </div>
+                        <div className="text-[11px] text-white/60 truncate">{activePrompt}</div>
+                      </div>
+                    </div>
+                    {/* Expandable details for the full prompt */}
+                    {activePrompt.length > 60 && (
+                      <details className="px-3 pb-2.5">
+                        <summary className="text-[10px] text-white/30 cursor-pointer hover:text-white/50 transition-colors">
+                          Full prompt details
+                        </summary>
+                        <div className="mt-1.5 text-[11px] text-white/50 leading-relaxed break-words whitespace-pre-wrap">
+                          {activePrompt}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )
+              })()}
 
               {/* ──────── View Pack — multi-angle collapsible panel ──────── */}
               <AvatarViewPackPanel

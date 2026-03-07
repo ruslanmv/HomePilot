@@ -90,7 +90,7 @@ async def run_avatar_workflow(
                     AvatarResult(
                         url=url,
                         seed=base_seed + i,
-                        metadata={"source": "comfyui", "workflow": wf_path.name},
+                        metadata={"source": "comfyui", "workflow": wf_path.name, "prompt": prompt},
                     )
                 )
         return results
@@ -120,7 +120,7 @@ async def run_avatar_workflow(
                 AvatarResult(
                     url=url,
                     seed=effective_seed + i,
-                    metadata={"source": "comfyui", "workflow": wf_path.name},
+                    metadata={"source": "comfyui", "workflow": wf_path.name, "prompt": prompt},
                 )
             )
         return results
