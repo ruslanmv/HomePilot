@@ -67,6 +67,7 @@ export const FRAMING_OPTIONS: FramingOption[] = [
 
 /** Well-known outfit scenario tag IDs (mirrors OUTFIT_PRESETS). */
 export type OutfitScenarioTag =
+  | 'modern'
   | 'corporate'
   | 'business'
   | 'executive'
@@ -97,6 +98,7 @@ export interface ScenarioTagMeta {
 
 export const SCENARIO_TAG_META: ScenarioTagMeta[] = [
   // ── SFW: Standard ──
+  { id: 'modern',           label: 'Modern Lifestyle',  icon: '\uD83D\uDC57', category: 'sfw' },
   { id: 'corporate',       label: 'Corporate Formal',  icon: '\uD83D\uDCBC', category: 'sfw' },
   { id: 'business',        label: 'Business Casual',   icon: '\uD83D\uDC54', category: 'sfw' },
   { id: 'executive',       label: 'Executive Elegant', icon: '\uD83D\uDC51', category: 'sfw' },

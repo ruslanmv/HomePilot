@@ -13,9 +13,10 @@
  *   - Each outfit is tagged with its scenario for future filtering
  */
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react'
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import {
   ChevronLeft,
+  ChevronRight,
   Shirt,
   PenLine,
   Download,
@@ -144,6 +145,9 @@ export function AvatarViewer({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [wardrobeFilter, setWardrobeFilter] = useState<OutfitScenarioTag | 'all'>('all')
   const [wardrobeFilterOpen, setWardrobeFilterOpen] = useState(false)
+  const wardrobeScrollRef = useRef<HTMLDivElement>(null)
+  const [wardrobeCanScrollLeft, setWardrobeCanScrollLeft] = useState(false)
+  const [wardrobeCanScrollRight, setWardrobeCanScrollRight] = useState(false)
   const [avatarSettingsState, setAvatarSettingsState] = useState<AvatarSettings>(loadAvatarSettings)
 
   // Outfit generation state
@@ -308,6 +312,30 @@ export function AvatarViewer({
     outfits.forEach((o) => { if (o.scenarioTag) tagSet.add(o.scenarioTag) })
     return SCENARIO_TAG_META.filter((t) => tagSet.has(t.id))
   }, [outfits])
+
+  // Wardrobe scroll detection — show/hide arrows when content overflows
+  const updateWardrobeScroll = useCallback(() => {
+    const el = wardrobeScrollRef.current
+    if (!el) return
+    setWardrobeCanScrollLeft(el.scrollLeft > 4)
+    setWardrobeCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4)
+  }, [])
+
+  useEffect(() => {
+    const el = wardrobeScrollRef.current
+    if (!el) return
+    updateWardrobeScroll()
+    el.addEventListener('scroll', updateWardrobeScroll, { passive: true })
+    const ro = new ResizeObserver(updateWardrobeScroll)
+    ro.observe(el)
+    return () => { el.removeEventListener('scroll', updateWardrobeScroll); ro.disconnect() }
+  }, [filteredOutfits, updateWardrobeScroll])
+
+  const scrollWardrobe = useCallback((dir: 'left' | 'right') => {
+    const el = wardrobeScrollRef.current
+    if (!el) return
+    el.scrollBy({ left: dir === 'left' ? -240 : 240, behavior: 'smooth' })
+  }, [])
 
   // View Pack — merge persisted view angles from wardrobe with freshly generated ones
   const persistedViewPreviews = useMemo<ViewPreviewMap>(() => {
@@ -1917,40 +1945,63 @@ export function AvatarViewer({
               </div>
             </div>
 
-            {/* Wardrobe strip — RPG inventory, horizontal scroll */}
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide flex-1 min-h-0 items-start pb-1">
-              {/* Filled outfit slots */}
-              {filteredOutfits.map((o) => {
-                const outfitUrl = resolveUrl(o.url, backendUrl)
-                const tagMeta = getTagMeta(o.scenarioTag)
-                return (
-                  <WardrobeSlot
-                    key={o.id}
-                    item={o}
-                    imageUrl={outfitUrl}
-                    tagMeta={tagMeta}
-                    isEquipped={equippedItem?.id === o.id}
-                    onEquip={handleEquip}
-                    onOpenLightbox={onOpenLightbox}
-                    onSendToEdit={onSendToEdit}
-                    onDelete={onDeleteItem}
-                  />
-                )
-              })}
-
-              {/* Empty inventory slots */}
-              {Array.from({ length: Math.max(0, MIN_WARDROBE_SLOTS - filteredOutfits.length) }).map((_, i) => (
-                <div
-                  key={`empty-${i}`}
-                  className="flex-shrink-0 w-24 rounded-xl border-2 border-dashed border-white/[0.06] bg-white/[0.01] flex flex-col items-center justify-center gap-1 group hover:border-cyan-500/20 hover:bg-cyan-500/[0.02] transition-all cursor-default"
-                  style={{ aspectRatio: '2/3' }}
+            {/* Wardrobe strip — RPG inventory, horizontal scroll with arrows */}
+            <div className="relative flex-1 min-h-0">
+              {/* Left scroll arrow */}
+              {wardrobeCanScrollLeft && (
+                <button
+                  onClick={() => scrollWardrobe('left')}
+                  className="absolute left-0 top-0 bottom-1 z-20 w-8 flex items-center justify-center bg-gradient-to-r from-[#141414] via-[#141414]/80 to-transparent hover:from-[#1a1a1a] transition-colors"
+                  aria-label="Scroll left"
                 >
-                  <Plus size={16} className="text-white/10 group-hover:text-cyan-500/30 transition-colors" />
-                  <span className="text-[8px] text-white/10 group-hover:text-cyan-500/25 font-medium transition-colors">
-                    Empty Slot
-                  </span>
-                </div>
-              ))}
+                  <ChevronLeft size={18} className="text-white/60" />
+                </button>
+              )}
+              {/* Right scroll arrow */}
+              {wardrobeCanScrollRight && (
+                <button
+                  onClick={() => scrollWardrobe('right')}
+                  className="absolute right-0 top-0 bottom-1 z-20 w-8 flex items-center justify-center bg-gradient-to-l from-[#141414] via-[#141414]/80 to-transparent hover:from-[#1a1a1a] transition-colors"
+                  aria-label="Scroll right"
+                >
+                  <ChevronRight size={18} className="text-white/60" />
+                </button>
+              )}
+
+              <div ref={wardrobeScrollRef} className="flex gap-2 overflow-x-auto scrollbar-hide h-full items-start pb-1">
+                {/* Filled outfit slots */}
+                {filteredOutfits.map((o) => {
+                  const outfitUrl = resolveUrl(o.url, backendUrl)
+                  const tagMeta = getTagMeta(o.scenarioTag)
+                  return (
+                    <WardrobeSlot
+                      key={o.id}
+                      item={o}
+                      imageUrl={outfitUrl}
+                      tagMeta={tagMeta}
+                      isEquipped={equippedItem?.id === o.id}
+                      onEquip={handleEquip}
+                      onOpenLightbox={onOpenLightbox}
+                      onSendToEdit={onSendToEdit}
+                      onDelete={onDeleteItem}
+                    />
+                  )
+                })}
+
+                {/* Empty inventory slots */}
+                {Array.from({ length: Math.max(0, MIN_WARDROBE_SLOTS - filteredOutfits.length) }).map((_, i) => (
+                  <div
+                    key={`empty-${i}`}
+                    className="flex-shrink-0 w-24 rounded-xl border-2 border-dashed border-white/[0.06] bg-white/[0.01] flex flex-col items-center justify-center gap-1 group hover:border-cyan-500/20 hover:bg-cyan-500/[0.02] transition-all cursor-default"
+                    style={{ aspectRatio: '2/3' }}
+                  >
+                    <Plus size={16} className="text-white/10 group-hover:text-cyan-500/30 transition-colors" />
+                    <span className="text-[8px] text-white/10 group-hover:text-cyan-500/25 font-medium transition-colors">
+                      Empty Slot
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
