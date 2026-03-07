@@ -25,12 +25,13 @@ import {
   Copy,
   Check,
 } from 'lucide-react'
-import type { GalleryItem, OutfitScenarioTag } from './galleryTypes'
-import { SCENARIO_TAG_META } from './galleryTypes'
+import type { GalleryItem, OutfitScenarioTag, FramingType } from './galleryTypes'
+import { SCENARIO_TAG_META, FRAMING_OPTIONS } from './galleryTypes'
 import type { AvatarResult } from './types'
 import { OUTFIT_PRESETS } from '../personaTypes'
 import { useOutfitGeneration } from './useOutfitGeneration'
 import { resolveFileUrl } from '../resolveFileUrl'
+import { AvatarGeneratingLoader } from './AvatarGeneratingLoader'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -76,7 +77,7 @@ export function OutfitPanel({
 }: OutfitPanelProps) {
   const outfit = useOutfitGeneration(backendUrl, apiKey)
 
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null)
+  const [selectedPreset, setSelectedPreset] = useState<string | null>('corporate')
   const [customPrompt, setCustomPrompt] = useState('')
   const [count, setCount] = useState(4)
   const [copiedSeed, setCopiedSeed] = useState<number | null>(null)
@@ -108,11 +109,35 @@ export function OutfitPanel({
       ? (selectedPreset as OutfitScenarioTag)
       : 'custom'
 
+    // --- Build positive prompt with anchors ---
+    const preset = selectedPreset
+      ? presets.find((p) => p.id === selectedPreset)
+      : null
+    let finalOutfitPrompt = effectivePrompt
+    if (preset?.positiveAnchors) {
+      finalOutfitPrompt = `${effectivePrompt}, ${preset.positiveAnchors}`
+    }
+
+    // --- Build combined negative: framing negatives + style negatives ---
+    const negParts: string[] = []
+    // 1. Framing negatives (based on the anchor's framing type)
+    const framingType: FramingType = anchor.framingType || 'half_body'
+    const framingOpt = FRAMING_OPTIONS.find((f) => f.id === framingType)
+    if (framingOpt?.negativeHints) {
+      negParts.push(framingOpt.negativeHints)
+    }
+    // 2. Style negatives (from the selected preset)
+    if (preset?.negativeHints) {
+      negParts.push(preset.negativeHints)
+    }
+    const negativePrompt = negParts.length > 0 ? negParts.join(', ') : undefined
+
     try {
       const result = await outfit.generate({
         referenceImageUrl: anchor.url,
-        outfitPrompt: effectivePrompt,
+        outfitPrompt: finalOutfitPrompt,
         characterPrompt: anchor.prompt,
+        negativePrompt,
         count,
         checkpointOverride,
       })
@@ -122,7 +147,7 @@ export function OutfitPanel({
     } catch {
       // Error is already captured in hook state
     }
-  }, [canGenerate, outfit, anchor, effectivePrompt, count, onResults, selectedPreset])
+  }, [canGenerate, outfit, anchor, effectivePrompt, count, onResults, selectedPreset, presets, checkpointOverride])
 
   const handleCopySeed = useCallback((seed: number) => {
     navigator.clipboard.writeText(String(seed)).catch(() => {})
@@ -168,33 +193,138 @@ export function OutfitPanel({
         </div>
       </div>
 
-      {/* Outfit presets */}
-      <div className="mb-3">
-        <div className="text-xs text-white/40 mb-2 font-medium uppercase tracking-wider">
+      {/* Outfit presets — grouped by category */}
+      <div className="mb-3 space-y-3">
+        <div className="text-xs text-white/40 mb-1 font-medium uppercase tracking-wider">
           Outfit Preset
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {presets.map((p) => {
-            const tagMeta = SCENARIO_TAG_META.find((t) => t.id === p.id)
-            return (
-              <button
-                key={p.id}
-                onClick={() => {
-                  setSelectedPreset(selectedPreset === p.id ? null : p.id)
-                  if (selectedPreset !== p.id) setCustomPrompt('')
-                }}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                  selectedPreset === p.id
-                    ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-300'
-                    : 'border-white/8 bg-white/[0.03] text-white/50 hover:bg-white/5 hover:text-white/70'
-                }`}
-              >
-                {tagMeta && <span className="text-sm leading-none">{tagMeta.icon}</span>}
-                {p.label}
-              </button>
-            )
-          })}
-        </div>
+
+        {/* SFW: Standard */}
+        {(() => {
+          const sfwPresets = presets.filter((p) => p.category === 'sfw' && p.id !== 'custom')
+          if (!sfwPresets.length) return null
+          return (
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-[9px] font-bold text-white/25 uppercase tracking-wider">Standard</span>
+                <div className="flex-1 h-px bg-white/[0.06]" />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {sfwPresets.map((p) => {
+                  const tagMeta = SCENARIO_TAG_META.find((t) => t.id === p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedPreset(selectedPreset === p.id ? null : p.id)
+                        if (selectedPreset !== p.id) setCustomPrompt('')
+                      }}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                        selectedPreset === p.id
+                          ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-300'
+                          : 'border-white/8 bg-white/[0.03] text-white/50 hover:bg-white/5 hover:text-white/70'
+                      }`}
+                      title={p.prompt}
+                    >
+                      {tagMeta && <span className="text-sm leading-none">{tagMeta.icon}</span>}
+                      {p.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* NSFW: Romance & Roleplay */}
+        {(() => {
+          const romancePresets = presets.filter((p) => p.category === 'nsfw' && p.group === 'romance')
+          if (!romancePresets.length) return null
+          return (
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-[9px] font-bold text-rose-400/50 uppercase tracking-wider">Romance & Roleplay</span>
+                <div className="flex-1 h-px bg-rose-500/10" />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {romancePresets.map((p) => {
+                  const tagMeta = SCENARIO_TAG_META.find((t) => t.id === p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedPreset(selectedPreset === p.id ? null : p.id)
+                        if (selectedPreset !== p.id) setCustomPrompt('')
+                      }}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                        selectedPreset === p.id
+                          ? 'border-rose-500/40 bg-rose-500/15 text-rose-300'
+                          : 'border-white/8 bg-white/[0.03] text-white/50 hover:bg-white/5 hover:text-rose-300/70'
+                      }`}
+                      title={p.prompt}
+                    >
+                      {tagMeta && <span className="text-sm leading-none">{tagMeta.icon}</span>}
+                      {p.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* NSFW: 18+ Explicit */}
+        {(() => {
+          const explicitPresets = presets.filter((p) => p.category === 'nsfw' && p.group === '18+')
+          if (!explicitPresets.length) return null
+          return (
+            <div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-[9px] font-bold text-red-400/50 uppercase tracking-wider">18+ Explicit</span>
+                <div className="flex-1 h-px bg-red-500/10" />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {explicitPresets.map((p) => {
+                  const tagMeta = SCENARIO_TAG_META.find((t) => t.id === p.id)
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => {
+                        setSelectedPreset(selectedPreset === p.id ? null : p.id)
+                        if (selectedPreset !== p.id) setCustomPrompt('')
+                      }}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                        selectedPreset === p.id
+                          ? 'border-red-500/40 bg-red-500/15 text-red-300'
+                          : 'border-white/8 bg-white/[0.03] text-white/50 hover:bg-white/5 hover:text-red-300/70'
+                      }`}
+                      title={p.prompt}
+                    >
+                      {tagMeta && <span className="text-sm leading-none">{tagMeta.icon}</span>}
+                      {p.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Custom option — deselects preset and focuses prompt input */}
+        <button
+          onClick={() => {
+            setSelectedPreset(null)
+            setCustomPrompt('')
+          }}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+            !selectedPreset && !customPrompt.trim()
+              ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-300'
+              : 'border-white/8 bg-white/[0.03] text-white/50 hover:bg-white/5 hover:text-white/70'
+          }`}
+        >
+          <span className="text-sm leading-none">{'\u270F\uFE0F'}</span>
+          Custom
+        </button>
       </div>
 
       {/* Custom prompt */}
@@ -283,15 +413,11 @@ export function OutfitPanel({
 
       {/* Loading skeleton */}
       {outfit.loading && outfit.results.length === 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {Array.from({ length: count }).map((_, i) => (
-            <div key={i} className="rounded-xl overflow-hidden border border-white/8 bg-white/[0.02]">
-              <div className="aspect-[2/3] bg-white/[0.03] animate-pulse flex items-center justify-center">
-                <Loader2 size={24} className="animate-spin text-white/10" />
-              </div>
-            </div>
-          ))}
-        </div>
+        <AvatarGeneratingLoader
+          label="Generating outfits…"
+          hint="Creating outfit variations for your character"
+          count={count}
+        />
       )}
 
       {/* Results grid */}
