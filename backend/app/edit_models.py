@@ -216,6 +216,22 @@ AVATAR_GENERATION_MODELS: Dict[str, ModelInfo] = {
         requires=["instantid-ip-adapter"],
     ),
 
+    # ── OpenPose ControlNet for SDXL (pose-guided body generation) ──
+    "openpose-controlnet-sdxl": ModelInfo(
+        id="openpose-controlnet-sdxl",
+        name="OpenPose ControlNet (SDXL)",
+        category=ModelCategory.AVATAR_GENERATION,
+        filename="diffusion_pytorch_model.safetensors",
+        subdir="controlnet/thibaud-openpose-sdxl-1.0",
+        description="OpenPose ControlNet for SDXL enabling pose-guided body generation. Safetensors conversion by dimitribarbot.",
+        license="CreativeML Open RAIL-M",
+        commercial_use_ok=True,
+        homepage="https://huggingface.co/thibaud/controlnet-openpose-sdxl-1.0",
+        download_url="https://huggingface.co/dimitribarbot/controlnet-openpose-sdxl-1.0-safetensors/resolve/main/diffusion_pytorch_model.safetensors",
+        sha256="",
+        requires=["instantid-controlnet"],
+    ),
+
     # ── PhotoMaker V2 (identity-preserving, Apache 2.0) ──
     "photomaker-v2": ModelInfo(
         id="photomaker-v2",
@@ -698,6 +714,12 @@ def get_avatar_models_status() -> Dict[str, Any]:
             "label": "Face Swap",
             "description": "Transfer identity onto generated or existing images",
             "required": ["insightface-antelopev2", "insightface-inswapper-128"],
+            "recommended": [],
+        },
+        "pose_guided_body": {
+            "label": "Pose-Guided Body Generation",
+            "description": "Generate full-body images with OpenPose control for precise posing",
+            "required": ["insightface-antelopev2", "instantid-ip-adapter", "instantid-controlnet", "openpose-controlnet-sdxl"],
             "recommended": [],
         },
         "random_faces": {

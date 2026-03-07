@@ -37,6 +37,16 @@ class AvatarGenerateRequest(BaseModel):
         description="Override the workflow checkpoint (model filename). "
         "Injects a CheckpointLoaderSimple node into the ComfyUI workflow.",
     )
+    width: Optional[int] = Field(
+        default=None,
+        ge=256, le=2048,
+        description="Override output image width (for framing control).",
+    )
+    height: Optional[int] = Field(
+        default=None,
+        ge=256, le=2048,
+        description="Override output image height (for framing control).",
+    )
 
 
 class AvatarResult(BaseModel):
@@ -66,9 +76,23 @@ class AvatarPackInfo(BaseModel):
     notes: Optional[str] = None
 
 
+class StyleGANPackStatus(BaseModel):
+    installed: bool
+    resolution: int
+
+
+class StyleGANStatusInfo(BaseModel):
+    installed: bool
+    active_pack: Optional[str] = None
+    resolution: Optional[int] = None
+    packs: Dict[str, StyleGANPackStatus] = {}
+
+
 class AvatarPacksResponse(BaseModel):
     packs: List[AvatarPackInfo]
     enabled_modes: List[str]
+    stylegan_status: Optional[StyleGANStatusInfo] = None
+    openpose_available: bool = False
 
 
 # ---------------------------------------------------------------------------

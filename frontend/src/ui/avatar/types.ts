@@ -44,6 +44,44 @@ export const RECOMMENDED_CHECKPOINTS: RecommendedCheckpoint[] = [
   },
 ]
 
+/** Body generation workflow method — controls which pipeline is used for face→body. */
+export type BodyWorkflowMethod = 'disabled' | 'default' | 'sdxl_hq' | 'pose'
+
+/** Metadata for each body workflow method shown in the UI. */
+export interface BodyWorkflowOption {
+  id: BodyWorkflowMethod
+  label: string
+  description: string
+  badge?: string
+}
+
+/** Available body workflow methods for the Advanced Settings selector. */
+export const BODY_WORKFLOW_OPTIONS: BodyWorkflowOption[] = [
+  {
+    id: 'disabled',
+    label: 'Disabled',
+    description: 'Skip body generation. Go directly from face to outfits (original workflow).',
+  },
+  {
+    id: 'default',
+    label: 'InstantID (SDXL)',
+    description: 'Default face-to-body with identity preservation. Balanced speed and quality.',
+    badge: 'Default',
+  },
+  {
+    id: 'sdxl_hq',
+    label: 'SDXL High Quality',
+    description: 'Higher quality 1024x1536 generation. Slower but more detailed output.',
+    badge: 'HQ',
+  },
+  {
+    id: 'pose',
+    label: 'Pose Guided',
+    description: 'Body generation with OpenPose control. Requires OpenPose ControlNet model. Falls back to default if missing.',
+    badge: 'Pose',
+  },
+]
+
 /** Persisted avatar settings (stored in localStorage). */
 export interface AvatarSettings {
   checkpointSource: AvatarCheckpointSource
@@ -52,6 +90,15 @@ export interface AvatarSettings {
   /** Show the Character Description (Identity Anchor) textarea in the designer.
    *  Hidden by default to reduce prompt clutter for most users. */
   showCharacterDescription: boolean
+  /** Use StyleGAN for face generation (studio_random mode).
+   *  When enabled, faces are generated via StyleGAN and a Body step is added.
+   *  When disabled, faces use the diffusion model (creative mode). */
+  useStyleGAN: boolean
+  /** Which body generation workflow to use (default | sdxl_hq | pose). */
+  bodyWorkflowMethod: BodyWorkflowMethod
+  /** Use square (1:1) aspect ratio for headshot generation instead of portrait (2:3).
+   *  Default false — portrait ratio produces higher quality results. */
+  headshot1to1?: boolean
 }
 
 export interface AvatarPackInfo {
@@ -67,6 +114,9 @@ export interface AvatarPackInfo {
 export interface AvatarPacksResponse {
   packs: AvatarPackInfo[]
   enabled_modes: string[]
+  stylegan_status?: StyleGANStatus
+  /** Whether an OpenPose ControlNet is installed (for Pose Guided body generation). */
+  openpose_available?: boolean
 }
 
 export interface AvatarGenerateRequest {
@@ -79,6 +129,10 @@ export interface AvatarGenerateRequest {
   persona_id?: string
   /** Optional checkpoint override — when set, overrides the workflow's default model. */
   checkpoint_override?: string
+  /** Optional width override — controls output image width (framing). */
+  width?: number
+  /** Optional height override — controls output image height (framing). */
+  height?: number
 }
 
 export interface AvatarResult {
@@ -91,4 +145,74 @@ export interface AvatarGenerateResponse {
   mode: AvatarMode
   results: AvatarResult[]
   warnings?: string[]
+}
+
+// ---------------------------------------------------------------------------
+// Capabilities — additive types for engine availability detection
+// ---------------------------------------------------------------------------
+
+export type AvatarEngine = 'comfyui' | 'stylegan'
+
+export interface AvatarEngineCapability {
+  available: boolean
+  reason?: string | null
+  details?: string | null
+}
+
+export interface StyleGANPackStatus {
+  installed: boolean
+  resolution: number
+}
+
+export interface StyleGANStatus {
+  installed: boolean
+  active_pack: string | null
+  resolution: number | null
+  packs: Record<string, StyleGANPackStatus>
+}
+
+export interface AvatarCapabilitiesResponse {
+  default_engine: AvatarEngine
+  engines: Record<AvatarEngine, AvatarEngineCapability>
+  enabled_modes?: string[]
+  stylegan_status?: StyleGANStatus
+  /** Whether an OpenPose ControlNet is installed in ComfyUI (for Pose Guided body generation). */
+  openpose_available?: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Hybrid pipeline — two-stage face → full-body generation
+// ---------------------------------------------------------------------------
+
+export interface HybridFullBodyRequest {
+  face_image_url: string
+  count?: number
+  outfit_style?: string
+  profession?: string
+  body_type?: string
+  posture?: string
+  gender?: string
+  age_range?: string
+  background?: string
+  lighting?: string
+  prompt_extra?: string
+  identity_strength?: number
+  seed?: number
+  /** Which body workflow to use: 'default' | 'sdxl_hq' | 'pose'. */
+  workflow_method?: BodyWorkflowMethod
+  /** URL of pose reference image (required for 'pose' workflow method). */
+  pose_image_url?: string
+}
+
+export interface HybridFullBodyResult {
+  url: string
+  seed?: number
+  metadata?: Record<string, unknown>
+}
+
+export interface HybridFullBodyResponse {
+  stage: string
+  results: HybridFullBodyResult[]
+  warnings?: string[]
+  used_checkpoint?: string | null
 }

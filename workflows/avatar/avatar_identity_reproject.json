@@ -1,0 +1,183 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Subject Image (body to fix)"
+    },
+    "inputs": {
+      "image": ""
+    }
+  },
+  "3": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "2",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Face Reference (identity anchor)"
+    },
+    "inputs": {
+      "image": ""
+    }
+  },
+  "11": {
+    "class_type": "InstantIDFaceAnalysis",
+    "inputs": {
+      "provider": "CPU"
+    }
+  },
+  "12": {
+    "class_type": "InstantIDModelLoader",
+    "inputs": {
+      "instantid_file": "ip-adapter.bin"
+    }
+  },
+  "13": {
+    "class_type": "ControlNetLoader",
+    "inputs": {
+      "control_net_name": "InstantID/diffusion_pytorch_model.safetensors"
+    }
+  },
+  "14": {
+    "class_type": "ApplyInstantID",
+    "inputs": {
+      "instantid": [
+        "12",
+        0
+      ],
+      "insightface": [
+        "11",
+        0
+      ],
+      "control_net": [
+        "13",
+        0
+      ],
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "4",
+        0
+      ],
+      "negative": [
+        "5",
+        0
+      ],
+      "image": [
+        "10",
+        0
+      ],
+      "weight": 0.85,
+      "start_at": 0.0,
+      "end_at": 1.0
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncodeSDXL",
+    "_meta": {
+      "title": "Positive Prompt"
+    },
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text_g": "same person, same outfit, same pose, same background, identity correction, high quality, sharp focus",
+      "text_l": "same person, same outfit, same pose, same background, identity correction, high quality, sharp focus",
+      "width": 1024,
+      "height": 1536,
+      "crop_w": 0,
+      "crop_h": 0,
+      "target_width": 1024,
+      "target_height": 1536
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncodeSDXL",
+    "_meta": {
+      "title": "Negative Prompt"
+    },
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text_g": "different person, different identity, mismatched face, lowres, blurry, bad anatomy, deformed",
+      "text_l": "different person, different identity, mismatched face, lowres, blurry, bad anatomy, deformed",
+      "width": 1024,
+      "height": 1536,
+      "crop_w": 0,
+      "crop_h": 0,
+      "target_width": 1024,
+      "target_height": 1536
+    }
+  },
+  "6": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "14",
+        0
+      ],
+      "positive": [
+        "14",
+        1
+      ],
+      "negative": [
+        "14",
+        2
+      ],
+      "latent_image": [
+        "3",
+        0
+      ],
+      "seed": 0,
+      "steps": 20,
+      "cfg": 5.0,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 0.45
+    }
+  },
+  "7": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "6",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "8": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "avatar/reproject",
+      "images": [
+        "7",
+        0
+      ]
+    }
+  }
+}

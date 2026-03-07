@@ -67,9 +67,9 @@ export interface CharacterDraft {
   outfitSecondaryColor: string
   accessories: string[]
   // NSFW fields (only when globally enabled)
-  nsfwExposure?: 'mild' | 'suggestive' | 'explicit'
+  nsfwExposure?: 'suggestive' | 'clothed_revealing' | 'partial_nudity' | 'topless' | 'full_nude' | 'explicit'
   nsfwIntensity?: number     // 0–10
-  nsfwPose?: 'subtle' | 'confident' | 'intimate'
+  nsfwPose?: 'subtle' | 'confident' | 'intimate' | 'seductive_lean' | 'lying_down' | 'back_arch' | 'kneeling' | 'over_shoulder' | 'hands_above_head'
   nsfwDominanceStyle?: 'soft' | 'balanced' | 'strong'
   nsfwFantasyTone?: 'romantic' | 'seductive' | 'dramatic'
 

@@ -1,8 +1,8 @@
 {
   "id": "avatar-stylegan2",
-  "title": "Avatar Studio (StyleGAN2 Random Face)",
+  "title": "Avatar Studio (StyleGAN2 FFHQ 256)",
   "license": "NVIDIA (Non-commercial)",
   "commercial_ok": false,
   "modes_enabled": ["studio_random"],
-  "notes": "Optional add-on. Requires avatar-service + StyleGAN2 weights. Non-commercial by default."
+  "notes": "Fast random-face generator (FFHQ 256). Non-commercial (NVIDIA). Requires avatar-service + StyleGAN2 256x256 weights."
 }
