@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { AvatarResult, AvatarMode } from './types'
-import type { GalleryItem, GalleryItemRole, OutfitScenarioTag, WizardMeta } from './galleryTypes'
+import type { GalleryItem, GalleryItemRole, OutfitScenarioTag, WizardMeta, FramingType } from './galleryTypes'
 import { GALLERY_STORAGE_KEY, GALLERY_MAX_ITEMS } from './galleryTypes'
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ export function useAvatarGallery() {
       mode: AvatarMode,
       prompt?: string,
       referenceUrl?: string,
-      extra?: { vibeTag?: string; nsfw?: boolean; wizardMeta?: WizardMeta },
+      extra?: { vibeTag?: string; nsfw?: boolean; wizardMeta?: WizardMeta; framingType?: FramingType },
     ) => {
       setItems((prev) => {
         const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -158,6 +158,7 @@ export function useAvatarGallery() {
           batchId,
           role: 'anchor',
           wizardMeta: extra?.wizardMeta,
+          framingType: extra?.framingType,
         }
         const portraitItems: GalleryItem[] = portraits.map((r) => ({
           id: galleryId(),
@@ -172,6 +173,7 @@ export function useAvatarGallery() {
           parentId: anchorId,
           batchId,
           role: 'portrait',
+          framingType: extra?.framingType,
         }))
         const updated = [anchorItem, ...portraitItems, ...prev]
         return updated.slice(0, GALLERY_MAX_ITEMS)
@@ -231,6 +233,13 @@ export function useAvatarGallery() {
     )
   }, [])
 
+  /** Update arbitrary fields on a gallery item */
+  const updateItem = useCallback((id: string, patch: Partial<GalleryItem>) => {
+    setItems((prev) =>
+      prev.map((i) => (i.id === id ? { ...i, ...patch } : i)),
+    )
+  }, [])
+
   return {
     items,
     addItem,
@@ -241,5 +250,6 @@ export function useAvatarGallery() {
     clearAll,
     tagItem,
     linkToPersona,
+    updateItem,
   }
 }

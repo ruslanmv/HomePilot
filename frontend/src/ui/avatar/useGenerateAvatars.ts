@@ -64,5 +64,15 @@ export function useGenerateAvatars(backendUrl: string, apiKey?: string) {
     setError(null)
   }, [])
 
-  return { loading, result, error, run, reset, cancel }
+  /** Remove a single result by index (e.g. delete a face the user doesn't like). */
+  const removeResult = useCallback((index: number) => {
+    setResult((prev) => {
+      if (!prev?.results) return prev
+      const next = prev.results.filter((_, i) => i !== index)
+      if (next.length === 0) return null
+      return { ...prev, results: next }
+    })
+  }, [])
+
+  return { loading, result, error, run, reset, cancel, removeResult }
 }

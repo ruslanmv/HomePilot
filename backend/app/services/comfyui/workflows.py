@@ -35,6 +35,11 @@ async def run_avatar_workflow(
     seed: Optional[int],
     checkpoint_override: Optional[str] = None,
     denoise_override: Optional[float] = None,
+    identity_strength: Optional[float] = None,
+    negative_prompt: Optional[str] = None,
+    pose_image_url: Optional[str] = None,
+    width_override: Optional[int] = None,
+    height_override: Optional[int] = None,
 ) -> List[AvatarResult]:
     """Load a workflow template, inject inputs, submit, and collect results."""
     if not comfyui_healthy(comfyui_base_url):
@@ -62,18 +67,28 @@ async def run_avatar_workflow(
         for i in range(count):
             wf = json.loads(json.dumps(wf_template))  # deep copy
             _inject_prompt(wf, prompt)
+            if negative_prompt:
+                _inject_negative_prompt(wf, negative_prompt)
             _inject_seed(wf, base_seed + i)
             _inject_reference(wf, reference_image_url)
+            _inject_pose_reference(wf, pose_image_url)
             _inject_checkpoint(wf, checkpoint_override)
             _inject_denoise(wf, denoise_override)
+            _inject_dimensions(wf, width_override, height_override)
+            if identity_strength is not None:
+                _inject_identity_strength(wf, identity_strength)
 
             prompt_id = await submit_prompt(comfyui_base_url, wf)
             images = await wait_for_images(comfyui_base_url, prompt_id)
             if images:
                 filename = images[0].get("filename", "")
+                subfolder = images[0].get("subfolder", "")
+                url = f"/comfy/view/{filename}"
+                if subfolder:
+                    url += f"?subfolder={subfolder}"
                 results.append(
                     AvatarResult(
-                        url=f"/comfy/view/{filename}",
+                        url=url,
                         seed=base_seed + i,
                         metadata={"source": "comfyui", "workflow": wf_path.name},
                     )
@@ -83,9 +98,13 @@ async def run_avatar_workflow(
         # ----- Text-to-image: single batch submission -----
         wf = wf_template
         _inject_prompt(wf, prompt)
-        _inject_seed(wf, seed)
+        # Always inject a seed — ComfyUI caches identical prompts+seeds and
+        # skips re-execution, returning 0 images on the second call.
+        effective_seed = seed if seed is not None else random.randint(0, 2**31 - 1)
+        _inject_seed(wf, effective_seed)
         _inject_batch_size(wf, count)
         _inject_checkpoint(wf, checkpoint_override)
+        _inject_dimensions(wf, width_override, height_override)
 
         prompt_id = await submit_prompt(comfyui_base_url, wf)
         images = await wait_for_images(comfyui_base_url, prompt_id)
@@ -93,10 +112,14 @@ async def run_avatar_workflow(
         results = []
         for i, img in enumerate(images[:count]):
             filename = img.get("filename", "")
+            subfolder = img.get("subfolder", "")
+            url = f"/comfy/view/{filename}"
+            if subfolder:
+                url += f"?subfolder={subfolder}"
             results.append(
                 AvatarResult(
-                    url=f"/comfy/view/{filename}",
-                    seed=(seed + i) if seed is not None else None,
+                    url=url,
+                    seed=effective_seed + i,
                     metadata={"source": "comfyui", "workflow": wf_path.name},
                 )
             )
@@ -112,6 +135,12 @@ _REF_WORKFLOWS = {
     "studio_reference": "avatar_instantid.json",
     "studio_faceswap": "avatar_faceswap.json",
     "creative": "avatar_photomaker.json",
+    "hybrid_body": "avatar_body_from_face.json",
+    "hybrid_body_pose": "avatar_body_pose.json",
+    "hybrid_outfit": "avatar_outfit_instantid.json",
+    "hybrid_portrait": "avatar_portrait_instantid.json",
+    "hybrid_sdxl_body": "avatar_sdxl_body.json",
+    "identity_reproject": "avatar_identity_reproject.json",
 }
 
 _NOREF_WORKFLOWS = {
@@ -135,18 +164,28 @@ def _inject_prompt(wf: Dict[str, Any], prompt: str) -> None:
 
     Nodes tagged with ``_meta.title`` containing "Negative" are skipped
     so the negative prompt template is preserved.
+
+    Supports both SD1.5 (CLIPTextEncode → text) and
+    SDXL (CLIPTextEncodeSDXL → text_g + text_l).
+
+    For CLIPTextEncodeSDXL, also ensures required dimension fields are present
+    (width, height, crop_w, crop_h, target_width, target_height).
     """
     for node in wf.values():
-        if isinstance(node, dict) and node.get("class_type") in (
-            "CLIPTextEncode",
-            "TextEncode",
-            "Text Encode",
-        ):
-            meta = node.get("_meta", {})
-            title = (meta.get("title", "") or "").lower()
-            if "negative" in title:
-                continue
+        if not isinstance(node, dict):
+            continue
+        cls = node.get("class_type", "")
+        meta = node.get("_meta", {})
+        title = (meta.get("title", "") or "").lower()
+        if "negative" in title:
+            continue
+        if cls in ("CLIPTextEncode", "TextEncode", "Text Encode"):
             node.setdefault("inputs", {})["text"] = prompt
+        elif cls == "CLIPTextEncodeSDXL":
+            inputs = node.setdefault("inputs", {})
+            inputs["text_g"] = prompt
+            inputs["text_l"] = prompt
+            _ensure_sdxl_clip_dimensions(inputs)
 
 
 def _inject_seed(wf: Dict[str, Any], seed: Optional[int]) -> None:
@@ -165,6 +204,27 @@ def _inject_batch_size(wf: Dict[str, Any], count: int) -> None:
     for node in wf.values():
         if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage":
             node.setdefault("inputs", {})["batch_size"] = count
+
+
+def _inject_dimensions(
+    wf: Dict[str, Any],
+    width: Optional[int],
+    height: Optional[int],
+) -> None:
+    """Override output dimensions in EmptyLatentImage nodes.
+
+    Used for framing control: half-body portraits use taller aspect ratios
+    (e.g. 512×768) while headshots use square (e.g. 512×512).
+    """
+    if width is None and height is None:
+        return
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") == "EmptyLatentImage":
+            inputs = node.setdefault("inputs", {})
+            if width is not None:
+                inputs["width"] = width
+            if height is not None:
+                inputs["height"] = height
 
 
 def _inject_reference(wf: Dict[str, Any], ref: Optional[str]) -> None:
@@ -207,7 +267,54 @@ def _inject_reference(wf: Dict[str, Any], ref: Optional[str]) -> None:
             "LoadImageFromURL",
             "ImageLoad",
         ):
+            # Skip pose reference nodes — they get their own injection
+            meta = node.get("_meta", {})
+            title = (meta.get("title", "") or "").lower()
+            if "pose" in title:
+                continue
             node.setdefault("inputs", {})["image"] = local_name
+
+
+def _resolve_image_url(ref: str) -> str:
+    """Resolve a reference URL to a local ComfyUI input filename.
+
+    Handles backend-relative URLs (``/comfy/view/...``) and HTTP URLs
+    by downloading the image into ComfyUI's input directory.
+    """
+    if ref.startswith("/comfy/view/"):
+        from ...config import COMFY_BASE_URL
+        filename = ref[len("/comfy/view/"):]
+        ref = f"{COMFY_BASE_URL.rstrip('/')}/view?filename={filename}&type=output"
+    elif ref.startswith("/"):
+        from ...config import PUBLIC_BASE_URL
+        base = (PUBLIC_BASE_URL or "http://localhost:8000").rstrip("/")
+        ref = f"{base}{ref}"
+
+    if ref.startswith("http://") or ref.startswith("https://"):
+        return _download_image_for_comfyui(ref)
+    return ref
+
+
+def _inject_pose_reference(wf: Dict[str, Any], pose_ref: Optional[str]) -> None:
+    """Inject pose reference image into LoadImage nodes titled 'Pose Reference'.
+
+    Only targets nodes whose ``_meta.title`` contains 'pose' (case-insensitive).
+    """
+    if not pose_ref:
+        return
+
+    local_name = _resolve_image_url(pose_ref)
+
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") in (
+            "LoadImage",
+            "LoadImageFromURL",
+            "ImageLoad",
+        ):
+            meta = node.get("_meta", {})
+            title = (meta.get("title", "") or "").lower()
+            if "pose" in title:
+                node.setdefault("inputs", {})["image"] = local_name
 
 
 def _inject_denoise(wf: Dict[str, Any], denoise: Optional[float]) -> None:
@@ -226,6 +333,59 @@ def _inject_denoise(wf: Dict[str, Any], denoise: Optional[float]) -> None:
             "KSamplerAdvanced",
         ):
             node.setdefault("inputs", {})["denoise"] = denoise
+
+
+def _inject_identity_strength(wf: Dict[str, Any], strength: float) -> None:
+    """Inject identity strength as weight on ApplyInstantID nodes.
+
+    Controls how strictly the face reference is preserved:
+      1.0 = very strict (face dominates)
+      0.5 = balanced
+      0.1 = loose (more creative freedom)
+    """
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") in (
+            "ApplyInstantID",
+            "ApplyIPAdapter",
+        ):
+            node.setdefault("inputs", {})["weight"] = strength
+
+
+def _inject_negative_prompt(wf: Dict[str, Any], negative: str) -> None:
+    """Inject negative prompt into CLIP nodes tagged as 'Negative'.
+
+    Supports both SD1.5 (CLIPTextEncode → text) and
+    SDXL (CLIPTextEncodeSDXL → text_g + text_l).
+    """
+    for node in wf.values():
+        if not isinstance(node, dict):
+            continue
+        cls = node.get("class_type", "")
+        meta = node.get("_meta", {})
+        title = (meta.get("title", "") or "").lower()
+        if "negative" not in title:
+            continue
+        if cls in ("CLIPTextEncode", "TextEncode", "Text Encode"):
+            node.setdefault("inputs", {})["text"] = negative
+        elif cls == "CLIPTextEncodeSDXL":
+            inputs = node.setdefault("inputs", {})
+            inputs["text_g"] = negative
+            inputs["text_l"] = negative
+            _ensure_sdxl_clip_dimensions(inputs)
+
+
+def _ensure_sdxl_clip_dimensions(inputs: Dict[str, Any]) -> None:
+    """Ensure CLIPTextEncodeSDXL has required dimension fields.
+
+    ComfyUI requires width, height, crop_w, crop_h, target_width, target_height
+    on CLIPTextEncodeSDXL nodes.  If missing, we fill in sensible SDXL defaults.
+    """
+    inputs.setdefault("width", 1024)
+    inputs.setdefault("height", 1024)
+    inputs.setdefault("crop_w", 0)
+    inputs.setdefault("crop_h", 0)
+    inputs.setdefault("target_width", inputs.get("width", 1024))
+    inputs.setdefault("target_height", inputs.get("height", 1024))
 
 
 def _inject_checkpoint(wf: Dict[str, Any], ckpt: Optional[str]) -> None:

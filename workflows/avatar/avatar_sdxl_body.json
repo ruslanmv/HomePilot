@@ -1,0 +1,169 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "CLIPTextEncodeSDXL",
+    "_meta": {
+      "title": "Positive Prompt"
+    },
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text_g": "full body photograph from head to toe, entire body visible, showing feet, standing pose, front-facing, professional studio lighting, full length shot, wide angle, high quality, sharp focus, highly detailed, 8k resolution",
+      "text_l": "full body photograph from head to toe, entire body visible, showing feet, standing pose, front-facing, professional studio lighting, full length shot, wide angle, high quality, sharp focus, highly detailed, 8k resolution",
+      "width": 1024,
+      "height": 1536,
+      "crop_w": 0,
+      "crop_h": 0,
+      "target_width": 1024,
+      "target_height": 1536
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncodeSDXL",
+    "_meta": {
+      "title": "Negative Prompt"
+    },
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text_g": "close-up, headshot, portrait crop, face only, cropped body, cut off legs, cut off feet, lowres, blurry, bad anatomy, deformed, extra fingers, missing fingers, bad hands, bad feet, disfigured face, mismatched identity, distorted eyes, duplicate, watermark, text, logo, signature",
+      "text_l": "close-up, headshot, portrait crop, face only, cropped body, cut off legs, cut off feet, lowres, blurry, bad anatomy, deformed, extra fingers, missing fingers, bad hands, bad feet, disfigured face, mismatched identity, distorted eyes, duplicate, watermark, text, logo, signature",
+      "width": 1024,
+      "height": 1536,
+      "crop_w": 0,
+      "crop_h": 0,
+      "target_width": 1024,
+      "target_height": 1536
+    }
+  },
+  "4": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 1536,
+      "batch_size": 1
+    }
+  },
+  "10": {
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Face Reference"
+    },
+    "inputs": {
+      "image": ""
+    }
+  },
+  "11": {
+    "class_type": "InstantIDFaceAnalysis",
+    "inputs": {
+      "provider": "CPU"
+    }
+  },
+  "12": {
+    "class_type": "InstantIDModelLoader",
+    "inputs": {
+      "instantid_file": "ip-adapter.bin"
+    }
+  },
+  "13": {
+    "class_type": "ControlNetLoader",
+    "inputs": {
+      "control_net_name": "InstantID/diffusion_pytorch_model.safetensors"
+    }
+  },
+  "14": {
+    "class_type": "ApplyInstantID",
+    "inputs": {
+      "instantid": [
+        "12",
+        0
+      ],
+      "insightface": [
+        "11",
+        0
+      ],
+      "control_net": [
+        "13",
+        0
+      ],
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "2",
+        0
+      ],
+      "negative": [
+        "3",
+        0
+      ],
+      "image": [
+        "10",
+        0
+      ],
+      "weight": 0.75,
+      "start_at": 0.0,
+      "end_at": 0.4
+    }
+  },
+  "5": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "14",
+        0
+      ],
+      "positive": [
+        "14",
+        1
+      ],
+      "negative": [
+        "14",
+        2
+      ],
+      "latent_image": [
+        "4",
+        0
+      ],
+      "seed": 0,
+      "steps": 30,
+      "cfg": 7.0,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1.0
+    }
+  },
+  "6": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "7": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "avatar/sdxl_body",
+      "images": [
+        "6",
+        0
+      ]
+    }
+  }
+}

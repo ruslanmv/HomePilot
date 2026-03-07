@@ -1,0 +1,137 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "dreamshaper_8.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Subject Image (body with outfit)"
+    },
+    "inputs": {
+      "image": ""
+    }
+  },
+  "3": {
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Outfit Mask"
+    },
+    "inputs": {
+      "image": ""
+    }
+  },
+  "4": {
+    "class_type": "ImageToMask",
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ],
+      "channel": "red"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Positive Prompt"
+    },
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "wearing professional outfit, high quality clothing, detailed fabric texture, sharp focus"
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Negative Prompt"
+    },
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "lowres, blurry, bad anatomy, deformed, watermark, text, logo, mismatched skin"
+    }
+  },
+  "7": {
+    "class_type": "InpaintModelConditioning",
+    "inputs": {
+      "positive": [
+        "5",
+        0
+      ],
+      "negative": [
+        "6",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ],
+      "pixels": [
+        "2",
+        0
+      ],
+      "mask": [
+        "4",
+        0
+      ]
+    }
+  },
+  "8": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "7",
+        0
+      ],
+      "negative": [
+        "7",
+        1
+      ],
+      "latent_image": [
+        "7",
+        2
+      ],
+      "seed": 0,
+      "steps": 25,
+      "cfg": 7.0,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 0.85
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "8",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "avatar/inpaint_outfit",
+      "images": [
+        "9",
+        0
+      ]
+    }
+  }
+}

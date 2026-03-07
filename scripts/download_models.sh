@@ -159,7 +159,8 @@ show_preset_info() {
             echo "   Avatar Generation Models:"
             echo "   • InsightFace AntelopeV2 (180MB) - Face detection & embeddings"
             echo "   • InstantID Adapter + ControlNet (1.7GB) - Identity-preserving avatars"
-            echo "   • Total: ~27GB"
+            echo "   • OpenPose ControlNet SDXL (400MB) - Pose-guided body generation"
+            echo "   • Total: ~28GB"
             echo "   • VRAM Required: 12-16GB"
             ;;
         full)
@@ -508,6 +509,18 @@ download_instantid() {
     echo ""
 }
 
+# Download OpenPose ControlNet for SDXL (pose-guided body generation)
+download_openpose_sdxl() {
+    log_info "=== Downloading OpenPose ControlNet for SDXL (Pose-Guided Body Generation) ==="
+
+    download_file \
+        "https://huggingface.co/thibaud/controlnet-openpose-sdxl-1.0/resolve/main/diffusion_pytorch_model.safetensors" \
+        "${COMFY_MODELS_DIR}/controlnet/thibaud-openpose-sdxl-1.0/diffusion_pytorch_model.safetensors" \
+        "OpenPose ControlNet SDXL (pose-guided avatar body generation)"
+
+    echo ""
+}
+
 # Core avatar models — InsightFace + InstantID (enterprise-grade, Apache 2.0)
 download_avatar_core() {
     log_info "=== Downloading Core Avatar Models (Enterprise-Grade) ==="
@@ -516,6 +529,7 @@ download_avatar_core() {
     echo ""
     download_insightface
     download_instantid
+    download_openpose_sdxl
 }
 
 # Display download summary
@@ -597,7 +611,7 @@ main() {
     fi
 
     # Create base directories
-    mkdir -p "$COMFY_MODELS_DIR"/{checkpoints,unet,clip,vae,controlnet,sams,rembg,upscale_models,gfpgan,insightface/models,instantid,controlnet/InstantID,photomaker,pulid,avatar,ipadapter}
+    mkdir -p "$COMFY_MODELS_DIR"/{checkpoints,unet,clip,vae,controlnet,sams,rembg,upscale_models,gfpgan,insightface/models,instantid,controlnet/InstantID,controlnet/thibaud-openpose-sdxl-1.0,photomaker,pulid,avatar,ipadapter}
     mkdir -p "$LLM_MODELS_DIR"
 
     log_info "Models directory: $MODELS_DIR"
