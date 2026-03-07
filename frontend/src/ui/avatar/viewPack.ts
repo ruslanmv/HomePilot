@@ -79,6 +79,8 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
 
 export type ViewResultMap = Partial<Record<ViewAngle, AvatarResult>>
 export type ViewPreviewMap = Partial<Record<ViewAngle, string>>
+/** Unix timestamps (Date.now()) for when each angle was generated/cached. */
+export type ViewTimestampMap = Partial<Record<ViewAngle, number>>
 
 export function getViewAngleOption(angle: ViewAngle): ViewAngleOption {
   return VIEW_ANGLE_OPTIONS.find((item) => item.id === angle) ?? VIEW_ANGLE_OPTIONS[0]

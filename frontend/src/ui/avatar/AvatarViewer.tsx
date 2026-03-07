@@ -1124,6 +1124,7 @@ export function AvatarViewer({
                 disableLatest={outfit.results.length === 0}
                 disableEquipped={!equippedItem}
                 previews={combinedViewPreviews}
+                timestamps={viewPack.timestampsByAngle}
                 loadingAngles={viewPack.loadingAngles}
                 busy={viewPack.anyLoading}
                 onToggle={() => setShowViewPack((v) => !v)}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AvatarResult } from './types'
-import type { ViewAngle, ViewResultMap } from './viewPack'
+import type { ViewAngle, ViewResultMap, ViewTimestampMap } from './viewPack'
 import { getViewAngleOption, VIEW_ANGLE_OPTIONS } from './viewPack'
 
 export interface GenerateViewParams {
@@ -22,25 +22,39 @@ interface OutfitGenerateResult {
 // ---------------------------------------------------------------------------
 const CACHE_PREFIX = 'hp_viewpack_'
 
+interface CachedViewPack {
+  results: ViewResultMap
+  timestamps: ViewTimestampMap
+}
+
 function cacheKeyFor(key: string): string {
   return `${CACHE_PREFIX}${key}`
 }
 
-function loadCached(key: string | undefined): ViewResultMap {
-  if (!key) return {}
+function loadCached(key: string | undefined): CachedViewPack {
+  if (!key) return { results: {}, timestamps: {} }
   try {
     const raw = localStorage.getItem(cacheKeyFor(key))
-    if (raw) return JSON.parse(raw) as ViewResultMap
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      // Support old format (plain ViewResultMap) and new format (CachedViewPack)
+      if (parsed && typeof parsed === 'object' && 'results' in parsed) {
+        return parsed as CachedViewPack
+      }
+      // Legacy: plain ViewResultMap without timestamps
+      return { results: parsed as ViewResultMap, timestamps: {} }
+    }
   } catch { /* corrupt entry — ignore */ }
-  return {}
+  return { results: {}, timestamps: {} }
 }
 
-function saveCached(key: string | undefined, results: ViewResultMap): void {
+function saveCached(key: string | undefined, results: ViewResultMap, timestamps: ViewTimestampMap): void {
   if (!key) return
   try {
     const hasEntries = Object.keys(results).length > 0
     if (hasEntries) {
-      localStorage.setItem(cacheKeyFor(key), JSON.stringify(results))
+      const data: CachedViewPack = { results, timestamps }
+      localStorage.setItem(cacheKeyFor(key), JSON.stringify(data))
     } else {
       localStorage.removeItem(cacheKeyFor(key))
     }
@@ -64,24 +78,28 @@ function removeCached(key: string | undefined): void {
  *                    loads the cached results for the new key.
  */
 export function useViewPackGeneration(backendUrl: string, apiKey?: string, cacheKey?: string) {
-  const [resultsByAngle, setResultsByAngle] = useState<ViewResultMap>(() => loadCached(cacheKey))
+  const [resultsByAngle, setResultsByAngle] = useState<ViewResultMap>(() => loadCached(cacheKey).results)
+  const [timestampsByAngle, setTimestampsByAngle] = useState<ViewTimestampMap>(() => loadCached(cacheKey).timestamps)
   const [loadingAngles, setLoadingAngles] = useState<Partial<Record<ViewAngle, boolean>>>({})
   const [warnings, setWarnings] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
 
   // Track previous cacheKey so we can save before switching
   const prevKeyRef = useRef(cacheKey)
+  const timestampsRef = useRef(timestampsByAngle)
+  timestampsRef.current = timestampsByAngle
 
   // When cacheKey changes, persist current results under old key and load new
   useEffect(() => {
     if (prevKeyRef.current === cacheKey) return
 
     // Save current in-memory results under the *previous* key
-    // (grab current state via functional setState to avoid stale closure)
     setResultsByAngle((current) => {
-      saveCached(prevKeyRef.current, current)
+      saveCached(prevKeyRef.current, current, timestampsRef.current)
       prevKeyRef.current = cacheKey
-      return loadCached(cacheKey)
+      const loaded = loadCached(cacheKey)
+      setTimestampsByAngle(loaded.timestamps)
+      return loaded.results
     })
 
     setLoadingAngles({})
@@ -91,8 +109,8 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
 
   // Auto-persist whenever results change
   useEffect(() => {
-    saveCached(cacheKey, resultsByAngle)
-  }, [cacheKey, resultsByAngle])
+    saveCached(cacheKey, resultsByAngle, timestampsByAngle)
+  }, [cacheKey, resultsByAngle, timestampsByAngle])
 
   const anyLoading = useMemo(() => Object.values(loadingAngles).some(Boolean), [loadingAngles])
 
@@ -160,6 +178,7 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
       }
 
       setResultsByAngle((current) => ({ ...current, [params.angle]: tagged }))
+      setTimestampsByAngle((current) => ({ ...current, [params.angle]: Date.now() }))
       if (data.warnings?.length) {
         setWarnings((current) => [...current, ...data.warnings])
       }
@@ -176,6 +195,7 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
   /** Clear all results for the current key (in-memory + cache). */
   const reset = useCallback(() => {
     setResultsByAngle({})
+    setTimestampsByAngle({})
     setLoadingAngles({})
     setWarnings([])
     setError(null)
@@ -189,6 +209,7 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
 
   return {
     resultsByAngle,
+    timestampsByAngle,
     loadingAngles,
     anyLoading,
     warnings,
