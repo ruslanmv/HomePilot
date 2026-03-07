@@ -242,12 +242,14 @@ export function AvatarViewer({
   const handleEquip = useCallback((wardrobeItem: GalleryItem) => {
     setEquippedItem(wardrobeItem)
     setStageTab('outfit')
-  }, [])
+    viewPack.reset()
+  }, [viewPack])
 
   const handleUnequip = useCallback(() => {
     setEquippedItem(null)
     setStageTab('anchor')
-  }, [])
+    viewPack.reset()
+  }, [viewPack])
 
   const heroUrl = resolveUrl(item.url, backendUrl)
 
@@ -515,17 +517,22 @@ export function AvatarViewer({
 
   // ── View Pack handlers ──────────────────────────────────────────────────
 
+  // Auto-resolve reference from whatever is currently displayed on the stage
   const currentViewReferenceUrl = useMemo(() => {
-    if (viewSource === 'equipped' && equippedItem) return equippedItem.url
-    if (viewSource === 'latest' && outfit.results[selectedResultIdx]) return outfit.results[selectedResultIdx].url
+    if (stageTab === 'outfit') {
+      if (equippedItem) return equippedItem.url
+      if (outfit.results[selectedResultIdx]) return outfit.results[selectedResultIdx].url
+    }
     return item.url
-  }, [viewSource, equippedItem, outfit.results, selectedResultIdx, item.url])
+  }, [stageTab, equippedItem, outfit.results, selectedResultIdx, item.url])
 
   const currentViewBasePrompt = useMemo(() => {
-    if (viewSource === 'latest' && effectivePrompt.trim()) return effectivePrompt.trim()
-    if (viewSource === 'equipped' && equippedItem?.prompt) return equippedItem.prompt
+    if (stageTab === 'outfit') {
+      if (equippedItem?.prompt) return equippedItem.prompt
+      if (effectivePrompt.trim()) return effectivePrompt.trim()
+    }
     return item.prompt || 'portrait photograph of the same character'
-  }, [viewSource, effectivePrompt, equippedItem, item.prompt])
+  }, [stageTab, effectivePrompt, equippedItem, item.prompt])
 
   const handleGenerateViewAngle = useCallback(async (angle: ViewAngle) => {
     try {
