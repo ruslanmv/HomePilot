@@ -107,10 +107,26 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     parts.append("elegant lighting, realistic, sharp focus")
     combined_prompt = ", ".join(parts)
 
-    # Prefer identity mode (studio_reference) for face preservation
-    target_mode = "studio_reference"
+    # Mode selection for the ComfyUI workflow:
+    #   - "identity"  → hybrid_outfit (InstantID pipeline: face ControlNet + empty latent,
+    #                    text prompt fully controls pose/angle/outfit)
+    #   - "standard"  → creative (text-to-image, no face preservation)
+    #   - fallback    → studio_reference (basic img2img, pose locked to reference)
+    #
+    # hybrid_outfit is strongly preferred because it uses ApplyInstantID with
+    # EmptyLatentImage, meaning the text prompt controls body pose while
+    # ControlNet only anchors facial identity.  The basic img2img workflow
+    # (studio_reference) bakes the reference pose into the VAE latent,
+    # making non-front angles impossible.
+    if req.generation_mode == "standard":
+        target_mode = "creative"
+    else:
+        # Try hybrid_outfit first (proper InstantID), fall back to studio_reference
+        target_mode = "hybrid_outfit"
+
     if target_mode not in allowed:
-        # Fallback to creative mode (text-only, no face preservation)
+        target_mode = "studio_reference"
+    if target_mode not in allowed:
         target_mode = "creative"
         warnings.append(
             "Identity models not available — using standard generation. "
