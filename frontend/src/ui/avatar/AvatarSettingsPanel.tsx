@@ -9,9 +9,9 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react'
-import { Settings, X, Check, Globe, Sparkles, Info, FileText } from 'lucide-react'
-import type { AvatarSettings, AvatarCheckpointSource } from './types'
-import { RECOMMENDED_CHECKPOINTS } from './types'
+import { Settings, X, Check, Globe, Sparkles, Info, FileText, Cpu, AlertTriangle, Layers } from 'lucide-react'
+import type { AvatarSettings, AvatarCheckpointSource, BodyWorkflowMethod, StyleGANStatus } from './types'
+import { RECOMMENDED_CHECKPOINTS, BODY_WORKFLOW_OPTIONS } from './types'
 
 // ---------------------------------------------------------------------------
 // Persistence
@@ -23,6 +23,8 @@ const DEFAULT_SETTINGS: AvatarSettings = {
   checkpointSource: 'recommended',
   recommendedCheckpointId: 'dreamshaper8',
   showCharacterDescription: false,
+  useStyleGAN: true,
+  bodyWorkflowMethod: 'default',
 }
 
 export function loadAvatarSettings(): AvatarSettings {
@@ -67,6 +69,9 @@ export interface AvatarSettingsPanelProps {
   globalModelImages?: string
   settings: AvatarSettings
   onChange: (next: AvatarSettings) => void
+  styleganStatus?: StyleGANStatus | null
+  /** Whether OpenPose ControlNet is installed (from capabilities endpoint). */
+  openposeAvailable?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +82,8 @@ export function AvatarSettingsPanel({
   globalModelImages,
   settings,
   onChange,
+  styleganStatus,
+  openposeAvailable,
 }: AvatarSettingsPanelProps) {
   const [open, setOpen] = useState(false)
 
@@ -282,6 +289,76 @@ export function AvatarSettingsPanel({
                 )}
               </div>
 
+              {/* Body Workflow Method */}
+              <div className="border-t border-white/[0.06] pt-5">
+                <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">
+                  Body Generation Method
+                </div>
+                <p className="text-[11px] text-white/30 mb-4">
+                  Choose the pipeline for face-to-body generation
+                </p>
+
+                <div className="space-y-1.5">
+                  {BODY_WORKFLOW_OPTIONS.map((opt) => {
+                    const isPoseDisabled = opt.id === 'pose' && openposeAvailable === false
+                    return (
+                    <button
+                      key={opt.id}
+                      disabled={isPoseDisabled}
+                      onClick={() => {
+                        if (isPoseDisabled) return
+                        const next = { ...settings, bodyWorkflowMethod: opt.id }
+                        onChange(next)
+                        saveAvatarSettings(next)
+                      }}
+                      className={[
+                        'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all',
+                        isPoseDisabled
+                          ? 'opacity-40 cursor-not-allowed border border-transparent'
+                          : settings.bodyWorkflowMethod === opt.id
+                          ? 'bg-purple-500/10 border border-purple-500/30 ring-1 ring-purple-500/10'
+                          : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+                      ].join(' ')}
+                    >
+                      <Layers
+                        size={16}
+                        className={
+                          settings.bodyWorkflowMethod === opt.id
+                            ? 'text-purple-400'
+                            : 'text-white/25'
+                        }
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-white/80">
+                            {opt.label}
+                          </span>
+                          {opt.badge && (
+                            <span className={[
+                              'text-[9px] px-1.5 py-0.5 rounded-md font-semibold',
+                              settings.bodyWorkflowMethod === opt.id
+                                ? 'bg-purple-500/20 text-purple-300'
+                                : 'bg-white/10 text-white/40',
+                            ].join(' ')}>
+                              {opt.badge}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-white/35 mt-0.5">
+                          {isPoseDisabled
+                            ? 'OpenPose ControlNet not installed. Run: ./scripts/download_models.sh recommended'
+                            : opt.description}
+                        </p>
+                      </div>
+                      {settings.bodyWorkflowMethod === opt.id && !isPoseDisabled && (
+                        <Check size={14} className="text-purple-400 shrink-0" />
+                      )}
+                    </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               {/* Character Description toggle */}
               <div className="border-t border-white/[0.06] pt-5">
                 <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">
@@ -291,6 +368,136 @@ export function AvatarSettingsPanel({
                   Show or hide advanced sections in the wizard
                 </p>
 
+                {/* StyleGAN Face Generator toggle */}
+                <button
+                  onClick={() => {
+                    const next = { ...settings, useStyleGAN: !settings.useStyleGAN }
+                    onChange(next)
+                    saveAvatarSettings(next)
+                  }}
+                  className={[
+                    'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
+                    settings.useStyleGAN
+                      ? 'bg-purple-500/10 border border-purple-500/30'
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+                  ].join(' ')}
+                >
+                  <Cpu
+                    size={16}
+                    className={settings.useStyleGAN ? 'text-purple-400' : 'text-white/25'}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">StyleGAN Face Creator</span>
+                      {settings.useStyleGAN && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                          ON
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      Use StyleGAN for face generation with Body step
+                    </p>
+                    {/* Install status */}
+                    {settings.useStyleGAN && styleganStatus && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        {styleganStatus.installed ? (
+                          <>
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                            <span className="text-[10px] text-green-400/70">
+                              FFHQ {styleganStatus.resolution} installed
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                            <span className="text-[10px] text-amber-400/70">
+                              Not installed — falls back to ComfyUI
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {/* Toggle switch */}
+                  <div className={[
+                    'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                    settings.useStyleGAN ? 'bg-gradient-to-r from-purple-500 to-pink-500' : 'bg-white/15',
+                  ].join(' ')}>
+                    <div className={[
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                      settings.useStyleGAN ? 'translate-x-4' : 'translate-x-0.5',
+                    ].join(' ')} />
+                  </div>
+                </button>
+
+                {settings.useStyleGAN && (
+                  <div className="flex items-start gap-2 mb-3 ml-8 px-3 py-2 rounded-lg bg-purple-500/5 border border-purple-500/10">
+                    <Info size={12} className="text-purple-400/60 mt-0.5 shrink-0" />
+                    <p className="text-[10px] text-purple-300/50 leading-relaxed">
+                      {styleganStatus?.installed
+                        ? `Faces via StyleGAN (${styleganStatus.resolution}px) → Body via Diffusion → Outfits. Adds a Body creation step.`
+                        : 'StyleGAN not installed. Faces generated via ComfyUI with photorealistic prompts. Install StyleGAN for dedicated face generation with Body step.'}
+                    </p>
+                  </div>
+                )}
+
+                {settings.useStyleGAN && styleganStatus && !styleganStatus.installed && (
+                  <div className="flex items-start gap-2 mb-3 ml-8 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                    <AlertTriangle size={12} className="text-amber-400/60 mt-0.5 shrink-0" />
+                    <div className="text-[10px] text-amber-300/50 leading-relaxed">
+                      <p className="font-medium text-amber-300/70">Install StyleGAN models:</p>
+                      <p className="mt-0.5 font-mono">cd avatar-service && python scripts/download_models.py</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Headshot 1:1 Aspect Ratio toggle */}
+                <button
+                  onClick={() => {
+                    const next = { ...settings, headshot1to1: !settings.headshot1to1 }
+                    onChange(next)
+                    saveAvatarSettings(next)
+                  }}
+                  className={[
+                    'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
+                    settings.headshot1to1
+                      ? 'bg-purple-500/10 border border-purple-500/30'
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+                  ].join(' ')}
+                >
+                  <Layers
+                    size={16}
+                    className={settings.headshot1to1 ? 'text-purple-400' : 'text-white/25'}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">Headshot 1:1 Ratio</span>
+                      {!settings.headshot1to1 && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-green-500/20 text-green-300 font-semibold">
+                          2:3 Default
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      {settings.headshot1to1
+                        ? 'Square 512×512 — may reduce quality'
+                        : 'Portrait 512×768 — best quality for headshots'}
+                    </p>
+                  </div>
+                  {/* Toggle switch */}
+                  <div className={[
+                    'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                    settings.headshot1to1 ? 'bg-purple-500' : 'bg-white/15',
+                  ].join(' ')}>
+                    <div className={[
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                      settings.headshot1to1 ? 'translate-x-4' : 'translate-x-0.5',
+                    ].join(' ')} />
+                  </div>
+                </button>
+
+                {/* Character Description toggle */}
                 <button
                   onClick={() => {
                     const next = { ...settings, showCharacterDescription: !settings.showCharacterDescription }
@@ -336,11 +543,25 @@ export function AvatarSettingsPanel({
               >
                 Save &amp; Close
               </button>
-              <div className="mt-3 text-center">
-                <span className="text-[9px] text-white/25 uppercase tracking-wider">Active: </span>
-                <span className="text-[10px] text-white/40 font-mono">
-                  {currentRec?.label || globalModelImages || 'Default'}
-                </span>
+              <div className="mt-3 text-center space-y-0.5">
+                <div>
+                  <span className="text-[9px] text-white/25 uppercase tracking-wider">Model: </span>
+                  <span className="text-[10px] text-white/40 font-mono">
+                    {currentRec?.label || globalModelImages || 'Default'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] text-white/25 uppercase tracking-wider">Face: </span>
+                  <span className={`text-[10px] font-mono ${settings.useStyleGAN ? 'text-purple-400/60' : 'text-white/40'}`}>
+                    {settings.useStyleGAN ? 'StyleGAN' : 'Diffusion'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] text-white/25 uppercase tracking-wider">Body: </span>
+                  <span className="text-[10px] text-white/40 font-mono">
+                    {BODY_WORKFLOW_OPTIONS.find((o) => o.id === settings.bodyWorkflowMethod)?.label || 'Default'}
+                  </span>
+                </div>
               </div>
             </div>
           </div>

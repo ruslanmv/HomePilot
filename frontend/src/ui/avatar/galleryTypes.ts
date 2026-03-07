@@ -7,19 +7,84 @@
 import type { AvatarMode } from './types'
 
 // ---------------------------------------------------------------------------
+// Portrait Framing — controls composition (headshot vs half-body)
+// ---------------------------------------------------------------------------
+
+/** Portrait framing type — controls camera distance and crop. */
+export type FramingType = 'half_body' | 'mid_body' | 'headshot'
+
+export interface FramingOption {
+  id: FramingType
+  label: string
+  icon: string
+  description: string
+  /** Prompt keywords injected for this framing style */
+  promptPrefix: string
+  /** Negative prompt keywords to prevent wrong framing */
+  negativeHints: string
+  /** Default dimensions (width × height) for SD 1.5 workflows */
+  sd15: { width: number; height: number }
+  /** Default dimensions (width × height) for SDXL workflows */
+  sdxl: { width: number; height: number }
+}
+
+export const FRAMING_OPTIONS: FramingOption[] = [
+  {
+    id: 'half_body',
+    label: 'Half-Body',
+    icon: '\uD83D\uDC64',
+    description: 'Head to waist — shows posture & clothing',
+    promptPrefix: 'medium shot portrait, half-body framing from head to waist, upper body visible, showing torso arms and hands, clothing and outfit clearly visible, body posture and pose visible, waist-up composition',
+    negativeHints: 'face only, cropped face',
+    sd15: { width: 512, height: 768 },
+    sdxl: { width: 1024, height: 1536 },
+  },
+  {
+    id: 'mid_body',
+    label: 'Half-Body (Mid)',
+    icon: '\uD83D\uDC64',
+    description: 'Head to hips — shows outfit & body shape',
+    promptPrefix: 'medium shot portrait, mid-body framing from head to hips, upper body and hips visible, showing full torso and hip area, clothing and outfit clearly visible, body posture and pose visible, frame ends at upper thighs, hips included in frame, no knees visible, no legs below thighs',
+    negativeHints: 'face only, cropped face',
+    sd15: { width: 512, height: 768 },
+    sdxl: { width: 832, height: 1216 },
+  },
+  {
+    id: 'headshot',
+    label: 'Headshot',
+    icon: '\uD83D\uDE42',
+    description: 'Close-up — head & shoulders, cinematic portrait',
+    promptPrefix: 'close-up portrait, head and shoulders, face is primary subject, shallow depth of field, cinematic lighting, sharp facial detail',
+    negativeHints: 'waist, hands',
+    sd15: { width: 512, height: 768 },
+    sdxl: { width: 1024, height: 1536 },
+  },
+]
+
+// ---------------------------------------------------------------------------
 // Outfit Scenario Tags — used for wardrobe tagging & filtering
 // ---------------------------------------------------------------------------
 
 /** Well-known outfit scenario tag IDs (mirrors OUTFIT_PRESETS). */
 export type OutfitScenarioTag =
+  | 'corporate'
   | 'business'
+  | 'executive'
+  | 'smart_casual'
   | 'casual'
   | 'evening'
   | 'sporty'
   | 'lingerie'
   | 'swimwear'
   | 'cocktail'
+  | 'boudoir'
+  | 'sheer'
+  | 'topless_artistic'
+  | 'artistic_nude'
   | 'fantasy_outfit'
+  | 'explicit'
+  | 'latex_fetish'
+  | 'bedroom_nude'
   | 'custom'
 
 /** Display metadata for scenario tags. */
@@ -31,15 +96,28 @@ export interface ScenarioTagMeta {
 }
 
 export const SCENARIO_TAG_META: ScenarioTagMeta[] = [
-  { id: 'business',       label: 'Business',  icon: '\uD83D\uDCBC', category: 'sfw' },
-  { id: 'casual',         label: 'Casual',    icon: '\u2615',       category: 'sfw' },
-  { id: 'evening',        label: 'Evening',   icon: '\uD83E\uDD42', category: 'sfw' },
-  { id: 'sporty',         label: 'Active',    icon: '\uD83C\uDFC3', category: 'sfw' },
-  { id: 'swimwear',       label: 'Swimwear',  icon: '\uD83D\uDC59', category: 'nsfw' },
-  { id: 'cocktail',       label: 'Cocktail',  icon: '\uD83C\uDF78', category: 'nsfw' },
-  { id: 'fantasy_outfit', label: 'Fantasy',   icon: '\u2728',       category: 'nsfw' },
-  { id: 'lingerie',       label: 'Lingerie',  icon: '\uD83E\uDE71', category: 'nsfw' },
-  { id: 'custom',         label: 'Custom',    icon: '\u270F\uFE0F', category: 'sfw' },
+  // ── SFW: Standard ──
+  { id: 'corporate',       label: 'Corporate Formal',  icon: '\uD83D\uDCBC', category: 'sfw' },
+  { id: 'business',        label: 'Business Casual',   icon: '\uD83D\uDC54', category: 'sfw' },
+  { id: 'executive',       label: 'Executive Elegant', icon: '\uD83D\uDC51', category: 'sfw' },
+  { id: 'smart_casual',    label: 'Smart Casual',      icon: '\u2615',       category: 'sfw' },
+  { id: 'casual',          label: 'Casual Day',        icon: '\uD83D\uDC55', category: 'sfw' },
+  { id: 'evening',         label: 'Evening Gala',      icon: '\uD83E\uDD42', category: 'sfw' },
+  { id: 'sporty',          label: 'Active Wear',       icon: '\uD83C\uDFC3', category: 'sfw' },
+  // ── NSFW: Romance & Roleplay ──
+  { id: 'lingerie',        label: 'Lingerie',          icon: '\uD83E\uDE71', category: 'nsfw' },
+  { id: 'swimwear',        label: 'Swimwear',          icon: '\uD83D\uDC59', category: 'nsfw' },
+  { id: 'cocktail',        label: 'Cocktail',          icon: '\uD83C\uDF78', category: 'nsfw' },
+  { id: 'boudoir',         label: 'Boudoir',           icon: '\uD83D\uDD6F\uFE0F', category: 'nsfw' },
+  { id: 'sheer',           label: 'Sheer Bodysuit',    icon: '\u2728',       category: 'nsfw' },
+  // ── NSFW: 18+ ──
+  { id: 'topless_artistic', label: 'Topless Artistic', icon: '\uD83C\uDFA8', category: 'nsfw' },
+  { id: 'artistic_nude',   label: 'Artistic Nude',     icon: '\uD83D\uDDBC\uFE0F', category: 'nsfw' },
+  { id: 'fantasy_outfit',  label: 'Fantasy Explicit',  icon: '\u2728',       category: 'nsfw' },
+  { id: 'explicit',        label: 'Explicit',          icon: '\uD83D\uDD25', category: 'nsfw' },
+  { id: 'latex_fetish',    label: 'Latex & Fetish',    icon: '\u26A1',       category: 'nsfw' },
+  { id: 'bedroom_nude',    label: 'Bedroom Nude',      icon: '\uD83D\uDECF\uFE0F', category: 'nsfw' },
+  { id: 'custom',          label: 'Custom',            icon: '\u270F\uFE0F', category: 'sfw' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -60,7 +138,7 @@ export interface AvatarVibePreset {
  *  All prompts enforce: front-facing, looking at camera, single person, portrait framing. */
 export const AVATAR_VIBE_PRESETS: AvatarVibePreset[] = [
   // Standard
-  { id: 'headshot',  label: 'Headshot',  icon: '\uD83D\uDC54', prompt: 'professional studio headshot, single person, front-facing, looking at camera, highly detailed, 8k resolution, soft lighting, clean background', category: 'standard' },
+  { id: 'headshot',  label: 'Professional',  icon: '\uD83D\uDC54', prompt: 'professional studio portrait, single person, front-facing, looking at camera, highly detailed, 8k resolution, soft lighting, clean background', category: 'standard' },
   { id: 'cinematic', label: 'Cinematic', icon: '\uD83C\uDFAC', prompt: 'cinematic portrait of a single person, front-facing, looking at camera, dramatic lighting, movie still, shallow depth of field, moody atmosphere', category: 'standard' },
   { id: 'artistic',  label: 'Artistic',  icon: '\uD83C\uDFA8', prompt: 'artistic portrait of a single person, front-facing, looking at camera, oil painting style, creative lighting, fine art, gallery quality', category: 'standard' },
   { id: 'cyberpunk', label: 'Cyberpunk', icon: '\uD83D\uDE80', prompt: 'cyberpunk portrait of a single person, front-facing, looking at camera, neon lights, futuristic, sci-fi, dark city background, glowing accents', category: 'standard' },
@@ -71,7 +149,7 @@ export const AVATAR_VIBE_PRESETS: AvatarVibePreset[] = [
   // Spicy (18+) — only shown when NSFW mode is on
   { id: 'girlfriend',   label: 'Girlfriend',   icon: '\uD83D\uDC96', prompt: 'solo portrait, girlfriend POV, single person, front-facing, intimate eye contact, casual home setting, warm lighting, romantic mood, loving smile', category: 'spicy' },
   { id: 'spouse',       label: 'Spouse',       icon: '\uD83D\uDC8D', prompt: 'solo intimate portrait, single person, front-facing, loving gaze at camera, home setting, natural light, romantic and tender expression', category: 'spicy' },
-  { id: 'companion',    label: 'Companion',    icon: '\uD83E\uDD1D', prompt: 'solo close-up portrait, single person, front-facing, soft smile, looking at camera, cozy setting, warm atmosphere, gentle expression', category: 'spicy' },
+  { id: 'companion',    label: 'Companion',    icon: '\uD83E\uDD1D', prompt: 'solo portrait, single person, front-facing, soft smile, looking at camera, cozy setting, warm atmosphere, gentle expression', category: 'spicy' },
   { id: 'fan_service',  label: 'Fan Service',  icon: '\uD83C\uDF36\uFE0F', prompt: 'solo portrait, single person, front-facing, fan service pose, playful expression, looking at camera, fashionable revealing outfit, studio lighting, alluring', category: 'spicy' },
   { id: 'boudoir',      label: 'Boudoir',      icon: '\uD83D\uDC8B', prompt: 'solo boudoir portrait, single person, front-facing, looking at camera, elegant lingerie, soft studio lighting, sensual pose, intimate setting', category: 'spicy' },
   { id: 'dominant',     label: 'Dominant',     icon: '\u26D3\uFE0F', prompt: 'solo portrait, single person, front-facing, confident dominant pose, looking at camera, dark aesthetic, dramatic lighting, leather accents, powerful expression', category: 'spicy' },
@@ -104,6 +182,10 @@ export interface CharacterStylePreset {
   category: VibeCategory
   /** Prompt template — use {gender}, {noun}, {possessive} placeholders */
   promptTemplate: string
+  /** 2 key visual anchors appended to the positive prompt to reinforce style */
+  positiveAnchors?: string
+  /** 2 short negative keywords to prevent style drift */
+  negativeHints?: string
 }
 
 const GENDER_DICT: Record<CharacterGender, { gender: string; noun: string; possessive: string }> = {
@@ -121,64 +203,83 @@ export function buildCharacterPrompt(gender: CharacterGender, preset: CharacterS
     .replace(/\{possessive\}/g, g.possessive)
 }
 
+/** Photorealism quality suffix appended to all portrait prompts. */
+const PHOTO_QUALITY = ', RAW photo, photorealistic, ultra realistic skin texture, pores visible, fine facial detail, natural skin imperfections, DSLR, 85mm lens, f/1.8, professional photography, 8k uhd'
+
 export const CHARACTER_STYLE_PRESETS: CharacterStylePreset[] = [
   // ── Standard ──
-  // All templates enforce: single person, front-facing, looking at camera
+  // All templates enforce: single real person, front-facing, looking at camera, photorealistic
   {
     id: 'executive',
     label: 'Executive',
     icon: '\uD83D\uDCBC',
     category: 'standard',
-    promptTemplate: 'Solo portrait of a single {gender} executive, front-facing, looking at camera, sharp facial features, professional attire, confident expression, impeccable grooming, clean studio lighting, highly detailed, 8k resolution',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} executive, front-facing, looking directly at camera, sharp defined facial features, tailored professional business suit, elegant accessories, confident poised expression, impeccable grooming, luxury office background, clean studio lighting with soft fill, body posture visible' + PHOTO_QUALITY,
+    positiveAnchors: 'business suit visible, formal neckwear',
+    negativeHints: 'casual clothing, lingerie',
   },
   {
     id: 'elegant',
     label: 'Elegant',
     icon: '\uD83C\uDF77',
     category: 'standard',
-    promptTemplate: 'Solo portrait of a single elegant {gender} {noun}, front-facing, looking at camera, refined graceful features, luxurious evening attire, soft golden lighting, haute couture aesthetic, poised expression, cinematic portrait',
+    promptTemplate: 'Solo portrait photograph of a single elegant real {gender} {noun}, front-facing, looking directly at camera, refined graceful bone structure, luxurious evening attire, soft golden hour lighting, haute couture editorial, poised composed expression, shallow depth of field' + PHOTO_QUALITY,
+    positiveAnchors: 'evening gown visible, jewelry details',
+    negativeHints: 'casual clothing, harsh lighting',
   },
   {
     id: 'romantic',
     label: 'Romantic',
     icon: '\uD83C\uDF39',
     category: 'standard',
-    promptTemplate: 'Solo close-up portrait of a single {gender} {noun}, front-facing, looking at camera, warm romantic aesthetic, soft delicate features, dreamy expression, gentle warm lighting, natural beauty',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} {noun}, front-facing, looking directly at camera, warm romantic aesthetic, soft natural features, dreamy tender expression, gentle warm window lighting, natural unretouched beauty, shallow depth of field' + PHOTO_QUALITY,
+    positiveAnchors: 'flowing fabric, warm tones',
+    negativeHints: 'formal suit, harsh shadows',
   },
   {
     id: 'casual_char',
     label: 'Casual',
     icon: '\u2615',
     category: 'standard',
-    promptTemplate: 'Solo portrait of a single relaxed {gender} {noun}, front-facing, looking at camera, casual everyday style, natural candid expression, comfortable modern outfit, warm natural lighting',
+    promptTemplate: 'Solo portrait photograph of a single real relaxed {gender} {noun}, front-facing, looking directly at camera, casual everyday style, genuine natural candid expression, comfortable modern outfit, warm natural daylight, street photography aesthetic' + PHOTO_QUALITY,
+    positiveAnchors: 'everyday streetwear, relaxed fit',
+    negativeHints: 'formal suit, studio backdrop',
   },
   {
     id: 'fantasy_char',
     label: 'Fantasy',
     icon: '\u2694\uFE0F',
     category: 'standard',
-    promptTemplate: 'Solo portrait of a single {gender} fantasy character, front-facing, looking at camera, striking mystical features, elaborate ornate armor or costume, ethereal magical lighting, enchanted atmosphere, epic detailed',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} person in fantasy cosplay, front-facing, looking directly at camera, striking facial features, elaborate ornate armor or costume, practical special effects lighting, cinematic fantasy film still, real person real skin' + PHOTO_QUALITY,
+    positiveAnchors: 'ornate armor, mystical elements',
+    negativeHints: 'modern clothing, plain background',
   },
   {
     id: 'scifi',
     label: 'Sci-Fi',
     icon: '\uD83D\uDE80',
     category: 'standard',
-    promptTemplate: 'Solo portrait of a single {gender} character, front-facing, looking at camera, futuristic sci-fi setting, sleek cybernetic enhancements, neon accent lighting, advanced technology backdrop, cinematic detailed',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} person, front-facing, looking directly at camera, futuristic sci-fi film still, sleek practical cyberpunk costume, neon accent rim lighting, real person real skin, cinematic color grading' + PHOTO_QUALITY,
+    positiveAnchors: 'tech accessories, neon accents',
+    negativeHints: 'period costume, natural setting',
   },
   {
     id: 'edgy',
     label: 'Edgy',
     icon: '\uD83D\uDD76\uFE0F',
     category: 'standard',
-    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, edgy rebellious aesthetic, dark alternative clothing, sharp angular features, dramatic shadows, urban backdrop, moody cinematic lighting',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} {noun}, front-facing, looking directly at camera, edgy rebellious street style, dark alternative clothing, sharp angular bone structure, dramatic shadow lighting, urban alley backdrop, moody cinematic color grading' + PHOTO_QUALITY,
+    positiveAnchors: 'leather details, urban textures',
+    negativeHints: 'bright colors, soft lighting',
   },
   {
     id: 'soft',
     label: 'Soft',
     icon: '\uD83C\uDF38',
     category: 'standard',
-    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, soft delicate features, gentle ethereal expression, pastel tones, dreamy atmosphere, natural beauty, soft diffused lighting',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} {noun}, front-facing, looking directly at camera, soft natural features, gentle serene expression, pastel color palette, natural diffused window light, real skin texture, beauty editorial' + PHOTO_QUALITY,
+    positiveAnchors: 'pastel fabric, gentle draping',
+    negativeHints: 'harsh shadows, dark clothing',
   },
   // ── Spicy (18+) ──
   {
@@ -186,56 +287,72 @@ export const CHARACTER_STYLE_PRESETS: CharacterStylePreset[] = [
     label: 'Girlfriend',
     icon: '\uD83D\uDC96',
     category: 'spicy',
-    promptTemplate: 'Solo portrait of a single captivating {gender} {noun}, front-facing, intimate eye contact with camera, girlfriend POV, casual home setting, warm soft lighting, romantic mood, loving playful smile, close-up',
+    promptTemplate: 'Solo portrait photograph of a single captivating real {gender} {noun}, front-facing, intimate eye contact with camera, girlfriend POV selfie aesthetic, casual home setting, warm soft natural lighting, romantic mood, loving playful smile' + PHOTO_QUALITY,
+    positiveAnchors: 'casual intimacy, loving gaze',
+    negativeHints: 'formal clothing, studio backdrop',
   },
   {
     id: 'cb_spouse',
     label: 'Spouse',
     icon: '\uD83D\uDC8D',
     category: 'spicy',
-    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera with loving tender gaze, intimate setting, cozy home, natural soft light, romantic vulnerable expression, close-up',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} {noun}, front-facing, looking at camera with loving tender gaze, intimate home setting, natural morning light, romantic vulnerable expression, real skin detail' + PHOTO_QUALITY,
+    positiveAnchors: 'tender expression, morning light',
+    negativeHints: 'formal pose, harsh lighting',
   },
   {
     id: 'cb_companion',
     label: 'Companion',
     icon: '\uD83E\uDD1D',
     category: 'spicy',
-    promptTemplate: 'Solo portrait of a single {gender} companion, front-facing, looking at camera, soft inviting smile, cozy intimate setting, warm ambient atmosphere, gentle expression, comfortable casual attire, close-up',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} companion, front-facing, looking directly at camera, soft inviting smile, cozy intimate setting, warm ambient natural lighting, gentle approachable expression, comfortable casual attire' + PHOTO_QUALITY,
+    positiveAnchors: 'inviting smile, cozy setting',
+    negativeHints: 'formal clothing, cold lighting',
   },
   {
     id: 'cb_boudoir',
     label: 'Boudoir',
     icon: '\uD83D\uDC8B',
     category: 'spicy',
-    promptTemplate: 'Solo portrait of a single captivating {gender} {noun}, front-facing, looking at camera, intimate boudoir setting, soft romantic lighting, wearing delicate lace, sensual elegant pose, tasteful and artistic',
+    promptTemplate: 'Solo portrait photograph of a single captivating real {gender} {noun}, front-facing, looking directly at camera, intimate boudoir setting, soft romantic diffused lighting, wearing delicate lace, sensual elegant pose, tasteful editorial photography' + PHOTO_QUALITY,
+    positiveAnchors: 'delicate lace, soft shadows',
+    negativeHints: 'casual clothing, bright lighting',
   },
   {
     id: 'cb_therapist',
     label: 'Therapist',
     icon: '\uD83E\uDE7A',
     category: 'spicy',
-    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, professional yet intimate setting, empathetic caring expression, soft warm lighting, approachable comforting presence, close-up',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} {noun}, front-facing, looking directly at camera, professional yet warm office setting, empathetic caring natural expression, soft warm lighting, approachable comforting presence' + PHOTO_QUALITY,
+    positiveAnchors: 'empathetic warmth, office setting',
+    negativeHints: 'revealing clothing, dark shadows',
   },
   {
     id: 'cb_dominant',
     label: 'Dominant',
     icon: '\u26D3\uFE0F',
     category: 'spicy',
-    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, commanding dominant presence, intense piercing gaze, cinematic moody lighting, dark aesthetic, leather accents, powerful confident expression',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} {noun}, front-facing, looking directly at camera, commanding dominant presence, intense piercing gaze, cinematic moody Rembrandt lighting, dark aesthetic, leather accents, powerful confident expression' + PHOTO_QUALITY,
+    positiveAnchors: 'leather accents, commanding gaze',
+    negativeHints: 'soft pastels, gentle lighting',
   },
   {
     id: 'cb_fan_service',
     label: 'Fan Service',
     icon: '\uD83C\uDF36\uFE0F',
     category: 'spicy',
-    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, playful fan service pose, flirtatious expression, fashionable revealing outfit, studio lighting, alluring confident energy',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} {noun}, front-facing, looking directly at camera, playful confident pose, flirtatious expression, fashionable revealing outfit, studio ring light, alluring confident energy, real person' + PHOTO_QUALITY,
+    positiveAnchors: 'revealing outfit, playful energy',
+    negativeHints: 'modest clothing, dull lighting',
   },
   {
     id: 'cb_fantasy_plus',
     label: 'Fantasy+',
     icon: '\uD83C\uDFB2',
     category: 'spicy',
-    promptTemplate: 'Solo portrait of a single {gender} {noun}, front-facing, looking at camera, exotic daring fantasy costume, mystical enchanted setting, alluring pose, magical ethereal lighting, detailed',
+    promptTemplate: 'Solo portrait photograph of a single real {gender} {noun}, front-facing, looking directly at camera, exotic daring fantasy cosplay costume, practical effects lighting, alluring confident pose, real person real skin, cinematic film still' + PHOTO_QUALITY,
+    positiveAnchors: 'exotic costume, magical lighting',
+    negativeHints: 'modern clothing, plain background',
   },
 ]
 
@@ -259,6 +376,7 @@ export interface WizardMeta {
   responseStyle?: string
   gender?: string
   ageRange?: string
+  outfitStyle?: string
 }
 
 export interface GalleryItem {
@@ -297,6 +415,13 @@ export interface GalleryItem {
   /** Wizard metadata — profession, tools, tone, etc. from the Character Wizard.
    *  Used by persona export to pre-populate role, description, system prompt. */
   wizardMeta?: WizardMeta
+  /** Optional character name set during the creator wizard finalize step. */
+  name?: string
+  /** Portrait framing type used during generation.
+   *  'half_body' = head-to-waist (supports outfit generation),
+   *  'headshot' = close-up face only (outfit generation not recommended).
+   *  Undefined treated as 'half_body' for backwards compat. */
+  framingType?: FramingType
 }
 
 // ---------------------------------------------------------------------------

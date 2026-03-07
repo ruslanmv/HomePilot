@@ -289,17 +289,99 @@ export const OUTFIT_PRESETS: Array<{
   label: string
   prompt: string
   category: 'sfw' | 'nsfw'
+  /** Sub-category for grouping in the UI. */
+  group?: 'standard' | 'romance' | '18+'
 }> = [
-  // SFW
-  { id: 'business', label: 'Business Meeting', prompt: 'professional business suit, office setting, confident pose', category: 'sfw' },
-  { id: 'casual', label: 'Casual Day', prompt: 'casual everyday outfit, relaxed setting, natural smile', category: 'sfw' },
-  { id: 'evening', label: 'Evening Gala', prompt: 'elegant evening gown, formal event, sophisticated', category: 'sfw' },
-  { id: 'sporty', label: 'Active Wear', prompt: 'athletic wear, fitness setting, energetic pose', category: 'sfw' },
-  // NSFW
-  { id: 'lingerie', label: 'Lingerie', prompt: 'lace lingerie set, boudoir setting, sensual pose', category: 'nsfw' },
-  { id: 'swimwear', label: 'Swimwear', prompt: 'bikini, beach or pool setting, sun-kissed', category: 'nsfw' },
-  { id: 'cocktail', label: 'Cocktail Night', prompt: 'tight cocktail dress, low neckline, nightclub setting', category: 'nsfw' },
-  { id: 'fantasy_outfit', label: 'Fantasy', prompt: 'fantasy costume, exotic and daring, mystical setting', category: 'nsfw' },
+  // ── SFW: Standard ──
+  { id: 'corporate',       label: 'Corporate Formal',  prompt: 'professional corporate suit, office boardroom, power pose, sharp tailoring', category: 'sfw', group: 'standard' },
+  { id: 'business',        label: 'Business Casual',   prompt: 'business casual outfit, modern office setting, confident relaxed pose', category: 'sfw', group: 'standard' },
+  { id: 'executive',       label: 'Executive Elegant', prompt: 'executive attire, luxury office, refined confident stance', category: 'sfw', group: 'standard' },
+  { id: 'smart_casual',    label: 'Smart Casual',      prompt: 'smart casual outfit, upscale cafe setting, relaxed confident pose', category: 'sfw', group: 'standard' },
+  { id: 'casual',          label: 'Casual Day',        prompt: 'casual everyday outfit, relaxed setting, natural smile', category: 'sfw', group: 'standard' },
+  { id: 'evening',         label: 'Evening Gala',      prompt: 'elegant evening gown, formal event, sophisticated', category: 'sfw', group: 'standard' },
+  { id: 'sporty',          label: 'Active Wear',       prompt: 'athletic wear, fitness setting, energetic pose', category: 'sfw', group: 'standard' },
+  // ── NSFW: Romance & Roleplay ──
+  { id: 'lingerie',        label: 'Lingerie',          prompt: 'delicate lace lingerie set, boudoir setting, sensual elegant pose, soft lighting', category: 'nsfw', group: 'romance' },
+  { id: 'swimwear',        label: 'Swimwear',          prompt: 'bikini, beach or pool setting, sun-kissed golden hour lighting', category: 'nsfw', group: 'romance' },
+  { id: 'cocktail',        label: 'Cocktail',          prompt: 'tight cocktail dress, low neckline, nightclub setting, dramatic lighting', category: 'nsfw', group: 'romance' },
+  { id: 'boudoir',         label: 'Boudoir',           prompt: 'sheer boudoir robe, luxury bedroom, soft candlelight, intimate elegant pose', category: 'nsfw', group: 'romance' },
+  { id: 'sheer',           label: 'Sheer Bodysuit',    prompt: 'sheer mesh bodysuit, studio setting, confident pose, editorial lighting', category: 'nsfw', group: 'romance' },
+  // ── NSFW: 18+ Explicit ──
+  { id: 'topless_artistic', label: 'Topless Artistic', prompt: 'topless artistic portrait, fine art studio, dramatic chiaroscuro lighting, gallery quality', category: 'nsfw', group: '18+' },
+  { id: 'artistic_nude',   label: 'Artistic Nude',     prompt: 'artistic nude portrait, classical fine art pose, painterly studio lighting, gallery quality', category: 'nsfw', group: '18+' },
+  { id: 'fantasy_outfit',  label: 'Fantasy',           prompt: 'exotic daring fantasy costume, mystical enchanted setting, magical lighting', category: 'nsfw', group: '18+' },
+  { id: 'explicit',        label: 'Explicit',          prompt: 'explicit adult content, intimate setting, bold confident pose', category: 'nsfw', group: '18+' },
+  { id: 'latex_fetish',    label: 'Latex & Fetish',    prompt: 'latex outfit, dark studio, dramatic lighting, bold commanding pose', category: 'nsfw', group: '18+' },
+  { id: 'bedroom_nude',    label: 'Bedroom Nude',      prompt: 'nude, luxury bedroom setting, warm intimate lighting, natural relaxed pose', category: 'nsfw', group: '18+' },
+]
+
+// ---------------------------------------------------------------------------
+// NSFW Advanced Controls — Types for nudity/exposure, poses, scenes, tone
+// ---------------------------------------------------------------------------
+
+export type NudityLevel = 'suggestive' | 'partial_nudity' | 'topless' | 'full_nude' | 'explicit'
+
+export const NUDITY_LEVELS: Array<{ id: NudityLevel; label: string; prompt: string }> = [
+  { id: 'suggestive',     label: 'Suggestive',      prompt: 'clothed but revealing, suggestive pose' },
+  { id: 'partial_nudity', label: 'Partial Nudity',   prompt: 'partially nude, implied nudity, strategic coverage' },
+  { id: 'topless',        label: 'Topless',           prompt: 'topless, nude upper body' },
+  { id: 'full_nude',      label: 'Full Nude',         prompt: 'fully nude, tasteful nude portrait' },
+  { id: 'explicit',       label: 'Explicit',          prompt: 'explicit adult content, fully nude, uninhibited' },
+]
+
+export type SensualPose = 'subtle_tease' | 'confident_display' | 'intimate_close' | 'seductive_lean' | 'lying_down' | 'arched_back' | 'kneeling' | 'over_shoulder' | 'arms_up'
+
+export const SENSUAL_POSES: Array<{ id: SensualPose; label: string; prompt: string }> = [
+  { id: 'subtle_tease',      label: 'Subtle Tease',      prompt: 'subtle teasing pose, coy glance' },
+  { id: 'confident_display', label: 'Confident Display',  prompt: 'confident bold pose, direct eye contact' },
+  { id: 'intimate_close',    label: 'Intimate Close',     prompt: 'intimate close-up, tender expression' },
+  { id: 'seductive_lean',    label: 'Seductive Lean',     prompt: 'seductive leaning pose, alluring gaze' },
+  { id: 'lying_down',        label: 'Lying Down',         prompt: 'lying down pose, relaxed sensual' },
+  { id: 'arched_back',       label: 'Arched Back',        prompt: 'arched back pose, elegant body line' },
+  { id: 'kneeling',          label: 'Kneeling',           prompt: 'kneeling pose, graceful posture' },
+  { id: 'over_shoulder',     label: 'Over Shoulder',      prompt: 'looking over shoulder, flirtatious glance' },
+  { id: 'arms_up',           label: 'Arms Up',            prompt: 'arms raised pose, open confident body language' },
+]
+
+export type PowerDynamic = 'soft_romantic' | 'balanced' | 'dominant_bold'
+
+export const POWER_DYNAMICS: Array<{ id: PowerDynamic; label: string; prompt: string }> = [
+  { id: 'soft_romantic',  label: 'Soft & Romantic',   prompt: 'soft romantic mood, gentle tender expression, warm tones' },
+  { id: 'balanced',       label: 'Balanced',          prompt: 'balanced confident pose, natural expression' },
+  { id: 'dominant_bold',  label: 'Dominant & Bold',   prompt: 'dominant commanding presence, bold powerful stance, dark dramatic tones' },
+]
+
+export type FantasyTone = 'romantic_tender' | 'seductive_alluring' | 'dramatic_intense'
+
+export const FANTASY_TONES: Array<{ id: FantasyTone; label: string; prompt: string }> = [
+  { id: 'romantic_tender',    label: 'Romantic & Tender',    prompt: 'romantic tender mood, warm soft lighting, dreamy atmosphere' },
+  { id: 'seductive_alluring', label: 'Seductive & Alluring', prompt: 'seductive alluring mood, sultry lighting, mysterious atmosphere' },
+  { id: 'dramatic_intense',   label: 'Dramatic & Intense',   prompt: 'dramatic intense mood, high contrast lighting, powerful atmosphere' },
+]
+
+export type SceneSetting = 'luxury_bedroom' | 'penthouse' | 'bathtub_spa' | 'poolside' | 'dark_studio' | 'mirror_room'
+
+export const SCENE_SETTINGS: Array<{ id: SceneSetting; label: string; prompt: string }> = [
+  { id: 'luxury_bedroom', label: 'Luxury Bedroom',  prompt: 'luxury bedroom, silk sheets, warm ambient lighting' },
+  { id: 'penthouse',      label: 'Penthouse Suite', prompt: 'penthouse suite, city skyline view, modern luxury interior' },
+  { id: 'bathtub_spa',    label: 'Bathtub / Spa',   prompt: 'luxury bathtub, spa setting, steam and candlelight' },
+  { id: 'poolside',       label: 'Poolside',        prompt: 'poolside setting, golden hour sunlight, tropical luxury' },
+  { id: 'dark_studio',    label: 'Dark Studio',     prompt: 'dark photography studio, dramatic spotlight, moody shadows' },
+  { id: 'mirror_room',    label: 'Mirror Room',     prompt: 'mirror room, reflective surfaces, artistic multiplied perspective' },
+]
+
+/** Accessory options for outfit customization. */
+export type AccessoryId = 'glasses' | 'necklace' | 'watch' | 'earrings' | 'folder' | 'id_badge' | 'scarf' | 'hat'
+
+export const ACCESSORY_OPTIONS: Array<{ id: AccessoryId; label: string; icon: string; prompt: string }> = [
+  { id: 'glasses',   label: 'Glasses',   icon: '👓', prompt: 'wearing stylish glasses' },
+  { id: 'necklace',  label: 'Necklace',  icon: '📿', prompt: 'wearing elegant necklace' },
+  { id: 'watch',     label: 'Watch',     icon: '⌚', prompt: 'wearing luxury watch' },
+  { id: 'earrings',  label: 'Earrings',  icon: '💎', prompt: 'wearing earrings' },
+  { id: 'folder',    label: 'Folder',    icon: '📁', prompt: 'holding a professional folder' },
+  { id: 'id_badge',  label: 'ID Badge',  icon: '🪪', prompt: 'wearing corporate ID badge lanyard' },
+  { id: 'scarf',     label: 'Scarf',     icon: '🧣', prompt: 'wearing fashionable scarf' },
+  { id: 'hat',       label: 'Hat',       icon: '🎩', prompt: 'wearing stylish hat' },
 ]
 
 // ---------------------------------------------------------------------------
