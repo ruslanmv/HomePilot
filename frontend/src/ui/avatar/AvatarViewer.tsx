@@ -68,6 +68,7 @@ import { resolveFileUrl } from '../resolveFileUrl'
 import { AvatarGeneratingLoader } from './AvatarGeneratingLoader'
 import { AvatarStageQuickTools } from './AvatarStageQuickTools'
 import { AvatarViewPackPanel } from './AvatarViewPackPanel'
+import { AvatarOrbitViewer } from './AvatarOrbitViewer'
 import { extractViewAngle, VIEW_ANGLE_OPTIONS, type ViewAngle, type ViewPreviewMap, type ViewSource } from './viewPack'
 import { useViewPackGeneration } from './useViewPackGeneration'
 
@@ -198,6 +199,7 @@ export function AvatarViewer({
   const [viewSource, setViewSource] = useState<ViewSource>('anchor')
   const [showViewPack, setShowViewPack] = useState(false)
   const [activeViewAngle, setActiveViewAngle] = useState<ViewAngle | null>(null)
+  const [orbitMode, setOrbitMode] = useState(false)
 
   // Auto-switch to Latest Outfit tab when new results arrive
   useEffect(() => {
@@ -732,6 +734,25 @@ export function AvatarViewer({
                 const equippedUrl = showEquipped ? resolveUrl(equippedItem!.url, backendUrl) : ''
                 const equippedTagMeta = showEquipped ? getTagMeta(equippedItem!.scenarioTag) : undefined
 
+                // ─── 360° Orbit Viewer ───
+                if (orbitMode) {
+                  return (
+                    <AvatarOrbitViewer
+                      previews={combinedViewPreviews}
+                      activeAngle={activeViewAngle}
+                      onAngleChange={(angle) => {
+                        if (angle === 'front') {
+                          setActiveViewAngle(null)
+                        } else {
+                          setActiveViewAngle(angle)
+                          setStageTab('outfit')
+                        }
+                      }}
+                      onOpenLightbox={onOpenLightbox}
+                    />
+                  )
+                }
+
                 if (stageTab === 'anchor') {
                   return (
                     /* ─── Anchor Face ─── */
@@ -1048,7 +1069,10 @@ export function AvatarViewer({
               <AvatarStageQuickTools
                 previews={combinedViewPreviews}
                 loadingAngles={viewPack.loadingAngles}
+                activeAngle={activeViewAngle}
                 busy={viewPack.anyLoading}
+                orbitMode={orbitMode}
+                onToggleOrbit={() => setOrbitMode((v) => !v)}
                 onGenerateAngle={handleGenerateViewAngle}
                 onOpenAngle={handleOpenGeneratedView}
                 onGenerateMissing={handleGenerateMissingViews}
