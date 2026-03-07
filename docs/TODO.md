@@ -4,6 +4,42 @@
 
 ---
 
+## TODO: Avatar Studio — Edit Integration Workflows
+
+> Workflows created as JSON templates in `workflows/avatar/`. These need to be
+> wired into the Avatar Studio Editor UI (not the wizard — the post-creation editor).
+
+### Ready (workflow JSONs exist, need UI wiring)
+
+- [ ] **WF-12 Inpaint Outfit** (`avatar_inpaint_outfit.json`) — Replace clothing region with mask-guided inpainting. Needs: mask drawing UI, outfit prompt input, integration with editor canvas.
+- [ ] **WF-14 Expression Change** (`avatar_expression_change.json`) — Change facial expression via face-region inpainting. Needs: auto face-region mask detection, expression preset selector (smile, serious, surprised, etc.).
+- [ ] **WF-10 FaceSwap Repair** (`avatar_faceswap_repair.json`) — Swap face from identity anchor onto generated body. Needs: "Fix Identity" button in editor, auto-detect drift confidence score.
+- [ ] **WF-11 Identity Reprojection** (`avatar_identity_reproject.json`) — Subtle identity correction via img2img + InstantID. Needs: denoise slider UI, before/after comparison.
+- [ ] **WF-13 Background Replace** (uses `comfyui/workflows/change_background.json`) — Auto-segment character with Rembg, replace background. Needs: background preset gallery, custom prompt input.
+- [ ] **WF-15 Pose Adjustment** (`avatar_body_pose.json`) — Re-pose a character using OpenPose ControlNet. Needs: pose skeleton picker UI, OpenPose model download, pose library.
+
+### Ready (workflow JSONs exist, advanced presets)
+
+- [ ] **WF-05 Body + Pose** (`avatar_body_pose.json`) — Body generation with pose skeleton. Needs: OpenPose ControlNet model install, pose reference image library.
+- [ ] **WF-06 Body SDXL** (`avatar_sdxl_body.json`) — Higher quality body via SDXL. Needs: SDXL checkpoint detection, resolution auto-scaling.
+- [ ] **WF-09 Outfit SDXL** (reuses `avatar_sdxl_body.json`) — SDXL outfit generation. Needs: same as WF-06.
+- [ ] **WF-16 Portrait** (`avatar_portrait_instantid.json`) — Square headshot from face reference. Needs: profile photo export, social media crop presets.
+
+### Models needed for full edit pipeline
+
+- [ ] **ControlNet OpenPose (SD1.5)** — `control_v11p_sd15_openpose.safetensors` for pose-guided generation
+- [ ] **ControlNet Depth (SD1.5)** — for depth-guided body generation
+- [ ] **Segment Anything (SAM)** — for automatic person/clothing segmentation masks
+- [ ] **CLIP Interrogator** — for prompt extraction from existing images (style matching)
+
+### Architecture notes
+
+All edit workflows use the same backend runner: `backend/app/avatar/workflows/runner.py`
+with the preset registry at `backend/app/avatar/workflows/registry.py` (19 presets total).
+Frontend types mirror backend at `frontend/src/ui/avatar/creator/presets/workflows.ts`.
+
+---
+
 ## COMPLETED: Community Gallery — Worker Proxy Migration
 
 > **Completed February 2026** — Worker deployed and configured as the
