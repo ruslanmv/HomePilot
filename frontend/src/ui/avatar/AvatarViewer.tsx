@@ -68,7 +68,7 @@ import { resolveFileUrl } from '../resolveFileUrl'
 import { AvatarGeneratingLoader } from './AvatarGeneratingLoader'
 import { AvatarStageQuickTools } from './AvatarStageQuickTools'
 import { AvatarViewPackPanel } from './AvatarViewPackPanel'
-import { extractViewAngle, type ViewAngle, type ViewPreviewMap, type ViewSource } from './viewPack'
+import { extractViewAngle, VIEW_ANGLE_OPTIONS, type ViewAngle, type ViewPreviewMap, type ViewSource } from './viewPack'
 import { useViewPackGeneration } from './useViewPackGeneration'
 
 // ---------------------------------------------------------------------------
@@ -195,6 +195,7 @@ export function AvatarViewer({
   const viewPack = useViewPackGeneration(backendUrl, apiKey)
   const [viewSource, setViewSource] = useState<ViewSource>('anchor')
   const [showViewPack, setShowViewPack] = useState(false)
+  const [activeViewAngle, setActiveViewAngle] = useState<ViewAngle | null>(null)
 
   // Auto-switch to Latest Outfit tab when new results arrive
   useEffect(() => {
@@ -202,6 +203,7 @@ export function AvatarViewer({
       setStageTab('outfit')
       setSelectedResultIdx(0)
       setEquippedItem(null) // new generation overrides equipped
+      setActiveViewAngle(null) // clear any viewed angle
     }
   }, [outfit.results])
 
@@ -246,12 +248,14 @@ export function AvatarViewer({
   const handleEquip = useCallback((wardrobeItem: GalleryItem) => {
     setEquippedItem(wardrobeItem)
     setStageTab('outfit')
+    setActiveViewAngle(null)
     viewPack.reset()
   }, [viewPack])
 
   const handleUnequip = useCallback(() => {
     setEquippedItem(null)
     setStageTab('anchor')
+    setActiveViewAngle(null)
     viewPack.reset()
   }, [viewPack])
 
@@ -361,10 +365,18 @@ export function AvatarViewer({
     return map
   }, [viewPack.resultsByAngle, backendUrl])
 
-  const combinedViewPreviews = useMemo<ViewPreviewMap>(
-    () => ({ ...persistedViewPreviews, ...generatedViewPreviews }),
-    [persistedViewPreviews, generatedViewPreviews]
-  )
+  const combinedViewPreviews = useMemo<ViewPreviewMap>(() => {
+    const base = { ...persistedViewPreviews, ...generatedViewPreviews }
+    // When an outfit is equipped or latest result is on stage, use that as the front
+    if (stageTab === 'outfit') {
+      if (equippedItem) {
+        base.front = resolveUrl(equippedItem.url, backendUrl)
+      } else if (outfit.results[selectedResultIdx]) {
+        base.front = resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)
+      }
+    }
+    return base
+  }, [persistedViewPreviews, generatedViewPreviews, stageTab, equippedItem, outfit.results, selectedResultIdx, backendUrl])
 
   // Presets filtered by tab + NSFW mode
   const presets = OUTFIT_PRESETS.filter((p) => {
@@ -595,8 +607,15 @@ export function AvatarViewer({
 
   const handleOpenGeneratedView = useCallback((angle: ViewAngle) => {
     const url = combinedViewPreviews[angle]
-    if (url) onOpenLightbox?.(url)
-  }, [combinedViewPreviews, onOpenLightbox])
+    if (!url) return
+    // Show the angle on the main stage instead of opening lightbox
+    if (angle === 'front') {
+      setActiveViewAngle(null) // front = default stage view
+    } else {
+      setActiveViewAngle(angle)
+      setStageTab('outfit') // ensure outfit tab is active
+    }
+  }, [combinedViewPreviews])
 
   return (
     <div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col">
@@ -643,7 +662,7 @@ export function AvatarViewer({
               {/* Toggle tabs: Anchor Face ↔ Latest Outfit */}
               <div className="flex items-center p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                 <button
-                  onClick={() => setStageTab('anchor')}
+                  onClick={() => { setStageTab('anchor'); setActiveViewAngle(null) }}
                   className={[
                     'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all',
                     stageTab === 'anchor'
@@ -664,9 +683,14 @@ export function AvatarViewer({
                   ].join(' ')}
                 >
                   <Sparkles size={12} />
-                  Latest Outfit
-                  {outfit.results.length > 0 && (
+                  {activeViewAngle ? 'Outfit 3D' : 'Latest Outfit'}
+                  {!activeViewAngle && outfit.results.length > 0 && (
                     <span className="text-[9px] opacity-60">({outfit.results.length})</span>
+                  )}
+                  {activeViewAngle && (
+                    <span className="text-[9px] opacity-60">
+                      ({VIEW_ANGLE_OPTIONS.find((a) => a.id === activeViewAngle)?.shortLabel || activeViewAngle})
+                    </span>
                   )}
                 </button>
               </div>
@@ -694,6 +718,43 @@ export function AvatarViewer({
                           className="max-w-full max-h-full object-contain"
                         />
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <Maximize2 size={28} className="text-white/80" />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
+
+                // ─── 3D View Angle on stage ───
+                if (activeViewAngle && combinedViewPreviews[activeViewAngle]) {
+                  const angleUrl = combinedViewPreviews[activeViewAngle]!
+                  const angleMeta = VIEW_ANGLE_OPTIONS.find((a) => a.id === activeViewAngle)
+                  return (
+                    <div className="relative group h-full animate-fadeSlideIn">
+                      <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-teal-500/25 via-transparent to-cyan-500/25 opacity-60 group-hover:opacity-100 transition-opacity" />
+                      <div
+                        className="relative h-full rounded-2xl overflow-hidden border border-teal-500/20 cursor-pointer bg-black/40 flex items-center justify-center"
+                        onClick={() => onOpenLightbox?.(angleUrl)}
+                      >
+                        <img
+                          src={angleUrl}
+                          alt={angleMeta?.label || 'View angle'}
+                          className="max-w-full max-h-full object-contain"
+                        />
+                        {/* Angle badge */}
+                        <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-teal-500/20 text-[10px] text-teal-200 font-medium">
+                          <span>{angleMeta?.icon || '📐'}</span>
+                          <span>{angleMeta?.label || activeViewAngle}</span>
+                        </div>
+                        {/* Back to front button */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setActiveViewAngle(null) }}
+                          className="absolute top-3 right-3 w-8 h-8 rounded-lg bg-black/60 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 hover:text-white hover:bg-teal-500/40 hover:border-teal-500/30 transition-all"
+                          title="Back to front view"
+                        >
+                          <X size={14} />
+                        </button>
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                           <Maximize2 size={28} className="text-white/80" />
                         </div>
                       </div>
