@@ -41,10 +41,14 @@ import { AvatarViewer } from './AvatarViewer'
 import { OutfitPanel } from './OutfitPanel'
 import { AvatarSettingsPanel, loadAvatarSettings, resolveCheckpoint } from './AvatarSettingsPanel'
 import type { AvatarMode, AvatarSettings } from './types'
-import type { GalleryItem, AvatarVibePreset, CharacterGender } from './galleryTypes'
-import { AVATAR_VIBE_PRESETS, GENDER_OPTIONS, CHARACTER_STYLE_PRESETS, buildCharacterPrompt } from './galleryTypes'
+import type { GalleryItem, AvatarVibePreset, CharacterGender, FramingType } from './galleryTypes'
+import { AVATAR_VIBE_PRESETS, GENDER_OPTIONS, CHARACTER_STYLE_PRESETS, buildCharacterPrompt, FRAMING_OPTIONS } from './galleryTypes'
 import { resolveFileUrl } from '../resolveFileUrl'
 import { CharacterWizard } from './wizard'
+import { CharacterCreatorStudio } from './creator'
+import { loadVibeTab, saveVibeTab } from './vibeTabPersistence'
+import type { VibeTab } from './vibeTabPersistence'
+import { AvatarGeneratingLoader } from './AvatarGeneratingLoader'
 import {
   DEFAULT_AVATAR_PREFS,
   buildGeneticsPromptFragment,
@@ -99,7 +103,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const gen = useGenerateAvatars(backendUrl, apiKey)
   const gallery = useAvatarGallery()
 
-  const [viewMode, setViewMode] = useState<'gallery' | 'designer' | 'wizard' | 'viewer'>('gallery')
+  const [viewMode, setViewMode] = useState<'gallery' | 'designer' | 'wizard' | 'viewer' | 'creator'>('gallery')
   const [viewerItem, setViewerItem] = useState<GalleryItem | null>(null)
   const [avatarSettings, setAvatarSettings] = useState<AvatarSettings>(loadAvatarSettings)
 
@@ -116,10 +120,16 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   // Wizard state (vibes — used for reference/faceswap modes)
   // Default to 'headshot' so users always get a portrait (not castles/landscapes)
   const [selectedVibe, setSelectedVibe] = useState<string | null>('headshot')
-  const [vibeTab, setVibeTab] = useState<'standard' | 'spicy'>('standard')
+  const [vibeTab, _setVibeTab] = useState<VibeTab>(loadVibeTab)
+  const setVibeTab = useCallback((tab: VibeTab) => { _setVibeTab(tab); saveVibeTab(tab) }, [])
   const [showCustomPrompt, setShowCustomPrompt] = useState(false)
   const [customPrompt, setCustomPrompt] = useState('')
   const nsfwMode = readNsfwMode()
+
+  // Reset spicy tab if NSFW gets disabled
+  useEffect(() => {
+    if (!nsfwMode && vibeTab === 'spicy') setVibeTab('standard')
+  }, [nsfwMode, vibeTab, setVibeTab])
 
   // Wrap onSaveAsPersonaAvatar to auto-compute outfit items AND batch siblings from the gallery
   const handleSaveAsPersona = useCallback((item: GalleryItem) => {
@@ -138,6 +148,9 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   const [selectedGender, setSelectedGender] = useState<CharacterGender | null>('female')
   const [selectedStyle, setSelectedStyle] = useState<string | null>('executive')
   const [characterDescription, setCharacterDescription] = useState('')
+
+  // Portrait framing — half_body (default, head-to-waist) vs headshot (close-up)
+  const [selectedFraming, setSelectedFraming] = useState<FramingType>('half_body')
 
   // MMORPG Genetics & Features (additive — enhances character prompt)
   const [showGenetics, setShowGenetics] = useState(false)
@@ -195,24 +208,44 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
     }
   }, [vibeTab, selectedStyle])
 
-  // Resolve the effective prompt based on active mode
+  // Resolve the effective prompt based on active mode, with framing suffix
+  const framingOption = FRAMING_OPTIONS.find((f) => f.id === selectedFraming) ?? FRAMING_OPTIONS[0]
+  // Resolve the active style preset (used for positive anchors + negative hints)
+  const activeStylePreset = mode === 'studio_random'
+    ? CHARACTER_STYLE_PRESETS.find((s) => s.id === selectedStyle)
+    : undefined
   const effectivePrompt = (() => {
+    let basePrompt: string
     if (mode === 'studio_random') {
-      return characterDescription.trim()
+      basePrompt = characterDescription.trim()
+    } else {
+      const vibePreset = AVATAR_VIBE_PRESETS.find((v) => v.id === selectedVibe)
+      const base = vibePreset?.prompt || ''
+      const custom = customPrompt.trim()
+      if (base && custom) basePrompt = `${base}, ${custom}`
+      else if (custom) basePrompt = custom
+      else basePrompt = base
     }
-    const vibePreset = AVATAR_VIBE_PRESETS.find((v) => v.id === selectedVibe)
-    const base = vibePreset?.prompt || ''
-    const custom = customPrompt.trim()
-    if (base && custom) return `${base}, ${custom}`
-    if (custom) return custom
-    return base
+    // Append framing keywords as a suffix — the preset prompt is the primary
+    // quality driver (executive, cinematic, etc.) and must come first.
+    // The output dimensions (512×768 for half-body, 512×512 for headshot)
+    // already guide composition; framing tokens are a gentle reinforcement.
+    if (basePrompt) {
+      // Append style-specific positive anchors (e.g., "business suit visible, formal neckwear")
+      const anchors = activeStylePreset?.positiveAnchors
+      const withAnchors = anchors ? `${basePrompt}, ${anchors}` : basePrompt
+      return `${withAnchors}, ${framingOption.promptPrefix}`
+    }
+    return framingOption.promptPrefix
   })()
+
+  // Build negative prompt from framing + style hints (max 4 tokens total)
+  const negativePrompt = [framingOption.negativeHints, activeStylePreset?.negativeHints].filter(Boolean).join(', ')
 
   // Determine if current generation is spicy/NSFW content
   const isSpicyContent = (() => {
     if (mode === 'studio_random') {
-      const style = CHARACTER_STYLE_PRESETS.find((s) => s.id === selectedStyle)
-      return style?.category === 'spicy'
+      return activeStylePreset?.category === 'spicy'
     }
     const selectedVibeData = AVATAR_VIBE_PRESETS.find((v) => v.id === selectedVibe)
     return selectedVibeData?.category === 'spicy'
@@ -261,15 +294,19 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
   // ---- Generate ----
   const onGenerate = useCallback(async () => {
     const checkpoint = resolveCheckpoint(avatarSettings, globalModelImages)
-    // Design Character always uses ComfyUI txt2img ('creative') — the StyleGAN
-    // microservice is not available in most setups. Provide a fallback prompt
-    // so generation never fails when the user clicks Generate without a prompt.
-    const fallbackPrompt = 'Solo portrait of a single female character, front-facing, looking at camera, highly detailed, studio lighting, 8k resolution'
-    const apiMode = mode === 'studio_random' ? 'creative' : mode
+    // studio_random routes to the avatar-service (StyleGAN) via the backend.
+    // If StyleGAN is unavailable, the backend returns a 503 which we handle below.
+    // For ComfyUI modes, provide a fallback prompt for users who skip the text field.
+    const fallbackPrompt = `Solo portrait photograph of a single real female person, front-facing, looking directly at camera, RAW photo, photorealistic, ultra realistic skin texture, pores visible, fine facial detail, DSLR, 85mm lens, f/1.8, professional studio lighting, 8k uhd, ${framingOption.promptPrefix}`
     const resolvedPrompt = effectivePrompt || (mode === 'studio_random' ? fallbackPrompt : '')
+    // Use SD 1.5 dimensions from the framing option (backend workflows are SD 1.5 by default)
+    // Headshot uses portrait 2:3 by default; only uses 1:1 square when explicitly enabled in settings.
+    const framingDims = (selectedFraming === 'headshot' && avatarSettings.headshot1to1)
+      ? { width: 512, height: 512 }
+      : framingOption.sd15
     try {
       const result = await gen.run({
-        mode: apiMode,
+        mode,
         count,
         prompt: resolvedPrompt || undefined,
         reference_image_url:
@@ -278,6 +315,9 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
             : undefined,
         truncation: 0.7,
         checkpoint_override: checkpoint,
+        width: framingDims.width,
+        height: framingDims.height,
+        negative_prompt: negativePrompt || undefined,
       })
       if (result?.results?.length) {
         // Always show the selection UI — user must click "Create Avatar" to commit.
@@ -292,7 +332,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
     } catch {
       showToast('Oops, the servers are a bit busy. Click Generate to try again.', 'error')
     }
-  }, [gen, mode, count, effectivePrompt, referenceUrl, gallery, avatarSettings, globalModelImages, showToast, vibeTagForGallery, isSpicyContent])
+  }, [gen, mode, count, effectivePrompt, referenceUrl, gallery, avatarSettings, globalModelImages, showToast, vibeTagForGallery, isSpicyContent, framingOption])
 
   // ---- Keyboard shortcut ----
   const needsReference = mode === 'studio_reference'
@@ -318,7 +358,8 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
         <AvatarLandingPage
           items={gallery.items}
           backendUrl={backendUrl}
-          onNewAvatar={() => setViewMode('wizard')}
+          onNewAvatar={() => setViewMode('designer')}
+          onOpenCreator={() => setViewMode('creator')}
           onOpenItem={(item) => { setViewerItem(item); setViewMode('viewer') }}
           onDeleteItem={gallery.removeItem}
           onOpenLightbox={onOpenLightbox}
@@ -357,6 +398,26 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
         onSaveGeneration={(anchor, portraits, genMode, prompt, refUrl, nsfw, wizardMeta) => {
           gallery.addAnchorWithPortraits(anchor, portraits, genMode, prompt, refUrl, { nsfw: nsfw || undefined, wizardMeta })
         }}
+      />
+    )
+  }
+
+  // ==========================================================================
+  // RENDER — MMORPG Character Creator Studio
+  // ==========================================================================
+  if (viewMode === 'creator') {
+    return (
+      <CharacterCreatorStudio
+        backendUrl={backendUrl}
+        apiKey={apiKey}
+        globalModelImages={globalModelImages}
+        enabledModes={enabledModes}
+        gallery={gallery}
+        onClose={() => setViewMode('gallery')}
+        onOpenLightbox={onOpenLightbox}
+        onSendToEdit={onSendToEdit}
+        onSaveAsPersonaAvatar={onSaveAsPersonaAvatar}
+        onOpenViewer={(item) => { setViewerItem(item); setViewMode('viewer') }}
       />
     )
   }
@@ -417,6 +478,8 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
             globalModelImages={globalModelImages}
             settings={avatarSettings}
             onChange={setAvatarSettings}
+            styleganStatus={packs.data?.stylegan_status ?? null}
+            openposeAvailable={packs.data?.openpose_available}
           />
         </div>
       </div>
@@ -476,6 +539,14 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
               )
             })}
           </div>
+
+          {/* StyleGAN engine info (additive — shown only in studio_random mode) */}
+          {mode === 'studio_random' && enabledModes.includes('studio_random') && (
+            <div className="text-[10px] text-white/25 text-center -mt-4 mb-4 flex items-center justify-center gap-1.5">
+              <Sparkles size={10} className="text-purple-400/50" />
+              <span>StyleGAN face generation — fast portraits with seed control</span>
+            </div>
+          )}
 
           {mode === 'studio_random' ? (
             /* ═══════════ CHARACTER BUILDER (Design Character mode) ═══════════ */
@@ -684,7 +755,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
               {avatarSettings.showCharacterDescription && (
                 <div className="mb-6">
                   <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
-                    4. Character Description
+                    5. Character Description
                     <span className="text-white/20 normal-case tracking-normal font-normal ml-1.5">(Your Identity Anchor)</span>
                   </div>
                   <div className={[
@@ -870,6 +941,37 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
             </>
           )}
 
+          {/* ═══ Portrait Framing Toggle ═══ */}
+          <div className="mb-6">
+            <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+              {mode === 'studio_random' ? '4' : '3'}. Photo Style
+            </div>
+            <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
+              {FRAMING_OPTIONS.map((f) => {
+                const active = selectedFraming === f.id
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => setSelectedFraming(f.id)}
+                    className={[
+                      'flex-1 flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium transition-all',
+                      active
+                        ? 'bg-white/10 text-white border border-white/15 shadow-sm'
+                        : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04] border border-transparent',
+                    ].join(' ')}
+                    title={f.description}
+                  >
+                    <span className="text-lg">{f.icon}</span>
+                    <div className="flex flex-col items-start">
+                      <span className="text-xs">{f.label}</span>
+                      <span className="text-[9px] text-white/25 font-normal">{f.description}</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           {/* ═══ Generate Button + Count ═══ */}
           <div className="flex items-center justify-center gap-3 mb-8">
             <div className="relative flex items-stretch">
@@ -923,31 +1025,21 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
               </div>
             </div>
 
-            {gen.loading && (
-              <button onClick={gen.cancel}
-                className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-sm font-medium border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all"
-              >
-                <X size={14} /> Cancel
-              </button>
-            )}
-
             {canGenerate && !gen.loading && (
               <span className="text-[10px] text-white/20 hidden sm:inline ml-1">Ctrl+Enter</span>
             )}
           </div>
 
-          {/* Loading skeleton */}
+          {/* Professional generating loader — matches Immagine / Animate style */}
           {gen.loading && (
             <div className="max-w-2xl mx-auto mb-8">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {Array.from({ length: count }).map((_, i) => (
-                  <div key={i} className="rounded-xl overflow-hidden border border-white/[0.06] bg-white/[0.02]">
-                    <div className="aspect-square bg-white/[0.03] animate-pulse flex items-center justify-center">
-                      <Loader2 size={20} className="animate-spin text-white/10" />
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <AvatarGeneratingLoader
+                label={mode === 'studio_random' ? 'Designing your character…' : 'Creating your avatar…'}
+                hint="This may take up to a minute"
+                onCancel={gen.cancel}
+                count={count}
+                aspectClass={(selectedFraming === 'headshot' && avatarSettings.headshot1to1) ? 'aspect-square' : 'aspect-[2/3]'}
+              />
             </div>
           )}
 
@@ -985,7 +1077,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                         setSelectedResultIndex(isSelected ? null : i)
                       }}
                     >
-                      <div className="aspect-square bg-white/[0.03] relative">
+                      <div className={`${(selectedFraming === 'headshot' && avatarSettings.headshot1to1) ? 'aspect-square' : 'aspect-[2/3]'} bg-white/[0.03] relative`}>
                         <img src={imgUrl} alt={`Avatar ${i + 1}`}
                           className={`w-full h-full object-cover transition-all duration-300 ${blurred ? 'blur-xl scale-110' : ''}`}
                           loading="lazy"
@@ -1021,7 +1113,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                         chosen, portraits, mode,
                         effectivePrompt || undefined,
                         referenceUrl || undefined,
-                        { vibeTag: vibeTagForGallery || undefined, nsfw: isSpicyContent || undefined },
+                        { vibeTag: vibeTagForGallery || undefined, nsfw: isSpicyContent || undefined, framingType: selectedFraming },
                       )
                       setSelectedResultIndex(null)
                       setViewMode('gallery')

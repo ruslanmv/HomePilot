@@ -111,6 +111,9 @@ from .avatar import router as avatar_router
 # Outfit Variations (additive — wardrobe changes for existing avatars)
 from .avatar.outfit import router as outfit_router
 
+# Hybrid Avatar Pipeline (additive — StyleGAN face → ComfyUI full-body)
+from .avatar.hybrid_router import router as hybrid_avatar_router
+
 # Multimodal Vision Layer (additive — on-demand image understanding)
 from .multimodal import analyze_image, is_vision_intent, VISION_MODEL_PATTERNS
 
@@ -169,6 +172,9 @@ app.include_router(avatar_router)
 
 # Include Outfit Variation routes (/v1/avatars/outfits)
 app.include_router(outfit_router)
+
+# Include Hybrid Avatar Pipeline routes (/v1/avatars/hybrid/*)
+app.include_router(hybrid_avatar_router)
 
 # Include User Auth & Onboarding routes (/v1/auth/*)
 app.include_router(users_router)
@@ -2449,10 +2455,17 @@ async def _download_comfy_image(url: str, upload_root: Path) -> str:
     # are served by the backend's own proxy endpoint.  Convert these to
     # direct ComfyUI /view?filename=<filename> requests.
     if url.startswith("/comfy/view/"):
-        filename = os.path.basename(url[len("/comfy/view/"):].split("?")[0])
+        rest = url[len("/comfy/view/"):]
+        filename = os.path.basename(rest.split("?")[0])
         if filename in ("", ".", ".."):
             raise ValueError("Invalid filename from proxy URL")
+        # Preserve subfolder query param (e.g. /comfy/view/x.png?subfolder=avatar)
+        from urllib.parse import parse_qs as _parse_qs
+        qs = _parse_qs(urlparse(url).query)
+        subfolder = qs.get("subfolder", [""])[0]
         url = f"{COMFY_BASE_URL}/view?filename={filename}&type=output"
+        if subfolder:
+            url += f"&subfolder={subfolder}"
 
     parsed = urlparse(url)
     comfy_parsed = urlparse(COMFY_BASE_URL)
