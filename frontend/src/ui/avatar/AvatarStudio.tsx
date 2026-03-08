@@ -30,6 +30,7 @@ import {
   Star,
   EyeOff,
   CheckCircle2,
+  Maximize2,
 } from 'lucide-react'
 
 import { useAvatarPacks } from './useAvatarPacks'
@@ -1052,8 +1053,54 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
               <p className="text-[11px] text-white/20 text-center mb-4">
                 {gen.result.results.length === 1
                   ? 'Click to select, then Create Avatar to save'
-                  : 'Select the character that speaks to you'}
+                  : 'Click a photo to preview — select your favourite'}
               </p>
+
+              {/* ── Hero preview — shows the clicked photo at full size ── */}
+              {selectedResultIndex !== null && gen.result.results[selectedResultIndex] && (() => {
+                const hero = gen.result.results[selectedResultIndex]
+                const heroUrl = resolveFileUrl(hero.url, backendUrl)
+                return (
+                  <div className="mb-5 flex flex-col items-center animate-fadeSlideIn">
+                    <div className="relative rounded-2xl overflow-hidden border border-white/10 shadow-2xl bg-black/30 max-w-sm w-full">
+                      <img
+                        src={heroUrl}
+                        alt={`Preview — ${hero.scenarioTag || 'Avatar'}`}
+                        className={`w-full ${(selectedFraming === 'headshot' && avatarSettings.headshot1to1) ? 'aspect-square' : 'aspect-[2/3]'} object-cover`}
+                      />
+                      {/* Info overlay — seed + scenario tag */}
+                      <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent px-3 py-2.5 flex items-end justify-between">
+                        <div className="flex flex-col gap-0.5">
+                          {hero.scenarioTag && (
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-purple-300/90">
+                              {hero.scenarioTag}
+                            </span>
+                          )}
+                          {hero.seed != null && (
+                            <span className="text-[10px] text-white/40 font-mono">
+                              Seed: {hero.seed}
+                            </span>
+                          )}
+                        </div>
+                        {onOpenLightbox && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onOpenLightbox(heroUrl) }}
+                            className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white/60 hover:text-white transition-colors"
+                            title="Full screen"
+                          >
+                            <Maximize2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-white/25 mt-2">
+                      {gen.result!.results.length > 1
+                        ? `Viewing ${selectedResultIndex + 1} of ${gen.result!.results.length} — click another to compare`
+                        : 'Click Create Avatar to save'}
+                    </p>
+                  </div>
+                )
+              })()}
 
               {/* Result grid — select one, dim the rest */}
               <div className={`grid gap-3 ${gen.result.results.length === 1 ? 'grid-cols-1 max-w-xs mx-auto' : 'grid-cols-2 sm:grid-cols-4'}`}>

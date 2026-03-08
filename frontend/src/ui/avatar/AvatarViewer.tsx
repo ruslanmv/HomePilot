@@ -13,9 +13,10 @@
  *   - Each outfit is tagged with its scenario for future filtering
  */
 
-import React, { useState, useMemo, useCallback, useEffect } from 'react'
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import {
   ChevronLeft,
+  ChevronRight,
   Shirt,
   PenLine,
   Download,
@@ -65,6 +66,11 @@ import { AvatarSettingsPanel, resolveCheckpoint, loadAvatarSettings } from './Av
 import type { AvatarSettings, HybridFullBodyRequest } from './types'
 import { resolveFileUrl } from '../resolveFileUrl'
 import { AvatarGeneratingLoader } from './AvatarGeneratingLoader'
+import { AvatarStageQuickTools } from './AvatarStageQuickTools'
+import { AvatarViewPackPanel } from './AvatarViewPackPanel'
+import { AvatarOrbitViewer } from './AvatarOrbitViewer'
+import { extractViewAngle, VIEW_ANGLE_OPTIONS, type ViewAngle, type ViewPreviewMap, type ViewSource } from './viewPack'
+import { useViewPackGeneration } from './useViewPackGeneration'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -140,6 +146,9 @@ export function AvatarViewer({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [wardrobeFilter, setWardrobeFilter] = useState<OutfitScenarioTag | 'all'>('all')
   const [wardrobeFilterOpen, setWardrobeFilterOpen] = useState(false)
+  const wardrobeScrollRef = useRef<HTMLDivElement>(null)
+  const [wardrobeCanScrollLeft, setWardrobeCanScrollLeft] = useState(false)
+  const [wardrobeCanScrollRight, setWardrobeCanScrollRight] = useState(false)
   const [avatarSettingsState, setAvatarSettingsState] = useState<AvatarSettings>(loadAvatarSettings)
 
   // Outfit generation state
@@ -183,12 +192,22 @@ export function AvatarViewer({
   // MMORPG "equip" — clicking a wardrobe item shows it on the stage
   const [equippedItem, setEquippedItem] = useState<GalleryItem | null>(null)
 
+  // View Pack — multi-angle generation state
+  // Single cache per character (shared across anchor + all outfits)
+  const viewCacheKey = item.parentId || item.id
+  const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey)
+  const [viewSource, setViewSource] = useState<ViewSource>('anchor')
+  const [showViewPack, setShowViewPack] = useState(false)
+  const [activeViewAngle, setActiveViewAngle] = useState<ViewAngle | null>(null)
+  const [orbitMode, setOrbitMode] = useState(false)
+
   // Auto-switch to Latest Outfit tab when new results arrive
   useEffect(() => {
     if (outfit.results.length > 0) {
       setStageTab('outfit')
       setSelectedResultIdx(0)
       setEquippedItem(null) // new generation overrides equipped
+      setActiveViewAngle(null) // clear any viewed angle
     }
   }, [outfit.results])
 
@@ -230,14 +249,17 @@ export function AvatarViewer({
   }, [isHeadshot, hybridBody, item.url, avatarSettingsState.bodyWorkflowMethod])
 
   // Equip handler — like clicking armor in an MMO inventory
+  // No viewPack.reset() — cacheKey change auto-loads persisted results for the new outfit
   const handleEquip = useCallback((wardrobeItem: GalleryItem) => {
     setEquippedItem(wardrobeItem)
     setStageTab('outfit')
+    setActiveViewAngle(null)
   }, [])
 
   const handleUnequip = useCallback(() => {
     setEquippedItem(null)
     setStageTab('anchor')
+    setActiveViewAngle(null)
   }, [])
 
   const heroUrl = resolveUrl(item.url, backendUrl)
@@ -281,10 +303,14 @@ export function AvatarViewer({
   const portraits = useMemo(() => children.filter((g) => g.role === 'portrait'), [children])
   const outfits = useMemo(() => children.filter((g) => g.role !== 'portrait'), [children])
 
-  // Filtered outfits for wardrobe display
+  // Filtered outfits for wardrobe display — exclude view-angle variants (they show in Quick Views)
   const filteredOutfits = useMemo(() => {
-    if (wardrobeFilter === 'all') return outfits
-    return outfits.filter((o) => o.scenarioTag === wardrobeFilter)
+    const frontOnly = outfits.filter((o) => {
+      const angle = extractViewAngle((o.metadata as Record<string, unknown> | undefined) || undefined)
+      return !angle || angle === 'front'
+    })
+    if (wardrobeFilter === 'all') return frontOnly
+    return frontOnly.filter((o) => o.scenarioTag === wardrobeFilter)
   }, [outfits, wardrobeFilter])
 
   // Available scenario tags from actual wardrobe items (for filter)
@@ -293,6 +319,67 @@ export function AvatarViewer({
     outfits.forEach((o) => { if (o.scenarioTag) tagSet.add(o.scenarioTag) })
     return SCENARIO_TAG_META.filter((t) => tagSet.has(t.id))
   }, [outfits])
+
+  // Wardrobe scroll detection — show/hide arrows when content overflows
+  const updateWardrobeScroll = useCallback(() => {
+    const el = wardrobeScrollRef.current
+    if (!el) return
+    setWardrobeCanScrollLeft(el.scrollLeft > 4)
+    setWardrobeCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4)
+  }, [])
+
+  useEffect(() => {
+    const el = wardrobeScrollRef.current
+    if (!el) return
+    updateWardrobeScroll()
+    el.addEventListener('scroll', updateWardrobeScroll, { passive: true })
+    const ro = new ResizeObserver(updateWardrobeScroll)
+    ro.observe(el)
+    return () => { el.removeEventListener('scroll', updateWardrobeScroll); ro.disconnect() }
+  }, [filteredOutfits, updateWardrobeScroll])
+
+  const scrollWardrobe = useCallback((dir: 'left' | 'right') => {
+    const el = wardrobeScrollRef.current
+    if (!el) return
+    el.scrollBy({ left: dir === 'left' ? -240 : 240, behavior: 'smooth' })
+  }, [])
+
+  // View Pack — merge persisted view angles from wardrobe with freshly generated ones
+  const persistedViewPreviews = useMemo<ViewPreviewMap>(() => {
+    const map: ViewPreviewMap = { front: heroUrl }
+
+    outfits.forEach((outfitItem) => {
+      const angle = extractViewAngle((outfitItem.metadata as Record<string, unknown> | undefined) || undefined)
+      if (angle) map[angle] = resolveUrl(outfitItem.url, backendUrl)
+    })
+
+    return map
+  }, [outfits, heroUrl, backendUrl])
+
+  const generatedViewPreviews = useMemo<ViewPreviewMap>(() => {
+    const map: ViewPreviewMap = {}
+
+    for (const [angle, result] of Object.entries(viewPack.resultsByAngle) as Array<
+      [ViewAngle, (typeof viewPack.resultsByAngle)[ViewAngle]]
+    >) {
+      if (result?.url) map[angle] = resolveUrl(result.url, backendUrl)
+    }
+
+    return map
+  }, [viewPack.resultsByAngle, backendUrl])
+
+  const combinedViewPreviews = useMemo<ViewPreviewMap>(() => {
+    const base = { ...persistedViewPreviews, ...generatedViewPreviews }
+    // When an outfit is equipped or latest result is on stage, use that as the front
+    if (stageTab === 'outfit') {
+      if (equippedItem) {
+        base.front = resolveUrl(equippedItem.url, backendUrl)
+      } else if (outfit.results[selectedResultIdx]) {
+        base.front = resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)
+      }
+    }
+    return base
+  }, [persistedViewPreviews, generatedViewPreviews, stageTab, equippedItem, outfit.results, selectedResultIdx, backendUrl])
 
   // Presets filtered by tab + NSFW mode
   const presets = OUTFIT_PRESETS.filter((p) => {
@@ -471,6 +558,96 @@ export function AvatarViewer({
     return SCENARIO_TAG_META.find((t) => t.id === tag)
   }
 
+  // ── View Pack handlers ──────────────────────────────────────────────────
+
+  // Auto-resolve reference from whatever is currently displayed on the stage
+  const currentViewReferenceUrl = useMemo(() => {
+    if (stageTab === 'outfit') {
+      if (equippedItem) return equippedItem.url
+      if (outfit.results[selectedResultIdx]) return outfit.results[selectedResultIdx].url
+    }
+    return item.url
+  }, [stageTab, equippedItem, outfit.results, selectedResultIdx, item.url])
+
+  const currentViewBasePrompt = useMemo(() => {
+    if (stageTab === 'outfit') {
+      if (equippedItem?.prompt) return equippedItem.prompt
+      if (effectivePrompt.trim()) return effectivePrompt.trim()
+    }
+    return item.prompt || 'portrait photograph of the same character'
+  }, [stageTab, effectivePrompt, equippedItem, item.prompt])
+
+  // Character prompt for view pack — when showing an outfit, use the outfit's
+  // prompt so the 3D angles reproduce the outfit (e.g. Lingerie), not the anchor's
+  // clothing.  The anchor prompt is only used when viewing the anchor itself.
+  const currentViewCharacterPrompt = useMemo(() => {
+    if (stageTab === 'outfit') {
+      if (equippedItem?.prompt) return equippedItem.prompt
+      if (effectivePrompt.trim()) return effectivePrompt.trim()
+    }
+    return item.prompt || 'portrait photograph of the same character'
+  }, [stageTab, equippedItem, effectivePrompt, item.prompt])
+
+  const handleGenerateViewAngle = useCallback(async (angle: ViewAngle) => {
+    try {
+      await viewPack.generateAngle({
+        referenceImageUrl: currentViewReferenceUrl,
+        angle,
+        characterPrompt: currentViewCharacterPrompt,
+        basePrompt: currentViewBasePrompt,
+        checkpointOverride: checkpoint,
+      })
+      // Show the newly generated angle on the stage
+      if (angle !== 'front') {
+        setActiveViewAngle(angle)
+        setStageTab('outfit')
+      }
+    } catch {
+      // hook manages error state
+    }
+  }, [
+    viewPack,
+    currentViewReferenceUrl,
+    currentViewCharacterPrompt,
+    currentViewBasePrompt,
+    checkpoint,
+  ])
+
+  const handleGenerateMissingViews = useCallback(async () => {
+    const missing = (['left_45', 'left', 'right_45', 'right', 'back'] as ViewAngle[]).filter(
+      (angle) => !combinedViewPreviews[angle]
+    )
+
+    for (const angle of missing) {
+      try {
+        await viewPack.generateAngle({
+          referenceImageUrl: currentViewReferenceUrl,
+          angle,
+          characterPrompt: currentViewCharacterPrompt,
+          basePrompt: currentViewBasePrompt,
+          checkpointOverride: checkpoint,
+        })
+        // Update stage to show each angle as it completes
+        setActiveViewAngle(angle)
+        setStageTab('outfit')
+      } catch {
+        // continue with next angle
+      }
+    }
+  }, [combinedViewPreviews, viewPack, currentViewReferenceUrl, currentViewCharacterPrompt, currentViewBasePrompt, checkpoint])
+
+  const handleOpenGeneratedView = useCallback((angle: ViewAngle) => {
+    const url = combinedViewPreviews[angle]
+    if (!url) return
+    // Show the angle on the main stage instead of opening lightbox
+    if (angle === 'front') {
+      setActiveViewAngle(null) // front = default stage view
+    } else {
+      setActiveViewAngle(angle)
+      setStageTab('outfit') // ensure outfit tab is active
+    }
+  }, [combinedViewPreviews])
+
   return (
     <div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col">
 
@@ -516,7 +693,7 @@ export function AvatarViewer({
               {/* Toggle tabs: Anchor Face ↔ Latest Outfit */}
               <div className="flex items-center p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                 <button
-                  onClick={() => setStageTab('anchor')}
+                  onClick={() => { setStageTab('anchor'); setActiveViewAngle(null) }}
                   className={[
                     'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all',
                     stageTab === 'anchor'
@@ -537,9 +714,14 @@ export function AvatarViewer({
                   ].join(' ')}
                 >
                   <Sparkles size={12} />
-                  Latest Outfit
-                  {outfit.results.length > 0 && (
+                  {activeViewAngle ? 'Outfit 3D' : 'Latest Outfit'}
+                  {!activeViewAngle && outfit.results.length > 0 && (
                     <span className="text-[9px] opacity-60">({outfit.results.length})</span>
+                  )}
+                  {activeViewAngle && (
+                    <span className="text-[9px] opacity-60">
+                      ({VIEW_ANGLE_OPTIONS.find((a) => a.id === activeViewAngle)?.shortLabel || activeViewAngle})
+                    </span>
                   )}
                 </button>
               </div>
@@ -551,6 +733,25 @@ export function AvatarViewer({
                 const showEquipped = stageTab === 'outfit' && equippedItem
                 const equippedUrl = showEquipped ? resolveUrl(equippedItem!.url, backendUrl) : ''
                 const equippedTagMeta = showEquipped ? getTagMeta(equippedItem!.scenarioTag) : undefined
+
+                // ─── 360° Orbit Viewer ───
+                if (orbitMode) {
+                  return (
+                    <AvatarOrbitViewer
+                      previews={combinedViewPreviews}
+                      activeAngle={activeViewAngle}
+                      onAngleChange={(angle) => {
+                        if (angle === 'front') {
+                          setActiveViewAngle(null)
+                        } else {
+                          setActiveViewAngle(angle)
+                          setStageTab('outfit')
+                        }
+                      }}
+                      onOpenLightbox={onOpenLightbox}
+                    />
+                  )
+                }
 
                 if (stageTab === 'anchor') {
                   return (
@@ -567,6 +768,43 @@ export function AvatarViewer({
                           className="max-w-full max-h-full object-contain"
                         />
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <Maximize2 size={28} className="text-white/80" />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }
+
+                // ─── 3D View Angle on stage ───
+                if (activeViewAngle && combinedViewPreviews[activeViewAngle]) {
+                  const angleUrl = combinedViewPreviews[activeViewAngle]!
+                  const angleMeta = VIEW_ANGLE_OPTIONS.find((a) => a.id === activeViewAngle)
+                  return (
+                    <div className="relative group h-full animate-fadeSlideIn">
+                      <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-teal-500/25 via-transparent to-cyan-500/25 opacity-60 group-hover:opacity-100 transition-opacity" />
+                      <div
+                        className="relative h-full rounded-2xl overflow-hidden border border-teal-500/20 cursor-pointer bg-black/40 flex items-center justify-center"
+                        onClick={() => onOpenLightbox?.(angleUrl)}
+                      >
+                        <img
+                          src={angleUrl}
+                          alt={angleMeta?.label || 'View angle'}
+                          className="max-w-full max-h-full object-contain"
+                        />
+                        {/* Angle badge */}
+                        <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-teal-500/20 text-[10px] text-teal-200 font-medium">
+                          <span>{angleMeta?.icon || '📐'}</span>
+                          <span>{angleMeta?.label || activeViewAngle}</span>
+                        </div>
+                        {/* Back to front button */}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setActiveViewAngle(null) }}
+                          className="absolute top-3 right-3 w-8 h-8 rounded-lg bg-black/60 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 hover:text-white hover:bg-teal-500/40 hover:border-teal-500/30 transition-all"
+                          title="Back to front view"
+                        >
+                          <X size={14} />
+                        </button>
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                           <Maximize2 size={28} className="text-white/80" />
                         </div>
                       </div>
@@ -826,6 +1064,19 @@ export function AvatarViewer({
                 ) : null}
                 </div>
               </div>
+
+              {/* ──────── Quick Views — multi-angle generation ──────── */}
+              <AvatarStageQuickTools
+                previews={combinedViewPreviews}
+                loadingAngles={viewPack.loadingAngles}
+                activeAngle={activeViewAngle}
+                busy={viewPack.anyLoading}
+                orbitMode={orbitMode}
+                onToggleOrbit={() => setOrbitMode((v) => !v)}
+                onGenerateAngle={handleGenerateViewAngle}
+                onOpenAngle={handleOpenGeneratedView}
+                onGenerateMissing={handleGenerateMissingViews}
+              />
             </div>
 
             {/* ──────── RIGHT PANEL: Outfit Studio (expands to fill) ──────── */}
@@ -848,15 +1099,69 @@ export function AvatarViewer({
               </div>
 
               {/* Anchor Face mini-preview (always visible as context) */}
-              <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/[0.03] border border-white/[0.06]">
-                <div className="w-10 h-10 rounded-lg overflow-hidden border border-white/10 flex-shrink-0">
-                  <img src={heroUrl} alt="Anchor face" className="w-full h-full object-cover" />
+              {(() => {
+                // Show the active prompt: equipped item > latest outfit > anchor
+                const activePrompt = equippedItem?.prompt
+                  || (stageTab === 'outfit' && outfit.results[selectedResultIdx]
+                      ? (typeof outfit.results[selectedResultIdx].metadata?.prompt === 'string'
+                          ? outfit.results[selectedResultIdx].metadata!.prompt as string
+                          : undefined)
+                      : undefined)
+                  || item.prompt
+                  || 'Your character'
+                const isOutfitPrompt = activePrompt !== item.prompt && activePrompt !== 'Your character'
+                return (
+                  <div className="rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                    <div className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="w-10 h-10 rounded-lg overflow-hidden border border-white/10 flex-shrink-0">
+                        <img src={heroUrl} alt="Anchor face" className="w-full h-full object-cover" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] text-white/40 font-medium">
+                          {isOutfitPrompt ? 'Active Outfit Prompt' : 'Identity Anchor'}
+                        </div>
+                        <div className="text-[11px] text-white/60 truncate">{activePrompt}</div>
+                      </div>
+                    </div>
+                    {/* Expandable details for the full prompt */}
+                    {activePrompt.length > 60 && (
+                      <details className="px-3 pb-2.5">
+                        <summary className="text-[10px] text-white/30 cursor-pointer hover:text-white/50 transition-colors">
+                          Full prompt details
+                        </summary>
+                        <div className="mt-1.5 text-[11px] text-white/50 leading-relaxed break-words whitespace-pre-wrap">
+                          {activePrompt}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )
+              })()}
+
+              {/* ──────── View Pack — multi-angle collapsible panel ──────── */}
+              <AvatarViewPackPanel
+                open={showViewPack}
+                source={viewSource}
+                disableLatest={outfit.results.length === 0}
+                disableEquipped={!equippedItem}
+                previews={combinedViewPreviews}
+                timestamps={viewPack.timestampsByAngle}
+                loadingAngles={viewPack.loadingAngles}
+                busy={viewPack.anyLoading}
+                onToggle={() => setShowViewPack((v) => !v)}
+                onSourceChange={setViewSource}
+                onGenerateAngle={handleGenerateViewAngle}
+                onGenerateMissing={handleGenerateMissingViews}
+                onClearAll={viewPack.reset}
+                hasAnyResults={Object.keys(viewPack.resultsByAngle).length > 0}
+              />
+
+              {viewPack.error && (
+                <div className="flex items-center gap-2 rounded-xl border border-red-500/15 bg-red-500/[0.08] px-3 py-2.5 text-xs text-red-300">
+                  <AlertTriangle size={14} />
+                  <span>{viewPack.error}</span>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[10px] text-white/40 font-medium">Identity Anchor</div>
-                  <div className="text-[11px] text-white/60 truncate">{item.prompt || 'Your character'}</div>
-                </div>
-              </div>
+              )}
 
               {/* Headshot — expand to half-body or warning */}
               {isHeadshot && (
@@ -1681,7 +1986,7 @@ export function AvatarViewer({
           </div>
 
           {/* ═══════════ WARDROBE (INVENTORY) — pinned to bottom ═══════════ */}
-          <div className="flex-shrink-0 border-t border-white/[0.06] px-5 py-2.5 overflow-hidden flex flex-col" style={{ height: '190px' }}>
+          <div className="flex-shrink-0 border-t border-white/[0.06] px-5 py-2.5 overflow-visible flex flex-col" style={{ height: '190px' }}>
             {/* Compact wardrobe header */}
             <div className="flex items-center justify-between mb-2 flex-shrink-0">
               <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
@@ -1757,40 +2062,63 @@ export function AvatarViewer({
               </div>
             </div>
 
-            {/* Wardrobe strip — RPG inventory, horizontal scroll */}
-            <div className="flex gap-2 overflow-x-auto scrollbar-hide flex-1 min-h-0 items-start pb-1">
-              {/* Filled outfit slots */}
-              {filteredOutfits.map((o) => {
-                const outfitUrl = resolveUrl(o.url, backendUrl)
-                const tagMeta = getTagMeta(o.scenarioTag)
-                return (
-                  <WardrobeSlot
-                    key={o.id}
-                    item={o}
-                    imageUrl={outfitUrl}
-                    tagMeta={tagMeta}
-                    isEquipped={equippedItem?.id === o.id}
-                    onEquip={handleEquip}
-                    onOpenLightbox={onOpenLightbox}
-                    onSendToEdit={onSendToEdit}
-                    onDelete={onDeleteItem}
-                  />
-                )
-              })}
-
-              {/* Empty inventory slots */}
-              {Array.from({ length: Math.max(0, MIN_WARDROBE_SLOTS - filteredOutfits.length) }).map((_, i) => (
-                <div
-                  key={`empty-${i}`}
-                  className="flex-shrink-0 w-24 rounded-xl border-2 border-dashed border-white/[0.06] bg-white/[0.01] flex flex-col items-center justify-center gap-1 group hover:border-cyan-500/20 hover:bg-cyan-500/[0.02] transition-all cursor-default"
-                  style={{ aspectRatio: '2/3' }}
+            {/* Wardrobe strip — RPG inventory, horizontal scroll with arrows */}
+            <div className="relative flex-1 min-h-0">
+              {/* Left scroll arrow */}
+              {wardrobeCanScrollLeft && (
+                <button
+                  onClick={() => scrollWardrobe('left')}
+                  className="absolute left-0 top-0 bottom-1 z-20 w-8 flex items-center justify-center bg-gradient-to-r from-[#141414] via-[#141414]/80 to-transparent hover:from-[#1a1a1a] transition-colors"
+                  aria-label="Scroll left"
                 >
-                  <Plus size={16} className="text-white/10 group-hover:text-cyan-500/30 transition-colors" />
-                  <span className="text-[8px] text-white/10 group-hover:text-cyan-500/25 font-medium transition-colors">
-                    Empty Slot
-                  </span>
-                </div>
-              ))}
+                  <ChevronLeft size={18} className="text-white/60" />
+                </button>
+              )}
+              {/* Right scroll arrow */}
+              {wardrobeCanScrollRight && (
+                <button
+                  onClick={() => scrollWardrobe('right')}
+                  className="absolute right-0 top-0 bottom-1 z-20 w-8 flex items-center justify-center bg-gradient-to-l from-[#141414] via-[#141414]/80 to-transparent hover:from-[#1a1a1a] transition-colors"
+                  aria-label="Scroll right"
+                >
+                  <ChevronRight size={18} className="text-white/60" />
+                </button>
+              )}
+
+              <div ref={wardrobeScrollRef} className="flex gap-2 overflow-x-auto scrollbar-hide h-full items-start pb-1">
+                {/* Filled outfit slots */}
+                {filteredOutfits.map((o) => {
+                  const outfitUrl = resolveUrl(o.url, backendUrl)
+                  const tagMeta = getTagMeta(o.scenarioTag)
+                  return (
+                    <WardrobeSlot
+                      key={o.id}
+                      item={o}
+                      imageUrl={outfitUrl}
+                      tagMeta={tagMeta}
+                      isEquipped={equippedItem?.id === o.id}
+                      onEquip={handleEquip}
+                      onOpenLightbox={onOpenLightbox}
+                      onSendToEdit={onSendToEdit}
+                      onDelete={onDeleteItem}
+                    />
+                  )
+                })}
+
+                {/* Empty inventory slots */}
+                {Array.from({ length: Math.max(0, MIN_WARDROBE_SLOTS - filteredOutfits.length) }).map((_, i) => (
+                  <div
+                    key={`empty-${i}`}
+                    className="flex-shrink-0 w-24 rounded-xl border-2 border-dashed border-white/[0.06] bg-white/[0.01] flex flex-col items-center justify-center gap-1 group hover:border-cyan-500/20 hover:bg-cyan-500/[0.02] transition-all cursor-default"
+                    style={{ aspectRatio: '2/3' }}
+                  >
+                    <Plus size={16} className="text-white/10 group-hover:text-cyan-500/30 transition-colors" />
+                    <span className="text-[8px] text-white/10 group-hover:text-cyan-500/25 font-medium transition-colors">
+                      Empty Slot
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
