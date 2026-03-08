@@ -17,6 +17,10 @@ export interface ViewAngleOption {
   /** When true, use 'standard' generation mode instead of 'identity' to avoid
    *  face preservation fighting the desired pose (e.g. back view). */
   skipIdentity?: boolean
+  /** Override InstantID weight for this angle.  Lower values (0.3–0.4) let the
+   *  angle directive dominate while still preserving face/hair identity.
+   *  Only meaningful when skipIdentity is NOT true. */
+  identityStrength?: number
 }
 
 // ── Angle prompt design notes ───────────────────────────────────────────
@@ -51,7 +55,7 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     negativePrompt: 'front view, facing camera, both eyes visible, symmetrical face, three-quarter view, 45 degree turn, back view, rear view, sitting, kneeling, crouching, lying down, on the floor, on the ground, cross-legged',
     icon: '\u25D1',
     denoise: 1.0,
-    skipIdentity: true,
+    identityStrength: 0.35,
   },
   {
     id: 'back',
@@ -71,7 +75,7 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     negativePrompt: 'front view, facing camera, both eyes visible, symmetrical face, three-quarter view, 45 degree turn, back view, rear view, sitting, kneeling, crouching, lying down, on the floor, on the ground, cross-legged',
     icon: '\u25D0',
     denoise: 1.0,
-    skipIdentity: true,
+    identityStrength: 0.35,
   },
 ]
 

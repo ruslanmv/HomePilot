@@ -166,6 +166,9 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
           // Non-front angles use denoise 1.0 so the text prompt fully controls
           // the pose/angle instead of the reference image's spatial layout.
           denoise_override: angleMeta.denoise,
+          // Lower identity strength for profile angles (0.35) so the angle
+          // directive dominates while still preserving face/hair identity.
+          identity_strength: angleMeta.identityStrength ?? undefined,
         }),
       })
 

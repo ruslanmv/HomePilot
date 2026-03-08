@@ -66,6 +66,14 @@ class OutfitRequest(BaseModel):
                     "the text prompt to fully control pose/angle instead of "
                     "following the reference image composition.",
     )
+    identity_strength: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Override InstantID weight. Lower values (0.3-0.4) reduce "
+                    "face ControlNet influence for profile angles while still "
+                    "preserving face/hair identity.",
+    )
 
 
 class OutfitResponse(BaseModel):
@@ -186,6 +194,7 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
             seed=seeds[0] if seeds else None,
             checkpoint_override=req.checkpoint_override,
             denoise_override=outfit_denoise,
+            identity_strength=req.identity_strength,
             negative_prompt=final_negative,
         )
         return OutfitResponse(results=results, warnings=warnings)
