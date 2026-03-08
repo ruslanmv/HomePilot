@@ -699,7 +699,12 @@ export default function SettingsPanel({
             </div>
             <button
               type="button"
-              onClick={() => onChangeDraft({ ...value, nsfwMode: !value.nsfwMode })}
+              onClick={() => {
+                const next = !value.nsfwMode
+                onChangeDraft({ ...value, nsfwMode: next })
+                // Persist immediately — user shouldn't need to click Save for this toggle
+                try { localStorage.setItem('homepilot_nsfw_mode', String(next)) } catch { /* quota */ }
+              }}
               className={[
                 "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
                 value.nsfwMode ? "bg-red-600" : "bg-white/10",
