@@ -73,6 +73,47 @@ function removeCached(key: string | undefined): void {
 }
 
 // ---------------------------------------------------------------------------
+// Backend helpers — commit & delete durable view-pack images
+// ---------------------------------------------------------------------------
+
+/** Commit a /comfy/view/ image to durable /files/ storage, optionally deleting the old one. */
+async function commitViewImage(
+  base: string,
+  headers: Record<string, string>,
+  comfyUrl: string,
+  oldUrl?: string,
+): Promise<string> {
+  try {
+    const res = await fetch(`${base}/v1/viewpack/commit`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ comfy_url: comfyUrl, old_url: oldUrl }),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      if (data.ok && data.url) return data.url
+    }
+  } catch { /* commit failed — fall back to ephemeral URL */ }
+  return comfyUrl
+}
+
+/** Ask backend to delete one or more durable view-pack images. Fire-and-forget. */
+function deleteViewImages(
+  base: string,
+  headers: Record<string, string>,
+  urls: string[],
+): void {
+  // Only send /files/ URLs — /comfy/view/ URLs are ephemeral and managed by ComfyUI
+  const durable = urls.filter((u) => u.startsWith('/files/'))
+  if (durable.length === 0) return
+  fetch(`${base}/v1/viewpack/delete`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ urls: durable }),
+  }).catch(() => { /* best-effort cleanup */ })
+}
+
+// ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
@@ -89,6 +130,10 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
   const [loadingAngles, setLoadingAngles] = useState<Partial<Record<ViewAngle, boolean>>>({})
   const [warnings, setWarnings] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  // Stable reference to current results for use inside callbacks
+  const resultsRef = useRef(resultsByAngle)
+  resultsRef.current = resultsByAngle
 
   // Track previous cacheKey so we can save before switching.
   // Uses React's "adjusting state from props" pattern: when cacheKey changes
@@ -120,10 +165,16 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
 
   const anyLoading = useMemo(() => Object.values(loadingAngles).some(Boolean), [loadingAngles])
 
+  /** Build common fetch headers. */
+  const makeHeaders = useCallback((): Record<string, string> => {
+    const h: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (apiKey) h['x-api-key'] = apiKey
+    return h
+  }, [apiKey])
+
   const generateAngle = useCallback(async (params: GenerateViewParams) => {
     const base = (backendUrl || '').replace(/\/+$/, '')
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (apiKey) headers['x-api-key'] = apiKey
+    const headers = makeHeaders()
 
     const angleMeta = getViewAngleOption(params.angle)
     const rawBase = params.basePrompt?.trim() || 'portrait photograph'
@@ -199,8 +250,13 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
       const first = data.results?.[0]
       if (!first) throw new Error('View generation returned no images')
 
+      // Commit to durable storage, deleting old image if regenerating
+      const oldUrl = resultsRef.current[params.angle]?.url
+      const durableUrl = await commitViewImage(base, headers, first.url, oldUrl)
+
       const tagged: AvatarResult = {
         ...first,
+        url: durableUrl,
         metadata: {
           ...(first.metadata || {}),
           view_angle: params.angle,
@@ -222,10 +278,17 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     } finally {
       setLoadingAngles((current) => ({ ...current, [params.angle]: false }))
     }
-  }, [backendUrl, apiKey])
+  }, [backendUrl, apiKey, makeHeaders])
 
-  /** Delete a single angle result (in-memory + cache). */
+  /** Delete a single angle result (in-memory + cache + backend file). */
   const deleteAngle = useCallback((angle: ViewAngle) => {
+    // Delete the durable file on the backend
+    const existing = resultsRef.current[angle]
+    if (existing?.url) {
+      const base = (backendUrl || '').replace(/\/+$/, '')
+      deleteViewImages(base, makeHeaders(), [existing.url])
+    }
+
     setResultsByAngle((current) => {
       const next = { ...current }
       delete next[angle]
@@ -236,17 +299,26 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
       delete next[angle]
       return next
     })
-  }, [])
+  }, [backendUrl, makeHeaders])
 
-  /** Clear all results for the current key (in-memory + cache). */
+  /** Clear all results for the current key (in-memory + cache + backend files). */
   const reset = useCallback(() => {
+    // Collect all durable URLs and delete them on the backend
+    const allUrls = Object.values(resultsRef.current)
+      .map((r) => r?.url)
+      .filter((u): u is string => Boolean(u))
+    if (allUrls.length > 0) {
+      const base = (backendUrl || '').replace(/\/+$/, '')
+      deleteViewImages(base, makeHeaders(), allUrls)
+    }
+
     setResultsByAngle({})
     setTimestampsByAngle({})
     setLoadingAngles({})
     setWarnings([])
     setError(null)
     removeCached(cacheKey)
-  }, [cacheKey])
+  }, [cacheKey, backendUrl, makeHeaders])
 
   const missingAngles = useCallback((existing?: ViewResultMap) => {
     const source = existing || resultsByAngle

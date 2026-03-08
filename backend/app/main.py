@@ -219,6 +219,105 @@ async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "outp
 
 
 # ----------------------------
+# View Pack image lifecycle
+# ----------------------------
+
+@app.post("/v1/viewpack/commit")
+async def viewpack_commit_image(request: Request) -> JSONResponse:
+    """Commit a ComfyUI view-pack image to durable storage.
+
+    Accepts:
+        { "comfy_url": "/comfy/view/X.png", "old_url": "/files/viewpack_X.png" (optional) }
+
+    If ``old_url`` is provided the previous file is deleted from disk so
+    regenerated views don't leave garbage behind.
+
+    Returns:
+        { "ok": true, "url": "/files/viewpack_<hash>.png" }
+    """
+    try:
+        body = await request.json()
+        comfy_url = body.get("comfy_url", "")
+        old_url = body.get("old_url")
+
+        if not comfy_url or not comfy_url.startswith("/comfy/view/"):
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "error": "comfy_url must start with /comfy/view/"},
+            )
+
+        # ── Delete previous file if caller is regenerating ────────────
+        if old_url and old_url.startswith("/files/"):
+            _viewpack_delete_file(old_url)
+
+        # ── Download from ComfyUI into UPLOAD_PATH ────────────────────
+        filename = await _download_comfy_image(comfy_url, UPLOAD_PATH)
+
+        # Rename into a viewpack-namespaced file to avoid collisions
+        src = UPLOAD_PATH / filename
+        vp_dir = UPLOAD_PATH / "viewpack"
+        vp_dir.mkdir(parents=True, exist_ok=True)
+        dest_name = f"vp_{uuidlib.uuid4().hex[:12]}_{filename}"
+        dest = vp_dir / dest_name
+        src.rename(dest)
+
+        durable_url = f"/files/viewpack/{dest_name}"
+        return JSONResponse(content={"ok": True, "url": durable_url})
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": f"Commit failed: {e}"},
+        )
+
+
+@app.post("/v1/viewpack/delete")
+async def viewpack_delete_image(request: Request) -> JSONResponse:
+    """Delete one or more durable view-pack images from disk.
+
+    Accepts:
+        { "urls": ["/files/viewpack/vp_xxx.png", ...] }
+    """
+    try:
+        body = await request.json()
+        urls = body.get("urls") or []
+        if isinstance(urls, str):
+            urls = [urls]
+
+        deleted = 0
+        for url in urls:
+            if url and url.startswith("/files/"):
+                if _viewpack_delete_file(url):
+                    deleted += 1
+
+        return JSONResponse(content={"ok": True, "deleted": deleted})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": f"Delete failed: {e}"},
+        )
+
+
+def _viewpack_delete_file(file_url: str) -> bool:
+    """Delete a /files/viewpack/... image from disk. Returns True if removed."""
+    if not file_url or not file_url.startswith("/files/"):
+        return False
+    rel = file_url[len("/files/"):]
+    # Security: only allow viewpack/ subdirectory and prevent traversal
+    rel = rel.split("?")[0]
+    if ".." in rel or not rel.startswith("viewpack/"):
+        return False
+    target = UPLOAD_PATH / rel
+    try:
+        if target.is_file():
+            target.unlink()
+            return True
+    except Exception as e:
+        print(f"[VIEWPACK] Failed to delete {rel}: {e}")
+    return False
+
+
+# ----------------------------
 # Models
 # ----------------------------
 
