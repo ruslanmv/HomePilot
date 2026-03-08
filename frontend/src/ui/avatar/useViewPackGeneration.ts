@@ -184,6 +184,8 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
         metadata: {
           ...(first.metadata || {}),
           view_angle: params.angle,
+          view_prompt: viewPrompt,
+          view_negative: negativePrompt,
         },
       }
 

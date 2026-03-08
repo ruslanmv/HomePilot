@@ -41,6 +41,8 @@ import {
   Expand,
   ChevronDown,
   Flame,
+  Info,
+  Clipboard,
 } from 'lucide-react'
 
 import type { GalleryItem, OutfitScenarioTag, ScenarioTagMeta } from './galleryTypes'
@@ -209,6 +211,7 @@ export function AvatarViewer({
   }, [item.parentId, item.id, viewSource, equippedItem, selectedResultIdx, outfit.results])
   const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey)
   const [showViewPack, setShowViewPack] = useState(false)
+  const [showStagePromptInfo, setShowStagePromptInfo] = useState(false)
   const [activeViewAngle, setActiveViewAngle] = useState<ViewAngle | null>(null)
   const [orbitMode, setOrbitMode] = useState(avatarSettingsState.orbit360Default ?? true)
 
@@ -637,6 +640,7 @@ export function AvatarViewer({
   const handleOpenGeneratedView = useCallback((angle: ViewAngle) => {
     const url = combinedViewPreviews[angle]
     if (!url) return
+    setShowStagePromptInfo(false)
     // Show the angle on the main stage instead of opening lightbox
     if (angle === 'front') {
       setActiveViewAngle(null) // front = default stage view
@@ -797,19 +801,77 @@ export function AvatarViewer({
                           alt={angleMeta?.label || 'View angle'}
                           className="max-w-full max-h-full object-contain"
                         />
-                        {/* Angle badge */}
-                        <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-teal-500/20 text-[10px] text-teal-200 font-medium">
-                          <span>{angleMeta?.icon || '📐'}</span>
-                          <span>{angleMeta?.label || activeViewAngle}</span>
+                        {/* Angle badge + info button */}
+                        <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-teal-500/20 text-[10px] text-teal-200 font-medium">
+                            <span>{angleMeta?.icon || ''}</span>
+                            <span>{angleMeta?.label || activeViewAngle}</span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setShowStagePromptInfo((v) => !v) }}
+                            className={[
+                              'w-6 h-6 rounded-lg backdrop-blur-sm border flex items-center justify-center transition-all',
+                              showStagePromptInfo
+                                ? 'bg-cyan-500/30 border-cyan-400/40 text-cyan-200'
+                                : 'bg-black/50 border-teal-500/20 text-teal-200/60 hover:text-teal-200 hover:bg-black/70',
+                            ].join(' ')}
+                            title="View generation prompt"
+                          >
+                            <Info size={10} />
+                          </button>
                         </div>
                         {/* Back to front button */}
                         <button
-                          onClick={(e) => { e.stopPropagation(); setActiveViewAngle(null) }}
+                          onClick={(e) => { e.stopPropagation(); setActiveViewAngle(null); setShowStagePromptInfo(false) }}
                           className="absolute top-3 right-3 w-8 h-8 rounded-lg bg-black/60 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 hover:text-white hover:bg-teal-500/40 hover:border-teal-500/30 transition-all"
                           title="Back to front view"
                         >
                           <X size={14} />
                         </button>
+                        {/* Prompt detail panel — slides up from bottom */}
+                        {showStagePromptInfo && (() => {
+                          const angleResult = viewPack.resultsByAngle[activeViewAngle]
+                          const vp = (angleResult?.metadata?.view_prompt as string) || (angleResult?.metadata?.prompt as string) || ''
+                          const vn = (angleResult?.metadata?.view_negative as string) || ''
+                          return (
+                            <div
+                              className="absolute bottom-0 left-0 right-0 z-20 bg-black/85 backdrop-blur-md border-t border-cyan-500/20 px-4 py-3 max-h-[45%] overflow-y-auto"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {vp && (
+                                <div className="mb-2">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[9px] font-semibold uppercase tracking-wider text-emerald-400/80">Positive Prompt</span>
+                                    <button
+                                      onClick={() => navigator.clipboard.writeText(vp)}
+                                      className="flex items-center gap-1 text-[9px] text-white/40 hover:text-white/70 transition-colors"
+                                    >
+                                      <Clipboard size={9} /> Copy
+                                    </button>
+                                  </div>
+                                  <div className="text-[10px] text-white/60 leading-relaxed break-words">{vp}</div>
+                                </div>
+                              )}
+                              {vn && (
+                                <div>
+                                  <div className="flex items-center justify-between mb-1">
+                                    <span className="text-[9px] font-semibold uppercase tracking-wider text-red-400/80">Negative Prompt</span>
+                                    <button
+                                      onClick={() => navigator.clipboard.writeText(vn)}
+                                      className="flex items-center gap-1 text-[9px] text-white/40 hover:text-white/70 transition-colors"
+                                    >
+                                      <Clipboard size={9} /> Copy
+                                    </button>
+                                  </div>
+                                  <div className="text-[10px] text-red-300/50 leading-relaxed break-words">{vn}</div>
+                                </div>
+                              )}
+                              {!vp && !vn && (
+                                <div className="text-[10px] text-white/30 italic">No prompt metadata for this view. Re-generate to capture prompts.</div>
+                              )}
+                            </div>
+                          )
+                        })()}
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                           <Maximize2 size={28} className="text-white/80" />
                         </div>
@@ -1158,6 +1220,7 @@ export function AvatarViewer({
                 disableLatest={outfit.results.length === 0}
                 disableEquipped={!equippedItem}
                 previews={combinedViewPreviews}
+                results={viewPack.resultsByAngle}
                 timestamps={viewPack.timestampsByAngle}
                 loadingAngles={viewPack.loadingAngles}
                 busy={viewPack.anyLoading}

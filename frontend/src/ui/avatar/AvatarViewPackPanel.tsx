@@ -1,12 +1,14 @@
-import React from 'react'
-import { ChevronDown, Loader2, Orbit, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
-import type { ViewAngle, ViewPreviewMap, ViewSource, ViewTimestampMap } from './viewPack'
+import React, { useState } from 'react'
+import { Check, ChevronDown, Clipboard, Info, Loader2, Orbit, Sparkles, Trash2, X } from 'lucide-react'
+import type { AvatarResult } from './types'
+import type { ViewAngle, ViewPreviewMap, ViewResultMap, ViewSource, ViewTimestampMap } from './viewPack'
 import { VIEW_ANGLE_OPTIONS } from './viewPack'
 
 interface AvatarViewPackPanelProps {
   open: boolean
   source: ViewSource
   previews: ViewPreviewMap
+  results?: ViewResultMap
   timestamps?: ViewTimestampMap
   loadingAngles: Partial<Record<ViewAngle, boolean>>
   busy?: boolean
@@ -40,10 +42,74 @@ function timeAgo(ts: number): string {
   return `${days}d ago`
 }
 
+/** Inline prompt detail popover for a generated angle. */
+function PromptDetailPopover({ result, label, onClose }: { result: AvatarResult; label: string; onClose: () => void }) {
+  const [copied, setCopied] = useState<'positive' | 'negative' | null>(null)
+  const prompt = (result.metadata?.view_prompt as string) || (result.metadata?.prompt as string) || ''
+  const negative = (result.metadata?.view_negative as string) || ''
+
+  const copyText = async (text: string, which: 'positive' | 'negative') => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(which)
+      setTimeout(() => setCopied(null), 1500)
+    } catch { /* clipboard not available */ }
+  }
+
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col bg-black/90 backdrop-blur-sm rounded-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-white/10">
+        <span className="text-[10px] font-semibold text-cyan-300">{label} Prompt</span>
+        <button onClick={onClose} className="w-4 h-4 flex items-center justify-center text-white/50 hover:text-white transition-colors">
+          <X size={10} />
+        </button>
+      </div>
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto px-2.5 py-2 space-y-2 custom-scrollbar">
+        {prompt && (
+          <div>
+            <div className="flex items-center justify-between mb-0.5">
+              <span className="text-[8px] font-semibold uppercase tracking-wider text-emerald-400/70">Positive</span>
+              <button
+                onClick={() => copyText(prompt, 'positive')}
+                className="flex items-center gap-0.5 text-[8px] text-white/40 hover:text-white/70 transition-colors"
+                title="Copy positive prompt"
+              >
+                {copied === 'positive' ? <Check size={8} className="text-emerald-400" /> : <Clipboard size={8} />}
+              </button>
+            </div>
+            <div className="text-[9px] text-white/60 leading-relaxed break-words">{prompt}</div>
+          </div>
+        )}
+        {negative && (
+          <div>
+            <div className="flex items-center justify-between mb-0.5">
+              <span className="text-[8px] font-semibold uppercase tracking-wider text-red-400/70">Negative</span>
+              <button
+                onClick={() => copyText(negative, 'negative')}
+                className="flex items-center gap-0.5 text-[8px] text-white/40 hover:text-white/70 transition-colors"
+                title="Copy negative prompt"
+              >
+                {copied === 'negative' ? <Check size={8} className="text-emerald-400" /> : <Clipboard size={8} />}
+              </button>
+            </div>
+            <div className="text-[9px] text-red-300/50 leading-relaxed break-words">{negative}</div>
+          </div>
+        )}
+        {!prompt && !negative && (
+          <div className="text-[9px] text-white/30 italic">No prompt metadata stored for this view.</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function AvatarViewPackPanel({
   open,
   source,
   previews,
+  results = {},
   timestamps = {},
   loadingAngles,
   busy = false,
@@ -59,6 +125,7 @@ export function AvatarViewPackPanel({
   hasAnyResults = false,
 }: AvatarViewPackPanelProps) {
   const readyCount = VIEW_ANGLE_OPTIONS.filter((a) => previews[a.id]).length
+  const [promptDetail, setPromptDetail] = useState<ViewAngle | null>(null)
 
   return (
     <div className="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]">
@@ -123,6 +190,8 @@ export function AvatarViewPackPanel({
                 const ready = Boolean(previewUrl)
                 const loading = Boolean(loadingAngles[angle.id])
                 const ts = timestamps[angle.id]
+                const result = results[angle.id]
+                const showingPrompt = promptDetail === angle.id
 
                 return (
                   <div
@@ -146,7 +215,7 @@ export function AvatarViewPackPanel({
                           className="h-full w-full object-cover object-top opacity-70 group-hover:opacity-90 transition-opacity"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
-                        {/* Bottom info bar — label + timestamp only, no icon */}
+                        {/* Bottom info bar — label + timestamp */}
                         <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between px-2 pb-1.5">
                           <div>
                             <div className="text-[11px] font-semibold text-white drop-shadow-sm">{angle.label}</div>
@@ -176,6 +245,22 @@ export function AvatarViewPackPanel({
                       </button>
                     )}
 
+                    {/* Prompt info button — top-right corner, visible on hover */}
+                    {ready && !loading && result && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setPromptDetail(showingPrompt ? null : angle.id) }}
+                        className={[
+                          'absolute top-1 right-1 w-5 h-5 rounded-md bg-black/60 backdrop-blur-sm border flex items-center justify-center transition-all',
+                          showingPrompt
+                            ? 'border-cyan-500/40 text-cyan-300 opacity-100'
+                            : 'border-white/15 text-white/50 opacity-0 group-hover:opacity-100 hover:!text-cyan-300 hover:!border-cyan-500/30',
+                        ].join(' ')}
+                        title="View generation prompt"
+                      >
+                        <Info size={10} />
+                      </button>
+                    )}
+
                     {/* Delete button — top-left corner, visible on hover */}
                     {ready && !loading && (
                       <button
@@ -185,6 +270,15 @@ export function AvatarViewPackPanel({
                       >
                         <X size={10} />
                       </button>
+                    )}
+
+                    {/* Prompt detail popover overlay */}
+                    {showingPrompt && result && (
+                      <PromptDetailPopover
+                        result={result}
+                        label={angle.label}
+                        onClose={() => setPromptDetail(null)}
+                      />
                     )}
 
                     {/* Loading overlay */}

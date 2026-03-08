@@ -1,5 +1,5 @@
 import React from 'react'
-import { Camera, Loader2, PackagePlus, RotateCw } from 'lucide-react'
+import { Loader2, PackagePlus, RotateCw } from 'lucide-react'
 import type { ViewAngle, ViewPreviewMap } from './viewPack'
 import { VIEW_ANGLE_OPTIONS } from './viewPack'
 
@@ -31,9 +31,7 @@ export function AvatarStageQuickTools({
   const canOrbit = readyCount >= 2
 
   return (
-    <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-black/50 backdrop-blur-md px-2 py-1.5 shadow-lg">
-      <Camera size={11} className="text-white/40 flex-shrink-0" />
-
+    <div className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-black/50 backdrop-blur-md px-2 py-1.5 shadow-lg">
       {VIEW_ANGLE_OPTIONS.map((angle) => {
         const available = Boolean(previews[angle.id])
         const loading = Boolean(loadingAngles[angle.id])
@@ -45,27 +43,30 @@ export function AvatarStageQuickTools({
             onClick={() => (available ? onOpenAngle(angle.id) : onGenerateAngle(angle.id))}
             disabled={loading}
             className={[
-              'flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-bold transition-all',
+              'relative flex items-center justify-center w-5 h-5 rounded-full transition-all',
               isActive && available
-                ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40 ring-1 ring-cyan-400/25'
+                ? 'bg-cyan-400 ring-2 ring-cyan-400/40 scale-125'
                 : available
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/25 hover:bg-emerald-500/30'
-                  : 'bg-white/[0.06] text-white/50 border border-white/[0.12] hover:bg-white/[0.12] hover:text-white/70',
+                  ? 'bg-emerald-400/80 hover:bg-emerald-300 hover:scale-110'
+                  : 'bg-white/20 hover:bg-white/35 hover:scale-110',
               loading ? 'cursor-wait opacity-60' : '',
             ].join(' ')}
             title={available ? `View ${angle.label}` : `Generate ${angle.label}`}
           >
-            {loading ? <Loader2 size={10} className="animate-spin" /> : angle.shortLabel}
+            {loading && <Loader2 size={8} className="animate-spin text-white" />}
           </button>
         )
       })}
+
+      {/* Separator */}
+      <div className="mx-0.5 h-3 w-px bg-white/15" />
 
       {/* 360° orbit toggle */}
       {canOrbit && onToggleOrbit && (
         <button
           onClick={onToggleOrbit}
           className={[
-            'flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-bold transition-all',
+            'flex items-center justify-center w-6 h-6 rounded-md text-[10px] font-bold transition-all',
             orbitMode
               ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40 ring-1 ring-cyan-400/25'
               : 'bg-white/[0.06] text-white/50 border border-white/[0.12] hover:bg-white/[0.12] hover:text-white/70',
