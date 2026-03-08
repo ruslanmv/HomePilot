@@ -31,8 +31,8 @@ export function AvatarStageQuickTools({
   const canOrbit = readyCount >= 2
 
   return (
-    <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5">
-      <Camera size={11} className="text-white/30 flex-shrink-0" />
+    <div className="flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-black/50 backdrop-blur-md px-2 py-1.5 shadow-lg">
+      <Camera size={11} className="text-white/40 flex-shrink-0" />
 
       {VIEW_ANGLE_OPTIONS.map((angle) => {
         const available = Boolean(previews[angle.id])
@@ -47,10 +47,10 @@ export function AvatarStageQuickTools({
             className={[
               'flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-bold transition-all',
               isActive && available
-                ? 'bg-cyan-500/[0.18] text-cyan-200 border border-cyan-500/30 ring-1 ring-cyan-500/20'
+                ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40 ring-1 ring-cyan-400/25'
                 : available
-                  ? 'bg-emerald-500/[0.12] text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/[0.20]'
-                  : 'bg-white/[0.04] text-white/40 border border-white/[0.08] hover:bg-white/[0.08] hover:text-white/60',
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/25 hover:bg-emerald-500/30'
+                  : 'bg-white/[0.06] text-white/50 border border-white/[0.12] hover:bg-white/[0.12] hover:text-white/70',
               loading ? 'cursor-wait opacity-60' : '',
             ].join(' ')}
             title={available ? `View ${angle.label}` : `Generate ${angle.label}`}
@@ -67,8 +67,8 @@ export function AvatarStageQuickTools({
           className={[
             'flex items-center justify-center w-7 h-7 rounded-md text-[10px] font-bold transition-all',
             orbitMode
-              ? 'bg-cyan-500/[0.18] text-cyan-200 border border-cyan-500/30 ring-1 ring-cyan-500/20'
-              : 'bg-white/[0.04] text-white/40 border border-white/[0.08] hover:bg-white/[0.08] hover:text-white/60',
+              ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/40 ring-1 ring-cyan-400/25'
+              : 'bg-white/[0.06] text-white/50 border border-white/[0.12] hover:bg-white/[0.12] hover:text-white/70',
           ].join(' ')}
           title={orbitMode ? 'Exit 360° mode' : 'Enter 360° mode'}
         >
@@ -83,8 +83,8 @@ export function AvatarStageQuickTools({
           className={[
             'ml-auto flex items-center gap-1 rounded-md border px-2 py-1 text-[9px] font-semibold transition-all flex-shrink-0',
             busy
-              ? 'cursor-wait border-white/[0.06] bg-white/[0.03] text-white/25'
-              : 'border-cyan-500/20 bg-cyan-500/[0.08] text-cyan-300 hover:bg-cyan-500/[0.14]',
+              ? 'cursor-wait border-white/[0.08] bg-white/[0.05] text-white/30'
+              : 'border-cyan-400/25 bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25',
           ].join(' ')}
         >
           {busy ? <Loader2 size={9} className="animate-spin" /> : <PackagePlus size={9} />}

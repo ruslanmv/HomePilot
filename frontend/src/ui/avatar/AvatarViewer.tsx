@@ -881,6 +881,23 @@ export function AvatarViewer({
                   </div>
                 )
               })()}
+
+              {/* ──────── Quick Views — overlay inside the stage image ──────── */}
+              <div className="absolute bottom-3 left-3 right-3 z-10 pointer-events-none">
+                <div className="pointer-events-auto inline-block">
+                  <AvatarStageQuickTools
+                    previews={combinedViewPreviews}
+                    loadingAngles={viewPack.loadingAngles}
+                    activeAngle={activeViewAngle}
+                    busy={viewPack.anyLoading}
+                    orbitMode={orbitMode}
+                    onToggleOrbit={() => setOrbitMode((v) => !v)}
+                    onGenerateAngle={handleGenerateViewAngle}
+                    onOpenAngle={handleOpenGeneratedView}
+                    onGenerateMissing={handleGenerateMissingViews}
+                  />
+                </div>
+              </div>
               </div>
 
               {/* Result thumbnail filmstrip (when multiple results and no equipped item) */}
@@ -1055,18 +1072,6 @@ export function AvatarViewer({
                 </div>
               </div>
 
-              {/* ──────── Quick Views — multi-angle generation ──────── */}
-              <AvatarStageQuickTools
-                previews={combinedViewPreviews}
-                loadingAngles={viewPack.loadingAngles}
-                activeAngle={activeViewAngle}
-                busy={viewPack.anyLoading}
-                orbitMode={orbitMode}
-                onToggleOrbit={() => setOrbitMode((v) => !v)}
-                onGenerateAngle={handleGenerateViewAngle}
-                onOpenAngle={handleOpenGeneratedView}
-                onGenerateMissing={handleGenerateMissingViews}
-              />
             </div>
 
             {/* ──────── RIGHT PANEL: Outfit Studio (expands to fill) ──────── */}
