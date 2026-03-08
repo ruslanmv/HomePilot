@@ -127,14 +127,94 @@ export function getViewAngleOption(angle: ViewAngle): ViewAngleOption {
   return VIEW_ANGLE_OPTIONS.find((item) => item.id === angle) ?? VIEW_ANGLE_OPTIONS[0]
 }
 
+// ── Prompt sanitisation for non-front angles ────────────────────────────
+// The outfit description often originates from the anchor's character_prompt
+// or a previously generated outfit prompt.  These contain front-specific
+// tokens ("front-facing", "looking directly at camera", etc.) that directly
+// contradict side/back angle directives and confuse CLIP.
+//
+// For the BACK angle, face-detail tokens are also meaningless (no face is
+// visible) and waste the limited CLIP budget.
+//
+// We strip these tokens before combining with the angle directive so that
+// only the angle's own pose prompt controls orientation.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Tokens that specify front-facing orientation — conflict with every other angle. */
+const FRONT_POSE_PATTERNS: RegExp[] = [
+  /\bfront[- ]?facing\b/gi,
+  /\bfacing\s+(?:the\s+)?camera(?:\s+directly)?\b/gi,
+  /\blooking\s+(?:directly\s+)?(?:at|into)\s+(?:the\s+)?camera\b/gi,
+  /\blooking\s+at\s+(?:the\s+)?viewer\b/gi,
+  /\bfront\s+view\b/gi,
+  /\bcentered\s+composition\b/gi,
+  /\bstanding\s+naturally\b/gi,
+  /\bcharacter\s+turntable\b/gi,
+]
+
+/** Face/expression detail tokens — irrelevant for the back angle (no face visible). */
+const FACE_DETAIL_PATTERNS: RegExp[] = [
+  /\bfine\s+facial\s+detail\b/gi,
+  /\bfacial\s+detail\b/gi,
+  /\bpores\s+visible\b/gi,
+  /\bnatural\s+skin\s+imperfections\b/gi,
+  /\bultra\s+realistic\s+skin\s+texture\b/gi,
+  /\bwarm\s+approachable\s+expression\b/gi,
+  /\b(?:confident|natural|relaxed)\s+(?:natural\s+)?(?:pose|expression)\b/gi,
+  /\bboth\s+eyes\s+visible\b/gi,
+  /\bsymmetrical\s+face\b/gi,
+]
+
+/**
+ * Remove comma-separated segments that are empty or whitespace-only after
+ * token stripping.  Fixes artifacts like "fitted , , delicate ," → "fitted, delicate".
+ */
+function cleanCommaArtifacts(text: string): string {
+  // Split on commas, trim each segment, drop empties, rejoin
+  return text
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join(', ')
+}
+
+/**
+ * Sanitise the outfit/character description for a specific angle by removing
+ * tokens that contradict the target pose.
+ *
+ * - Non-front angles: strips front-facing orientation tokens.
+ * - Back angle: additionally strips face/expression detail tokens.
+ * - Front angle: returns the description unchanged (only cleans comma artifacts).
+ */
+function sanitizeDescForAngle(desc: string, angle: ViewAngle): string {
+  if (angle === 'front') return cleanCommaArtifacts(desc)
+
+  let result = desc
+  // Strip front-facing orientation for all non-front angles
+  for (const pat of FRONT_POSE_PATTERNS) {
+    result = result.replace(pat, '')
+  }
+  // Strip face/expression detail for back angle (no face visible)
+  if (angle === 'back') {
+    for (const pat of FACE_DETAIL_PATTERNS) {
+      result = result.replace(pat, '')
+    }
+  }
+  return cleanCommaArtifacts(result)
+}
+
 /**
  * Builds the exact outfit_prompt that would be sent to the backend for a
  * given angle + outfit description.  Used both by the generation hook and
  * by the View Pack panel to let users preview/copy the prompt.
+ *
+ * The description is sanitised per-angle to remove tokens that contradict
+ * the target pose (e.g. "front-facing" is stripped for back/side angles).
  */
 export function buildAnglePrompt(angle: ViewAngle, outfitDesc: string): string {
   const angleMeta = getViewAngleOption(angle)
-  const desc = outfitDesc?.trim() || 'portrait photograph'
+  const rawDesc = outfitDesc?.trim() || 'portrait photograph'
+  const desc = sanitizeDescForAngle(rawDesc, angle)
   const rearEmphasis = getRearEmphasis(angle, desc)
   return [
     angleMeta.prompt,

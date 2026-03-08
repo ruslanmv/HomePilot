@@ -207,13 +207,18 @@ _OUTFIT_STRIP_PATTERNS: list[_re.Pattern[str]] = [
         # Generic outfit/clothing/fashion phrases
         r"\b(?:wearing|dressed in|outfit|attire|wardrobe)\b[^,]*",
         r"\b(?:stylish|contemporary|modern|smart|casual|elegant|executive)\s+(?:fashion|clothing|outfit|attire|look)\b[^,]*",
-        # Specific garment names
-        r"\b(?:blouse|shirt|top|skirt|mini skirt|pencil skirt|trousers|pants|dress|suit|blazer|jacket|coat|gown|heels|stockings|necklace|jewelry)\b[^,]*",
+        # Specific garment names — match the garment word and any adjectives
+        # before it within the same comma-segment to avoid leaving orphaned
+        # adjectives like "fitted ," or "delicate ,".
+        r"[^,]*\b(?:blouse|shirt|top|skirt|mini skirt|pencil skirt|trousers|pants|dress|suit|blazer|jacket|coat|gown|heels|stockings|necklace|jewelry|sneakers|shoes|boots|sandals|sunglasses)\b[^,]*",
         # Fashion style descriptors that anchor outfits
-        r"\b(?:fitted top|halter top|crop top|body-conscious|tailored|high-waisted)\b[^,]*",
+        r"[^,]*\b(?:fitted top|halter top|crop top|body-conscious|tailored|high-waisted)\b[^,]*",
         r"\b(?:clean modern aesthetic|contemporary lifestyle fashion|smart modern chic)\b[^,]*",
+        r"\b(?:modern fashion|clean aesthetic)\b[^,]*",
         # Scene/setting that should come from outfit preset instead
-        r"\b(?:office|boardroom|cafe setting|studio background|nightclub)\s+(?:setting|background|scene)\b[^,]*",
+        r"\b(?:office|boardroom|cafe setting|studio background|nightclub|urban park)\s+(?:setting|background|scene)\b[^,]*",
+        # Clothing-adjacent phrases (e.g. "clothing and outfit clearly visible")
+        r"\bclothing\s+and\b[^,]*",
     ]
 ]
 
@@ -228,12 +233,12 @@ def _strip_outfit_tokens(character_prompt: str) -> str:
     result = character_prompt
     for pat in _OUTFIT_STRIP_PATTERNS:
         result = pat.sub("", result)
-    # Clean up leftover commas and whitespace
-    result = _re.sub(r",\s*,", ",", result)
-    result = _re.sub(r"^\s*,\s*", "", result)
-    result = _re.sub(r"\s*,\s*$", "", result)
-    result = _re.sub(r"\s{2,}", " ", result)
-    return result.strip()
+    # Clean up: split on commas, trim each segment, drop empties, rejoin.
+    # This handles orphaned commas, double commas, leading/trailing commas,
+    # and whitespace artifacts all in one pass.
+    segments = [seg.strip() for seg in result.split(",")]
+    segments = [seg for seg in segments if seg]
+    return ", ".join(segments)
 
 
 def _make_seeds(seed: int | None, count: int) -> List[int]:
