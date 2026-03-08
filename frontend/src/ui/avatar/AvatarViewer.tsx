@@ -615,7 +615,7 @@ export function AvatarViewer({
   ])
 
   const handleGenerateMissingViews = useCallback(async () => {
-    const missing = (['left_45', 'left', 'right_45', 'right', 'back'] as ViewAngle[]).filter(
+    const missing = (['left', 'right', 'back'] as ViewAngle[]).filter(
       (angle) => !combinedViewPreviews[angle]
     )
 

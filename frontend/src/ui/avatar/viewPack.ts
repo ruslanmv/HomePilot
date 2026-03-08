@@ -1,6 +1,6 @@
 import type { AvatarResult } from './types'
 
-export type ViewAngle = 'front' | 'left_45' | 'left' | 'right_45' | 'right' | 'back'
+export type ViewAngle = 'front' | 'left' | 'right' | 'back'
 export type ViewSource = 'anchor' | 'latest' | 'equipped'
 
 export interface ViewAngleOption {
@@ -30,30 +30,12 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     denoise: 0.85,
   },
   {
-    id: 'left_45',
-    label: '45\u00B0 Left',
-    shortLabel: 'L45',
-    prompt: 'character turntable reference sheet, three-quarter view from the left, camera orbited 45 degrees to the right of the subject, head and torso rotated 45 degrees to the left showing left cheek and left ear, left shoulder closer to camera, eyes looking slightly to the left, body angled showing left side of torso and waist curve and left hip, outfit visible from three-quarter angle showing how garment drapes and fits the body contours, full body visible from head to thighs, identical person same outfit same skin tone same body proportions, consistent lighting',
-    negativePrompt: 'front view, facing camera directly, looking straight at viewer, symmetrical face, full frontal, full left profile, 90 degree profile, side silhouette, back view, rear view, from behind',
-    icon: '\u25D6',
-    denoise: 1.0,
-  },
-  {
     id: 'left',
     label: 'Left',
     shortLabel: 'L',
     prompt: 'character turntable reference sheet, full left profile view, camera positioned directly to the right of the subject, head and body turned 90 degrees to the left, only left side of face visible showing left ear left cheekbone jaw line and nose tip in profile silhouette, left shoulder directly facing camera, full body profile silhouette visible showing bust contour waist curve hip shape and thigh line from the side, outfit visible in profile showing how garment fits along the body silhouette, full body visible from head to thighs, identical person same outfit same skin tone same body proportions, consistent lighting',
     negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, right side visible, back view, rear view',
     icon: '\u25D0',
-    denoise: 1.0,
-  },
-  {
-    id: 'right_45',
-    label: '45\u00B0 Right',
-    shortLabel: 'R45',
-    prompt: 'character turntable reference sheet, three-quarter view from the right, camera orbited 45 degrees to the left of the subject, head and torso rotated 45 degrees to the right showing right cheek and right ear, right shoulder closer to camera, eyes looking slightly to the right, body angled showing right side of torso and waist curve and right hip, outfit visible from three-quarter angle showing how garment drapes and fits the body contours, full body visible from head to thighs, identical person same outfit same skin tone same body proportions, consistent lighting',
-    negativePrompt: 'front view, facing camera directly, looking straight at viewer, symmetrical face, full frontal, full right profile, 90 degree profile, side silhouette, back view, rear view, from behind',
-    icon: '\u25D7',
     denoise: 1.0,
   },
   {
