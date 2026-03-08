@@ -53,6 +53,7 @@ export type AvatarPreferences = {
   faceBase: FaceBase
   hairType: HairType
   hairColor: HairColor
+  eyeColor?: EyeColor
   stylePreset: StylePreset
   baseEthnicityPreset: EthnicityPreset
   customEthnicityHint?: string
@@ -82,6 +83,7 @@ export const DEFAULT_AVATAR_PREFS: AvatarPreferences = {
   faceBase: 'blend',
   hairType: 'wavy',
   hairColor: 'brown',
+  eyeColor: 'brown',
   stylePreset: 'casual',
   baseEthnicityPreset: 'european_standard',
   imageCount: 4,

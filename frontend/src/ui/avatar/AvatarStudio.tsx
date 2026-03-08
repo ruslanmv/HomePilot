@@ -54,14 +54,28 @@ import {
   DEFAULT_AVATAR_PREFS,
   buildGeneticsPromptFragment,
   SKIN_TONE_OPTIONS,
-  FACE_BASE_OPTIONS,
   HAIR_TYPE_OPTIONS,
   HAIR_COLOR_OPTIONS,
+  EYE_COLOR_OPTIONS,
   AGE_RANGE_OPTIONS,
-  REALISM_OPTIONS,
   ETHNICITY_OPTIONS,
 } from './avatarPrompt'
-import type { AvatarPreferences, SkinTone, FaceBase, HairType, HairColor, AgeRange, RealismLevel, EthnicityPreset } from './avatarPrompt'
+import type { AvatarPreferences, SkinTone, HairType, HairColor, AgeRange, EthnicityPreset } from './avatarPrompt'
+
+// ── Color swatch maps for the Quick Studio appearance panel ──
+const SKIN_SWATCH_COLORS: Record<string, string> = {
+  espresso: '#3B1E0A', mocha: '#5C3A1E', umber: '#7A5230',
+  sienna: '#A07040', olive: '#B8A060', sand: '#D2B88C',
+  ivory: '#F0DCC0', cream: '#FFF0DC',
+}
+const HAIR_SWATCH_COLORS: Record<string, string> = {
+  black: '#1a1a1a', brown: '#5C3317', blonde: '#D4A84B',
+  auburn: '#922724', neon_blue: '#00BFFF', fuchsia: '#FF00FF',
+}
+const EYE_SWATCH_COLORS: Record<string, string> = {
+  brown: '#634E34', blue: '#2E86C1', green: '#2E8B57',
+  hazel: '#8E7618', amber: '#BF8A30', grey: '#8E9196',
+}
 
 // ---------------------------------------------------------------------------
 // Props
@@ -579,72 +593,66 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                 </div>
               </div>
 
-              {/* Step 2: Genetics & Features (collapsible MMORPG panel) */}
+              {/* Step 2: Appearance (collapsible — color swatches for quick selection) */}
               <div className="mb-6">
                 <button
                   onClick={() => setShowGenetics(!showGenetics)}
                   className="flex items-center gap-2 text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider hover:text-white/60 transition-colors"
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`transition-transform ${showGenetics ? 'rotate-90' : ''}`}><path d="m9 18 6-6-6-6"/></svg>
-                  2. Genetics &amp; Features
-                  <span className="text-white/15 normal-case tracking-normal font-normal">(MMORPG Creator)</span>
+                  2. Appearance
+                  <span className="text-white/15 normal-case tracking-normal font-normal">(quick customise)</span>
                 </button>
 
                 {showGenetics && (
                   <div className="space-y-4 animate-fadeSlideIn">
-                    {/* Age Range + Realism row */}
+                    {/* Skin Tone — color swatches */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-2 font-medium">Skin Tone</div>
+                      <div className="flex flex-wrap gap-2">
+                        {SKIN_TONE_OPTIONS.map((o) => {
+                          const active = geneticsPrefs.skinTone === o.key
+                          return (
+                            <button key={o.key} title={o.label}
+                              onClick={() => setGeneticsPrefs((p) => ({ ...p, skinTone: o.key as SkinTone }))}
+                              className={[
+                                'w-8 h-8 rounded-full border-2 transition-all flex-shrink-0',
+                                active
+                                  ? 'border-purple-400 scale-110 shadow-[0_0_10px_rgba(168,85,247,0.4)]'
+                                  : 'border-white/10 hover:border-white/30 hover:scale-105',
+                              ].join(' ')}
+                              style={{ backgroundColor: SKIN_SWATCH_COLORS[o.key] || '#888' }}
+                            />
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Hair Color + Type row */}
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <div className="text-[10px] text-white/30 mb-1.5 font-medium">Age Range</div>
-                        <div className="flex gap-1.5">
-                          {AGE_RANGE_OPTIONS.map((o) => (
-                            <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, ageRange: o.key as AgeRange }))}
-                              className={`flex-1 px-2 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.ageRange === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
-                            >{o.label}</button>
-                          ))}
+                        <div className="text-[10px] text-white/30 mb-2 font-medium">Hair Color</div>
+                        <div className="flex flex-wrap gap-2">
+                          {HAIR_COLOR_OPTIONS.map((o) => {
+                            const active = geneticsPrefs.hairColor === o.key
+                            return (
+                              <button key={o.key} title={o.label}
+                                onClick={() => setGeneticsPrefs((p) => ({ ...p, hairColor: o.key as HairColor }))}
+                                className={[
+                                  'w-8 h-8 rounded-full border-2 transition-all flex-shrink-0',
+                                  active
+                                    ? 'border-purple-400 scale-110 shadow-[0_0_10px_rgba(168,85,247,0.4)]'
+                                    : 'border-white/10 hover:border-white/30 hover:scale-105',
+                                ].join(' ')}
+                                style={{ backgroundColor: HAIR_SWATCH_COLORS[o.key] || '#888' }}
+                              />
+                            )
+                          })}
                         </div>
                       </div>
                       <div>
-                        <div className="text-[10px] text-white/30 mb-1.5 font-medium">Realism</div>
-                        <div className="flex gap-1.5">
-                          {REALISM_OPTIONS.map((o) => (
-                            <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, realism: Number(o.key) as RealismLevel }))}
-                              className={`flex-1 px-2 py-2 rounded-xl text-[11px] font-medium border transition-colors ${String(geneticsPrefs.realism) === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
-                            >{o.label}</button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Skin Tone */}
-                    <div>
-                      <div className="text-[10px] text-white/30 mb-1.5 font-medium">Skin Tone</div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {SKIN_TONE_OPTIONS.map((o) => (
-                          <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, skinTone: o.key as SkinTone }))}
-                            className={`px-3 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.skinTone === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
-                          >{o.label}</button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Face Base */}
-                    <div>
-                      <div className="text-[10px] text-white/30 mb-1.5 font-medium">Face Structure</div>
-                      <div className="flex gap-1.5">
-                        {FACE_BASE_OPTIONS.map((o) => (
-                          <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, faceBase: o.key as FaceBase }))}
-                            className={`flex-1 px-3 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.faceBase === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
-                          >{o.label}</button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Hair Type + Color row */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="text-[10px] text-white/30 mb-1.5 font-medium">Hair Type</div>
-                        <div className="flex gap-1.5">
+                        <div className="text-[10px] text-white/30 mb-2 font-medium">Hair Type</div>
+                        <div className="flex flex-wrap gap-1.5">
                           {HAIR_TYPE_OPTIONS.map((o) => (
                             <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, hairType: o.key as HairType }))}
                               className={`flex-1 px-2 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.hairType === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
@@ -652,24 +660,45 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                           ))}
                         </div>
                       </div>
-                      <div>
-                        <div className="text-[10px] text-white/30 mb-1.5 font-medium">Hair Color</div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {HAIR_COLOR_OPTIONS.map((o) => (
-                            <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, hairColor: o.key as HairColor }))}
-                              className={`px-2.5 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.hairColor === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
-                            >{o.label}</button>
-                          ))}
-                        </div>
+                    </div>
+
+                    {/* Eye Color — color swatches */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-2 font-medium">Eye Color</div>
+                      <div className="flex flex-wrap gap-2">
+                        {EYE_COLOR_OPTIONS.map((o) => {
+                          const active = geneticsPrefs.eyeColor === o.key
+                          return (
+                            <button key={o.key} title={o.label}
+                              onClick={() => setGeneticsPrefs((p) => ({ ...p, eyeColor: o.key }))}
+                              className={[
+                                'w-8 h-8 rounded-full border-2 transition-all flex-shrink-0',
+                                active
+                                  ? 'border-purple-400 scale-110 shadow-[0_0_10px_rgba(168,85,247,0.4)]'
+                                  : 'border-white/10 hover:border-white/30 hover:scale-105',
+                              ].join(' ')}
+                              style={{ backgroundColor: EYE_SWATCH_COLORS[o.key] || '#888' }}
+                            />
+                          )
+                        })}
                       </div>
                     </div>
 
-                    {/* Ethnicity Baseline */}
+                    {/* Age Range — compact row */}
                     <div>
-                      <div className="text-[10px] text-white/30 mb-1.5 font-medium">
-                        Ethnicity Baseline
-                        <span className="text-white/15 ml-1.5 font-normal">(for consistent diffusion output)</span>
+                      <div className="text-[10px] text-white/30 mb-1.5 font-medium">Age Range</div>
+                      <div className="flex gap-1.5">
+                        {AGE_RANGE_OPTIONS.map((o) => (
+                          <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, ageRange: o.key as AgeRange }))}
+                            className={`flex-1 px-2 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.ageRange === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
+                          >{o.label}</button>
+                        ))}
                       </div>
+                    </div>
+
+                    {/* Ethnicity — compact row */}
+                    <div>
+                      <div className="text-[10px] text-white/30 mb-1.5 font-medium">Ethnicity</div>
                       <div className="flex gap-1.5">
                         {ETHNICITY_OPTIONS.map((o) => (
                           <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: o.key as EthnicityPreset }))}
@@ -682,7 +711,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                           value={geneticsPrefs.customEthnicityHint || ''}
                           onChange={(e) => setGeneticsPrefs((p) => ({ ...p, customEthnicityHint: e.target.value }))}
                           className="mt-2 w-full px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white/70 placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
-                          placeholder="Custom hint (e.g., Mediterranean, Nordic, etc.)"
+                          placeholder="e.g., Mediterranean, Nordic..."
                         />
                       )}
                     </div>
