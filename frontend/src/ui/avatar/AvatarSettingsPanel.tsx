@@ -532,6 +532,41 @@ export function AvatarSettingsPanel({
                     ].join(' ')} />
                   </div>
                 </button>
+
+                {/* 360° Orbit Default toggle */}
+                <button
+                  onClick={() => {
+                    const next = { ...settings, orbit360Default: !(settings.orbit360Default ?? true) }
+                    onChange(next)
+                    saveAvatarSettings(next)
+                  }}
+                  className={[
+                    'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all',
+                    (settings.orbit360Default ?? true)
+                      ? 'bg-cyan-500/10 border border-cyan-500/30'
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+                  ].join(' ')}
+                >
+                  <Globe
+                    size={16}
+                    className={(settings.orbit360Default ?? true) ? 'text-cyan-400' : 'text-white/25'}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-white/80">360° orbit by default</div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      Start in orbit mode — disable for manual angle buttons
+                    </p>
+                  </div>
+                  <div className={[
+                    'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                    (settings.orbit360Default ?? true) ? 'bg-cyan-500' : 'bg-white/15',
+                  ].join(' ')}>
+                    <div className={[
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                      (settings.orbit360Default ?? true) ? 'translate-x-4' : 'translate-x-0.5',
+                    ].join(' ')} />
+                  </div>
+                </button>
               </div>
             </div>
 
