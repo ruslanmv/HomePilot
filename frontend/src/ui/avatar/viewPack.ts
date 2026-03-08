@@ -51,6 +51,7 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     negativePrompt: 'front view, facing camera, both eyes visible, symmetrical face, three-quarter view, 45 degree turn, back view, rear view',
     icon: '\u25D1',
     denoise: 1.0,
+    skipIdentity: true,
   },
   {
     id: 'back',
@@ -70,6 +71,7 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     negativePrompt: 'front view, facing camera, both eyes visible, symmetrical face, three-quarter view, 45 degree turn, back view, rear view',
     icon: '\u25D0',
     denoise: 1.0,
+    skipIdentity: true,
   },
 ]
 
@@ -194,15 +196,13 @@ const IDENTITY_BOILERPLATE_PATTERNS: RegExp[] = [
   /\bportrait\s+photograph\s+of\s+the\s+same\s+character\b/gi,
 ]
 
-// ── Layer 5: Scene/setting from character prompt (strip for ALL non-front) ─
-// The outfit preset already specifies its own scene.  Character-prompt
-// scenes ("professional office", "studio background") conflict.
+// ── Layer 5: Persona-specific scenes (strip for ALL non-front) ──────────
+// Only strip scene tokens tied to the anchor's persona (office, cafe).
+// KEEP neutral studio backgrounds — they ensure visual consistency across
+// all angles.  Without them the model generates random backgrounds (city,
+// street, etc.) that don't match the front view.
 const SCENE_SETTING_PATTERNS: RegExp[] = [
   /\bprofessional\s+office\b/gi,
-  /\bneutral\s+studio\s+background\b/gi,
-  /\bclean\s+(?:minimal\s+)?studio\s+background\b/gi,
-  /\bclean\s+studio\s+lighting(?:\s+with\s+soft\s+fill)?\b/gi,
-  /\bclean\s+(?:modern\s+)?studio\s+(?:background|setting)\b/gi,
   /\b(?:corporate|luxury\s+penthouse|modern)\s+office\b/gi,
   /\boffice\s+with\s+plants\b/gi,
   /\bupscale\s+cafe\s+background\b/gi,
@@ -219,23 +219,25 @@ const PROFESSIONAL_IDENTITY_PATTERNS: RegExp[] = [
   /\bformal\s+neckwear\b/gi,
 ]
 
-// ── Layer 7: Quality/photography/lighting tokens the backend already appends
+// ── Layer 7: Quality/photography tokens the backend already appends ─────
 // The backend adds "elegant lighting, realistic, sharp focus" so these
 // duplicate tokens waste CLIP budget.
+// NOTE: User-chosen lighting (e.g. "soft diffused lighting") is NOT stripped
+// here — it ensures lighting consistency across all angles.
 const BACKEND_QUALITY_PATTERNS: RegExp[] = [
   /\belegant\s+lighting\b/gi,
   /\brealistic\b/gi,
   /\bsharp\s+focus\b/gi,
-  /\bsoft\s+diffused\s+lighting\b/gi,
 ]
 
-// ── Layer 8: Medium-shot framing (strip for ALL non-front) ──────────────
-// The character prompt often includes medium-shot framing directives that
-// directly contradict the angle view's "full body visible head to knees".
-// "no knees visible" vs "head to knees" causes the model to produce
-// incoherent crops.
+// ── Layer 8: Medium/half-body framing (strip for ALL non-front) ─────────
+// The character prompt includes framing directives from the chosen Photo
+// Style (Half-Body or Half-Body Mid) that directly contradict the angle
+// view's "full body visible head to knees".
+// Covers both Half-Body (head→waist) and Half-Body Mid (head→hips).
 const MEDIUM_SHOT_FRAMING_PATTERNS: RegExp[] = [
   /\bmedium\s+shot\s+portrait\b/gi,
+  // Half-Body Mid (head → hips)
   /\bmid-body\s+framing\s+from\s+head\s+to\s+hips\b/gi,
   /\bupper\s+body\s+and\s+hips\s+visible\b/gi,
   /\bshowing\s+full\s+torso\s+and\s+hip\s+area\b/gi,
@@ -243,8 +245,15 @@ const MEDIUM_SHOT_FRAMING_PATTERNS: RegExp[] = [
   /\bhips\s+included\s+in\s+frame\b/gi,
   /\bno\s+knees\s+visible\b/gi,
   /\bno\s+legs\s+below\s+thighs\b/gi,
+  // Half-Body (head → waist)
+  /\bhalf-body\s+framing\s+from\s+head\s+to\s+waist\b/gi,
+  /\bupper\s+body\s+visible\b/gi,
+  /\bshowing\s+torso\s+arms\s+and\s+hands\b/gi,
+  /\bwaist-up\s+composition\b/gi,
+  // Common to both
   /\bbody\s+posture\s+and\s+pose\s+visible\b/gi,
   /\bbody\s+posture\s+visible\b/gi,
+  /\bclothing\s+and\s+outfit\s+clearly\s+visible\b/gi,
 ]
 
 // ── Layer 9: Persona / role-identity tokens (strip for ALL non-front) ───
