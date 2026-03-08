@@ -107,11 +107,12 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     shortLabel: 'L',
     negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, right side visible, right profile, right ear visible, looking right, facing right, turned right, right shoulder facing camera, back view, rear view, facing forward, head facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side, sitting, kneeling, crouching, lying down, on the floor, on the ground, cross-legged',
     icon: '\u25D0',
-    denoise: 1.0,
-    // Bypass InstantID ControlNet — it extracts front-facing pose from the
-    // reference image and fights the left profile directive for ~50% of
-    // sampling steps (end_at: 0.5, weight: 0.65), causing right-facing output.
-    generationMode: 'standard',
+    // Use 'reference' mode (img2img) so the front image anchors the generation
+    // to a single person and preserves outfit colors.  Denoise 0.9 lets the
+    // angle text prompt override the front-facing pose while keeping ~10% of
+    // the reference's color/structure signal.
+    denoise: 0.9,
+    generationMode: 'reference',
   },
   {
     id: 'right',
@@ -119,9 +120,10 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     shortLabel: 'R',
     negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, left side visible, back view, rear view, facing forward, head facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side, sitting, kneeling, crouching, lying down, on the floor, on the ground, cross-legged',
     icon: '\u25D1',
-    denoise: 1.0,
-    // Bypass InstantID ControlNet for same reason as left.
-    generationMode: 'standard',
+    // Same as left — 'reference' mode preserves colors and prevents
+    // dual-person generation that happens with pure text-only mode.
+    denoise: 0.9,
+    generationMode: 'reference',
   },
   {
     id: 'back',
