@@ -204,7 +204,7 @@ export function AvatarViewer({
   const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey)
   const [showViewPack, setShowViewPack] = useState(false)
   const [activeViewAngle, setActiveViewAngle] = useState<ViewAngle | null>(null)
-  const [orbitMode, setOrbitMode] = useState(false)
+  const [orbitMode, setOrbitMode] = useState(avatarSettingsState.orbit360Default ?? true)
 
   // Auto-switch to Latest Outfit tab when new results arrive
   useEffect(() => {
@@ -898,7 +898,8 @@ export function AvatarViewer({
                 )
               })()}
 
-              {/* ──────── Quick Views — overlay inside the stage image ──────── */}
+              {/* ──────── Quick Views — overlay inside the stage image (hidden in orbit mode) ──────── */}
+              {!orbitMode && (
               <div className="absolute bottom-3 left-3 right-3 z-10 pointer-events-none">
                 <div className="pointer-events-auto inline-block">
                   <AvatarStageQuickTools
@@ -914,6 +915,7 @@ export function AvatarViewer({
                   />
                 </div>
               </div>
+              )}
               </div>
 
               {/* Result thumbnail filmstrip (when multiple results and no equipped item) */}

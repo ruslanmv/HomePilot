@@ -99,6 +99,9 @@ export interface AvatarSettings {
   /** Use square (1:1) aspect ratio for headshot generation instead of portrait (2:3).
    *  Default false — portrait ratio produces higher quality results. */
   headshot1to1?: boolean
+  /** Start in 360° orbit mode by default instead of static view.
+   *  Default true — orbit mode lets users drag/arrow through angles. */
+  orbit360Default?: boolean
 }
 
 export interface AvatarPackInfo {
