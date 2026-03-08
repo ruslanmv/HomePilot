@@ -1,6 +1,6 @@
 import type { AvatarResult } from './types'
 
-export type ViewAngle = 'front' | 'left_45' | 'left' | 'right_45' | 'right' | 'back'
+export type ViewAngle = 'front' | 'left' | 'right' | 'back'
 export type ViewSource = 'anchor' | 'latest' | 'equipped'
 
 export interface ViewAngleOption {
@@ -20,16 +20,17 @@ export interface ViewAngleOption {
 }
 
 // ── Angle prompt design notes ───────────────────────────────────────────
-// These prompts go into the `character_prompt` field (NOT outfit_prompt).
-// The backend strips clothing/garment tokens from character_prompt, so
-// these must NOT contain outfit words (dress, lingerie, suit, etc.).
+// Only cardinal directions (0°, 90°, 180°) are supported.  45° angles were
+// removed because InstantID's ControlNet conflicts with three-quarter poses,
+// producing face distortion in the 30–60° "conflict zone".  Cardinal angles
+// either align with InstantID (front) or are extreme enough that the model
+// ignores the ControlNet entirely (left/right/back).
 //
 // Keep prompts lean — CLIP has limited token budget (~77 SD1.5 / ~256 SDXL).
 // The backend appends its own quality suffix ("elegant lighting, realistic,
 // sharp focus") so we skip lighting/quality cues here.
 //
 // Structure: [turntable context] [camera position] [visible anatomy] [what NOT to show]
-// Identity/consistency cues are appended by the generation hook separately.
 // ────────────────────────────────────────────────────────────────────────
 
 export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
@@ -41,33 +42,6 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     negativePrompt: 'side view, profile, three-quarter view, back view, turned away',
     icon: '\u25C9',
     denoise: 0.85,
-  },
-  {
-    id: 'left_45',
-    label: '45\u00B0 Left',
-    shortLabel: 'L45',
-    prompt: 'character turntable, three-quarter view from the left, camera 45 degrees right of subject, head and torso rotated 45 degrees left, left cheek and left ear visible, left shoulder closer to camera',
-    negativePrompt: 'front view, facing camera, symmetrical face, full frontal, full left profile, 90 degree turn, back view, rear view',
-    icon: '\u25D6',
-    denoise: 1.0,
-  },
-  {
-    id: 'left',
-    label: 'Left',
-    shortLabel: 'L',
-    prompt: 'character turntable, full left profile, camera directly to the right of subject, head turned 90 degrees left, only left side of face visible, left ear jaw line nose tip in silhouette',
-    negativePrompt: 'front view, facing camera, both eyes visible, symmetrical face, three-quarter view, 45 degree turn, back view, rear view',
-    icon: '\u25D0',
-    denoise: 1.0,
-  },
-  {
-    id: 'right_45',
-    label: '45\u00B0 Right',
-    shortLabel: 'R45',
-    prompt: 'character turntable, three-quarter view from the right, camera 45 degrees left of subject, head and torso rotated 45 degrees right, right cheek and right ear visible, right shoulder closer to camera',
-    negativePrompt: 'front view, facing camera, symmetrical face, full frontal, full right profile, 90 degree turn, back view, rear view',
-    icon: '\u25D7',
-    denoise: 1.0,
   },
   {
     id: 'right',
@@ -88,13 +62,22 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     denoise: 1.0,
     skipIdentity: true,
   },
+  {
+    id: 'left',
+    label: 'Left',
+    shortLabel: 'L',
+    prompt: 'character turntable, full left profile, camera directly to the right of subject, head turned 90 degrees left, only left side of face visible, left ear jaw line nose tip in silhouette',
+    negativePrompt: 'front view, facing camera, both eyes visible, symmetrical face, three-quarter view, 45 degree turn, back view, rear view',
+    icon: '\u25D0',
+    denoise: 1.0,
+  },
 ]
 
 // ── Outfit-aware rear emphasis ────────────────────────────────────────────
-// When the outfit description contains NSFW/lingerie tokens, back and
-// rear-quarter angles need explicit body-from-behind cues so the model
-// actually shows the garment's rear design (thong back, straps, bare skin,
-// buttocks shape through fabric, etc.) instead of a generic spine shot.
+// When the outfit description contains NSFW/lingerie tokens, the back angle
+// needs explicit body-from-behind cues so the model actually shows the
+// garment's rear design (thong back, straps, bare skin, buttocks shape
+// through fabric, etc.) instead of a generic spine shot.
 // ──────────────────────────────────────────────────────────────────────────
 
 const NSFW_REAR_KEYWORDS = [
@@ -113,34 +96,26 @@ export function isNsfwOutfit(outfitDesc: string): boolean {
 
 /**
  * Returns angle-specific emphasis tokens that guide the model to show the
- * rear of the garment and relevant body features.  Only applies to back
- * and rear-quarter angles, and only when the outfit is NSFW/lingerie.
+ * rear of the garment and relevant body features.  Only applies to the back
+ * angle, and only when the outfit is NSFW/lingerie.
  */
 export function getRearEmphasis(angle: ViewAngle, outfitDesc: string): string {
+  if (angle !== 'back') return ''
   if (!isNsfwOutfit(outfitDesc)) return ''
 
   const lower = outfitDesc.toLowerCase()
   const hasThong = lower.includes('thong') || lower.includes('g-string')
   const hasStockings = lower.includes('stockings') || lower.includes('garter')
 
-  if (angle === 'back') {
-    const tokens = [
-      'outfit visible from behind',
-      'back of garment and body details clearly visible',
-      'rear view of clothing showing full back design',
-      'buttocks shape and contour visible through outfit',
-    ]
-    if (hasThong) tokens.push('thong back strap visible between buttocks')
-    if (hasStockings) tokens.push('stocking tops and garter straps visible from behind')
-    return tokens.join(', ')
-  }
-
-  // Rear-quarter angles (left = camera on right = shows back-left, etc.)
-  if (angle === 'left_45' || angle === 'right_45') {
-    return 'outfit side and partial rear visible, hip and buttock contour visible'
-  }
-
-  return ''
+  const tokens = [
+    'outfit visible from behind',
+    'back of garment and body details clearly visible',
+    'rear view of clothing showing full back design',
+    'buttocks shape and contour visible through outfit',
+  ]
+  if (hasThong) tokens.push('thong back strap visible between buttocks')
+  if (hasStockings) tokens.push('stocking tops and garter straps visible from behind')
+  return tokens.join(', ')
 }
 
 export type ViewResultMap = Partial<Record<ViewAngle, AvatarResult>>

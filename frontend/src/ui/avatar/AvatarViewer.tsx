@@ -613,7 +613,7 @@ export function AvatarViewer({
   ])
 
   const handleGenerateMissingViews = useCallback(async () => {
-    const missing = (['left_45', 'left', 'right_45', 'right', 'back'] as ViewAngle[]).filter(
+    const missing = (['right', 'back', 'left'] as ViewAngle[]).filter(
       (angle) => !combinedViewPreviews[angle]
     )
 
@@ -788,7 +788,7 @@ export function AvatarViewer({
                   const angleMeta = VIEW_ANGLE_OPTIONS.find((a) => a.id === activeViewAngle)
 
                   // Build ordered list of available angles (clockwise orbit order)
-                  const ORBIT_NAV: ViewAngle[] = ['front', 'right_45', 'right', 'back', 'left', 'left_45']
+                  const ORBIT_NAV: ViewAngle[] = ['front', 'right', 'back', 'left']
                   const availableNav = ORBIT_NAV.filter((a) => combinedViewPreviews[a])
                   const currentNavIdx = availableNav.indexOf(activeViewAngle)
                   const prevAngle = currentNavIdx > 0 ? availableNav[currentNavIdx - 1] : availableNav[availableNav.length - 1]
@@ -885,7 +885,7 @@ export function AvatarViewer({
 
                 if (showEquipped) {
                   // Check if any non-front angles exist for arrow navigation
-                  const ORBIT_NAV_EQ: ViewAngle[] = ['front', 'right_45', 'right', 'back', 'left', 'left_45']
+                  const ORBIT_NAV_EQ: ViewAngle[] = ['front', 'right', 'back', 'left']
                   const extraAnglesEq = ORBIT_NAV_EQ.filter((a) => a !== 'front' && combinedViewPreviews[a])
                   const nextFromEq = extraAnglesEq.length > 0 ? extraAnglesEq[0] : null
                   const prevFromEq = extraAnglesEq.length > 0 ? extraAnglesEq[extraAnglesEq.length - 1] : null
@@ -981,7 +981,7 @@ export function AvatarViewer({
 
                 if (outfit.results.length > 0) {
                   // Check if any non-front angles exist for arrow navigation
-                  const ORBIT_NAV_FRONT: ViewAngle[] = ['front', 'right_45', 'right', 'back', 'left', 'left_45']
+                  const ORBIT_NAV_FRONT: ViewAngle[] = ['front', 'right', 'back', 'left']
                   const extraAngles = ORBIT_NAV_FRONT.filter((a) => a !== 'front' && combinedViewPreviews[a])
                   const nextFromFront = extraAngles.length > 0 ? extraAngles[0] : null
                   const prevFromFront = extraAngles.length > 0 ? extraAngles[extraAngles.length - 1] : null

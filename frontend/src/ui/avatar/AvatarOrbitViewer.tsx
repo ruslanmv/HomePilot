@@ -1,12 +1,12 @@
 /**
  * AvatarOrbitViewer — pseudo-3D 360° character viewer.
  *
- * Simulates orbit rotation using the 6 generated view-angle images.
+ * Simulates orbit rotation using the 4 cardinal view-angle images.
  * The user drags horizontally to rotate; images crossfade for smooth transitions.
  * Clicking the image still opens the lightbox (non-destructive).
  *
  * Angle order (clockwise):
- *   front → right_45 → right → back → left → left_45 → (wrap to front)
+ *   front → right → back → left → (wrap to front)
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -16,11 +16,9 @@ import type { ViewAngle, ViewPreviewMap } from './viewPack'
 // Clockwise orbit order — maps continuous rotation to discrete angles
 const ORBIT_ORDER: ViewAngle[] = [
   'front',
-  'right_45',
   'right',
   'back',
   'left',
-  'left_45',
 ]
 
 const CROSSFADE_MS = 180
@@ -219,11 +217,9 @@ export function AvatarOrbitViewer({
           <span>360°</span>
           <span className="text-white/50">·</span>
           <span className="text-white/70">{ORBIT_ORDER[currentIndex] === 'front' ? 'Front' :
-            ORBIT_ORDER[currentIndex] === 'right_45' ? '45° R' :
             ORBIT_ORDER[currentIndex] === 'right' ? 'Right' :
             ORBIT_ORDER[currentIndex] === 'back' ? 'Back' :
-            ORBIT_ORDER[currentIndex] === 'left' ? 'Left' :
-            '45° L'}</span>
+            'Left'}</span>
         </div>
 
         {/* Drag hint — only if not actively dragging */}
