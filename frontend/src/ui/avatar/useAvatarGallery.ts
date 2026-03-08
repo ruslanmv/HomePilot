@@ -113,7 +113,7 @@ export function useAvatarGallery() {
           id: galleryId(),
           url: r.url,
           seed: r.seed,
-          prompt,
+          prompt: (typeof r.metadata?.prompt === 'string' ? r.metadata.prompt : undefined) ?? prompt,
           mode,
           referenceUrl,
           createdAt: Date.now(),

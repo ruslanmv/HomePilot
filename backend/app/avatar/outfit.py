@@ -58,6 +58,14 @@ class OutfitRequest(BaseModel):
         default=None,
         description="Override the workflow checkpoint (model filename).",
     )
+    denoise_override: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Override denoise strength. Higher values (0.95-1.0) allow "
+                    "the text prompt to fully control pose/angle instead of "
+                    "following the reference image composition.",
+    )
 
 
 class OutfitResponse(BaseModel):
@@ -99,10 +107,38 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     parts.append("elegant lighting, realistic, sharp focus")
     combined_prompt = ", ".join(parts)
 
-    # Prefer identity mode (studio_reference) for face preservation
-    target_mode = "studio_reference"
+    # Mode selection for the ComfyUI workflow:
+    #   - "identity"  → hybrid_outfit (InstantID pipeline: face ControlNet + empty latent,
+    #                    text prompt fully controls pose/angle/outfit)
+    #   - "standard"  → creative (text-to-image, no face preservation)
+    #   - fallback    → studio_reference (basic img2img, pose locked to reference)
+    #
+    # hybrid_outfit is strongly preferred because it uses ApplyInstantID with
+    # EmptyLatentImage, meaning the text prompt controls body pose while
+    # ControlNet only anchors facial identity.  The basic img2img workflow
+    # (studio_reference) bakes the reference pose into the VAE latent,
+    # making non-front angles impossible.
+    #
+    # IMPORTANT: hybrid_outfit uses an SDXL workflow (CLIPTextEncodeSDXL).
+    # If a checkpoint_override is set, it's likely an SD 1.5 model which
+    # only has CLIP-L (no CLIP-G), causing a KeyError: 'g' crash.
+    # Fall back to studio_reference when a checkpoint override is active.
+    if req.generation_mode == "standard":
+        target_mode = "creative"
+    elif req.checkpoint_override:
+        # SD 1.5 checkpoint override → can't use SDXL workflow
+        target_mode = "studio_reference"
+        warnings.append(
+            "Using studio_reference mode because a custom checkpoint is set. "
+            "The hybrid_outfit workflow requires an SDXL model."
+        )
+    else:
+        # Try hybrid_outfit first (proper InstantID), fall back to studio_reference
+        target_mode = "hybrid_outfit"
+
     if target_mode not in allowed:
-        # Fallback to creative mode (text-only, no face preservation)
+        target_mode = "studio_reference"
+    if target_mode not in allowed:
         target_mode = "creative"
         warnings.append(
             "Identity models not available — using standard generation. "
@@ -121,7 +157,10 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     # Use high denoise (0.85) so the sampler can actually change the outfit
     # instead of reproducing the reference image structure.
     # Default img2img denoise (0.65) is too conservative for outfit changes.
-    outfit_denoise = 0.85
+    # For non-front angles, callers should pass denoise_override=1.0 so
+    # the text prompt fully controls the pose/angle (the reference latent
+    # is pure noise at 1.0, letting CLIP guide the composition).
+    outfit_denoise = req.denoise_override if req.denoise_override is not None else 0.85
 
     # Build the final negative prompt by combining:
     #   1. Workflow baseline (quality/artifact prevention)
