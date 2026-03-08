@@ -164,13 +164,25 @@ const FACE_DETAIL_PATTERNS: RegExp[] = [
   /\bsymmetrical\s+face\b/gi,
 ]
 
-// ── Layer 3: Expression tokens (strip for back; left/right keep them) ───
+// ── Layer 3: Expression tokens (strip for ALL non-front angles) ──────────
+// Profile views show the face in silhouette; expressions like "warm
+// approachable" imply camera engagement and fight the profile directive.
 const EXPRESSION_PATTERNS: RegExp[] = [
   /\bwarm\s+approachable\s+expression\b/gi,
   /\b(?:confident|natural|relaxed)\s+(?:poised\s+|natural\s+)?expression\b/gi,
   /\bsmoldering\s+gaze\b/gi,
   /\bbedroom\s+eyes\b/gi,
   /\bcoy\s+expression\b/gi,
+]
+
+// ── Layer 3b: Front-biased pose tokens (strip for ALL non-front) ─────────
+// Pose descriptors that imply a frontal body orientation.
+const FRONT_POSE_DESC_PATTERNS: RegExp[] = [
+  /\bconfident\s+relaxed\s+pose\b/gi,
+  /\bconfident\s+natural\s+pose\b/gi,
+  /\bconfident\s+poised\s+pose\b/gi,
+  /\brelaxed\s+natural\s+pose\b/gi,
+  /\bnatural\s+confident\s+pose\b/gi,
 ]
 
 // ── Layer 4: Character-prompt identity boilerplate (strip for ALL non-front) ─
@@ -207,24 +219,67 @@ const PROFESSIONAL_IDENTITY_PATTERNS: RegExp[] = [
   /\bformal\s+neckwear\b/gi,
 ]
 
-// ── Layer 7: Quality/photography tokens the backend already appends ─────
+// ── Layer 7: Quality/photography/lighting tokens the backend already appends
 // The backend adds "elegant lighting, realistic, sharp focus" so these
 // duplicate tokens waste CLIP budget.
 const BACKEND_QUALITY_PATTERNS: RegExp[] = [
   /\belegant\s+lighting\b/gi,
   /\brealistic\b/gi,
   /\bsharp\s+focus\b/gi,
+  /\bsoft\s+diffused\s+lighting\b/gi,
+]
+
+// ── Layer 8: Medium-shot framing (strip for ALL non-front) ──────────────
+// The character prompt often includes medium-shot framing directives that
+// directly contradict the angle view's "full body visible head to knees".
+// "no knees visible" vs "head to knees" causes the model to produce
+// incoherent crops.
+const MEDIUM_SHOT_FRAMING_PATTERNS: RegExp[] = [
+  /\bmedium\s+shot\s+portrait\b/gi,
+  /\bmid-body\s+framing\s+from\s+head\s+to\s+hips\b/gi,
+  /\bupper\s+body\s+and\s+hips\s+visible\b/gi,
+  /\bshowing\s+full\s+torso\s+and\s+hip\s+area\b/gi,
+  /\bframe\s+ends\s+at\s+upper\s+thighs\b/gi,
+  /\bhips\s+included\s+in\s+frame\b/gi,
+  /\bno\s+knees\s+visible\b/gi,
+  /\bno\s+legs\s+below\s+thighs\b/gi,
+  /\bbody\s+posture\s+and\s+pose\s+visible\b/gi,
+  /\bbody\s+posture\s+visible\b/gi,
+]
+
+// ── Layer 9: Persona / role-identity tokens (strip for ALL non-front) ───
+// The anchor's character_prompt often includes job titles or persona
+// descriptors ("executive assistant professional") that add nothing to
+// angle views and can fight outfit aesthetics.
+const PERSONA_ROLE_PATTERNS: RegExp[] = [
+  /\bexecutive\s+assistant\s+professional\b/gi,
+  /\bexecutive\s+(?:professional|portrait)\b/gi,
+  /\bcorporate\s+executive\b/gi,
+  /\bbusiness\s+(?:professional|executive|woman|man)\b/gi,
 ]
 
 /**
- * Remove comma-separated segments that are empty or whitespace-only after
- * token stripping.  Fixes artifacts like "fitted , , delicate ," → "fitted, delicate".
+ * Remove comma-separated segments that are empty, whitespace-only, or
+ * consist of a bare trailing conjunction after token stripping.
+ * Also deduplicates identical segments to save CLIP budget.
+ * Fixes artifacts like "fitted , , delicate ," → "fitted, delicate"
+ * and "clothing and," → removed, and "fitted, ..., fitted" → "fitted, ..."
  */
 function cleanCommaArtifacts(text: string): string {
+  const seen = new Set<string>()
   return text
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
+    // Remove bare trailing conjunctions ("clothing and", "style or")
+    .filter((s) => !/^\w+\s+(?:and|or)$/i.test(s))
+    // Deduplicate identical segments
+    .filter((s) => {
+      const key = s.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
     .join(', ')
 }
 
@@ -241,29 +296,28 @@ function applyPatterns(text: string, patterns: RegExp[]): string {
  * Sanitise the outfit/character description for a specific angle by removing
  * tokens that contradict or are irrelevant to the target pose.
  *
- * Stripping layers (cumulative):
- *   front  → clean comma artifacts only
- *   left/right → + front-facing, face detail, identity, scene, professional, quality
- *   back   → + expression tokens (no face visible at all)
+ * Stripping layers (cumulative — ALL non-front angles):
+ *   front  → clean comma artifacts + dedup only
+ *   left/right/back → front-facing, face detail, expressions, front-biased poses,
+ *                      identity boilerplate, scene/setting, professional tokens,
+ *                      medium-shot framing, persona/role, backend quality/lighting
  */
 function sanitizeDescForAngle(desc: string, angle: ViewAngle): string {
   if (angle === 'front') return cleanCommaArtifacts(desc)
 
   let result = desc
 
-  // All non-front angles: strip front-facing, face detail, identity,
-  // scene/setting, professional tokens, and duplicate quality tokens
+  // All non-front angles: strip every category that fights the angle directive
   result = applyPatterns(result, FRONT_POSE_PATTERNS)
   result = applyPatterns(result, FACE_DETAIL_PATTERNS)
+  result = applyPatterns(result, EXPRESSION_PATTERNS)
+  result = applyPatterns(result, FRONT_POSE_DESC_PATTERNS)
   result = applyPatterns(result, IDENTITY_BOILERPLATE_PATTERNS)
   result = applyPatterns(result, SCENE_SETTING_PATTERNS)
   result = applyPatterns(result, PROFESSIONAL_IDENTITY_PATTERNS)
   result = applyPatterns(result, BACKEND_QUALITY_PATTERNS)
-
-  // Back angle: also strip expression tokens (no face visible)
-  if (angle === 'back') {
-    result = applyPatterns(result, EXPRESSION_PATTERNS)
-  }
+  result = applyPatterns(result, MEDIUM_SHOT_FRAMING_PATTERNS)
+  result = applyPatterns(result, PERSONA_ROLE_PATTERNS)
 
   return cleanCommaArtifacts(result)
 }
