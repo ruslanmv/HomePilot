@@ -99,6 +99,27 @@ export interface AvatarSettings {
   /** Use square (1:1) aspect ratio for headshot generation instead of portrait (2:3).
    *  Default false — portrait ratio produces higher quality results. */
   headshot1to1?: boolean
+  /** Start in 360° orbit mode by default instead of static view.
+   *  Default true — orbit mode lets users drag/arrow through angles. */
+  orbit360Default?: boolean
+  /** Per-angle tuning overrides for view pack generation.
+   *  Undefined fields fall back to the built-in defaults in viewPack.ts. */
+  viewAngleTuning?: {
+    left?:  { denoise?: number; promptWeight?: number }
+    right?: { denoise?: number; promptWeight?: number }
+    back?:  { denoise?: number; promptWeight?: number }
+  }
+  /** Auto-mirror left view after generation.
+   *  When enabled, the backend mirrors the right-facing image to produce
+   *  a correct left-facing result.  Default: true (enabled). */
+  autoMirrorLeft?: boolean
+  /** Auto-mirror right view after generation.
+   *  When enabled and the right image faces the wrong way, the backend
+   *  mirrors it.  Default: false (disabled — right prompt is reliable). */
+  autoMirrorRight?: boolean
+  /** @deprecated Use autoMirrorLeft / autoMirrorRight instead. Kept for
+   *  backwards compatibility with existing localStorage data. */
+  autoFixOrientation?: boolean
 }
 
 export interface AvatarPackInfo {
