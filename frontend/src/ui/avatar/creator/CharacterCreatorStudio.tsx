@@ -54,10 +54,12 @@ import {
 import {
   DEFAULT_AVATAR_PREFS,
   buildGeneticsPromptFragment,
+  mapEyeColor,
   SKIN_TONE_OPTIONS,
   FACE_BASE_OPTIONS,
   HAIR_TYPE_OPTIONS,
   HAIR_COLOR_OPTIONS,
+  EYE_COLOR_OPTIONS,
   AGE_RANGE_OPTIONS,
   REALISM_OPTIONS,
   ETHNICITY_OPTIONS,
@@ -68,6 +70,7 @@ import type {
   FaceBase,
   HairType,
   HairColor,
+  EyeColor,
   AgeRange,
   RealismLevel,
   EthnicityPreset,
@@ -205,6 +208,9 @@ export function CharacterCreatorStudio({
   const setVibeTab = useCallback((tab: VibeTab) => { _setVibeTab(tab); saveVibeTab(tab) }, [])
   const [showGenetics, setShowGenetics] = useState(false)
   const [geneticsPrefs, setGeneticsPrefs] = useState<AvatarPreferences>(DEFAULT_AVATAR_PREFS)
+  const [eyeColor, setEyeColor] = useState<EyeColor>('brown')
+  // Controls the collapsed "Advanced" section (face structure, realism, ethnicity, profession)
+  const [showAdvancedIdentity, setShowAdvancedIdentity] = useState(false)
   const [faceCount, setFaceCount] = useState(4)
   const [selectedFaceIndex, setSelectedFaceIndex] = useState<number | null>(null)
   const [showNsfw, setShowNsfw] = useState(nsfwMode)
@@ -333,6 +339,19 @@ export function CharacterCreatorStudio({
       const safeLabel = PROFESSION_PROMPT_ALIAS[prof.id] ?? prof.label.toLowerCase()
       base = `${base}, ${safeLabel} professional`
     }
+    // Always include core appearance tokens (skin tone, hair, eye color) so
+    // they are baked into the prompt — View Pack reads wizardMeta for these but
+    // having them in the prompt also anchors the diffusion model during face gen.
+    const appearanceParts: string[] = []
+    const skinLabel = SKIN_TONE_OPTIONS.find((o) => o.key === geneticsPrefs.skinTone)
+    if (skinLabel) appearanceParts.push(`${skinLabel.label.toLowerCase()} skin tone`)
+    const hairColorLabel = HAIR_COLOR_OPTIONS.find((o) => o.key === geneticsPrefs.hairColor)
+    if (hairColorLabel) appearanceParts.push(`${hairColorLabel.label.toLowerCase()} hair`)
+    const hairTypeLabel = HAIR_TYPE_OPTIONS.find((o) => o.key === geneticsPrefs.hairType)
+    if (hairTypeLabel) appearanceParts.push(`${hairTypeLabel.label.toLowerCase()} hair texture`)
+    appearanceParts.push(mapEyeColor(eyeColor))
+    base = `${base}, ${appearanceParts.join(', ')}`
+
     if (showGenetics) {
       const frag = buildGeneticsPromptFragment(geneticsPrefs)
       base = `${base}, ${frag}`
@@ -347,7 +366,7 @@ export function CharacterCreatorStudio({
       return `${base}, ${identityFramingOption.promptPrefix}`
     }
     return base
-  }, [selectedGender, selectedStyle, selectedProfession, showGenetics, geneticsPrefs, bodyFraming, identityFramingOption])
+  }, [selectedGender, selectedStyle, selectedProfession, showGenetics, geneticsPrefs, eyeColor, bodyFraming, identityFramingOption])
 
   // Build negative prompt from framing + style hints (max 4 tokens total)
   const identityNegativePrompt = useMemo(() => {
@@ -480,6 +499,8 @@ export function CharacterCreatorStudio({
     })()
 
     // Build WizardMeta so persona export can pre-populate role, tools, tone
+    // Appearance fields are stored so View Pack can produce exact visual
+    // descriptors without regex-guessing from the prompt text.
     const prof = selectedProfession ? PROFESSIONS.find((p) => p.id === selectedProfession) : null
     const wizardMeta: WizardMeta = {
       professionId: selectedProfession || undefined,
@@ -492,6 +513,11 @@ export function CharacterCreatorStudio({
       systemPrompt: prof?.defaults.systemPrompt,
       responseStyle: prof?.defaults.responseStyle,
       gender: selectedGender || undefined,
+      // Appearance — used by View Pack for drift-free 3D angle generation
+      skinTone: geneticsPrefs.skinTone,
+      hairColor: geneticsPrefs.hairColor,
+      hairType: geneticsPrefs.hairType,
+      eyeColor,
     }
 
     gallery.addAnchorWithPortraits(
@@ -514,7 +540,7 @@ export function CharacterCreatorStudio({
       gen.reset()
       showToast('Identity saved! Now pick an outfit for your character.', 'success')
     }
-  }, [gen, selectedFaceIndex, gallery, identityPrompt, selectedStyle, selectedProfession, selectedGender, bodyFraming, showToast, needsBodyStep])
+  }, [gen, selectedFaceIndex, gallery, identityPrompt, selectedStyle, selectedProfession, selectedGender, geneticsPrefs, eyeColor, bodyFraming, showToast, needsBodyStep])
 
   // Auto-advance: when single face generated, auto-save identity and move on
   useEffect(() => {
@@ -1194,59 +1220,86 @@ export function CharacterCreatorStudio({
                   </div>
                 </div>
 
-                {/* Section: Profession / Role */}
+                {/* ── Section: Appearance (always visible — critical for View Pack) ── */}
                 <div>
-                  <SectionLabel>Profession</SectionLabel>
-                  <div className="grid grid-cols-2 gap-1.5 max-h-[180px] overflow-y-auto scrollbar-hide pr-0.5">
-                    {PROFESSIONS.map((prof) => {
-                      const active = selectedProfession === prof.id
-                      return (
-                        <button key={prof.id}
-                          onClick={() => setSelectedProfession(active ? null : prof.id)}
-                          className={[
-                            'flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-all border',
-                            active
-                              ? 'border-purple-500/30 bg-purple-500/10 text-purple-200'
-                              : 'border-white/[0.06] bg-white/[0.02] text-white/50 hover:bg-white/[0.04] hover:text-white/70',
-                          ].join(' ')}
-                          title={prof.description}
-                        >
-                          <span className="text-sm leading-none">{prof.icon}</span>
-                          <div className="flex-1 min-w-0">
-                            <span className="text-[11px] font-medium block truncate">{prof.label}</span>
-                            {prof.recommended && (
-                              <span className="text-[8px] text-yellow-400/70 font-bold uppercase">Recommended</span>
-                            )}
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                  {selectedProfession && (() => {
-                    const prof = PROFESSIONS.find((p) => p.id === selectedProfession)
-                    return prof ? (
-                      <div className="mt-2 px-3 py-2 rounded-lg bg-purple-500/5 border border-purple-500/10 animate-fadeIn">
-                        <p className="text-[10px] text-white/35 italic">{prof.description}</p>
+                  <SectionLabel>Appearance</SectionLabel>
+                  <div className="space-y-3">
+                    {/* Skin Tone */}
+                    <div>
+                      <MiniLabel>Skin Tone</MiniLabel>
+                      <div className="flex flex-wrap gap-2">
+                        {SKIN_TONE_OPTIONS.map((o) => (
+                          <SkinSwatch key={o.key}
+                            tone={o.key}
+                            label={o.label}
+                            active={geneticsPrefs.skinTone === o.key}
+                            onClick={() => setGeneticsPrefs((p) => ({ ...p, skinTone: o.key as SkinTone }))}
+                          />
+                        ))}
                       </div>
-                    ) : null
-                  })()}
+                    </div>
+
+                    {/* Hair Color + Type (side by side) */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <MiniLabel>Hair Color</MiniLabel>
+                        <div className="flex flex-wrap gap-2">
+                          {HAIR_COLOR_OPTIONS.map((o) => (
+                            <SkinSwatch key={o.key}
+                              tone={`hair_${o.key}`}
+                              label={o.label}
+                              active={geneticsPrefs.hairColor === o.key}
+                              onClick={() => setGeneticsPrefs((p) => ({ ...p, hairColor: o.key as HairColor }))}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <MiniLabel>Hair Type</MiniLabel>
+                        <div className="flex flex-col gap-1">
+                          {HAIR_TYPE_OPTIONS.map((o) => (
+                            <OptionPill key={o.key}
+                              label={o.label}
+                              active={geneticsPrefs.hairType === o.key}
+                              onClick={() => setGeneticsPrefs((p) => ({ ...p, hairType: o.key as HairType }))}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Eye Color */}
+                    <div>
+                      <MiniLabel>Eye Color</MiniLabel>
+                      <div className="flex flex-wrap gap-2">
+                        {EYE_COLOR_OPTIONS.map((o) => (
+                          <SkinSwatch key={o.key}
+                            tone={`eye_${o.key}`}
+                            label={o.label}
+                            active={eyeColor === o.key}
+                            onClick={() => setEyeColor(o.key)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
-                {/* Section: Genetics (collapsible) */}
+                {/* ── Section: Advanced (collapsible — profession, face structure, realism, ethnicity) ── */}
                 <div>
                   <button
-                    onClick={() => setShowGenetics(!showGenetics)}
+                    onClick={() => setShowAdvancedIdentity(!showAdvancedIdentity)}
                     className={[
                       'flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider transition-colors w-full',
-                      showGenetics ? 'text-purple-300/60' : 'text-white/35 hover:text-purple-300/50',
+                      showAdvancedIdentity ? 'text-purple-300/60' : 'text-white/35 hover:text-purple-300/50',
                     ].join(' ')}
                   >
-                    <ChevronLeft size={10} className={`transition-transform ${showGenetics ? '-rotate-90' : 'rotate-180'}`} />
-                    Genetics & Features
-                    <span className="text-white/15 normal-case tracking-normal font-normal">(MMORPG)</span>
+                    <ChevronLeft size={10} className={`transition-transform ${showAdvancedIdentity ? '-rotate-90' : 'rotate-180'}`} />
+                    Advanced
+                    <span className="text-white/15 normal-case tracking-normal font-normal">(optional)</span>
                   </button>
 
-                  {showGenetics && (
+                  {showAdvancedIdentity && (
                     <div className="mt-3 space-y-3 animate-fadeSlideIn">
                       {/* Age Range */}
                       <div>
@@ -1257,35 +1310,6 @@ export function CharacterCreatorStudio({
                               label={o.label}
                               active={geneticsPrefs.ageRange === o.key}
                               onClick={() => setGeneticsPrefs((p) => ({ ...p, ageRange: o.key as AgeRange }))}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Realism */}
-                      <div>
-                        <MiniLabel>Realism</MiniLabel>
-                        <div className="flex gap-1">
-                          {REALISM_OPTIONS.map((o) => (
-                            <OptionPill key={o.key}
-                              label={o.label}
-                              active={String(geneticsPrefs.realism) === o.key}
-                              onClick={() => setGeneticsPrefs((p) => ({ ...p, realism: Number(o.key) as RealismLevel }))}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Skin Tone */}
-                      <div>
-                        <MiniLabel>Skin Tone</MiniLabel>
-                        <div className="flex flex-wrap gap-2">
-                          {SKIN_TONE_OPTIONS.map((o) => (
-                            <SkinSwatch key={o.key}
-                              tone={o.key}
-                              label={o.label}
-                              active={geneticsPrefs.skinTone === o.key}
-                              onClick={() => setGeneticsPrefs((p) => ({ ...p, skinTone: o.key as SkinTone }))}
                             />
                           ))}
                         </div>
@@ -1305,63 +1329,86 @@ export function CharacterCreatorStudio({
                         </div>
                       </div>
 
-                      {/* Hair Type + Color */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <MiniLabel>Hair Type</MiniLabel>
-                          <div className="flex flex-col gap-1">
-                            {HAIR_TYPE_OPTIONS.map((o) => (
-                              <OptionPill key={o.key}
-                                label={o.label}
-                                active={geneticsPrefs.hairType === o.key}
-                                onClick={() => setGeneticsPrefs((p) => ({ ...p, hairType: o.key as HairType }))}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                        <div>
-                          <MiniLabel>Hair Color</MiniLabel>
-                          <div className="flex flex-wrap gap-2">
-                            {HAIR_COLOR_OPTIONS.map((o) => (
-                              <SkinSwatch key={o.key}
-                                tone={`hair_${o.key}`}
-                                label={o.label}
-                                active={geneticsPrefs.hairColor === o.key}
-                                onClick={() => setGeneticsPrefs((p) => ({ ...p, hairColor: o.key as HairColor }))}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Ethnicity */}
+                      {/* Realism */}
                       <div>
-                        <MiniLabel>Ethnicity Baseline</MiniLabel>
-                        <div className="flex flex-wrap gap-1">
-                          {ETHNICITY_OPTIONS.map((o) => (
+                        <MiniLabel>Realism</MiniLabel>
+                        <div className="flex gap-1">
+                          {REALISM_OPTIONS.map((o) => (
                             <OptionPill key={o.key}
                               label={o.label}
-                              active={geneticsPrefs.baseEthnicityPreset === o.key}
-                              onClick={() => setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: o.key as EthnicityPreset }))}
+                              active={String(geneticsPrefs.realism) === o.key}
+                              onClick={() => setGeneticsPrefs((p) => ({ ...p, realism: Number(o.key) as RealismLevel }))}
                             />
                           ))}
                         </div>
-                        {geneticsPrefs.baseEthnicityPreset === 'custom' && (
-                          <>
-                            <input
-                              list="ethnicity-suggestions"
-                              value={geneticsPrefs.customEthnicityHint || ''}
-                              onChange={(e) => setGeneticsPrefs((p) => ({ ...p, customEthnicityHint: e.target.value }))}
-                              className="mt-2 w-full px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/70 placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
-                              placeholder="e.g., Mediterranean, Nordic..."
-                            />
-                            <datalist id="ethnicity-suggestions">
-                              {['Mediterranean', 'Nordic', 'South Asian', 'Southeast Asian', 'Middle Eastern', 'Indigenous American', 'Pacific Islander', 'Sub-Saharan African', 'Caribbean', 'Slavic', 'Celtic', 'Iberian', 'Polynesian', 'Andean', 'Amazigh'].map((s) => (
-                                <option key={s} value={s} />
-                              ))}
-                            </datalist>
-                          </>
+                      </div>
+
+                      {/* Ethnicity — dropdown */}
+                      <div>
+                        <MiniLabel>Ethnicity Baseline</MiniLabel>
+                        <select
+                          value={geneticsPrefs.baseEthnicityPreset === 'custom' ? (geneticsPrefs.customEthnicityHint || '__custom__') : geneticsPrefs.baseEthnicityPreset}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            if (val === 'european_standard' || val === 'global_mixed') {
+                              setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: val as EthnicityPreset, customEthnicityHint: '' }))
+                            } else if (val === '__custom__') {
+                              setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: 'custom', customEthnicityHint: '' }))
+                            } else {
+                              setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: 'custom', customEthnicityHint: val }))
+                            }
+                          }}
+                          className="w-full px-2.5 py-2 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/70 focus:outline-none focus:border-purple-500/40 appearance-none cursor-pointer"
+                          style={{ colorScheme: 'dark', backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.3)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
+                        >
+                          <option value="european_standard" className="bg-[#1a1a2e] text-white">European Standard</option>
+                          <option value="global_mixed" className="bg-[#1a1a2e] text-white">Global Mixed</option>
+                          <option disabled className="bg-[#1a1a2e] text-white/40">───────────</option>
+                          {['Mediterranean', 'Nordic', 'South Asian', 'Southeast Asian', 'Middle Eastern', 'East Asian', 'Indigenous American', 'Pacific Islander', 'Sub-Saharan African', 'Caribbean', 'Slavic', 'Celtic', 'Iberian', 'Polynesian', 'Andean', 'Amazigh'].map((s) => (
+                            <option key={s} value={s} className="bg-[#1a1a2e] text-white">{s}</option>
+                          ))}
+                          <option disabled className="bg-[#1a1a2e] text-white/40">───────────</option>
+                          <option value="__custom__" className="bg-[#1a1a2e] text-white">Custom...</option>
+                        </select>
+                        {geneticsPrefs.baseEthnicityPreset === 'custom' && !['Mediterranean', 'Nordic', 'South Asian', 'Southeast Asian', 'Middle Eastern', 'East Asian', 'Indigenous American', 'Pacific Islander', 'Sub-Saharan African', 'Caribbean', 'Slavic', 'Celtic', 'Iberian', 'Polynesian', 'Andean', 'Amazigh'].includes(geneticsPrefs.customEthnicityHint || '') && (
+                          <input
+                            value={geneticsPrefs.customEthnicityHint || ''}
+                            onChange={(e) => setGeneticsPrefs((p) => ({ ...p, customEthnicityHint: e.target.value }))}
+                            className="mt-2 w-full px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/70 placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
+                            placeholder="e.g., Afro-Caribbean, Eurasian..."
+                            autoFocus
+                          />
                         )}
+                      </div>
+
+                      {/* Profession */}
+                      <div>
+                        <MiniLabel>Profession</MiniLabel>
+                        <div className="grid grid-cols-2 gap-1.5 max-h-[140px] overflow-y-auto scrollbar-hide pr-0.5">
+                          {PROFESSIONS.map((prof) => {
+                            const active = selectedProfession === prof.id
+                            return (
+                              <button key={prof.id}
+                                onClick={() => setSelectedProfession(active ? null : prof.id)}
+                                className={[
+                                  'flex items-center gap-2 px-3 py-2 rounded-xl text-left transition-all border',
+                                  active
+                                    ? 'border-purple-500/30 bg-purple-500/10 text-purple-200'
+                                    : 'border-white/[0.06] bg-white/[0.02] text-white/50 hover:bg-white/[0.04] hover:text-white/70',
+                                ].join(' ')}
+                                title={prof.description}
+                              >
+                                <span className="text-sm leading-none">{prof.icon}</span>
+                                <div className="flex-1 min-w-0">
+                                  <span className="text-[11px] font-medium block truncate">{prof.label}</span>
+                                  {prof.recommended && (
+                                    <span className="text-[8px] text-yellow-400/70 font-bold uppercase">Rec</span>
+                                  )}
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -2248,6 +2295,9 @@ const SKIN_TONE_COLORS: Record<string, string> = {
   // Hair colors
   hair_black: '#1a1a1a', hair_brown: '#5C3317', hair_blonde: '#D4A84B',
   hair_auburn: '#922724', hair_neon_blue: '#00BFFF', hair_fuchsia: '#FF00FF',
+  // Eye colors
+  eye_brown: '#634E34', eye_blue: '#2E86C1', eye_green: '#2E8B57',
+  eye_hazel: '#8E7618', eye_amber: '#BF8A30', eye_grey: '#8E9196',
 }
 
 function SkinSwatch({ tone, active, onClick, label }: {
