@@ -782,10 +782,20 @@ export function AvatarViewer({
                   )
                 }
 
-                // ─── 3D View Angle on stage ───
+                // ─── 3D View Angle on stage — with left/right arrow navigation ───
                 if (activeViewAngle && combinedViewPreviews[activeViewAngle]) {
                   const angleUrl = combinedViewPreviews[activeViewAngle]!
                   const angleMeta = VIEW_ANGLE_OPTIONS.find((a) => a.id === activeViewAngle)
+
+                  // Build ordered list of available angles (clockwise orbit order)
+                  const ORBIT_NAV: ViewAngle[] = ['front', 'right_45', 'right', 'back', 'left', 'left_45']
+                  const availableNav = ORBIT_NAV.filter((a) => combinedViewPreviews[a])
+                  const currentNavIdx = availableNav.indexOf(activeViewAngle)
+                  const prevAngle = currentNavIdx > 0 ? availableNav[currentNavIdx - 1] : availableNav[availableNav.length - 1]
+                  const nextAngle = currentNavIdx < availableNav.length - 1 ? availableNav[currentNavIdx + 1] : availableNav[0]
+                  const canNavigate = availableNav.length > 1
+                  const anglePosition = availableNav.indexOf(activeViewAngle) + 1
+
                   return (
                     <div className="relative group h-full animate-fadeSlideIn">
                       <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-teal-500/25 via-transparent to-cyan-500/25 opacity-60 group-hover:opacity-100 transition-opacity" />
@@ -798,10 +808,12 @@ export function AvatarViewer({
                           alt={angleMeta?.label || 'View angle'}
                           className="max-w-full max-h-full object-contain"
                         />
-                        {/* Angle badge */}
+                        {/* Angle badge + position */}
                         <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-teal-500/20 text-[10px] text-teal-200 font-medium">
                           <span>{angleMeta?.icon || '📐'}</span>
                           <span>{angleMeta?.label || activeViewAngle}</span>
+                          <span className="text-white/40">·</span>
+                          <span className="text-white/50">{anglePosition}/{availableNav.length}</span>
                         </div>
                         {/* Back to front button */}
                         <button
@@ -811,6 +823,58 @@ export function AvatarViewer({
                         >
                           <X size={14} />
                         </button>
+
+                        {/* Left/right arrow navigation — cycle through available view angles */}
+                        {canNavigate && (
+                          <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (prevAngle === 'front') setActiveViewAngle(null)
+                                else setActiveViewAngle(prevAngle)
+                              }}
+                              className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 opacity-0 group-hover:opacity-100 hover:!bg-teal-500/30 hover:!text-white hover:!border-teal-400/30 transition-all"
+                              title={`Previous: ${VIEW_ANGLE_OPTIONS.find((a) => a.id === prevAngle)?.label || prevAngle}`}
+                            >
+                              <ChevronLeft size={18} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (nextAngle === 'front') setActiveViewAngle(null)
+                                else setActiveViewAngle(nextAngle)
+                              }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 opacity-0 group-hover:opacity-100 hover:!bg-teal-500/30 hover:!text-white hover:!border-teal-400/30 transition-all"
+                              title={`Next: ${VIEW_ANGLE_OPTIONS.find((a) => a.id === nextAngle)?.label || nextAngle}`}
+                            >
+                              <ChevronRight size={18} />
+                            </button>
+                          </>
+                        )}
+
+                        {/* Angle dot indicators */}
+                        {canNavigate && (
+                          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/50 backdrop-blur-sm border border-white/10">
+                            {availableNav.map((navAngle) => (
+                              <button
+                                key={navAngle}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (navAngle === 'front') setActiveViewAngle(null)
+                                  else setActiveViewAngle(navAngle)
+                                }}
+                                className={[
+                                  'w-2 h-2 rounded-full transition-all',
+                                  navAngle === activeViewAngle
+                                    ? 'bg-teal-400 scale-125'
+                                    : 'bg-white/30 hover:bg-white/50',
+                                ].join(' ')}
+                                title={VIEW_ANGLE_OPTIONS.find((a) => a.id === navAngle)?.label || navAngle}
+                              />
+                            ))}
+                          </div>
+                        )}
+
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                           <Maximize2 size={28} className="text-white/80" />
                         </div>
@@ -820,6 +884,12 @@ export function AvatarViewer({
                 }
 
                 if (showEquipped) {
+                  // Check if any non-front angles exist for arrow navigation
+                  const ORBIT_NAV_EQ: ViewAngle[] = ['front', 'right_45', 'right', 'back', 'left', 'left_45']
+                  const extraAnglesEq = ORBIT_NAV_EQ.filter((a) => a !== 'front' && combinedViewPreviews[a])
+                  const nextFromEq = extraAnglesEq.length > 0 ? extraAnglesEq[0] : null
+                  const prevFromEq = extraAnglesEq.length > 0 ? extraAnglesEq[extraAnglesEq.length - 1] : null
+
                   return (
                     /* ─── Equipped wardrobe item (MMORPG-style) ─── */
                     <div className="relative group h-full animate-fadeSlideIn">
@@ -848,6 +918,47 @@ export function AvatarViewer({
                         >
                           <X size={14} />
                         </button>
+
+                        {/* Arrow navigation to 3D angles — only if angles have been generated */}
+                        {nextFromEq && (
+                          <>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setActiveViewAngle(prevFromEq!) }}
+                              className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 opacity-0 group-hover:opacity-100 hover:!bg-amber-500/30 hover:!text-white hover:!border-amber-400/30 transition-all"
+                              title={`Previous: ${VIEW_ANGLE_OPTIONS.find((a) => a.id === prevFromEq)?.label}`}
+                            >
+                              <ChevronLeft size={18} />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setActiveViewAngle(nextFromEq) }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 opacity-0 group-hover:opacity-100 hover:!bg-amber-500/30 hover:!text-white hover:!border-amber-400/30 transition-all"
+                              title={`Next: ${VIEW_ANGLE_OPTIONS.find((a) => a.id === nextFromEq)?.label}`}
+                            >
+                              <ChevronRight size={18} />
+                            </button>
+
+                            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/50 backdrop-blur-sm border border-white/10">
+                              {ORBIT_NAV_EQ.filter((a) => combinedViewPreviews[a]).map((navAngle) => (
+                                <button
+                                  key={navAngle}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (navAngle === 'front') setActiveViewAngle(null)
+                                    else setActiveViewAngle(navAngle)
+                                  }}
+                                  className={[
+                                    'w-2 h-2 rounded-full transition-all',
+                                    navAngle === 'front'
+                                      ? 'bg-amber-400 scale-125'
+                                      : 'bg-white/30 hover:bg-white/50',
+                                  ].join(' ')}
+                                  title={VIEW_ANGLE_OPTIONS.find((a) => a.id === navAngle)?.label || navAngle}
+                                />
+                              ))}
+                            </div>
+                          </>
+                        )}
+
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                           <Maximize2 size={28} className="text-white/80" />
                         </div>
@@ -869,8 +980,14 @@ export function AvatarViewer({
                 }
 
                 if (outfit.results.length > 0) {
+                  // Check if any non-front angles exist for arrow navigation
+                  const ORBIT_NAV_FRONT: ViewAngle[] = ['front', 'right_45', 'right', 'back', 'left', 'left_45']
+                  const extraAngles = ORBIT_NAV_FRONT.filter((a) => a !== 'front' && combinedViewPreviews[a])
+                  const nextFromFront = extraAngles.length > 0 ? extraAngles[0] : null
+                  const prevFromFront = extraAngles.length > 0 ? extraAngles[extraAngles.length - 1] : null
+
                   return (
-                    /* ─── Latest outfit result (full size) ─── */
+                    /* ─── Latest outfit result (full size) — front view with angle nav ─── */
                     <div className="relative group h-full animate-fadeSlideIn">
                       <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-cyan-500/20 via-transparent to-blue-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
                       <div
@@ -882,7 +999,49 @@ export function AvatarViewer({
                           alt={`Outfit result ${selectedResultIdx + 1}`}
                           className="max-w-full max-h-full object-contain"
                         />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+
+                        {/* Arrow navigation to 3D angles — only if angles have been generated */}
+                        {nextFromFront && (
+                          <>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setActiveViewAngle(prevFromFront!) }}
+                              className="absolute left-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 opacity-0 group-hover:opacity-100 hover:!bg-teal-500/30 hover:!text-white hover:!border-teal-400/30 transition-all"
+                              title={`Previous: ${VIEW_ANGLE_OPTIONS.find((a) => a.id === prevFromFront)?.label}`}
+                            >
+                              <ChevronLeft size={18} />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setActiveViewAngle(nextFromFront) }}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/50 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/60 opacity-0 group-hover:opacity-100 hover:!bg-teal-500/30 hover:!text-white hover:!border-teal-400/30 transition-all"
+                              title={`Next: ${VIEW_ANGLE_OPTIONS.find((a) => a.id === nextFromFront)?.label}`}
+                            >
+                              <ChevronRight size={18} />
+                            </button>
+
+                            {/* Angle dot indicators — front is active (null activeViewAngle) */}
+                            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/50 backdrop-blur-sm border border-white/10">
+                              {ORBIT_NAV_FRONT.filter((a) => combinedViewPreviews[a]).map((navAngle) => (
+                                <button
+                                  key={navAngle}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (navAngle === 'front') setActiveViewAngle(null)
+                                    else setActiveViewAngle(navAngle)
+                                  }}
+                                  className={[
+                                    'w-2 h-2 rounded-full transition-all',
+                                    navAngle === 'front'
+                                      ? 'bg-cyan-400 scale-125'
+                                      : 'bg-white/30 hover:bg-white/50',
+                                  ].join(' ')}
+                                  title={VIEW_ANGLE_OPTIONS.find((a) => a.id === navAngle)?.label || navAngle}
+                                />
+                              ))}
+                            </div>
+                          </>
+                        )}
+
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                           <Maximize2 size={28} className="text-white/80" />
                         </div>
                       </div>
