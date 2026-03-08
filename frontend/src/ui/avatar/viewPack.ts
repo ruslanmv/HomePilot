@@ -55,16 +55,15 @@ function getFramingTokens(framingType?: FramingType): FramingTokens {
 // ---------------------------------------------------------------------------
 
 function buildLeftPrompt(ft: FramingTokens): string {
-  // LEFT profile needs stronger emphasis than RIGHT because SD has a
-  // right-facing bias. skipIdentity=true bypasses InstantID ControlNet
-  // which was extracting front-facing pose from the reference image.
-  // Standing tokens prevent the model from defaulting to sitting/kneeling
-  // after losing the reference image's spatial anchor.
-  return `solo single person, (full left profile view:1.5), (looking to the left:1.5), (facing left:1.4), standing upright, camera positioned directly to the right of the subject, head and body turned 90 degrees to the left, only left side of face visible showing left ear left cheekbone jaw line and nose tip in profile silhouette, left shoulder directly facing camera, left arm visible, right arm hidden behind body, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, standing pose, legs straight, feet on floor, (left side only:1.3), (side view:1.3)`
+  // Simplified to match back prompt's clean camera-position style.
+  // Shorter prompt reduces CLIP token saturation on local GPUs.
+  // Uses camera-position language instead of body-anatomy tokens.
+  return `solo single person, left profile view from directly to the right, camera positioned to the right of the subject, person facing directly to the left, left side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (left profile:1.4), (side view:1.3)`
 }
 
 function buildRightPrompt(ft: FramingTokens): string {
-  return `solo single person, (full right profile view:1.4), standing upright, camera positioned directly to the left of the subject, head and body turned 90 degrees to the right, only right side of face visible showing right ear right cheekbone jaw line and nose tip in profile silhouette, right shoulder directly facing camera, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, standing pose, legs straight, feet on floor, (right profile:1.4), (side view:1.3)`
+  // Simplified to match back prompt's clean camera-position style.
+  return `solo single person, right profile view from directly to the left, camera positioned to the left of the subject, person facing directly to the right, right side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (right profile:1.4), (side view:1.3)`
 }
 
 function buildBackPrompt(ft: FramingTokens): string {
@@ -105,24 +104,24 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'left',
     label: 'Left',
     shortLabel: 'L',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, right side visible, right profile, right ear visible, looking right, facing right, turned right, right shoulder facing camera, back view, rear view, facing forward, head facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side, sitting, kneeling, crouching, lying down, on the floor, on the ground, cross-legged',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, right side visible, back view, rear view, facing forward, double person, two people, split image, multiple views',
     icon: '\u25D0',
     // Use 'reference' mode (img2img) so the front image anchors the generation
-    // to a single person and preserves outfit colors.  Denoise 0.9 lets the
-    // angle text prompt override the front-facing pose while keeping ~10% of
-    // the reference's color/structure signal.
-    denoise: 0.9,
+    // to a single person and preserves outfit colors.  Denoise 0.85 keeps ~15%
+    // of the reference's color/structure signal for better identity anchoring
+    // while the simplified prompt controls the angle with less CLIP saturation.
+    denoise: 0.85,
     generationMode: 'reference',
   },
   {
     id: 'right',
     label: 'Right',
     shortLabel: 'R',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, left side visible, back view, rear view, facing forward, head facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side, sitting, kneeling, crouching, lying down, on the floor, on the ground, cross-legged',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, left side visible, back view, rear view, facing forward, double person, two people, split image, multiple views',
     icon: '\u25D1',
     // Same as left — 'reference' mode preserves colors and prevents
     // dual-person generation that happens with pure text-only mode.
-    denoise: 0.9,
+    denoise: 0.85,
     generationMode: 'reference',
   },
   {
