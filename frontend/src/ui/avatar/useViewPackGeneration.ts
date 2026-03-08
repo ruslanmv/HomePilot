@@ -3,7 +3,7 @@ import type { AvatarResult } from './types'
 import type { FramingType } from './galleryTypes'
 import type { ViewAngle, ViewResultMap, ViewTimestampMap } from './viewPack'
 import type { AvatarSettings } from './types'
-import { buildAnglePrompt, buildIdentityLockSuffix, getViewAngleOption, resolveAngleTuning, sanitiseBasePromptForAngle, VIEW_ANGLE_OPTIONS } from './viewPack'
+import { buildAnglePrompt, buildIdentityLockSuffix, extractVisualDescriptors, getViewAngleOption, resolveAngleTuning, sanitiseBasePromptForAngle, VIEW_ANGLE_OPTIONS } from './viewPack'
 
 export interface GenerateViewParams {
   referenceImageUrl: string
@@ -200,8 +200,14 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     const tunableAngle = params.angle !== 'front' ? params.angle as 'left' | 'right' | 'back' : null
     const angleTuning = tunableAngle ? resolveAngleTuning(tunableAngle, params.avatarSettings) : null
 
+    // Extract concrete visual descriptors (hair color, skin tone, ethnicity)
+    // from the original prompt so CLIP generates the correct appearance at
+    // every angle instead of drifting to the checkpoint's default bias.
+    const visualDescriptors = extractVisualDescriptors(rawBase)
+
     const viewPrompt = [
       buildAnglePrompt(params.angle, params.framingType, params.avatarSettings),
+      visualDescriptors,
       basePrompt,
       buildIdentityLockSuffix(params.framingType),
     ].filter(Boolean).join(', ')

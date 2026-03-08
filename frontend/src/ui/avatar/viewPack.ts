@@ -51,29 +51,66 @@ function getFramingTokens(framingType?: FramingType): FramingTokens {
 }
 
 // ---------------------------------------------------------------------------
-// Angle prompt builders — inject framing-appropriate body range tokens
+// Visual descriptor extraction — pull concrete attributes (hair color, skin
+// tone, ethnicity, eye color) from the base prompt so CLIP knows the actual
+// appearance instead of vague "same hairstyle" that means nothing to it.
+// ---------------------------------------------------------------------------
+
+const VISUAL_DESCRIPTOR_PATTERNS: Array<{ re: RegExp; category: string }> = [
+  // Hair color — match multi-word color + hair
+  { re: /\b(platinum\s+blonde|strawberry\s+blonde|dirty\s+blonde|ash\s+blonde|honey\s+blonde|light\s+brown|dark\s+brown|reddish\s+brown|jet\s+black|dark\s+black|bright\s+red|dark\s+red|silver\s+grey|blue\s+black|black|blonde|brunette|brown|red|auburn|ginger|white|grey|gray|silver|pink|blue|green|purple|copper|chestnut|mahogany|caramel|golden|sandy|strawberry|platinum|raven|ebony)\s+hair\b/i, category: 'hair_color' },
+  // Hair length/style
+  { re: /\b(long|short|medium[- ]length|shoulder[- ]length|waist[- ]length|pixie|bob|curly|wavy|straight|braided|ponytail|twin[- ]tails?|bun|updo|bangs|fringe)\s+hair\b/i, category: 'hair_style' },
+  // Standalone hair descriptors (e.g. "with long flowing hair")
+  { re: /\bhair\s+(flowing|cascading|tied|pulled\s+back)/i, category: 'hair_style' },
+  // Ethnicity / race
+  { re: /\b(asian|east\s+asian|southeast\s+asian|korean|japanese|chinese|vietnamese|thai|filipina?|indian|south\s+asian|middle\s+eastern|arab|persian|african|black|caucasian|white|european|latina?o?|hispanic|mixed[- ]race|biracial)\b/i, category: 'ethnicity' },
+  // Skin tone
+  { re: /\b(pale|fair|light|olive|tan|tanned|dark|brown|ebony|porcelain|ivory|warm|cool|golden|bronze[d]?)\s+skin(?:\s+tone)?\b/i, category: 'skin' },
+  // Eye color
+  { re: /\b(blue|green|brown|hazel|amber|grey|gray|dark|light|black)\s+eyes\b/i, category: 'eyes' },
+]
+
+/**
+ * Extract concrete visual descriptors from a prompt string.
+ * Returns a short string like "dark black hair, Asian, pale skin" that can
+ * be prepended to angle prompts so CLIP generates the correct appearance.
+ */
+export function extractVisualDescriptors(prompt: string): string {
+  const found: Map<string, string> = new Map()
+  for (const { re, category } of VISUAL_DESCRIPTOR_PATTERNS) {
+    if (found.has(category)) continue  // first match wins per category
+    const m = prompt.match(re)
+    if (m) found.set(category, m[0].trim())
+  }
+  return Array.from(found.values()).join(', ')
+}
+
+// ---------------------------------------------------------------------------
+// Angle prompt builders — concise directives that leave CLIP budget for the
+// visual descriptors and outfit tokens from the base prompt.
 // ---------------------------------------------------------------------------
 
 function buildLeftPrompt(ft: FramingTokens, w: number): string {
-  return `solo single person, left profile view from directly to the right, camera positioned to the right of the subject, person facing directly to the left, left side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (left profile:${w.toFixed(1)}), (side view:1.3)`
+  return `(left profile view:${w.toFixed(1)}), (side view:1.3), facing left, ${ft.bodyRange}, solo, consistent lighting`
 }
 
 function buildRightPrompt(ft: FramingTokens, w: number): string {
-  return `solo single person, (right profile view:${w.toFixed(1)}), (facing right:${w.toFixed(1)}), camera positioned to the left of the subject, person facing directly to the right, right side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (right profile:${w.toFixed(1)}), (side view:1.3)`
+  return `(right profile view:${w.toFixed(1)}), (side view:1.3), facing right, ${ft.bodyRange}, solo, consistent lighting`
 }
 
 function buildBackPrompt(ft: FramingTokens, w: number): string {
-  return `solo single person, rear view from directly behind, camera positioned behind the subject, person facing completely away from camera, back of head visible showing hair from behind, back of body visible ${ft.bodyRange} showing shoulders and upper back and lower back from behind, outfit visible from behind showing the rear design of the garment, spine centered in frame, no face visible at all, body visible ${ft.bodyRange}, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (rear view:${w.toFixed(1)}), (from behind:1.3)`
+  return `(rear view:${w.toFixed(1)}), (from behind:1.3), facing away from camera, back of head visible, no face visible, ${ft.bodyRange}, solo, consistent lighting`
 }
 
 function buildFrontPrompt(ft: FramingTokens): string {
-  return `front view, facing the camera directly, centered composition, standing naturally, body visible ${ft.bodyRange}, same person, same outfit, same hairstyle, same body proportions`
+  return `front view, facing camera, ${ft.bodyRange}, solo`
 }
 
-/** Build the identity-lock suffix with framing-appropriate body range. */
+/** Build the identity-lock suffix — concise to save CLIP budget. */
 export function buildIdentityLockSuffix(framingType?: FramingType): string {
   const ft = getFramingTokens(framingType)
-  return `fixed camera distance, preserve exact outfit including coverage level and skin exposure and garment fit, preserve exact hairstyle and accessories, same body shape and proportions, body framing ${ft.bodyRange}`
+  return `same outfit, same hairstyle, same body proportions, ${ft.bodyRange}`
 }
 
 /** Build the angle-specific positive prompt, adapted to the framing type.
@@ -102,24 +139,23 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'left',
     label: 'Left',
     shortLabel: 'L',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, right side visible, back view, rear view, facing forward, double person, two people, split image, multiple views',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, back view, rear view, double person, two people, split image, multiple views',
     icon: '\u25D0',
-    // Use 'reference' mode (img2img) so the front image anchors the generation
-    // to a single person and preserves outfit colors.  Denoise 0.85 keeps ~15%
-    // of the reference's color/structure signal for better identity anchoring
-    // while the simplified prompt controls the angle with less CLIP saturation.
-    denoise: 0.85,
+    // Use 'reference' mode (img2img) so the front image anchors the generation.
+    // Denoise 0.78 keeps ~22% of the reference latent — enough to preserve
+    // hair color, skin tone, and outfit colors while still allowing rotation.
+    denoise: 0.78,
     generationMode: 'reference',
   },
   {
     id: 'right',
     label: 'Right',
     shortLabel: 'R',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, left side visible, facing left, looking left, turned left, left profile, back view, rear view, facing forward, double person, two people, split image, multiple views',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, back view, rear view, double person, two people, split image, multiple views',
     icon: '\u25D1',
-    // Same as left — 'reference' mode preserves colors and prevents
-    // dual-person generation that happens with pure text-only mode.
-    denoise: 0.85,
+    // Same as left — 'reference' mode at 0.78 denoise preserves colors
+    // while the simplified prompt focuses CLIP on angle rotation.
+    denoise: 0.78,
     generationMode: 'reference',
   },
   {
@@ -150,8 +186,8 @@ type TunableAngle = 'left' | 'right' | 'back'
 
 /** Built-in defaults — these are the values used when no user override exists. */
 export const ANGLE_TUNING_DEFAULTS: Record<TunableAngle, AngleTuning> = {
-  left:  { denoise: 0.85, promptWeight: 1.4 },
-  right: { denoise: 0.85, promptWeight: 1.5 },
+  left:  { denoise: 0.78, promptWeight: 1.4 },
+  right: { denoise: 0.78, promptWeight: 1.5 },
   back:  { denoise: 0.90, promptWeight: 1.4 },
 }
 
