@@ -143,6 +143,33 @@ export function AvatarOrbitViewer({
     }
   }, [currentUrl, onOpenLightbox])
 
+  // Keyboard arrow left/right navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!hasEnoughAngles) return
+      let step = 0
+      if (e.key === 'ArrowRight') step = 1   // clockwise
+      else if (e.key === 'ArrowLeft') step = -1 // counter-clockwise
+      else return
+
+      e.preventDefault()
+      const rawIdx = currentIndex + step
+      const snapped = snapToNearest(rawIdx)
+
+      if (snapped !== currentIndex) {
+        setPrevIndex(currentIndex)
+        setCurrentIndex(snapped)
+        setFading(true)
+        clearTimeout(fadeTimer.current)
+        fadeTimer.current = setTimeout(() => setFading(false), CROSSFADE_MS)
+        onAngleChange(ORBIT_ORDER[snapped])
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [hasEnoughAngles, currentIndex, snapToNearest, onAngleChange])
+
   // Cleanup
   useEffect(() => {
     return () => clearTimeout(fadeTimer.current)
@@ -202,7 +229,7 @@ export function AvatarOrbitViewer({
         {/* Drag hint — only if not actively dragging */}
         {hasEnoughAngles && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 backdrop-blur-sm border border-white/10 text-[10px] text-white/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-            <span>← drag to rotate →</span>
+            <span>← → arrow keys or drag to rotate</span>
           </div>
         )}
 

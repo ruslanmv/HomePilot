@@ -193,10 +193,15 @@ export function AvatarViewer({
   const [equippedItem, setEquippedItem] = useState<GalleryItem | null>(null)
 
   // View Pack — multi-angle generation state
-  // Single cache per character (shared across anchor + all outfits)
-  const viewCacheKey = item.parentId || item.id
-  const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey)
+  // Each "front photo" gets its own 3D pack (anchor, each outfit, equipped item)
   const [viewSource, setViewSource] = useState<ViewSource>('anchor')
+  const viewCacheKey = useMemo(() => {
+    const charId = item.parentId || item.id
+    if (viewSource === 'equipped' && equippedItem) return `${charId}_eq_${equippedItem.id}`
+    if (viewSource === 'latest' && outfit.results[selectedResultIdx]) return `${charId}_out_${selectedResultIdx}`
+    return `${charId}_anchor`
+  }, [item.parentId, item.id, viewSource, equippedItem, selectedResultIdx, outfit.results])
+  const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey)
   const [showViewPack, setShowViewPack] = useState(false)
   const [activeViewAngle, setActiveViewAngle] = useState<ViewAngle | null>(null)
   const [orbitMode, setOrbitMode] = useState(false)
@@ -208,6 +213,7 @@ export function AvatarViewer({
       setSelectedResultIdx(0)
       setEquippedItem(null) // new generation overrides equipped
       setActiveViewAngle(null) // clear any viewed angle
+      setViewSource('latest')
     }
   }, [outfit.results])
 
@@ -254,12 +260,14 @@ export function AvatarViewer({
     setEquippedItem(wardrobeItem)
     setStageTab('outfit')
     setActiveViewAngle(null)
+    setViewSource('equipped')
   }, [])
 
   const handleUnequip = useCallback(() => {
     setEquippedItem(null)
     setStageTab('anchor')
     setActiveViewAngle(null)
+    setViewSource('anchor')
   }, [])
 
   const heroUrl = resolveUrl(item.url, backendUrl)
@@ -691,7 +699,7 @@ export function AvatarViewer({
               {/* Toggle tabs: Anchor Face ↔ Latest Outfit */}
               <div className="flex items-center p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
                 <button
-                  onClick={() => { setStageTab('anchor'); setActiveViewAngle(null) }}
+                  onClick={() => { setStageTab('anchor'); setActiveViewAngle(null); setViewSource('anchor') }}
                   className={[
                     'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all',
                     stageTab === 'anchor'
