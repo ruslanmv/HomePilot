@@ -1,4 +1,4 @@
-import type { AvatarResult } from './types'
+import type { AvatarResult, AvatarSettings } from './types'
 import type { FramingType } from './galleryTypes'
 
 export type ViewAngle = 'front' | 'left' | 'right' | 'back'
@@ -54,20 +54,16 @@ function getFramingTokens(framingType?: FramingType): FramingTokens {
 // Angle prompt builders — inject framing-appropriate body range tokens
 // ---------------------------------------------------------------------------
 
-function buildLeftPrompt(ft: FramingTokens): string {
-  // Simplified to match back prompt's clean camera-position style.
-  // Shorter prompt reduces CLIP token saturation on local GPUs.
-  // Uses camera-position language instead of body-anatomy tokens.
-  return `solo single person, left profile view from directly to the right, camera positioned to the right of the subject, person facing directly to the left, left side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (left profile:1.4), (side view:1.3)`
+function buildLeftPrompt(ft: FramingTokens, w: number): string {
+  return `solo single person, left profile view from directly to the right, camera positioned to the right of the subject, person facing directly to the left, left side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (left profile:${w.toFixed(1)}), (side view:1.3)`
 }
 
-function buildRightPrompt(ft: FramingTokens): string {
-  // Simplified to match back prompt's clean camera-position style.
-  return `solo single person, (right profile view:1.5), (facing right:1.5), camera positioned to the left of the subject, person facing directly to the right, right side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (right profile:1.5), (side view:1.3)`
+function buildRightPrompt(ft: FramingTokens, w: number): string {
+  return `solo single person, (right profile view:${w.toFixed(1)}), (facing right:${w.toFixed(1)}), camera positioned to the left of the subject, person facing directly to the right, right side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (right profile:${w.toFixed(1)}), (side view:1.3)`
 }
 
-function buildBackPrompt(ft: FramingTokens): string {
-  return `solo single person, rear view from directly behind, camera positioned behind the subject, person facing completely away from camera, back of head visible showing hair from behind, back of body visible ${ft.bodyRange} showing shoulders and upper back and lower back from behind, outfit visible from behind showing the rear design of the garment, spine centered in frame, no face visible at all, body visible ${ft.bodyRange}, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (rear view:1.4), (from behind:1.3)`
+function buildBackPrompt(ft: FramingTokens, w: number): string {
+  return `solo single person, rear view from directly behind, camera positioned behind the subject, person facing completely away from camera, back of head visible showing hair from behind, back of body visible ${ft.bodyRange} showing shoulders and upper back and lower back from behind, outfit visible from behind showing the rear design of the garment, spine centered in frame, no face visible at all, body visible ${ft.bodyRange}, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (rear view:${w.toFixed(1)}), (from behind:1.3)`
 }
 
 function buildFrontPrompt(ft: FramingTokens): string {
@@ -80,14 +76,16 @@ export function buildIdentityLockSuffix(framingType?: FramingType): string {
   return `fixed camera distance, preserve exact outfit including coverage level and skin exposure and garment fit, preserve exact hairstyle and accessories, same body shape and proportions, body framing ${ft.bodyRange}`
 }
 
-/** Build the angle-specific positive prompt, adapted to the framing type. */
-export function buildAnglePrompt(angle: ViewAngle, framingType?: FramingType): string {
+/** Build the angle-specific positive prompt, adapted to the framing type.
+ *  When `settings` is provided, per-angle prompt weights from viewAngleTuning
+ *  override the built-in defaults. */
+export function buildAnglePrompt(angle: ViewAngle, framingType?: FramingType, settings?: AvatarSettings): string {
   const ft = getFramingTokens(framingType)
   switch (angle) {
     case 'front': return buildFrontPrompt(ft)
-    case 'left':  return buildLeftPrompt(ft)
-    case 'right': return buildRightPrompt(ft)
-    case 'back':  return buildBackPrompt(ft)
+    case 'left':  return buildLeftPrompt(ft, resolveAngleTuning('left', settings).promptWeight)
+    case 'right': return buildRightPrompt(ft, resolveAngleTuning('right', settings).promptWeight)
+    case 'back':  return buildBackPrompt(ft, resolveAngleTuning('back', settings).promptWeight)
   }
 }
 
@@ -138,6 +136,38 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     generationMode: 'reference',
   },
 ]
+
+// ---------------------------------------------------------------------------
+// Per-angle tuning defaults & resolver
+// ---------------------------------------------------------------------------
+
+export interface AngleTuning {
+  denoise: number
+  promptWeight: number
+}
+
+type TunableAngle = 'left' | 'right' | 'back'
+
+/** Built-in defaults — these are the values used when no user override exists. */
+export const ANGLE_TUNING_DEFAULTS: Record<TunableAngle, AngleTuning> = {
+  left:  { denoise: 0.85, promptWeight: 1.4 },
+  right: { denoise: 0.85, promptWeight: 1.5 },
+  back:  { denoise: 0.90, promptWeight: 1.4 },
+}
+
+/** Resolve effective tuning for an angle, merging user overrides with defaults. */
+export function resolveAngleTuning(
+  angle: TunableAngle,
+  settings?: AvatarSettings,
+): AngleTuning {
+  const defaults = ANGLE_TUNING_DEFAULTS[angle]
+  const overrides = settings?.viewAngleTuning?.[angle]
+  if (!overrides) return defaults
+  return {
+    denoise: overrides.denoise ?? defaults.denoise,
+    promptWeight: overrides.promptWeight ?? defaults.promptWeight,
+  }
+}
 
 export type ViewResultMap = Partial<Record<ViewAngle, AvatarResult>>
 export type ViewPreviewMap = Partial<Record<ViewAngle, string>>

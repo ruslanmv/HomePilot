@@ -598,6 +598,7 @@ export function AvatarViewer({
         basePrompt: currentViewBasePrompt,
         checkpointOverride: checkpoint,
         framingType: item.framingType || 'half_body',
+        avatarSettings: avatarSettingsState,
       })
       // Show the newly generated angle on the stage
       if (angle !== 'front') {
@@ -614,6 +615,7 @@ export function AvatarViewer({
     currentViewBasePrompt,
     checkpoint,
     item.framingType,
+    avatarSettingsState,
   ])
 
   const handleGenerateMissingViews = useCallback(async () => {
@@ -630,6 +632,7 @@ export function AvatarViewer({
           basePrompt: currentViewBasePrompt,
           checkpointOverride: checkpoint,
           framingType: item.framingType || 'half_body',
+          avatarSettings: avatarSettingsState,
         })
         // Update stage to show each angle as it completes
         setActiveViewAngle(angle)
@@ -638,7 +641,7 @@ export function AvatarViewer({
         // continue with next angle
       }
     }
-  }, [combinedViewPreviews, viewPack, currentViewReferenceUrl, currentViewCharacterPrompt, currentViewBasePrompt, checkpoint, item.framingType])
+  }, [combinedViewPreviews, viewPack, currentViewReferenceUrl, currentViewCharacterPrompt, currentViewBasePrompt, checkpoint, item.framingType, avatarSettingsState])
 
   const handleOpenGeneratedView = useCallback((angle: ViewAngle) => {
     const url = combinedViewPreviews[angle]

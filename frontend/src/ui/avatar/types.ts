@@ -102,6 +102,13 @@ export interface AvatarSettings {
   /** Start in 360° orbit mode by default instead of static view.
    *  Default true — orbit mode lets users drag/arrow through angles. */
   orbit360Default?: boolean
+  /** Per-angle tuning overrides for view pack generation.
+   *  Undefined fields fall back to the built-in defaults in viewPack.ts. */
+  viewAngleTuning?: {
+    left?:  { denoise?: number; promptWeight?: number }
+    right?: { denoise?: number; promptWeight?: number }
+    back?:  { denoise?: number; promptWeight?: number }
+  }
 }
 
 export interface AvatarPackInfo {

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AvatarResult } from './types'
 import type { FramingType } from './galleryTypes'
 import type { ViewAngle, ViewResultMap, ViewTimestampMap } from './viewPack'
-import { buildAnglePrompt, buildIdentityLockSuffix, getViewAngleOption, sanitiseBasePromptForAngle, VIEW_ANGLE_OPTIONS } from './viewPack'
+import type { AvatarSettings } from './types'
+import { buildAnglePrompt, buildIdentityLockSuffix, getViewAngleOption, resolveAngleTuning, sanitiseBasePromptForAngle, VIEW_ANGLE_OPTIONS } from './viewPack'
 
 export interface GenerateViewParams {
   referenceImageUrl: string
@@ -13,6 +14,8 @@ export interface GenerateViewParams {
   seed?: number
   /** Framing type from the front view — angles will match this composition. */
   framingType?: FramingType
+  /** Avatar settings — used to read per-angle tuning overrides (denoise, promptWeight). */
+  avatarSettings?: AvatarSettings
 }
 
 interface OutfitGenerateResult {
@@ -142,8 +145,12 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     // framing type (half_body / mid_body / headshot) so the body range
     // matches across all angles — e.g. "head to waist" instead of
     // hardcoded "head to thighs".
+    // Resolve per-angle tuning (denoise, promptWeight) from user settings or defaults
+    const tunableAngle = params.angle !== 'front' ? params.angle as 'left' | 'right' | 'back' : null
+    const angleTuning = tunableAngle ? resolveAngleTuning(tunableAngle, params.avatarSettings) : null
+
     const viewPrompt = [
-      buildAnglePrompt(params.angle, params.framingType),
+      buildAnglePrompt(params.angle, params.framingType, params.avatarSettings),
       basePrompt,
       buildIdentityLockSuffix(params.framingType),
     ].filter(Boolean).join(', ')
@@ -178,9 +185,8 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
           generation_mode: angleMeta.generationMode || 'identity',
           checkpoint_override: params.checkpointOverride,
           seed: params.seed,
-          // Non-front angles use denoise 1.0 so the text prompt fully controls
-          // the pose/angle instead of the reference image's spatial layout.
-          denoise_override: angleMeta.denoise,
+          // Denoise: user-tuned value (from settings) or built-in default.
+          denoise_override: angleTuning?.denoise ?? angleMeta.denoise,
         }),
       })
 
