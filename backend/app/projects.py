@@ -531,6 +531,9 @@ def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
                 "default": is_default,
             })
 
+    # Track outfits that have view packs for angle-aware instructions
+    _outfits_with_views: list[dict] = []
+
     for outfit in (pap.get("outfits") or []):
         o_label = outfit.get("label", "Outfit")
         o_desc = outfit.get("outfit_prompt", o_label)
@@ -555,6 +558,25 @@ def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
                 "url": full_url,
                 "default": is_default,
             })
+
+        # Register view_pack angle labels so [show:Lingerie Back] etc. work
+        view_pack = outfit.get("view_pack")
+        if isinstance(view_pack, dict):
+            _vp_angles = []
+            for angle in ("front", "left", "right", "back"):
+                vp_url = view_pack.get(angle, "")
+                if not vp_url:
+                    continue
+                full_vp_url = _abs_img_url(vp_url)
+                if not _file_url_exists(full_vp_url):
+                    continue
+                _vp_angles.append(angle)
+            if _vp_angles:
+                _outfits_with_views.append({
+                    "label": o_label,
+                    "equipped": bool(outfit.get("equipped")),
+                    "angles": _vp_angles,
+                })
 
     if not default_photo_url and photo_catalog:
         default_photo_url = photo_catalog[0]["url"]
@@ -679,6 +701,31 @@ IMPORTANT:
 - When showing multiple photos, just put [show:...] tags back to back. No numbering.
 - NEVER describe generating a photo. You HAVE real photos.
 - ALWAYS include a [show:Label] tag when the conversation is about photos. Text alone = no image.
+"""
+
+    # Add angle-view instructions if any outfits have view packs
+    if _outfits_with_views:
+        _view_lines: list[str] = []
+        for ov in _outfits_with_views:
+            _eq = " ← currently wearing" if ov["equipped"] else ""
+            _angles_str = ", ".join(a.title() for a in ov["angles"])
+            _tags_str = " ".join(f'[show:{ov["label"]} {a.title()}]' for a in ov["angles"])
+            _view_lines.append(f'  {ov["label"]}{_eq}: {_angles_str} → {_tags_str}')
+        _view_block = "\n".join(_view_lines)
+        hint += f"""
+OUTFIT ANGLE VIEWS — you can show your outfit from different angles:
+{_view_block}
+
+HOW TO SHOW ANGLES:
+- "Show me your back" → [show:OUTFIT_LABEL Back]
+- "Turn around" → show the Back view of your current outfit
+- "Show me your side" → show Left or Right view
+- "Turn slowly" / "Show all angles" → show all available views in sequence
+- Narrate naturally: "Let me turn around for you." then show the back view.
+- If a requested angle doesn't exist, say: "I don't have a back view of this outfit yet."
+"""
+
+    hint += """
 
 CONVERSATION STYLE:
 - Talk like a real person. Be concise and natural.
@@ -996,8 +1043,129 @@ You have access to the project's context. When relevant context from the knowled
 
         _photo_hint = None
 
+        # Intent: angle view request ("show me your back", "turn around", "from the side")
+        _ANGLE_PATTERNS = {
+            "back": r'\b(?:back|behind|rear|turn\s*around)\b',
+            "left": r'\b(?:left\s*side|left\s*profile|from\s*(?:the\s*)?left)\b',
+            "right": r'\b(?:right\s*side|right\s*profile|from\s*(?:the\s*)?right)\b',
+            "front": r'\b(?:front|facing|face\s*me)\b',
+        }
+        _angle_match = None
+        for _ang, _pat in _ANGLE_PATTERNS.items():
+            if _hint_re.search(_pat, _user_msg):
+                _angle_match = _ang
+                break
+        # Also detect generic side/profile requests
+        if not _angle_match and _hint_re.search(r'\b(?:side|profile)\b', _user_msg):
+            _angle_match = "left"
+        # Detect "turn slowly" / "all angles" / "rotate"
+        _all_angles_match = _hint_re.search(r'\b(?:turn\s*slowly|all\s*angles?|rotate|spin|every\s*angle)\b', _user_msg)
+
+        # Build outfit data from persona_appearance for angle resolution
+        _outfits_with_views: list[dict] = []
+        _all_outfits: list[dict] = []
+        try:
+            _pap = (project_data or {}).get("persona_appearance") or {}
+            for _outfit in _pap.get("outfits") or []:
+                _o_label = _outfit.get("label", "Outfit")
+                _o_equipped = bool(_outfit.get("equipped"))
+                _vp = _outfit.get("view_pack")
+                _angles = []
+                if isinstance(_vp, dict):
+                    _angles = [a for a in ("front", "left", "right", "back") if _vp.get(a)]
+                _all_outfits.append({
+                    "label": _o_label,
+                    "equipped": _o_equipped,
+                    "angles": _angles,
+                })
+                if _angles:
+                    _outfits_with_views.append({
+                        "label": _o_label,
+                        "equipped": _o_equipped,
+                        "angles": _angles,
+                    })
+        except Exception:
+            pass
+
+        # Resolve the target outfit for angle requests:
+        # Priority: 1) outfit name in message, 2) last shown in conversation,
+        # 3) equipped outfit, 4) first outfit
+        _target_ov = None
+        if _angle_match or _all_angles_match:
+            # 1) Check if user mentioned an outfit name
+            for _ov in (_outfits_with_views or _all_outfits):
+                if _ov["label"].lower() in _user_msg:
+                    _target_ov = _ov
+                    break
+
+            # 2) Check conversation history for last shown outfit
+            if not _target_ov:
+                try:
+                    _conv_id = payload.get("conversation_id")
+                    if _conv_id:
+                        from .storage import get_recent as _get_recent_hist
+                        _hist = _get_recent_hist(_conv_id, limit=6)
+                        _labels_map = {ov["label"].lower(): ov for ov in (_outfits_with_views or _all_outfits)}
+                        for _role, _content in reversed(_hist):
+                            if _role == "assistant" and _content:
+                                _cl = _content.lower()
+                                for _lbl, _ov in _labels_map.items():
+                                    if _lbl in _cl:
+                                        _target_ov = _ov
+                                        break
+                            if _target_ov:
+                                break
+                except Exception:
+                    pass
+
+            # 3) Equipped outfit
+            if not _target_ov:
+                _target_ov = next((o for o in (_outfits_with_views or _all_outfits) if o["equipped"]), None)
+
+            # 4) First outfit
+            if not _target_ov and (_outfits_with_views or _all_outfits):
+                _target_ov = (_outfits_with_views or _all_outfits)[0]
+
+        if _all_angles_match and _target_ov and _target_ov.get("angles"):
+            _angle_tags = " ".join(f'[show:{_target_ov["label"]} {a.title()}]' for a in _target_ov["angles"])
+            _photo_hint = (
+                f'[SYSTEM HINT] The user wants to see ALL angles of your {_target_ov["label"]} outfit. '
+                f'Narrate turning, then show all views: {_angle_tags}'
+            )
+        elif _angle_match and _target_ov and _target_ov.get("angles"):
+            if _angle_match in _target_ov["angles"]:
+                _tag = f'[show:{_target_ov["label"]} {_angle_match.title()}]'
+                _photo_hint = (
+                    f'[SYSTEM HINT] The user wants the {_angle_match} view of your {_target_ov["label"]} outfit. '
+                    f'Narrate naturally (e.g. "Let me turn around for you."), then use this exact tag: {_tag}'
+                )
+            else:
+                _avail = ", ".join(_target_ov["angles"])
+                _photo_hint = (
+                    f'[SYSTEM HINT] The user wants the {_angle_match} view of {_target_ov["label"]} but that angle is not available. '
+                    f'Available views: {_avail}. '
+                    f'Tell them you don\'t have that angle yet and offer to show what you have.'
+                )
+        elif _angle_match and _target_ov:
+            # Outfit exists but has no view_pack angles — show the outfit's static image
+            _photo_hint = (
+                f'[SYSTEM HINT] The user wants the {_angle_match} view of your {_target_ov["label"]} outfit. '
+                f'You don\'t have multi-angle photos for this outfit yet. '
+                f'Show your current look with [show:{_target_ov["label"]}] and mention you only have the front view for now.'
+            )
+        elif _angle_match:
+            # No outfits at all — fallback to default
+            _photo_hint = (
+                f'[SYSTEM HINT] The user wants the {_angle_match} view. You do not have multi-angle photos yet, '
+                f'but you can still show your current look. Narrate naturally and include [show:Default Look] '
+                f'so the user sees your photo.'
+            )
+
         # Intent: counting / inventory question ("how many", "what do you have")
-        if _hint_re.search(r'(?:what|which|how many|tell me|describe|explain|list|do you have)\b.*(?:have|got|inventory|wardrobe|collection|photo|picture|outfit|more)', _user_msg) or \
+        # Only check these if no angle hint was already set above
+        if _photo_hint:
+            pass  # angle/view hint already assigned — skip generic patterns
+        elif _hint_re.search(r'(?:what|which|how many|tell me|describe|explain|list|do you have)\b.*(?:have|got|inventory|wardrobe|collection|photo|picture|outfit|more)', _user_msg) or \
            _hint_re.search(r'\bhow many\b', _user_msg):
             _photo_hint = (
                 f"[SYSTEM HINT] The user is asking about your inventory. "
@@ -1080,6 +1248,27 @@ You have access to the project's context. When relevant context from the knowled
                         seen.add(url)
                 if resolved:
                     text_media = {"images": resolved}
+                    # If any resolved label is an angle view, attach view_pack metadata
+                    # so the frontend can render angle chips for interactive preview.
+                    for lbl in show_labels:
+                        lbl = lbl.strip()
+                        # Check if this is an angle label like "Lingerie Back"
+                        _angle_suffixes = {"Front": "front", "Left": "left", "Right": "right", "Back": "back"}
+                        for _suffix, _ang in _angle_suffixes.items():
+                            if lbl.endswith(f" {_suffix}"):
+                                _outfit_label = lbl[:-len(f" {_suffix}")]
+                                # Look up all angles for this outfit
+                                _vp: dict[str, str] = {}
+                                for _a_name, _a_key in _angle_suffixes.items():
+                                    _a_url = _lookup_label(idx, f"{_outfit_label} {_a_name}")
+                                    if _a_url:
+                                        _vp[_a_key] = _a_url
+                                if _vp:
+                                    text_media["view_pack"] = _vp
+                                    text_media["active_angle"] = _ang
+                                    text_media["available_views"] = list(_vp.keys())
+                                    text_media["interactive_preview"] = True
+                                break
             except Exception:
                 pass
             # Strip [show:...] tags from display text

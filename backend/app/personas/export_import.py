@@ -698,6 +698,10 @@ def export_persona_project(
             # (created by Avatar Studio → Save as Persona flow)
             for img in (outfit.get("images") or []):
                 add_asset_by_url(img.get("url"))
+            # Strategy 3b: view pack angle images
+            for _angle, _vp_path in (outfit.get("view_pack") or {}).items():
+                add_asset_by_url(_vp_path)
+                add_asset_by_relpath(_vp_path)
 
         # Strategy 4: main avatar images from sets[].images[].url
         # (Avatar Studio stores images as full URLs, not committed filenames)
@@ -935,6 +939,46 @@ def import_persona_package(
             updated["persona_appearance"]["sets"] = []
             # Also clear `selected` ref that pointed into the old sets
             updated["persona_appearance"].pop("selected", None)
+
+        # Remap outfit view_pack and image paths to the new project location.
+        def _remap_rel_asset(val: Optional[str]) -> Optional[str]:
+            """Remap a relative asset path to the new project's appearance dir."""
+            if not isinstance(val, str) or not val.strip():
+                return val
+            bn = _safe_basename(val)
+            candidate = appearance_dir / bn
+            if candidate.exists():
+                return str(candidate.relative_to(upload_root))
+            return val
+
+        _remapped_outfits = []
+        _changed_outfits = False
+        for outfit in (persona_appearance.get("outfits") or []):
+            o = dict(outfit)
+            # Remap view_pack angle paths
+            vp = dict(o.get("view_pack") or {})
+            if vp:
+                new_vp = {}
+                for angle, val in vp.items():
+                    new_v = _remap_rel_asset(val)
+                    new_vp[angle] = new_v
+                    _changed_outfits = _changed_outfits or (new_v != val)
+                o["view_pack"] = new_vp
+            # Remap individual image URLs
+            imgs = []
+            for img in (o.get("images") or []):
+                ii = dict(img)
+                if ii.get("url"):
+                    new_url = _remap_rel_asset(ii["url"])
+                    _changed_outfits = _changed_outfits or (new_url != ii.get("url"))
+                    ii["url"] = new_url
+                imgs.append(ii)
+            if imgs:
+                o["images"] = imgs
+            _remapped_outfits.append(o)
+        if _changed_outfits:
+            updated.setdefault("persona_appearance", dict(persona_appearance))
+            updated["persona_appearance"]["outfits"] = _remapped_outfits
 
         # Auto-seed avatar_settings so imported personas can generate
         # outfit variations immediately — the frontend gates outfit
