@@ -124,26 +124,30 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
 
     // ── Prompt architecture ─────────────────────────────────────────────
     // The backend concatenates:  outfit_prompt + character_prompt(stripped) + quality suffix
-    // It strips clothing/garment tokens FROM character_prompt to prevent outfit competition.
     //
-    // Therefore we MUST send:
-    //   outfit_prompt   = outfit description (survives fully, placed first for max influence)
-    //   character_prompt = angle/pose direction + identity cues (no outfit words → stripping is harmless)
+    // CLIP gives highest attention weight to the FIRST tokens in the prompt.
+    // For angle generation, the pose directive must lead — otherwise outfit
+    // tokens drown out the rotation instruction and the model defaults to
+    // a front-facing composition.
     //
-    // Sending them backwards would cause the backend to strip "lingerie", "dress", etc.
-    // from the outfit description, destroying the clothing generation.
+    // We put everything into outfit_prompt (angle first, then outfit desc)
+    // and OMIT character_prompt entirely.  Reasons:
+    //   1. Angle directive leads → maximum CLIP attention on pose
+    //   2. Outfit desc follows → still gets strong weight, never stripped
+    //   3. No character_prompt → no risk of outfit tokens being doubled
+    //      (the backend's _strip_outfit_tokens would remove clothing words
+    //       like "lingerie", "dress", etc. if they appeared there)
+    //   4. Identity is preserved via the reference image + InstantID ControlNet,
+    //      not via text tokens — so we don't need text-based identity cues
     // ────────────────────────────────────────────────────────────────────
 
-    // outfit_prompt: the actual outfit/clothing description — must go here so the backend
-    // places it first and does NOT strip clothing tokens from it.
-    const outfitPrompt = outfitDesc
-
-    // character_prompt: angle direction + identity preservation.
-    // No outfit/clothing words here — safe from the backend's stripping.
-    const characterPrompt = [
+    // outfit_prompt: angle directive FIRST (for CLIP priority), then outfit description.
+    // The backend places this first and never strips it.
+    const outfitPrompt = [
       angleMeta.prompt,
-      'same person, same face, same body proportions, same hairstyle, full body visible head to knees',
-    ].filter(Boolean).join(', ')
+      outfitDesc,
+      'full body visible head to knees',
+    ].join(', ')
 
     // Negative prompt: only angle-specific negatives.
     // The backend already prepends its own baseline negatives (lowres, blurry, bad anatomy, etc.)
@@ -160,7 +164,6 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
         body: JSON.stringify({
           reference_image_url: params.referenceImageUrl,
           outfit_prompt: outfitPrompt,
-          character_prompt: characterPrompt,
           negative_prompt: negativePrompt || undefined,
           count: 1,
           generation_mode: angleMeta.skipIdentity ? 'standard' : 'identity',
