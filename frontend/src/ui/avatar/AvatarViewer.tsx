@@ -740,8 +740,8 @@ export function AvatarViewer({
                 const equippedUrl = showEquipped ? resolveUrl(equippedItem!.url, backendUrl) : ''
                 const equippedTagMeta = showEquipped ? getTagMeta(equippedItem!.scenarioTag) : undefined
 
-                // ─── 360° Orbit Viewer ───
-                if (orbitMode) {
+                // ─── 360° Orbit Viewer (only when 360° is enabled in settings) ───
+                if (orbitMode && (avatarSettingsState.orbit360Default ?? true)) {
                   return (
                     <AvatarOrbitViewer
                       previews={combinedViewPreviews}
@@ -898,8 +898,8 @@ export function AvatarViewer({
                 )
               })()}
 
-              {/* ──────── Quick Views — overlay inside the stage image (hidden in orbit mode) ──────── */}
-              {!orbitMode && (
+              {/* ──────── Quick Views — overlay inside the stage image (hidden in orbit mode or when 360° disabled) ──────── */}
+              {!orbitMode && (avatarSettingsState.orbit360Default ?? true) && (
               <div className="absolute bottom-3 left-3 right-3 z-10 pointer-events-none">
                 <div className="pointer-events-auto inline-block">
                   <AvatarStageQuickTools
@@ -1152,7 +1152,7 @@ export function AvatarViewer({
               })()}
 
               {/* ──────── View Pack — multi-angle collapsible panel ──────── */}
-              <AvatarViewPackPanel
+              {(avatarSettingsState.orbit360Default ?? true) && <AvatarViewPackPanel
                 open={showViewPack}
                 source={viewSource}
                 disableLatest={outfit.results.length === 0}
@@ -1162,14 +1162,14 @@ export function AvatarViewer({
                 loadingAngles={viewPack.loadingAngles}
                 busy={viewPack.anyLoading}
                 onToggle={() => setShowViewPack((v) => !v)}
-                onSourceChange={setViewSource}
+                onSourceChange={(src) => { setViewSource(src); setActiveViewAngle(null) }}
                 onGenerateAngle={handleGenerateViewAngle}
                 onOpenAngle={handleOpenGeneratedView}
                 onDeleteAngle={handleDeleteViewAngle}
                 onGenerateMissing={handleGenerateMissingViews}
                 onClearAll={viewPack.reset}
                 hasAnyResults={Object.keys(viewPack.resultsByAngle).length > 0}
-              />
+              />}
 
               {viewPack.error && (
                 <div className="flex items-center gap-2 rounded-xl border border-red-500/15 bg-red-500/[0.08] px-3 py-2.5 text-xs text-red-300">

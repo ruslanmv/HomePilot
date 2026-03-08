@@ -84,28 +84,28 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
   const [warnings, setWarnings] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Track previous cacheKey so we can save before switching
-  const prevKeyRef = useRef(cacheKey)
+  // Track previous cacheKey so we can save before switching.
+  // Uses React's "adjusting state from props" pattern: when cacheKey changes
+  // we synchronously swap the cached data during render so there is never a
+  // stale-data frame where angle thumbnails from the OLD source are shown
+  // alongside the NEW source's front image.
+  const [prevKey, setPrevKey] = useState(cacheKey)
   const timestampsRef = useRef(timestampsByAngle)
   timestampsRef.current = timestampsByAngle
 
-  // When cacheKey changes, persist current results under old key and load new
-  useEffect(() => {
-    if (prevKeyRef.current === cacheKey) return
-
+  if (prevKey !== cacheKey) {
     // Save current in-memory results under the *previous* key
-    setResultsByAngle((current) => {
-      saveCached(prevKeyRef.current, current, timestampsRef.current)
-      prevKeyRef.current = cacheKey
-      const loaded = loadCached(cacheKey)
-      setTimestampsByAngle(loaded.timestamps)
-      return loaded.results
-    })
+    saveCached(prevKey, resultsByAngle, timestampsRef.current)
 
+    // Load the new key's cached data synchronously
+    const loaded = loadCached(cacheKey)
+    setPrevKey(cacheKey)
+    setResultsByAngle(loaded.results)
+    setTimestampsByAngle(loaded.timestamps)
     setLoadingAngles({})
     setWarnings([])
     setError(null)
-  }, [cacheKey])
+  }
 
   // Auto-persist whenever results change
   useEffect(() => {
