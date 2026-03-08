@@ -930,20 +930,81 @@ export function AvatarViewer({
                 }
 
                 if (outfit.results.length > 0) {
+                  const frontResult = outfit.results[selectedResultIdx]
+                  const frontPrompt = (frontResult?.metadata?.prompt as string) || ''
+                  const frontNeg = (frontResult?.metadata?.negative_prompt as string) || ''
                   return (
                     /* ─── Latest outfit result (full size) ─── */
                     <div className="relative group h-full animate-fadeSlideIn">
                       <div className="absolute -inset-[2px] rounded-2xl bg-gradient-to-br from-cyan-500/20 via-transparent to-blue-500/20 opacity-50 group-hover:opacity-100 transition-opacity" />
                       <div
                         className="relative h-full rounded-2xl overflow-hidden border border-cyan-500/15 cursor-pointer bg-black/40 flex items-center justify-center"
-                        onClick={() => onOpenLightbox?.(resolveUrl(outfit.results[selectedResultIdx].url, backendUrl))}
+                        onClick={() => onOpenLightbox?.(resolveUrl(frontResult.url, backendUrl))}
                       >
                         <img
-                          src={resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)}
+                          src={resolveUrl(frontResult.url, backendUrl)}
                           alt={`Outfit result ${selectedResultIdx + 1}`}
                           className="max-w-full max-h-full object-contain"
                         />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        {/* Info button — top-left, same style as angle views */}
+                        <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-cyan-500/20 text-[10px] text-cyan-200 font-medium">
+                            <span>◉</span>
+                            <span>Front</span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setShowStagePromptInfo((v) => !v) }}
+                            className={[
+                              'w-6 h-6 rounded-lg backdrop-blur-sm border flex items-center justify-center transition-all',
+                              showStagePromptInfo
+                                ? 'bg-cyan-500/30 border-cyan-400/40 text-cyan-200'
+                                : 'bg-black/50 border-cyan-500/20 text-cyan-200/60 hover:text-cyan-200 hover:bg-black/70',
+                            ].join(' ')}
+                            title="View generation prompt"
+                          >
+                            <Info size={10} />
+                          </button>
+                        </div>
+                        {/* Prompt detail panel — slides up from bottom */}
+                        {showStagePromptInfo && (
+                          <div
+                            className="absolute bottom-0 left-0 right-0 z-20 bg-black/85 backdrop-blur-md border-t border-cyan-500/20 px-4 py-3 max-h-[45%] overflow-y-auto"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {frontPrompt && (
+                              <div className="mb-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[9px] font-semibold uppercase tracking-wider text-emerald-400/80">Positive Prompt</span>
+                                  <button
+                                    onClick={() => navigator.clipboard.writeText(frontPrompt)}
+                                    className="flex items-center gap-1 text-[9px] text-white/40 hover:text-white/70 transition-colors"
+                                  >
+                                    <Clipboard size={9} /> Copy
+                                  </button>
+                                </div>
+                                <div className="text-[10px] text-white/60 leading-relaxed break-words">{frontPrompt}</div>
+                              </div>
+                            )}
+                            {frontNeg && (
+                              <div>
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[9px] font-semibold uppercase tracking-wider text-red-400/80">Negative Prompt</span>
+                                  <button
+                                    onClick={() => navigator.clipboard.writeText(frontNeg)}
+                                    className="flex items-center gap-1 text-[9px] text-white/40 hover:text-white/70 transition-colors"
+                                  >
+                                    <Clipboard size={9} /> Copy
+                                  </button>
+                                </div>
+                                <div className="text-[10px] text-red-300/50 leading-relaxed break-words">{frontNeg}</div>
+                              </div>
+                            )}
+                            {!frontPrompt && !frontNeg && (
+                              <div className="text-[10px] text-white/30 italic">No prompt metadata for this outfit. Re-generate to capture prompts.</div>
+                            )}
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                           <Maximize2 size={28} className="text-white/80" />
                         </div>
                       </div>
