@@ -199,25 +199,59 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
 
 import re as _re
 
-# Phrases that describe clothing/outfit/setting — these compete with outfit_prompt
-# and must be removed from the character_prompt before combining.
+# ---------------------------------------------------------------------------
+# Character-prompt stripping
+# ---------------------------------------------------------------------------
+# When generating outfits, the character_prompt describes the anchor photo
+# (face, body, hair, original clothing, scene).  We strip clothing, scene,
+# and professional-identity tokens so the new outfit_prompt fully controls
+# what the person wears and where they stand.
+#
+# The patterns below match FULL comma-segments (via [^,]* anchors) so that
+# orphaned adjectives like "fitted ," never remain.
+# ---------------------------------------------------------------------------
+
 _OUTFIT_STRIP_PATTERNS: list[_re.Pattern[str]] = [
     _re.compile(p, _re.IGNORECASE)
     for p in [
-        # Generic outfit/clothing/fashion phrases
+        # ── Generic outfit/clothing/fashion phrases ──
         r"\b(?:wearing|dressed in|outfit|attire|wardrobe)\b[^,]*",
         r"\b(?:stylish|contemporary|modern|smart|casual|elegant|executive)\s+(?:fashion|clothing|outfit|attire|look)\b[^,]*",
-        # Specific garment names — match the garment word and any adjectives
-        # before it within the same comma-segment to avoid leaving orphaned
-        # adjectives like "fitted ," or "delicate ,".
-        r"[^,]*\b(?:blouse|shirt|top|skirt|mini skirt|pencil skirt|trousers|pants|dress|suit|blazer|jacket|coat|gown|heels|stockings|necklace|jewelry|sneakers|shoes|boots|sandals|sunglasses)\b[^,]*",
-        # Fashion style descriptors that anchor outfits
-        r"[^,]*\b(?:fitted top|halter top|crop top|body-conscious|tailored|high-waisted)\b[^,]*",
+        # "modern stylish contemporary fashion" — multi-word fashion descriptor
+        r"[^,]*\b(?:contemporary|stylish)\s+(?:contemporary\s+)?fashion\b[^,]*",
+
+        # ── Specific garment names (match full comma-segment) ──
+        r"[^,]*\b(?:blouse|shirt|top|skirt|mini skirt|pencil skirt|trousers|pants|"
+        r"dress|suit|blazer|jacket|coat|gown|heels|stockings|necklace|jewelry|"
+        r"sneakers|shoes|boots|sandals|sunglasses|belt|loafers|wristwatch|"
+        r"clutch|earrings|bracelet|stilettos|turtleneck|sweater|jeans|chinos|"
+        r"leggings|sports bra|crop top|bodysuit|lingerie|bikini|robe|"
+        r"neckwear|tie|cufflinks|scarf)\b[^,]*",
+
+        # ── Fashion style descriptors ──
+        r"[^,]*\b(?:fitted top|halter top|crop top|body-conscious|tailored|"
+        r"high-waisted|sheath dress|satin gown|cocktail dress)\b[^,]*",
         r"\b(?:clean modern aesthetic|contemporary lifestyle fashion|smart modern chic)\b[^,]*",
         r"\b(?:modern fashion|clean aesthetic)\b[^,]*",
-        # Scene/setting that should come from outfit preset instead
-        r"\b(?:office|boardroom|cafe setting|studio background|nightclub|urban park)\s+(?:setting|background|scene)\b[^,]*",
-        # Clothing-adjacent phrases (e.g. "clothing and outfit clearly visible")
+
+        # ── Scene/setting — should come from outfit preset instead ──
+        r"[^,]*\b(?:professional office|corporate office|luxury penthouse office|"
+        r"modern office|office with plants|boardroom|cafe background|"
+        r"studio background|nightclub|urban park|ballroom|grand ballroom|"
+        r"gym with mirrors|modern gym)\b[^,]*",
+        r"[^,]*\b(?:neutral studio background|clean minimal studio background|"
+        r"clean studio background)\b[^,]*",
+
+        # ── Professional/formal identity tokens ──
+        # These describe the anchor's persona, not the clothing.  In NSFW or
+        # casual outfit contexts they fight the target aesthetic.
+        r"\bprofessional\s+appearance\b[^,]*",
+        r"\bimpeccable\s+grooming\b[^,]*",
+        r"\bformal\s+neckwear\b[^,]*",
+        r"\bwell\s+groomed\b[^,]*",
+        r"[^,]*\bclean studio lighting[^,]*",
+
+        # ── Clothing-adjacent phrases ──
         r"\bclothing\s+and\b[^,]*",
     ]
 ]
@@ -234,8 +268,6 @@ def _strip_outfit_tokens(character_prompt: str) -> str:
     for pat in _OUTFIT_STRIP_PATTERNS:
         result = pat.sub("", result)
     # Clean up: split on commas, trim each segment, drop empties, rejoin.
-    # This handles orphaned commas, double commas, leading/trailing commas,
-    # and whitespace artifacts all in one pass.
     segments = [seg.strip() for seg in result.split(",")]
     segments = [seg for seg in segments if seg]
     return ", ".join(segments)

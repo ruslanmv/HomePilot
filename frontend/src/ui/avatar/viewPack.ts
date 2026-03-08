@@ -128,19 +128,17 @@ export function getViewAngleOption(angle: ViewAngle): ViewAngleOption {
 }
 
 // ── Prompt sanitisation for non-front angles ────────────────────────────
-// The outfit description often originates from the anchor's character_prompt
-// or a previously generated outfit prompt.  These contain front-specific
-// tokens ("front-facing", "looking directly at camera", etc.) that directly
-// contradict side/back angle directives and confuse CLIP.
+// The outfit description often includes the anchor's character_prompt
+// (appended by the backend via _strip_outfit_tokens).  This injects
+// front-specific tokens, face detail, scene/setting, and identity phrases
+// that contradict the target angle and waste CLIP's limited budget.
 //
-// For the BACK angle, face-detail tokens are also meaningless (no face is
-// visible) and waste the limited CLIP budget.
-//
-// We strip these tokens before combining with the angle directive so that
-// only the angle's own pose prompt controls orientation.
+// We aggressively strip these before combining with the angle directive.
+// The outfit tokens (clothing, accessories, mood) appear FIRST in the
+// string and survive — only the character-prompt tail is cleaned.
 // ─────────────────────────────────────────────────────────────────────────
 
-/** Tokens that specify front-facing orientation — conflict with every other angle. */
+// ── Layer 1: Front-facing orientation (strip for ALL non-front angles) ──
 const FRONT_POSE_PATTERNS: RegExp[] = [
   /\bfront[- ]?facing\b/gi,
   /\bfacing\s+(?:the\s+)?camera(?:\s+directly)?\b/gi,
@@ -152,17 +150,70 @@ const FRONT_POSE_PATTERNS: RegExp[] = [
   /\bcharacter\s+turntable\b/gi,
 ]
 
-/** Face/expression detail tokens — irrelevant for the back angle (no face visible). */
+// ── Layer 2: Face/expression detail (strip for left/right/back) ─────────
+// Profile views show limited face; back shows none.  These tokens fight
+// the angle directive and waste CLIP budget.
 const FACE_DETAIL_PATTERNS: RegExp[] = [
   /\bfine\s+facial\s+detail\b/gi,
   /\bfacial\s+detail\b/gi,
+  /\bsharp\s+defined\s+facial\s+features\b/gi,
   /\bpores\s+visible\b/gi,
   /\bnatural\s+skin\s+imperfections\b/gi,
   /\bultra\s+realistic\s+skin\s+texture\b/gi,
-  /\bwarm\s+approachable\s+expression\b/gi,
-  /\b(?:confident|natural|relaxed)\s+(?:natural\s+)?(?:pose|expression)\b/gi,
   /\bboth\s+eyes\s+visible\b/gi,
   /\bsymmetrical\s+face\b/gi,
+]
+
+// ── Layer 3: Expression tokens (strip for back; left/right keep them) ───
+const EXPRESSION_PATTERNS: RegExp[] = [
+  /\bwarm\s+approachable\s+expression\b/gi,
+  /\b(?:confident|natural|relaxed)\s+(?:poised\s+|natural\s+)?expression\b/gi,
+  /\bsmoldering\s+gaze\b/gi,
+  /\bbedroom\s+eyes\b/gi,
+  /\bcoy\s+expression\b/gi,
+]
+
+// ── Layer 4: Character-prompt identity boilerplate (strip for ALL non-front) ─
+// These come from the anchor's character_prompt and add nothing to angle views.
+const IDENTITY_BOILERPLATE_PATTERNS: RegExp[] = [
+  // "Solo portrait photograph of a single real female woman/executive/..."
+  /\bSolo\s+portrait\s+photograph\s+of\s+a\s+single\s+real\s+\w+(?:\s+\w+)?\b/gi,
+  // "portrait photograph of the same character"
+  /\bportrait\s+photograph\s+of\s+the\s+same\s+character\b/gi,
+]
+
+// ── Layer 5: Scene/setting from character prompt (strip for ALL non-front) ─
+// The outfit preset already specifies its own scene.  Character-prompt
+// scenes ("professional office", "studio background") conflict.
+const SCENE_SETTING_PATTERNS: RegExp[] = [
+  /\bprofessional\s+office\b/gi,
+  /\bneutral\s+studio\s+background\b/gi,
+  /\bclean\s+(?:minimal\s+)?studio\s+background\b/gi,
+  /\bclean\s+studio\s+lighting(?:\s+with\s+soft\s+fill)?\b/gi,
+  /\bclean\s+(?:modern\s+)?studio\s+(?:background|setting)\b/gi,
+  /\b(?:corporate|luxury\s+penthouse|modern)\s+office\b/gi,
+  /\boffice\s+with\s+plants\b/gi,
+  /\bupscale\s+cafe\s+background\b/gi,
+]
+
+// ── Layer 6: Professional/formal identity tokens (strip for ALL non-front) ─
+// These describe the anchor's persona, not the outfit.  In lingerie/NSFW
+// contexts they actively fight the target aesthetic.
+const PROFESSIONAL_IDENTITY_PATTERNS: RegExp[] = [
+  /\bprofessional\s+appearance\b/gi,
+  /\bprofessional\s+photography\b/gi,
+  /\bimpeccable\s+grooming\b/gi,
+  /\bwell\s+groomed\b/gi,
+  /\bformal\s+neckwear\b/gi,
+]
+
+// ── Layer 7: Quality/photography tokens the backend already appends ─────
+// The backend adds "elegant lighting, realistic, sharp focus" so these
+// duplicate tokens waste CLIP budget.
+const BACKEND_QUALITY_PATTERNS: RegExp[] = [
+  /\belegant\s+lighting\b/gi,
+  /\brealistic\b/gi,
+  /\bsharp\s+focus\b/gi,
 ]
 
 /**
@@ -170,7 +221,6 @@ const FACE_DETAIL_PATTERNS: RegExp[] = [
  * token stripping.  Fixes artifacts like "fitted , , delicate ," → "fitted, delicate".
  */
 function cleanCommaArtifacts(text: string): string {
-  // Split on commas, trim each segment, drop empties, rejoin
   return text
     .split(',')
     .map((s) => s.trim())
@@ -178,28 +228,43 @@ function cleanCommaArtifacts(text: string): string {
     .join(', ')
 }
 
+/** Apply a list of regex patterns, replacing all matches with empty string. */
+function applyPatterns(text: string, patterns: RegExp[]): string {
+  let result = text
+  for (const pat of patterns) {
+    result = result.replace(pat, '')
+  }
+  return result
+}
+
 /**
  * Sanitise the outfit/character description for a specific angle by removing
- * tokens that contradict the target pose.
+ * tokens that contradict or are irrelevant to the target pose.
  *
- * - Non-front angles: strips front-facing orientation tokens.
- * - Back angle: additionally strips face/expression detail tokens.
- * - Front angle: returns the description unchanged (only cleans comma artifacts).
+ * Stripping layers (cumulative):
+ *   front  → clean comma artifacts only
+ *   left/right → + front-facing, face detail, identity, scene, professional, quality
+ *   back   → + expression tokens (no face visible at all)
  */
 function sanitizeDescForAngle(desc: string, angle: ViewAngle): string {
   if (angle === 'front') return cleanCommaArtifacts(desc)
 
   let result = desc
-  // Strip front-facing orientation for all non-front angles
-  for (const pat of FRONT_POSE_PATTERNS) {
-    result = result.replace(pat, '')
-  }
-  // Strip face/expression detail for back angle (no face visible)
+
+  // All non-front angles: strip front-facing, face detail, identity,
+  // scene/setting, professional tokens, and duplicate quality tokens
+  result = applyPatterns(result, FRONT_POSE_PATTERNS)
+  result = applyPatterns(result, FACE_DETAIL_PATTERNS)
+  result = applyPatterns(result, IDENTITY_BOILERPLATE_PATTERNS)
+  result = applyPatterns(result, SCENE_SETTING_PATTERNS)
+  result = applyPatterns(result, PROFESSIONAL_IDENTITY_PATTERNS)
+  result = applyPatterns(result, BACKEND_QUALITY_PATTERNS)
+
+  // Back angle: also strip expression tokens (no face visible)
   if (angle === 'back') {
-    for (const pat of FACE_DETAIL_PATTERNS) {
-      result = result.replace(pat, '')
-    }
+    result = applyPatterns(result, EXPRESSION_PATTERNS)
   }
+
   return cleanCommaArtifacts(result)
 }
 
