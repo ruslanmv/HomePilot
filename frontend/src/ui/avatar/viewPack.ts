@@ -75,20 +75,31 @@ export function getViewAngleOption(angle: ViewAngle): ViewAngleOption {
 // ---------------------------------------------------------------------------
 
 /** Phrases that describe camera direction, body pose, or framing — these must
- *  NOT leak into non-front angle prompts because they fight the angle directive. */
+ *  NOT leak into non-front angle prompts because they fight the angle directive.
+ *
+ *  Catch-all patterns (e.g. /\bpose\b/, /\bstance\b/) are used so that new
+ *  outfit presets, NSFW modifiers, or user-typed prompts are automatically
+ *  handled without needing per-phrase regex additions. */
 const POSE_CAMERA_PHRASES: RegExp[] = [
-  // Camera / gaze direction
+  // ── Camera / gaze direction ──
   /front[- ]?facing/i,
   /facing\s+(the\s+)?camera\s*(directly)?/i,
   /looking\s+(directly\s+)?(at|into)\s+(the\s+)?camera/i,
   /looking\s+straight\s+ahead/i,
+  /looking\s+over\b/i,
   /facing\s+(forward|ahead|straight)/i,
   /eye\s*contact/i,
   /gazing?\s+(at|into)\s+(the\s+)?(camera|viewer|lens)/i,
   /staring\s+(at|into)\s+(the\s+)?camera/i,
   /direct\s+(eye\s*contact|gaze)/i,
+  /\balluring\s+gaze\b/i,
+  /\bsmoldering\s+gaze\b/i,
+  /\bbedroom\s+eyes\b/i,
+  /\bcoy\s+expression\b/i,
+  /\bseductive\s+expression\b/i,
+  /\binviting\s+pose\b/i,
 
-  // Body framing / cropping instructions
+  // ── Body framing / cropping instructions ──
   /medium\s+shot\s+portrait/i,
   /mid[- ]?body\s+framing(\s+from\s+head\s+to\s+hips)?/i,
   /upper\s+body\s+and\s+hips\s+visible/i,
@@ -99,18 +110,31 @@ const POSE_CAMERA_PHRASES: RegExp[] = [
   /no\s+legs\s+below\s+thighs/i,
   /full\s+body\s+visible\s+from\s+head\s+to\s+thighs/i,
   /body\s+posture\s+(and\s+pose\s+)?visible/i,
-  /body\s+posture\s+visible/i,
   /clothing\s+and\s+outfit\s+clearly\s+visible/i,
 
-  // Pose descriptors
-  /centered\s+composition/i,
-  /standing\s+naturally/i,
-  /confident\s+(natural\s+)?pose/i,
-  /confident\s+poised\s+expression/i,
-  /natural\s+relaxed\s+pose/i,
-  /hands?\s+(on|at)\s+(hip|side|waist)s?/i,
+  // ── Catch-all pose / stance / posture — any segment containing these words
+  //    is a body-direction token that conflicts with non-front angles ──
+  /\bpose\b/i,
+  /\bstance\b/i,
+  /\bposture\b/i,
 
-  // Generic "portrait" framing that biases front
+  // ── Specific body actions that imply a fixed camera angle ──
+  /\bstanding\s+(naturally|professionally)\b/i,
+  /\bseated\b/i,
+  /\bkneeling\b/i,
+  /\blying\s+down\b/i,
+  /\bleaning\s+(forward|casually)\b/i,
+  /\bleaning\s+forward\s+seductively\b/i,
+  /\barched\s+back\b/i,
+  /\barms?\s+(raised|crossed|above)\b/i,
+  /\bwalking\s+confidently\b/i,
+  /\bgiving\s+a\s+presentation\b/i,
+  /\bhands?\s+(on|at)\s+(hip|side|waist)s?/i,
+  /\bcentered\s+composition\b/i,
+  /\belongated\s+body\b/i,
+  /\bconfident\s+display\b/i,
+
+  // ── Generic "portrait" framing that biases front ──
   /solo\s+portrait\s+photograph\s+of\s+a\s+single\s+real/i,
   /portrait\s+photograph/i,
 ]
