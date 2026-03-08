@@ -84,28 +84,24 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
   const [warnings, setWarnings] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  // Track previous cacheKey so we can save before switching
-  const prevKeyRef = useRef(cacheKey)
-  const timestampsRef = useRef(timestampsByAngle)
-  timestampsRef.current = timestampsByAngle
-
-  // When cacheKey changes, persist current results under old key and load new
-  useEffect(() => {
-    if (prevKeyRef.current === cacheKey) return
-
-    // Save current in-memory results under the *previous* key
-    setResultsByAngle((current) => {
-      saveCached(prevKeyRef.current, current, timestampsRef.current)
-      prevKeyRef.current = cacheKey
-      const loaded = loadCached(cacheKey)
-      setTimestampsByAngle(loaded.timestamps)
-      return loaded.results
-    })
-
+  // ── Synchronous cache swap on cacheKey change ──────────────────────
+  // IMPORTANT: This must happen during render (not in useEffect) to avoid
+  // a one-frame flash where the old pack's angles are shown with the new
+  // pack's front thumbnail.  React's recommended "derived state" pattern:
+  // compare prev key, and if different, save old + load new synchronously.
+  const [prevKey, setPrevKey] = useState(cacheKey)
+  if (prevKey !== cacheKey) {
+    // Persist current in-memory results under the old key
+    saveCached(prevKey, resultsByAngle, timestampsByAngle)
+    // Load the new key's cached results
+    const loaded = loadCached(cacheKey)
+    setPrevKey(cacheKey)
+    setResultsByAngle(loaded.results)
+    setTimestampsByAngle(loaded.timestamps)
     setLoadingAngles({})
     setWarnings([])
     setError(null)
-  }, [cacheKey])
+  }
 
   // Auto-persist whenever results change
   useEffect(() => {

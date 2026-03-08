@@ -1164,7 +1164,7 @@ export function AvatarViewer({
                 loadingAngles={viewPack.loadingAngles}
                 busy={viewPack.anyLoading}
                 onToggle={() => setShowViewPack((v) => !v)}
-                onSourceChange={setViewSource}
+                onSourceChange={(src) => { setViewSource(src); setActiveViewAngle(null) }}
                 onGenerateAngle={handleGenerateViewAngle}
                 onOpenAngle={handleOpenGeneratedView}
                 onDeleteAngle={handleDeleteViewAngle}
