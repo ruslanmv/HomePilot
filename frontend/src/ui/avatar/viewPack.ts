@@ -23,12 +23,8 @@ export interface ViewAngleOption {
 // Framing-aware body range tokens — match the front view's composition
 // ---------------------------------------------------------------------------
 
-/** Body range descriptions that adapt to the front view's framing type.
- *  `bodyRange` is used in angle directives, `suffix` in the identity lock. */
 interface FramingTokens {
-  /** e.g. "from head to waist" */
   bodyRange: string
-  /** Negative to prevent wrong framing */
   framingNegative: string
 }
 
@@ -56,17 +52,16 @@ function getFramingTokens(framingType?: FramingType): FramingTokens {
 // ---------------------------------------------------------------------------
 
 function buildLeftPrompt(ft: FramingTokens): string {
-  // LEFT profile needs significantly stronger emphasis than RIGHT because
-  // Stable Diffusion has a strong right-facing bias in its training data.
-  // We use higher CLIP attention weights (1.5 vs 1.4) and add redundant
-  // directional tokens to overcome this bias.
-  // IMPORTANT: Do NOT use "character turntable reference sheet" — it triggers
-  // multi-view sheet layouts (side-by-side duplicates) instead of a single image.
-  return `solo single person, (full left profile view:1.5), (looking to the left:1.5), (facing left:1.4), camera positioned directly to the right of the subject, head and body turned 90 degrees to the left, only left side of face visible showing left ear left cheekbone jaw line and nose tip in profile silhouette, left shoulder directly facing camera, left arm visible, right arm hidden behind body, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, (left side only:1.3), (side view:1.3)`
+  // LEFT profile needs stronger emphasis than RIGHT because SD has a
+  // right-facing bias. skipIdentity=true bypasses InstantID ControlNet
+  // which was extracting front-facing pose from the reference image.
+  // Standing tokens prevent the model from defaulting to sitting/kneeling
+  // after losing the reference image's spatial anchor.
+  return `solo single person, (full left profile view:1.5), (looking to the left:1.5), (facing left:1.4), standing upright, camera positioned directly to the right of the subject, head and body turned 90 degrees to the left, only left side of face visible showing left ear left cheekbone jaw line and nose tip in profile silhouette, left shoulder directly facing camera, left arm visible, right arm hidden behind body, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, standing pose, legs straight, feet on floor, (left side only:1.3), (side view:1.3)`
 }
 
 function buildRightPrompt(ft: FramingTokens): string {
-  return `solo single person, (full right profile view:1.4), camera positioned directly to the left of the subject, head and body turned 90 degrees to the right, only right side of face visible showing right ear right cheekbone jaw line and nose tip in profile silhouette, right shoulder directly facing camera, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, (right profile:1.4), (side view:1.3)`
+  return `solo single person, (full right profile view:1.4), standing upright, camera positioned directly to the left of the subject, head and body turned 90 degrees to the right, only right side of face visible showing right ear right cheekbone jaw line and nose tip in profile silhouette, right shoulder directly facing camera, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, standing pose, legs straight, feet on floor, (right profile:1.4), (side view:1.3)`
 }
 
 function buildBackPrompt(ft: FramingTokens): string {
@@ -80,7 +75,7 @@ function buildFrontPrompt(ft: FramingTokens): string {
 /** Build the identity-lock suffix with framing-appropriate body range. */
 export function buildIdentityLockSuffix(framingType?: FramingType): string {
   const ft = getFramingTokens(framingType)
-  return `single character turntable rotation, fixed camera distance, preserve exact identity and facial features, preserve exact outfit including coverage level and skin exposure and garment fit, preserve exact hairstyle and accessories, same body shape and proportions, body framing ${ft.bodyRange}`
+  return `fixed camera distance, preserve exact outfit including coverage level and skin exposure and garment fit, preserve exact hairstyle and accessories, same body shape and proportions, body framing ${ft.bodyRange}`
 }
 
 /** Build the angle-specific positive prompt, adapted to the framing type. */
@@ -107,17 +102,24 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'left',
     label: 'Left',
     shortLabel: 'L',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, right side visible, right profile, right ear visible, looking right, facing right, turned right, right shoulder facing camera, back view, rear view, facing forward, head facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, right side visible, right profile, right ear visible, looking right, facing right, turned right, right shoulder facing camera, back view, rear view, facing forward, head facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side, sitting, kneeling, crouching, lying down, on the floor, on the ground, cross-legged',
     icon: '\u25D0',
     denoise: 1.0,
+    // Bypass InstantID ControlNet — it extracts front-facing pose from the
+    // reference image and fights the left profile directive for ~50% of
+    // sampling steps (end_at: 0.5, weight: 0.65), causing right-facing output.
+    skipIdentity: true,
   },
   {
     id: 'right',
     label: 'Right',
     shortLabel: 'R',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, left side visible, back view, rear view, facing forward, head facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, left side visible, back view, rear view, facing forward, head facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side, sitting, kneeling, crouching, lying down, on the floor, on the ground, cross-legged',
     icon: '\u25D1',
     denoise: 1.0,
+    // Bypass InstantID ControlNet for same reason as left — the front-facing
+    // reference pose bleeds into right profile generation.
+    skipIdentity: true,
   },
   {
     id: 'back',
@@ -140,19 +142,15 @@ export function getViewAngleOption(angle: ViewAngle): ViewAngleOption {
 }
 
 // ---------------------------------------------------------------------------
-// Prompt sanitiser — strips pose / camera / framing tokens from the anchor
-// or outfit prompt so they don't contradict the angle-specific directive.
-// Only outfit, appearance, quality, and technical tokens are kept.
+// Prompt sanitiser — strips conflicting tokens from the base prompt so they
+// don't fight the angle directive. Applied to ALL non-front angles.
+//
+// 10 layers of patterns, each targeting a specific category of tokens that
+// waste CLIP budget or actively contradict the angle directive.
 // ---------------------------------------------------------------------------
 
-/** Phrases that describe camera direction, body pose, or framing — these must
- *  NOT leak into non-front angle prompts because they fight the angle directive.
- *
- *  Catch-all patterns (e.g. /\bpose\b/, /\bstance\b/) are used so that new
- *  outfit presets, NSFW modifiers, or user-typed prompts are automatically
- *  handled without needing per-phrase regex additions. */
-const POSE_CAMERA_PHRASES: RegExp[] = [
-  // ── Camera / gaze direction ──
+// Layer 1: Front pose / camera direction
+const FRONT_POSE_PATTERNS: RegExp[] = [
   /front[- ]?facing/i,
   /facing\s+(the\s+)?camera\s*(directly)?/i,
   /looking\s+(directly\s+)?(at|into)\s+(the\s+)?camera/i,
@@ -163,14 +161,86 @@ const POSE_CAMERA_PHRASES: RegExp[] = [
   /gazing?\s+(at|into)\s+(the\s+)?(camera|viewer|lens)/i,
   /staring\s+(at|into)\s+(the\s+)?camera/i,
   /direct\s+(eye\s*contact|gaze)/i,
+  /\bfront\s+view\b/i,
+]
+
+// Layer 2: Face detail tokens (waste CLIP budget on profile/back where face is minimal or hidden)
+const FACE_DETAIL_PATTERNS: RegExp[] = [
+  /\bfine\s+facial\s+detail\b/i,
+  /\bfacial\s+detail\b/i,
+  /\bpores\s+visible\b/i,
+  /\bultra\s+realistic\s+skin\s+texture\b/i,
+  /\bnatural\s+skin\s+imperfections\b/i,
+]
+
+// Layer 3: Expression tokens (imply camera engagement / visible face)
+const EXPRESSION_PATTERNS: RegExp[] = [
+  /\bwarm\s+approachable\s+expression\b/i,
   /\balluring\s+gaze\b/i,
   /\bsmoldering\s+gaze\b/i,
   /\bbedroom\s+eyes\b/i,
   /\bcoy\s+expression\b/i,
   /\bseductive\s+expression\b/i,
-  /\binviting\s+pose\b/i,
+  /\binviting\b/i,
+  /\bexpression\b/i,
+  /\bsmile\b/i,
+  /\bsmiling\b/i,
+]
 
-  // ── Body framing / cropping instructions ──
+// Layer 3b: Front-biased pose descriptions
+const FRONT_POSE_DESC_PATTERNS: RegExp[] = [
+  /\bconfident\s+(natural|relaxed)\s+pose\b/i,
+  /\bconfident\s+display\b/i,
+  /\binviting\s+pose\b/i,
+  /\bpose\b/i,
+  /\bstance\b/i,
+  /\bposture\b/i,
+]
+
+// Layer 4: Identity boilerplate (wastes CLIP budget, adds no visual info for angles)
+const IDENTITY_BOILERPLATE_PATTERNS: RegExp[] = [
+  /solo\s+portrait\s+photograph\s+of\s+a\s+single\s+real/i,
+  /portrait\s+photograph/i,
+  /\bportrait\b/i,
+  /\bsingle\s+real\s+(female|male)\s+(woman|man|person)\b/i,
+]
+
+// Layer 5: Scene/setting tokens (persona-specific; studio backgrounds are KEPT)
+const SCENE_SETTING_PATTERNS: RegExp[] = [
+  /\bprofessional\s+office\b/i,
+  /\bcorporate\s+office\b/i,
+  /\bupscale\s+cafe\s+background\b/i,
+  /\burban\s+alley\s+backdrop\b/i,
+  /\bboudoir\s+setting\b/i,
+  /\bhome\s+setting\b/i,
+  /\boffice\s+setting\b/i,
+  /\bnightclub\b/i,
+  /\bboardroom\b/i,
+  // NOTE: "clean minimal studio background", "neutral studio background",
+  // "clean studio lighting" are intentionally NOT stripped — they keep the
+  // background consistent across all angles.
+]
+
+// Layer 6: Professional identity tokens (irrelevant to outfit appearance)
+const PROFESSIONAL_IDENTITY_PATTERNS: RegExp[] = [
+  /\bprofessional\s+appearance\b/i,
+  /\bimpeccable\s+grooming\b/i,
+  /\bformal\s+neckwear\b/i,
+  /\bexecutive\s+assistant\s+professional\b/i,
+  /\bcorporate\s+executive\b/i,
+  /\bwell\s+groomed\b/i,
+]
+
+// Layer 7: Backend-duplicated quality tokens (already added by backend's outfit.py)
+// NOTE: User-specified lighting like "soft diffused lighting" is intentionally KEPT.
+const BACKEND_QUALITY_PATTERNS: RegExp[] = [
+  /\belegant\s+lighting\b/i,
+  /^realistic$/i,
+  /^sharp\s+focus$/i,
+]
+
+// Layer 8: Framing / composition tokens (replaced by angle-specific framing)
+const FRAMING_PATTERNS: RegExp[] = [
   /medium\s+shot\s+portrait/i,
   /medium\s+shot/i,
   /mid[- ]?body\s+framing(\s+from\s+head\s+to\s+(hips|waist))?/i,
@@ -188,14 +258,19 @@ const POSE_CAMERA_PHRASES: RegExp[] = [
   /clothing\s+and\b/i,
   /waist[- ]?up\s+composition/i,
   /head\s+to\s+(waist|hips|thighs)\s+composition/i,
+  /\bcentered\s+composition\b/i,
+]
 
-  // ── Catch-all pose / stance / posture — any segment containing these words
-  //    is a body-direction token that conflicts with non-front angles ──
-  /\bpose\b/i,
-  /\bstance\b/i,
-  /\bposture\b/i,
+// Layer 9: Persona role tokens (persona description, not visual)
+const PERSONA_ROLE_PATTERNS: RegExp[] = [
+  /\bexecutive\s+assistant\b/i,
+  /\bcorporate\s+executive\b/i,
+  /\bprofessional\s+executive\b/i,
+  /\boffice\s+attire\b/i,
+]
 
-  // ── Specific body actions that imply a fixed camera angle ──
+// Layer 10: Specific body actions that imply a fixed camera angle
+const BODY_ACTION_PATTERNS: RegExp[] = [
   /\bstanding\s+(naturally|professionally)\b/i,
   /\bseated\b/i,
   /\bkneeling\b/i,
@@ -207,61 +282,69 @@ const POSE_CAMERA_PHRASES: RegExp[] = [
   /\bwalking\s+confidently\b/i,
   /\bgiving\s+a\s+presentation\b/i,
   /\bhands?\s+(on|at)\s+(hip|side|waist)s?/i,
-  /\bcentered\s+composition\b/i,
   /\belongated\s+body\b/i,
-  /\bconfident\s+display\b/i,
-
-  // ── Generic "portrait" framing that biases front ──
-  /solo\s+portrait\s+photograph\s+of\s+a\s+single\s+real/i,
-  /portrait\s+photograph/i,
-  /\bportrait\b/i,
 ]
 
-/** Extra patterns stripped ONLY for the back angle — face/expression tokens
- *  that fight the "no face visible" directive. */
-const BACK_ONLY_PHRASES: RegExp[] = [
-  /\bfacial\s+detail\b/i,
-  /\bfine\s+facial\b/i,
-  /\bexpression\b/i,
-  /\bsmile\b/i,
-  /\bsmiling\b/i,
-  /\bface\b/i,
-  /\beyes?\b/i,
-  /\blips?\b/i,
-  /\bnose\b/i,
-  /\bmouth\b/i,
-  /\bcheek(bone)?s?\b/i,
-  /\bjaw\s*line\b/i,
-  /\bskin\s+imperfections\b/i,
+/** All pattern layers applied for non-front angles. */
+const ALL_SANITISE_LAYERS: RegExp[][] = [
+  FRONT_POSE_PATTERNS,
+  FACE_DETAIL_PATTERNS,
+  EXPRESSION_PATTERNS,
+  FRONT_POSE_DESC_PATTERNS,
+  IDENTITY_BOILERPLATE_PATTERNS,
+  SCENE_SETTING_PATTERNS,
+  PROFESSIONAL_IDENTITY_PATTERNS,
+  BACKEND_QUALITY_PATTERNS,
+  FRAMING_PATTERNS,
+  PERSONA_ROLE_PATTERNS,
+  BODY_ACTION_PATTERNS,
 ]
 
 /**
- * Strip pose / camera / framing tokens from a prompt, keeping only appearance,
- * outfit, quality, and technical photography tokens.
+ * Clean comma artifacts after stripping tokens:
+ * - Remove empty segments
+ * - Remove trailing conjunctions ("clothing and" → removed)
+ * - Deduplicate identical segments ("fitted, ..., fitted" → "fitted, ...")
+ */
+function cleanCommaArtifacts(text: string): string {
+  const seen = new Set<string>()
+  return text
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .filter((s) => !/^\w+\s+(?:and|or)$/i.test(s)) // trailing conjunctions
+    .filter((s) => {
+      const key = s.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .join(', ')
+}
+
+/**
+ * Strip conflicting tokens from a prompt for non-front angles.
  *
- * For `front` angle this is a no-op — the full prompt is returned unchanged.
- * For `back` angle, face-related tokens are additionally stripped.
+ * For `front` angle this is a no-op — returns the cleaned prompt unchanged.
+ * For all other angles, applies all 10+ sanitisation layers to remove tokens
+ * that fight the angle directive, waste CLIP budget, or duplicate backend tokens.
  */
 export function sanitiseBasePromptForAngle(basePrompt: string, angle: ViewAngle): string {
-  if (angle === 'front') return basePrompt
+  if (angle === 'front') return cleanCommaArtifacts(basePrompt)
 
   // Split on commas — each segment is an independent CLIP token group
   const segments = basePrompt.split(',').map((s) => s.trim()).filter(Boolean)
 
   const kept = segments.filter((seg) => {
-    for (const re of POSE_CAMERA_PHRASES) {
-      if (re.test(seg)) return false
-    }
-    // Back view: additionally strip face/expression tokens
-    if (angle === 'back') {
-      for (const re of BACK_ONLY_PHRASES) {
+    for (const layer of ALL_SANITISE_LAYERS) {
+      for (const re of layer) {
         if (re.test(seg)) return false
       }
     }
     return true
   })
 
-  return kept.join(', ')
+  return cleanCommaArtifacts(kept.join(', '))
 }
 
 export function extractViewAngle(metadata?: Record<string, unknown> | null): ViewAngle | null {
