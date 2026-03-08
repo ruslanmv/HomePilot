@@ -67,6 +67,7 @@ export const FRAMING_OPTIONS: FramingOption[] = [
 
 /** Well-known outfit scenario tag IDs (mirrors OUTFIT_PRESETS). */
 export type OutfitScenarioTag =
+  | 'modern'
   | 'corporate'
   | 'business'
   | 'executive'
@@ -97,6 +98,7 @@ export interface ScenarioTagMeta {
 
 export const SCENARIO_TAG_META: ScenarioTagMeta[] = [
   // ── SFW: Standard ──
+  { id: 'modern',           label: 'Modern Lifestyle',  icon: '\uD83D\uDC57', category: 'sfw' },
   { id: 'corporate',       label: 'Corporate Formal',  icon: '\uD83D\uDCBC', category: 'sfw' },
   { id: 'business',        label: 'Business Casual',   icon: '\uD83D\uDC54', category: 'sfw' },
   { id: 'executive',       label: 'Executive Elegant', icon: '\uD83D\uDC51', category: 'sfw' },
@@ -363,7 +365,9 @@ export const CHARACTER_STYLE_PRESETS: CharacterStylePreset[] = [
 /** Gallery item role — distinguishes the selected anchor from portrait alternatives. */
 export type GalleryItemRole = 'anchor' | 'portrait'
 
-/** Wizard metadata stored on a GalleryItem so persona export can access profession data. */
+/** Wizard metadata stored on a GalleryItem so persona export can access profession data.
+ *  Appearance fields (skinTone, hairColor, etc.) are used by View Pack generation
+ *  to produce exact visual descriptors instead of regex-guessing from prompts. */
 export interface WizardMeta {
   professionId?: string
   professionLabel?: string
@@ -377,6 +381,11 @@ export interface WizardMeta {
   gender?: string
   ageRange?: string
   outfitStyle?: string
+  // ── Appearance fields (used by View Pack for accurate 3D angle generation) ──
+  skinTone?: string
+  hairColor?: string
+  hairType?: string
+  eyeColor?: string
 }
 
 export interface GalleryItem {

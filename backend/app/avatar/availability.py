@@ -111,7 +111,8 @@ def enabled_modes() -> List[str]:
     )
 
     if comfy_ok and basic_ok:
-        modes += ["studio_reference", "studio_faceswap", "creative"]
+        modes += ["studio_reference", "studio_faceswap", "creative",
+                  "hybrid_outfit"]  # InstantID + empty latent for angle control
 
     # StyleGAN cascading: prefer 1024, fallback to 256
     sg = stylegan_status()

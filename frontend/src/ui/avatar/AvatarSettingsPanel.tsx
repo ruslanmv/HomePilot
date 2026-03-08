@@ -9,9 +9,10 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react'
-import { Settings, X, Check, Globe, Sparkles, Info, FileText, Cpu, AlertTriangle, Layers } from 'lucide-react'
+import { Settings, X, Check, Globe, Sparkles, Info, FileText, Cpu, AlertTriangle, Layers, Orbit, SlidersHorizontal, RotateCcw } from 'lucide-react'
 import type { AvatarSettings, AvatarCheckpointSource, BodyWorkflowMethod, StyleGANStatus } from './types'
 import { RECOMMENDED_CHECKPOINTS, BODY_WORKFLOW_OPTIONS } from './types'
+import { ANGLE_TUNING_DEFAULTS } from './viewPack'
 
 // ---------------------------------------------------------------------------
 // Persistence
@@ -59,6 +60,196 @@ export function resolveCheckpoint(
     (c) => c.id === avatarSettings.recommendedCheckpointId,
   )
   return rec?.filename
+}
+
+// ---------------------------------------------------------------------------
+// View Angle Tuning sub-component
+// ---------------------------------------------------------------------------
+
+type TunableAngle = 'left' | 'right' | 'back'
+const TUNABLE_ANGLES: { id: TunableAngle; label: string }[] = [
+  { id: 'left', label: 'Left' },
+  { id: 'right', label: 'Right' },
+  { id: 'back', label: 'Back' },
+]
+
+function ViewAngleTuningSection({
+  settings,
+  onChange,
+}: {
+  settings: AvatarSettings
+  onChange: (next: AvatarSettings) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [activeTab, setActiveTab] = useState<TunableAngle>('left')
+
+  const tuning = settings.viewAngleTuning ?? {}
+  const current = {
+    denoise: tuning[activeTab]?.denoise ?? ANGLE_TUNING_DEFAULTS[activeTab].denoise,
+    promptWeight: tuning[activeTab]?.promptWeight ?? ANGLE_TUNING_DEFAULTS[activeTab].promptWeight,
+  }
+
+  const update = useCallback(
+    (field: 'denoise' | 'promptWeight', value: number) => {
+      const next: AvatarSettings = {
+        ...settings,
+        viewAngleTuning: {
+          ...tuning,
+          [activeTab]: {
+            ...tuning[activeTab],
+            [field]: value,
+          },
+        },
+      }
+      onChange(next)
+      saveAvatarSettings(next)
+    },
+    [settings, onChange, activeTab, tuning],
+  )
+
+  const resetAll = useCallback(() => {
+    const next: AvatarSettings = { ...settings }
+    delete next.viewAngleTuning
+    onChange(next)
+    saveAvatarSettings(next)
+  }, [settings, onChange])
+
+  const hasOverrides = settings.viewAngleTuning && Object.keys(settings.viewAngleTuning).length > 0
+
+  return (
+    <div className="mt-3">
+      {/* Collapsible header */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className={[
+          'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all',
+          expanded
+            ? 'bg-orange-500/10 border border-orange-500/30'
+            : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+        ].join(' ')}
+      >
+        <SlidersHorizontal
+          size={16}
+          className={expanded ? 'text-orange-400' : 'text-white/25'}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-white/80">View Angle Tuning</span>
+            {hasOverrides && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-orange-500/20 text-orange-300 font-semibold">
+                CUSTOM
+              </span>
+            )}
+          </div>
+          <p className="text-[11px] text-white/35 mt-0.5">
+            Fine-tune generation strength per angle
+          </p>
+        </div>
+        {/* Chevron */}
+        <svg
+          className={`w-4 h-4 text-white/30 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {/* Expanded content */}
+      {expanded && (
+        <div className="mt-2 mx-1 px-4 py-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+          {/* Angle tab pills */}
+          <div className="flex gap-1.5 mb-4">
+            {TUNABLE_ANGLES.map((a) => {
+              const isActive = activeTab === a.id
+              const hasCustom = tuning[a.id] !== undefined
+              return (
+                <button
+                  key={a.id}
+                  onClick={() => setActiveTab(a.id)}
+                  className={[
+                    'flex-1 py-1.5 rounded-lg text-xs font-medium transition-all text-center',
+                    isActive
+                      ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30'
+                      : hasCustom
+                        ? 'bg-white/[0.04] text-white/50 border border-white/[0.08]'
+                        : 'bg-transparent text-white/30 border border-transparent hover:bg-white/[0.03]',
+                  ].join(' ')}
+                >
+                  {a.label}
+                  {hasCustom && !isActive && (
+                    <span className="ml-1 inline-block w-1 h-1 rounded-full bg-orange-400/60" />
+                  )}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Denoise Strength slider */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-medium text-white/60">Denoise Strength</span>
+              <span className="text-[11px] font-mono text-orange-300/80 bg-orange-500/10 px-1.5 py-0.5 rounded">
+                {current.denoise.toFixed(2)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0.5}
+              max={1.0}
+              step={0.05}
+              value={current.denoise}
+              onChange={(e) => update('denoise', parseFloat(e.target.value))}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-orange-500"
+              style={{
+                background: `linear-gradient(to right, rgb(249 115 22) ${((current.denoise - 0.5) / 0.5) * 100}%, rgba(255,255,255,0.1) ${((current.denoise - 0.5) / 0.5) * 100}%)`,
+              }}
+            />
+            <div className="flex justify-between mt-1">
+              <span className="text-[9px] text-white/25">0.50 — keep colors</span>
+              <span className="text-[9px] text-white/25">1.00 — full prompt</span>
+            </div>
+          </div>
+
+          {/* Prompt Weight slider */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-medium text-white/60">Prompt Weight</span>
+              <span className="text-[11px] font-mono text-orange-300/80 bg-orange-500/10 px-1.5 py-0.5 rounded">
+                {current.promptWeight.toFixed(1)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={1.0}
+              max={2.0}
+              step={0.1}
+              value={current.promptWeight}
+              onChange={(e) => update('promptWeight', parseFloat(e.target.value))}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-orange-500"
+              style={{
+                background: `linear-gradient(to right, rgb(249 115 22) ${((current.promptWeight - 1.0) / 1.0) * 100}%, rgba(255,255,255,0.1) ${((current.promptWeight - 1.0) / 1.0) * 100}%)`,
+              }}
+            />
+            <div className="flex justify-between mt-1">
+              <span className="text-[9px] text-white/25">1.0 — subtle</span>
+              <span className="text-[9px] text-white/25">2.0 — strong override</span>
+            </div>
+          </div>
+
+          {/* Reset button */}
+          {hasOverrides && (
+            <button
+              onClick={resetAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-white/40 hover:text-white/60 hover:bg-white/[0.04] transition-colors"
+            >
+              <RotateCcw size={12} />
+              Reset All to Defaults
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +688,94 @@ export function AvatarSettingsPanel({
                   </div>
                 </button>
 
+                {/* Auto-Mirror Left toggle */}
+                <button
+                  onClick={() => {
+                    const next = { ...settings, autoMirrorLeft: !(settings.autoMirrorLeft ?? true) }
+                    onChange(next)
+                    saveAvatarSettings(next)
+                  }}
+                  className={[
+                    'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
+                    (settings.autoMirrorLeft ?? true)
+                      ? 'bg-purple-500/10 border border-purple-500/30'
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+                  ].join(' ')}
+                >
+                  <RotateCcw
+                    size={16}
+                    className={(settings.autoMirrorLeft ?? true) ? 'text-purple-400' : 'text-white/25'}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">Auto-Mirror Left View</span>
+                      {(settings.autoMirrorLeft ?? true) && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                          ON
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      {(settings.autoMirrorLeft ?? true)
+                        ? 'Generates right-facing then mirrors to left — reliable result'
+                        : 'Disabled — left prompt sent as-is, may face wrong direction'}
+                    </p>
+                  </div>
+                  <div className={[
+                    'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                    (settings.autoMirrorLeft ?? true) ? 'bg-gradient-to-r from-purple-500 to-pink-500' : 'bg-white/15',
+                  ].join(' ')}>
+                    <div className={[
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                      (settings.autoMirrorLeft ?? true) ? 'translate-x-4' : 'translate-x-0.5',
+                    ].join(' ')} />
+                  </div>
+                </button>
+
+                {/* Auto-Mirror Right toggle */}
+                <button
+                  onClick={() => {
+                    const next = { ...settings, autoMirrorRight: !(settings.autoMirrorRight ?? false) }
+                    onChange(next)
+                    saveAvatarSettings(next)
+                  }}
+                  className={[
+                    'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
+                    (settings.autoMirrorRight ?? false)
+                      ? 'bg-purple-500/10 border border-purple-500/30'
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+                  ].join(' ')}
+                >
+                  <RotateCcw
+                    size={16}
+                    className={(settings.autoMirrorRight ?? false) ? 'text-purple-400' : 'text-white/25'}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">Auto-Mirror Right View</span>
+                      {(settings.autoMirrorRight ?? false) && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                          ON
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      {(settings.autoMirrorRight ?? false)
+                        ? 'Mirrors right-facing image if orientation is wrong'
+                        : 'Disabled — right prompt is reliable, no mirroring needed'}
+                    </p>
+                  </div>
+                  <div className={[
+                    'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                    (settings.autoMirrorRight ?? false) ? 'bg-gradient-to-r from-purple-500 to-pink-500' : 'bg-white/15',
+                  ].join(' ')}>
+                    <div className={[
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                      (settings.autoMirrorRight ?? false) ? 'translate-x-4' : 'translate-x-0.5',
+                    ].join(' ')} />
+                  </div>
+                </button>
+
                 {/* Character Description toggle */}
                 <button
                   onClick={() => {
@@ -532,6 +811,54 @@ export function AvatarSettingsPanel({
                     ].join(' ')} />
                   </div>
                 </button>
+
+                {/* 360° Orbit Default toggle */}
+                <button
+                  onClick={() => {
+                    const next = { ...settings, orbit360Default: !(settings.orbit360Default ?? true) }
+                    onChange(next)
+                    saveAvatarSettings(next)
+                  }}
+                  className={[
+                    'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mt-2',
+                    (settings.orbit360Default ?? true)
+                      ? 'bg-purple-500/10 border border-purple-500/30'
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+                  ].join(' ')}
+                >
+                  <Orbit
+                    size={16}
+                    className={(settings.orbit360Default ?? true) ? 'text-purple-400' : 'text-white/25'}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">360° Orbit by Default</span>
+                      {(settings.orbit360Default ?? true) && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                          ON
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      Start in 360° drag-to-rotate mode instead of static view
+                    </p>
+                  </div>
+                  {/* Toggle switch */}
+                  <div className={[
+                    'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                    (settings.orbit360Default ?? true) ? 'bg-gradient-to-r from-cyan-500 to-teal-500' : 'bg-white/15',
+                  ].join(' ')}>
+                    <div className={[
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                      (settings.orbit360Default ?? true) ? 'translate-x-4' : 'translate-x-0.5',
+                    ].join(' ')} />
+                  </div>
+                </button>
+
+                {/* View Angle Tuning — only when 360° orbit is enabled */}
+                {(settings.orbit360Default ?? true) && (
+                  <ViewAngleTuningSection settings={settings} onChange={onChange} />
+                )}
               </div>
             </div>
 
@@ -560,6 +887,12 @@ export function AvatarSettingsPanel({
                   <span className="text-[9px] text-white/25 uppercase tracking-wider">Body: </span>
                   <span className="text-[10px] text-white/40 font-mono">
                     {BODY_WORKFLOW_OPTIONS.find((o) => o.id === settings.bodyWorkflowMethod)?.label || 'Default'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] text-white/25 uppercase tracking-wider">Orbit: </span>
+                  <span className={`text-[10px] font-mono ${(settings.orbit360Default ?? true) ? 'text-cyan-400/60' : 'text-white/40'}`}>
+                    {(settings.orbit360Default ?? true) ? '360° On' : 'Off'}
                   </span>
                 </div>
               </div>
