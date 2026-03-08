@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AvatarResult } from './types'
-import type { FramingType } from './galleryTypes'
+import type { FramingType, WizardMeta } from './galleryTypes'
 import type { ViewAngle, ViewResultMap, ViewTimestampMap } from './viewPack'
 import type { AvatarSettings } from './types'
-import { buildAnglePrompt, buildIdentityLockSuffix, extractVisualDescriptors, getViewAngleOption, resolveAngleTuning, sanitiseBasePromptForAngle, VIEW_ANGLE_OPTIONS } from './viewPack'
+import { buildAnglePrompt, buildIdentityLockSuffix, buildVisualDescriptorsFromMeta, extractVisualDescriptors, getViewAngleOption, resolveAngleTuning, sanitiseBasePromptForAngle, VIEW_ANGLE_OPTIONS } from './viewPack'
 
 export interface GenerateViewParams {
   referenceImageUrl: string
@@ -16,6 +16,10 @@ export interface GenerateViewParams {
   framingType?: FramingType
   /** Avatar settings — used to read per-angle tuning overrides (denoise, promptWeight). */
   avatarSettings?: AvatarSettings
+  /** Structured appearance data from the creator wizard. When present, visual
+   *  descriptors are built from exact values (e.g. "black hair, olive skin tone")
+   *  instead of regex-guessing from the prompt — eliminating color drift. */
+  wizardMeta?: WizardMeta
 }
 
 interface OutfitGenerateResult {
@@ -200,10 +204,10 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     const tunableAngle = params.angle !== 'front' ? params.angle as 'left' | 'right' | 'back' : null
     const angleTuning = tunableAngle ? resolveAngleTuning(tunableAngle, params.avatarSettings) : null
 
-    // Extract concrete visual descriptors (hair color, skin tone, ethnicity)
-    // from the original prompt so CLIP generates the correct appearance at
-    // every angle instead of drifting to the checkpoint's default bias.
-    const visualDescriptors = extractVisualDescriptors(rawBase)
+    // Prefer structured appearance data from wizardMeta (exact values, no guessing).
+    // Fall back to regex extraction from the prompt for legacy items without meta.
+    const metaDescriptors = buildVisualDescriptorsFromMeta(params.wizardMeta)
+    const visualDescriptors = metaDescriptors || extractVisualDescriptors(rawBase)
 
     const viewPrompt = [
       buildAnglePrompt(params.angle, params.framingType, params.avatarSettings),

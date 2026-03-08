@@ -29,6 +29,8 @@ export type HairType = 'straight' | 'wavy' | 'curly' | 'coily'
 
 export type HairColor = 'black' | 'brown' | 'blonde' | 'auburn' | 'neon_blue' | 'fuchsia'
 
+export type EyeColor = 'brown' | 'blue' | 'green' | 'hazel' | 'amber' | 'grey'
+
 export type StylePreset =
   | 'modern'
   | 'executive'
@@ -127,6 +129,18 @@ function mapHairColor(c: HairColor): string {
     auburn: 'auburn hair',
     neon_blue: 'neon blue hair',
     fuchsia: 'fuchsia hair',
+  }
+  return m[c]
+}
+
+export function mapEyeColor(c: EyeColor): string {
+  const m: Record<EyeColor, string> = {
+    brown: 'brown eyes',
+    blue: 'blue eyes',
+    green: 'green eyes',
+    hazel: 'hazel eyes',
+    amber: 'amber eyes',
+    grey: 'grey eyes',
   }
   return m[c]
 }
@@ -286,6 +300,15 @@ export const REALISM_OPTIONS: Array<{ key: string; label: string }> = [
   { key: '0', label: 'MMORPG Stylized' },
   { key: '1', label: 'Semi-Real' },
   { key: '2', label: 'Photoreal' },
+]
+
+export const EYE_COLOR_OPTIONS: Array<{ key: EyeColor; label: string }> = [
+  { key: 'brown', label: 'Brown' },
+  { key: 'blue', label: 'Blue' },
+  { key: 'green', label: 'Green' },
+  { key: 'hazel', label: 'Hazel' },
+  { key: 'amber', label: 'Amber' },
+  { key: 'grey', label: 'Grey' },
 ]
 
 export const ETHNICITY_OPTIONS: Array<{ key: EthnicityPreset; label: string }> = [

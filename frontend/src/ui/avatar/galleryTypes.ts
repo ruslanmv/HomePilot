@@ -365,7 +365,9 @@ export const CHARACTER_STYLE_PRESETS: CharacterStylePreset[] = [
 /** Gallery item role — distinguishes the selected anchor from portrait alternatives. */
 export type GalleryItemRole = 'anchor' | 'portrait'
 
-/** Wizard metadata stored on a GalleryItem so persona export can access profession data. */
+/** Wizard metadata stored on a GalleryItem so persona export can access profession data.
+ *  Appearance fields (skinTone, hairColor, etc.) are used by View Pack generation
+ *  to produce exact visual descriptors instead of regex-guessing from prompts. */
 export interface WizardMeta {
   professionId?: string
   professionLabel?: string
@@ -379,6 +381,11 @@ export interface WizardMeta {
   gender?: string
   ageRange?: string
   outfitStyle?: string
+  // ── Appearance fields (used by View Pack for accurate 3D angle generation) ──
+  skinTone?: string
+  hairColor?: string
+  hairType?: string
+  eyeColor?: string
 }
 
 export interface GalleryItem {

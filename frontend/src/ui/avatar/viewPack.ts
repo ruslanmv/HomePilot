@@ -1,5 +1,5 @@
 import type { AvatarResult, AvatarSettings } from './types'
-import type { FramingType } from './galleryTypes'
+import type { FramingType, WizardMeta } from './galleryTypes'
 
 export type ViewAngle = 'front' | 'left' | 'right' | 'back'
 export type ViewSource = 'anchor' | 'latest' | 'equipped'
@@ -84,6 +84,22 @@ export function extractVisualDescriptors(prompt: string): string {
     if (m) found.set(category, m[0].trim())
   }
   return Array.from(found.values()).join(', ')
+}
+
+/**
+ * Build visual descriptors from structured WizardMeta appearance fields.
+ * This is the preferred path — returns exact tokens like "black hair, olive skin tone,
+ * brown eyes" without any regex guessing. Falls back to empty string if no
+ * appearance data is present (legacy items created before this feature).
+ */
+export function buildVisualDescriptorsFromMeta(meta?: WizardMeta): string {
+  if (!meta) return ''
+  const parts: string[] = []
+  if (meta.hairColor) parts.push(`${meta.hairColor} hair`)
+  if (meta.hairType) parts.push(`${meta.hairType} hair texture`)
+  if (meta.skinTone) parts.push(`${meta.skinTone} skin tone`)
+  if (meta.eyeColor) parts.push(`${meta.eyeColor} eyes`)
+  return parts.join(', ')
 }
 
 // ---------------------------------------------------------------------------
