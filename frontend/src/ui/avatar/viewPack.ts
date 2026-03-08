@@ -90,6 +90,59 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
   },
 ]
 
+// ── Outfit-aware rear emphasis ────────────────────────────────────────────
+// When the outfit description contains NSFW/lingerie tokens, back and
+// rear-quarter angles need explicit body-from-behind cues so the model
+// actually shows the garment's rear design (thong back, straps, bare skin,
+// buttocks shape through fabric, etc.) instead of a generic spine shot.
+// ──────────────────────────────────────────────────────────────────────────
+
+const NSFW_REAR_KEYWORDS = [
+  'lingerie', 'boudoir', 'thong', 'g-string', 'panties', 'underwear',
+  'bikini', 'swimwear', 'nude', 'naked', 'topless', 'explicit',
+  'sensual', 'erotic', 'provocative', 'revealing', 'sheer',
+  'latex', 'fetish', 'stockings', 'garter', 'corset', 'bodysuit',
+  'teddy', 'babydoll', 'chemise', 'negligee',
+]
+
+/** Returns true when the outfit description contains NSFW/lingerie tokens. */
+export function isNsfwOutfit(outfitDesc: string): boolean {
+  const lower = outfitDesc.toLowerCase()
+  return NSFW_REAR_KEYWORDS.some((kw) => lower.includes(kw))
+}
+
+/**
+ * Returns angle-specific emphasis tokens that guide the model to show the
+ * rear of the garment and relevant body features.  Only applies to back
+ * and rear-quarter angles, and only when the outfit is NSFW/lingerie.
+ */
+export function getRearEmphasis(angle: ViewAngle, outfitDesc: string): string {
+  if (!isNsfwOutfit(outfitDesc)) return ''
+
+  const lower = outfitDesc.toLowerCase()
+  const hasThong = lower.includes('thong') || lower.includes('g-string')
+  const hasStockings = lower.includes('stockings') || lower.includes('garter')
+
+  if (angle === 'back') {
+    const tokens = [
+      'outfit visible from behind',
+      'back of garment and body details clearly visible',
+      'rear view of clothing showing full back design',
+      'buttocks shape and contour visible through outfit',
+    ]
+    if (hasThong) tokens.push('thong back strap visible between buttocks')
+    if (hasStockings) tokens.push('stocking tops and garter straps visible from behind')
+    return tokens.join(', ')
+  }
+
+  // Rear-quarter angles (left = camera on right = shows back-left, etc.)
+  if (angle === 'left_45' || angle === 'right_45') {
+    return 'outfit side and partial rear visible, hip and buttock contour visible'
+  }
+
+  return ''
+}
+
 export type ViewResultMap = Partial<Record<ViewAngle, AvatarResult>>
 export type ViewPreviewMap = Partial<Record<ViewAngle, string>>
 /** Unix timestamps (Date.now()) for when each angle was generated/cached. */

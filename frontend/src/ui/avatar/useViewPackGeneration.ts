@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AvatarResult } from './types'
 import type { ViewAngle, ViewResultMap, ViewTimestampMap } from './viewPack'
-import { getViewAngleOption, VIEW_ANGLE_OPTIONS } from './viewPack'
+import { getViewAngleOption, getRearEmphasis, VIEW_ANGLE_OPTIONS } from './viewPack'
 
 export interface GenerateViewParams {
   referenceImageUrl: string
@@ -139,9 +139,13 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
 
     // outfit_prompt: angle directive FIRST (for CLIP priority), then outfit description.
     // The backend places this first and never strips it.
+    // For back / rear-quarter angles with NSFW outfits, inject rear-emphasis tokens
+    // so the model shows the garment from behind (thong back, buttocks contour, etc.)
+    const rearEmphasis = getRearEmphasis(params.angle, outfitDesc)
     const outfitPrompt = [
       angleMeta.prompt,
       outfitDesc,
+      ...(rearEmphasis ? [rearEmphasis] : []),
       'full body visible head to knees',
     ].join(', ')
 
