@@ -131,7 +131,7 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     const viewPrompt = [
       angleMeta.prompt,
       basePrompt,
-      'single character turntable rotation, fixed camera distance, preserve exact identity and facial features, preserve exact outfit design colors and fabric, preserve exact hairstyle and accessories, same body shape and proportions, full subject visible head to knees, plain neutral studio backdrop',
+      'single character turntable rotation, fixed camera distance, preserve exact identity and facial features, preserve exact outfit including coverage level and skin exposure and garment fit, preserve exact hairstyle and accessories, same body shape and proportions, full body framing head to thighs',
     ].filter(Boolean).join(', ')
 
     // Build the negative prompt: prevent front-facing bias from the reference latent
