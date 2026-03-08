@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AvatarResult } from './types'
+import type { FramingType } from './galleryTypes'
 import type { ViewAngle, ViewResultMap, ViewTimestampMap } from './viewPack'
-import { getViewAngleOption, sanitiseBasePromptForAngle, VIEW_ANGLE_OPTIONS } from './viewPack'
+import { buildAnglePrompt, buildIdentityLockSuffix, getViewAngleOption, sanitiseBasePromptForAngle, VIEW_ANGLE_OPTIONS } from './viewPack'
 
 export interface GenerateViewParams {
   referenceImageUrl: string
@@ -10,6 +11,8 @@ export interface GenerateViewParams {
   basePrompt?: string
   checkpointOverride?: string
   seed?: number
+  /** Framing type from the front view — angles will match this composition. */
+  framingType?: FramingType
 }
 
 interface OutfitGenerateResult {
@@ -134,10 +137,15 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     // The outfit description comes second — it's NOT duplicated via character_prompt
     // (we send character_prompt=undefined) to avoid tripling outfit tokens which
     // drowns out the angle instruction.
+    //
+    // The angle prompt and identity-lock suffix adapt to the front view's
+    // framing type (half_body / mid_body / headshot) so the body range
+    // matches across all angles — e.g. "head to waist" instead of
+    // hardcoded "head to thighs".
     const viewPrompt = [
-      angleMeta.prompt,
+      buildAnglePrompt(params.angle, params.framingType),
       basePrompt,
-      'single character turntable rotation, fixed camera distance, preserve exact identity and facial features, preserve exact outfit including coverage level and skin exposure and garment fit, preserve exact hairstyle and accessories, same body shape and proportions, full body framing head to thighs',
+      buildIdentityLockSuffix(params.framingType),
     ].filter(Boolean).join(', ')
 
     // Build the negative prompt: prevent front-facing bias from the reference latent

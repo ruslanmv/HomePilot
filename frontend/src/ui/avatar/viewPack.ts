@@ -1,4 +1,5 @@
 import type { AvatarResult } from './types'
+import type { FramingType } from './galleryTypes'
 
 export type ViewAngle = 'front' | 'left' | 'right' | 'back'
 export type ViewSource = 'anchor' | 'latest' | 'equipped'
@@ -7,7 +8,6 @@ export interface ViewAngleOption {
   id: ViewAngle
   label: string
   shortLabel: string
-  prompt: string
   /** Negative prompt tokens to prevent the reference pose from dominating. */
   negativePrompt: string
   icon: string
@@ -19,12 +19,80 @@ export interface ViewAngleOption {
   skipIdentity?: boolean
 }
 
+// ---------------------------------------------------------------------------
+// Framing-aware body range tokens — match the front view's composition
+// ---------------------------------------------------------------------------
+
+/** Body range descriptions that adapt to the front view's framing type.
+ *  `bodyRange` is used in angle directives, `suffix` in the identity lock. */
+interface FramingTokens {
+  /** e.g. "from head to waist" */
+  bodyRange: string
+  /** Negative to prevent wrong framing */
+  framingNegative: string
+}
+
+const FRAMING_TOKENS: Record<FramingType, FramingTokens> = {
+  half_body: {
+    bodyRange: 'from head to waist',
+    framingNegative: 'full body, legs visible, knees visible, feet visible',
+  },
+  mid_body: {
+    bodyRange: 'from head to hips',
+    framingNegative: 'full body, knees visible, feet visible',
+  },
+  headshot: {
+    bodyRange: 'from head to shoulders',
+    framingNegative: 'full body, waist visible, legs visible',
+  },
+}
+
+function getFramingTokens(framingType?: FramingType): FramingTokens {
+  return FRAMING_TOKENS[framingType || 'half_body']
+}
+
+// ---------------------------------------------------------------------------
+// Angle prompt builders — inject framing-appropriate body range tokens
+// ---------------------------------------------------------------------------
+
+function buildLeftPrompt(ft: FramingTokens): string {
+  return `character turntable reference sheet, full left profile view, camera positioned directly to the right of the subject, head and body turned 90 degrees to the left, only left side of face visible showing left ear left cheekbone jaw line and nose tip in profile silhouette, left shoulder directly facing camera, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, (left profile:1.4), (side view:1.3)`
+}
+
+function buildRightPrompt(ft: FramingTokens): string {
+  return `character turntable reference sheet, full right profile view, camera positioned directly to the left of the subject, head and body turned 90 degrees to the right, only right side of face visible showing right ear right cheekbone jaw line and nose tip in profile silhouette, right shoulder directly facing camera, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, (right profile:1.4), (side view:1.3)`
+}
+
+function buildBackPrompt(ft: FramingTokens): string {
+  return `character turntable reference sheet, rear view from directly behind, camera positioned behind the subject, person facing completely away from camera, back of head visible showing hair from behind, back of body visible ${ft.bodyRange} showing shoulders and upper back and lower back from behind, outfit visible from behind showing the rear design of the garment, spine centered in frame, no face visible at all, body visible ${ft.bodyRange}, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (rear view:1.4), (from behind:1.3)`
+}
+
+function buildFrontPrompt(ft: FramingTokens): string {
+  return `front view, facing the camera directly, centered composition, standing naturally, body visible ${ft.bodyRange}, same person, same outfit, same hairstyle, same body proportions`
+}
+
+/** Build the identity-lock suffix with framing-appropriate body range. */
+export function buildIdentityLockSuffix(framingType?: FramingType): string {
+  const ft = getFramingTokens(framingType)
+  return `single character turntable rotation, fixed camera distance, preserve exact identity and facial features, preserve exact outfit including coverage level and skin exposure and garment fit, preserve exact hairstyle and accessories, same body shape and proportions, body framing ${ft.bodyRange}`
+}
+
+/** Build the angle-specific positive prompt, adapted to the framing type. */
+export function buildAnglePrompt(angle: ViewAngle, framingType?: FramingType): string {
+  const ft = getFramingTokens(framingType)
+  switch (angle) {
+    case 'front': return buildFrontPrompt(ft)
+    case 'left':  return buildLeftPrompt(ft)
+    case 'right': return buildRightPrompt(ft)
+    case 'back':  return buildBackPrompt(ft)
+  }
+}
+
 export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
   {
     id: 'front',
     label: 'Front',
     shortLabel: 'F',
-    prompt: 'front view, facing the camera directly, centered composition, standing naturally, full body visible from head to thighs, same person, same outfit, same hairstyle, same body proportions',
     negativePrompt: '',
     icon: '\u25C9',
     denoise: 0.85,
@@ -33,7 +101,6 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'left',
     label: 'Left',
     shortLabel: 'L',
-    prompt: 'character turntable reference sheet, full left profile view, camera positioned directly to the right of the subject, head and body turned 90 degrees to the left, only left side of face visible showing left ear left cheekbone jaw line and nose tip in profile silhouette, left shoulder directly facing camera, full body profile silhouette visible showing bust contour waist curve hip shape and thigh line from the side, outfit visible in profile showing how garment fits along the body silhouette, full body visible from head to thighs, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, (left profile:1.4), (side view:1.3)',
     negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, right side visible, back view, rear view, facing forward, head facing forward',
     icon: '\u25D0',
     denoise: 1.0,
@@ -42,7 +109,6 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'right',
     label: 'Right',
     shortLabel: 'R',
-    prompt: 'character turntable reference sheet, full right profile view, camera positioned directly to the left of the subject, head and body turned 90 degrees to the right, only right side of face visible showing right ear right cheekbone jaw line and nose tip in profile silhouette, right shoulder directly facing camera, full body profile silhouette visible showing bust contour waist curve hip shape and thigh line from the side, outfit visible in profile showing how garment fits along the body silhouette, full body visible from head to thighs, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, (right profile:1.4), (side view:1.3)',
     negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, left side visible, back view, rear view, facing forward, head facing forward',
     icon: '\u25D1',
     denoise: 1.0,
@@ -51,7 +117,6 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'back',
     label: 'Back',
     shortLabel: 'B',
-    prompt: 'character turntable reference sheet, rear view from directly behind, camera positioned behind the subject, person facing completely away from camera, back of head visible showing hair from behind, full back of body visible showing shoulders and upper back and lower back and waist and hips and buttocks and upper thighs from behind, outfit visible from behind showing the rear design of the garment how it fits across the back and hips and backside, spine centered in frame, no face visible at all, full body visible from head to thighs, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (rear view:1.4), (from behind:1.3)',
     negativePrompt: 'front view, facing camera, looking at camera, face visible, eyes visible, nose visible, mouth visible, front of body, frontal pose, turning head, looking over shoulder, three-quarter view, profile view, side view, facing forward',
     icon: '\u25CE',
     denoise: 1.0,
