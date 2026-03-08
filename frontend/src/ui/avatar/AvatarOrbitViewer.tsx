@@ -23,6 +23,15 @@ const ORBIT_ORDER: ViewAngle[] = [
   'left_45',
 ]
 
+const ANGLE_LABELS: Record<ViewAngle, string> = {
+  front: 'Front',
+  right_45: '45° R',
+  right: 'Right',
+  back: 'Back',
+  left: 'Left',
+  left_45: '45° L',
+}
+
 const CROSSFADE_MS = 180
 
 interface AvatarOrbitViewerProps {
@@ -52,32 +61,14 @@ export function AvatarOrbitViewer({
   const fadeTimer = useRef<ReturnType<typeof setTimeout>>()
 
   // Available angles that have images
-  const availableAngles = useMemo(() => {
-    return ORBIT_ORDER.map((angle, idx) => ({
-      angle,
-      idx,
-      url: previews[angle],
-    }))
+  const availableCount = useMemo(() => {
+    return ORBIT_ORDER.filter((angle) => previews[angle]).length
   }, [previews])
 
-  const hasEnoughAngles = availableAngles.filter((a) => a.url).length >= 2
-
-  // Sync external activeAngle → internal index
-  useEffect(() => {
-    const target = activeAngle ?? 'front'
-    const idx = ORBIT_ORDER.indexOf(target)
-    if (idx >= 0 && idx !== currentIndex) {
-      setPrevIndex(currentIndex)
-      setCurrentIndex(idx)
-      setFading(true)
-      clearTimeout(fadeTimer.current)
-      fadeTimer.current = setTimeout(() => setFading(false), CROSSFADE_MS)
-    }
-  }, [activeAngle]) // eslint-disable-line react-hooks/exhaustive-deps
+  const hasEnoughAngles = availableCount >= 2
 
   // Find nearest available angle for a given raw index
   const snapToNearest = useCallback((rawIdx: number): number => {
-    // Wrap to 0..5
     const len = ORBIT_ORDER.length
     const wrapped = ((rawIdx % len) + len) % len
 
@@ -93,6 +84,47 @@ export function AvatarOrbitViewer({
     }
     return 0 // fallback
   }, [previews])
+
+  // Transition to a new index with crossfade
+  const transitionTo = useCallback((newIdx: number, fromIdx?: number) => {
+    const from = fromIdx ?? currentIndex
+    if (newIdx === from && previews[ORBIT_ORDER[newIdx]]) return
+    setPrevIndex(from)
+    setCurrentIndex(newIdx)
+    setFading(true)
+    clearTimeout(fadeTimer.current)
+    fadeTimer.current = setTimeout(() => setFading(false), CROSSFADE_MS)
+  }, [currentIndex, previews])
+
+  // Sync external activeAngle → internal index
+  useEffect(() => {
+    const target = activeAngle ?? 'front'
+    const idx = ORBIT_ORDER.indexOf(target)
+    if (idx >= 0 && idx !== currentIndex) {
+      transitionTo(idx)
+    }
+  }, [activeAngle]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When previews change (outfit switch), snap to nearest available angle.
+  // This prevents showing a blank screen when the previous outfit's angle
+  // doesn't exist in the new outfit's view pack.
+  const prevPreviewsRef = useRef(previews)
+  useEffect(() => {
+    const prev = prevPreviewsRef.current
+    prevPreviewsRef.current = previews
+
+    // Check if the previews actually changed (not just re-render)
+    const changed = ORBIT_ORDER.some((a) => prev[a] !== previews[a])
+    if (!changed) return
+
+    const currentAngle = ORBIT_ORDER[currentIndex]
+    if (!previews[currentAngle]) {
+      // Current angle no longer available — snap to nearest
+      const snapped = snapToNearest(currentIndex)
+      transitionTo(snapped)
+      onAngleChange(ORBIT_ORDER[snapped])
+    }
+  }, [previews, currentIndex, snapToNearest, transitionTo, onAngleChange])
 
   // Drag sensitivity: pixels per angle step
   const PX_PER_STEP = 80
@@ -117,16 +149,10 @@ export function AvatarOrbitViewer({
     const snapped = snapToNearest(rawIdx)
 
     if (snapped !== currentIndex) {
-      setPrevIndex(currentIndex)
-      setCurrentIndex(snapped)
-      setFading(true)
-      clearTimeout(fadeTimer.current)
-      fadeTimer.current = setTimeout(() => setFading(false), CROSSFADE_MS)
-
-      const newAngle = ORBIT_ORDER[snapped]
-      onAngleChange(newAngle)
+      transitionTo(snapped)
+      onAngleChange(ORBIT_ORDER[snapped])
     }
-  }, [currentIndex, snapToNearest, onAngleChange])
+  }, [currentIndex, snapToNearest, transitionTo, onAngleChange])
 
   const handlePointerUp = useCallback(() => {
     dragging.current = false
@@ -157,25 +183,37 @@ export function AvatarOrbitViewer({
       const snapped = snapToNearest(rawIdx)
 
       if (snapped !== currentIndex) {
-        setPrevIndex(currentIndex)
-        setCurrentIndex(snapped)
-        setFading(true)
-        clearTimeout(fadeTimer.current)
-        fadeTimer.current = setTimeout(() => setFading(false), CROSSFADE_MS)
+        transitionTo(snapped)
         onAngleChange(ORBIT_ORDER[snapped])
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [hasEnoughAngles, currentIndex, snapToNearest, onAngleChange])
+  }, [hasEnoughAngles, currentIndex, snapToNearest, transitionTo, onAngleChange])
 
   // Cleanup
   useEffect(() => {
     return () => clearTimeout(fadeTimer.current)
   }, [])
 
-  if (!currentUrl) return null
+  // If no image at all, show a placeholder instead of returning null
+  if (!currentUrl) {
+    // Try to find ANY available angle
+    const fallbackIdx = snapToNearest(0)
+    const fallbackUrl = previews[ORBIT_ORDER[fallbackIdx]]
+    if (!fallbackUrl) {
+      return (
+        <div className="relative h-full rounded-2xl border border-white/[0.08] bg-black/40 flex items-center justify-center">
+          <div className="text-center">
+            <RotateCw size={24} className="text-white/15 mx-auto mb-2" />
+            <div className="text-xs text-white/25">No 3D views for this outfit</div>
+            <div className="text-[10px] text-white/15 mt-1">Generate views in the View Pack panel</div>
+          </div>
+        </div>
+      )
+    }
+  }
 
   return (
     <div className="relative group h-full">
@@ -203,61 +241,72 @@ export function AvatarOrbitViewer({
         )}
 
         {/* Current image — fades in */}
-        <img
-          src={currentUrl}
-          alt={currentAngle}
-          className="max-w-full max-h-full object-contain pointer-events-none"
-          style={{
-            opacity: fading ? 0 : 1,
-            animation: fading ? `orbitFadeIn ${CROSSFADE_MS}ms ease-out forwards` : undefined,
-          }}
-        />
+        {currentUrl && (
+          <img
+            src={currentUrl}
+            alt={currentAngle}
+            className="max-w-full max-h-full object-contain pointer-events-none"
+            style={{
+              opacity: fading ? 0 : 1,
+              animation: fading ? `orbitFadeIn ${CROSSFADE_MS}ms ease-out forwards` : undefined,
+            }}
+          />
+        )}
 
         {/* Orbit indicator badge */}
         <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-cyan-500/20 text-[10px] text-cyan-200 font-medium">
           <RotateCw size={10} />
           <span>360°</span>
           <span className="text-white/50">·</span>
-          <span className="text-white/70">{ORBIT_ORDER[currentIndex] === 'front' ? 'Front' :
-            ORBIT_ORDER[currentIndex] === 'right_45' ? '45° R' :
-            ORBIT_ORDER[currentIndex] === 'right' ? 'Right' :
-            ORBIT_ORDER[currentIndex] === 'back' ? 'Back' :
-            ORBIT_ORDER[currentIndex] === 'left' ? 'Left' :
-            '45° L'}</span>
+          <span className="text-white/70">{ANGLE_LABELS[currentAngle] || currentAngle}</span>
+          {availableCount > 0 && (
+            <>
+              <span className="text-white/20">·</span>
+              <span className="text-emerald-300/60">{availableCount}/6</span>
+            </>
+          )}
         </div>
 
         {/* Drag hint — only if not actively dragging */}
         {hasEnoughAngles && (
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 backdrop-blur-sm border border-white/10 text-[10px] text-white/40 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-            <span>← → arrow keys or drag to rotate</span>
+            <span>← → drag to rotate</span>
           </div>
         )}
 
         {/* Lightbox overlay on hover */}
-        <div
-          className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
-          onClick={handleClick}
-        >
-          <Maximize2 size={28} className="text-white/80" />
-        </div>
+        {currentUrl && (
+          <div
+            className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
+            onClick={handleClick}
+          >
+            <Maximize2 size={28} className="text-white/80" />
+          </div>
+        )}
 
-        {/* Angle dots — orbit position indicator */}
-        <div className="absolute bottom-3 right-3 flex items-center gap-1">
+        {/* Angle dots — orbit position indicator (clickable) */}
+        <div className="absolute bottom-3 right-3 flex items-center gap-1.5">
           {ORBIT_ORDER.map((angle, idx) => {
             const hasImage = Boolean(previews[angle])
             const isActive = idx === currentIndex
             return (
-              <div
+              <button
                 key={angle}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!hasImage) return
+                  transitionTo(idx)
+                  onAngleChange(angle)
+                }}
                 className={[
-                  'w-1.5 h-1.5 rounded-full transition-all',
+                  'w-2 h-2 rounded-full transition-all',
                   isActive
-                    ? 'bg-cyan-400 scale-125'
+                    ? 'bg-cyan-400 scale-150'
                     : hasImage
-                      ? 'bg-white/30'
-                      : 'bg-white/10',
+                      ? 'bg-white/40 hover:bg-white/60 cursor-pointer'
+                      : 'bg-white/10 cursor-default',
                 ].join(' ')}
-                title={angle}
+                title={`${ANGLE_LABELS[angle] || angle}${hasImage ? '' : ' (not generated)'}`}
               />
             )
           })}

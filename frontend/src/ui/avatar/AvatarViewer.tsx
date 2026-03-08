@@ -983,20 +983,50 @@ export function AvatarViewer({
               {/* Result thumbnail filmstrip (when multiple results and no equipped item) */}
               {stageTab === 'outfit' && !equippedItem && outfit.results.length > 1 && (
                 <div className="flex gap-1.5 overflow-x-auto scrollbar-hide flex-shrink-0">
-                  {outfit.results.map((r, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setSelectedResultIdx(i)}
-                      className={[
-                        'flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden border-2 transition-all',
-                        selectedResultIdx === i
-                          ? 'border-cyan-500/60 ring-1 ring-cyan-500/20'
-                          : 'border-white/10 hover:border-white/25',
-                      ].join(' ')}
-                    >
-                      <img src={resolveUrl(r.url, backendUrl)} alt={`Result ${i + 1}`} className="w-full h-full object-cover" />
-                    </button>
-                  ))}
+                  {outfit.results.map((r, i) => {
+                    // Check if this outfit result has cached 3D views
+                    const charId = item.parentId || item.id
+                    const urlHash = r.url.replace(/[^a-zA-Z0-9]/g, '').slice(-16)
+                    const cacheKey = `hp_viewpack_${charId}_out_${urlHash}`
+                    let has3D = false
+                    try {
+                      const raw = localStorage.getItem(cacheKey)
+                      if (raw) {
+                        const parsed = JSON.parse(raw)
+                        const results = parsed?.results || parsed
+                        has3D = results && typeof results === 'object' && Object.keys(results).length > 0
+                      }
+                    } catch { /* ignore */ }
+                    // Also mark current selected if it has live view pack results
+                    if (i === selectedResultIdx && viewSource === 'latest' && Object.keys(viewPack.resultsByAngle).length > 0) {
+                      has3D = true
+                    }
+
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => {
+                          setSelectedResultIdx(i)
+                          setActiveViewAngle(null)
+                          setShowStagePromptInfo(false)
+                        }}
+                        className={[
+                          'relative flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden border-2 transition-all',
+                          selectedResultIdx === i
+                            ? 'border-cyan-500/60 ring-1 ring-cyan-500/20'
+                            : 'border-white/10 hover:border-white/25',
+                        ].join(' ')}
+                      >
+                        <img src={resolveUrl(r.url, backendUrl)} alt={`Result ${i + 1}`} className="w-full h-full object-cover" />
+                        {/* 3D ready indicator */}
+                        {has3D && (
+                          <div className="absolute top-0 right-0 w-3 h-3 flex items-center justify-center bg-emerald-500/90 rounded-bl text-[6px] text-white font-bold" title="Has 3D views">
+                            3D
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
 
