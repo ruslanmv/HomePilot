@@ -175,7 +175,7 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
           // Identity is preserved via the reference image + InstantID, not text.
           negative_prompt: negativePrompt,
           count: 1,
-          generation_mode: angleMeta.skipIdentity ? 'standard' : 'identity',
+          generation_mode: angleMeta.generationMode || 'identity',
           checkpoint_override: params.checkpointOverride,
           seed: params.seed,
           // Non-front angles use denoise 1.0 so the text prompt fully controls

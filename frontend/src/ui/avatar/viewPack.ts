@@ -14,9 +14,12 @@ export interface ViewAngleOption {
   /** Denoise override — higher values let the text prompt control pose.
    *  Front uses default (0.85), non-front uses 1.0 for full prompt control. */
   denoise: number
-  /** When true, use 'standard' generation mode instead of 'identity' to avoid
-   *  face preservation fighting the desired pose (e.g. back view). */
-  skipIdentity?: boolean
+  /** Generation mode override for this angle:
+   *  - 'identity'  → InstantID (face ControlNet + empty latent)
+   *  - 'standard'  → text-only (no reference image at all)
+   *  - 'reference' → img2img with reference (colors preserved, no face ControlNet)
+   *  Defaults to 'identity' if not set. */
+  generationMode?: 'identity' | 'standard' | 'reference'
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +111,7 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     // Bypass InstantID ControlNet — it extracts front-facing pose from the
     // reference image and fights the left profile directive for ~50% of
     // sampling steps (end_at: 0.5, weight: 0.65), causing right-facing output.
-    skipIdentity: true,
+    generationMode: 'standard',
   },
   {
     id: 'right',
@@ -117,9 +120,8 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, left side visible, back view, rear view, facing forward, head facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side, sitting, kneeling, crouching, lying down, on the floor, on the ground, cross-legged',
     icon: '\u25D1',
     denoise: 1.0,
-    // Bypass InstantID ControlNet for same reason as left — the front-facing
-    // reference pose bleeds into right profile generation.
-    skipIdentity: true,
+    // Bypass InstantID ControlNet for same reason as left.
+    generationMode: 'standard',
   },
   {
     id: 'back',
@@ -127,8 +129,12 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     shortLabel: 'B',
     negativePrompt: 'front view, facing camera, looking at camera, face visible, eyes visible, nose visible, mouth visible, front of body, frontal pose, turning head, looking over shoulder, three-quarter view, profile view, side view, facing forward, double person, double people, two people, two persons, split image, reference sheet, multiple views, side by side',
     icon: '\u25CE',
-    denoise: 1.0,
-    skipIdentity: true,
+    // Use 'reference' mode (img2img) so the front image's outfit colors
+    // (e.g. black skirt, white top) survive into the back view via the
+    // reference latent. Denoise 0.9 preserves ~10% color signal from the
+    // reference while the strong back-facing text prompt controls the pose.
+    denoise: 0.9,
+    generationMode: 'reference',
   },
 ]
 

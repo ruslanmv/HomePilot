@@ -52,7 +52,9 @@ class OutfitRequest(BaseModel):
     seed: Optional[int] = None
     generation_mode: str = Field(
         "identity",
-        description="'identity' (face-preserving) or 'standard' (text-only fallback)",
+        description="'identity' (face-preserving via InstantID), "
+                    "'standard' (text-only, no reference), or "
+                    "'reference' (img2img with reference colors, no face ControlNet)",
     )
     checkpoint_override: Optional[str] = Field(
         default=None,
@@ -125,6 +127,12 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     # Fall back to studio_reference when a checkpoint override is active.
     if req.generation_mode == "standard":
         target_mode = "creative"
+    elif req.generation_mode == "reference":
+        # img2img using the reference image as the latent source.
+        # Preserves outfit colors/patterns from the reference without
+        # face ControlNet fighting non-front angles.  The text prompt
+        # controls the angle/pose via denoise_override (~0.9).
+        target_mode = "studio_reference"
     elif req.checkpoint_override:
         # SD 1.5 checkpoint override → can't use SDXL workflow
         target_mode = "studio_reference"
