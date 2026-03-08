@@ -66,7 +66,6 @@ import { AvatarSettingsPanel, resolveCheckpoint, loadAvatarSettings } from './Av
 import type { AvatarSettings, HybridFullBodyRequest } from './types'
 import { resolveFileUrl } from '../resolveFileUrl'
 import { AvatarGeneratingLoader } from './AvatarGeneratingLoader'
-import { AvatarStageQuickTools } from './AvatarStageQuickTools'
 import { AvatarViewPackPanel } from './AvatarViewPackPanel'
 import { AvatarOrbitViewer } from './AvatarOrbitViewer'
 import { VIEW_ANGLE_OPTIONS, type ViewAngle, type ViewPreviewMap, type ViewSource } from './viewPack'
@@ -900,24 +899,6 @@ export function AvatarViewer({
                 )
               })()}
 
-              {/* ──────── Quick Views — overlay inside the stage image ──────── */}
-              {!orbitMode && (avatarSettingsState.orbit360Default ?? true) && (
-              <div className="absolute bottom-3 left-3 right-3 z-10 pointer-events-none">
-                <div className="pointer-events-auto inline-block">
-                  <AvatarStageQuickTools
-                    previews={combinedViewPreviews}
-                    loadingAngles={viewPack.loadingAngles}
-                    activeAngle={activeViewAngle}
-                    busy={viewPack.anyLoading}
-                    orbitMode={orbitMode}
-                    onToggleOrbit={() => setOrbitMode((v) => !v)}
-                    onGenerateAngle={handleGenerateViewAngle}
-                    onOpenAngle={handleOpenGeneratedView}
-                    onGenerateMissing={handleGenerateMissingViews}
-                  />
-                </div>
-              </div>
-              )}
               </div>
 
               {/* Result thumbnail filmstrip (when multiple results and no equipped item) */}
@@ -1163,6 +1144,7 @@ export function AvatarViewer({
                 timestamps={viewPack.timestampsByAngle}
                 loadingAngles={viewPack.loadingAngles}
                 busy={viewPack.anyLoading}
+                outfitPrompt={currentViewBasePrompt}
                 onToggle={() => setShowViewPack((v) => !v)}
                 onSourceChange={(src) => { setViewSource(src); setActiveViewAngle(null) }}
                 onGenerateAngle={handleGenerateViewAngle}

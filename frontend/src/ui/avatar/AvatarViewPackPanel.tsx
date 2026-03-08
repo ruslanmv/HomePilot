@@ -1,7 +1,7 @@
-import React from 'react'
-import { ChevronDown, Loader2, Orbit, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
+import React, { useCallback, useState } from 'react'
+import { ChevronDown, ClipboardCopy, Code2, Loader2, Orbit, Sparkles, Trash2, X } from 'lucide-react'
 import type { ViewAngle, ViewPreviewMap, ViewSource, ViewTimestampMap } from './viewPack'
-import { VIEW_ANGLE_OPTIONS } from './viewPack'
+import { buildAnglePrompt, VIEW_ANGLE_OPTIONS } from './viewPack'
 
 interface AvatarViewPackPanelProps {
   open: boolean
@@ -12,6 +12,8 @@ interface AvatarViewPackPanelProps {
   busy?: boolean
   disableLatest?: boolean
   disableEquipped?: boolean
+  /** The current outfit description used to build angle prompts. */
+  outfitPrompt?: string
   onToggle: () => void
   onSourceChange: (value: ViewSource) => void
   onGenerateAngle: (angle: ViewAngle) => void
@@ -49,6 +51,7 @@ export function AvatarViewPackPanel({
   busy = false,
   disableLatest = false,
   disableEquipped = false,
+  outfitPrompt = '',
   onToggle,
   onSourceChange,
   onGenerateAngle,
@@ -59,6 +62,33 @@ export function AvatarViewPackPanel({
   hasAnyResults = false,
 }: AvatarViewPackPanelProps) {
   const readyCount = VIEW_ANGLE_OPTIONS.filter((a) => previews[a.id]).length
+  // Track which angle tile has its prompt tooltip expanded
+  const [expandedPrompt, setExpandedPrompt] = useState<ViewAngle | null>(null)
+  // Flash feedback after copying
+  const [copiedAngle, setCopiedAngle] = useState<ViewAngle | null>(null)
+
+  const handleCopyPrompt = useCallback(async (angle: ViewAngle) => {
+    const prompt = buildAnglePrompt(angle, outfitPrompt)
+    try {
+      await navigator.clipboard.writeText(prompt)
+    } catch {
+      // Fallback for non-secure contexts
+      const ta = document.createElement('textarea')
+      ta.value = prompt
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    setCopiedAngle(angle)
+    setTimeout(() => setCopiedAngle((prev) => (prev === angle ? null : prev)), 1500)
+  }, [outfitPrompt])
+
+  const togglePrompt = useCallback((angle: ViewAngle) => {
+    setExpandedPrompt((prev) => (prev === angle ? null : angle))
+  }, [])
 
   return (
     <div className="overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.02]">
@@ -123,6 +153,8 @@ export function AvatarViewPackPanel({
                 const ready = Boolean(previewUrl)
                 const loading = Boolean(loadingAngles[angle.id])
                 const ts = timestamps[angle.id]
+                const isPromptExpanded = expandedPrompt === angle.id
+                const isCopied = copiedAngle === angle.id
 
                 return (
                   <div
@@ -146,7 +178,7 @@ export function AvatarViewPackPanel({
                           className="h-full w-full object-cover object-top opacity-70 group-hover:opacity-90 transition-opacity"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
-                        {/* Bottom info bar — label + timestamp only, no icon */}
+                        {/* Bottom info bar — label + timestamp */}
                         <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between px-2 pb-1.5">
                           <div>
                             <div className="text-[11px] font-semibold text-white drop-shadow-sm">{angle.label}</div>
@@ -176,6 +208,20 @@ export function AvatarViewPackPanel({
                       </button>
                     )}
 
+                    {/* Prompt inspect button — top-right corner, visible on hover */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); togglePrompt(angle.id) }}
+                      className={[
+                        'absolute top-1 right-1 w-5 h-5 rounded-md backdrop-blur-sm border flex items-center justify-center transition-all',
+                        isPromptExpanded
+                          ? 'bg-cyan-500/30 border-cyan-400/40 text-cyan-200 opacity-100'
+                          : 'bg-black/60 border-white/15 text-white/50 opacity-0 group-hover:opacity-100 hover:!text-cyan-200 hover:!bg-cyan-500/20 hover:!border-cyan-400/30',
+                      ].join(' ')}
+                      title="View prompt"
+                    >
+                      <Code2 size={10} />
+                    </button>
+
                     {/* Delete button — top-left corner, visible on hover */}
                     {ready && !loading && (
                       <button
@@ -191,6 +237,31 @@ export function AvatarViewPackPanel({
                     {loading && ready && (
                       <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-[2px]">
                         <Loader2 size={18} className="animate-spin text-cyan-300" />
+                      </div>
+                    )}
+
+                    {/* Expanded prompt panel — below the tile */}
+                    {isPromptExpanded && (
+                      <div className="border-t border-white/[0.08] bg-black/40 px-2 py-2">
+                        <div className="flex items-start justify-between gap-1 mb-1">
+                          <span className="text-[9px] font-semibold uppercase tracking-wider text-white/40">Prompt</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleCopyPrompt(angle.id) }}
+                            className={[
+                              'flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-medium transition-all',
+                              isCopied
+                                ? 'bg-emerald-500/20 text-emerald-300'
+                                : 'bg-white/[0.06] text-white/50 hover:bg-white/[0.12] hover:text-white/70',
+                            ].join(' ')}
+                            title="Copy to clipboard"
+                          >
+                            <ClipboardCopy size={9} />
+                            {isCopied ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
+                        <div className="max-h-24 overflow-y-auto rounded bg-black/30 px-2 py-1.5 text-[10px] leading-relaxed text-white/60 font-mono select-all">
+                          {buildAnglePrompt(angle.id, outfitPrompt)}
+                        </div>
                       </div>
                     )}
                   </div>

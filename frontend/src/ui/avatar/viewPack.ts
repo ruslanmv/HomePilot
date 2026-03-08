@@ -152,6 +152,23 @@ export function getViewAngleOption(angle: ViewAngle): ViewAngleOption {
   return VIEW_ANGLE_OPTIONS.find((item) => item.id === angle) ?? VIEW_ANGLE_OPTIONS[0]
 }
 
+/**
+ * Builds the exact outfit_prompt that would be sent to the backend for a
+ * given angle + outfit description.  Used both by the generation hook and
+ * by the View Pack panel to let users preview/copy the prompt.
+ */
+export function buildAnglePrompt(angle: ViewAngle, outfitDesc: string): string {
+  const angleMeta = getViewAngleOption(angle)
+  const desc = outfitDesc?.trim() || 'portrait photograph'
+  const rearEmphasis = getRearEmphasis(angle, desc)
+  return [
+    angleMeta.prompt,
+    desc,
+    ...(rearEmphasis ? [rearEmphasis] : []),
+    'full body visible head to knees',
+  ].join(', ')
+}
+
 export function extractViewAngle(metadata?: Record<string, unknown> | null): ViewAngle | null {
   const value = metadata?.view_angle
   if (typeof value !== 'string') return null
