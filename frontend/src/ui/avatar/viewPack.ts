@@ -56,7 +56,11 @@ function getFramingTokens(framingType?: FramingType): FramingTokens {
 // ---------------------------------------------------------------------------
 
 function buildLeftPrompt(ft: FramingTokens): string {
-  return `character turntable reference sheet, full left profile view, camera positioned directly to the right of the subject, head and body turned 90 degrees to the left, only left side of face visible showing left ear left cheekbone jaw line and nose tip in profile silhouette, left shoulder directly facing camera, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, (left profile:1.4), (side view:1.3)`
+  // LEFT profile needs significantly stronger emphasis than RIGHT because
+  // Stable Diffusion has a strong right-facing bias in its training data.
+  // We use higher CLIP attention weights (1.5 vs 1.4) and add redundant
+  // directional tokens to overcome this bias.
+  return `character turntable reference sheet, (full left profile view:1.5), (looking to the left:1.5), (facing left:1.4), camera positioned directly to the right of the subject, head and body turned 90 degrees to the left, only left side of face visible showing left ear left cheekbone jaw line and nose tip in profile silhouette, left shoulder directly facing camera, left arm visible, right arm hidden behind body, body profile silhouette visible ${ft.bodyRange}, outfit visible in profile showing how garment fits along the body silhouette, body visible ${ft.bodyRange}, identical person same outfit same skin tone same body proportions same outfit colors, consistent lighting, (left side only:1.3), (side view:1.3)`
 }
 
 function buildRightPrompt(ft: FramingTokens): string {
@@ -101,7 +105,7 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'left',
     label: 'Left',
     shortLabel: 'L',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, right side visible, back view, rear view, facing forward, head facing forward',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, 45 degree angle, right side visible, right profile, right ear visible, looking right, facing right, turned right, right shoulder facing camera, back view, rear view, facing forward, head facing forward',
     icon: '\u25D0',
     denoise: 1.0,
   },
@@ -117,7 +121,7 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'back',
     label: 'Back',
     shortLabel: 'B',
-    negativePrompt: 'front view, facing camera, looking at camera, face visible, eyes visible, nose visible, mouth visible, front of body, frontal pose, turning head, looking over shoulder, three-quarter view, profile view, side view, facing forward',
+    negativePrompt: 'front view, facing camera, looking at camera, face visible, eyes visible, nose visible, mouth visible, front of body, frontal pose, turning head, looking over shoulder, three-quarter view, profile view, side view, facing forward, double person, double people, two people, two persons, split image',
     icon: '\u25CE',
     denoise: 1.0,
     skipIdentity: true,
