@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useCallback, useMemo } from 'react'
-import { X, Sparkles, User, Loader2, ChevronRight, Shirt, Camera } from 'lucide-react'
+import { X, Sparkles, User, Loader2, ChevronRight, Shirt, Camera, RotateCcw } from 'lucide-react'
 import type { GalleryItem } from './galleryTypes'
 import type { PersonaClassId, PersonaWizardDraft } from '../personaTypes'
 import { PERSONA_BLUEPRINTS } from '../personaTypes'
@@ -78,6 +78,28 @@ export function SaveAsPersonaModal({
   const blueprints = useMemo(() => getVisibleBlueprints(isSpicy), [isSpicy])
 
   const imgUrl = resolveUrl(item.url, backendUrl)
+
+  // Count outfits that have 3D angle views (view_pack with at least 2 angles)
+  const outfits3dCount = useMemo(() => {
+    if (!outfitItems) return 0
+    return outfitItems.filter((oi) => {
+      // Check GalleryItem.view_pack field
+      if (oi.view_pack && Object.keys(oi.view_pack).length >= 2) return true
+      // Fallback: check localStorage cache
+      try {
+        const raw = localStorage.getItem(`hp_viewpack_${oi.id}`)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          const results = parsed?.results ?? parsed
+          if (results && typeof results === 'object') {
+            const count = ['front', 'left', 'right', 'back'].filter((a) => results[a]?.url).length
+            return count >= 2
+          }
+        }
+      } catch { /* ignore */ }
+      return false
+    }).length
+  }, [outfitItems])
 
   const handleOpenWizard = useCallback(() => {
     const draft = draftFromGalleryItem(item, name.trim() || 'My Persona', classId, outfitItems, batchSiblings)
@@ -160,6 +182,11 @@ export function SaveAsPersonaModal({
                 <div className="flex items-center gap-1 text-purple-400/70">
                   <Shirt size={11} />
                   {outfitItems.length} outfit{outfitItems.length !== 1 ? 's' : ''} included
+                  {outfits3dCount > 0 && (
+                    <span className="inline-flex items-center gap-0.5 ml-1 px-1.5 py-0 rounded-full bg-cyan-500/15 border border-cyan-500/20 text-cyan-300/80 text-[9px] font-medium">
+                      <RotateCcw size={8} /> {outfits3dCount} 360°
+                    </span>
+                  )}
                 </div>
               )}
             </div>

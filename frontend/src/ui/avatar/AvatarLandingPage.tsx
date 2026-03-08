@@ -14,9 +14,6 @@ import {
   Trash2,
   Clock,
   Plus,
-  User,
-  Shuffle,
-  Palette,
   Maximize2,
   PenLine,
   Shirt,
@@ -27,7 +24,6 @@ import {
 } from 'lucide-react'
 import type { GalleryItem } from './galleryTypes'
 import { SCENARIO_TAG_META } from './galleryTypes'
-import type { AvatarMode } from './types'
 import { resolveFileUrl } from '../resolveFileUrl'
 
 // ---------------------------------------------------------------------------
@@ -62,20 +58,6 @@ function formatTimeAgo(timestamp: number): string {
 
 function resolveUrl(url: string, backendUrl: string): string {
   return resolveFileUrl(url, backendUrl)
-}
-
-const MODE_LABELS: Record<AvatarMode, string> = {
-  studio_reference: 'Reference',
-  studio_random: 'Random',
-  studio_faceswap: 'Face + Style',
-  creative: 'Creative',
-}
-
-const MODE_ICONS: Record<AvatarMode, React.ReactNode> = {
-  studio_reference: <User size={10} />,
-  studio_random: <Shuffle size={10} />,
-  studio_faceswap: <Palette size={10} />,
-  creative: <Sparkles size={10} />,
 }
 
 // ---------------------------------------------------------------------------
@@ -277,18 +259,14 @@ export function AvatarLandingPage({
                   </div>
                 )}
 
-                {/* Mode badge + character name */}
-                <div className="absolute top-2.5 left-2.5 z-10 flex flex-col gap-1">
-                  <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-black/50 backdrop-blur-sm border border-white/[0.08] text-[9px] text-white/60 font-medium">
-                    {MODE_ICONS[item.mode]}
-                    {MODE_LABELS[item.mode] || item.mode}
-                  </div>
-                  {item.name && (
+                {/* Character name badge */}
+                {item.name && (
+                  <div className="absolute top-2.5 left-2.5 z-10">
                     <div className="px-2 py-0.5 rounded-md bg-black/50 backdrop-blur-sm border border-white/[0.08] text-[10px] text-white/80 font-medium truncate max-w-[140px]">
                       {item.name}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 {/* Outfit + portrait count badges (top right) */}
                 {(oCount > 0 || pCount > 0) && (

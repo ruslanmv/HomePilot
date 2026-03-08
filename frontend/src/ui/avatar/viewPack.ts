@@ -277,6 +277,19 @@ export function resolveAngleTuning(
 
 export type ViewResultMap = Partial<Record<ViewAngle, AvatarResult>>
 export type ViewPreviewMap = Partial<Record<ViewAngle, string>>
+
+// ---------------------------------------------------------------------------
+// Persisted view pack — durable angle→URL mapping stored on outfit assets.
+// Used by inventory, chat, profile, and .hpersona export/import.
+// ---------------------------------------------------------------------------
+
+export type PersistedViewPack = Partial<Record<ViewAngle, string>>
+
+/** Return the list of angles that have a URL in the given view pack. */
+export function getAvailableViewAngles(viewPack?: PersistedViewPack): ViewAngle[] {
+  if (!viewPack) return []
+  return (['front', 'left', 'right', 'back'] as ViewAngle[]).filter((a) => !!viewPack[a])
+}
 /** Unix timestamps (Date.now()) for when each angle was generated/cached. */
 export type ViewTimestampMap = Partial<Record<ViewAngle, number>>
 

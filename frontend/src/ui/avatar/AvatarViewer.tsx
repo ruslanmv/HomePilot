@@ -73,6 +73,7 @@ import { AvatarViewPackPanel } from './AvatarViewPackPanel'
 import { AvatarOrbitViewer } from './AvatarOrbitViewer'
 import { VIEW_ANGLE_OPTIONS, type ViewAngle, type ViewPreviewMap, type ViewSource } from './viewPack'
 import { useViewPackGeneration } from './useViewPackGeneration'
+import { saveViewPackToOutfit } from '../inventoryApi'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -91,6 +92,8 @@ export interface AvatarViewerProps {
   onDeleteItem?: (id: string) => void
   onSwapAnchor?: (anchorId: string, portraitId: string) => void
   onOutfitResults?: (results: AvatarResult[], anchorItem: GalleryItem) => void
+  /** Called when view_pack changes so the gallery item can be updated. */
+  onUpdateItem?: (id: string, patch: Partial<GalleryItem>) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +146,7 @@ export function AvatarViewer({
   onDeleteItem,
   onSwapAnchor,
   onOutfitResults,
+  onUpdateItem,
 }: AvatarViewerProps) {
   const [copiedSeed, setCopiedSeed] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -225,6 +229,49 @@ export function AvatarViewer({
       setViewSource('latest')
     }
   }, [outfit.results])
+
+  // Auto-sync view_pack to GalleryItem and backend when angles are generated.
+  // This ensures the persona export pipeline picks up angle images and the
+  // backend outfit record has durable view_pack URLs.
+  //
+  // The target GalleryItem depends on viewSource:
+  //   - 'equipped' → the equipped wardrobe item (outfit)
+  //   - 'latest'   → the latest generated outfit (stored in outfit.results)
+  //   - 'anchor'   → the anchor character itself
+  useEffect(() => {
+    const entries = Object.entries(viewPack.resultsByAngle) as Array<[ViewAngle, { url?: string } | undefined]>
+    if (entries.length === 0) return
+
+    // Build view_pack URL map from current results
+    const vp: Partial<Record<'front' | 'left' | 'right' | 'back', string>> = {}
+    for (const [angle, result] of entries) {
+      if (result?.url) vp[angle] = result.url
+    }
+    if (Object.keys(vp).length === 0) return
+
+    // Determine which GalleryItem should carry the view_pack
+    const targetId = (viewSource === 'equipped' && equippedItem)
+      ? equippedItem.id
+      : item.id
+
+    // Update GalleryItem so personaBridge picks it up during export
+    if (onUpdateItem) {
+      onUpdateItem(targetId, { view_pack: vp })
+    }
+
+    // Also persist to backend outfit if this item is linked to a persona project
+    const projectId = (viewSource === 'equipped' && equippedItem?.personaProjectId)
+      ? equippedItem.personaProjectId
+      : item.personaProjectId
+    if (projectId) {
+      saveViewPackToOutfit(backendUrl, {
+        apiKey,
+        projectId,
+        viewPack: vp,
+        equipped: true,
+      }).catch(() => { /* best-effort — localStorage cache is the primary store */ })
+    }
+  }, [viewPack.resultsByAngle, viewSource, equippedItem, item.id, item.personaProjectId, backendUrl, apiKey, onUpdateItem])
 
   // Check if hybrid body pipeline is available (for headshot → half-body expand)
   useEffect(() => {
