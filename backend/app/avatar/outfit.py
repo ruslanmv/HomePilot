@@ -52,11 +52,21 @@ class OutfitRequest(BaseModel):
     seed: Optional[int] = None
     generation_mode: str = Field(
         "identity",
-        description="'identity' (face-preserving) or 'standard' (text-only fallback)",
+        description="'identity' (face-preserving via InstantID), "
+                    "'standard' (text-only, no reference), or "
+                    "'reference' (img2img with reference colors, no face ControlNet)",
     )
     checkpoint_override: Optional[str] = Field(
         default=None,
         description="Override the workflow checkpoint (model filename).",
+    )
+    denoise_override: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Override denoise strength. Higher values (0.95-1.0) allow "
+                    "the text prompt to fully control pose/angle instead of "
+                    "following the reference image composition.",
     )
 
 
@@ -99,10 +109,44 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     parts.append("elegant lighting, realistic, sharp focus")
     combined_prompt = ", ".join(parts)
 
-    # Prefer identity mode (studio_reference) for face preservation
-    target_mode = "studio_reference"
+    # Mode selection for the ComfyUI workflow:
+    #   - "identity"  → hybrid_outfit (InstantID pipeline: face ControlNet + empty latent,
+    #                    text prompt fully controls pose/angle/outfit)
+    #   - "standard"  → creative (text-to-image, no face preservation)
+    #   - fallback    → studio_reference (basic img2img, pose locked to reference)
+    #
+    # hybrid_outfit is strongly preferred because it uses ApplyInstantID with
+    # EmptyLatentImage, meaning the text prompt controls body pose while
+    # ControlNet only anchors facial identity.  The basic img2img workflow
+    # (studio_reference) bakes the reference pose into the VAE latent,
+    # making non-front angles impossible.
+    #
+    # IMPORTANT: hybrid_outfit uses an SDXL workflow (CLIPTextEncodeSDXL).
+    # If a checkpoint_override is set, it's likely an SD 1.5 model which
+    # only has CLIP-L (no CLIP-G), causing a KeyError: 'g' crash.
+    # Fall back to studio_reference when a checkpoint override is active.
+    if req.generation_mode == "standard":
+        target_mode = "creative"
+    elif req.generation_mode == "reference":
+        # img2img using the reference image as the latent source.
+        # Preserves outfit colors/patterns from the reference without
+        # face ControlNet fighting non-front angles.  The text prompt
+        # controls the angle/pose via denoise_override (~0.9).
+        target_mode = "studio_reference"
+    elif req.checkpoint_override:
+        # SD 1.5 checkpoint override → can't use SDXL workflow
+        target_mode = "studio_reference"
+        warnings.append(
+            "Using studio_reference mode because a custom checkpoint is set. "
+            "The hybrid_outfit workflow requires an SDXL model."
+        )
+    else:
+        # Try hybrid_outfit first (proper InstantID), fall back to studio_reference
+        target_mode = "hybrid_outfit"
+
     if target_mode not in allowed:
-        # Fallback to creative mode (text-only, no face preservation)
+        target_mode = "studio_reference"
+    if target_mode not in allowed:
         target_mode = "creative"
         warnings.append(
             "Identity models not available — using standard generation. "
@@ -121,19 +165,24 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     # Use high denoise (0.85) so the sampler can actually change the outfit
     # instead of reproducing the reference image structure.
     # Default img2img denoise (0.65) is too conservative for outfit changes.
-    outfit_denoise = 0.85
+    # For non-front angles, callers should pass denoise_override=1.0 so
+    # the text prompt fully controls the pose/angle (the reference latent
+    # is pure noise at 1.0, letting CLIP guide the composition).
+    outfit_denoise = req.denoise_override if req.denoise_override is not None else 0.85
 
-    # Build the final negative prompt by combining:
-    #   1. Workflow baseline (quality/artifact prevention)
-    #   2. Frontend-supplied negatives (framing + style preset hints)
-    # This prevents wrong clothing/nudity while preserving scene coherence.
+    # Build the final negative prompt.
+    # The frontend already includes baseline quality negatives for view-pack
+    # generation, so we only prepend the baseline when no negative is supplied.
+    # Duplicating baseline tokens (lowres, blurry, …) dilutes the critical
+    # angle-specific negatives (e.g. "frontal, both eyes visible") that
+    # prevent wrong orientation in left/right/back views.
     baseline_negative = (
         "lowres, blurry, bad anatomy, deformed, extra fingers, "
         "missing fingers, bad hands, disfigured face, watermark, text, "
         "multiple people, duplicate, clone"
     )
     if req.negative_prompt:
-        final_negative = f"{baseline_negative}, {req.negative_prompt}"
+        final_negative = req.negative_prompt
     else:
         final_negative = baseline_negative
 
