@@ -162,17 +162,19 @@ async def generate_outfits(req: OutfitRequest) -> OutfitResponse:
     # is pure noise at 1.0, letting CLIP guide the composition).
     outfit_denoise = req.denoise_override if req.denoise_override is not None else 0.85
 
-    # Build the final negative prompt by combining:
-    #   1. Workflow baseline (quality/artifact prevention)
-    #   2. Frontend-supplied negatives (framing + style preset hints)
-    # This prevents wrong clothing/nudity while preserving scene coherence.
+    # Build the final negative prompt.
+    # The frontend already includes baseline quality negatives for view-pack
+    # generation, so we only prepend the baseline when no negative is supplied.
+    # Duplicating baseline tokens (lowres, blurry, …) dilutes the critical
+    # angle-specific negatives (e.g. "frontal, both eyes visible") that
+    # prevent wrong orientation in left/right/back views.
     baseline_negative = (
         "lowres, blurry, bad anatomy, deformed, extra fingers, "
         "missing fingers, bad hands, disfigured face, watermark, text, "
         "multiple people, duplicate, clone"
     )
     if req.negative_prompt:
-        final_negative = f"{baseline_negative}, {req.negative_prompt}"
+        final_negative = req.negative_prompt
     else:
         final_negative = baseline_negative
 
