@@ -129,6 +129,7 @@ Create AI portrait avatars from reference photos, random faces, or face+style co
 - **Wardrobe Equip System** — click any outfit to equip it on the stage instantly, like equipping armor in an MMO; amber glow highlights the equipped item
 - **Full Portrait Display** — dynamic height with `object-contain` ensures full-body portraits are never cropped (no more chopped heads)
 - **Persona Export** — save any avatar + all outfits as a persona; images are packaged as real files inside the `.hpersona` ZIP for full portability
+- **360° View Pack** — generate front/right/back/left views of any character with per-direction auto-mirror correction and drag-to-rotate orbit viewing; see [docs/360-View.md](docs/360-View.md)
 - See [docs/AVATAR.md](docs/AVATAR.md) for the full specification
 
 ### 🎬 Animate Studio Enhancements
