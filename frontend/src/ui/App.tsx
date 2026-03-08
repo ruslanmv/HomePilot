@@ -2093,6 +2093,9 @@ export default function App() {
       // Ignore parsing errors
     }
 
+    // Spice Mode (NSFW) — persisted so users don't have to re-enable every session
+    const nsfwMode = localStorage.getItem('homepilot_nsfw_mode') === 'true'
+
     // Prompt refinement: default to true (enabled by default for better results)
     const promptRefinement = localStorage.getItem('homepilot_prompt_refinement') !== 'false'
 
@@ -2115,6 +2118,7 @@ export default function App() {
       modelImages,
       modelVideo,
       preset,
+      nsfwMode,
       ttsEnabled,
       selectedVoice,
       promptRefinement,

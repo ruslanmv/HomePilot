@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react'
-import { Settings, X, Check, Globe, Sparkles, Info, FileText, Cpu, AlertTriangle, Layers } from 'lucide-react'
+import { Settings, X, Check, Globe, Sparkles, Info, FileText, Cpu, AlertTriangle, Layers, Orbit } from 'lucide-react'
 import type { AvatarSettings, AvatarCheckpointSource, BodyWorkflowMethod, StyleGANStatus } from './types'
 import { RECOMMENDED_CHECKPOINTS, BODY_WORKFLOW_OPTIONS } from './types'
 
@@ -532,6 +532,49 @@ export function AvatarSettingsPanel({
                     ].join(' ')} />
                   </div>
                 </button>
+
+                {/* 360° Orbit Default toggle */}
+                <button
+                  onClick={() => {
+                    const next = { ...settings, orbit360Default: !(settings.orbit360Default ?? true) }
+                    onChange(next)
+                    saveAvatarSettings(next)
+                  }}
+                  className={[
+                    'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mt-2',
+                    (settings.orbit360Default ?? true)
+                      ? 'bg-purple-500/10 border border-purple-500/30'
+                      : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+                  ].join(' ')}
+                >
+                  <Orbit
+                    size={16}
+                    className={(settings.orbit360Default ?? true) ? 'text-purple-400' : 'text-white/25'}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">360° Orbit by Default</span>
+                      {(settings.orbit360Default ?? true) && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                          ON
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      Start in 360° drag-to-rotate mode instead of static view
+                    </p>
+                  </div>
+                  {/* Toggle switch */}
+                  <div className={[
+                    'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                    (settings.orbit360Default ?? true) ? 'bg-gradient-to-r from-cyan-500 to-teal-500' : 'bg-white/15',
+                  ].join(' ')}>
+                    <div className={[
+                      'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                      (settings.orbit360Default ?? true) ? 'translate-x-4' : 'translate-x-0.5',
+                    ].join(' ')} />
+                  </div>
+                </button>
               </div>
             </div>
 
@@ -560,6 +603,12 @@ export function AvatarSettingsPanel({
                   <span className="text-[9px] text-white/25 uppercase tracking-wider">Body: </span>
                   <span className="text-[10px] text-white/40 font-mono">
                     {BODY_WORKFLOW_OPTIONS.find((o) => o.id === settings.bodyWorkflowMethod)?.label || 'Default'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] text-white/25 uppercase tracking-wider">Orbit: </span>
+                  <span className={`text-[10px] font-mono ${(settings.orbit360Default ?? true) ? 'text-cyan-400/60' : 'text-white/40'}`}>
+                    {(settings.orbit360Default ?? true) ? '360° On' : 'Off'}
                   </span>
                 </div>
               </div>
