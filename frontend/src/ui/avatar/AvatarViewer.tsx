@@ -198,7 +198,13 @@ export function AvatarViewer({
   const viewCacheKey = useMemo(() => {
     const charId = item.parentId || item.id
     if (viewSource === 'equipped' && equippedItem) return `${charId}_eq_${equippedItem.id}`
-    if (viewSource === 'latest' && outfit.results[selectedResultIdx]) return `${charId}_out_${selectedResultIdx}`
+    if (viewSource === 'latest' && outfit.results[selectedResultIdx]) {
+      // Use URL-based fingerprint instead of array index — the index resets to 0
+      // on every new generation, which would load stale cached results.
+      const url = outfit.results[selectedResultIdx].url
+      const fingerprint = url.replace(/^.*\//, '').replace(/\.[^.]+$/, '').slice(-16)
+      return `${charId}_out_${fingerprint}`
+    }
     return `${charId}_anchor`
   }, [item.parentId, item.id, viewSource, equippedItem, selectedResultIdx, outfit.results])
   const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey)
@@ -368,16 +374,16 @@ export function AvatarViewer({
 
   const combinedViewPreviews = useMemo<ViewPreviewMap>(() => {
     const base = { ...persistedViewPreviews, ...generatedViewPreviews }
-    // When an outfit is equipped or latest result is on stage, use that as the front
-    if (stageTab === 'outfit') {
-      if (equippedItem) {
-        base.front = resolveUrl(equippedItem.url, backendUrl)
-      } else if (outfit.results[selectedResultIdx]) {
-        base.front = resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)
-      }
+    // The front thumbnail must match viewSource (not stageTab) so the View Pack
+    // always shows the correct front photo for the currently selected outfit,
+    // even if the user switches to the Anchor Face tab temporarily.
+    if (viewSource === 'equipped' && equippedItem) {
+      base.front = resolveUrl(equippedItem.url, backendUrl)
+    } else if (viewSource === 'latest' && outfit.results[selectedResultIdx]) {
+      base.front = resolveUrl(outfit.results[selectedResultIdx].url, backendUrl)
     }
     return base
-  }, [persistedViewPreviews, generatedViewPreviews, stageTab, equippedItem, outfit.results, selectedResultIdx, backendUrl])
+  }, [persistedViewPreviews, generatedViewPreviews, viewSource, equippedItem, outfit.results, selectedResultIdx, backendUrl])
 
   // Presets filtered by tab + NSFW mode
   const presets = OUTFIT_PRESETS.filter((p) => {
@@ -558,33 +564,29 @@ export function AvatarViewer({
 
   // ── View Pack handlers ──────────────────────────────────────────────────
 
-  // Auto-resolve reference from whatever is currently displayed on the stage
+  // Auto-resolve reference from viewSource (not stageTab) so the View Pack
+  // always generates from the correct front photo even if the user temporarily
+  // switches to the Anchor Face tab to inspect the face.
   const currentViewReferenceUrl = useMemo(() => {
-    if (stageTab === 'outfit') {
-      if (equippedItem) return equippedItem.url
-      if (outfit.results[selectedResultIdx]) return outfit.results[selectedResultIdx].url
-    }
+    if (viewSource === 'equipped' && equippedItem) return equippedItem.url
+    if (viewSource === 'latest' && outfit.results[selectedResultIdx]) return outfit.results[selectedResultIdx].url
     return item.url
-  }, [stageTab, equippedItem, outfit.results, selectedResultIdx, item.url])
+  }, [viewSource, equippedItem, outfit.results, selectedResultIdx, item.url])
 
   const currentViewBasePrompt = useMemo(() => {
-    if (stageTab === 'outfit') {
-      if (equippedItem?.prompt) return equippedItem.prompt
-      if (effectivePrompt.trim()) return effectivePrompt.trim()
-    }
+    if (viewSource === 'equipped' && equippedItem?.prompt) return equippedItem.prompt
+    if (viewSource === 'latest' && effectivePrompt.trim()) return effectivePrompt.trim()
     return item.prompt || 'portrait photograph of the same character'
-  }, [stageTab, effectivePrompt, equippedItem, item.prompt])
+  }, [viewSource, effectivePrompt, equippedItem, item.prompt])
 
   // Character prompt for view pack — when showing an outfit, use the outfit's
   // prompt so the 3D angles reproduce the outfit (e.g. Lingerie), not the anchor's
   // clothing.  The anchor prompt is only used when viewing the anchor itself.
   const currentViewCharacterPrompt = useMemo(() => {
-    if (stageTab === 'outfit') {
-      if (equippedItem?.prompt) return equippedItem.prompt
-      if (effectivePrompt.trim()) return effectivePrompt.trim()
-    }
+    if (viewSource === 'equipped' && equippedItem?.prompt) return equippedItem.prompt
+    if (viewSource === 'latest' && effectivePrompt.trim()) return effectivePrompt.trim()
     return item.prompt || 'portrait photograph of the same character'
-  }, [stageTab, equippedItem, effectivePrompt, item.prompt])
+  }, [viewSource, equippedItem, effectivePrompt, item.prompt])
 
   const handleGenerateViewAngle = useCallback(async (angle: ViewAngle) => {
     try {
