@@ -1,5 +1,5 @@
 import React from 'react'
-import { ChevronDown, Loader2, Orbit, RefreshCw, Sparkles, Trash2 } from 'lucide-react'
+import { ChevronDown, Loader2, Orbit, RefreshCw, Sparkles, Trash2, X } from 'lucide-react'
 import type { ViewAngle, ViewPreviewMap, ViewSource, ViewTimestampMap } from './viewPack'
 import { VIEW_ANGLE_OPTIONS } from './viewPack'
 
@@ -15,6 +15,8 @@ interface AvatarViewPackPanelProps {
   onToggle: () => void
   onSourceChange: (value: ViewSource) => void
   onGenerateAngle: (angle: ViewAngle) => void
+  onOpenAngle: (angle: ViewAngle) => void
+  onDeleteAngle: (angle: ViewAngle) => void
   onGenerateMissing: () => void
   onClearAll?: () => void
   hasAnyResults?: boolean
@@ -50,6 +52,8 @@ export function AvatarViewPackPanel({
   onToggle,
   onSourceChange,
   onGenerateAngle,
+  onOpenAngle,
+  onDeleteAngle,
   onGenerateMissing,
   onClearAll,
   hasAnyResults = false,
@@ -121,10 +125,8 @@ export function AvatarViewPackPanel({
                 const ts = timestamps[angle.id]
 
                 return (
-                  <button
+                  <div
                     key={angle.id}
-                    onClick={() => onGenerateAngle(angle.id)}
-                    disabled={loading}
                     className={[
                       'group relative rounded-xl border text-left transition-all overflow-hidden',
                       ready
@@ -132,23 +134,19 @@ export function AvatarViewPackPanel({
                         : 'border-white/[0.08] bg-white/[0.03] hover:bg-white/[0.06]',
                     ].join(' ')}
                   >
-                    {/* Thumbnail preview when ready */}
+                    {/* Thumbnail preview when ready — click to open in main stage */}
                     {ready && previewUrl ? (
-                      <div className="relative h-20 w-full overflow-hidden">
+                      <div
+                        className="relative h-20 w-full overflow-hidden cursor-pointer"
+                        onClick={() => onOpenAngle(angle.id)}
+                      >
                         <img
                           src={previewUrl}
                           alt={angle.label}
                           className="h-full w-full object-cover object-top opacity-70 group-hover:opacity-90 transition-opacity"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
-                        {/* Regenerate overlay on hover */}
-                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <div className="flex items-center gap-1 rounded-lg bg-black/60 px-2 py-1 text-[10px] font-medium text-white/80 backdrop-blur-sm">
-                            <RefreshCw size={10} />
-                            Redo
-                          </div>
-                        </div>
-                        {/* Bottom info bar */}
+                        {/* Bottom info bar — label + timestamp only, no icon */}
                         <div className="absolute bottom-0 left-0 right-0 flex items-end justify-between px-2 pb-1.5">
                           <div>
                             <div className="text-[11px] font-semibold text-white drop-shadow-sm">{angle.label}</div>
@@ -156,14 +154,15 @@ export function AvatarViewPackPanel({
                               <div className="text-[9px] text-emerald-300/80 drop-shadow-sm">{timeAgo(ts)}</div>
                             )}
                           </div>
-                          <span className="text-[10px] font-semibold text-emerald-300 drop-shadow-sm">
-                            {angle.icon}
-                          </span>
                         </div>
                       </div>
                     ) : (
-                      /* Default empty tile */
-                      <div className="px-3 py-3">
+                      /* Default empty tile — click to generate */
+                      <button
+                        onClick={() => onGenerateAngle(angle.id)}
+                        disabled={loading}
+                        className="w-full px-3 py-3 text-left"
+                      >
                         <div className="flex items-center justify-between">
                           <span className="text-sm">
                             {loading ? <Loader2 size={14} className="animate-spin text-white/60" /> : angle.icon}
@@ -174,7 +173,18 @@ export function AvatarViewPackPanel({
                         </div>
                         <div className="mt-2 text-xs font-medium text-white">{angle.label}</div>
                         <div className="mt-0.5 text-[10px] text-white/35">{angle.shortLabel}</div>
-                      </div>
+                      </button>
+                    )}
+
+                    {/* Delete button — top-left corner, visible on hover */}
+                    {ready && !loading && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDeleteAngle(angle.id) }}
+                        className="absolute top-1 left-1 w-5 h-5 rounded-md bg-black/60 backdrop-blur-sm border border-white/15 flex items-center justify-center text-white/50 opacity-0 group-hover:opacity-100 hover:!text-red-300 hover:!bg-red-500/30 hover:!border-red-500/30 transition-all"
+                        title={`Delete ${angle.label}`}
+                      >
+                        <X size={10} />
+                      </button>
                     )}
 
                     {/* Loading overlay */}
@@ -183,7 +193,7 @@ export function AvatarViewPackPanel({
                         <Loader2 size={18} className="animate-spin text-cyan-300" />
                       </div>
                     )}
-                  </button>
+                  </div>
                 )
               })}
             </div>

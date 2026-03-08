@@ -192,6 +192,20 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     }
   }, [backendUrl, apiKey])
 
+  /** Delete a single angle result (in-memory + cache). */
+  const deleteAngle = useCallback((angle: ViewAngle) => {
+    setResultsByAngle((current) => {
+      const next = { ...current }
+      delete next[angle]
+      return next
+    })
+    setTimestampsByAngle((current) => {
+      const next = { ...current }
+      delete next[angle]
+      return next
+    })
+  }, [])
+
   /** Clear all results for the current key (in-memory + cache). */
   const reset = useCallback(() => {
     setResultsByAngle({})
@@ -215,6 +229,7 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     warnings,
     error,
     generateAngle,
+    deleteAngle,
     reset,
     missingAngles,
   }

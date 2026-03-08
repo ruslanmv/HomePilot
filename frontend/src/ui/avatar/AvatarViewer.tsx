@@ -638,6 +638,14 @@ export function AvatarViewer({
     }
   }, [combinedViewPreviews])
 
+  const handleDeleteViewAngle = useCallback((angle: ViewAngle) => {
+    viewPack.deleteAngle(angle)
+    // If the deleted angle was being displayed, go back to front
+    if (activeViewAngle === angle) {
+      setActiveViewAngle(null)
+    }
+  }, [viewPack, activeViewAngle])
+
   return (
     <div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col">
 
@@ -1146,6 +1154,8 @@ export function AvatarViewer({
                 onToggle={() => setShowViewPack((v) => !v)}
                 onSourceChange={setViewSource}
                 onGenerateAngle={handleGenerateViewAngle}
+                onOpenAngle={handleOpenGeneratedView}
+                onDeleteAngle={handleDeleteViewAngle}
                 onGenerateMissing={handleGenerateMissingViews}
                 onClearAll={viewPack.reset}
                 hasAnyResults={Object.keys(viewPack.resultsByAngle).length > 0}
