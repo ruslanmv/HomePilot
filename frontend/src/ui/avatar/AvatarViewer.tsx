@@ -69,7 +69,7 @@ import { AvatarGeneratingLoader } from './AvatarGeneratingLoader'
 import { AvatarStageQuickTools } from './AvatarStageQuickTools'
 import { AvatarViewPackPanel } from './AvatarViewPackPanel'
 import { AvatarOrbitViewer } from './AvatarOrbitViewer'
-import { extractViewAngle, VIEW_ANGLE_OPTIONS, type ViewAngle, type ViewPreviewMap, type ViewSource } from './viewPack'
+import { VIEW_ANGLE_OPTIONS, type ViewAngle, type ViewPreviewMap, type ViewSource } from './viewPack'
 import { useViewPackGeneration } from './useViewPackGeneration'
 
 // ---------------------------------------------------------------------------
@@ -303,14 +303,10 @@ export function AvatarViewer({
   const portraits = useMemo(() => children.filter((g) => g.role === 'portrait'), [children])
   const outfits = useMemo(() => children.filter((g) => g.role !== 'portrait'), [children])
 
-  // Filtered outfits for wardrobe display — exclude view-angle variants (they show in Quick Views)
+  // Filtered outfits for wardrobe display
   const filteredOutfits = useMemo(() => {
-    const frontOnly = outfits.filter((o) => {
-      const angle = extractViewAngle((o.metadata as Record<string, unknown> | undefined) || undefined)
-      return !angle || angle === 'front'
-    })
-    if (wardrobeFilter === 'all') return frontOnly
-    return frontOnly.filter((o) => o.scenarioTag === wardrobeFilter)
+    if (wardrobeFilter === 'all') return outfits
+    return outfits.filter((o) => o.scenarioTag === wardrobeFilter)
   }, [outfits, wardrobeFilter])
 
   // Available scenario tags from actual wardrobe items (for filter)
@@ -344,17 +340,11 @@ export function AvatarViewer({
     el.scrollBy({ left: dir === 'left' ? -240 : 240, behavior: 'smooth' })
   }, [])
 
-  // View Pack — merge persisted view angles from wardrobe with freshly generated ones
+  // View Pack — front is always the hero/anchor image; other angles come from the
+  // localStorage-cached viewPack results (no longer stored as gallery outfit items).
   const persistedViewPreviews = useMemo<ViewPreviewMap>(() => {
-    const map: ViewPreviewMap = { front: heroUrl }
-
-    outfits.forEach((outfitItem) => {
-      const angle = extractViewAngle((outfitItem.metadata as Record<string, unknown> | undefined) || undefined)
-      if (angle) map[angle] = resolveUrl(outfitItem.url, backendUrl)
-    })
-
-    return map
-  }, [outfits, heroUrl, backendUrl])
+    return { front: heroUrl }
+  }, [heroUrl])
 
   const generatedViewPreviews = useMemo<ViewPreviewMap>(() => {
     const map: ViewPreviewMap = {}
