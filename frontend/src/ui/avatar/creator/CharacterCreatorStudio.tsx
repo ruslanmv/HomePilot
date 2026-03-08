@@ -1343,33 +1343,41 @@ export function CharacterCreatorStudio({
                         </div>
                       </div>
 
-                      {/* Ethnicity */}
+                      {/* Ethnicity — dropdown */}
                       <div>
                         <MiniLabel>Ethnicity Baseline</MiniLabel>
-                        <div className="flex flex-wrap gap-1">
-                          {ETHNICITY_OPTIONS.map((o) => (
-                            <OptionPill key={o.key}
-                              label={o.label}
-                              active={geneticsPrefs.baseEthnicityPreset === o.key}
-                              onClick={() => setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: o.key as EthnicityPreset }))}
-                            />
+                        <select
+                          value={geneticsPrefs.baseEthnicityPreset === 'custom' ? (geneticsPrefs.customEthnicityHint || '__custom__') : geneticsPrefs.baseEthnicityPreset}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            if (val === 'european_standard' || val === 'global_mixed') {
+                              setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: val as EthnicityPreset, customEthnicityHint: '' }))
+                            } else if (val === '__custom__') {
+                              setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: 'custom', customEthnicityHint: '' }))
+                            } else {
+                              setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: 'custom', customEthnicityHint: val }))
+                            }
+                          }}
+                          className="w-full px-2.5 py-2 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/70 focus:outline-none focus:border-purple-500/40 appearance-none cursor-pointer"
+                          style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.3)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
+                        >
+                          <option value="european_standard">European Standard</option>
+                          <option value="global_mixed">Global Mixed</option>
+                          <option disabled>───────────</option>
+                          {['Mediterranean', 'Nordic', 'South Asian', 'Southeast Asian', 'Middle Eastern', 'East Asian', 'Indigenous American', 'Pacific Islander', 'Sub-Saharan African', 'Caribbean', 'Slavic', 'Celtic', 'Iberian', 'Polynesian', 'Andean', 'Amazigh'].map((s) => (
+                            <option key={s} value={s}>{s}</option>
                           ))}
-                        </div>
-                        {geneticsPrefs.baseEthnicityPreset === 'custom' && (
-                          <>
-                            <input
-                              list="ethnicity-suggestions"
-                              value={geneticsPrefs.customEthnicityHint || ''}
-                              onChange={(e) => setGeneticsPrefs((p) => ({ ...p, customEthnicityHint: e.target.value }))}
-                              className="mt-2 w-full px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/70 placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
-                              placeholder="e.g., Mediterranean, Nordic..."
-                            />
-                            <datalist id="ethnicity-suggestions">
-                              {['Mediterranean', 'Nordic', 'South Asian', 'Southeast Asian', 'Middle Eastern', 'Indigenous American', 'Pacific Islander', 'Sub-Saharan African', 'Caribbean', 'Slavic', 'Celtic', 'Iberian', 'Polynesian', 'Andean', 'Amazigh'].map((s) => (
-                                <option key={s} value={s} />
-                              ))}
-                            </datalist>
-                          </>
+                          <option disabled>───────────</option>
+                          <option value="__custom__">Custom...</option>
+                        </select>
+                        {geneticsPrefs.baseEthnicityPreset === 'custom' && !['Mediterranean', 'Nordic', 'South Asian', 'Southeast Asian', 'Middle Eastern', 'East Asian', 'Indigenous American', 'Pacific Islander', 'Sub-Saharan African', 'Caribbean', 'Slavic', 'Celtic', 'Iberian', 'Polynesian', 'Andean', 'Amazigh'].includes(geneticsPrefs.customEthnicityHint || '') && (
+                          <input
+                            value={geneticsPrefs.customEthnicityHint || ''}
+                            onChange={(e) => setGeneticsPrefs((p) => ({ ...p, customEthnicityHint: e.target.value }))}
+                            className="mt-2 w-full px-2.5 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/70 placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
+                            placeholder="e.g., Afro-Caribbean, Eurasian..."
+                            autoFocus
+                          />
                         )}
                       </div>
 

@@ -696,22 +696,41 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                       </div>
                     </div>
 
-                    {/* Ethnicity — compact row */}
+                    {/* Ethnicity — dropdown selector */}
                     <div>
                       <div className="text-[10px] text-white/30 mb-1.5 font-medium">Ethnicity</div>
-                      <div className="flex gap-1.5">
-                        {ETHNICITY_OPTIONS.map((o) => (
-                          <button key={o.key} onClick={() => setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: o.key as EthnicityPreset }))}
-                            className={`px-3 py-2 rounded-xl text-[11px] font-medium border transition-colors ${geneticsPrefs.baseEthnicityPreset === o.key ? 'bg-purple-500/10 border-purple-500/25 text-purple-200' : 'bg-white/[0.02] border-white/[0.06] text-white/40 hover:bg-white/[0.04]'}`}
-                          >{o.label}</button>
+                      <select
+                        value={geneticsPrefs.baseEthnicityPreset === 'custom' ? (geneticsPrefs.customEthnicityHint || '__custom__') : geneticsPrefs.baseEthnicityPreset}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          if (val === 'european_standard' || val === 'global_mixed') {
+                            setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: val as EthnicityPreset, customEthnicityHint: '' }))
+                          } else if (val === '__custom__') {
+                            setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: 'custom', customEthnicityHint: '' }))
+                          } else {
+                            // Specific ethnicity picked — store as custom with the value
+                            setGeneticsPrefs((p) => ({ ...p, baseEthnicityPreset: 'custom', customEthnicityHint: val }))
+                          }
+                        }}
+                        className="w-full px-3 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08] text-[11px] text-white/70 focus:outline-none focus:border-purple-500/40 appearance-none cursor-pointer"
+                        style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.3)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center' }}
+                      >
+                        <option value="european_standard">European Standard</option>
+                        <option value="global_mixed">Global Mixed</option>
+                        <option disabled>───────────</option>
+                        {['Mediterranean', 'Nordic', 'South Asian', 'Southeast Asian', 'Middle Eastern', 'East Asian', 'Indigenous American', 'Pacific Islander', 'Sub-Saharan African', 'Caribbean', 'Slavic', 'Celtic', 'Iberian', 'Polynesian', 'Andean', 'Amazigh'].map((s) => (
+                          <option key={s} value={s}>{s}</option>
                         ))}
-                      </div>
-                      {geneticsPrefs.baseEthnicityPreset === 'custom' && (
+                        <option disabled>───────────</option>
+                        <option value="__custom__">Custom...</option>
+                      </select>
+                      {geneticsPrefs.baseEthnicityPreset === 'custom' && !['Mediterranean', 'Nordic', 'South Asian', 'Southeast Asian', 'Middle Eastern', 'East Asian', 'Indigenous American', 'Pacific Islander', 'Sub-Saharan African', 'Caribbean', 'Slavic', 'Celtic', 'Iberian', 'Polynesian', 'Andean', 'Amazigh'].includes(geneticsPrefs.customEthnicityHint || '') && (
                         <input
                           value={geneticsPrefs.customEthnicityHint || ''}
                           onChange={(e) => setGeneticsPrefs((p) => ({ ...p, customEthnicityHint: e.target.value }))}
                           className="mt-2 w-full px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white/70 placeholder:text-white/20 focus:outline-none focus:border-purple-500/40"
-                          placeholder="e.g., Mediterranean, Nordic..."
+                          placeholder="e.g., Afro-Caribbean, Eurasian..."
+                          autoFocus
                         />
                       )}
                     </div>
