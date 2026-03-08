@@ -122,10 +122,15 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     const angleMeta = getViewAngleOption(params.angle)
     const basePrompt = params.basePrompt?.trim() || 'portrait photograph'
 
-    // Build the positive prompt: base description + angle-specific direction + consistency phrases
+    // Build the positive prompt: angle-specific direction FIRST (highest weight),
+    // then outfit description, then consistency suffix.
+    // Angle directive is placed first so CLIP gives it the most attention weight.
+    // The outfit description comes second — it's NOT duplicated via character_prompt
+    // (we send character_prompt=undefined) to avoid tripling outfit tokens which
+    // drowns out the angle instruction.
     const viewPrompt = [
-      basePrompt,
       angleMeta.prompt,
+      basePrompt,
       'single character turntable rotation, fixed camera distance, preserve exact identity and facial features, preserve exact outfit design colors and fabric, preserve exact hairstyle and accessories, same body shape and proportions, full subject visible head to knees, plain neutral studio backdrop',
     ].filter(Boolean).join(', ')
 
@@ -148,7 +153,12 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
         body: JSON.stringify({
           reference_image_url: params.referenceImageUrl,
           outfit_prompt: viewPrompt,
-          character_prompt: params.characterPrompt,
+          // character_prompt intentionally omitted for view pack generation.
+          // The outfit description is already in viewPrompt (via basePrompt).
+          // Sending it again as character_prompt causes the backend to include
+          // it a second time after _strip_outfit_tokens, tripling outfit token
+          // weight and drowning out the angle directive.
+          // Identity is preserved via the reference image + InstantID, not text.
           negative_prompt: negativePrompt,
           count: 1,
           generation_mode: angleMeta.skipIdentity ? 'standard' : 'identity',
