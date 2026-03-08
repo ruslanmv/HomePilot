@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AvatarResult } from './types'
 import type { ViewAngle, ViewResultMap, ViewTimestampMap } from './viewPack'
-import { getViewAngleOption, VIEW_ANGLE_OPTIONS } from './viewPack'
+import { getViewAngleOption, sanitiseBasePromptForAngle, VIEW_ANGLE_OPTIONS } from './viewPack'
 
 export interface GenerateViewParams {
   referenceImageUrl: string
@@ -120,7 +120,13 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     if (apiKey) headers['x-api-key'] = apiKey
 
     const angleMeta = getViewAngleOption(params.angle)
-    const basePrompt = params.basePrompt?.trim() || 'portrait photograph'
+    const rawBase = params.basePrompt?.trim() || 'portrait photograph'
+
+    // Strip pose / camera / framing tokens that would contradict the angle
+    // directive.  For 'front' this is a no-op (returns rawBase unchanged).
+    // Keeps only outfit, appearance, and quality tokens so the clothing is
+    // faithfully reproduced at every angle without front-bias contamination.
+    const basePrompt = sanitiseBasePromptForAngle(rawBase, params.angle)
 
     // Build the positive prompt: angle-specific direction FIRST (highest weight),
     // then outfit description, then consistency suffix.

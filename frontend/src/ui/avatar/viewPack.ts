@@ -68,6 +68,75 @@ export function getViewAngleOption(angle: ViewAngle): ViewAngleOption {
   return VIEW_ANGLE_OPTIONS.find((item) => item.id === angle) ?? VIEW_ANGLE_OPTIONS[0]
 }
 
+// ---------------------------------------------------------------------------
+// Prompt sanitiser — strips pose / camera / framing tokens from the anchor
+// or outfit prompt so they don't contradict the angle-specific directive.
+// Only outfit, appearance, quality, and technical tokens are kept.
+// ---------------------------------------------------------------------------
+
+/** Phrases that describe camera direction, body pose, or framing — these must
+ *  NOT leak into non-front angle prompts because they fight the angle directive. */
+const POSE_CAMERA_PHRASES: RegExp[] = [
+  // Camera / gaze direction
+  /front[- ]?facing/i,
+  /facing\s+(the\s+)?camera\s*(directly)?/i,
+  /looking\s+(directly\s+)?(at|into)\s+(the\s+)?camera/i,
+  /looking\s+straight\s+ahead/i,
+  /facing\s+(forward|ahead|straight)/i,
+  /eye\s*contact/i,
+  /gazing?\s+(at|into)\s+(the\s+)?(camera|viewer|lens)/i,
+  /staring\s+(at|into)\s+(the\s+)?camera/i,
+  /direct\s+(eye\s*contact|gaze)/i,
+
+  // Body framing / cropping instructions
+  /medium\s+shot\s+portrait/i,
+  /mid[- ]?body\s+framing(\s+from\s+head\s+to\s+hips)?/i,
+  /upper\s+body\s+and\s+hips\s+visible/i,
+  /showing\s+full\s+torso\s+and\s+hip\s+area/i,
+  /frame\s+ends\s+at\s+upper\s+thighs/i,
+  /hips\s+included\s+in\s+frame/i,
+  /no\s+knees\s+visible/i,
+  /no\s+legs\s+below\s+thighs/i,
+  /full\s+body\s+visible\s+from\s+head\s+to\s+thighs/i,
+  /body\s+posture\s+(and\s+pose\s+)?visible/i,
+  /body\s+posture\s+visible/i,
+  /clothing\s+and\s+outfit\s+clearly\s+visible/i,
+
+  // Pose descriptors
+  /centered\s+composition/i,
+  /standing\s+naturally/i,
+  /confident\s+(natural\s+)?pose/i,
+  /confident\s+poised\s+expression/i,
+  /natural\s+relaxed\s+pose/i,
+  /hands?\s+(on|at)\s+(hip|side|waist)s?/i,
+
+  // Generic "portrait" framing that biases front
+  /solo\s+portrait\s+photograph\s+of\s+a\s+single\s+real/i,
+  /portrait\s+photograph/i,
+]
+
+/**
+ * Strip pose / camera / framing tokens from a prompt, keeping only appearance,
+ * outfit, quality, and technical photography tokens.
+ *
+ * For `front` angle this is a no-op — the full prompt is returned unchanged.
+ */
+export function sanitiseBasePromptForAngle(basePrompt: string, angle: ViewAngle): string {
+  if (angle === 'front') return basePrompt
+
+  // Split on commas — each segment is an independent CLIP token group
+  const segments = basePrompt.split(',').map((s) => s.trim()).filter(Boolean)
+
+  const kept = segments.filter((seg) => {
+    for (const re of POSE_CAMERA_PHRASES) {
+      if (re.test(seg)) return false
+    }
+    return true
+  })
+
+  return kept.join(', ')
+}
+
 export function extractViewAngle(metadata?: Record<string, unknown> | null): ViewAngle | null {
   const value = metadata?.view_angle
   if (typeof value !== 'string') return null
