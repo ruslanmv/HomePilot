@@ -102,6 +102,17 @@ export interface AvatarSettings {
   /** Start in 360° orbit mode by default (hides quick-angle buttons).
    *  Default true — users can toggle off in settings for manual angle buttons. */
   orbit360Default?: boolean
+
+  // ── 360° View Tuning ─────────────────────────────────────────────────
+  /** Denoise strength for front view (0.50–1.00, default 0.85).
+   *  Higher = more prompt control, lower = more reference influence. */
+  angleFrontDenoise?: number
+  /** InstantID weight for left/right profile views (0.00–0.80, default 0.35).
+   *  Higher = stronger face/hair preservation, may fight the profile angle. */
+  angleProfileIdentity?: number
+  /** Denoise strength for left/right profile views (0.50–1.00, default 1.00).
+   *  Keep at 1.0 unless you want the reference pose to bleed through. */
+  angleProfileDenoise?: number
 }
 
 export interface AvatarPackInfo {

@@ -67,17 +67,31 @@ function removeCached(key: string | undefined): void {
 }
 
 // ---------------------------------------------------------------------------
+// Angle overrides (from Advanced Settings sliders)
+// ---------------------------------------------------------------------------
+
+export interface AngleOverrides {
+  /** Denoise for front view (default 0.85). */
+  frontDenoise?: number
+  /** InstantID weight for left/right profiles (default 0.35). */
+  profileIdentity?: number
+  /** Denoise for left/right profiles (default 1.0). */
+  profileDenoise?: number
+}
+
+// ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
 /**
- * @param backendUrl  Backend base URL
- * @param apiKey      Optional API key
- * @param cacheKey    Unique key for localStorage persistence (e.g. characterId
- *                    or characterId+outfitId). When this changes the hook
- *                    loads the cached results for the new key.
+ * @param backendUrl      Backend base URL
+ * @param apiKey          Optional API key
+ * @param cacheKey        Unique key for localStorage persistence (e.g. characterId
+ *                        or characterId+outfitId). When this changes the hook
+ *                        loads the cached results for the new key.
+ * @param angleOverrides  Optional overrides from Advanced Settings sliders.
  */
-export function useViewPackGeneration(backendUrl: string, apiKey?: string, cacheKey?: string) {
+export function useViewPackGeneration(backendUrl: string, apiKey?: string, cacheKey?: string, angleOverrides?: AngleOverrides) {
   const [resultsByAngle, setResultsByAngle] = useState<ViewResultMap>(() => loadCached(cacheKey).results)
   const [timestampsByAngle, setTimestampsByAngle] = useState<ViewTimestampMap>(() => loadCached(cacheKey).timestamps)
   const [loadingAngles, setLoadingAngles] = useState<Partial<Record<ViewAngle, boolean>>>({})
@@ -163,12 +177,17 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
           generation_mode: angleMeta.skipIdentity ? 'standard' : 'identity',
           checkpoint_override: params.checkpointOverride,
           seed: params.seed,
-          // Non-front angles use denoise 1.0 so the text prompt fully controls
-          // the pose/angle instead of the reference image's spatial layout.
-          denoise_override: angleMeta.denoise,
-          // Lower identity strength for profile angles (0.35) so the angle
-          // directive dominates while still preserving face/hair identity.
-          identity_strength: angleMeta.identityStrength ?? undefined,
+          // Apply angle overrides from settings, falling back to hardcoded defaults.
+          denoise_override:
+            params.angle === 'front'
+              ? (angleOverrides?.frontDenoise ?? angleMeta.denoise)
+              : params.angle === 'left' || params.angle === 'right'
+                ? (angleOverrides?.profileDenoise ?? angleMeta.denoise)
+                : angleMeta.denoise,
+          identity_strength:
+            params.angle === 'left' || params.angle === 'right'
+              ? (angleOverrides?.profileIdentity ?? angleMeta.identityStrength ?? undefined)
+              : (angleMeta.identityStrength ?? undefined),
         }),
       })
 

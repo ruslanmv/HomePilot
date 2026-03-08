@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react'
-import { Settings, X, Check, Globe, Sparkles, Info, FileText, Cpu, AlertTriangle, Layers } from 'lucide-react'
+import { Settings, X, Check, Globe, Sparkles, Info, FileText, Cpu, AlertTriangle, Layers, SlidersHorizontal, RotateCcw } from 'lucide-react'
 import type { AvatarSettings, AvatarCheckpointSource, BodyWorkflowMethod, StyleGANStatus } from './types'
 import { RECOMMENDED_CHECKPOINTS, BODY_WORKFLOW_OPTIONS } from './types'
 
@@ -568,6 +568,139 @@ export function AvatarSettingsPanel({
                   </div>
                 </button>
               </div>
+
+              {/* ── 360° View Tuning ──────────────────────────────── */}
+              <div className="border-t border-white/[0.06] pt-5">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs font-semibold text-white/60 uppercase tracking-wider">
+                    360° View Tuning
+                  </div>
+                  <button
+                    onClick={() => {
+                      const next = {
+                        ...settings,
+                        angleFrontDenoise: undefined,
+                        angleProfileIdentity: undefined,
+                        angleProfileDenoise: undefined,
+                      }
+                      onChange(next)
+                      saveAvatarSettings(next)
+                    }}
+                    className="flex items-center gap-1 text-[10px] text-white/30 hover:text-white/60 transition-colors"
+                    title="Reset to defaults"
+                  >
+                    <RotateCcw size={10} />
+                    Reset
+                  </button>
+                </div>
+                <p className="text-[11px] text-white/30 mb-4">
+                  Fine-tune how left &amp; right profile views match the front
+                </p>
+
+                {/* Front Denoise */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <SlidersHorizontal size={12} className="text-purple-400/70" />
+                      <span className="text-[11px] font-medium text-white/70">Front Denoise</span>
+                    </div>
+                    <span className="text-[11px] font-mono text-white/40">
+                      {(settings.angleFrontDenoise ?? 0.85).toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.50}
+                    max={1.00}
+                    step={0.05}
+                    value={settings.angleFrontDenoise ?? 0.85}
+                    onChange={(e) => {
+                      const next = { ...settings, angleFrontDenoise: parseFloat(e.target.value) }
+                      onChange(next)
+                      saveAvatarSettings(next)
+                    }}
+                    className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                    style={{
+                      background: `linear-gradient(to right, rgb(168 85 247 / 0.6) ${((settings.angleFrontDenoise ?? 0.85) - 0.5) / 0.5 * 100}%, rgba(255,255,255,0.1) ${((settings.angleFrontDenoise ?? 0.85) - 0.5) / 0.5 * 100}%)`,
+                    }}
+                  />
+                  <p className="text-[10px] text-white/25 mt-1">
+                    How much the text prompt controls the front view composition
+                  </p>
+                </div>
+
+                {/* Profile Identity Strength */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <SlidersHorizontal size={12} className="text-cyan-400/70" />
+                      <span className="text-[11px] font-medium text-white/70">Profile Identity</span>
+                    </div>
+                    <span className="text-[11px] font-mono text-white/40">
+                      {(settings.angleProfileIdentity ?? 0.35).toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.00}
+                    max={0.80}
+                    step={0.05}
+                    value={settings.angleProfileIdentity ?? 0.35}
+                    onChange={(e) => {
+                      const next = { ...settings, angleProfileIdentity: parseFloat(e.target.value) }
+                      onChange(next)
+                      saveAvatarSettings(next)
+                    }}
+                    className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                    style={{
+                      background: `linear-gradient(to right, rgb(34 211 238 / 0.6) ${(settings.angleProfileIdentity ?? 0.35) / 0.8 * 100}%, rgba(255,255,255,0.1) ${(settings.angleProfileIdentity ?? 0.35) / 0.8 * 100}%)`,
+                    }}
+                  />
+                  <p className="text-[10px] text-white/25 mt-1">
+                    Face &amp; hair match for left/right — higher = closer to front, may resist profile
+                  </p>
+                </div>
+
+                {/* Profile Denoise */}
+                <div className="mb-1">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <SlidersHorizontal size={12} className="text-cyan-400/70" />
+                      <span className="text-[11px] font-medium text-white/70">Profile Denoise</span>
+                    </div>
+                    <span className="text-[11px] font-mono text-white/40">
+                      {(settings.angleProfileDenoise ?? 1.00).toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0.50}
+                    max={1.00}
+                    step={0.05}
+                    value={settings.angleProfileDenoise ?? 1.00}
+                    onChange={(e) => {
+                      const next = { ...settings, angleProfileDenoise: parseFloat(e.target.value) }
+                      onChange(next)
+                      saveAvatarSettings(next)
+                    }}
+                    className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                    style={{
+                      background: `linear-gradient(to right, rgb(34 211 238 / 0.6) ${((settings.angleProfileDenoise ?? 1.0) - 0.5) / 0.5 * 100}%, rgba(255,255,255,0.1) ${((settings.angleProfileDenoise ?? 1.0) - 0.5) / 0.5 * 100}%)`,
+                    }}
+                  />
+                  <p className="text-[10px] text-white/25 mt-1">
+                    Text control for left/right pose — keep at 1.00 unless the angle looks wrong
+                  </p>
+                </div>
+
+                {/* Info box */}
+                <div className="flex items-start gap-2 mt-3 px-3 py-2 rounded-lg bg-cyan-500/5 border border-cyan-500/10">
+                  <Info size={12} className="text-cyan-400/60 mt-0.5 shrink-0" />
+                  <p className="text-[10px] text-cyan-300/50 leading-relaxed">
+                    Regenerate left/right views after changing these values. Back view is unaffected.
+                  </p>
+                </div>
+              </div>
             </div>
 
             {/* Drawer footer */}
@@ -610,6 +743,29 @@ export function AvatarSettingsPanel({
         }
         .animate-slideInRight {
           animation: slideInRight 0.25s ease-out;
+        }
+        /* Slim range slider thumbs for settings panel */
+        .animate-slideInRight input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          height: 14px;
+          width: 14px;
+          border-radius: 50%;
+          background: #ffffff;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+          cursor: pointer;
+          margin-top: -5px;
+        }
+        .animate-slideInRight input[type="range"]::-moz-range-thumb {
+          height: 14px;
+          width: 14px;
+          border-radius: 50%;
+          background: #ffffff;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+          cursor: pointer;
+          border: none;
+        }
+        .animate-slideInRight input[type="range"]:focus {
+          outline: none;
         }
       `}</style>
     </>

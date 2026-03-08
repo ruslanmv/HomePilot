@@ -206,7 +206,12 @@ export function AvatarViewer({
     }
     return `${charId}_anchor`
   }, [item.parentId, item.id, viewSource, equippedItem, selectedResultIdx, outfit.results])
-  const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey)
+  const viewAngleOverrides = useMemo(() => ({
+    frontDenoise: avatarSettingsState.angleFrontDenoise,
+    profileIdentity: avatarSettingsState.angleProfileIdentity,
+    profileDenoise: avatarSettingsState.angleProfileDenoise,
+  }), [avatarSettingsState.angleFrontDenoise, avatarSettingsState.angleProfileIdentity, avatarSettingsState.angleProfileDenoise])
+  const viewPack = useViewPackGeneration(backendUrl, apiKey, viewCacheKey, viewAngleOverrides)
   const [showViewPack, setShowViewPack] = useState(false)
   const [activeViewAngle, setActiveViewAngle] = useState<ViewAngle | null>(null)
   const [orbitMode, setOrbitMode] = useState(avatarSettingsState.orbit360Default ?? true)
