@@ -764,6 +764,7 @@ export function AvatarViewer({
                 }
 
                 if (stageTab === 'anchor') {
+                  const anchorPrompt = item.prompt || ''
                   return (
                     /* ─── Anchor Face ─── */
                     <div className="relative group h-full">
@@ -777,7 +778,50 @@ export function AvatarViewer({
                           alt={item.prompt || 'Avatar portrait'}
                           className="max-w-full max-h-full object-contain"
                         />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        {/* Anchor badge + info button */}
+                        <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-purple-500/20 text-[10px] text-purple-200 font-medium">
+                            <span>◉</span>
+                            <span>Anchor</span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setShowStagePromptInfo((v) => !v) }}
+                            className={[
+                              'w-6 h-6 rounded-lg backdrop-blur-sm border flex items-center justify-center transition-all',
+                              showStagePromptInfo
+                                ? 'bg-cyan-500/30 border-cyan-400/40 text-cyan-200'
+                                : 'bg-black/50 border-purple-500/20 text-purple-200/60 hover:text-purple-200 hover:bg-black/70',
+                            ].join(' ')}
+                            title="View generation prompt"
+                          >
+                            <Info size={10} />
+                          </button>
+                        </div>
+                        {/* Prompt detail panel — slides up from bottom */}
+                        {showStagePromptInfo && (
+                          <div
+                            className="absolute bottom-0 left-0 right-0 z-20 bg-black/85 backdrop-blur-md border-t border-purple-500/20 px-4 py-3 max-h-[45%] overflow-y-auto"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {anchorPrompt ? (
+                              <div>
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[9px] font-semibold uppercase tracking-wider text-emerald-400/80">Anchor Prompt</span>
+                                  <button
+                                    onClick={() => navigator.clipboard.writeText(anchorPrompt)}
+                                    className="flex items-center gap-1 text-[9px] text-white/40 hover:text-white/70 transition-colors"
+                                  >
+                                    <Clipboard size={9} /> Copy
+                                  </button>
+                                </div>
+                                <div className="text-[10px] text-white/60 leading-relaxed break-words">{anchorPrompt}</div>
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-white/30 italic">No prompt metadata for this anchor.</div>
+                            )}
+                          </div>
+                        )}
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                           <Maximize2 size={28} className="text-white/80" />
                         </div>
                       </div>
@@ -881,6 +925,7 @@ export function AvatarViewer({
                 }
 
                 if (showEquipped) {
+                  const eqPrompt = equippedItem!.prompt || ''
                   return (
                     /* ─── Equipped wardrobe item (MMORPG-style) ─── */
                     <div className="relative group h-full animate-fadeSlideIn">
@@ -894,13 +939,27 @@ export function AvatarViewer({
                           alt={equippedItem!.prompt || 'Equipped outfit'}
                           className="max-w-full max-h-full object-contain"
                         />
-                        {/* Equipped badge */}
-                        {equippedTagMeta && (
-                          <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-amber-500/20 text-[10px] text-amber-200 font-medium">
-                            <span>{equippedTagMeta.icon}</span>
-                            <span>{equippedTagMeta.label}</span>
-                          </div>
-                        )}
+                        {/* Equipped badge + info button */}
+                        <div className="absolute top-3 left-3 flex items-center gap-1.5">
+                          {equippedTagMeta && (
+                            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/50 backdrop-blur-sm border border-amber-500/20 text-[10px] text-amber-200 font-medium">
+                              <span>{equippedTagMeta.icon}</span>
+                              <span>{equippedTagMeta.label}</span>
+                            </div>
+                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setShowStagePromptInfo((v) => !v) }}
+                            className={[
+                              'w-6 h-6 rounded-lg backdrop-blur-sm border flex items-center justify-center transition-all',
+                              showStagePromptInfo
+                                ? 'bg-cyan-500/30 border-cyan-400/40 text-cyan-200'
+                                : 'bg-black/50 border-amber-500/20 text-amber-200/60 hover:text-amber-200 hover:bg-black/70',
+                            ].join(' ')}
+                            title="View generation prompt"
+                          >
+                            <Info size={10} />
+                          </button>
+                        </div>
                         {/* Unequip button — return to base */}
                         <button
                           onClick={(e) => { e.stopPropagation(); handleUnequip() }}
@@ -909,6 +968,30 @@ export function AvatarViewer({
                         >
                           <X size={14} />
                         </button>
+                        {/* Prompt detail panel — slides up from bottom */}
+                        {showStagePromptInfo && (
+                          <div
+                            className="absolute bottom-0 left-0 right-0 z-20 bg-black/85 backdrop-blur-md border-t border-amber-500/20 px-4 py-3 max-h-[45%] overflow-y-auto"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {eqPrompt ? (
+                              <div>
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-[9px] font-semibold uppercase tracking-wider text-emerald-400/80">Equipped Outfit Prompt</span>
+                                  <button
+                                    onClick={() => navigator.clipboard.writeText(eqPrompt)}
+                                    className="flex items-center gap-1 text-[9px] text-white/40 hover:text-white/70 transition-colors"
+                                  >
+                                    <Clipboard size={9} /> Copy
+                                  </button>
+                                </div>
+                                <div className="text-[10px] text-white/60 leading-relaxed break-words">{eqPrompt}</div>
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-white/30 italic">No prompt metadata for this equipped item.</div>
+                            )}
+                          </div>
+                        )}
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
                           <Maximize2 size={28} className="text-white/80" />
                         </div>
