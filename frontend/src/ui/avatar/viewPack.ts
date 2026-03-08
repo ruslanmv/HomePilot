@@ -19,12 +19,25 @@ export interface ViewAngleOption {
   skipIdentity?: boolean
 }
 
+// ── Angle prompt design notes ───────────────────────────────────────────
+// These prompts go into the `character_prompt` field (NOT outfit_prompt).
+// The backend strips clothing/garment tokens from character_prompt, so
+// these must NOT contain outfit words (dress, lingerie, suit, etc.).
+//
+// Keep prompts lean — CLIP has limited token budget (~77 SD1.5 / ~256 SDXL).
+// The backend appends its own quality suffix ("elegant lighting, realistic,
+// sharp focus") so we skip lighting/quality cues here.
+//
+// Structure: [turntable context] [camera position] [visible anatomy] [what NOT to show]
+// Identity/consistency cues are appended by the generation hook separately.
+// ────────────────────────────────────────────────────────────────────────
+
 export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
   {
     id: 'front',
     label: 'Front',
     shortLabel: 'F',
-    prompt: 'front view, facing the camera directly, centered composition, standing naturally, same person, same outfit, same hairstyle, same body proportions',
+    prompt: 'character turntable, front view, facing camera directly, centered composition, standing naturally',
     negativePrompt: '',
     icon: '\u25C9',
     denoise: 0.85,
@@ -33,8 +46,8 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'left_45',
     label: '45\u00B0 Left',
     shortLabel: 'L45',
-    prompt: 'character turntable reference sheet, three-quarter view from the left, camera orbited 45 degrees to the right of the subject, head and torso rotated 45 degrees to the left showing left cheek and left ear, left shoulder closer to camera, eyes looking slightly to the left, neutral studio background, identical person same face same outfit same hairstyle same skin tone same body proportions, consistent studio lighting',
-    negativePrompt: 'front view, facing camera directly, looking straight at viewer, symmetrical face, full frontal, back view, rear view, from behind',
+    prompt: 'character turntable, three-quarter view from the left, camera 45 degrees right of subject, head and torso rotated 45 degrees left, left cheek and left ear visible, left shoulder closer to camera',
+    negativePrompt: 'front view, facing camera, symmetrical face, full frontal, back view, rear view',
     icon: '\u25D6',
     denoise: 1.0,
   },
@@ -42,8 +55,8 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'left',
     label: 'Left',
     shortLabel: 'L',
-    prompt: 'character turntable reference sheet, full left profile view, camera positioned directly to the right of the subject, head and body turned 90 degrees to the left, only left side of face visible showing left ear left cheekbone jaw line and nose tip in profile silhouette, left shoulder directly facing camera, neutral studio background, identical person same face same outfit same hairstyle same skin tone same body proportions, consistent studio lighting',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, right side visible, back view, rear view',
+    prompt: 'character turntable, full left profile, camera directly to the right of subject, head turned 90 degrees left, only left side of face visible, left ear jaw line nose tip in silhouette',
+    negativePrompt: 'front view, facing camera, both eyes visible, symmetrical face, three-quarter view, back view',
     icon: '\u25D0',
     denoise: 1.0,
   },
@@ -51,8 +64,8 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'right_45',
     label: '45\u00B0 Right',
     shortLabel: 'R45',
-    prompt: 'character turntable reference sheet, three-quarter view from the right, camera orbited 45 degrees to the left of the subject, head and torso rotated 45 degrees to the right showing right cheek and right ear, right shoulder closer to camera, eyes looking slightly to the right, neutral studio background, identical person same face same outfit same hairstyle same skin tone same body proportions, consistent studio lighting',
-    negativePrompt: 'front view, facing camera directly, looking straight at viewer, symmetrical face, full frontal, back view, rear view, from behind',
+    prompt: 'character turntable, three-quarter view from the right, camera 45 degrees left of subject, head and torso rotated 45 degrees right, right cheek and right ear visible, right shoulder closer to camera',
+    negativePrompt: 'front view, facing camera, symmetrical face, full frontal, back view, rear view',
     icon: '\u25D7',
     denoise: 1.0,
   },
@@ -60,8 +73,8 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'right',
     label: 'Right',
     shortLabel: 'R',
-    prompt: 'character turntable reference sheet, full right profile view, camera positioned directly to the left of the subject, head and body turned 90 degrees to the right, only right side of face visible showing right ear right cheekbone jaw line and nose tip in profile silhouette, right shoulder directly facing camera, neutral studio background, identical person same face same outfit same hairstyle same skin tone same body proportions, consistent studio lighting',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, three-quarter view, left side visible, back view, rear view',
+    prompt: 'character turntable, full right profile, camera directly to the left of subject, head turned 90 degrees right, only right side of face visible, right ear jaw line nose tip in silhouette',
+    negativePrompt: 'front view, facing camera, both eyes visible, symmetrical face, three-quarter view, back view',
     icon: '\u25D1',
     denoise: 1.0,
   },
@@ -69,8 +82,8 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'back',
     label: 'Back',
     shortLabel: 'B',
-    prompt: 'character turntable reference sheet, rear view from directly behind, camera positioned behind the subject, person facing completely away from camera, only back of head visible showing hair from behind, back of torso and shoulders visible, spine centered in frame, no face visible at all, identical outfit colors fabric and silhouette as front view, same hairstyle length and color seen from behind, same body proportions and height, neutral studio background, consistent studio lighting',
-    negativePrompt: 'front view, facing camera, looking at camera, face visible, eyes visible, nose visible, mouth visible, front of body, frontal pose, turning head, looking over shoulder, three-quarter view, profile view, side view',
+    prompt: 'character turntable, rear view from behind, camera behind subject, person facing completely away, back of head and back of body visible, spine centered, no face visible',
+    negativePrompt: 'front view, facing camera, face visible, eyes visible, nose visible, mouth visible, frontal pose, turning head, looking over shoulder, three-quarter view, profile view',
     icon: '\u25CE',
     denoise: 1.0,
     skipIdentity: true,

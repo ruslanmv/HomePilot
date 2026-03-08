@@ -120,23 +120,35 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     if (apiKey) headers['x-api-key'] = apiKey
 
     const angleMeta = getViewAngleOption(params.angle)
-    const basePrompt = params.basePrompt?.trim() || 'portrait photograph'
+    const outfitDesc = params.basePrompt?.trim() || 'portrait photograph'
 
-    // Build the positive prompt: base description + angle-specific direction + consistency phrases
-    const viewPrompt = [
-      basePrompt,
+    // ── Prompt architecture ─────────────────────────────────────────────
+    // The backend concatenates:  outfit_prompt + character_prompt(stripped) + quality suffix
+    // It strips clothing/garment tokens FROM character_prompt to prevent outfit competition.
+    //
+    // Therefore we MUST send:
+    //   outfit_prompt   = outfit description (survives fully, placed first for max influence)
+    //   character_prompt = angle/pose direction + identity cues (no outfit words → stripping is harmless)
+    //
+    // Sending them backwards would cause the backend to strip "lingerie", "dress", etc.
+    // from the outfit description, destroying the clothing generation.
+    // ────────────────────────────────────────────────────────────────────
+
+    // outfit_prompt: the actual outfit/clothing description — must go here so the backend
+    // places it first and does NOT strip clothing tokens from it.
+    const outfitPrompt = outfitDesc
+
+    // character_prompt: angle direction + identity preservation.
+    // No outfit/clothing words here — safe from the backend's stripping.
+    const characterPrompt = [
       angleMeta.prompt,
-      'single character turntable rotation, fixed camera distance, preserve exact identity and facial features, preserve exact outfit design colors and fabric, preserve exact hairstyle and accessories, same body shape and proportions, full subject visible head to knees, plain neutral studio backdrop',
+      'same person, same face, same body proportions, same hairstyle, full body visible head to knees',
     ].filter(Boolean).join(', ')
 
-    // Build the negative prompt: prevent front-facing bias from the reference latent
-    const negParts = [
-      'lowres, blurry, bad anatomy, deformed, extra fingers, missing fingers, bad hands, disfigured face, watermark, text, multiple people, duplicate',
-    ]
-    if (angleMeta.negativePrompt) {
-      negParts.push(angleMeta.negativePrompt)
-    }
-    const negativePrompt = negParts.join(', ')
+    // Negative prompt: only angle-specific negatives.
+    // The backend already prepends its own baseline negatives (lowres, blurry, bad anatomy, etc.)
+    // so we do NOT duplicate them here.
+    const negativePrompt = angleMeta.negativePrompt || ''
 
     setLoadingAngles((current) => ({ ...current, [params.angle]: true }))
     setError(null)
@@ -147,9 +159,9 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
         headers,
         body: JSON.stringify({
           reference_image_url: params.referenceImageUrl,
-          outfit_prompt: viewPrompt,
-          character_prompt: params.characterPrompt,
-          negative_prompt: negativePrompt,
+          outfit_prompt: outfitPrompt,
+          character_prompt: characterPrompt,
+          negative_prompt: negativePrompt || undefined,
           count: 1,
           generation_mode: angleMeta.skipIdentity ? 'standard' : 'identity',
           checkpoint_override: params.checkpointOverride,
