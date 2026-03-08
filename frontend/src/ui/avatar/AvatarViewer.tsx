@@ -743,7 +743,7 @@ export function AvatarViewer({
                 const equippedTagMeta = showEquipped ? getTagMeta(equippedItem!.scenarioTag) : undefined
 
                 // ─── 360° Orbit Viewer ───
-                if (orbitMode) {
+                if (orbitMode && (avatarSettingsState.orbit360Default ?? true)) {
                   return (
                     <AvatarOrbitViewer
                       previews={combinedViewPreviews}
@@ -901,7 +901,7 @@ export function AvatarViewer({
               })()}
 
               {/* ──────── Quick Views — overlay inside the stage image ──────── */}
-              {!orbitMode && (
+              {!orbitMode && (avatarSettingsState.orbit360Default ?? true) && (
               <div className="absolute bottom-3 left-3 right-3 z-10 pointer-events-none">
                 <div className="pointer-events-auto inline-block">
                   <AvatarStageQuickTools
@@ -1154,7 +1154,7 @@ export function AvatarViewer({
               })()}
 
               {/* ──────── View Pack — multi-angle collapsible panel ──────── */}
-              <AvatarViewPackPanel
+              {(avatarSettingsState.orbit360Default ?? true) && <AvatarViewPackPanel
                 open={showViewPack}
                 source={viewSource}
                 disableLatest={outfit.results.length === 0}
@@ -1171,7 +1171,7 @@ export function AvatarViewer({
                 onGenerateMissing={handleGenerateMissingViews}
                 onClearAll={viewPack.reset}
                 hasAnyResults={Object.keys(viewPack.resultsByAngle).length > 0}
-              />
+              />}
 
               {viewPack.error && (
                 <div className="flex items-center gap-2 rounded-xl border border-red-500/15 bg-red-500/[0.08] px-3 py-2.5 text-xs text-red-300">
