@@ -63,7 +63,7 @@ function buildLeftPrompt(ft: FramingTokens): string {
 
 function buildRightPrompt(ft: FramingTokens): string {
   // Simplified to match back prompt's clean camera-position style.
-  return `solo single person, right profile view from directly to the left, camera positioned to the left of the subject, person facing directly to the right, right side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (right profile:1.4), (side view:1.3)`
+  return `solo single person, (right profile view:1.5), (facing right:1.5), camera positioned to the left of the subject, person facing directly to the right, right side of body visible ${ft.bodyRange}, outfit visible in profile, identical outfit colors and design as front view, same fabric colors same pattern same garment style, same body proportions and height, consistent lighting, (right profile:1.5), (side view:1.3)`
 }
 
 function buildBackPrompt(ft: FramingTokens): string {
@@ -117,7 +117,7 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'right',
     label: 'Right',
     shortLabel: 'R',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, left side visible, back view, rear view, facing forward, double person, two people, split image, multiple views',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, left side visible, facing left, looking left, turned left, left profile, back view, rear view, facing forward, double person, two people, split image, multiple views',
     icon: '\u25D1',
     // Same as left — 'reference' mode preserves colors and prevents
     // dual-person generation that happens with pure text-only mode.
