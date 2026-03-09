@@ -317,6 +317,92 @@ def _viewpack_delete_file(file_url: str) -> bool:
     return False
 
 
+@app.post("/v1/viewpack/save-to-outfit")
+async def viewpack_save_to_outfit(request: Request) -> JSONResponse:
+    """Save a view pack (angle→URL mapping) into a persona outfit.
+
+    Accepts:
+        {
+            "project_id": "uuid",
+            "outfit_id": "outfit_lingerie_01" (optional — defaults to first/equipped),
+            "view_pack": { "front": "/files/...", "left": "/files/...", ... },
+            "equipped": true (optional — mark this outfit as equipped)
+        }
+
+    This persists the grouped view_pack into persona_appearance.outfits[].
+    """
+    try:
+        body = await request.json()
+        project_id = str(body.get("project_id") or "").strip()
+        outfit_id = str(body.get("outfit_id") or "").strip()
+        view_pack = body.get("view_pack") or {}
+        mark_equipped = body.get("equipped", False)
+
+        if not project_id:
+            return JSONResponse(status_code=400, content={"ok": False, "message": "Missing project_id"})
+
+        from .projects import get_project_by_id, update_project
+        project = get_project_by_id(project_id)
+        if not project:
+            return JSONResponse(status_code=404, content={"ok": False, "message": "Project not found"})
+
+        appearance = dict(project.get("persona_appearance") or {})
+        outfits = list(appearance.get("outfits") or [])
+
+        # Find the target outfit
+        target_idx = -1
+        for i, o in enumerate(outfits):
+            oid = str(o.get("id") or "").strip()
+            if outfit_id and oid == outfit_id:
+                target_idx = i
+                break
+            if not outfit_id and (o.get("equipped") or i == 0):
+                target_idx = i
+                break
+
+        if target_idx < 0:
+            return JSONResponse(status_code=404, content={
+                "ok": False, "message": "Outfit not found"
+            })
+
+        # Update the outfit's view_pack
+        outfit = dict(outfits[target_idx])
+        outfit["view_pack"] = view_pack
+        outfit["interactive_preview"] = True
+        outfit["preview_mode"] = "view_pack"
+        if view_pack.get("front"):
+            outfit["hero_view"] = "front"
+
+        # Mark equipped if requested
+        if mark_equipped:
+            for i, o in enumerate(outfits):
+                o_copy = dict(o)
+                o_copy["equipped"] = (i == target_idx)
+                outfits[i] = o_copy
+            outfit["equipped"] = True
+
+        outfits[target_idx] = outfit
+        appearance["outfits"] = outfits
+
+        update_project(project_id, {"persona_appearance": appearance})
+
+        return JSONResponse(content={
+            "ok": True,
+            "project_id": project_id,
+            "outfit_id": str(outfit.get("id") or ""),
+            "outfit_label": str(outfit.get("label") or "Outfit"),
+            "view_pack": view_pack,
+            "available_views": [a for a in ("front", "left", "right", "back") if view_pack.get(a)],
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "message": str(e)},
+        )
+
+
 # ----------------------------
 # Models
 # ----------------------------
@@ -520,6 +606,20 @@ def _is_photo_intent(msg: str) -> bool:
     # Questions starting with question words → LLM reasons
     if _re.search(r'^(?:what|explain|describe|tell|list|how many|which|why|who|where|when|do you|can you|have you|are you|could you|would you)\b', m):
         return False
+
+    # ---- Angle / view-pack requests: "turn around", "show me the back", etc. ----
+    if _re.search(r'\b(?:turn\s*around|from\s*(?:the\s*)?(?:back|behind|side|left|right|front))\b', m):
+        return True
+    if _re.search(r'\b(?:show\s+me\s+(?:the\s+|your\s+)?(?:back|side|left|right|front))\b', m):
+        return True
+    if _re.search(r'\b(?:(?:let\s+me\s+)?see\s+(?:the\s+|your\s+)?(?:back|side|left|right|front))\b', m):
+        return True
+    if _re.search(r'\b(?:back\s*view|side\s*view|front\s*view|rear\s*view|left\s*side|right\s*side|turn\s*slowly|rotate|spin\b|all\s*angles?)\b', m):
+        return True
+    # "spin for me" — short phrases about rotation
+    if _re.search(r'\bspin\b', m) and len(m.split()) <= 6:
+        return True
+
     # Conversational messages without any photo/show words → LLM
     if not _re.search(r'(?:show|print|display|photo|picture|pic|image|lingerie|portrait|outfit|more|another|next|again|all)', m):
         return False
@@ -2695,6 +2795,50 @@ async def create_project(data: ProjectCreateIn) -> JSONResponse:
                         except Exception as img_err:
                             print(f"[PERSONA] Commit outfit image skipped ({url}): {img_err}")
 
+                    # Commit view_pack angle images (front/left/right/back)
+                    vp = outfit.get("view_pack")
+                    if isinstance(vp, dict):
+                        new_vp = dict(vp)
+                        vp_changed = False
+                        for angle in ("front", "left", "right", "back"):
+                            vp_url = vp.get(angle, "")
+                            if not vp_url:
+                                continue
+                            try:
+                                if vp_url.startswith("/comfy/view/"):
+                                    # Download from ComfyUI and commit
+                                    fname = await _download_comfy_image(vp_url, UPLOAD_PATH)
+                                    rel = commit_persona_image(
+                                        UPLOAD_PATH, project_root, fname, prefix=f"outfit_{angle}",
+                                    )
+                                    new_vp[angle] = f"/files/{rel}"
+                                    vp_changed = True
+                                elif vp_url.startswith("/files/viewpack/"):
+                                    # Already committed to viewpack/ — copy to project dir
+                                    vp_rel = vp_url[len("/files/"):]
+                                    src_path = UPLOAD_PATH / vp_rel
+                                    if src_path.is_file():
+                                        import shutil
+                                        dest_name = f"outfit_{angle}_{src_path.name}"
+                                        dest_path = project_root / dest_name
+                                        dest_path.parent.mkdir(parents=True, exist_ok=True)
+                                        shutil.copy2(str(src_path), str(dest_path))
+                                        new_vp[angle] = f"/files/{dest_path.relative_to(UPLOAD_PATH)}"
+                                        vp_changed = True
+                                    else:
+                                        print(f"[PERSONA] View pack source not found: {src_path}")
+                                # else: already a /files/projects/... URL, keep as-is
+                            except Exception as vp_err:
+                                print(f"[PERSONA] Commit view_pack {angle} skipped ({vp_url}): {vp_err}")
+                        if vp_changed:
+                            outfit["view_pack"] = new_vp
+                            outfit["interactive_preview"] = True
+                            outfit["preview_mode"] = "view_pack"
+                            if new_vp.get("front"):
+                                outfit["hero_view"] = "front"
+                            dirty = True
+                            print(f"[PERSONA] View pack committed: {list(new_vp.keys())} angles")
+
                 if dirty:
                     result = projects.update_project(
                         result["id"], {"persona_appearance": appearance},
@@ -3935,6 +4079,22 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                         continue
                     _cat_urls.setdefault(cat, []).append(v)
 
+                # --- Detect angle keywords ---
+                _ANGLE_PATTERNS_PHOTO = {
+                    "back": r'\b(?:back|behind|rear|turn\s*around)\b',
+                    "left": r'\b(?:left\s*side|left\s*profile|from\s*(?:the\s*)?left)\b',
+                    "right": r'\b(?:right\s*side|right\s*profile|from\s*(?:the\s*)?right)\b',
+                    "front": r'\b(?:front|facing|face\s*me|front\s*view)\b',
+                }
+                _detected_angle = None
+                for _ang_name, _ang_pat in _ANGLE_PATTERNS_PHOTO.items():
+                    if _re.search(_ang_pat, msg_lower):
+                        _detected_angle = _ang_name
+                        break
+                if not _detected_angle and _re.search(r'\b(?:side|profile|side\s*view)\b', msg_lower):
+                    _detected_angle = "left"
+                _all_angles_req = _re.search(r'\b(?:turn\s*slowly|all\s*angles?|rotate|spin|every\s*angle)\b', msg_lower)
+
                 # --- Detect requested category ---
                 _requested_cat = None
                 for cat_name in _cat_urls:
@@ -3942,7 +4102,147 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                         _requested_cat = cat_name
                         break
 
-                # --- Case 1: show ALL or show all of a CATEGORY ---
+                # ─── Case 1: ANGLE / VIEW-PACK REQUEST ───
+                # Must run BEFORE category handler so "show me your lingerie
+                # from the back" returns the back angle, not all lingerie photos.
+                if _detected_angle or _all_angles_req:
+                    _vp_media: dict | None = None
+                    _angle_text = ""
+                    try:
+                        _pap = proj.get("persona_appearance") or {}
+                        _all_outfits = _pap.get("outfits") or []
+
+                        # Step A: Determine which outfit the user is referring to.
+                        # Priority: 1) outfit name in message, 2) last shown in
+                        # conversation, 3) equipped outfit, 4) first outfit.
+                        _target_outfit = None
+                        _target_label = None
+
+                        # A1: Outfit name mentioned in the message (fuzzy match)
+                        for _ofit in _all_outfits:
+                            _ol = (_ofit.get("label") or "").lower()
+                            if _ol and _ol in msg_lower:
+                                _target_outfit = _ofit
+                                _target_label = _ofit.get("label", "Outfit")
+                                break
+
+                        # A2: Check conversation history for the last shown outfit
+                        if not _target_outfit and cid:
+                            try:
+                                from .storage import get_recent
+                                _history = get_recent(cid, limit=6)
+                                _outfit_labels_lower = {
+                                    (_o.get("label") or "").lower(): _o
+                                    for _o in _all_outfits if _o.get("label")
+                                }
+                                for _role, _content in reversed(_history):
+                                    if _role == "assistant" and _content:
+                                        _cl = _content.lower()
+                                        for _ol, _ofit in _outfit_labels_lower.items():
+                                            if _ol in _cl:
+                                                _target_outfit = _ofit
+                                                _target_label = _ofit.get("label", "Outfit")
+                                                break
+                                    if _target_outfit:
+                                        break
+                            except Exception:
+                                pass
+
+                        # A3: Equipped outfit
+                        if not _target_outfit:
+                            for _ofit in _all_outfits:
+                                if _ofit.get("equipped"):
+                                    _target_outfit = _ofit
+                                    _target_label = _ofit.get("label", "Outfit")
+                                    break
+
+                        # A4: First outfit
+                        if not _target_outfit and _all_outfits:
+                            _target_outfit = _all_outfits[0]
+                            _target_label = _target_outfit.get("label", "Outfit")
+
+                        # Step B: Resolve the angle from the outfit's view_pack
+                        if _target_outfit:
+                            _vp = _target_outfit.get("view_pack")
+                            if isinstance(_vp, dict) and any(_vp.get(a) for a in ("front", "left", "right", "back")):
+                                _available = {}
+                                for _a in ("front", "left", "right", "back"):
+                                    if _vp.get(_a):
+                                        _available[_a] = _vp[_a]
+
+                                if _all_angles_req and _available:
+                                    _first_angle = list(_available.keys())[0]
+                                    _vp_media = {
+                                        "images": [_available[_first_angle]],
+                                        "view_pack": _available,
+                                        "active_angle": _first_angle,
+                                        "available_views": list(_available.keys()),
+                                        "interactive_preview": True,
+                                    }
+                                    _angle_text = f"Here's my {_target_label} from every angle!"
+                                elif _detected_angle and _detected_angle in _available:
+                                    _vp_media = {
+                                        "images": [_available[_detected_angle]],
+                                        "view_pack": _available,
+                                        "active_angle": _detected_angle,
+                                        "available_views": list(_available.keys()),
+                                        "interactive_preview": True,
+                                    }
+                                    _angle_names = {"front": "from the front", "back": "from behind",
+                                                    "left": "from the left", "right": "from the right"}
+                                    _angle_text = f"Here's my {_target_label} {_angle_names.get(_detected_angle, '')}!"
+                                elif _detected_angle:
+                                    # Requested angle not available — show what we have
+                                    _first_angle = list(_available.keys())[0]
+                                    _vp_media = {
+                                        "images": [_available[_first_angle]],
+                                        "view_pack": _available,
+                                        "active_angle": _first_angle,
+                                        "available_views": list(_available.keys()),
+                                        "interactive_preview": True,
+                                    }
+                                    _avail_str = ", ".join(a.title() for a in _available)
+                                    _angle_text = f"I don't have a {_detected_angle} view of {_target_label} yet, but here's what I have! ({_avail_str})"
+
+                    except Exception as _e:
+                        print(f"[CHAT ENDPOINT] angle-intent: view_pack lookup error: {_e}")
+
+                    if _vp_media:
+                        print(f"[CHAT ENDPOINT] photo-intent: returning {_detected_angle or 'all'} angle of '{_target_label}' for project {_photo_project_id}")
+                        return JSONResponse(
+                            status_code=200,
+                            content={
+                                "conversation_id": cid,
+                                "text": _angle_text,
+                                "media": _vp_media,
+                            },
+                        )
+                    else:
+                        # No view_pack on any outfit — fallback to static image
+                        # Try the target outfit's first static image, then default
+                        _fallback_url = None
+                        if _target_outfit:
+                            _imgs = _target_outfit.get("images") or []
+                            if _imgs:
+                                _fallback_url = _imgs[0].get("url")
+                        if not _fallback_url:
+                            _fallback_url = all_urls[0] if all_urls else None
+                        if _fallback_url:
+                            _angle_names_fb = {"front": "from the front", "back": "from behind",
+                                               "left": "from the left", "right": "from the right"}
+                            _fb_label = _target_label or "my look"
+                            _fb_text = f"Here's {_fb_label}{' ' + _angle_names_fb.get(_detected_angle, '') if _detected_angle else ''}!"
+                            print(f"[CHAT ENDPOINT] photo-intent: no view_pack, returning fallback for angle={_detected_angle} outfit='{_target_label}' project={_photo_project_id}")
+                            return JSONResponse(
+                                status_code=200,
+                                content={
+                                    "conversation_id": cid,
+                                    "text": _fb_text,
+                                    "media": {"images": [_fallback_url]},
+                                },
+                            )
+
+                # ─── Case 2: show ALL or show all of a CATEGORY ───
                 _all_triggers = ["show me all", "all your", "all my",
                                  "all photo", "all picture", "print all",
                                  "show all", "all of them", "everything"]
@@ -3972,7 +4272,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                         },
                     )
 
-                # --- Case 2: user asks for a SPECIFIC photo by number ---
+                # ─── Case 3: user asks for a SPECIFIC photo by number ───
                 requested_num = _extract_photo_number(inp.message)
                 if requested_num is not None:
                     idx_0 = requested_num - 1  # convert to 0-based
@@ -3998,7 +4298,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                             },
                         )
 
-                # --- Case 3: round-robin (show another / next / etc.) ---
+                # ─── Case 4: round-robin (show another / next / etc.) ───
                 if not hasattr(_is_photo_intent, "_counters"):
                     _is_photo_intent._counters = {}  # type: ignore[attr-defined]
                 ctr = _is_photo_intent._counters.get(_photo_project_id, 0)  # type: ignore[attr-defined]

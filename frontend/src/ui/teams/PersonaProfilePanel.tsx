@@ -28,8 +28,9 @@ import {
   ChevronRight,
   Users,
   Bot,
+  RotateCcw,
 } from 'lucide-react'
-import type { PersonaSummary } from './types'
+import type { PersonaSummary, PersonaAppearanceOutfit } from './types'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -41,6 +42,8 @@ export interface PersonaProfilePanelProps {
   onClose: () => void
   /** Optional: current meeting status for this persona */
   status?: 'speaking' | 'wants-to-speak' | 'listening' | 'muted'
+  /** Optional: callback when user clicks Inspect Outfit */
+  onInspectOutfit?: (outfitId: string, initialAngle?: 'front' | 'left' | 'right' | 'back') => void
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +85,18 @@ const CAPABILITY_LABELS: Record<string, string> = {
   generate_videos: 'Generate short videos',
   analyze_documents: 'Analyze documents',
   automate_external: 'Automate external services',
+}
+
+/** Get the equipped or first outfit from persona appearance */
+function getEquippedOutfit(persona: PersonaSummary): PersonaAppearanceOutfit | null {
+  const outfits = persona.persona_appearance?.outfits || []
+  return outfits.find((o) => o.equipped) || outfits[0] || null
+}
+
+/** Get available view angles from an outfit's view_pack */
+function getOutfitAvailableViews(outfit: PersonaAppearanceOutfit | null): Array<'front' | 'left' | 'right' | 'back'> {
+  const vp = outfit?.view_pack || {}
+  return (['front', 'left', 'right', 'back'] as const).filter((a) => !!vp[a])
 }
 
 /** Compute stat bars from real persona data */
@@ -159,7 +174,7 @@ const STATUS_STYLES: Record<string, { dot: string; text: string; label: string }
 // Component
 // ---------------------------------------------------------------------------
 
-export function PersonaProfilePanel({ persona, backendUrl, onClose, status }: PersonaProfilePanelProps) {
+export function PersonaProfilePanel({ persona, backendUrl, onClose, status, onInspectOutfit }: PersonaProfilePanelProps) {
   const avatarUrl = resolveAvatarUrl(persona, backendUrl)
   const agent = persona.persona_agent
   const appearance = persona.persona_appearance
@@ -175,6 +190,8 @@ export function PersonaProfilePanel({ persona, backendUrl, onClose, status }: Pe
   }, [appearance])
 
   const outfitCount = appearance?.outfits?.length || 0
+  const equippedOutfit = useMemo(() => getEquippedOutfit(persona), [persona])
+  const outfitViews = useMemo(() => getOutfitAvailableViews(equippedOutfit), [equippedOutfit])
   const skillCount = agentic?.capabilities?.length || 0
   const toolCount = agent?.allowed_tools?.length || 0
   const stance = STANCE_STYLES[agentic?.execution_profile || 'balanced'] || STANCE_STYLES.balanced
@@ -242,6 +259,24 @@ export function PersonaProfilePanel({ persona, backendUrl, onClose, status }: Pe
             )}
           </div>
 
+          {/* Wearing pill + 360 preview badge */}
+          {(equippedOutfit || outfitViews.length > 0) && (
+            <div className="flex items-center justify-center gap-2 mt-2.5 flex-wrap">
+              {equippedOutfit && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-white/[0.04] border border-white/[0.08] text-white/40">
+                  <Shirt size={10} className="text-amber-400/60" />
+                  Wearing: <span className="text-white/60 capitalize">{equippedOutfit.label || 'Outfit'}</span>
+                </span>
+              )}
+              {outfitViews.length > 0 && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-violet-500/10 border border-violet-500/20 text-violet-300/70">
+                  <RotateCcw size={9} />
+                  360 preview
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Role subtitle */}
           {agent?.role && (
             <p className="mt-2 text-xs text-white/40">{agent.role}</p>
@@ -273,6 +308,54 @@ export function PersonaProfilePanel({ persona, backendUrl, onClose, status }: Pe
             ))}
           </div>
         </div>
+
+        {/* ═══════════ CURRENT LOOK ═══════════ */}
+        {equippedOutfit && (
+          <div className="px-6 py-4 border-t border-white/[0.06]">
+            <div className="text-[10px] font-semibold text-white/30 uppercase tracking-wider mb-3">Current Look</div>
+            <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+              <Shirt size={14} className="text-white/30 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-[12px] text-white/60 font-medium truncate capitalize">
+                  {equippedOutfit.label || 'Outfit'}
+                </div>
+                {outfitViews.length > 0 && (
+                  <div className="text-[10px] text-white/30 mt-0.5">
+                    360 preview &middot; {outfitViews.length} views
+                  </div>
+                )}
+              </div>
+              {onInspectOutfit && (
+                <button
+                  onClick={() => onInspectOutfit(equippedOutfit.id || '', equippedOutfit.hero_view || 'front')}
+                  className="px-2.5 py-1 text-[10px] font-medium text-white/50 bg-white/[0.04] border border-white/[0.08] rounded-lg hover:bg-white/[0.08] hover:text-white/70 transition-colors shrink-0"
+                >
+                  Inspect
+                </button>
+              )}
+            </div>
+            {/* View angle chips */}
+            {outfitViews.length > 0 && (
+              <div className="flex gap-1.5 mt-2 px-1">
+                {outfitViews.map((angle) => (
+                  <button
+                    key={angle}
+                    onClick={() => onInspectOutfit?.(equippedOutfit.id || '', angle)}
+                    className="px-2.5 py-1 text-[10px] font-medium text-white/40 bg-white/[0.03] border border-white/[0.06] rounded-full hover:bg-white/[0.08] hover:text-white/60 transition-colors capitalize"
+                  >
+                    {angle}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Discoverability hint */}
+            {outfitViews.length > 0 && (
+              <p className="text-[10px] text-white/20 mt-2.5 px-1 italic">
+                Try asking &ldquo;turn around&rdquo; or &ldquo;show me your back&rdquo; in chat
+              </p>
+            )}
+          </div>
+        )}
 
         {/* ═══════════ QUICK INFO ═══════════ */}
         <div className="px-6 py-4 border-t border-white/[0.06]">

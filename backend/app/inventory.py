@@ -35,6 +35,7 @@ router = APIRouter(prefix="/v1/inventory", tags=["inventory"])
 # ---------------------------------------------------------------------------
 
 SENS_ORDER = {"safe": 0, "sensitive": 1, "explicit": 2}
+VIEW_ANGLES = ("front", "left", "right", "back")
 _UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -103,6 +104,37 @@ def _extract_rel_path(url: str) -> str:
     if url.startswith("projects/"):
         return url
     return ""
+
+
+# ---------------------------------------------------------------------------
+# View pack helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_view_pack(raw: Any) -> Dict[str, str]:
+    """Extract valid angle→URL mappings from a raw view_pack dict."""
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, str] = {}
+    for angle in VIEW_ANGLES:
+        val = str(raw.get(angle) or "").strip()
+        rel_path = _extract_rel_path(val)
+        if rel_path:
+            out[angle] = f"/files/{rel_path}"
+    return out
+
+
+def _available_views(view_pack: Dict[str, str]) -> List[str]:
+    """Return list of angles that have a URL in the view pack."""
+    return [a for a in VIEW_ANGLES if view_pack.get(a)]
+
+
+def _get_equipped_outfit(appearance: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Find the equipped outfit, falling back to the first outfit."""
+    outfits = appearance.get("outfits") or []
+    for o in outfits:
+        if o.get("equipped") is True:
+            return o
+    return outfits[0] if outfits else None
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +240,14 @@ def _collect_outfit_items(appearance: Dict[str, Any]) -> List[Dict[str, Any]]:
                 if preview_asset_id is None:
                     preview_asset_id = img_id
 
+        # View pack — angle-grouped images for 360° preview
+        view_pack = _normalize_view_pack(o.get("view_pack"))
+        avail_views = _available_views(view_pack)
+
+        # If no preview_asset_id from images but view_pack has front, use that
+        if not preview_asset_id and view_pack.get("front"):
+            preview_asset_id = _sha_id("img", f"{item_id}|view|front")
+
         items.append({
             "id": item_id,
             "type": "outfit",
@@ -217,6 +257,13 @@ def _collect_outfit_items(appearance: Dict[str, Any]) -> List[Dict[str, Any]]:
             "sensitivity": sens,
             "asset_ids": asset_ids,
             "preview_asset_id": preview_asset_id,
+            # View pack fields (additive)
+            "equipped": bool(o.get("equipped", False)),
+            "interactive_preview": bool(o.get("interactive_preview") or bool(avail_views)),
+            "preview_mode": str(o.get("preview_mode") or ("view_pack" if avail_views else "static")),
+            "hero_view": str(o.get("hero_view") or ("front" if view_pack.get("front") else "")) or None,
+            "view_pack": view_pack or None,
+            "available_views": avail_views,
         })
     return items
 
@@ -287,6 +334,21 @@ def _collect_image_assets(project_id: str, appearance: Dict[str, Any]) -> List[D
             )
             add(img_id, rel_path, f"{outfit_label} photo", ["outfit", outfit_label.lower()], sens,
                 set_id=o_set_id, image_id=img_id, image_kind="outfit")
+
+        # View pack angle images — register as individual assets
+        view_pack = _normalize_view_pack(o.get("view_pack"))
+        for angle, url in view_pack.items():
+            rel_path = _extract_rel_path(url)
+            if not rel_path:
+                continue
+            img_id = _sha_id("img", f"{project_id}|outfit|{o_set_id}|{angle}|{rel_path}")
+            add(
+                img_id, rel_path,
+                f"{outfit_label} {angle}",
+                ["outfit", outfit_label.lower(), angle, "view-pack"],
+                sens,
+                set_id=o_set_id, image_id=img_id, image_kind=f"outfit_{angle}",
+            )
 
     return list(assets.values())
 
@@ -526,6 +588,13 @@ async def inventory_search(
                 "asset_ids": o.get("asset_ids") or [],
                 "description": o.get("description", ""),
                 "url": preview_url,
+                # View pack fields (additive)
+                "equipped": o.get("equipped", False),
+                "interactive_preview": o.get("interactive_preview", False),
+                "preview_mode": o.get("preview_mode"),
+                "hero_view": o.get("hero_view"),
+                "view_pack": o.get("view_pack"),
+                "available_views": o.get("available_views") or [],
             }
             if preview_id and preview_id in inv["assets_by_id"]:
                 pa = inv["assets_by_id"][preview_id]
@@ -656,6 +725,74 @@ async def inventory_resolve(
         "label": a.get("label", ""),
         "url": _as_file_url(rp),
         "url_path": f"/files/{rp}",
+    })
+
+
+@router.post("/{project_id}/persona/outfit-view", dependencies=[Depends(require_api_key)])
+async def resolve_persona_outfit_view(
+    project_id: str,
+    body: dict,
+) -> JSONResponse:
+    """Resolve the current equipped outfit's view pack to a specific angle URL.
+
+    Used by chat and profile to fetch the correct image for 'show me your back' etc.
+    """
+    if not _UUID_RE.match(project_id):
+        return JSONResponse(status_code=400, content={"ok": False, "message": "Invalid project_id"})
+
+    target = str(body.get("target") or "current_outfit").strip()
+    angle = str(body.get("angle") or "front").strip()
+    sensitivity_max = str(body.get("sensitivity_max") or "safe").strip().lower()
+
+    if angle not in VIEW_ANGLES:
+        return JSONResponse(status_code=400, content={
+            "ok": False, "message": f"Invalid angle '{angle}'. Must be one of: {', '.join(VIEW_ANGLES)}"
+        })
+    if sensitivity_max not in SENS_ORDER:
+        sensitivity_max = "safe"
+
+    meta = _load_projects_metadata()
+    appearance = _get_appearance(meta, project_id)
+    outfit = _get_equipped_outfit(appearance)
+
+    if not outfit:
+        return JSONResponse(status_code=404, content={
+            "ok": False, "message": "NO_EQUIPPED_OUTFIT",
+            "detail": "No outfit found in persona appearance."
+        })
+
+    # Sensitivity check
+    sens = str(outfit.get("sensitivity") or "").strip().lower()
+    if sens not in SENS_ORDER:
+        sens = _classify_sensitivity(str(outfit.get("label") or ""))
+    if not _allowed_by_sensitivity(sens, sensitivity_max):
+        return JSONResponse(status_code=403, content={"ok": False, "message": "FORBIDDEN_SENSITIVITY"})
+
+    view_pack = _normalize_view_pack(outfit.get("view_pack"))
+    avail_views = _available_views(view_pack)
+    outfit_id = str(outfit.get("id") or "").strip()
+    label = str(outfit.get("label") or "Outfit").strip()
+
+    if not view_pack.get(angle):
+        return JSONResponse(status_code=404, content={
+            "ok": False,
+            "message": "VIEW_NOT_AVAILABLE",
+            "detail": f"No '{angle}' view for outfit '{label}'.",
+            "available_views": avail_views,
+        })
+
+    return JSONResponse(content={
+        "ok": True,
+        "project_id": project_id,
+        "persona_id": project_id,
+        "target_type": "outfit",
+        "target_id": outfit_id,
+        "target_label": label,
+        "angle": angle,
+        "image_url": view_pack[angle],
+        "available_views": avail_views,
+        "interactive_preview": bool(avail_views),
+        "view_pack": view_pack,
     })
 
 

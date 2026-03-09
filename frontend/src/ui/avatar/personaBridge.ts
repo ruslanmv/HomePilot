@@ -193,6 +193,32 @@ export function draftFromGalleryItem(
         set_id: 'avatar_studio',
         seed: oi.seed,
       }
+
+      // Extract view_pack from GalleryItem field or localStorage cache
+      let viewPack: Partial<Record<'front' | 'left' | 'right' | 'back', string>> | undefined
+      if (oi.view_pack && Object.keys(oi.view_pack).length > 0) {
+        viewPack = oi.view_pack
+      } else {
+        try {
+          const cacheKey = `hp_viewpack_${oi.id}`
+          const raw = localStorage.getItem(cacheKey)
+          if (raw) {
+            const parsed = JSON.parse(raw)
+            const results = parsed?.results ?? parsed
+            if (results && typeof results === 'object') {
+              const vp: Partial<Record<'front' | 'left' | 'right' | 'back', string>> = {}
+              for (const angle of ['front', 'left', 'right', 'back'] as const) {
+                const entry = results[angle]
+                if (entry?.url) vp[angle] = entry.url
+              }
+              if (Object.keys(vp).length > 0) viewPack = vp
+            }
+          }
+        } catch { /* corrupt cache — skip */ }
+      }
+
+      const hasViewPack = viewPack && Object.keys(viewPack).length > 0
+
       return {
         id: `outfit_${oi.id}`,
         label: outfitLabel(oi),
@@ -210,6 +236,12 @@ export function draftFromGalleryItem(
           nsfw_mode: oi.nsfw || false,
         },
         created_at: new Date(oi.createdAt).toISOString(),
+        ...(hasViewPack ? {
+          view_pack: viewPack,
+          interactive_preview: true,
+          preview_mode: 'view_pack' as const,
+          hero_view: viewPack!.front ? 'front' as const : Object.keys(viewPack!)[0] as any,
+        } : {}),
       }
     })
   }
