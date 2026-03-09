@@ -1,0 +1,13 @@
+{
+  "description": "Port allocation map for community MCP servers. Core=9101-9105, Optional=9110-9120, Community=9200-9999.",
+  "ranges": {
+    "core": { "start": 9101, "end": 9105 },
+    "optional_local": { "start": 9110, "end": 9113 },
+    "optional_comms": { "start": 9114, "end": 9117 },
+    "optional_dev": { "start": 9118, "end": 9120 },
+    "community": { "start": 9200, "end": 9999 }
+  },
+  "allocated": {
+    "9200": { "server_id": "hp-community-greeter", "bundle_id": "hello_world_greeter" }
+  }
+}

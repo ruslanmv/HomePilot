@@ -1,0 +1,68 @@
+# community/shared MCP server template
+# Replace {{SERVER_NAME}}, {{SERVER_SLUG}}, {{TOOLS}} with actual values.
+#
+# Compatibility:
+#   - HomePilot server_manager.py (install/uninstall lifecycle)
+#   - Context Forge (tool registration, virtual-server prefix matching)
+#   - MCP protocol (JSON-RPC 2.0 via /rpc)
+#
+# Install:
+#   1. Copy to agentic/integrations/mcp/community_{{SERVER_SLUG}}_server.py
+#      OR create entry point that imports this app
+#   2. Register in server_catalog.yaml under optional: with category: community
+#   3. Add virtual server entry matching hp.community.{{SERVER_SLUG}}.*
+"""
+Community MCP Server: {{SERVER_NAME}}
+Tool namespace: hp.community.{{SERVER_SLUG}}.*
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+from agentic.integrations.mcp._common.server import ToolDef, create_mcp_app
+
+
+Json = Dict[str, Any]
+
+
+def _json(payload: Json) -> Json:
+    """Return MCP content array wrapping a JSON payload (Forge-compatible)."""
+    return {"content": [{"type": "json", "json": payload}]}
+
+
+# ── Tool Handlers ─────────────────────────────────────────────────────────
+
+async def hp_example(query: str) -> Json:
+    """Replace with your actual tool logic."""
+    return _json({"result": f"Echo: {query}"})
+
+
+# ── Tool Definitions ─────────────────────────────────────────────────────
+# Naming: hp.community.{{SERVER_SLUG}}.<action>
+# Forge discovers via tools/list, registers each in Forge, virtual servers match by prefix.
+
+TOOLS: List[ToolDef] = [
+    ToolDef(
+        name="hp.community.{{SERVER_SLUG}}.example",
+        description="Example tool — replace with your implementation.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Input query"},
+            },
+            "required": ["query"],
+        },
+        handler=lambda args: hp_example(**args),
+    ),
+    # Add more ToolDef entries here...
+]
+
+
+# ── FastAPI App ───────────────────────────────────────────────────────────
+# Endpoints: GET /health, POST /rpc (JSON-RPC 2.0)
+# server_manager: start uvicorn → /health → tools/list → register in Forge
+
+app = create_mcp_app(
+    server_name="homepilot-community-{{SERVER_SLUG}}",
+    tools=TOOLS,
+)

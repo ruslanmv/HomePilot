@@ -158,14 +158,14 @@ export function stripDescriptorDuplicates(basePrompt: string, descriptors: strin
 function buildLeftPrompt(ft: FramingTokens, w: number, autoMirror: boolean): string {
   if (autoMirror) {
     // Auto-mirror ON: generate right-facing (reliable) — backend mirrors to left.
-    return `(right profile view:${w.toFixed(1)}), (side view:1.3), facing right, ${ft.bodyRange}, solo, consistent lighting`
+    return `(right profile view:${w.toFixed(1)}), (full body side view:1.3), (body turned right:1.3), shoulders angled right, torso rotated right, hips turned right, facing right, ${ft.bodyRange}, solo, consistent lighting`
   }
   // Auto-mirror OFF: original left-facing prompt — no backend post-processing.
-  return `(left profile view:${w.toFixed(1)}), (side view:1.3), facing left, ${ft.bodyRange}, solo, consistent lighting`
+  return `(left profile view:${w.toFixed(1)}), (full body side view:1.3), (body turned left:1.3), shoulders angled left, torso rotated left, hips turned left, facing left, ${ft.bodyRange}, solo, consistent lighting`
 }
 
 function buildRightPrompt(ft: FramingTokens, w: number): string {
-  return `(right profile view:${w.toFixed(1)}), (side view:1.3), facing right, ${ft.bodyRange}, solo, consistent lighting`
+  return `(right profile view:${w.toFixed(1)}), (full body side view:1.3), (body turned right:1.3), shoulders angled right, torso rotated right, hips turned right, facing right, ${ft.bodyRange}, solo, consistent lighting`
 }
 
 function buildBackPrompt(ft: FramingTokens, w: number): string {
@@ -209,23 +209,23 @@ export const VIEW_ANGLE_OPTIONS: ViewAngleOption[] = [
     id: 'left',
     label: 'Left',
     shortLabel: 'L',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, back view, rear view, double person, two people, split image, multiple views',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, frontal body, shoulders facing camera, torso facing forward, hips facing camera, chest facing forward, body facing camera, straight-on pose, back view, rear view, double person, two people, split image, multiple views',
     icon: '\u25D0',
     // Use 'reference' mode (img2img) so the front image anchors the generation.
-    // Denoise 0.78 keeps ~22% of the reference latent — enough to preserve
-    // hair color, skin tone, and outfit colors while still allowing rotation.
-    denoise: 0.78,
+    // Denoise 0.82 keeps ~18% of the reference latent — preserves hair color,
+    // skin tone, and outfit colors while giving enough freedom for full-body rotation.
+    denoise: 0.82,
     generationMode: 'reference',
   },
   {
     id: 'right',
     label: 'Right',
     shortLabel: 'R',
-    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, back view, rear view, double person, two people, split image, multiple views',
+    negativePrompt: 'front view, facing camera, looking at camera, frontal, both eyes visible, symmetrical face, frontal body, shoulders facing camera, torso facing forward, hips facing camera, chest facing forward, body facing camera, straight-on pose, back view, rear view, double person, two people, split image, multiple views',
     icon: '\u25D1',
-    // Same as left — 'reference' mode at 0.78 denoise preserves colors
-    // while the simplified prompt focuses CLIP on angle rotation.
-    denoise: 0.78,
+    // Same as left — 'reference' mode at 0.82 denoise preserves colors
+    // while the body rotation tokens ensure full torso/hip rotation.
+    denoise: 0.82,
     generationMode: 'reference',
   },
   {
@@ -256,8 +256,8 @@ type TunableAngle = 'left' | 'right' | 'back'
 
 /** Built-in defaults — these are the values used when no user override exists. */
 export const ANGLE_TUNING_DEFAULTS: Record<TunableAngle, AngleTuning> = {
-  left:  { denoise: 0.78, promptWeight: 1.4 },
-  right: { denoise: 0.78, promptWeight: 1.5 },
+  left:  { denoise: 0.82, promptWeight: 1.4 },
+  right: { denoise: 0.82, promptWeight: 1.5 },
   back:  { denoise: 0.90, promptWeight: 1.4 },
 }
 
@@ -510,6 +510,184 @@ export function sanitiseBasePromptForAngle(basePrompt: string, angle: ViewAngle)
   })
 
   return cleanCommaArtifacts(kept.join(', '))
+}
+
+// ---------------------------------------------------------------------------
+// Lingerie-aware garment emphasis — adds angle-specific reinforcement tokens
+// so CLIP "sees" the panty/stocking/garter details from every angle.
+// Pure additive: returns empty string for non-lingerie outfits.
+// ---------------------------------------------------------------------------
+
+/** Keywords that indicate a lingerie / intimate outfit is present. */
+const LINGERIE_OUTFIT_KEYWORDS: RegExp[] = [
+  /\blingerie\b/i, /\bboudoir\b/i, /\bthong\b/i, /\bg-string\b/i,
+  /\bbrazilian\b/i, /\bcheeky\b/i, /\bhipster\s+panty\b/i,
+  /\bboyshort\b/i, /\bperizoma\b/i, /\bitalian\s+brief\b/i,
+  /\bhigh-waist\s+panty\b/i, /\bbralette\b/i, /\bbalconette\b/i,
+  /\bpush-up\s+bra\b/i, /\btriangle\s+bra\b/i, /\bbodysuit\b/i,
+  /\bmatching\s+(lingerie\s+)?set\b/i, /\bcoordinated\s+bra\b/i,
+  /\bpanty\b/i, /\bstring\b/i,
+]
+
+function isLingerieOutfit(outfitPrompt: string): boolean {
+  return LINGERIE_OUTFIT_KEYWORDS.some((re) => re.test(outfitPrompt))
+}
+
+interface GarmentEmphasisRule {
+  detect: RegExp
+  back: string
+  side: string
+}
+
+const GARMENT_EMPHASIS_RULES: GarmentEmphasisRule[] = [
+  // Panty styles — back view shows rear coverage, side view shows hip strap
+  { detect: /\bthong\b/i,
+    back: 'thong back strap visible between buttocks, minimal rear coverage',
+    side: 'thong strap visible on hip' },
+  { detect: /\bbrazilian\b/i,
+    back: 'brazilian cut visible from behind, moderate rear exposure',
+    side: 'brazilian panty side visible on hip' },
+  { detect: /\bcheeky\b/i,
+    back: 'cheeky panty visible from behind, playful rear cut',
+    side: 'cheeky panty side visible on hip' },
+  { detect: /\bhipster\b/i,
+    back: 'hipster panty visible from behind, wide waistband',
+    side: 'hipster panty side visible, low-rise waistband on hip' },
+  { detect: /\bboyshort\b/i,
+    back: 'boyshort panty visible from behind, full coverage shorts',
+    side: 'boyshort panty side visible on hip' },
+  { detect: /\bperizoma\b/i,
+    back: 'perizoma string visible from behind, ultra-minimal rear',
+    side: 'perizoma string visible on hip' },
+  { detect: /\bitalian\s+brief\b/i,
+    back: 'italian brief visible from behind, elegant cut',
+    side: 'italian brief side visible on hip' },
+  { detect: /\bhigh-waist\b/i,
+    back: 'high-waist panty visible from behind, retro coverage',
+    side: 'high-waist panty side visible on hip' },
+  // Bodysuit — full-body garment visible from all angles
+  { detect: /\bbodysuit\b/i,
+    back: 'bodysuit back panel visible, straps on shoulders from behind',
+    side: 'bodysuit side panel visible, strap on shoulder' },
+  // Accessories — stockings and garters visible from back and side
+  { detect: /\bstocking/i,
+    back: 'stocking seams visible from behind on legs',
+    side: 'stocking top visible on thigh' },
+  { detect: /\bgarter/i,
+    back: 'garter straps visible on back of thighs',
+    side: 'garter clip visible on side of thigh' },
+  // Fabric emphasis — only fires once for the fabric type
+  { detect: /\blace\b/i,
+    back: 'lace pattern visible on skin from behind',
+    side: 'lace fabric detail visible from side' },
+  { detect: /\bmesh\b.*\bfabric\b|\bsheer\s+mesh\b/i,
+    back: 'sheer mesh fabric visible from behind',
+    side: 'sheer mesh visible from side' },
+  { detect: /\bsatin\b/i,
+    back: 'satin sheen visible from behind',
+    side: 'satin sheen visible from side' },
+  { detect: /\bsilk\b/i,
+    back: 'silk drape visible from behind',
+    side: 'silk drape visible from side' },
+]
+
+/**
+ * Build angle-specific garment emphasis tokens for lingerie outfits.
+ * Returns empty string for non-lingerie outfits or front view (no-op).
+ * For back/left/right, scans the outfit prompt for known garment keywords
+ * and returns concise reinforcement tokens that tell CLIP what should be
+ * visible from that specific angle.
+ */
+export function getGarmentEmphasis(angle: ViewAngle, outfitPrompt: string): string {
+  if (angle === 'front') return ''
+  if (!isLingerieOutfit(outfitPrompt)) return ''
+
+  const lower = outfitPrompt.toLowerCase()
+  const parts: string[] = []
+  const isBack = angle === 'back'
+
+  for (const rule of GARMENT_EMPHASIS_RULES) {
+    if (rule.detect.test(lower)) {
+      parts.push(isBack ? rule.back : rule.side)
+    }
+  }
+
+  // Generic rear emphasis when lingerie is detected but no specific style matched
+  if (parts.length === 0 && isBack) {
+    parts.push('outfit visible from behind, buttocks shape and contour visible through outfit')
+  }
+
+  return parts.join(', ')
+}
+
+// ---------------------------------------------------------------------------
+// Outfit prompt compression — strips verbose descriptors for non-front angles
+// to stay within CLIP's 77-token budget. Keeps only visual keywords.
+// Pure additive: for front view or non-lingerie outfits, returns input unchanged.
+// ---------------------------------------------------------------------------
+
+/** Verbose filler patterns that waste CLIP tokens without adding visual info. */
+const VERBOSE_FILLER_PATTERNS: RegExp[] = [
+  /\bintricate\s+floral\s+pattern\b/i,
+  /\bluxury\s+haute\s+couture\b/i,
+  /\bhaut[e]?\s+couture\b/i,
+  /\bpremium\s+embroidered\s+details\b/i,
+  /\bdelicate\s+feminine\s+details\b/i,
+  /\bsimple\s+elegant\s+lines\b/i,
+  /\bcomfortable\s+natural\b/i,
+  /\bluxurious\s+drape\b/i,
+  /\bsmooth\s+glossy\s+sheen\b/i,
+  /\bsemi-transparent\b/i,
+  /\ballover\s+lace\s+pattern\b/i,
+  /\bsheer\s+stretch\s+fabric\b/i,
+  /\bsee-through\s+minimal\b/i,
+  /\bclean\s+seamless\s+design\b/i,
+  /\bunlined\s+wireless\b/i,
+  /\bhalf-cup\s+low\s+neckline\b/i,
+  /\benhanced\s+cleavage\b/i,
+  /\bminimal\s+wire-free\b/i,
+  /\bwhite\s+lace\s+with\s+satin\s+accents\b/i,
+  /\binspired\s+by\b/i,
+  /\bitalian\s+lingerie\s+style\b/i,
+  /\bglamorous\s+style\b/i,
+  /\bintimate\b/i,
+  /\bsensual\b/i,
+  /\belegant\b/i,
+  /\bseductive\b/i,
+]
+
+/**
+ * Compress an outfit prompt for non-front angles by stripping verbose
+ * descriptors that waste CLIP budget. Keeps garment type, style name,
+ * fabric keyword, accessory name, and brand name (short form).
+ *
+ * For front view, returns the input unchanged (front has full CLIP budget).
+ * For non-lingerie outfits, also returns unchanged (no filler to strip).
+ */
+export function compressOutfitForAngle(outfitPrompt: string, angle: ViewAngle): string {
+  if (angle === 'front') return outfitPrompt
+  if (!isLingerieOutfit(outfitPrompt)) return outfitPrompt
+
+  const segments = outfitPrompt.split(',').map((s) => s.trim()).filter(Boolean)
+
+  const kept = segments.filter((seg) => {
+    for (const re of VERBOSE_FILLER_PATTERNS) {
+      if (re.test(seg)) return false
+    }
+    return true
+  })
+
+  // Shorten "inspired by X luxury haute couture lingerie" → already stripped
+  // Shorten remaining brand references: collapse to brand keyword
+  const shortened = kept.map((seg) => {
+    return seg
+      .replace(/inspired\s+by\s+/i, '')
+      .replace(/\s+luxury\s+haute\s+couture\s+lingerie/i, ' style')
+      .replace(/\s+Italian\s+lingerie\s+style/i, ' style')
+      .replace(/\s+glamorous\s+style/i, ' style')
+  })
+
+  return cleanCommaArtifacts(shortened.join(', '))
 }
 
 export function extractViewAngle(metadata?: Record<string, unknown> | null): ViewAngle | null {

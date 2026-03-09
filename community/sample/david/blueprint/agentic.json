@@ -1,0 +1,7 @@
+{
+  "goal": "Deliver real-time news headlines, search stories by topic, and keep users informed",
+  "capabilities": [
+    "news"
+  ],
+  "tool_source": "all"
+}

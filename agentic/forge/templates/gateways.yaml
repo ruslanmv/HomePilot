@@ -83,3 +83,10 @@ gateways:
     url: "http://localhost:9119/rpc"
     transport: "SSE"
     description: "HomePilot Notion MCP server"
+
+
+  # ── Community: hello_world_greeter ──
+  - name: hp-community-greeter
+    url: "http://localhost:9200/rpc"
+    transport: "SSE"
+    description: "HomePilot Community Greeter MCP server"

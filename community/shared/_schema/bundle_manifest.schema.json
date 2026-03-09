@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homepilot.ai/schemas/shared-bundle/v1/bundle-manifest",
+  "title": "HomePilot Shared Bundle Manifest",
+  "description": "Defines a portable persona+MCP-server bundle for community distribution.",
+  "type": "object",
+  "required": [
+    "kind",
+    "schema_version",
+    "bundle_id",
+    "persona",
+    "mcp_server",
+    "compatibility"
+  ],
+  "properties": {
+    "kind": {
+      "const": "homepilot.shared_bundle",
+      "description": "Discriminator — always 'homepilot.shared_bundle'."
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Bundle schema version. Current: 1."
+    },
+    "bundle_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{2,63}$",
+      "description": "Globally unique bundle identifier (snake_case)."
+    },
+    "bundle_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of this bundle."
+    },
+    "author": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string",
+      "default": "MIT"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "persona": {
+      "type": "object",
+      "required": ["id", "name", "role", "class_id"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "class_id": {
+          "type": "string",
+          "enum": ["assistant", "secretary", "companion", "creative", "specialist"]
+        },
+        "content_rating": {
+          "type": "string",
+          "enum": ["sfw", "nsfw"],
+          "default": "sfw"
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "mcp_server": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["dedicated", "shared", "none"],
+          "description": "dedicated = bundle ships its own server. shared = references an existing server by ID. none = persona has no MCP tools."
+        },
+        "server_id": {
+          "type": "string",
+          "description": "For 'shared' mode: ID of an existing server in server_catalog.yaml. For 'dedicated': the new server ID to register."
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 9200,
+          "maximum": 9999,
+          "description": "For 'dedicated' mode only. Community ports start at 9200."
+        },
+        "module": {
+          "type": "string",
+          "description": "Python module path for 'dedicated' mode."
+        },
+        "git": {
+          "type": "string",
+          "format": "uri",
+          "description": "Git repo URL. Stored inside .hpersona so the MCP server can be auto-fetched on import by another HomePilot instance."
+        },
+        "ref": {
+          "type": "string",
+          "default": "main",
+          "description": "Git branch, tag, or commit hash."
+        },
+        "tools_provided": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Fully-qualified tool names this server provides."
+        },
+        "shared_with": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Other bundle_ids that share this same MCP server."
+        }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "properties": {
+        "min_homepilot_version": {
+          "type": "string",
+          "default": "2.1.0"
+        },
+        "hpersona_schema_version": {
+          "type": "integer",
+          "default": 2
+        },
+        "requires_config": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Environment keys needed (e.g. GOOGLE_OAUTH, SLACK_TOKEN)."
+        }
+      }
+    }
+  }
+}

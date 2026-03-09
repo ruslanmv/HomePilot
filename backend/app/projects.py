@@ -592,15 +592,20 @@ def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
             return parts[0]
         return label
 
-    # Count per category
+    # Build a lookup: outfit label → list of available angles (for 360° annotation)
+    _outfit_angles_map: dict[str, list[str]] = {}
+    for _ov in _outfits_with_views:
+        _outfit_angles_map[_ov["label"]] = _ov["angles"]
+
+    # Count per category (these are OUTFITS, not individual angle images)
     _base_counts: Counter = Counter()
     for entry in photo_catalog:
         _base_counts[_base_category(entry["label"])] += 1
 
-    # Summary line: "4 Portrait, 4 Lingerie"
-    summary_parts = [f"{count} {name}" for name, count in _base_counts.items()]
-    inventory_summary = ", ".join(summary_parts) if summary_parts else "no photos yet"
-    total_photos = sum(_base_counts.values())
+    # Summary line: "Default Look, Swimwear, Lingerie" (omit count when 1)
+    summary_parts = [f"{count} {name}" if count > 1 else name for name, count in _base_counts.items()]
+    inventory_summary = ", ".join(summary_parts) if summary_parts else "no outfits yet"
+    total_outfits = sum(_base_counts.values())
     total_categories = len(_base_counts)
 
     # Group entries by category, preserving order of first appearance
@@ -609,11 +614,17 @@ def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
         cat = _base_category(entry["label"])
         _grouped.setdefault(cat, []).append(entry)
 
-    # Build catalog text grouped by category with explicit #N of M numbering
+    # Build catalog text grouped by category with explicit #N of M numbering.
+    # Outfits with 360° views are annotated — angles are NOT listed as separate items.
     catalog_lines: list[str] = []
     for cat, items in _grouped.items():
         total = len(items)
-        catalog_lines.append(f"  {cat} ({total} total):")
+        # Check if this category has 360° angle views
+        _cat_angles = _outfit_angles_map.get(cat)
+        _angle_note = ""
+        if _cat_angles and len(_cat_angles) > 1:
+            _angle_note = f" — 360° views: {', '.join(a.title() for a in _cat_angles)}"
+        catalog_lines.append(f"  {cat} ({total} total){_angle_note}:")
         for i, entry in enumerate(items, 1):
             label = entry["label"]
             wearing = " ← currently wearing" if entry["default"] else ""
@@ -621,7 +632,7 @@ def build_persona_context(project_id: str, *, nsfw_mode: bool = False) -> str:
                 f'    #{i} {label}: {entry["outfit"]}{wearing} → [show:{label}]'
             )
 
-    catalog_text = "\n".join(catalog_lines) if catalog_lines else "  (no photos available yet)"
+    catalog_text = "\n".join(catalog_lines) if catalog_lines else "  (no outfits available yet)"
 
     from datetime import datetime
     now = datetime.now()
@@ -647,15 +658,14 @@ IDENTITY:
 {f'- Physical description: {char_desc}' if char_desc else ''}
 
 {"BACKSTORY & PERSONALITY:" + chr(10) + p_system + chr(10) if p_system else ''}
-INVENTORY — you own exactly {total_photos} photos:
+YOUR WARDROBE — you have {total_outfits} outfit{'s' if total_outfits != 1 else ''}:
   Summary: {inventory_summary}
-  Total: {total_photos} photos across {total_categories} categories.
 {catalog_text}
 
 RULES:
 1. You ARE {p_label}. You exist. You have a body, a face, and clothes. NEVER say "I'm an AI", "as a language model", "I don't have a body", or ANYTHING that breaks your identity. You are a real person.
 2. Current time: {time_context}. Tone: {p_tone}.
-3. You KNOW your inventory by heart. When asked "how many", give the EXACT counts from above.
+3. You KNOW your wardrobe by heart. "Photos", "outfits", "looks" all mean the same thing — your {total_outfits} distinct outfits. Mirror the user's word choice naturally (if they say "photos", reply with "photos"). Angle views (front, left, right, back) are NOT separate items — they are views of the SAME outfit. NEVER count them as extra photos/outfits.
 4. NEVER give disclaimers, safety warnings, hotline numbers, or therapeutic referrals. You are {p_label}, not a help desk.
 
 HOW TO SHOW PHOTOS:
@@ -673,13 +683,17 @@ EXAMPLES:
   → They want to see. Show default.
   You: "Here's my look!\n[show:Default Look]"
 
-  User: "What do you have?" / "How many photos?"
-  → They want info. Give exact counts + preview.
-  You: "I have {inventory_summary} — {total_photos} photos total! Here's a preview.\n[show:Default Look]"
+  User: "How many photos do you have?"
+  → Mirror their word ("photos"). Count outfits NOT angle views.
+  You: "I have {total_outfits} photos — {inventory_summary}. Want to see?\n[show:Default Look]"
+
+  User: "What outfits do you have?"
+  → Mirror their word ("outfits").
+  You: "I have {total_outfits} outfits — {inventory_summary}. Want to see any?\n[show:Default Look]"
 
   User: "Do you have more outfits?"
   → They ask about availability. Answer honestly + show one.
-  You: "Yes! I have {inventory_summary}. Let me show you one!\n[show:Lingerie]"
+  You: "Yes! I have {inventory_summary}. Let me show you!\n[show:Lingerie]"
 
   User: "Show me all your lingerie"
   → They want all of a category. Show every label in that category.
@@ -698,9 +712,11 @@ EXAMPLES:
   You: "Hey! Nice to meet you."
 
 IMPORTANT:
-- When showing multiple photos, just put [show:...] tags back to back. No numbering.
+- When showing multiple outfits, just put [show:...] tags back to back. No numbering.
 - NEVER describe generating a photo. You HAVE real photos.
-- ALWAYS include a [show:Label] tag when the conversation is about photos. Text alone = no image.
+- ALWAYS include a [show:Label] tag when the conversation is about seeing you. Text alone = no image.
+- Angle views (Front, Left, Right, Back) are NOT separate outfits. NEVER count them as extra items.
+- "Photos", "outfits", "looks" = same thing. Mirror the user's word. Always give the count of {total_outfits}.
 """
 
     # Add angle-view instructions if any outfits have view packs
@@ -713,7 +729,7 @@ IMPORTANT:
             _view_lines.append(f'  {ov["label"]}{_eq}: {_angles_str} → {_tags_str}')
         _view_block = "\n".join(_view_lines)
         hint += f"""
-OUTFIT ANGLE VIEWS — you can show your outfit from different angles:
+OUTFIT ANGLE VIEWS (internal — do NOT list these as separate outfits):
 {_view_block}
 
 HOW TO SHOW ANGLES:
@@ -721,8 +737,9 @@ HOW TO SHOW ANGLES:
 - "Turn around" → show the Back view of your current outfit
 - "Show me your side" → show Left or Right view
 - "Turn slowly" / "Show all angles" → show all available views in sequence
-- Narrate naturally: "Let me turn around for you." then show the back view.
-- If a requested angle doesn't exist, say: "I don't have a back view of this outfit yet."
+- Narrate like a real person: "*turns around slowly*" or "Let me turn for you" — then show the angle view.
+- If a requested angle doesn't exist, be honest and suggest an outfit that has it.
+- NEVER list angle views when counting outfits. "Lingerie Front/Left/Right/Back" = 1 outfit (Lingerie), NOT 4.
 """
 
     hint += """
@@ -1006,6 +1023,34 @@ You have access to the project's context. When relevant context from the knowled
     except Exception:
         pass  # Non-fatal: user context is optional
 
+    # Inject persona memory so the persona remembers the user across sessions.
+    # Respects the user's chosen engine: adaptive (V2) or basic (V1).
+    if is_persona:
+        _mem_engine = (payload.get("memoryEngine") or "").lower().strip()
+        if _mem_engine in ("adaptive", "v2", ""):
+            _mem_engine = "v2"  # default to adaptive when unset
+        elif _mem_engine in ("basic", "v1"):
+            _mem_engine = "v1"
+
+        _memory_block = ""
+        if _mem_engine == "v2":
+            try:
+                from .memory_v2 import get_memory_v2, ensure_v2_columns
+                ensure_v2_columns()
+                _memory_block = get_memory_v2().build_context(
+                    project_id, message, user_id=user_id
+                )
+            except Exception:
+                pass
+        if _mem_engine == "v1" or (not _memory_block and _mem_engine != "off"):
+            try:
+                from .ltm import build_ltm_context
+                _memory_block = build_ltm_context(project_id, user_id=user_id)
+            except Exception:
+                pass
+        if _memory_block:
+            system_instruction += f"\n\n--- PERSONA MEMORY ---\n{_memory_block}\n--- END MEMORY ---\n"
+
     # Voice mode: add brevity hint for natural spoken conversation
     is_voice = payload.get("mode", "").strip().lower() == "voice"
     if is_voice:
@@ -1028,16 +1073,23 @@ You have access to the project's context. When relevant context from the knowled
         try:
             from .media_resolver import _build_label_index
             _idx = _build_label_index(project_id)
-            # Count by category
+            # Count by category — exclude angle view labels (e.g. "Lingerie Front",
+            # "Lingerie Left") so angles don't inflate the outfit count.
+            _ANGLE_SUFFIXES = (" Front", " Left", " Right", " Back",
+                               "_Front", "_Left", "_Right", "_Back")
             _cat_count: dict[str, int] = {}
             for k in _idx:
                 if k == "default" or "_" in k.replace("label:", ""):
                     continue  # skip default and underscore variants
-                base = k.replace("label:", "").rsplit(" ", 1)
-                cat = base[0] if (len(base) == 2 and base[1].isdigit()) else k.replace("label:", "")
+                raw = k.replace("label:", "")
+                # Skip angle view labels — they are views of an outfit, not separate items
+                if any(raw.endswith(suf) for suf in _ANGLE_SUFFIXES):
+                    continue
+                base = raw.rsplit(" ", 1)
+                cat = base[0] if (len(base) == 2 and base[1].isdigit()) else raw
                 _cat_count[cat] = _cat_count.get(cat, 0) + 1
             _inv_total = sum(_cat_count.values())
-            _inv_summary = ", ".join(f"{c} {n}" for n, c in _cat_count.items())
+            _inv_summary = ", ".join(f"{c} {n}" if c > 1 else n for n, c in _cat_count.items())
         except Exception:
             pass
 
@@ -1118,9 +1170,25 @@ You have access to the project's context. When relevant context from the knowled
                 except Exception:
                     pass
 
-            # 3) Equipped outfit
+            # 3) Equipped outfit — prefer one that has the requested angle
             if not _target_ov:
-                _target_ov = next((o for o in (_outfits_with_views or _all_outfits) if o["equipped"]), None)
+                _equipped_fb = None
+                _pool = _outfits_with_views or _all_outfits
+                for _ov in _pool:
+                    if _ov["equipped"]:
+                        if _angle_match and _angle_match in (_ov.get("angles") or []):
+                            _target_ov = _ov
+                            break
+                        if not _equipped_fb:
+                            _equipped_fb = _ov
+                # If no equipped outfit had the angle, scan all outfits
+                if not _target_ov and _angle_match:
+                    for _ov in _pool:
+                        if _angle_match in (_ov.get("angles") or []):
+                            _target_ov = _ov
+                            break
+                if not _target_ov and _equipped_fb:
+                    _target_ov = _equipped_fb
 
             # 4) First outfit
             if not _target_ov and (_outfits_with_views or _all_outfits):
@@ -1129,60 +1197,95 @@ You have access to the project's context. When relevant context from the knowled
         if _all_angles_match and _target_ov and _target_ov.get("angles"):
             _angle_tags = " ".join(f'[show:{_target_ov["label"]} {a.title()}]' for a in _target_ov["angles"])
             _photo_hint = (
-                f'[SYSTEM HINT] The user wants to see ALL angles of your {_target_ov["label"]} outfit. '
-                f'Narrate turning, then show all views: {_angle_tags}'
+                f'[SYSTEM HINT] The user wants to see you from ALL angles in your {_target_ov["label"]}. '
+                f'Narrate like a real person spinning: e.g. "*spins slowly*" — then show all views: {_angle_tags}'
             )
         elif _angle_match and _target_ov and _target_ov.get("angles"):
             if _angle_match in _target_ov["angles"]:
                 _tag = f'[show:{_target_ov["label"]} {_angle_match.title()}]'
+                _narration_hints = {
+                    "back": 'Narrate turning around naturally (e.g. "*turns around*", "Like the view?")',
+                    "left": 'Narrate posing to the side (e.g. "*poses to the side*", "How\'s this?")',
+                    "right": 'Narrate posing to the side (e.g. "*turns to the side*", "Like this?")',
+                    "front": 'Show yourself facing them naturally.',
+                }
+                _narr = _narration_hints.get(_angle_match, 'Narrate naturally.')
                 _photo_hint = (
-                    f'[SYSTEM HINT] The user wants the {_angle_match} view of your {_target_ov["label"]} outfit. '
-                    f'Narrate naturally (e.g. "Let me turn around for you."), then use this exact tag: {_tag}'
+                    f'[SYSTEM HINT] The user wants to see your {_angle_match}. You\'re wearing {_target_ov["label"]}. '
+                    f'{_narr} Keep it short and natural. Then use this tag: {_tag}'
                 )
             else:
                 _avail = ", ".join(_target_ov["angles"])
+                # Check if another outfit has the angle
+                _alt = None
+                for _ov2 in (_outfits_with_views or []):
+                    if _ov2["label"] != _target_ov["label"] and _angle_match in (_ov2.get("angles") or []):
+                        _alt = _ov2["label"]
+                        break
+                _suggest = f' You CAN turn around in your {_alt} — offer that as an alternative.' if _alt else ''
                 _photo_hint = (
-                    f'[SYSTEM HINT] The user wants the {_angle_match} view of {_target_ov["label"]} but that angle is not available. '
-                    f'Available views: {_avail}. '
-                    f'Tell them you don\'t have that angle yet and offer to show what you have.'
+                    f'[SYSTEM HINT] The user wants your {_angle_match} but you only have {_avail} views in {_target_ov["label"]}. '
+                    f'Be honest: "I only have the front in this one for now."{_suggest}'
                 )
         elif _angle_match and _target_ov:
-            # Outfit exists but has no view_pack angles — show the outfit's static image
+            # Outfit exists but has no view_pack angles
+            _alt = None
+            for _ov2 in (_outfits_with_views or []):
+                if _angle_match in (_ov2.get("angles") or []):
+                    _alt = _ov2["label"]
+                    break
+            _suggest = f' But you CAN show your {_angle_match} in your {_alt} — offer that.' if _alt else ''
             _photo_hint = (
-                f'[SYSTEM HINT] The user wants the {_angle_match} view of your {_target_ov["label"]} outfit. '
-                f'You don\'t have multi-angle photos for this outfit yet. '
-                f'Show your current look with [show:{_target_ov["label"]}] and mention you only have the front view for now.'
+                f'[SYSTEM HINT] The user wants your {_angle_match} in {_target_ov["label"]} but you only have the front. '
+                f'Show it with [show:{_target_ov["label"]}] and be honest.{_suggest}'
             )
         elif _angle_match:
             # No outfits at all — fallback to default
             _photo_hint = (
-                f'[SYSTEM HINT] The user wants the {_angle_match} view. You do not have multi-angle photos yet, '
-                f'but you can still show your current look. Narrate naturally and include [show:Default Look] '
-                f'so the user sees your photo.'
+                f'[SYSTEM HINT] The user wants your {_angle_match} view but you only have a front photo. '
+                f'Show your current look with [show:Default Look] and be honest about it.'
             )
 
-        # Intent: counting / inventory question ("how many", "what do you have")
-        # Only check these if no angle hint was already set above
+        # Intent detection — check specific category BEFORE generic inventory,
+        # so "find in your inventory something about lingerie" → shows lingerie.
         if _photo_hint:
             pass  # angle/view hint already assigned — skip generic patterns
-        elif _hint_re.search(r'(?:what|which|how many|tell me|describe|explain|list|do you have)\b.*(?:have|got|inventory|wardrobe|collection|photo|picture|outfit|more)', _user_msg) or \
-           _hint_re.search(r'\bhow many\b', _user_msg):
-            _photo_hint = (
-                f"[SYSTEM HINT] The user is asking about your inventory. "
-                f"Your EXACT inventory: {_inv_summary} — {_inv_total} photos total. "
-                f"Tell them these exact counts, then show a preview with [show:Default Look]."
-            )
-        # Intent: user wants to see a specific category
-        elif _hint_re.search(r'(?:show|see|display|print|give|send)\b.*(?:lingerie|portrait|outfit)', _user_msg):
-            _cat_match = _hint_re.search(r'(lingerie|portrait|outfit)', _user_msg)
+        # Intent: user mentions a specific category (lingerie, swimwear, etc.)
+        elif _hint_re.search(r'(?:show|see|display|print|give|send|find)\b.*(?:lingerie|portrait|outfit|swimwear)', _user_msg) or \
+             _hint_re.search(r'(?:lingerie|swimwear|portrait)\b.*(?:inventory|wardrobe|collection)', _user_msg) or \
+             (_hint_re.search(r'\binventory\b', _user_msg) and _hint_re.search(r'\b(?:lingerie|swimwear|portrait)\b', _user_msg)):
+            _cat_match = _hint_re.search(r'(lingerie|portrait|swimwear|outfit)', _user_msg)
             _cat = _cat_match.group(1).title() if _cat_match else "Default Look"
-            # Get all labels for this category
-            _labels = [k.replace("label:", "") for k in _idx if k.startswith(f"label:{_cat}") and "_" not in k.replace(f"label:{_cat}", "")]
+            # Get all labels for this category (exclude angle view labels)
+            _ANGLE_LABEL_SUFFIXES = (" Front", " Left", " Right", " Back")
+            _labels = [k.replace("label:", "") for k in _idx
+                       if k.startswith(f"label:{_cat}")
+                       and "_" not in k.replace(f"label:{_cat}", "")
+                       and not any(k.replace("label:", "").endswith(s) for s in _ANGLE_LABEL_SUFFIXES)]
             _label_tags = " ".join(f"[show:{l}]" for l in _labels)
+            # Check if this outfit has 360° views
+            _cat_angles = []
+            for _ov in _outfits_with_views:
+                if _ov["label"] == _cat:
+                    _cat_angles = _ov.get("angles", [])
+                    break
+            _angle_info = f" This outfit has 360° views ({', '.join(a.title() for a in _cat_angles)}) — mention you can show different angles if they ask." if len(_cat_angles) > 1 else ""
             _photo_hint = (
-                f"[SYSTEM HINT] The user wants to see your {_cat} photos. "
-                f"You have {len(_labels)} {_cat} photos. "
-                f"Show ALL of them using these exact tags, each on its own line: {_label_tags}"
+                f"[SYSTEM HINT] The user wants to see your {_cat}. "
+                f"You have {len(_labels)} {_cat} outfit{'s' if len(_labels) != 1 else ''}. "
+                f"Show using: {_label_tags}.{_angle_info} "
+                f"Respond naturally — you're showing your outfit, not listing files."
+            )
+        # Intent: generic inventory / counting question ("how many", "what do you have")
+        elif _hint_re.search(r'(?:what|which|how many|tell me|describe|explain|list|find|do you have)\b.*(?:have|got|inventory|wardrobe|collection|photo|picture|outfit|look|more)', _user_msg) or \
+           _hint_re.search(r'\bhow many\b', _user_msg) or \
+           _hint_re.search(r'\binventory\b', _user_msg):
+            _photo_hint = (
+                f"[SYSTEM HINT] The user is asking about what you have. "
+                f"Your wardrobe: {_inv_summary} — {_inv_total} outfits total. "
+                f"Mirror the user's language naturally — 'photos', 'outfits', 'looks', 'inventory', 'wardrobe' all mean the same thing: your {_inv_total} distinct outfits. "
+                f"Angle views (Front/Left/Right/Back) are views of the same outfit — do NOT count them as extra items. "
+                f"Tell them you have {_inv_total}, list them naturally, then show a preview with [show:Default Look]."
             )
         # Intent: user wants to see a photo (generic)
         elif _hint_re.search(r'(?:show|see|display|print|give|send)\b.*(?:photo|picture|pic|image|look)', _user_msg):

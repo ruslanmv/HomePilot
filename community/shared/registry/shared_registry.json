@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "kind": "homepilot.shared_registry",
+  "generated_at": "2026-03-09T00:00:00Z",
+  "description": "Registry of all shared persona bundles with their MCP servers",
+  "port_allocation": {
+    "community_range_start": 9200,
+    "community_range_end": 9999,
+    "next_available": 9201
+  },
+  "mcp_servers": [
+    {
+      "server_id": "hp-community-greeter",
+      "port": 9200,
+      "bundle_id": "hello_world_greeter",
+      "tool_prefix": "hp.community.greeter.",
+      "shared_by_bundles": ["hello_world_greeter"]
+    }
+  ],
+  "bundles": [
+    {
+      "bundle_id": "hello_world_greeter",
+      "name": "Sunny — Friendly Greeter",
+      "version": "1.0.0",
+      "persona_id": "hello_world_greeter",
+      "class_id": "assistant",
+      "tags": ["greeting", "demo", "starter"],
+      "content_rating": "sfw",
+      "mcp_server_mode": "dedicated",
+      "mcp_server_id": "hp-community-greeter",
+      "tool_count": 3,
+      "requires_config": [],
+      "status": "stable"
+    }
+  ]
+}

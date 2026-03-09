@@ -307,6 +307,40 @@ def _delete_by_id(project_id: str, mem_id: int) -> None:
     con.close()
 
 
+def purge_memories_by_keyword(project_id: str, keyword: str) -> int:
+    """
+    Delete all Working and Semantic memories whose value mentions `keyword`.
+    Called when an outfit/item is deleted from the wardrobe so stale references
+    don't linger.  Pinned (P) memories are preserved — the user explicitly
+    asked to remember those.
+
+    Returns count of deleted entries.
+    """
+    if not keyword or not keyword.strip():
+        return 0
+    kw = keyword.strip().lower()
+    con = sqlite3.connect(_get_db_path())
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+    cur.execute(
+        "SELECT id, value, mem_type FROM persona_memory WHERE project_id = ?",
+        (project_id,),
+    )
+    to_delete: List[int] = []
+    for row in cur.fetchall():
+        mem_type = (row["mem_type"] or "S").upper()
+        if mem_type == "P":
+            continue  # Never auto-delete pinned memories
+        val = (row["value"] or "").lower()
+        if kw in val:
+            to_delete.append(int(row["id"]))
+    for mid in to_delete:
+        cur.execute("DELETE FROM persona_memory WHERE id = ?", (mid,))
+    con.commit()
+    con.close()
+    return len(to_delete)
+
+
 # ---------------------------------------------------------------------------
 # V2 Engine
 # ---------------------------------------------------------------------------
