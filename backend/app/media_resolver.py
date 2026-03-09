@@ -173,6 +173,19 @@ def _build_label_index(project_id: str) -> Dict[str, str]:
             if is_default:
                 default_url = full_url
 
+        # --- view pack angle labels (e.g. "Lingerie Front", "Lingerie Back") ---
+        view_pack = outfit.get("view_pack")
+        if isinstance(view_pack, dict):
+            for angle in ("front", "left", "right", "back"):
+                vp_url = view_pack.get(angle, "")
+                if not vp_url:
+                    continue
+                full_vp_url = _abs_img_url(vp_url)
+                if not _file_url_exists(full_vp_url):
+                    continue
+                angle_label = f"{o_label} {angle.title()}"
+                _add_label(angle_label, full_vp_url)
+
     # fallback default
     if not default_url:
         for v in mapping.values():
