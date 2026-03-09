@@ -1,0 +1,18 @@
+# Append this to agentic/forge/templates/server_catalog.yaml under "optional:"
+# This registers the community greeter server with HomePilot's server_manager.
+#
+# server_manager.install() flow:
+#   1. Start uvicorn on port 9200 with module below
+#   2. Poll GET /health until 200
+#   3. POST /rpc {"method":"tools/list"} → discover 3 tools
+#   4. Register each tool in Forge via POST {forge_url}/tools
+#   5. Persist to agentic/forge/installed.json
+#   6. sync_homepilot() updates virtual servers
+
+- id: hp-community-greeter
+  port: 9200
+  module: "agentic.integrations.mcp.community_greeter_server:app"
+  label: "Community Greeter"
+  description: "Greeting tools — personalized hellos, farewells, and compliments"
+  category: community
+  icon: smile

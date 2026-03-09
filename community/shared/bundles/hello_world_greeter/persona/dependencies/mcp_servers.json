@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "servers": [
+    {
+      "name": "hp-community-greeter",
+      "description": "Greeting tools — personalized hellos, farewells, and compliments",
+      "default_port": 9200,
+      "source": {
+        "type": "community_bundle",
+        "bundle_id": "hello_world_greeter",
+        "git": "",
+        "ref": "main"
+      },
+      "transport": "HTTP",
+      "protocol": "MCP",
+      "tools_provided": [
+        "hp.community.greeter.greet",
+        "hp.community.greeter.farewell",
+        "hp.community.greeter.compliment"
+      ],
+      "health_check": {
+        "method": "GET",
+        "path": "/health"
+      }
+    }
+  ]
+}

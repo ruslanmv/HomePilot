@@ -3,7 +3,7 @@ import type { AvatarResult } from './types'
 import type { FramingType, WizardMeta } from './galleryTypes'
 import type { ViewAngle, ViewResultMap, ViewTimestampMap } from './viewPack'
 import type { AvatarSettings } from './types'
-import { buildAnglePrompt, buildIdentityLockSuffix, buildVisualDescriptorsFromMeta, extractVisualDescriptors, getViewAngleOption, resolveAngleTuning, sanitiseBasePromptForAngle, stripDescriptorDuplicates, VIEW_ANGLE_OPTIONS } from './viewPack'
+import { buildAnglePrompt, buildIdentityLockSuffix, buildVisualDescriptorsFromMeta, compressOutfitForAngle, extractVisualDescriptors, getGarmentEmphasis, getViewAngleOption, resolveAngleTuning, sanitiseBasePromptForAngle, stripDescriptorDuplicates, VIEW_ANGLE_OPTIONS } from './viewPack'
 
 export interface GenerateViewParams {
   referenceImageUrl: string
@@ -214,10 +214,18 @@ export function useViewPackGeneration(backendUrl: string, apiKey?: string, cache
     // (e.g. "European features baseline", "semi-realistic") to free CLIP budget.
     const cleanedBase = stripDescriptorDuplicates(basePrompt, visualDescriptors)
 
+    // For non-front angles, compress the outfit to save CLIP tokens and add
+    // angle-specific garment emphasis (e.g. "thong strap visible on hip" for
+    // side views, "lace pattern visible from behind" for back view).
+    // Front view uses the full uncompressed outfit (plenty of CLIP budget).
+    const outfitTokens = compressOutfitForAngle(cleanedBase, params.angle)
+    const garmentEmphasis = getGarmentEmphasis(params.angle, cleanedBase)
+
     const viewPrompt = [
       buildAnglePrompt(params.angle, params.framingType, params.avatarSettings),
       visualDescriptors,
-      cleanedBase,
+      outfitTokens,
+      garmentEmphasis,
       buildIdentityLockSuffix(params.framingType),
     ].filter(Boolean).join(', ')
 

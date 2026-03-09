@@ -1,0 +1,13 @@
+# Append this to agentic/forge/templates/virtual_servers.yaml under "servers:"
+# Defines the virtual server that bundles community greeter tools.
+#
+# Forge sync matches tools by prefix:
+#   hp.community.greeter.* → all tools from this server
+#
+# Personas with tool_source="all" get these automatically.
+# Personas with specific tool_ids can reference individual tools.
+
+- name: "hp-community-greeter"
+  description: "Community greeter tools: greet, farewell, compliment"
+  include_tool_prefixes:
+    - "hp.community.greeter."
