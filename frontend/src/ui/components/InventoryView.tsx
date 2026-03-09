@@ -25,6 +25,7 @@ import {
   Package,
   AlertCircle,
   Trash2,
+  RotateCcw,
 } from 'lucide-react'
 import type { InventoryCategory, InventoryItem } from '../inventoryApi'
 import {
@@ -416,8 +417,8 @@ export function InventoryView({ projectId, backendUrl, apiKey, onBack, onShowInC
           isDeleting ? 'opacity-40 pointer-events-none' : '',
         ].join(' ')}
       >
-        {/* Equipped badge — Wardrobe style (top-right, always visible when selected) */}
-        {isSelected && (
+        {/* Equipped badge — Wardrobe style (top-right, always visible when selected or outfit is equipped) */}
+        {(isSelected || (isOutfit && item.equipped)) && (
           <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-md bg-amber-500/80 text-[7px] text-white font-bold uppercase tracking-wider z-10">
             Equipped
           </div>
@@ -493,13 +494,19 @@ export function InventoryView({ projectId, backendUrl, apiKey, onBack, onShowInC
         {/* Label + metadata */}
         <div className="px-2.5 py-2">
           <div className="text-xs text-white truncate font-medium">{item.label}</div>
-          <div className="flex items-center gap-1 mt-1">
+          <div className="flex items-center gap-1 mt-1 flex-wrap">
             <span className={`text-[9px] uppercase tracking-wider ${CATEGORY_COLORS[item.type] || 'text-white/40'}`}>
               {item.type}
             </span>
             {isSensitive && (
               <span className={`text-[9px] flex items-center gap-0.5 ${item.sensitivity === 'explicit' ? 'text-red-400/60' : 'text-orange-400/60'}`}>
                 <Lock size={8} /> {item.sensitivity}
+              </span>
+            )}
+            {/* 360 preview badge for outfits with view packs */}
+            {isOutfit && item.interactive_preview && (
+              <span className="text-[9px] flex items-center gap-0.5 text-violet-300/60">
+                <RotateCcw size={8} /> 360
               </span>
             )}
           </div>
@@ -512,6 +519,19 @@ export function InventoryView({ projectId, backendUrl, apiKey, onBack, onShowInC
                   className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/5 text-white/30 border border-white/5"
                 >
                   {tag}
+                </span>
+              ))}
+            </div>
+          )}
+          {/* View angle chips for outfits with view packs */}
+          {isOutfit && item.available_views && item.available_views.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {item.available_views.map((angle) => (
+                <span
+                  key={angle}
+                  className="text-[8px] px-1.5 py-0.5 rounded-full bg-violet-500/8 text-violet-300/50 border border-violet-500/15 capitalize"
+                >
+                  {angle}
                 </span>
               ))}
             </div>

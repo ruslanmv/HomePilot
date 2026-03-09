@@ -98,12 +98,59 @@ export type Msg = {
   media?: {
     images?: string[]
     video_url?: string
+    // View pack angle preview (additive)
+    view_pack?: Partial<Record<'front' | 'left' | 'right' | 'back', string>>
+    active_angle?: 'front' | 'left' | 'right' | 'back'
+    available_views?: Array<'front' | 'left' | 'right' | 'back'>
+    interactive_preview?: boolean
   } | null
   // Phase 4: "Ask before acting" confirmation payload
   confirm?: {
     intent: 'generate_images' | 'generate_videos'
     prompt: string
   }
+}
+
+// ---------------------------------------------------------------------------
+// ViewAngleChips — clickable angle selectors rendered under chat images
+// when the message has an interactive view_pack.
+// ---------------------------------------------------------------------------
+
+const VIEW_ANGLE_LABELS: Record<string, string> = { front: 'Front', left: 'Left', right: 'Right', back: 'Back' }
+
+function ViewAngleChips({
+  viewPack,
+  activeAngle,
+  availableViews,
+  onSelect,
+}: {
+  viewPack: Partial<Record<'front' | 'left' | 'right' | 'back', string>>
+  activeAngle?: 'front' | 'left' | 'right' | 'back'
+  availableViews: Array<'front' | 'left' | 'right' | 'back'>
+  onSelect: (angle: 'front' | 'left' | 'right' | 'back', url: string) => void
+}) {
+  return (
+    <div className="flex gap-1.5 pt-2">
+      {availableViews.map((angle) => {
+        const url = viewPack[angle]
+        if (!url) return null
+        const isActive = angle === activeAngle
+        return (
+          <button
+            key={angle}
+            onClick={() => onSelect(angle, url)}
+            className={`px-3 py-1 text-xs rounded-full border transition-colors ${
+              isActive
+                ? 'bg-white/15 border-white/30 text-white/90 font-medium'
+                : 'bg-white/[0.04] border-white/10 text-white/50 hover:bg-white/10 hover:text-white/70'
+            }`}
+          >
+            {VIEW_ANGLE_LABELS[angle] || angle}
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio' | 'avatar' | 'teams'
@@ -1413,6 +1460,8 @@ function ChatState({
 }) {
   const { copied, copy } = useCopyMessage()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
+  // Local overrides for view-pack angle switching (keyed by message id)
+  const [angleOverrides, setAngleOverrides] = useState<Record<string, { angle: string; url: string }>>({})
 
   /** Resolve backend-relative image URLs and append auth token for <img> tags. */
   const resolveImageUrl = useCallback((src: string) => {
@@ -1609,21 +1658,41 @@ function ChatState({
                 ) : null}
 
                 {m.media?.images?.length ? (
-                  <div className="flex gap-2 overflow-x-auto pt-2">
-                    {[...new Set(m.media.images)].map((src: string, i: number) => {
-                      const resolved = resolveImageUrl(src)
-                      return (
-                        <img
-                          key={src || i}
-                          src={resolved}
-                          onClick={() => setLightbox(resolved)}
-                          className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
-                          alt={`image ${i}`}
-                          loading="lazy"
-                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                        />
-                      )
-                    })}
+                  <div className="pt-2">
+                    <div className="flex gap-2 overflow-x-auto">
+                      {(() => {
+                        // If user clicked an angle chip, show the overridden URL instead
+                        const override = angleOverrides[m.id]
+                        const displayImages = override
+                          ? [override.url]
+                          : [...new Set(m.media!.images!)]
+                        return displayImages.map((src: string, i: number) => {
+                          const resolved = resolveImageUrl(src)
+                          return (
+                            <img
+                              key={`${override?.angle || 'default'}-${i}`}
+                              src={resolved}
+                              onClick={() => setLightbox(resolved)}
+                              className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                              alt={`image ${i}`}
+                              loading="lazy"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                            />
+                          )
+                        })
+                      })()}
+                    </div>
+                    {/* View Pack angle chips — interactive 360° preview */}
+                    {m.media.interactive_preview && m.media.view_pack && m.media.available_views?.length ? (
+                      <ViewAngleChips
+                        viewPack={m.media.view_pack}
+                        activeAngle={(angleOverrides[m.id]?.angle as 'front' | 'left' | 'right' | 'back') || m.media.active_angle}
+                        availableViews={m.media.available_views}
+                        onSelect={(angle, url) => {
+                          setAngleOverrides((prev) => ({ ...prev, [m.id]: { angle, url } }))
+                        }}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
 

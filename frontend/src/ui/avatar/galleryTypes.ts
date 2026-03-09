@@ -431,6 +431,9 @@ export interface GalleryItem {
    *  'headshot' = close-up face only (outfit generation not recommended).
    *  Undefined treated as 'half_body' for backwards compat. */
   framingType?: FramingType
+  /** View pack angle→URL mapping for 360° outfit views.
+   *  Populated when the user generates angle views in the Character Sheet. */
+  view_pack?: Partial<Record<'front' | 'left' | 'right' | 'back', string>>
 }
 
 // ---------------------------------------------------------------------------

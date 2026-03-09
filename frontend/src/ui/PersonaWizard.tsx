@@ -17,7 +17,7 @@
  */
 
 import React, { useMemo, useState } from 'react'
-import { X, ChevronRight, ChevronLeft, Sparkles, Loader2, Shield, Star, Check } from 'lucide-react'
+import { X, ChevronRight, ChevronLeft, Sparkles, Loader2, Shield, Star, Check, Shirt, RotateCcw } from 'lucide-react'
 import type {
   PersonaAppearance,
   PersonaGender,
@@ -206,9 +206,10 @@ const CLASS_COLORS: Record<string, { bg: string; border: string; text: string; r
 // ---------------------------------------------------------------------------
 
 export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialDraft }: Props) {
-  // If an initialDraft with a selected avatar is provided, skip to Step 1 (Identity)
+  // If an initialDraft is provided (from "Export to Persona" modal), skip past
+  // Step 0 (Choose Class) since the class + avatar are already chosen.
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(() => {
-    if (initialDraft?.persona_appearance?.selected) return 1
+    if (initialDraft) return 1
     return 0
   })
   const [saving, setSaving] = useState(false)
@@ -1209,7 +1210,7 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
                   <div>
                     {selectedImageUrl ? (
                       <img
-                        src={selectedImageUrl}
+                        src={resolveFileUrl(selectedImageUrl)}
                         className="w-full max-w-[280px] rounded-xl border border-white/10"
                         alt="Selected avatar"
                       />
@@ -1317,6 +1318,46 @@ export function PersonaWizard({ backendUrl, apiKey, onClose, onCreated, initialD
                         <span className="text-emerald-300/70">Same Person</span>
                       ) : 'Standard'}
                     </div>
+
+                    {/* Outfit summary with 3D indicator */}
+                    {draft.persona_appearance.outfits && draft.persona_appearance.outfits.length > 0 && (() => {
+                      const outfits = draft.persona_appearance.outfits
+                      const count3d = outfits.filter((o: any) => o.view_pack && Object.keys(o.view_pack).length >= 2).length
+                      return (
+                        <div className="mt-2 rounded-lg bg-white/[0.03] border border-white/[0.06] p-2.5 space-y-1.5">
+                          <div className="flex items-center gap-1.5 text-xs text-purple-300/80">
+                            <Shirt size={12} />
+                            <span className="font-medium">
+                              {outfits.length} outfit{outfits.length !== 1 ? 's' : ''} included
+                            </span>
+                            {count3d > 0 && (
+                              <span className="inline-flex items-center gap-0.5 ml-1 px-1.5 py-0 rounded-full bg-cyan-500/15 border border-cyan-500/20 text-cyan-300/80 text-[9px] font-medium">
+                                <RotateCcw size={8} /> {count3d} 360°
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {outfits.map((o: any) => {
+                              const has3d = o.view_pack && Object.keys(o.view_pack).length >= 2
+                              const angleCount = has3d ? Object.keys(o.view_pack).length : 0
+                              return (
+                                <span
+                                  key={o.id}
+                                  className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-white/50"
+                                >
+                                  {o.label || 'Outfit'}
+                                  {has3d && (
+                                    <span className="inline-flex items-center gap-0.5 text-cyan-300/70">
+                                      <RotateCcw size={7} /> {angleCount}
+                                    </span>
+                                  )}
+                                </span>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })()}
 
                     {/* Avatar settings note */}
                     {draft.persona_appearance.avatar_settings && (

@@ -463,6 +463,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           const rootId = anchor.parentId || anchor.id
           gallery.addBatch(results, anchor.mode, anchor.prompt, anchor.url, anchor.scenarioTag, { parentId: rootId })
         }}
+        onUpdateItem={gallery.updateItem}
       />
     )
   }

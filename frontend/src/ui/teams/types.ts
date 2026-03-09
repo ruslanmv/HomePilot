@@ -1,5 +1,30 @@
 /** Teams module types */
 
+// ---------------------------------------------------------------------------
+// Persona Appearance — outfit with optional view pack
+// ---------------------------------------------------------------------------
+
+export type PersonaAppearanceViewPack = Partial<Record<'front' | 'left' | 'right' | 'back', string>>
+
+export type PersonaAppearanceOutfit = {
+  id?: string
+  label?: string
+  tags?: string[]
+  sensitivity?: 'safe' | 'sensitive' | 'explicit'
+  equipped?: boolean
+  preview_asset_id?: string
+  hero_view?: 'front' | 'left' | 'right' | 'back'
+  interactive_preview?: boolean
+  preview_mode?: 'static' | 'view_pack'
+  view_pack?: PersonaAppearanceViewPack
+  images?: Array<{
+    id?: string
+    label?: string
+    url?: string
+    angle?: 'front' | 'left' | 'right' | 'back'
+  }>
+}
+
 export type MeetingMessage = {
   id: string
   sender_id: string
@@ -162,7 +187,7 @@ export type PersonaSummary = {
     selected_filename?: string
     selected_thumb_filename?: string
     sets?: Array<{ set_id: string; images: unknown[] }>
-    outfits?: unknown[]
+    outfits?: PersonaAppearanceOutfit[]
     persona_voice?: {
       provider?: string
       voiceURI?: string
