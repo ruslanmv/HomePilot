@@ -83,6 +83,14 @@ export type PersonaOutfit = {
   selected_image_id?: string
   generation_settings: AvatarGenerationSettings
   created_at: string
+  /** 360° angle→URL mapping (front, left, right, back). */
+  view_pack?: Partial<Record<'front' | 'left' | 'right' | 'back', string>>
+  /** Whether interactive angle preview is enabled. */
+  interactive_preview?: boolean
+  /** Which display mode: 'static' or 'view_pack'. */
+  preview_mode?: 'static' | 'view_pack'
+  /** Initial hero angle to display. */
+  hero_view?: 'front' | 'left' | 'right' | 'back'
 }
 
 // ---------------------------------------------------------------------------

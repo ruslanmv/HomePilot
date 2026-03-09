@@ -13,6 +13,10 @@ export type InventoryCategory = {
   top_tags?: Array<{ tag: string; count: number }>
 }
 
+export type ViewAngle = 'front' | 'left' | 'right' | 'back'
+
+export type ViewPack = Partial<Record<ViewAngle, string>>
+
 export type InventoryItem = {
   id: string
   type: 'outfit' | 'image' | 'file'
@@ -33,6 +37,28 @@ export type InventoryItem = {
   image_id?: string
   /** True when this item is the persona's current Active Look */
   is_active_look?: boolean
+  // View Pack — outfit angle views (additive, all optional)
+  equipped?: boolean
+  interactive_preview?: boolean
+  preview_mode?: 'static' | 'view_pack'
+  hero_view?: ViewAngle
+  available_views?: ViewAngle[]
+  view_pack?: ViewPack
+}
+
+/** Response from the persona outfit-view resolver endpoint. */
+export type ResolvedPersonaOutfitView = {
+  ok: boolean
+  persona_id: string
+  project_id: string
+  target_type: 'outfit'
+  target_id: string
+  target_label: string
+  angle: ViewAngle
+  image_url: string
+  available_views: ViewAngle[]
+  interactive_preview: boolean
+  view_pack?: ViewPack
 }
 
 export type ResolvedMedia = {
@@ -137,6 +163,53 @@ export async function resolveInventoryMedia(
     }),
   })
   if (!res.ok) throw new Error(`Inventory resolve failed: ${res.status}`)
+  return res.json()
+}
+
+export async function resolvePersonaOutfitView(
+  backendUrl: string,
+  projectId: string,
+  opts: {
+    apiKey?: string
+    angle: ViewAngle
+    target?: 'current_outfit'
+    sensitivityMax?: string
+  },
+): Promise<ResolvedPersonaOutfitView> {
+  const res = await fetch(`${backendUrl}/v1/inventory/${projectId}/persona/outfit-view`, {
+    method: 'POST',
+    headers: authHeaders(opts.apiKey),
+    body: JSON.stringify({
+      target: opts.target || 'current_outfit',
+      angle: opts.angle,
+      sensitivity_max: opts.sensitivityMax || 'safe',
+    }),
+  })
+  if (!res.ok) throw new Error(`Resolve persona outfit view failed: ${res.status}`)
+  return res.json()
+}
+
+export async function saveViewPackToOutfit(
+  backendUrl: string,
+  opts: {
+    apiKey?: string
+    projectId: string
+    outfitId?: string
+    viewPack: ViewPack
+    equipped?: boolean
+  },
+): Promise<{ ok: boolean; project_id: string; outfit_id: string; outfit_label: string; view_pack: ViewPack; available_views: ViewAngle[] }> {
+  const res = await fetch(`${backendUrl}/v1/viewpack/save-to-outfit`, {
+    method: 'POST',
+    headers: authHeaders(opts.apiKey),
+    body: JSON.stringify({
+      project_id: opts.projectId,
+      outfit_id: opts.outfitId,
+      view_pack: opts.viewPack,
+      equipped: opts.equipped,
+    }),
+  })
+  if (!res.ok) throw new Error(`Save view pack to outfit failed: ${res.status}`)
   return res.json()
 }
 
