@@ -22,19 +22,30 @@ logger = logging.getLogger("homepilot.personas.dependency_checker")
 
 @dataclass
 class DependencyItem:
-    """Single dependency check result."""
+    """Single dependency check result.
+
+    Status values:
+      - "available"    — server running / tools registered        (green)
+      - "installable"  — bundle present locally, not yet started  (blue)
+      - "downloadable" — git URL known, can be auto-fetched       (yellow)
+      - "missing"      — no source info, can't auto-resolve       (red)
+      - "degraded"     — partially working                        (amber)
+      - "unknown"      — can't determine status                   (gray)
+    """
     name: str
     kind: str  # "model", "tool", "mcp_server", "a2a_agent"
-    status: str  # "available", "missing", "degraded", "unknown"
+    status: str  # "available", "installable", "downloadable", "missing", "degraded", "unknown"
     description: str = ""
     detail: str = ""
-    source_type: str = ""  # "builtin", "forge", "external", "registry"
+    source_type: str = ""  # "builtin", "forge", "external", "registry", "community_bundle"
     required: bool = False
     fallback: Optional[str] = None
     # Registry metadata for auto-install
     registry_id: str = ""
     auth_type: str = ""
     url: str = ""
+    bundle_id: str = ""
+    port: int = 0
 
 
 @dataclass
@@ -63,6 +74,8 @@ class DependencyReport:
                     "registry_id": d.registry_id,
                     "auth_type": d.auth_type,
                     "url": d.url,
+                    "bundle_id": d.bundle_id,
+                    "port": d.port,
                 }
                 for d in getattr(self, section)
             ]
@@ -161,7 +174,57 @@ def check_dependencies(
                 source_type="builtin",
             ))
 
-    # 3. Check MCP servers (by known port / builtin ID / registry lookup)
+    # 3. Check MCP servers (by known port / builtin ID / registry / external / community_bundle)
+    #
+    # Status resolution order:
+    #   1. Running/installed  → "available"
+    #   2. Community bundle present locally → "installable"
+    #   3. Has git URL (external or bundle) → "downloadable"
+    #   4. No source info → "missing"
+
+    _external_names: set = set()
+    try:
+        from ..agentic.mcp_installer import _read_external_registry
+        ext_reg = _read_external_registry()
+        for entry in ext_reg.get("servers", []):
+            n = (entry.get("name") or "").lower().strip()
+            if n and entry.get("status") == "installed":
+                _external_names.add(n)
+    except Exception:
+        pass  # mcp_installer not available — skip external check
+
+    # Check server_catalog.yaml for known server IDs
+    _catalog_ids: set = set()
+    try:
+        from ..agentic.server_manager import get_server_manager
+        mgr = get_server_manager()
+        for s in mgr.core_servers + mgr.optional_servers:
+            _catalog_ids.add(s.id.lower())
+    except Exception:
+        pass
+
+    # Check community/shared/bundles/ for locally available bundles
+    _local_bundles: Dict[str, Dict[str, Any]] = {}
+    try:
+        from ..agentic.mcp_installer import _community_bundles_dir
+        bundles_dir = _community_bundles_dir()
+        if bundles_dir.is_dir():
+            for bd in bundles_dir.iterdir():
+                manifest_path = bd / "bundle_manifest.json"
+                if manifest_path.exists():
+                    import json as _json
+                    bm = _json.loads(manifest_path.read_text())
+                    mcp_info = bm.get("mcp_server", {})
+                    sid = (mcp_info.get("server_id") or "").lower().strip()
+                    if sid:
+                        _local_bundles[sid] = {
+                            "bundle_id": bm.get("bundle_id", ""),
+                            "port": mcp_info.get("port", 0),
+                            "mode": mcp_info.get("mode", "dedicated"),
+                        }
+    except Exception:
+        pass
+
     mcp_dep = dependencies.get("mcp_servers") or {}
     for server_info in mcp_dep.get("servers", []):
         name = server_info.get("name") or "unknown"
@@ -171,8 +234,19 @@ def check_dependencies(
         registry_id = source.get("registry_id") or server_info.get("registry_id") or ""
         auth_type = server_info.get("auth_type") or ""
         url = server_info.get("url") or ""
+        git_url = source.get("git", "")
+        bundle_id = source.get("bundle_id", "")
 
-        if source_type == "builtin":
+        # Check if already installed in external registry
+        is_external_installed = name.lower().strip() in _external_names
+
+        # Check if in the builtin server catalog
+        is_in_catalog = name.lower().strip() in _catalog_ids
+
+        # Check if community bundle exists locally
+        local_bundle = _local_bundles.get(name.lower().strip())
+
+        if source_type == "builtin" or is_in_catalog:
             # Built-in servers are always "available" (can be started)
             report.mcp_servers.append(DependencyItem(
                 name=name,
@@ -181,6 +255,17 @@ def check_dependencies(
                 description=server_info.get("description") or name,
                 detail=f"Built-in (port {port})" if port else "Built-in",
                 source_type="builtin",
+            ))
+        elif is_external_installed:
+            # Already cloned and installed from git
+            report.mcp_servers.append(DependencyItem(
+                name=name,
+                kind="mcp_server",
+                status="available",
+                description=server_info.get("description") or name,
+                detail="Installed from git (external)",
+                source_type="external",
+                url=git_url,
             ))
         elif source_type == "registry":
             # Registry (Discover-installed) servers: check if already installed
@@ -214,6 +299,55 @@ def check_dependencies(
                     auth_type=auth_type,
                     url=url,
                 ))
+        elif source_type == "community_bundle" and local_bundle:
+            # Bundle present locally — can be installed with one click
+            bp = local_bundle.get("port", port or 0)
+            report.mcp_servers.append(DependencyItem(
+                name=name,
+                kind="mcp_server",
+                status="installable",
+                description=server_info.get("description") or name,
+                detail=f"Community bundle ready — will install on port {bp}" if bp else "Community bundle ready",
+                source_type="community_bundle",
+                bundle_id=local_bundle["bundle_id"],
+                port=bp,
+                url=git_url,
+            ))
+        elif source_type == "community_bundle" and git_url:
+            # Bundle not present locally but has git URL — downloadable
+            report.mcp_servers.append(DependencyItem(
+                name=name,
+                kind="mcp_server",
+                status="downloadable",
+                description=server_info.get("description") or name,
+                detail=f"Will be downloaded from {git_url}",
+                source_type="community_bundle",
+                bundle_id=bundle_id,
+                url=git_url,
+                port=port or 0,
+            ))
+        elif (source_type == "external" or source_type == "community_bundle") and git_url:
+            # External with git URL — downloadable (can be auto-installed)
+            report.mcp_servers.append(DependencyItem(
+                name=name,
+                kind="mcp_server",
+                status="downloadable",
+                description=server_info.get("description") or name,
+                detail=f"Will be downloaded from {git_url}",
+                source_type=source_type or "external",
+                url=git_url,
+                required=True,
+            ))
+        elif source_type == "external":
+            report.mcp_servers.append(DependencyItem(
+                name=name,
+                kind="mcp_server",
+                status="missing",
+                description=server_info.get("description") or name,
+                detail="External server — no source URL available",
+                source_type="external",
+            ))
+            report.all_satisfied = False
         else:
             report.mcp_servers.append(DependencyItem(
                 name=name,
@@ -258,16 +392,33 @@ def check_dependencies(
         1 for items in (report.models, report.tools, report.mcp_servers, report.a2a_agents)
         for d in items if d.status == "available"
     )
+    installable = sum(
+        1 for items in (report.models, report.tools, report.mcp_servers, report.a2a_agents)
+        for d in items if d.status == "installable"
+    )
+    downloadable = sum(
+        1 for items in (report.models, report.tools, report.mcp_servers, report.a2a_agents)
+        for d in items if d.status == "downloadable"
+    )
     missing = sum(
         1 for items in (report.models, report.tools, report.mcp_servers, report.a2a_agents)
         for d in items if d.status == "missing"
     )
+    auto_resolvable = installable + downloadable
 
     if total == 0:
         report.summary = "No dependencies required"
-    elif missing == 0:
+    elif missing == 0 and auto_resolvable == 0:
         report.summary = f"All {available} dependencies available"
+    elif missing == 0 and auto_resolvable > 0:
+        report.summary = f"{available}/{total} available, {auto_resolvable} can be auto-installed"
+        report.all_satisfied = False  # needs user action to install
     else:
-        report.summary = f"{available}/{total} dependencies available, {missing} missing"
+        parts = [f"{available}/{total} available"]
+        if auto_resolvable > 0:
+            parts.append(f"{auto_resolvable} auto-installable")
+        if missing > 0:
+            parts.append(f"{missing} missing")
+        report.summary = ", ".join(parts)
 
     return report

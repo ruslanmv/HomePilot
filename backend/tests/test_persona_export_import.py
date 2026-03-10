@@ -366,7 +366,7 @@ class TestDependencyChecker:
         assert report.mcp_servers[0].status == "available"
         assert report.mcp_servers[0].source_type == "builtin"
 
-    def test_external_mcp_server_unknown(self):
+    def test_external_mcp_server_no_git_url(self):
         from app.personas.dependency_checker import check_dependencies
 
         deps = {
@@ -381,8 +381,58 @@ class TestDependencyChecker:
         }
         report = check_dependencies(deps)
         assert len(report.mcp_servers) == 1
-        assert report.mcp_servers[0].status == "unknown"
+        # External server with no git URL → missing (can't auto-resolve)
+        assert report.mcp_servers[0].status == "missing"
         assert report.mcp_servers[0].source_type == "external"
+
+    def test_external_mcp_server_with_git_url(self):
+        from app.personas.dependency_checker import check_dependencies
+
+        deps = {
+            "mcp_servers": {
+                "servers": [
+                    {
+                        "name": "custom-weather",
+                        "source": {
+                            "type": "external",
+                            "git": "https://github.com/someone/mcp-weather",
+                        },
+                    },
+                ],
+            },
+        }
+        report = check_dependencies(deps)
+        assert len(report.mcp_servers) == 1
+        # External server with git URL → downloadable (can auto-install)
+        assert report.mcp_servers[0].status == "downloadable"
+        assert report.mcp_servers[0].url == "https://github.com/someone/mcp-weather"
+
+    def test_community_bundle_mcp_server(self):
+        from app.personas.dependency_checker import check_dependencies
+
+        deps = {
+            "mcp_servers": {
+                "servers": [
+                    {
+                        "name": "hp-community-greeter",
+                        "source": {
+                            "type": "community_bundle",
+                            "bundle_id": "hello_world_greeter",
+                            "git": "https://github.com/HomePilotAI/hp-bundle-greeter",
+                        },
+                        "default_port": 9200,
+                    },
+                ],
+            },
+        }
+        report = check_dependencies(deps)
+        assert len(report.mcp_servers) == 1
+        server = report.mcp_servers[0]
+        # Community bundle with local files → installable
+        # Without local files but with git → downloadable
+        # The exact status depends on whether bundles/ exists locally
+        assert server.status in ("installable", "downloadable", "available")
+        assert server.source_type in ("community_bundle", "builtin")
 
     def test_builtin_a2a_agents(self):
         from app.personas.dependency_checker import check_dependencies

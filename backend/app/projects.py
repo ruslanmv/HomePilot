@@ -1367,6 +1367,11 @@ You have access to the project's context. When relevant context from the knowled
                                     if _a_url:
                                         _vp[_a_key] = _a_url
                                 if _vp:
+                                    # FIX B: If "front" missing, fall back to base outfit label
+                                    if "front" not in _vp:
+                                        _front_url = _lookup_label(idx, _outfit_label)
+                                        if _front_url:
+                                            _vp["front"] = _front_url
                                     text_media["view_pack"] = _vp
                                     text_media["active_angle"] = _ang
                                     text_media["available_views"] = list(_vp.keys())
