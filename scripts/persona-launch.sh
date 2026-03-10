@@ -163,6 +163,84 @@ except:
 " 2>/dev/null || echo ""
 }
 
+# ── Extract tools.json from .hpersona or folder ─────────────────────────────
+extract_tools_json() {
+    local source="$1"
+    local tmpdir=""
+    local outfile="${2:-}"  # optional: write to this path instead of stdout
+
+    local content=""
+    if [ -f "$source" ] && [[ "$source" == *.hpersona ]]; then
+        tmpdir=$(mktemp -d)
+        unzip -qo "$source" "dependencies/tools.json" -d "$tmpdir" 2>/dev/null || true
+        if [ -f "$tmpdir/dependencies/tools.json" ]; then
+            content=$(cat "$tmpdir/dependencies/tools.json")
+        fi
+        rm -rf "$tmpdir"
+    elif [ -d "$source" ]; then
+        if [ -f "$source/dependencies/tools.json" ]; then
+            content=$(cat "$source/dependencies/tools.json")
+        fi
+    fi
+
+    if [ -n "$outfile" ] && [ -n "$content" ]; then
+        echo "$content" > "$outfile"
+    elif [ -n "$content" ]; then
+        echo "$content"
+    else
+        echo "{}"
+    fi
+}
+
+# ── Get external MCP server details from mcp_servers.json ───────────────────
+# Returns JSON lines: one per external server with name, git, ref, port, subdir
+get_external_servers() {
+    local source="$1"
+    local mcp_json
+    mcp_json=$(extract_mcp_servers "$source")
+
+    echo "$mcp_json" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    for s in data.get('servers', []):
+        src = s.get('source', {})
+        if src.get('type') == 'external' and src.get('git'):
+            print(json.dumps({
+                'name': s.get('name', ''),
+                'description': s.get('description', ''),
+                'git': src.get('git', ''),
+                'ref': src.get('ref', 'main'),
+                'subdir': src.get('subdir', ''),
+                'port': s.get('default_port', 0),
+                'tools_provided': s.get('tools_provided', [])
+            }))
+except:
+    pass
+" 2>/dev/null || echo ""
+}
+
+# ── Check if an external server is already installed & running ───────────────
+check_external_server() {
+    local name="$1"
+    local port="$2"
+    local ext_dir="${EXTERNAL_MCP_DIR:-$ROOT/external-mcp}"
+
+    # Check health first
+    if curl -sf --connect-timeout "$HEALTH_TIMEOUT" "http://localhost:${port}/health" >/dev/null 2>&1; then
+        echo "running"
+        return
+    fi
+
+    # Check if installed but not running
+    if [ -d "$ext_dir/$name/.git" ] && [ -d "$ext_dir/$name/.venv" ]; then
+        echo "installed"
+        return
+    fi
+
+    echo "missing"
+}
+
 # ── Extract mcp_servers.json from .hpersona or folder ───────────────────────
 extract_mcp_servers() {
     local source="$1"
@@ -581,22 +659,157 @@ cmd_launch() {
         return 0
     fi
 
-    # 2. Health-check-first: classify each service
+    # 2. Detect external MCP servers that need installation
+    local external_servers
+    external_servers=$(get_external_servers "$source")
+    local external_installed=()
+
+    if [ -n "$external_servers" ]; then
+        info "Checking external MCP server dependencies..."
+        echo ""
+
+        # Collect external servers that need installation
+        local ext_to_install=()
+        local ext_names_display=()
+
+        while IFS= read -r ext_json; do
+            [ -z "$ext_json" ] && continue
+            local ext_name ext_port ext_git ext_ref ext_subdir ext_desc
+            ext_name=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null)
+            ext_port=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])" 2>/dev/null)
+            ext_git=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['git'])" 2>/dev/null)
+            ext_ref=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ref','main'))" 2>/dev/null)
+            ext_subdir=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('subdir',''))" 2>/dev/null)
+            ext_desc=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('description','External MCP server'))" 2>/dev/null)
+
+            local ext_status
+            ext_status=$(check_external_server "$ext_name" "$ext_port")
+
+            case "$ext_status" in
+                running)
+                    ok "$ext_name (port $ext_port) — ${GREEN}already running${NC}"
+                    external_installed+=("$ext_name")
+                    ;;
+                installed)
+                    warn "$ext_name — installed but not running"
+                    ext_to_install+=("$ext_json")
+                    ext_names_display+=("$ext_name (restart)")
+                    ;;
+                missing)
+                    echo -e "  ${YELLOW}📦${NC} $ext_name — ${BOLD}external MCP server required${NC}"
+                    echo -e "     ${DIM}$ext_desc${NC}"
+                    echo -e "     ${DIM}Source: $ext_git${NC}"
+                    ext_to_install+=("$ext_json")
+                    ext_names_display+=("$ext_name")
+                    ;;
+            esac
+        done <<< "$external_servers"
+
+        # Single confirmation for ALL external servers
+        if [ ${#ext_to_install[@]} -gt 0 ]; then
+            echo ""
+            echo -e "  ${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "  ${BOLD}  ${persona_name} requires ${#ext_to_install[@]} external MCP server(s):${NC}"
+            for dn in "${ext_names_display[@]}"; do
+                echo -e "    ${CYAN}•${NC} $dn"
+            done
+            echo -e "  ${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo ""
+
+            # Single Y/n prompt
+            if [ "${AUTO_INSTALL_EXTERNAL:-}" = "true" ]; then
+                REPLY="y"
+            else
+                echo -ne "  Install and start? ${BOLD}[Y/n]${NC} "
+                read -r REPLY < /dev/tty 2>/dev/null || REPLY="y"
+            fi
+
+            if [[ "$REPLY" =~ ^[Nn] ]]; then
+                warn "Skipped external server installation"
+                warn "$persona_name will run without these tools (LLM may hallucinate results)"
+                echo ""
+            else
+                echo ""
+                # Extract tools.json to a temp file for registration
+                local tools_tmpfile
+                tools_tmpfile=$(mktemp /tmp/hp-tools-XXXXXX.json)
+                extract_tools_json "$source" "$tools_tmpfile"
+
+                for ext_json in "${ext_to_install[@]}"; do
+                    local ext_name ext_port ext_git ext_ref ext_subdir
+                    ext_name=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null)
+                    ext_port=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])" 2>/dev/null)
+                    ext_git=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['git'])" 2>/dev/null)
+                    ext_ref=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ref','main'))" 2>/dev/null)
+                    ext_subdir=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('subdir',''))" 2>/dev/null)
+
+                    echo -e "  ${BOLD}Installing $ext_name...${NC}"
+
+                    local install_args=(
+                        --name "$ext_name"
+                        --git "$ext_git"
+                        --ref "$ext_ref"
+                        --port "$ext_port"
+                        --tools-file "$tools_tmpfile"
+                    )
+                    [ -n "$ext_subdir" ] && install_args+=(--subdir "$ext_subdir")
+
+                    if bash "$ROOT/scripts/install-external-mcp.sh" "${install_args[@]}"; then
+                        external_installed+=("$ext_name")
+                    else
+                        err "Failed to install $ext_name"
+                    fi
+                    echo ""
+                done
+
+                rm -f "$tools_tmpfile"
+            fi
+        fi
+
+        echo ""
+    fi
+
+    # 3. Health-check-first: classify BUILT-IN services (docker-compose)
     local already_running=()
     local needs_start=()
     local invalid_services=()
 
     load_valid_services
-    info "Checking which services are already running..."
+    info "Checking built-in services..."
     echo ""
+
+    # Build a set of external server names (mapped to service names) to skip
+    local external_svc_names=()
+    if [ -n "$external_servers" ]; then
+        while IFS= read -r ext_json; do
+            [ -z "$ext_json" ] && continue
+            local ename
+            ename=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null)
+            local esvc
+            esvc=$(map_server_to_service "$ename")
+            external_svc_names+=("$esvc")
+        done <<< "$external_servers"
+    fi
 
     while IFS= read -r svc; do
         [ -z "$svc" ] && continue
+
+        # Skip services handled by external installer
+        local is_external=false
+        for esvc in "${external_svc_names[@]:-}"; do
+            if [ "$svc" = "$esvc" ]; then
+                is_external=true
+                break
+            fi
+        done
+        if [ "$is_external" = true ]; then
+            continue
+        fi
+
         local port
         port=$(get_service_port "$svc")
 
         if [ "$force" = "true" ]; then
-            # --force: skip health check, always restart
             if service_exists "$svc" || [ -n "${PORT_MAP[$svc]:-}" ]; then
                 needs_start+=("$svc")
                 echo -e "  ${DIM}○${NC} $svc (port ${port:-?}) — force restart"
@@ -605,15 +818,12 @@ cmd_launch() {
                 err "$svc — not found in docker-compose.mcp.yml"
             fi
         elif [ -n "$port" ] && health_check "$port"; then
-            # Already running and healthy — skip
             already_running+=("$svc")
             ok "$svc (port $port) — ${GREEN}already running${NC}"
         elif service_exists "$svc" || [ -n "${PORT_MAP[$svc]:-}" ]; then
-            # Not running, but we know how to start it
             needs_start+=("$svc")
             echo -e "  ${DIM}○${NC} $svc (port ${port:-?}) — not running"
         else
-            # Unknown service
             invalid_services+=("$svc")
             err "$svc — not found in docker-compose.mcp.yml"
         fi
@@ -621,16 +831,18 @@ cmd_launch() {
 
     echo ""
 
-    # 3. Report invalid services
+    # 4. Report invalid services (only truly unknown ones)
     if [ ${#invalid_services[@]} -gt 0 ]; then
         warn "Unknown services (skipped): ${invalid_services[*]}"
         echo ""
     fi
 
-    # 4. If everything is already running, we're done
+    # 5. If everything is already running (including externals), we're done
+    local ext_count=${#external_installed[@]}
     if [ ${#needs_start[@]} -eq 0 ]; then
-        if [ ${#already_running[@]} -gt 0 ]; then
-            ok "All ${#already_running[@]} service(s) already running — nothing to start!"
+        local total_running=$(( ${#already_running[@]} + ext_count ))
+        if [ "$total_running" -gt 0 ]; then
+            ok "All ${total_running} service(s) already running — nothing to start!"
         else
             err "No valid services to start."
             return 1
@@ -692,8 +904,14 @@ cmd_launch() {
     echo ""
     echo "  ──────────────────────────────────────────────────────────────"
 
-    local total_ok=$(( ${#already_running[@]} + ${#started_ok[@]:-0} ))
-    local total_fail=${#started_fail[@]:-0}
+    # Ensure arrays exist for summary (may not be set if all services already running)
+    : "${started_ok=}" "${started_fail=}"
+    local _started_ok_count=0 _started_fail_count=0
+    [ -n "${started_ok:-}" ] && _started_ok_count=${#started_ok[@]} || true
+    [ -n "${started_fail:-}" ] && _started_fail_count=${#started_fail[@]} || true
+
+    local total_ok=$(( ${#already_running[@]} + _started_ok_count + ${#external_installed[@]} ))
+    local total_fail=$_started_fail_count
     local total_req=$(( total_ok + total_fail + ${#invalid_services[@]} ))
 
     if [ "$total_fail" -eq 0 ] && [ ${#invalid_services[@]} -eq 0 ]; then
@@ -705,13 +923,16 @@ cmd_launch() {
     echo ""
 
     # Show what happened
+    if [ ${#external_installed[@]} -gt 0 ]; then
+        echo -e "  ${DIM}External MCP:     ${external_installed[*]}${NC}"
+    fi
     if [ ${#already_running[@]} -gt 0 ]; then
         echo -e "  ${DIM}Already running:  ${already_running[*]}${NC}"
     fi
-    if [ ${#started_ok[@]:-0} -gt 0 ]; then
+    if [ "$_started_ok_count" -gt 0 ]; then
         echo -e "  ${DIM}Newly started:    ${started_ok[*]}${NC}"
     fi
-    if [ ${#started_fail[@]:-0} -gt 0 ]; then
+    if [ "$_started_fail_count" -gt 0 ]; then
         echo -e "  ${DIM}Failed to start:  ${started_fail[*]}${NC}"
     fi
 

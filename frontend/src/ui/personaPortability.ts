@@ -11,7 +11,13 @@
 // Dependency check types
 // ---------------------------------------------------------------------------
 
-export type DependencyStatus = 'available' | 'missing' | 'degraded' | 'unknown'
+export type DependencyStatus =
+  | 'available'      // server running, tools registered       (green)
+  | 'installable'    // bundle present locally, not started     (blue)
+  | 'downloadable'   // git URL known, can be auto-fetched      (yellow)
+  | 'missing'        // no source info, can't auto-resolve      (red)
+  | 'degraded'       // partially working                       (amber)
+  | 'unknown'        // can't determine                         (gray)
 
 export type DependencyItem = {
   name: string
@@ -28,6 +34,10 @@ export type DependencyItem = {
   auth_type?: string
   /** Endpoint URL for registry servers */
   url?: string
+  /** Community bundle ID for auto-install */
+  bundle_id?: string
+  /** Allocated port for the server */
+  port?: number
 }
 
 export type DependencyReport = {
@@ -188,6 +198,135 @@ export async function importPersonaPackage(params: {
   }
 
   return await res.json()
+}
+
+/**
+ * Atomic import — install MCP servers + create persona project in one call.
+ * This is the recommended flow for community gallery imports.
+ */
+export async function importPersonaAtomic(params: {
+  backendUrl: string
+  apiKey?: string
+  file: File
+  autoInstallServers?: boolean
+}): Promise<{ ok: boolean; project: Record<string, any>; install_plan: McpInstallPlan | null }> {
+  const formData = new FormData()
+  formData.append('file', params.file)
+
+  const headers: Record<string, string> = {}
+  if (params.apiKey) headers['x-api-key'] = params.apiKey
+
+  const autoInstall = params.autoInstallServers !== false
+  const res = await fetch(
+    `${params.backendUrl}/persona/import/atomic?auto_install_servers=${autoInstall}`,
+    { method: 'POST', headers, body: formData },
+  )
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
+    throw new Error(err.detail || `Atomic import failed: ${res.status}`)
+  }
+
+  return await res.json()
+}
+
+// ---------------------------------------------------------------------------
+// MCP Dependency Resolution & Auto-Install
+// ---------------------------------------------------------------------------
+
+export type McpInstallPhase =
+  | 'analyzing' | 'cloning' | 'registering' | 'starting'
+  | 'discovering' | 'syncing' | 'complete' | 'failed' | 'skipped'
+
+export type ServerInstallStatus = {
+  server_name: string
+  phase: McpInstallPhase
+  progress_pct: number
+  message: string
+  error: string | null
+  port: number | null
+  tools_discovered: number
+  tools_registered: number
+  source_type: string
+  git_url: string
+  install_path: string
+  elapsed_ms: number
+}
+
+export type McpInstallPlan = {
+  persona_name: string
+  servers_needed: Record<string, any>[]
+  servers_already_available: Record<string, any>[]
+  servers_to_install: {
+    name: string
+    description: string
+    source: Record<string, any>
+    tools_provided: string[]
+    git_url: string
+  }[]
+  servers_unresolvable: Record<string, any>[]
+  install_statuses: ServerInstallStatus[]
+  all_satisfied: boolean
+  summary: string
+}
+
+/**
+ * Resolve MCP dependencies for a .hpersona — returns an install plan.
+ * Does NOT install anything.
+ */
+export async function resolvePersonaDeps(params: {
+  backendUrl: string
+  apiKey?: string
+  file: File
+}): Promise<McpInstallPlan> {
+  const formData = new FormData()
+  formData.append('file', params.file)
+
+  const headers: Record<string, string> = {}
+  if (params.apiKey) headers['x-api-key'] = params.apiKey
+
+  const res = await fetch(`${params.backendUrl}/persona/import/resolve-deps`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
+    throw new Error(err.detail || `Dependency check failed: ${res.status}`)
+  }
+
+  const data = await res.json()
+  return data.plan
+}
+
+/**
+ * Auto-install missing MCP servers — clones from git, starts, registers in Forge.
+ */
+export async function installPersonaDeps(params: {
+  backendUrl: string
+  apiKey?: string
+  file: File
+}): Promise<McpInstallPlan> {
+  const formData = new FormData()
+  formData.append('file', params.file)
+
+  const headers: Record<string, string> = {}
+  if (params.apiKey) headers['x-api-key'] = params.apiKey
+
+  const res = await fetch(`${params.backendUrl}/persona/import/install-deps`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }))
+    throw new Error(err.detail || `Installation failed: ${res.status}`)
+  }
+
+  const data = await res.json()
+  return data.plan
 }
 
 /**
