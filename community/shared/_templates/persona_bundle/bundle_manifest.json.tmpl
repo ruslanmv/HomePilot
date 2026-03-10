@@ -1,0 +1,30 @@
+{
+  "kind": "homepilot.shared_bundle",
+  "schema_version": 1,
+  "bundle_id": "{{BUNDLE_ID}}",
+  "bundle_version": "1.0.0",
+  "author": "{{AUTHOR}}",
+  "license": "MIT",
+  "created_at": "{{CREATED_AT}}",
+  "persona": {
+    "id": "{{PERSONA_ID}}",
+    "name": "{{PERSONA_NAME}}",
+    "role": "{{PERSONA_ROLE}}",
+    "class_id": "{{CLASS_ID}}",
+    "content_rating": "sfw",
+    "tags": []
+  },
+  "mcp_server": {
+    "mode": "{{MCP_MODE}}",
+    "server_id": "hp-community-{{SERVER_SLUG}}",
+    "port": {{PORT}},
+    "module": "agentic.integrations.mcp.community.{{SERVER_SLUG}}_server:app",
+    "tools_provided": [],
+    "shared_with": []
+  },
+  "compatibility": {
+    "min_homepilot_version": "2.1.0",
+    "hpersona_schema_version": 2,
+    "requires_config": []
+  }
+}

@@ -136,3 +136,13 @@ optional:
     category: developer
     icon: book-open
     requires_config: NOTION_TOKEN
+
+
+  # ── Community: hello_world_greeter ──
+  - id: hp-community-greeter
+    port: 9200
+    module: "agentic.integrations.mcp.community_greeter_server:app"
+    label: "Community Greeter"
+    description: "Greeting tools — personalized hellos, farewells, and compliments"
+    category: community
+    icon: smile

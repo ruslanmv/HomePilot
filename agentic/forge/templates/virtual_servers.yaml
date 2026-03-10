@@ -89,3 +89,10 @@ servers:
       - "hp.shell."
       - "hp.projects."
       - "hp.local_projects."
+
+
+  # ── Community: hello_world_greeter ──
+  - name: "hp-community-greeter"
+    description: "Community greeter tools: greet, farewell, compliment"
+    include_tool_prefixes:
+      - "hp.community.greeter."

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://homepilot.ai/schemas/shared-bundle/v1/mcp-server",
+  "title": "Community MCP Server Definition",
+  "description": "Schema for a community-contributed MCP server that ships inside a shared bundle.",
+  "type": "object",
+  "required": ["server_id", "server_name", "version", "tools"],
+  "properties": {
+    "server_id": {
+      "type": "string",
+      "pattern": "^hp-community-[a-z][a-z0-9-]{2,48}$",
+      "description": "Prefixed with hp-community- to avoid collisions with core/optional servers."
+    },
+    "server_name": {
+      "type": "string",
+      "description": "Human-readable server name."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "description": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["community", "productivity", "communication", "developer", "creative", "data"],
+      "default": "community"
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "input_schema"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^hp\\.community\\.[a-z_]+\\.[a-z_]+$",
+            "description": "Namespaced: hp.community.<server_slug>.<tool_name>"
+          },
+          "description": { "type": "string" },
+          "input_schema": { "type": "object" }
+        }
+      }
+    },
+    "transport": {
+      "type": "string",
+      "enum": ["HTTP", "STDIO"],
+      "default": "HTTP"
+    },
+    "health_check": {
+      "type": "object",
+      "properties": {
+        "method": { "type": "string", "default": "GET" },
+        "path": { "type": "string", "default": "/health" }
+      }
+    }
+  }
+}

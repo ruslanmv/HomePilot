@@ -129,6 +129,17 @@ function ViewAngleChips({
   availableViews: Array<'front' | 'left' | 'right' | 'back'>
   onSelect: (angle: 'front' | 'left' | 'right' | 'back', url: string) => void
 }) {
+  // Preload all view_pack images on mount so angle switches are instant
+  React.useEffect(() => {
+    availableViews.forEach((angle) => {
+      const url = viewPack[angle]
+      if (url) {
+        const img = new Image()
+        img.src = url
+      }
+    })
+  }, [viewPack, availableViews])
+
   return (
     <div className="flex gap-1.5 pt-2">
       {availableViews.map((angle) => {
@@ -1670,12 +1681,12 @@ function ChatState({
                           const resolved = resolveImageUrl(src)
                           return (
                             <img
-                              key={`${override?.angle || 'default'}-${i}`}
+                              key={`viewpack-img-${m.id}-${i}`}
                               src={resolved}
                               onClick={() => setLightbox(resolved)}
-                              className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90 transition-opacity"
+                              className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 cursor-zoom-in hover:opacity-90"
+                              style={{ transition: 'opacity 150ms ease-out' }}
                               alt={`image ${i}`}
-                              loading="lazy"
                               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                             />
                           )

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "servers": [
+    {
+      "name": "mcp-news",
+      "description": "Real-time news aggregator — top headlines, search, and source management via RSS/Google News/GDELT",
+      "default_port": 8787,
+      "source": {
+        "type": "external",
+        "git": "https://github.com/HomePilotAI/hp-news",
+        "ref": "main",
+        "subdir": ""
+      },
+      "transport": "HTTP",
+      "protocol": "MCP",
+      "tools_provided": [
+        "news.top",
+        "news.search",
+        "news.sources",
+        "news.health"
+      ],
+      "health_check": {
+        "method": "POST",
+        "path": "/rpc",
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "id": 1
+        }
+      }
+    }
+  ]
+}
