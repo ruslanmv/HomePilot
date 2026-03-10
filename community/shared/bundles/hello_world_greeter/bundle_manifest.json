@@ -1,0 +1,36 @@
+{
+  "kind": "homepilot.shared_bundle",
+  "schema_version": 1,
+  "bundle_id": "hello_world_greeter",
+  "bundle_version": "1.0.0",
+  "author": "HomePilot Community",
+  "license": "MIT",
+  "created_at": "2026-03-09T00:00:00Z",
+  "persona": {
+    "id": "hello_world_greeter",
+    "name": "Sunny",
+    "role": "Friendly Greeter",
+    "class_id": "assistant",
+    "content_rating": "sfw",
+    "tags": ["greeting", "demo", "starter"]
+  },
+  "mcp_server": {
+    "mode": "dedicated",
+    "server_id": "hp-community-greeter",
+    "port": 9200,
+    "module": "agentic.integrations.mcp.community.greeter_server:app",
+    "git": "",
+    "ref": "main",
+    "tools_provided": [
+      "hp.community.greeter.greet",
+      "hp.community.greeter.farewell",
+      "hp.community.greeter.compliment"
+    ],
+    "shared_with": []
+  },
+  "compatibility": {
+    "min_homepilot_version": "2.1.0",
+    "hpersona_schema_version": 2,
+    "requires_config": []
+  }
+}

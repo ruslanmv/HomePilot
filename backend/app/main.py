@@ -4030,6 +4030,19 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
         _photo_project_id = inp.personalityId[len("persona:"):]
         print(f"[CHAT ENDPOINT] photo-intent: inferred project_id={_photo_project_id!r} from personalityId")
 
+    # Helper: persist deterministic photo responses to conversation history
+    # so outfit context is available for follow-up messages (e.g. "show me your back"
+    # after "show me your lingerie" should know lingerie was the last outfit shown).
+    def _persist_photo_response(cid_: str | None, user_msg: str, assistant_text: str, project_id: str | None = None) -> None:
+        if not cid_:
+            return
+        try:
+            from .storage import add_message
+            add_message(cid_, "user", user_msg, project_id=project_id or "")
+            add_message(cid_, "assistant", assistant_text, project_id=project_id or "")
+        except Exception as _e:
+            print(f"[CHAT ENDPOINT] photo-intent: failed to persist history: {_e}")
+
     if _photo_project_id and _is_photo_intent(inp.message):
         proj = projects.get_project_by_id(_photo_project_id)
         if proj and proj.get("project_type") == "persona":
@@ -4148,13 +4161,33 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                             except Exception:
                                 pass
 
-                        # A3: Equipped outfit
+                        # A3: Equipped outfit — but prefer one that HAS the
+                        # requested angle so we don't show a fallback when a
+                        # different outfit actually has the view.
                         if not _target_outfit:
+                            _equipped_fallback = None
                             for _ofit in _all_outfits:
                                 if _ofit.get("equipped"):
-                                    _target_outfit = _ofit
-                                    _target_label = _ofit.get("label", "Outfit")
-                                    break
+                                    _ovp = _ofit.get("view_pack") or {}
+                                    if _detected_angle and isinstance(_ovp, dict) and _ovp.get(_detected_angle):
+                                        # Equipped AND has the angle — perfect
+                                        _target_outfit = _ofit
+                                        _target_label = _ofit.get("label", "Outfit")
+                                        break
+                                    if not _equipped_fallback:
+                                        _equipped_fallback = _ofit
+                            # If no equipped outfit had the angle, check all outfits
+                            if not _target_outfit and _detected_angle:
+                                for _ofit in _all_outfits:
+                                    _ovp = _ofit.get("view_pack") or {}
+                                    if isinstance(_ovp, dict) and _ovp.get(_detected_angle):
+                                        _target_outfit = _ofit
+                                        _target_label = _ofit.get("label", "Outfit")
+                                        break
+                            # Fall back to equipped outfit without the angle
+                            if not _target_outfit and _equipped_fallback:
+                                _target_outfit = _equipped_fallback
+                                _target_label = _equipped_fallback.get("label", "Outfit")
 
                         # A4: First outfit
                         if not _target_outfit and _all_outfits:
@@ -4179,7 +4212,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                                         "available_views": list(_available.keys()),
                                         "interactive_preview": True,
                                     }
-                                    _angle_text = f"Here's my {_target_label} from every angle!"
+                                    _angle_text = f"Let me do a full turn for you! Here's my {_target_label} from every angle!"
                                 elif _detected_angle and _detected_angle in _available:
                                     _vp_media = {
                                         "images": [_available[_detected_angle]],
@@ -4188,11 +4221,16 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                                         "available_views": list(_available.keys()),
                                         "interactive_preview": True,
                                     }
-                                    _angle_names = {"front": "from the front", "back": "from behind",
-                                                    "left": "from the left", "right": "from the right"}
-                                    _angle_text = f"Here's my {_target_label} {_angle_names.get(_detected_angle, '')}!"
+                                    # Natural narration — like a real person turning
+                                    _angle_narration = {
+                                        "front": "Here I am!",
+                                        "back": "Let me turn around for you... like the view?",
+                                        "left": "Let me pose to the side for you!",
+                                        "right": "Here, from this side!",
+                                    }
+                                    _angle_text = _angle_narration.get(_detected_angle, f"Here's my {_target_label}!")
                                 elif _detected_angle:
-                                    # Requested angle not available — show what we have
+                                    # Requested angle not available — suggest another outfit
                                     _first_angle = list(_available.keys())[0]
                                     _vp_media = {
                                         "images": [_available[_first_angle]],
@@ -4202,13 +4240,14 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                                         "interactive_preview": True,
                                     }
                                     _avail_str = ", ".join(a.title() for a in _available)
-                                    _angle_text = f"I don't have a {_detected_angle} view of {_target_label} yet, but here's what I have! ({_avail_str})"
+                                    _angle_text = f"I only have the front in this {_target_label} for now — here's what I have! ({_avail_str})"
 
                     except Exception as _e:
                         print(f"[CHAT ENDPOINT] angle-intent: view_pack lookup error: {_e}")
 
                     if _vp_media:
                         print(f"[CHAT ENDPOINT] photo-intent: returning {_detected_angle or 'all'} angle of '{_target_label}' for project {_photo_project_id}")
+                        _persist_photo_response(cid, inp.message, _angle_text, _photo_project_id)
                         return JSONResponse(
                             status_code=200,
                             content={
@@ -4218,8 +4257,9 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                             },
                         )
                     else:
-                        # No view_pack on any outfit — fallback to static image
-                        # Try the target outfit's first static image, then default
+                        # No view_pack on any outfit — fallback to static image.
+                        # IMPORTANT: Do NOT claim we're showing the requested angle
+                        # — this is just the front/static image.
                         _fallback_url = None
                         if _target_outfit:
                             _imgs = _target_outfit.get("images") or []
@@ -4228,11 +4268,30 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                         if not _fallback_url:
                             _fallback_url = all_urls[0] if all_urls else None
                         if _fallback_url:
-                            _angle_names_fb = {"front": "from the front", "back": "from behind",
-                                               "left": "from the left", "right": "from the right"}
                             _fb_label = _target_label or "my look"
-                            _fb_text = f"Here's {_fb_label}{' ' + _angle_names_fb.get(_detected_angle, '') if _detected_angle else ''}!"
+                            if _detected_angle and _detected_angle != "front":
+                                # Check if another outfit has the requested angle
+                                _alt_outfit = None
+                                for _ofit in _all_outfits:
+                                    if _ofit is _target_outfit:
+                                        continue
+                                    _ovp = _ofit.get("view_pack") or {}
+                                    if isinstance(_ovp, dict) and _ovp.get(_detected_angle):
+                                        _alt_outfit = _ofit.get("label", "another outfit")
+                                        break
+                                if _alt_outfit:
+                                    _fb_text = (
+                                        f"I only have the front in my {_fb_label} for now — "
+                                        f"but I can turn around in my {_alt_outfit} if you want!"
+                                    )
+                                else:
+                                    _fb_text = (
+                                        f"I only have the front in my {_fb_label} for now. Here it is!"
+                                    )
+                            else:
+                                _fb_text = f"Here's my {_fb_label}!"
                             print(f"[CHAT ENDPOINT] photo-intent: no view_pack, returning fallback for angle={_detected_angle} outfit='{_target_label}' project={_photo_project_id}")
+                            _persist_photo_response(cid, inp.message, _fb_text, _photo_project_id)
                             return JSONResponse(
                                 status_code=200,
                                 content={
@@ -4263,6 +4322,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                         urls_to_show = all_urls
                         text = "Here are all my photos!"
                         print(f"[CHAT ENDPOINT] photo-intent: returning ALL {len(all_urls)} photos for project {_photo_project_id}")
+                    _persist_photo_response(cid, inp.message, text, _photo_project_id)
                     return JSONResponse(
                         status_code=200,
                         content={
@@ -4279,6 +4339,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                     if 0 <= idx_0 < len(all_urls):
                         photo_url = all_urls[idx_0]
                         print(f"[CHAT ENDPOINT] photo-intent: returning photo {requested_num} of {len(all_urls)} for project {_photo_project_id}")
+                        _persist_photo_response(cid, inp.message, f"Here's photo {requested_num}!", _photo_project_id)
                         return JSONResponse(
                             status_code=200,
                             content={
@@ -4306,6 +4367,7 @@ async def chat(inp: ChatIn, authorization: str = Header(default=""), homepilot_s
                 _is_photo_intent._counters[_photo_project_id] = ctr + 1  # type: ignore[attr-defined]
                 print(f"[CHAT ENDPOINT] photo-intent: returning photo {ctr % len(all_urls) + 1} of {len(all_urls)} for project {_photo_project_id}")
                 text = "Here's my photo!" if ctr == 0 else "Here's another one!"
+                _persist_photo_response(cid, inp.message, text, _photo_project_id)
                 return JSONResponse(
                     status_code=200,
                     content={

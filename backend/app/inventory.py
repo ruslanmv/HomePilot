@@ -853,6 +853,7 @@ async def inventory_delete_item(
             return JSONResponse(status_code=500, content={
                 "ok": False, "message": f"Failed to save metadata: {e}"
             })
+
         return JSONResponse(content={
             "ok": True,
             "project_id": project_id,

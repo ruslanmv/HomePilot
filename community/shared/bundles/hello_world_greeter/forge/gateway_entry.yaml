@@ -1,0 +1,8 @@
+# Append this to agentic/forge/templates/gateways.yaml
+# Registers the server for admin UI catalog visibility in Context Forge.
+# Tool discovery happens directly via /rpc (not via SSE auto-discovery).
+
+- name: hp-community-greeter
+  url: "http://localhost:9200/rpc"
+  transport: "SSE"
+  description: "HomePilot Community Greeter MCP server"

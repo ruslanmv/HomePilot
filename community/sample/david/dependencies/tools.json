@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Simple tool IDs from PersonalityAgent.allowed_tools",
+    "tools": [
+      "news_top",
+      "news_search",
+      "news_sources",
+      "news_health"
+    ]
+  },
+  "forge_tools": {
+    "description": "Tool references from Context Forge / MCP",
+    "tools": [
+      "news.top",
+      "news.search",
+      "news.sources",
+      "news.health"
+    ]
+  },
+  "tool_schemas": [
+    {
+      "name": "news.top",
+      "description": "Get top headlines for a topic from the news cache",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "topic": { "type": "string", "description": "News topic (e.g. world, technology, sports)", "default": "world" },
+          "limit": { "type": "integer", "description": "Number of headlines (1-50)", "default": 10 },
+          "hours": { "type": "integer", "description": "Look-back window in hours (1-168)", "default": 24 }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "news.search",
+      "description": "Search cached headlines by keyword",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": { "type": "string", "description": "Search query" },
+          "limit": { "type": "integer", "description": "Number of results (1-50)", "default": 10 },
+          "hours": { "type": "integer", "description": "Look-back window in hours (1-720)", "default": 72 }
+        },
+        "required": ["q"]
+      }
+    },
+    {
+      "name": "news.sources",
+      "description": "List all configured news sources and their status",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "news.health",
+      "description": "Check news service readiness and status",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  ],
+  "capability_summary": {
+    "required": [
+      "news"
+    ],
+    "optional": []
+  }
+}
