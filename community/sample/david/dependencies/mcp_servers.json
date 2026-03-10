@@ -8,7 +8,7 @@
       "source": {
         "type": "external",
         "git": "https://github.com/HomePilotAI/hp-news",
-        "ref": "main",
+        "ref": "master",
         "subdir": ""
       },
       "transport": "HTTP",
@@ -20,13 +20,8 @@
         "news.health"
       ],
       "health_check": {
-        "method": "POST",
-        "path": "/rpc",
-        "body": {
-          "jsonrpc": "2.0",
-          "method": "initialize",
-          "id": 1
-        }
+        "method": "GET",
+        "path": "/health"
       }
     }
   ]

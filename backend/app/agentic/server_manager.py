@@ -481,10 +481,14 @@ class ServerManager:
                 started.append(server.id)
                 logger.info("Auto-started core server %s on port %d", server.id, server.port)
         if started:
-            await asyncio.sleep(3)
-            # Verify they came up
+            # Poll health for each started server (up to 10s)
+            # instead of a single 3s sleep which is too short for
+            # servers that take longer to initialize.
             for sid in list(started):
-                if not await self.server_healthy(sid):
+                healthy = await self._check_health(
+                    self._all[sid].port, timeout=10,
+                )
+                if not healthy:
                     logger.warning("Core server %s did not become healthy after auto-start", sid)
         return started
 
@@ -507,19 +511,182 @@ class ServerManager:
             await asyncio.sleep(2)
         return started
 
+    async def auto_start_external(self) -> List[str]:
+        """Start all previously installed external/community MCP servers.
+
+        Reads community/external/registry.json and restarts any server
+        with status="installed". These are servers installed via persona
+        import (external git repos or community bundles) that are not in
+        the server_catalog.yaml but still need to run for their personas
+        to work.
+        """
+        started: List[str] = []
+        root = Path(self._project_root())
+
+        # Read external registry
+        ext_path = root / "community" / "external" / "registry.json"
+        if not ext_path.exists():
+            return started
+
+        try:
+            reg = json.loads(ext_path.read_text())
+        except Exception:
+            return started
+
+        python = self._python_path()
+        project_root = self._project_root()
+
+        for entry in reg.get("servers", []):
+            name = entry.get("name", "")
+            port = entry.get("port")
+            install_path = entry.get("install_path", "")
+            status = entry.get("status", "")
+
+            if not name or not port or status != "installed":
+                continue
+
+            # Skip if already healthy
+            try:
+                async with httpx.AsyncClient(timeout=2.0) as c:
+                    r = await c.get(f"http://{MCP_TOOL_HOST}:{port}/health")
+                    if r.status_code == 200:
+                        continue
+            except Exception:
+                pass
+
+            # Determine how to start the server
+            server_dir = Path(install_path) if install_path else None
+
+            if server_dir and server_dir.is_dir():
+                # Try to detect entry point
+                app_py = server_dir / "app.py"
+                main_py = server_dir / "app" / "main.py"
+                env = {**os.environ, "PYTHONPATH": f"{project_root}:{server_dir}"}
+
+                if main_py.exists():
+                    cmd = [python, "-m", "app.main", "--http",
+                           "--host", "127.0.0.1", "--port", str(port)]
+                elif app_py.exists():
+                    cmd = [python, "-m", "uvicorn", "app:app",
+                           "--host", "127.0.0.1", "--port", str(port),
+                           "--log-level", "warning"]
+                else:
+                    # Community bundle — try the module path from manifest
+                    manifest_path = server_dir / "bundle_manifest.json"
+                    module = ""
+                    if manifest_path.exists():
+                        try:
+                            bm = json.loads(manifest_path.read_text())
+                            module = bm.get("mcp_server", {}).get("module", "")
+                        except Exception:
+                            pass
+
+                    if module:
+                        cmd = [python, "-m", "uvicorn", module,
+                               "--host", "127.0.0.1", "--port", str(port),
+                               "--log-level", "warning"]
+                        env = {**os.environ, "PYTHONPATH": project_root}
+                    else:
+                        logger.warning("Cannot detect entry point for external server %s at %s", name, server_dir)
+                        continue
+
+                try:
+                    proc = subprocess.Popen(
+                        cmd, env=env, cwd=str(server_dir),
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                    self._processes[name] = proc
+                    started.append(name)
+                    logger.info("Auto-started external server %s (pid=%d, port=%d)", name, proc.pid, port)
+                except Exception as exc:
+                    logger.warning("Failed to auto-start external server %s: %s", name, exc)
+            else:
+                logger.warning("External server %s install_path not found: %s", name, install_path)
+
+        if started:
+            await asyncio.sleep(3)
+            # Verify health
+            for name in list(started):
+                entry = next((e for e in reg.get("servers", []) if e.get("name") == name), None)
+                if entry:
+                    try:
+                        async with httpx.AsyncClient(timeout=2.0) as c:
+                            r = await c.get(f"http://{MCP_TOOL_HOST}:{entry['port']}/health")
+                            if r.status_code != 200:
+                                logger.warning("External server %s did not become healthy after auto-start", name)
+                    except Exception:
+                        logger.warning("External server %s did not become healthy after auto-start", name)
+
+        return started
+
     async def ensure_all_running(self) -> Dict[str, List[str]]:
-        """Start all servers that should be running (core + installed optional).
+        """Start all servers that should be running (core + installed optional + external).
 
         Called during backend startup to ensure the full agentic stack is up,
         regardless of whether agentic-start.sh ran.
         """
         core_started = await self.auto_start_core()
         optional_started = await self.auto_start_installed()
+        external_started = await self.auto_start_external()
         if core_started:
             logger.info("Auto-started %d core servers: %s", len(core_started), core_started)
         if optional_started:
             logger.info("Auto-started %d optional servers: %s", len(optional_started), optional_started)
-        return {"core": core_started, "optional": optional_started}
+        if external_started:
+            logger.info("Auto-started %d external servers: %s", len(external_started), external_started)
+        return {"core": core_started, "optional": optional_started, "external": external_started}
+
+    async def uninstall_external(
+        self,
+        server_name: str,
+        forge_url: str,
+        auth_user: str = "admin",
+        auth_pass: str = "changeme",
+        bearer_token: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Uninstall an external/community MCP server: stop process, deactivate tools, update registry."""
+        root = Path(self._project_root())
+        ext_path = root / "community" / "external" / "registry.json"
+
+        if not ext_path.exists():
+            return {"ok": False, "error": f"External server '{server_name}' not found"}
+
+        try:
+            reg = json.loads(ext_path.read_text())
+        except Exception:
+            return {"ok": False, "error": "Failed to read external registry"}
+
+        entry = next((s for s in reg.get("servers", []) if s.get("name") == server_name), None)
+        if not entry:
+            return {"ok": False, "error": f"External server '{server_name}' not in registry"}
+
+        port = entry.get("port")
+
+        # 1. Deactivate tools in Forge
+        deactivated = 0
+        if port:
+            deactivated = await self._deactivate_tools_in_forge(
+                port, forge_url, auth_user, auth_pass, bearer_token,
+            )
+
+        # 2. Stop the process
+        self._stop_process(server_name)
+
+        # 3. Mark as uninstalled in registry (don't delete — preserve history)
+        for s in reg.get("servers", []):
+            if s.get("name") == server_name:
+                s["status"] = "uninstalled"
+                break
+        ext_path.write_text(json.dumps(reg, indent=2))
+
+        logger.info("Uninstalled external server %s (port %s, %d tools deactivated)", server_name, port, deactivated)
+
+        return {
+            "ok": True,
+            "status": "uninstalled",
+            "server_name": server_name,
+            "tools_deactivated": deactivated,
+        }
 
     def shutdown_all(self) -> None:
         """Stop all managed subprocesses (called on backend shutdown)."""

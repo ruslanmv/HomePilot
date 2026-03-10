@@ -186,8 +186,9 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 	@echo ""
 	@echo "✓ Installing avatar-service (StyleGAN face generator)..."
 	@if [ -d "avatar-service" ]; then \
-		cd avatar-service && uv venv .venv --python 3.11 2>/dev/null || uv venv .venv 2>/dev/null || python3 -m venv .venv; \
-		.venv/bin/pip install -e . >/dev/null 2>&1 && \
+		cd avatar-service && \
+		(uv venv .venv --python 3.11 --seed 2>/dev/null || uv venv .venv --seed 2>/dev/null || python3 -m venv .venv) && \
+		(uv pip install -e . --python .venv/bin/python 2>/dev/null || .venv/bin/pip install -e . 2>/dev/null) && \
 		echo "  ✓ Avatar service installed (port 8020)" || \
 		echo "  ⚠ Avatar service install failed (non-fatal). Face generation uses ComfyUI fallback."; \
 	else \

@@ -185,6 +185,9 @@ def _build_label_index(project_id: str) -> Dict[str, str]:
                     continue
                 angle_label = f"{o_label} {angle.title()}"
                 _add_label(angle_label, full_vp_url)
+            # FIX A: If view_pack has no "front", register main image as front
+            if "front" not in view_pack and default_url:
+                _add_label(f"{o_label} Front", default_url)
 
     # fallback default
     if not default_url:

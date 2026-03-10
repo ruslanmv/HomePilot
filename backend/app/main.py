@@ -198,6 +198,14 @@ app.include_router(inventory_router)
 from .models import lora_router
 app.include_router(lora_router)
 
+# Include System Status dashboard routes (/v1/system/*)
+from .system_dashboard import router as system_dashboard_router
+app.include_router(system_dashboard_router)
+
+# Include Machine Resources routes (/v1/system/resources)
+from .system_resources import router as system_resources_router
+app.include_router(system_resources_router)
+
 
 # ----------------------------
 # ComfyUI image proxy
@@ -762,7 +770,7 @@ def _startup() -> None:
 
 
 async def _start_agentic_servers() -> None:
-    """Background task: ensure core + installed MCP servers are running."""
+    """Background task: ensure core + installed + external MCP servers are running."""
     # Brief delay to let Forge gateway finish initializing
     await asyncio.sleep(5)
     try:
@@ -773,8 +781,12 @@ async def _start_agentic_servers() -> None:
         _logger = logging.getLogger("homepilot.startup")
         core = result.get("core", [])
         optional = result.get("optional", [])
-        if core or optional:
-            _logger.info("Agentic auto-start: %d core, %d optional servers started", len(core), len(optional))
+        external = result.get("external", [])
+        if core or optional or external:
+            _logger.info(
+                "Agentic auto-start: %d core, %d optional, %d external servers started",
+                len(core), len(optional), len(external),
+            )
         else:
             _logger.info("Agentic auto-start: all servers already running")
     except Exception as exc:
@@ -5776,6 +5788,218 @@ async def persona_import_preview(file: UploadFile = File(...)) -> JSONResponse:
             "avatar_preview_data_url": preview.thumb_data_url,
         },
     )
+
+
+# ── MCP Dependency Resolution & Auto-Install ─────────────────────────────
+
+
+@app.post("/persona/import/atomic", dependencies=[Depends(require_api_key)])
+async def persona_import_atomic(
+    file: UploadFile = File(...),
+    auto_install_servers: bool = True,
+) -> JSONResponse:
+    """Atomic one-click persona import: install MCP servers + create project.
+
+    This is the recommended endpoint for the community gallery flow:
+      1. Preview the .hpersona (dependency check)
+      2. If MCP servers needed: auto-install (clone → start → register → sync)
+      3. Import the .hpersona → create persona project
+      4. Return the complete result (plan + project)
+
+    Set auto_install_servers=False to skip server installation (same as /persona/import).
+    """
+    from .agentic.mcp_installer import resolve_persona_mcp_deps
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    try:
+        preview_result = preview_persona_package(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    persona_name = (
+        preview_result.persona_agent.get("label")
+        or preview_result.persona_agent.get("id")
+        or "Unknown"
+    )
+
+    # Phase 1: Install MCP servers if needed
+    install_plan = None
+    if auto_install_servers:
+        forge_url = os.getenv("CONTEXT_FORGE_URL", "http://localhost:4444")
+        auth_user = os.getenv("CONTEXT_FORGE_AUTH_USER", "admin")
+        auth_pass = os.getenv("CONTEXT_FORGE_AUTH_PASS", "changeme")
+        token = os.getenv("CONTEXT_FORGE_TOKEN", "") or None
+
+        install_plan = await resolve_persona_mcp_deps(
+            dependencies=preview_result.dependencies,
+            persona_name=persona_name,
+            auto_install=True,
+            forge_url=forge_url,
+            auth_user=auth_user,
+            auth_pass=auth_pass,
+            bearer_token=token,
+        )
+
+    # Phase 2: Import the persona project
+    try:
+        created = import_persona_package(UPLOAD_PATH, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Import failed: {e}")
+
+    return JSONResponse(
+        status_code=201,
+        content={
+            "ok": True,
+            "project": created,
+            "install_plan": install_plan.to_dict() if install_plan else None,
+        },
+    )
+
+
+@app.post("/persona/import/resolve-deps", dependencies=[Depends(require_api_key)])
+async def persona_resolve_deps(file: UploadFile = File(...)) -> JSONResponse:
+    """Analyze MCP server dependencies for a .hpersona package.
+
+    Returns an install plan showing which servers are available, which need
+    installation, and which are unresolvable.  Does NOT install anything.
+    """
+    from .agentic.mcp_installer import resolve_persona_mcp_deps
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    try:
+        preview = preview_persona_package(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    persona_name = (
+        preview.persona_agent.get("label")
+        or preview.persona_agent.get("id")
+        or "Unknown"
+    )
+
+    plan = await resolve_persona_mcp_deps(
+        dependencies=preview.dependencies,
+        persona_name=persona_name,
+        auto_install=False,
+    )
+
+    return JSONResponse(status_code=200, content={"ok": True, "plan": plan.to_dict()})
+
+
+@app.post("/persona/import/install-deps", dependencies=[Depends(require_api_key)])
+async def persona_install_deps(file: UploadFile = File(...)) -> JSONResponse:
+    """Auto-install missing MCP servers for a .hpersona package.
+
+    Clones external servers from git, installs dependencies, starts processes,
+    registers tools in Context Forge, and syncs virtual servers.
+    Returns the full install plan with per-server status.
+    """
+    from .agentic.mcp_installer import resolve_persona_mcp_deps
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    try:
+        preview = preview_persona_package(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    persona_name = (
+        preview.persona_agent.get("label")
+        or preview.persona_agent.get("id")
+        or "Unknown"
+    )
+
+    forge_url = os.getenv("CONTEXT_FORGE_URL", "http://localhost:4444")
+    auth_user = os.getenv("CONTEXT_FORGE_AUTH_USER", "admin")
+    auth_pass = os.getenv("CONTEXT_FORGE_AUTH_PASS", "changeme")
+    token = os.getenv("CONTEXT_FORGE_TOKEN", "") or None
+
+    plan = await resolve_persona_mcp_deps(
+        dependencies=preview.dependencies,
+        persona_name=persona_name,
+        auto_install=True,
+        forge_url=forge_url,
+        auth_user=auth_user,
+        auth_pass=auth_pass,
+        bearer_token=token,
+    )
+
+    return JSONResponse(status_code=200, content={"ok": True, "plan": plan.to_dict()})
+
+
+@app.get("/v1/agentic/mcp/status", dependencies=[Depends(require_api_key)])
+async def mcp_server_status() -> JSONResponse:
+    """Professional MCP server analyzer — shows all running servers with status.
+
+    Returns:
+      - Core servers (always on) with health status
+      - Optional servers (installed) with health status
+      - External servers (community/external/) with health status
+      - Summary counts and overall health
+    """
+    from .agentic.server_manager import get_server_manager
+    from .agentic.mcp_installer import _read_external_registry
+
+    mgr = get_server_manager()
+    available = await mgr.get_available()
+
+    # External servers from community/external/registry.json
+    ext_registry = _read_external_registry()
+    external_servers = []
+    for entry in ext_registry.get("servers", []):
+        port = entry.get("port")
+        healthy = False
+        if port:
+            try:
+                import httpx as _httpx
+                async with _httpx.AsyncClient(timeout=2.0) as c:
+                    r = await c.get(f"http://127.0.0.1:{port}/health")
+                    healthy = r.status_code == 200
+            except Exception:
+                pass
+
+        external_servers.append({
+            "name": entry.get("name", ""),
+            "port": port,
+            "git_url": entry.get("git_url", ""),
+            "install_path": entry.get("install_path", ""),
+            "tools_discovered": entry.get("tools_discovered", 0),
+            "installed_at": entry.get("installed_at", ""),
+            "healthy": healthy,
+            "status": "running" if healthy else "stopped",
+            "source": "external",
+        })
+
+    # Counts
+    core_running = sum(1 for s in available if s.get("is_core") and s.get("healthy"))
+    core_total = sum(1 for s in available if s.get("is_core"))
+    optional_installed = sum(1 for s in available if not s.get("is_core") and s.get("installed"))
+    optional_running = sum(1 for s in available if not s.get("is_core") and s.get("healthy"))
+    external_running = sum(1 for s in external_servers if s.get("healthy"))
+
+    return JSONResponse(content={
+        "ok": True,
+        "core_servers": [s for s in available if s.get("is_core")],
+        "optional_servers": [s for s in available if not s.get("is_core")],
+        "external_servers": external_servers,
+        "summary": {
+            "core": f"{core_running}/{core_total} running",
+            "optional": f"{optional_running}/{optional_installed} running ({optional_installed} installed)",
+            "external": f"{external_running}/{len(external_servers)} running",
+            "total_running": core_running + optional_running + external_running,
+            "total_servers": core_total + len([s for s in available if not s.get("is_core")]) + len(external_servers),
+        },
+    })
 
 
 # ============================================================================

@@ -459,22 +459,22 @@ async def sync_homepilot(
             except Exception as exc:
                 errors.append(f"agent '{name}': {exc}")
 
-        # 3. Register gateways (best-effort, may 503 on Community Edition)
+        # 3. Register gateways
+        #
+        # DISABLED: HomePilot MCP servers expose plain HTTP POST /rpc
+        # endpoints (JSON-RPC 2.0), not SSE.  Forge gateway registration
+        # attempts an SSE handshake (GET /rpc) which always fails with
+        # 404 or 405, flooding the Forge log with GatewayConnectionError
+        # stack traces.  Tool discovery (step 1) already registers tools
+        # correctly via direct POST.  Gateway registration is purely
+        # decorative (admin UI catalog) and adds no functional value.
+        #
+        # When HomePilot MCP servers add SSE support, re-enable this
+        # section and filter to only reachable servers:
+        #   reachable = {port for n, port, _ in mcp_servers
+        #                if f"{n}:{port}" not in set(servers_unreachable)}
         gateways_registered = 0
-        for gw in templates_gateways.get("gateways", []):
-            name = gw["name"]
-            payload = {
-                "name": name,
-                "url": gw.get("url", ""),
-                "description": gw.get("description", ""),
-                "transport": "SSE",
-                "tags": ["homepilot"],
-            }
-            try:
-                await _post(client, base_url, "/gateways", json=payload)
-                gateways_registered += 1
-            except Exception:
-                pass  # gateways are optional
+        gateways_skipped = len(templates_gateways.get("gateways", []))
 
         # 4. Create or update virtual servers (upsert tool associations)
         vservers_created = 0
@@ -582,6 +582,7 @@ async def sync_homepilot(
         "agents_registered": agents_registered,
         "agents_skipped": agents_skipped,
         "gateways_registered": gateways_registered,
+        "gateways_skipped": gateways_skipped,
         "virtual_servers_created": vservers_created,
         "virtual_servers_updated": vservers_updated,
         "virtual_servers_unchanged": vservers_unchanged,
