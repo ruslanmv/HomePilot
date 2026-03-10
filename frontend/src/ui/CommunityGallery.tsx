@@ -31,8 +31,8 @@ import {
   communityDownloadPackage,
   communityCard,
 } from './communityApi'
-import { previewPersonaPackage, importPersonaPackage } from './personaPortability'
-import type { PersonaPreview } from './personaPortability'
+import { previewPersonaPackage, importPersonaPackage, importPersonaAtomic } from './personaPortability'
+import type { PersonaPreview, DependencyItem } from './personaPortability'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -181,6 +181,34 @@ function GalleryCard({
 // Install Preview Modal
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// MCP Dependency Status Badge
+// ---------------------------------------------------------------------------
+
+function McpStatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    available:   'bg-emerald-500/15 border-emerald-500/30 text-emerald-300',
+    installable: 'bg-blue-500/15 border-blue-500/30 text-blue-300',
+    downloadable:'bg-amber-500/15 border-amber-500/30 text-amber-300',
+    missing:     'bg-red-500/15 border-red-500/30 text-red-300',
+    degraded:    'bg-amber-500/15 border-amber-500/30 text-amber-300',
+    unknown:     'bg-white/10 border-white/20 text-white/50',
+  }
+  const labels: Record<string, string> = {
+    available:    'Running',
+    installable:  'Will install',
+    downloadable: 'Will download & install',
+    missing:      'Missing',
+    degraded:     'Degraded',
+    unknown:      'Unknown',
+  }
+  return (
+    <span className={`text-[10px] px-2 py-0.5 rounded-full border ${styles[status] || styles.unknown}`}>
+      {labels[status] || status}
+    </span>
+  )
+}
+
 function InstallPreviewModal({
   state,
   onConfirm,
@@ -196,6 +224,13 @@ function InstallPreviewModal({
   const agent = preview.persona_agent || {}
   const depCheck = preview.dependency_check
   const allGood = depCheck?.all_satisfied !== false
+
+  // Check if MCP servers need to be installed
+  const mcpServers: DependencyItem[] = depCheck?.mcp_servers || []
+  const needsMcpInstall = mcpServers.some(
+    (s) => s.status === 'installable' || s.status === 'downloadable'
+  )
+  const hasMissing = mcpServers.some((s) => s.status === 'missing')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -223,8 +258,31 @@ function InstallPreviewModal({
             </div>
           )}
 
-          {/* Dependency status */}
-          {depCheck && (
+          {/* MCP Server Dependencies — detailed view */}
+          {mcpServers.length > 0 && (
+            <div>
+              <div className="text-xs font-medium text-white/50 mb-1.5">MCP Servers</div>
+              <div className="space-y-2">
+                {mcpServers.map((srv) => (
+                  <div
+                    key={srv.name}
+                    className="flex items-center justify-between bg-white/[0.03] border border-white/[0.06] rounded-lg px-3 py-2"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-white/80 font-medium truncate">{srv.name}</div>
+                      {srv.description && (
+                        <div className="text-[10px] text-white/40 truncate">{srv.description}</div>
+                      )}
+                    </div>
+                    <McpStatusBadge status={srv.status} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Overall dependency status */}
+          {depCheck && mcpServers.length === 0 && (
             <div>
               <div className="text-xs font-medium text-white/50 mb-1.5">Dependencies</div>
               <div className={`text-xs px-3 py-2 rounded-lg border ${
@@ -236,6 +294,21 @@ function InstallPreviewModal({
                   ? 'All dependencies satisfied'
                   : depCheck.summary || 'Some dependencies may need setup'}
               </div>
+            </div>
+          )}
+
+          {/* MCP install notice */}
+          {needsMcpInstall && (
+            <div className="text-xs px-3 py-2 rounded-lg border bg-blue-500/10 border-blue-500/20 text-blue-300">
+              MCP servers will be automatically installed when you click Install.
+            </div>
+          )}
+
+          {/* Missing servers warning */}
+          {hasMissing && (
+            <div className="text-xs px-3 py-2 rounded-lg border bg-red-500/10 border-red-500/20 text-red-300 flex items-start gap-2">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>Some MCP servers cannot be auto-installed. The persona will work but may have limited functionality.</span>
             </div>
           )}
 
@@ -264,9 +337,10 @@ function InstallPreviewModal({
           </button>
           <button
             onClick={onConfirm}
-            className="px-5 py-2 rounded-lg text-sm font-semibold bg-purple-500 hover:bg-purple-600 text-white transition-colors"
+            className="px-5 py-2 rounded-lg text-sm font-semibold bg-purple-500 hover:bg-purple-600 text-white transition-colors flex items-center gap-2"
           >
-            Install Persona
+            <Download size={14} />
+            {needsMcpInstall ? 'Install Persona + Servers' : 'Install Persona'}
           </button>
         </div>
       </div>
@@ -569,16 +643,37 @@ export function CommunityGallery({ backendUrl, apiKey, onInstalled }: CommunityG
 
   const handleConfirmInstall = useCallback(async () => {
     if (install.kind !== 'preview') return
-    const { personaId, file } = install
+    const { personaId, file, preview } = install
+
+    // Check if MCP servers need installation
+    const mcpServers = preview.dependency_check?.mcp_servers || []
+    const needsMcpInstall = mcpServers.some(
+      (s: DependencyItem) => s.status === 'installable' || s.status === 'downloadable'
+    )
 
     try {
       setInstall({ kind: 'installing', personaId })
-      const result = await importPersonaPackage({
-        backendUrl: cleanUrl,
-        apiKey,
-        file,
-      })
-      const projectName = result.project?.name || 'Persona'
+
+      let projectName = 'Persona'
+      if (needsMcpInstall) {
+        // Atomic install: install MCP servers + create persona in one call
+        const result = await importPersonaAtomic({
+          backendUrl: cleanUrl,
+          apiKey,
+          file,
+          autoInstallServers: true,
+        })
+        projectName = result.project?.name || projectName
+      } else {
+        // Simple install: just create the persona project
+        const result = await importPersonaPackage({
+          backendUrl: cleanUrl,
+          apiKey,
+          file,
+        })
+        projectName = result.project?.name || projectName
+      }
+
       setInstall({ kind: 'done', personaId, projectName })
       onInstalled?.()
     } catch (e: any) {

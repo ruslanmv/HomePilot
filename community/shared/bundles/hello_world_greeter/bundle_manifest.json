@@ -19,7 +19,7 @@
     "server_id": "hp-community-greeter",
     "port": 9200,
     "module": "agentic.integrations.mcp.community.greeter_server:app",
-    "git": "",
+    "git": "https://github.com/HomePilotAI/hp-bundle-greeter",
     "ref": "main",
     "tools_provided": [
       "hp.community.greeter.greet",
