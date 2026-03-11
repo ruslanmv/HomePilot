@@ -24,6 +24,7 @@ Compatible with:
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -31,10 +32,11 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 logger = logging.getLogger("homepilot.agentic.mcp_installer")
 
@@ -119,6 +121,123 @@ class InstallPlan:
             "all_satisfied": self.all_satisfied,
             "summary": self.summary,
         }
+
+
+# ── Installation Log ─────────────────────────────────────────────────────
+
+
+@dataclass
+class InstallLogEntry:
+    """A single log line from an installation process."""
+    timestamp: str
+    server_name: str
+    phase: str
+    level: str  # "info", "warning", "error", "debug"
+    message: str
+    detail: str = ""  # optional extended info (command output, etc.)
+
+    def to_dict(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {
+            "timestamp": self.timestamp,
+            "server_name": self.server_name,
+            "phase": self.phase,
+            "level": self.level,
+            "message": self.message,
+        }
+        if self.detail:
+            d["detail"] = self.detail
+        return d
+
+
+class InstallLogger:
+    """Captures detailed step-by-step installation logs.
+
+    Stores logs in memory (ring buffer) and optionally writes to a log file
+    under ``community/external/install_logs/``.  The API can stream or poll
+    these entries so the frontend can display real-time installation progress.
+    """
+
+    _MAX_ENTRIES = 2000  # per-server ring buffer cap
+
+    def __init__(self) -> None:
+        # server_name → deque of entries
+        self._logs: Dict[str, Deque[InstallLogEntry]] = {}
+        self._log_dir: Optional[Path] = None
+
+    def _ensure_log_dir(self) -> Path:
+        if self._log_dir is None:
+            self._log_dir = _community_external_dir() / "install_logs"
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+        return self._log_dir
+
+    def _ts(self) -> str:
+        return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds")
+
+    def log(
+        self,
+        server_name: str,
+        phase: str,
+        level: str,
+        message: str,
+        detail: str = "",
+    ) -> None:
+        entry = InstallLogEntry(
+            timestamp=self._ts(),
+            server_name=server_name,
+            phase=phase,
+            level=level,
+            message=message,
+            detail=detail,
+        )
+        if server_name not in self._logs:
+            self._logs[server_name] = deque(maxlen=self._MAX_ENTRIES)
+        self._logs[server_name].append(entry)
+
+        # Also emit to Python logger for backend console
+        log_fn = getattr(logger, level, logger.info)
+        log_fn("[%s/%s] %s%s", server_name, phase, message,
+               f" | {detail[:200]}" if detail else "")
+
+        # Append to per-server log file (non-blocking best-effort)
+        try:
+            log_path = self._ensure_log_dir() / f"{server_name}.log"
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{entry.timestamp}] [{level.upper():7s}] [{phase}] {message}")
+                if detail:
+                    f.write(f"\n  └─ {detail[:500]}")
+                f.write("\n")
+        except Exception:
+            pass  # non-critical — memory log is authoritative
+
+    def info(self, server_name: str, phase: str, message: str, detail: str = "") -> None:
+        self.log(server_name, phase, "info", message, detail)
+
+    def warning(self, server_name: str, phase: str, message: str, detail: str = "") -> None:
+        self.log(server_name, phase, "warning", message, detail)
+
+    def error(self, server_name: str, phase: str, message: str, detail: str = "") -> None:
+        self.log(server_name, phase, "error", message, detail)
+
+    def debug(self, server_name: str, phase: str, message: str, detail: str = "") -> None:
+        self.log(server_name, phase, "debug", message, detail)
+
+    def get_logs(self, server_name: str, since_idx: int = 0) -> List[Dict[str, Any]]:
+        """Return log entries for a server, optionally starting from an index."""
+        entries = self._logs.get(server_name, deque())
+        return [e.to_dict() for e in list(entries)[since_idx:]]
+
+    def get_all_servers(self) -> List[str]:
+        """Return names of all servers that have logs."""
+        return list(self._logs.keys())
+
+    def get_log_file(self, server_name: str) -> Optional[str]:
+        """Return path to the persistent log file, if it exists."""
+        p = self._ensure_log_dir() / f"{server_name}.log"
+        return str(p) if p.exists() else None
+
+
+# Global install logger singleton
+install_logger = InstallLogger()
 
 
 # ── Path Resolution ───────────────────────────────────────────────────────
@@ -386,32 +505,60 @@ def _clone_server_from_git(
     server_name: str,
     ref: str = "master",
     status: Optional[ServerInstallStatus] = None,
+    force_reinstall: bool = False,
 ) -> Path:
     """Clone an external MCP server from git into community/external/<name>/.
 
     Returns the path to the cloned directory.
+
+    If *force_reinstall* is ``True`` (or the existing install is detected as
+    broken), the old directory is purged and a fresh clone is performed.
     """
+    import shutil
     dest = _community_external_dir() / server_name
+    ilog = install_logger
 
     if dest.exists():
-        if status:
-            status.message = f"Server {server_name} already cloned, updating..."
-        # Pull latest instead of re-clone
-        try:
-            result = subprocess.run(
-                ["git", "-C", str(dest), "pull", "--ff-only"],
-                capture_output=True, encoding="utf-8", errors="replace", timeout=60,
-            )
-            if result.returncode != 0:
-                logger.warning("git pull failed for %s: %s", server_name, result.stderr)
-        except Exception as exc:
-            logger.warning("git pull failed for %s: %s", server_name, exc)
-        return dest
+        # Detect broken installs: no venv or missing key files
+        venv_ok = (dest / ".venv" / "bin" / "python").is_file()
+        has_pyproject = (dest / "pyproject.toml").is_file()
+        is_broken = not venv_ok or not has_pyproject
+
+        if force_reinstall or is_broken:
+            reason = "force_reinstall requested" if force_reinstall else "detected broken install (missing venv or pyproject.toml)"
+            ilog.info(server_name, "clone", f"Purging old install at {dest}: {reason}")
+            if status:
+                status.message = f"Reinstalling {server_name} (purging old clone)..."
+            shutil.rmtree(dest, ignore_errors=True)
+        else:
+            if status:
+                status.message = f"Server {server_name} already cloned, updating..."
+            ilog.info(server_name, "clone", f"Directory exists at {dest}, pulling latest")
+            # Pull latest instead of re-clone
+            try:
+                result = subprocess.run(
+                    ["git", "-C", str(dest), "pull", "--ff-only"],
+                    capture_output=True, encoding="utf-8", errors="replace", timeout=60,
+                )
+                if result.returncode != 0:
+                    ilog.warning(server_name, "clone", "git pull failed", result.stderr.strip())
+                else:
+                    ilog.info(server_name, "clone", "git pull succeeded", result.stdout.strip())
+            except Exception as exc:
+                ilog.warning(server_name, "clone", f"git pull exception: {exc}")
+            return dest
 
     if status:
         status.message = f"Cloning {git_url}..."
         status.phase = InstallPhase.CLONING
         status.progress_pct = 20
+
+    ilog.info(server_name, "clone", f"Cloning repository: {git_url} (ref={ref})")
+    ilog.info(server_name, "clone", f"Target directory: {dest}")
+    print(f"\n{'='*60}")
+    print(f"[{server_name}] Cloning {git_url} (ref={ref})")
+    print(f"[{server_name}] Target: {dest}")
+    print(f"{'='*60}", flush=True)
 
     tmp = Path(tempfile.mkdtemp(prefix=f"hp-mcp-{server_name}-"))
     try:
@@ -420,18 +567,30 @@ def _clone_server_from_git(
             clone_cmd += ["--branch", ref]
         clone_cmd += [git_url, str(tmp / "repo")]
 
+        ilog.info(server_name, "clone", f"Running: {' '.join(clone_cmd)}")
+        print(f"[{server_name}] Running: {' '.join(clone_cmd)}", flush=True)
         result = subprocess.run(
             clone_cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=120,
         )
         if result.returncode != 0 and ref:
             # Branch not found — retry without --branch to use repo default
-            logger.info("Branch '%s' not found for %s, retrying with default branch", ref, server_name)
+            ilog.warning(server_name, "clone",
+                         f"Branch '{ref}' not found, retrying with default branch",
+                         result.stderr.strip())
+            print(f"[{server_name}] Branch '{ref}' not found, retrying with default branch...", flush=True)
             fallback_cmd = ["git", "clone", "--depth", "1", git_url, str(tmp / "repo")]
+            ilog.info(server_name, "clone", f"Running: {' '.join(fallback_cmd)}")
+            print(f"[{server_name}] Running: {' '.join(fallback_cmd)}", flush=True)
             result = subprocess.run(
                 fallback_cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=120,
             )
         if result.returncode != 0:
+            ilog.error(server_name, "clone", "git clone failed", result.stderr.strip())
+            print(f"[{server_name}] git clone FAILED: {result.stderr.strip()}")
             raise RuntimeError(f"git clone failed: {result.stderr.strip()}")
+
+        ilog.info(server_name, "clone", "Clone succeeded, cleaning up .git directory")
+        print(f"[{server_name}] Clone succeeded", flush=True)
 
         # Move to final location (remove .git for clean storage)
         repo_dir = tmp / "repo"
@@ -440,7 +599,14 @@ def _clone_server_from_git(
             shutil.rmtree(git_dir)
 
         shutil.move(str(repo_dir), str(dest))
-        logger.info("Cloned %s to %s", git_url, dest)
+        ilog.info(server_name, "clone", f"Repository cloned to {dest}")
+
+        # Log discovered files for debugging
+        try:
+            top_files = sorted(f.name for f in dest.iterdir())[:20]
+            ilog.info(server_name, "clone", f"Top-level files: {', '.join(top_files)}")
+        except Exception:
+            pass
 
     finally:
         if tmp.exists():
@@ -452,62 +618,365 @@ def _clone_server_from_git(
 # ── Install Python Dependencies ───────────────────────────────────────────
 
 
+def _find_uv() -> Optional[str]:
+    """Find the ``uv`` binary if available."""
+    uv = shutil.which("uv")
+    if uv:
+        return uv
+    # Check common locations
+    for candidate in ("/usr/local/bin/uv", str(Path.home() / ".local" / "bin" / "uv"),
+                      str(Path.home() / ".cargo" / "bin" / "uv")):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _stream_subprocess(cmd: list[str], name: str, label: str, **kwargs: Any) -> tuple[int, list[str]]:
+    """Run a subprocess, streaming output to terminal and returning (returncode, lines)."""
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        encoding="utf-8", errors="replace",
+        **kwargs,
+    )
+    output_lines: list[str] = []
+    for line in proc.stdout:  # type: ignore[union-attr]
+        line_stripped = line.rstrip()
+        output_lines.append(line_stripped)
+        print(f"[{name}/{label}] {line_stripped}", flush=True)
+    proc.wait()
+    return proc.returncode, output_lines
+
+
 def _install_python_deps(server_dir: Path, status: Optional[ServerInstallStatus] = None) -> bool:
     """Install Python dependencies for a cloned MCP server.
 
     Creates a dedicated venv inside the server directory so external
-    servers don't pollute the HomePilot backend environment.  Falls back
-    to the backend venv or ``python -m pip`` if venv creation fails.
+    servers don't pollute the HomePilot backend environment.
+
+    Prefers ``uv`` (much faster) when available, falls back to pip.
     """
+    ilog = install_logger
+    name = server_dir.name
+
+    # Check for pyproject.toml or requirements.txt
+    pyproject = server_dir / "pyproject.toml"
     req_file = server_dir / "requirements.txt"
-    if not req_file.exists():
-        return True  # No deps to install
+    has_pyproject = pyproject.exists()
+    has_requirements = req_file.exists()
+
+    # Warn if pyproject.toml is missing [build-system]; the upstream MCP
+    # server should declare it — we no longer patch third-party files.
+    if has_pyproject:
+        content = pyproject.read_text(encoding="utf-8")
+        if "[build-system]" not in content:
+            ilog.warning(
+                name, "deps",
+                "pyproject.toml is missing [build-system]; "
+                "pip install -e . may fail — please fix the upstream project",
+            )
+
+    if not has_pyproject and not has_requirements:
+        ilog.info(name, "deps", "No requirements.txt or pyproject.toml found, skipping dependency install")
+        return True
 
     if status:
         status.message = "Installing Python dependencies..."
         status.progress_pct = 35
 
+    ilog.info(name, "deps", f"Found: {'pyproject.toml' if has_pyproject else ''} {'requirements.txt' if has_requirements else ''}".strip())
+
     import sys
 
-    # Create a dedicated venv for this external server
+    uv_bin = _find_uv()
+    use_uv = uv_bin is not None
     server_venv = server_dir / ".venv"
-    server_pip = server_venv / "bin" / "pip"
+    server_python = server_venv / "bin" / "python"
 
-    if not server_pip.is_file():
+    # ── Step 1: Create virtual environment ──────────────────────────────
+    if not server_python.is_file():
+        print(f"\n{'='*60}")
+        if use_uv:
+            ilog.info(name, "deps", f"Creating virtual environment with uv at {server_venv}")
+            print(f"[{name}] Creating virtual environment with uv (fast)...")
+            venv_cmd = [uv_bin, "venv", str(server_venv), "--python", sys.executable]
+        else:
+            ilog.info(name, "deps", f"Creating virtual environment at {server_venv}")
+            print(f"[{name}] Creating virtual environment with python -m venv...")
+            venv_cmd = [sys.executable, "-m", "venv", str(server_venv)]
+        print(f"[{name}] Command: {' '.join(venv_cmd)}")
+        print(f"{'='*60}", flush=True)
         try:
-            subprocess.run(
-                [sys.executable, "-m", "venv", str(server_venv)],
-                capture_output=True, encoding="utf-8", errors="replace", timeout=60,
-            )
+            rc, _ = _stream_subprocess(venv_cmd, name, "venv")
+            if rc == 0:
+                ilog.info(name, "deps", "Virtual environment created successfully")
+                print(f"[{name}] Virtual environment created successfully")
+            else:
+                ilog.warning(name, "deps", f"venv creation failed (exit code {rc})")
+                print(f"[{name}] venv creation failed (exit code {rc})")
+                # If uv failed, try stdlib venv as fallback
+                if use_uv:
+                    ilog.info(name, "deps", "Falling back to python -m venv...")
+                    print(f"[{name}] Falling back to python -m venv...", flush=True)
+                    fallback_venv_cmd = [sys.executable, "-m", "venv", str(server_venv)]
+                    rc2, _ = _stream_subprocess(fallback_venv_cmd, name, "venv")
+                    if rc2 != 0:
+                        ilog.warning(name, "deps", "stdlib venv also failed")
+                        print(f"[{name}] stdlib venv also failed")
         except Exception as exc:
-            logger.debug("venv creation failed for %s: %s", server_dir.name, exc)
+            ilog.warning(name, "deps", f"venv creation failed: {exc}")
+            print(f"[{name}] venv creation failed: {exc}")
+    else:
+        ilog.info(name, "deps", f"Using existing virtual environment at {server_venv}")
+        print(f"[{name}] Using existing virtual environment at {server_venv}")
 
-    # Resolve pip: server venv → backend venv → python -m pip
-    pip_cmd: list[str] = []
-    candidates = [
-        server_venv / "bin" / "pip",
-        _project_root() / "backend" / ".venv" / "bin" / "pip",
-        Path(sys.executable).parent / "pip",
-    ]
-    for c in candidates:
-        if c.is_file():
-            pip_cmd = [str(c)]
-            break
-    if not pip_cmd:
-        pip_cmd = [sys.executable, "-m", "pip"]
+    # ── Step 2: Try `make install` first (preferred) ───────────────────
+    # Repos that ship a Makefile with an `install` target can handle
+    # repo-specific setup (env files, playwright, extra deps, etc.).
+    makefile = server_dir / "Makefile"
+    has_makefile_install = False
+    if makefile.is_file():
+        try:
+            mk_text = makefile.read_text(encoding="utf-8", errors="replace")
+            # Match a line starting with "install:" (Makefile target)
+            has_makefile_install = any(
+                line.split("#")[0].strip().startswith("install:")
+                for line in mk_text.splitlines()
+            )
+        except OSError:
+            pass
+
+    if has_makefile_install:
+        make_bin = shutil.which("make") or "make"
+        make_cmd = [make_bin, "-C", str(server_dir), "install"]
+        ilog.info(name, "deps", f"Found Makefile with install target — running make install")
+        print(f"\n{'='*60}")
+        print(f"[{name}] Installing dependencies with make install (preferred)...")
+        print(f"[{name}] Command: {' '.join(make_cmd)}")
+        print(f"{'='*60}", flush=True)
+        try:
+            rc, output_lines = _stream_subprocess(make_cmd, name, "make")
+            if rc == 0:
+                ilog.info(name, "deps", "make install succeeded")
+                print(f"[{name}] Dependencies installed successfully via make install")
+                return True
+            else:
+                full_output = "\n".join(output_lines[-20:])
+                ilog.warning(name, "deps", f"make install failed (exit {rc}), falling back to pip/uv", full_output[:1000])
+                print(f"[{name}] make install FAILED (exit code {rc}), falling back to pip/uv...")
+        except subprocess.TimeoutExpired:
+            ilog.warning(name, "deps", "make install timed out, falling back to pip/uv")
+            print(f"[{name}] make install TIMED OUT, falling back to pip/uv...")
+        except Exception as exc:
+            ilog.warning(name, "deps", f"make install exception: {exc}, falling back to pip/uv")
+            print(f"[{name}] make install exception: {exc}, falling back to pip/uv...")
+
+    # ── Step 3: Fallback — uv pip install / pip install ──────────────
+    # base_cmd includes the full prefix up to the package specifier, e.g.:
+    #   uv:  ["uv", "pip", "install", "--python", "/path/to/python"]
+    #   pip: ["/path/to/pip", "install"]
+    if use_uv:
+        base_cmd = [uv_bin, "pip", "install", "--python", str(server_venv / "bin" / "python")]
+        pkg_manager = "uv"
+        ilog.info(name, "deps", f"Using uv for package installation: {uv_bin}")
+    else:
+        # Resolve pip: server venv → backend venv → python -m pip
+        server_pip = server_venv / "bin" / "pip"
+        candidates = [
+            server_pip,
+            _project_root() / "backend" / ".venv" / "bin" / "pip",
+            Path(sys.executable).parent / "pip",
+        ]
+        base_cmd = []
+        for c in candidates:
+            if c.is_file():
+                base_cmd = [str(c), "install"]
+                ilog.info(name, "deps", f"Using pip: {c}")
+                break
+        if not base_cmd:
+            base_cmd = [sys.executable, "-m", "pip", "install"]
+            ilog.info(name, "deps", f"Using fallback pip: {' '.join(base_cmd)}")
+        pkg_manager = "pip"
+
+    # Prefer pyproject.toml, fall back to requirements.txt
+    if has_pyproject:
+        install_cmd = base_cmd + [str(server_dir)]
+        ilog.info(name, "deps", f"Installing via pyproject.toml: {pkg_manager} install {server_dir}")
+    else:
+        install_cmd = base_cmd + ["-r", str(req_file)]
+        ilog.info(name, "deps", f"Installing via requirements.txt: {pkg_manager} install -r {req_file}")
+
+    # ── Step 4: Run pip/uv install ───────────────────────────────────
+    try:
+        ilog.info(name, "deps", f"Running: {' '.join(install_cmd)}")
+        print(f"\n{'='*60}")
+        print(f"[{name}] Installing dependencies with {pkg_manager}...")
+        print(f"[{name}] Command: {' '.join(install_cmd)}")
+        print(f"{'='*60}", flush=True)
+
+        rc, output_lines = _stream_subprocess(install_cmd, name, pkg_manager)
+
+        if rc != 0:
+            full_output = "\n".join(output_lines[-20:])
+            ilog.warning(name, "deps", f"Primary {pkg_manager} install failed", full_output[:1000])
+            print(f"[{name}] {pkg_manager} install FAILED (exit code {rc})")
+
+            # Fallback: if pyproject.toml install failed, try requirements.txt
+            if has_pyproject and has_requirements:
+                ilog.info(name, "deps", "Falling back to requirements.txt")
+                fallback_cmd = base_cmd + ["-r", str(req_file)]
+                ilog.info(name, "deps", f"Running: {' '.join(fallback_cmd)}")
+                print(f"\n[{name}] Falling back to requirements.txt...")
+                print(f"[{name}] Command: {' '.join(fallback_cmd)}", flush=True)
+                rc2, _ = _stream_subprocess(fallback_cmd, name, pkg_manager)
+                if rc2 == 0:
+                    ilog.info(name, "deps", "Fallback requirements.txt install succeeded")
+                    print(f"[{name}] Fallback requirements.txt install succeeded")
+                    return True
+                else:
+                    ilog.error(name, "deps", "Fallback requirements.txt also failed")
+                    print(f"[{name}] Fallback requirements.txt also FAILED")
+
+            return False
+        ilog.info(name, "deps", f"Dependencies installed successfully via {pkg_manager}")
+        print(f"[{name}] Dependencies installed successfully via {pkg_manager}")
+        return True
+    except subprocess.TimeoutExpired:
+        ilog.error(name, "deps", f"{pkg_manager} install timed out after 300s")
+        print(f"[{name}] {pkg_manager} install TIMED OUT after 300s")
+        return False
+    except Exception as exc:
+        ilog.error(name, "deps", f"{pkg_manager} install exception: {exc}")
+        print(f"[{name}] {pkg_manager} install EXCEPTION: {exc}")
+        return False
+
+
+# ── Auto-populate .env for external servers ───────────────────────────────
+
+
+def _auto_populate_env(server_dir: Path, server_name: str, env: dict) -> None:
+    """Auto-create a .env file from .env.example if missing.
+
+    Generates secure values for known sensitive keys (e.g. Fernet token keys)
+    and injects them into the process env dict so the server can start.
+    """
+    ilog = install_logger
+    env_file = server_dir / ".env"
+    env_example = server_dir / ".env.example"
+
+    if env_file.exists():
+        # .env already exists — parse and inject into env dict
+        ilog.info(server_name, "env", f"Found existing .env at {env_file}")
+        _inject_env_file(env_file, env, server_name)
+        return
+
+    if not env_example.exists():
+        return
+
+    ilog.info(server_name, "env", "No .env found — generating from .env.example")
+
+    lines: list[str] = []
+    for raw_line in env_example.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        # Comments and blank lines: keep as-is
+        if not line or line.startswith("#"):
+            lines.append(raw_line)
+            continue
+
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+
+        # Auto-generate Fernet keys for known patterns
+        if "TOKEN_KEY" in key or "FERNET_KEY" in key or "ENCRYPTION_KEY" in key:
+            if value in ("", "PLEASE_SET_A_FERNET_KEY", "YOUR_KEY_HERE"):
+                try:
+                    from cryptography.fernet import Fernet
+                    generated = Fernet.generate_key().decode("utf-8")
+                except ImportError:
+                    import base64
+                    generated = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8")
+                lines.append(f"{key}={generated}")
+                env[key] = generated
+                ilog.info(server_name, "env", f"Generated Fernet key for {key}")
+                continue
+
+        # Keep the example value (may be a placeholder)
+        lines.append(raw_line)
+        # Inject non-empty, non-placeholder values into env
+        if value and not value.startswith("YOUR_"):
+            env[key] = value
+
+    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    ilog.info(server_name, "env", f"Created .env at {env_file}")
+
+
+def _inject_env_file(env_file: Path, env: dict, server_name: str) -> None:
+    """Parse a .env file and inject values into the env dict."""
+    ilog = install_logger
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key and value:
+            env[key] = value
+    ilog.info(server_name, "env", "Injected .env values into server environment")
+
+
+# ── Detect Entry Point from pyproject.toml ────────────────────────────────
+
+
+def _detect_pyproject_app(server_dir: Path, server_name: str) -> Optional[str]:
+    """Try to detect the ASGI app module path from pyproject.toml.
+
+    Looks for ``[project.scripts]`` entries that reference a module,
+    then constructs a ``module.main:app`` style string for uvicorn.
+
+    For example, teams-mcp-server defines:
+        [project.scripts]
+        teams-mcp = "teams_mcp.main:run"
+
+    We extract ``teams_mcp.main:app`` from this.
+    """
+    pyproject_path = server_dir / "pyproject.toml"
+    if not pyproject_path.exists():
+        return None
 
     try:
-        result = subprocess.run(
-            pip_cmd + ["install", "-r", str(req_file), "--quiet"],
-            capture_output=True, encoding="utf-8", errors="replace", timeout=180,
-        )
-        if result.returncode != 0:
-            logger.warning("pip install failed for %s: %s", server_dir.name, result.stderr)
-            return False
-        return True
-    except Exception as exc:
-        logger.warning("pip install failed for %s: %s", server_dir.name, exc)
-        return False
+        content = pyproject_path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+    # Simple TOML parsing for [project.scripts] section
+    # Look for lines like: name = "module.path:function"
+    in_scripts = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped == "[project.scripts]":
+            in_scripts = True
+            continue
+        if in_scripts:
+            if stripped.startswith("["):
+                break  # next section
+            if "=" in stripped and not stripped.startswith("#"):
+                _, _, val = stripped.partition("=")
+                val = val.strip().strip('"').strip("'")
+                if ":" in val:
+                    module_path, _ = val.rsplit(":", 1)
+                    # Convert "teams_mcp.main" → "teams_mcp.main:app"
+                    return f"{module_path}:app"
+
+    # Fallback: look for src/<package>/main.py pattern
+    src_dir = server_dir / "src"
+    if src_dir.is_dir():
+        for pkg in src_dir.iterdir():
+            if pkg.is_dir() and (pkg / "main.py").exists() and (pkg / "__init__.py").exists():
+                return f"{pkg.name}.main:app"
+
+    return None
 
 
 # ── Start External Server Process ─────────────────────────────────────────
@@ -526,6 +995,8 @@ async def _start_external_server(
       - Python (app.py)      → uvicorn app:app --port <port>
       - Node (index.js)      → node index.js --port <port>
     """
+    ilog = install_logger
+
     if status:
         status.message = f"Starting server on port {port}..."
         status.phase = InstallPhase.STARTING
@@ -539,56 +1010,132 @@ async def _start_external_server(
     backend_python = _project_root() / "backend" / ".venv" / "bin" / "python"
     if server_python.is_file():
         python = server_python
+        ilog.info(server_name, "start", f"Using server venv Python: {python}")
     elif backend_python.is_file():
         python = backend_python
+        ilog.info(server_name, "start", f"Using backend venv Python: {python}")
     else:
         python = Path(sys.executable)
+        ilog.info(server_name, "start", f"Using system Python: {python}")
 
-    env = {**os.environ, "PYTHONPATH": str(server_dir)}
+    # Build PYTHONPATH: include both the server root and src/ for src-layout packages
+    pythonpath_parts = [str(server_dir)]
+    src_dir = server_dir / "src"
+    if src_dir.is_dir():
+        pythonpath_parts.append(str(src_dir))
+    existing_pp = os.environ.get("PYTHONPATH", "")
+    if existing_pp:
+        pythonpath_parts.append(existing_pp)
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(pythonpath_parts)}
 
-    # Detect entry point
+    # Detect entry point — check multiple patterns in priority order:
+    #   1. app/main.py             (HomePilot builtin style)
+    #   2. pyproject.toml scripts  (pip-installed CLI, e.g. teams-mcp-server)
+    #   3. app.py                  (simple uvicorn app)
     main_py = server_dir / "app" / "main.py"
     app_py = server_dir / "app.py"
+    pyproject_toml = server_dir / "pyproject.toml"
+    cmd: list[str] = []
 
     if main_py.exists():
         cmd = [str(python), "-m", "app.main", "--http",
                "--host", "127.0.0.1", "--port", str(port)]
+        ilog.info(server_name, "start", f"Entry point: app/main.py (HomePilot module style)")
+    elif pyproject_toml.exists():
+        # For pip-installed packages, use uvicorn with the module's app object
+        # Try to detect the module name from pyproject.toml
+        module_app = _detect_pyproject_app(server_dir, server_name)
+        if module_app:
+            cmd = [str(python), "-m", "uvicorn", module_app,
+                   "--host", "127.0.0.1", "--port", str(port),
+                   "--log-level", "info"]
+            ilog.info(server_name, "start", f"Entry point: pyproject.toml → uvicorn {module_app}")
+            # Set port env var for pydantic-settings based servers
+            env[f"{server_name.upper().replace('-', '_')}_PORT"] = str(port)
+            env["TEAMS_MCP_PORT"] = str(port)  # specific for teams-mcp-server
+            env["TEAMS_MCP_HOST"] = "127.0.0.1"
+            # Auto-generate TEAMS_MCP_TOKEN_KEY if not already set
+            if "TEAMS_MCP_TOKEN_KEY" not in env:
+                try:
+                    from cryptography.fernet import Fernet
+                    env["TEAMS_MCP_TOKEN_KEY"] = Fernet.generate_key().decode()
+                    ilog.info(server_name, "start", "Auto-generated TEAMS_MCP_TOKEN_KEY (cryptography)")
+                except Exception:
+                    # cryptography may not be in the backend venv; generate
+                    # a url-safe base64 key that Fernet accepts (32 bytes).
+                    import base64
+                    env["TEAMS_MCP_TOKEN_KEY"] = base64.urlsafe_b64encode(os.urandom(32)).decode()
+                    ilog.info(server_name, "start", "Auto-generated TEAMS_MCP_TOKEN_KEY (os.urandom fallback)")
+        else:
+            ilog.warning(server_name, "start", "pyproject.toml found but could not detect app entry point")
     elif app_py.exists():
         cmd = [str(python), "-m", "uvicorn", "app:app",
                "--host", "127.0.0.1", "--port", str(port),
                "--log-level", "warning"]
-    else:
-        logger.error("Cannot detect entry point for %s", server_name)
+        ilog.info(server_name, "start", f"Entry point: app.py (uvicorn style)")
+
+    # Auto-populate .env from .env.example if missing
+    _auto_populate_env(server_dir, server_name, env)
+
+    if not cmd:
+        ilog.error(server_name, "start", "Cannot detect entry point — no app/main.py, pyproject.toml scripts, or app.py found")
         return None
 
+    # Capture server output to a log file for debugging
+    log_dir = _community_external_dir() / "install_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stdout_log = log_dir / f"{server_name}.stdout.log"
+    stderr_log = log_dir / f"{server_name}.stderr.log"
+
     try:
+        ilog.info(server_name, "start", f"Command: {' '.join(cmd)}")
+        ilog.info(server_name, "start", f"Working directory: {server_dir}")
+        ilog.info(server_name, "start", f"Server stdout → {stdout_log}")
+        ilog.info(server_name, "start", f"Server stderr → {stderr_log}")
+
+        stdout_f = open(stdout_log, "w", encoding="utf-8")
+        stderr_f = open(stderr_log, "w", encoding="utf-8")
         proc = subprocess.Popen(
             cmd,
             env=env,
             cwd=str(server_dir),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=stdout_f,
+            stderr=stderr_f,
         )
-        logger.info("Started external server %s (pid=%d, port=%d)", server_name, proc.pid, port)
+        ilog.info(server_name, "start", f"Process started (pid={proc.pid}, port={port})")
         return proc
     except Exception as exc:
-        logger.error("Failed to start %s: %s", server_name, exc)
+        ilog.error(server_name, "start", f"Failed to start process: {exc}")
         return None
 
 
-async def _wait_for_health(port: int, timeout: int = 15) -> bool:
+async def _wait_for_health(port: int, timeout: int = 15, server_name: str = "") -> bool:
     """Wait for a server to become healthy."""
     import httpx
+    ilog = install_logger
     host = os.getenv("MCP_TOOL_HOST", "127.0.0.1")
-    for _ in range(timeout):
+    url = f"http://{host}:{port}/health"
+    sn = server_name or f"port-{port}"
+    ilog.info(sn, "health", f"Polling {url} (timeout={timeout}s)")
+    print(f"[{sn}] Health check: polling {url} (timeout={timeout}s)", flush=True)
+    for attempt in range(timeout):
         try:
             async with httpx.AsyncClient(timeout=2.0) as c:
-                r = await c.get(f"http://{host}:{port}/health")
+                r = await c.get(url)
                 if r.status_code == 200:
+                    ilog.info(sn, "health", f"Server healthy after {attempt + 1}s", r.text[:200])
+                    print(f"[{sn}] Server HEALTHY after {attempt + 1}s", flush=True)
                     return True
-        except Exception:
-            pass
+                ilog.info(sn, "health", f"Attempt {attempt + 1}/{timeout}: HTTP {r.status_code}")
+                if attempt % 5 == 4:
+                    print(f"[{sn}] Health check attempt {attempt + 1}/{timeout}: HTTP {r.status_code}", flush=True)
+        except Exception as exc:
+            ilog.info(sn, "health", f"Attempt {attempt + 1}/{timeout}: {type(exc).__name__}")
+            if attempt % 5 == 4:
+                print(f"[{sn}] Health check attempt {attempt + 1}/{timeout}: {type(exc).__name__}", flush=True)
         await asyncio.sleep(1)
+    ilog.error(sn, "health", f"Server not healthy after {timeout}s")
+    print(f"[{sn}] Server NOT HEALTHY after {timeout}s", flush=True)
     return False
 
 
@@ -624,7 +1171,15 @@ async def _discover_and_register(
         async with httpx.AsyncClient(timeout=10.0) as c:
             r = await c.post(url, json=body)
             if r.status_code == 200:
-                tools = r.json().get("result", {}).get("tools", [])
+                result = r.json().get("result", {})
+                # MCP servers may return {"result": {"tools": [...]}}
+                # or {"result": [...]} (tools list directly).
+                if isinstance(result, list):
+                    tools = result
+                elif isinstance(result, dict):
+                    tools = result.get("tools", [])
+                else:
+                    tools = []
     except Exception as exc:
         logger.warning("Tool discovery failed for %s: %s", server_name, exc)
 
@@ -720,7 +1275,7 @@ async def install_community_bundle(
     source = server_info.get("source", {})
     bundle_id = source.get("bundle_id", "")
     git_url = source.get("git", "")
-    ref = source.get("ref", "main") or "main"
+    ref = source.get("ref", "master") or "master"
     port = server_info.get("default_port") or 0
 
     status = ServerInstallStatus(
@@ -920,6 +1475,7 @@ async def install_external_server(
     auth_user: str = "admin",
     auth_pass: str = "changeme",
     bearer_token: Optional[str] = None,
+    force_reinstall: bool = False,
 ) -> ServerInstallStatus:
     """Install a single external MCP server: clone → deps → start → register → sync.
 
@@ -929,6 +1485,7 @@ async def install_external_server(
     source = server_info.get("source", {})
     git_url = source.get("git", "")
     ref = source.get("ref", "master") or "master"
+    ilog = install_logger
 
     status = ServerInstallStatus(
         server_name=name,
@@ -937,74 +1494,119 @@ async def install_external_server(
     )
     start_time = time.monotonic()
 
+    ilog.info(name, "install", "=" * 60)
+    ilog.info(name, "install", f"Starting installation of external MCP server: {name}")
+    ilog.info(name, "install", f"Source: {git_url} (ref={ref})")
+    ilog.info(name, "install", "=" * 60)
+    print(f"\n{'#'*60}")
+    print(f"# Installing MCP server: {name}")
+    print(f"# Source: {git_url} (ref={ref})")
+    print(f"{'#'*60}", flush=True)
+
     try:
         # Check if already installed in external registry
         existing = _find_in_external_registry(name)
-        if existing and existing.get("status") == "installed":
+        if existing and existing.get("status") == "installed" and not force_reinstall:
             port = existing["port"]
-            healthy = await _wait_for_health(port, timeout=3)
+            ilog.info(name, "install", f"Found in registry as installed (port={port}), checking health...")
+            healthy = await _wait_for_health(port, timeout=3, server_name=name)
             if healthy:
+                ilog.info(name, "install", f"Already running and healthy — skipping reinstall")
                 status.phase = InstallPhase.SKIPPED
                 status.progress_pct = 100
                 status.message = f"Already installed and running on port {port}"
                 status.port = port
                 status.elapsed_ms = int((time.monotonic() - start_time) * 1000)
                 return status
+            ilog.info(name, "install", "Registered but not healthy — proceeding with reinstall")
+        elif force_reinstall and existing:
+            ilog.info(name, "install", "force_reinstall=True — purging and reinstalling")
 
         # Step 1: Clone from git
         if not git_url:
+            ilog.error(name, "install", f"No git URL provided for server '{name}'")
             status.phase = InstallPhase.FAILED
             status.error = f"No git URL provided for server '{name}'"
             status.elapsed_ms = int((time.monotonic() - start_time) * 1000)
             return status
 
+        print(f"[{name}] Step 1/7: Cloning from {git_url}", flush=True)
+        ilog.info(name, "clone", f"Step 1/7: Cloning from {git_url}")
         status.phase = InstallPhase.CLONING
         status.progress_pct = 10
         status.message = f"Cloning {name} from {git_url}..."
 
-        server_dir = _clone_server_from_git(git_url, name, ref=ref, status=status)
+        server_dir = _clone_server_from_git(git_url, name, ref=ref, status=status, force_reinstall=force_reinstall)
         status.install_path = str(server_dir)
 
         # Step 2: Install Python dependencies
+        print(f"\n[{name}] Step 2/7: Installing Python dependencies", flush=True)
+        ilog.info(name, "deps", "Step 2/7: Installing Python dependencies")
         status.progress_pct = 30
         deps_ok = _install_python_deps(server_dir, status=status)
         if not deps_ok:
-            logger.warning("Dependency install had issues for %s, continuing anyway", name)
+            ilog.warning(name, "deps", "Dependency install had issues, continuing anyway")
+            print(f"[{name}] WARNING: Dependency install had issues, continuing anyway")
 
         # Step 3: Allocate port & start server
         port = server_info.get("default_port") or _allocate_port(name)
         status.port = port
+        print(f"\n[{name}] Step 3/7: Starting server on port {port}", flush=True)
+        ilog.info(name, "start", f"Step 3/7: Allocated port {port}")
         status.phase = InstallPhase.STARTING
         status.progress_pct = 45
         status.message = f"Starting on port {port}..."
 
         proc = await _start_external_server(server_dir, port, name, status=status)
         if not proc:
+            ilog.error(name, "start", "Failed to start server process — aborting")
+            print(f"[{name}] FAILED to start server process — aborting")
             status.phase = InstallPhase.FAILED
             status.error = f"Failed to start server process"
             status.elapsed_ms = int((time.monotonic() - start_time) * 1000)
             return status
 
         # Step 4: Wait for health
+        print(f"\n[{name}] Step 4/7: Waiting for server health check...", flush=True)
+        ilog.info(name, "health", "Step 4/7: Waiting for server health check")
         status.message = f"Waiting for server to become healthy..."
         status.progress_pct = 55
-        healthy = await _wait_for_health(port, timeout=20)
+        healthy = await _wait_for_health(port, timeout=20, server_name=name)
         if not healthy:
             proc.terminate()
+            ilog.error(name, "health", "Server did not become healthy within 20s — aborting")
+            print(f"[{name}] FAILED: Server did not become healthy within 20s")
+            # Try to capture stderr for diagnostics
+            stderr_log = _community_external_dir() / "install_logs" / f"{name}.stderr.log"
+            if stderr_log.exists():
+                try:
+                    tail = stderr_log.read_text(encoding="utf-8", errors="replace")[-1000:]
+                    ilog.error(name, "health", "Server stderr (tail):", tail)
+                    print(f"[{name}] Server stderr:\n{tail}")
+                except Exception:
+                    pass
             status.phase = InstallPhase.FAILED
             status.error = f"Server did not become healthy within 20s"
             status.elapsed_ms = int((time.monotonic() - start_time) * 1000)
             return status
 
         # Step 5: Discover tools & register in Forge
+        print(f"\n[{name}] Step 5/7: Discovering tools via RPC...", flush=True)
+        ilog.info(name, "discover", "Step 5/7: Discovering tools via RPC")
         discovered, registered = await _discover_and_register(
             port, name, forge_url, auth_user, auth_pass, bearer_token, status=status,
         )
+        ilog.info(name, "discover", f"Discovered {discovered} tools, registered {registered} in Forge")
+        print(f"[{name}] Discovered {discovered} tools, registered {registered} in Forge")
 
         # Step 6: Register in external server registry
+        print(f"[{name}] Step 6/7: Registering in external server registry", flush=True)
+        ilog.info(name, "registry", "Step 6/7: Registering in external server registry")
         _register_external_server(name, port, git_url, str(server_dir), discovered)
 
         # Step 7: Trigger full sync to update virtual servers
+        print(f"[{name}] Step 7/7: Syncing with Context Forge...", flush=True)
+        ilog.info(name, "sync", "Step 7/7: Syncing with Context Forge")
         status.phase = InstallPhase.SYNCING
         status.progress_pct = 90
         status.message = "Syncing with Context Forge..."
@@ -1016,18 +1618,46 @@ async def install_external_server(
                 auth_pass=auth_pass,
                 bearer_token=bearer_token,
             )
+            ilog.info(name, "sync", "Forge sync completed successfully")
+            print(f"[{name}] Forge sync completed")
         except Exception as exc:
-            logger.warning("Post-install sync failed for %s: %s", name, exc)
+            ilog.warning(name, "sync", f"Post-install sync failed: {exc}")
+            print(f"[{name}] WARNING: Post-install sync failed: {exc}")
+
+        # Step 8: Re-enable previously disabled tools (if this is a reinstall)
+        try:
+            from .mcp_uninstaller import reenable_after_reinstall, get_disabled_tools
+            if get_disabled_tools(name):
+                ilog.info(name, "reenable", "Step 8: Re-enabling tools disabled during previous uninstall")
+                reenable_result = await reenable_after_reinstall(
+                    name, new_port=port,
+                    forge_url=forge_url, auth_user=auth_user,
+                    auth_pass=auth_pass, bearer_token=bearer_token,
+                )
+                reenabled = reenable_result.get("reenabled", 0)
+                if reenabled:
+                    ilog.info(name, "reenable", f"Re-enabled {reenabled} tools for previously affected personas")
+        except Exception as exc:
+            ilog.warning(name, "reenable", f"Re-enable step failed (non-critical): {exc}")
 
         # Done!
+        elapsed = int((time.monotonic() - start_time) * 1000)
         status.phase = InstallPhase.COMPLETE
         status.progress_pct = 100
         status.message = f"Installed: {discovered} tools discovered, {registered} registered"
+        ilog.info(name, "install", f"Installation complete in {elapsed}ms")
+        ilog.info(name, "install", f"Summary: port={port}, tools={discovered}, registered={registered}")
+        ilog.info(name, "install", "=" * 60)
+        print(f"\n{'='*60}")
+        print(f"[{name}] INSTALLATION COMPLETE in {elapsed}ms")
+        print(f"[{name}] Port: {port} | Tools: {discovered} | Registered: {registered}")
+        print(f"{'='*60}", flush=True)
 
     except Exception as exc:
         status.phase = InstallPhase.FAILED
         status.error = str(exc)
-        logger.error("Install failed for %s: %s", name, exc, exc_info=True)
+        ilog.error(name, "install", f"Installation failed: {exc}")
+        print(f"\n[{name}] INSTALLATION FAILED: {exc}")
 
     status.elapsed_ms = int((time.monotonic() - start_time) * 1000)
     return status
@@ -1039,6 +1669,7 @@ async def install_servers_from_plan(
     auth_user: str = "admin",
     auth_pass: str = "changeme",
     bearer_token: Optional[str] = None,
+    force_reinstall: bool = False,
 ) -> InstallPlan:
     """Execute the install plan: install all servers_to_install sequentially.
 
@@ -1054,6 +1685,7 @@ async def install_servers_from_plan(
         else:
             install_status = await install_external_server(
                 server_info, forge_url, auth_user, auth_pass, bearer_token,
+                force_reinstall=force_reinstall,
             )
         plan.install_statuses.append(install_status)
 
@@ -1084,6 +1716,7 @@ async def resolve_persona_mcp_deps(
     auth_user: str = "admin",
     auth_pass: str = "changeme",
     bearer_token: Optional[str] = None,
+    force_reinstall: bool = False,
 ) -> InstallPlan:
     """One-shot: analyze persona MCP deps and optionally auto-install missing ones.
 
@@ -1093,18 +1726,34 @@ async def resolve_persona_mcp_deps(
       3. If auto_install=True, install all missing servers
       4. Return the complete plan with statuses
 
+    When *force_reinstall* is ``True``, servers that are already installed
+    are moved into ``servers_to_install`` so they get purged and reinstalled.
+
     Used by:
       - POST /persona/import/resolve-deps (preview + plan)
       - POST /persona/import/install-deps (auto-install)
+      - POST /persona/import/atomic (one-click)
     """
     mcp_dep = dependencies.get("mcp_servers") or {}
     plan = await analyze_mcp_dependencies(mcp_dep, persona_name)
+
+    # When force-reinstalling, move already-available servers back into
+    # the install queue so they get purged and freshly cloned.
+    if force_reinstall and plan.servers_already_available:
+        reinstallable = [
+            s for s in plan.servers_already_available
+            if s.get("source", {}).get("type") in ("external", "community_bundle")
+        ]
+        for s in reinstallable:
+            plan.servers_already_available.remove(s)
+            plan.servers_to_install.append(s)
 
     if auto_install and plan.servers_to_install:
         if not forge_url:
             forge_url = os.getenv("CONTEXT_FORGE_URL", "http://localhost:4444")
         plan = await install_servers_from_plan(
             plan, forge_url, auth_user, auth_pass, bearer_token,
+            force_reinstall=force_reinstall,
         )
 
     return plan

@@ -20,8 +20,13 @@
         "news.health"
       ],
       "health_check": {
-        "method": "GET",
-        "path": "/health"
+        "method": "POST",
+        "path": "/rpc",
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "id": 1
+        }
       }
     }
   ]

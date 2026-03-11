@@ -842,6 +842,66 @@ def import_persona_package(
         except KeyError:
             pass
 
+        # v2: auto-populate tool_ids from dependencies so tools are pinned
+        # on install.  Wrapped in try/except so it NEVER breaks persona import
+        # — tool auto-pinning is best-effort, not critical.
+        try:
+            if isinstance(agentic, dict) and not agentic.get("tool_ids"):
+                _dep_tool_ids: List[str] = []
+                _tools_dep: Dict[str, Any] = {}
+
+                # 1) Forge tools from dependencies/tools.json
+                try:
+                    _tools_dep = json.loads(
+                        z.read("dependencies/tools.json").decode("utf-8")
+                    )
+                    forge_tools = (_tools_dep.get("forge_tools") or {})
+                    for ft in (forge_tools.get("tools") if isinstance(forge_tools, dict) else []) or []:
+                        tid = (ft.get("id") or ft.get("name") or "") if isinstance(ft, dict) else str(ft)
+                        if tid and tid not in _dep_tool_ids:
+                            _dep_tool_ids.append(tid)
+                except KeyError:
+                    pass
+
+                # 2) Tools from MCP servers in dependencies/mcp_servers.json
+                try:
+                    _mcp_dep = json.loads(
+                        z.read("dependencies/mcp_servers.json").decode("utf-8")
+                    )
+                    for srv in (_mcp_dep.get("servers") or []):
+                        if not isinstance(srv, dict):
+                            continue
+                        for tid in (srv.get("tools_provided") or []):
+                            tid_str = tid if isinstance(tid, str) else str(tid)
+                            if tid_str and tid_str not in _dep_tool_ids:
+                                _dep_tool_ids.append(tid_str)
+                except KeyError:
+                    pass
+
+                if _dep_tool_ids:
+                    agentic["tool_ids"] = _dep_tool_ids
+
+                # Also seed tool_details so the frontend knows names/descriptions
+                if not agentic.get("tool_details") and _dep_tool_ids:
+                    _details: List[Dict[str, str]] = []
+                    try:
+                        forge_tools_list = (_tools_dep.get("forge_tools") or {})
+                        for ft in (forge_tools_list.get("tools") if isinstance(forge_tools_list, dict) else []) or []:
+                            if isinstance(ft, dict):
+                                _details.append({
+                                    "id": ft.get("id") or ft.get("name") or "",
+                                    "name": ft.get("name") or ft.get("id") or "",
+                                    "description": ft.get("description") or "",
+                                })
+                            elif isinstance(ft, str) and ft:
+                                _details.append({"id": ft, "name": ft, "description": ""})
+                    except Exception:
+                        pass
+                    if _details:
+                        agentic["tool_details"] = _details
+        except Exception:
+            pass  # Never break import — tool pinning is best-effort
+
         # Read preview card for richer description (v2 packages)
         preview_card: Dict[str, Any] = {}
         try:

@@ -518,6 +518,17 @@ async def run_reactive_step(
         new_messages.append(msg)
         set_cooldown(room, pid, cd_turns)
 
+        # Forward persona response to Teams meeting chat (best-effort)
+        try:
+            from .bridge.manager import bridge_manager
+            if bridge_manager.is_connected(room_id):
+                import asyncio
+                asyncio.create_task(
+                    bridge_manager.send_to_meeting(room_id, msg["sender_name"], msg["content"])
+                )
+        except Exception:
+            pass  # bridge forwarding is best-effort
+
         # Clear stale wants_to_speak flag now that persona has spoken
         if pid in room.get("intents", {}):
             room["intents"][pid]["wants_to_speak"] = False

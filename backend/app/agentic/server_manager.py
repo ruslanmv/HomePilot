@@ -70,16 +70,17 @@ class ServerDef:
     def __init__(self, data: Dict[str, Any], is_core: bool = False):
         self.id: str = data["id"]
         self.port: int = data["port"]
-        self.module: str = data["module"]
+        self.module: str = data.get("module", "")
         self.label: str = data.get("label", self.id)
         self.description: str = data.get("description", "")
         self.category: str = data.get("category", "other")
         self.icon: str = data.get("icon", "server")
         self.requires_config: Optional[str] = data.get("requires_config")
+        self.source: Optional[Dict[str, Any]] = data.get("source")
         self.is_core: bool = is_core
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "id": self.id,
             "port": self.port,
             "module": self.module,
@@ -90,6 +91,9 @@ class ServerDef:
             "requires_config": self.requires_config,
             "is_core": self.is_core,
         }
+        if self.source:
+            d["source"] = self.source
+        return d
 
 
 # ── Installed State Persistence ──────────────────────────────────────────
@@ -105,6 +109,11 @@ def _state_path() -> Path:
         if p.parent.is_dir():
             return p
     return candidates[0]
+
+
+def _external_label(name: str) -> str:
+    """Convert external server name like 'mcp-teams' to a display label."""
+    return name.replace("mcp-", "").replace("hp-", "").replace("-", " ").replace("_", " ").title()
 
 
 def _read_installed() -> Dict[str, Any]:
@@ -301,6 +310,9 @@ class ServerManager:
 
     def _start_process(self, server: ServerDef) -> Optional[subprocess.Popen]:
         """Start a uvicorn subprocess for the server."""
+        if not server.module:
+            logger.info("Skipping process start for %s (external server)", server.id)
+            return None
         python = self._python_path()
         root = self._project_root()
         env = {**os.environ, "PYTHONPATH": root}
@@ -446,7 +458,7 @@ class ServerManager:
         }
 
     async def get_available(self) -> List[Dict[str, Any]]:
-        """Return all servers with their current status."""
+        """Return all servers (core + optional + external) with their current status."""
         installed_set = set(self.installed_ids())
         result: List[Dict[str, Any]] = []
 
@@ -462,7 +474,58 @@ class ServerManager:
             )
             result.append(entry)
 
+        # Include external servers from community/external/registry.json
+        result.extend(await self._get_external_entries())
+
         return result
+
+    async def _get_external_entries(self) -> List[Dict[str, Any]]:
+        """Build entries for external servers from the external registry."""
+        from .mcp_installer import _read_external_registry
+
+        reg = _read_external_registry()
+        entries: List[Dict[str, Any]] = []
+        seen_names = set()
+
+        for srv in reg.get("servers", []):
+            name = srv.get("name", "")
+            if not name or name in seen_names:
+                continue
+            seen_names.add(name)
+
+            port = srv.get("port", 0)
+            is_installed = srv.get("status") == "installed"
+
+            # Check health if installed
+            healthy = False
+            if is_installed and port:
+                healthy = await self._check_health(port, timeout=3)
+
+            entries.append({
+                "id": name,
+                "port": port,
+                "module": "",
+                "label": _external_label(name),
+                "description": f"External MCP server ({srv.get('git_url', 'community')})",
+                "category": "external",
+                "icon": "package",
+                "requires_config": None,
+                "is_core": False,
+                "source_type": "external",
+                "git_url": srv.get("git_url", ""),
+                "install_path": srv.get("install_path", ""),
+                "tools_discovered": srv.get("tools_discovered", 0),
+                "installed_at": srv.get("installed_at", ""),
+                "installed": is_installed,
+                "healthy": healthy,
+                "status": (
+                    "running" if healthy
+                    else "installed" if is_installed
+                    else "available"
+                ),
+            })
+
+        return entries
 
     async def auto_start_core(self) -> List[str]:
         """Start core MCP servers if they aren't already running.
@@ -519,6 +582,13 @@ class ServerManager:
         import (external git repos or community bundles) that are not in
         the server_catalog.yaml but still need to run for their personas
         to work.
+
+        Uses the same robust startup logic as the installer
+        (_start_external_server) including:
+          - server-local .venv detection
+          - pyproject.toml entry-point detection
+          - environment variable injection (.env files, TEAMS_MCP_* vars)
+          - log-file capture for debugging
         """
         started: List[str] = []
         root = Path(self._project_root())
@@ -532,9 +602,6 @@ class ServerManager:
             reg = json.loads(ext_path.read_text())
         except Exception:
             return started
-
-        python = self._python_path()
-        project_root = self._project_root()
 
         for entry in reg.get("servers", []):
             name = entry.get("name", "")
@@ -554,54 +621,115 @@ class ServerManager:
             except Exception:
                 pass
 
-            # Determine how to start the server
+            # Determine how to start the server — full detection matching
+            # the installer (_start_external_server in mcp_installer.py)
             server_dir = Path(install_path) if install_path else None
+            if not server_dir or not server_dir.is_dir():
+                logger.warning("External server %s install_path not found: %s", name, install_path)
+                continue
 
-            if server_dir and server_dir.is_dir():
-                # Try to detect entry point
-                app_py = server_dir / "app.py"
-                main_py = server_dir / "app" / "main.py"
-                env = {**os.environ, "PYTHONPATH": f"{project_root}:{server_dir}"}
+            # Python interpreter: prefer server .venv, then backend .venv, then sys
+            server_python = server_dir / ".venv" / "bin" / "python"
+            backend_python = root / "backend" / ".venv" / "bin" / "python"
+            if server_python.is_file():
+                python = str(server_python)
+            elif backend_python.is_file():
+                python = str(backend_python)
+            else:
+                python = sys.executable
 
-                if main_py.exists():
-                    cmd = [python, "-m", "app.main", "--http",
-                           "--host", "127.0.0.1", "--port", str(port)]
-                elif app_py.exists():
-                    cmd = [python, "-m", "uvicorn", "app:app",
+            # PYTHONPATH: include server root + src/ for src-layout packages
+            pp_parts = [str(server_dir)]
+            src_dir = server_dir / "src"
+            if src_dir.is_dir():
+                pp_parts.append(str(src_dir))
+            existing_pp = os.environ.get("PYTHONPATH", "")
+            if existing_pp:
+                pp_parts.append(existing_pp)
+            env = {**os.environ, "PYTHONPATH": os.pathsep.join(pp_parts)}
+
+            # Entry-point detection (same priority as installer):
+            #   1. app/main.py  (HomePilot module style)
+            #   2. pyproject.toml [project.scripts]  (pip-installed CLI)
+            #   3. app.py  (simple uvicorn)
+            #   4. bundle_manifest.json module
+            app_main = server_dir / "app" / "main.py"
+            app_py = server_dir / "app.py"
+            pyproject = server_dir / "pyproject.toml"
+            cmd: list[str] = []
+
+            if app_main.exists():
+                cmd = [python, "-m", "app.main", "--http",
+                       "--host", "127.0.0.1", "--port", str(port)]
+            elif pyproject.exists():
+                try:
+                    from .mcp_installer import _detect_pyproject_app
+                    module_app = _detect_pyproject_app(server_dir, name)
+                except ImportError:
+                    module_app = None
+                if module_app:
+                    cmd = [python, "-m", "uvicorn", module_app,
+                           "--host", "127.0.0.1", "--port", str(port),
+                           "--log-level", "info"]
+                    # Env vars for pydantic-settings-based servers
+                    env[f"{name.upper().replace('-', '_')}_PORT"] = str(port)
+                    env["TEAMS_MCP_PORT"] = str(port)
+                    env["TEAMS_MCP_HOST"] = "127.0.0.1"
+                    if "TEAMS_MCP_TOKEN_KEY" not in env:
+                        import base64
+                        env["TEAMS_MCP_TOKEN_KEY"] = base64.urlsafe_b64encode(
+                            os.urandom(32)
+                        ).decode()
+            elif app_py.exists():
+                cmd = [python, "-m", "uvicorn", "app:app",
+                       "--host", "127.0.0.1", "--port", str(port),
+                       "--log-level", "warning"]
+            else:
+                # Community bundle — try bundle_manifest.json
+                manifest_path = server_dir / "bundle_manifest.json"
+                module = ""
+                if manifest_path.exists():
+                    try:
+                        bm = json.loads(manifest_path.read_text())
+                        module = bm.get("mcp_server", {}).get("module", "")
+                    except Exception:
+                        pass
+                if module:
+                    cmd = [python, "-m", "uvicorn", module,
                            "--host", "127.0.0.1", "--port", str(port),
                            "--log-level", "warning"]
                 else:
-                    # Community bundle — try the module path from manifest
-                    manifest_path = server_dir / "bundle_manifest.json"
-                    module = ""
-                    if manifest_path.exists():
-                        try:
-                            bm = json.loads(manifest_path.read_text())
-                            module = bm.get("mcp_server", {}).get("module", "")
-                        except Exception:
-                            pass
+                    logger.warning("Cannot detect entry point for external server %s at %s", name, server_dir)
+                    continue
 
-                    if module:
-                        cmd = [python, "-m", "uvicorn", module,
-                               "--host", "127.0.0.1", "--port", str(port),
-                               "--log-level", "warning"]
-                        env = {**os.environ, "PYTHONPATH": project_root}
-                    else:
-                        logger.warning("Cannot detect entry point for external server %s at %s", name, server_dir)
-                        continue
+            # Inject .env file values into env dict
+            try:
+                from .mcp_installer import _auto_populate_env
+                _auto_populate_env(server_dir, name, env)
+            except ImportError:
+                pass
 
-                try:
-                    proc = subprocess.Popen(
-                        cmd, env=env, cwd=str(server_dir),
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    )
-                    self._processes[name] = proc
-                    started.append(name)
-                    logger.info("Auto-started external server %s (pid=%d, port=%d)", name, proc.pid, port)
-                except Exception as exc:
-                    logger.warning("Failed to auto-start external server %s: %s", name, exc)
-            else:
-                logger.warning("External server %s install_path not found: %s", name, install_path)
+            if not cmd:
+                continue
+
+            # Log to files instead of DEVNULL for debugging
+            log_dir = root / "community" / "external" / "install_logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            stdout_log = log_dir / f"{name}.stdout.log"
+            stderr_log = log_dir / f"{name}.stderr.log"
+
+            try:
+                stdout_f = open(stdout_log, "a", encoding="utf-8")
+                stderr_f = open(stderr_log, "a", encoding="utf-8")
+                proc = subprocess.Popen(
+                    cmd, env=env, cwd=str(server_dir),
+                    stdout=stdout_f, stderr=stderr_f,
+                )
+                self._processes[name] = proc
+                started.append(name)
+                logger.info("Auto-started external server %s (pid=%d, port=%d)", name, proc.pid, port)
+            except Exception as exc:
+                logger.warning("Failed to auto-start external server %s: %s", name, exc)
 
         if started:
             await asyncio.sleep(3)
@@ -689,9 +817,53 @@ class ServerManager:
         }
 
     def shutdown_all(self) -> None:
-        """Stop all managed subprocesses (called on backend shutdown)."""
-        for server_id in list(self._processes.keys()):
-            self._stop_process(server_id)
+        """Stop all managed subprocesses (called on backend shutdown).
+
+        Sends SIGTERM to every child process, waits up to 5 s for each,
+        then SIGKILL any survivors.  Logs a summary of what was stopped.
+        """
+        if not self._processes:
+            return
+
+        names = list(self._processes.keys())
+        logger.info("Stopping %d managed server(s): %s", len(names), names)
+
+        # Phase 1: send SIGTERM to all at once (parallel)
+        for server_id, proc in list(self._processes.items()):
+            try:
+                proc.send_signal(signal.SIGTERM)
+            except Exception:
+                pass
+
+        # Phase 2: wait for graceful exit (up to 5s total)
+        import time
+        deadline = time.monotonic() + 5
+        for server_id in list(names):
+            proc = self._processes.get(server_id)
+            if proc is None:
+                continue
+            remaining = max(0.1, deadline - time.monotonic())
+            try:
+                proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                pass
+
+        # Phase 3: force-kill any still alive
+        for server_id in list(names):
+            proc = self._processes.pop(server_id, None)
+            if proc is None:
+                continue
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                    logger.info("Force-killed %s (pid=%d)", server_id, proc.pid)
+                except Exception:
+                    pass
+            else:
+                logger.info("Stopped %s (pid=%d)", server_id, proc.pid)
+
+        logger.info("All managed servers stopped")
 
 
 # Module-level singleton
