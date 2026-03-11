@@ -58,6 +58,7 @@ import { SaveAsPersonaModal } from './avatar/SaveAsPersonaModal'
 import { PersonaWizard } from './PersonaWizard'
 import type { PersonaWizardDraft } from './personaTypes'
 import AboutDialog from './AboutDialog'
+import SystemStatusDialog from './SystemStatusDialog'
 import { PERSONALITY_CAPS, type PersonalityId } from './voice/personalityCaps'
 import {
   getVoiceLinkedProjectId,
@@ -924,6 +925,7 @@ function Sidebar({
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
   const [showAboutDialog, setShowAboutDialog] = useState(false)
+  const [showSystemStatus, setShowSystemStatus] = useState(false)
   const { user: authUser, logout } = useAuth()
 
   // Build AccountMenuUser from auth context (fallback for pre-auth setups)
@@ -1106,7 +1108,19 @@ function Sidebar({
 
       {/* About HomePilot dialog */}
       {showAboutDialog && (
-        <AboutDialog onClose={() => setShowAboutDialog(false)} />
+        <AboutDialog
+          onClose={() => setShowAboutDialog(false)}
+          onOpenSystemStatus={() => setShowSystemStatus(true)}
+        />
+      )}
+
+      {/* System Status dashboard */}
+      {showSystemStatus && (
+        <SystemStatusDialog
+          backendUrl={settingsDraft.backendUrl}
+          apiKey={settingsDraft.apiKey}
+          onClose={() => setShowSystemStatus(false)}
+        />
       )}
     </aside>
   )
