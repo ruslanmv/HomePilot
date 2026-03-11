@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-03-09T19:00:00Z",
-  "total": 13,
+  "generated_at": "2026-03-11T08:15:21Z",
+  "total": 14,
   "items": [
     {
       "id": "atlas_research_assistant",
@@ -27,6 +27,29 @@
       }
     },
     {
+      "id": "david_news_anchor",
+      "name": "David Mercer",
+      "short": "News anchor \u2014 delivers real-time headlines, searches stories, and tracks global events",
+      "tags": [
+        "news",
+        "headlines",
+        "current-affairs"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "assistant",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/david_news_anchor/1.0.0",
+        "preview_url": "/v/david_news_anchor/1.0.0",
+        "card_url": "/c/david_news_anchor/1.0.0",
+        "sha256": "ecbd5f69e35e6929daaf94381190f7af5c5230c102fd9cf012a44dc278480895",
+        "size_bytes": 417925
+      }
+    },
+    {
       "id": "diana_office_navigator",
       "name": "Diana Brooks",
       "short": "Office navigator \u2014 manages Outlook mail and calendar via Microsoft 365",
@@ -45,8 +68,8 @@
         "package_url": "/p/diana_office_navigator/1.0.0",
         "preview_url": "/v/diana_office_navigator/1.0.0",
         "card_url": "/c/diana_office_navigator/1.0.0",
-        "sha256": "5bd8a56dce9ac248d6cfd734710d2d0f7792b59db7cd09c96eb06f540ea2dfd5",
-        "size_bytes": 391851
+        "sha256": "8dbef0fc591fefe2a4198458eb7fa4e317fa3d90fa08de2dcfe4f683f7b8e0e4",
+        "size_bytes": 11439
       }
     },
     {
@@ -68,8 +91,8 @@
         "package_url": "/p/elena_knowledge_curator/1.0.0",
         "preview_url": "/v/elena_knowledge_curator/1.0.0",
         "card_url": "/c/elena_knowledge_curator/1.0.0",
-        "sha256": "b03c19f159d689b335a0fe7aaf5dcb8a8234e4edbd9501f719c6b93deae085fa",
-        "size_bytes": 429684
+        "sha256": "488096fd457e4678bf50aa28cf4da91c5a31befd332aa2c65833bd8fccc90b3a",
+        "size_bytes": 8312
       }
     },
     {
@@ -91,8 +114,8 @@
         "package_url": "/p/felix_project_navigator/1.0.0",
         "preview_url": "/v/felix_project_navigator/1.0.0",
         "card_url": "/c/felix_project_navigator/1.0.0",
-        "sha256": "9f36fb199a4f41344cffebaec0588dc6dd20359fd80c1e9611175804d0d016ed",
-        "size_bytes": 388040
+        "sha256": "78b57e3b751c04f9174b255227aa676f8b53aea3b49b402cf20ef5f87ce10268",
+        "size_bytes": 7603
       }
     },
     {
@@ -114,8 +137,8 @@
         "package_url": "/p/kai_channel_whisperer/1.0.0",
         "preview_url": "/v/kai_channel_whisperer/1.0.0",
         "card_url": "/c/kai_channel_whisperer/1.0.0",
-        "sha256": "eb021d4f5b08b648e0e6dddb93b3b18dab6581f6ca85d83af7df1d0e7340c513",
-        "size_bytes": 421775
+        "sha256": "9dc48d7bac41655fb6dfaec23dda3f84fca2528f25623017e68d85fe65089275",
+        "size_bytes": 8929
       }
     },
     {
@@ -137,8 +160,33 @@
         "package_url": "/p/luca_calendar_strategist/1.0.0",
         "preview_url": "/v/luca_calendar_strategist/1.0.0",
         "card_url": "/c/luca_calendar_strategist/1.0.0",
-        "sha256": "2c282f2001cca0d54f00b71ea2306243c416d41062f90612b88f8882c420d038",
-        "size_bytes": 406794
+        "sha256": "b16aec31ec97c528252aa26e730e2105ff8f220d7c955697e456301f9bf6b827",
+        "size_bytes": 8030
+      }
+    },
+    {
+      "id": "marcus_teams_coordinator",
+      "name": "Marcus Chen",
+      "short": "Meeting coordinator \u2014 manages Teams chats, channels, and calendar from one place",
+      "tags": [
+        "teams",
+        "meetings",
+        "calendar",
+        "chat",
+        "productivity"
+      ],
+      "nsfw": false,
+      "author": "HomePilot Community",
+      "downloads": 0,
+      "class_id": "assistant",
+      "has_avatar": true,
+      "latest": {
+        "version": "1.0.0",
+        "package_url": "/p/marcus_teams_coordinator/1.0.0",
+        "preview_url": "/v/marcus_teams_coordinator/1.0.0",
+        "card_url": "/c/marcus_teams_coordinator/1.0.0",
+        "sha256": "b65bf12cd9ed624fb865cb13b3755fbac0a75e329acfb390b1eb2e68b38a8a8d",
+        "size_bytes": 430258
       }
     },
     {
@@ -160,8 +208,8 @@
         "package_url": "/p/maya_web_researcher/1.0.0",
         "preview_url": "/v/maya_web_researcher/1.0.0",
         "card_url": "/c/maya_web_researcher/1.0.0",
-        "sha256": "60ddd5878cb4b4daffb9afd384c1bfa9095f75f270e464da900e878da0007c9c",
-        "size_bytes": 405486
+        "sha256": "a2b4655aa277c29f94d671c26fcbea8224cf24361b94fdaaa219556d9e32a7cf",
+        "size_bytes": 11643
       }
     },
     {
@@ -183,8 +231,8 @@
         "package_url": "/p/nora_memory_keeper/1.0.0",
         "preview_url": "/v/nora_memory_keeper/1.0.0",
         "card_url": "/c/nora_memory_keeper/1.0.0",
-        "sha256": "3e79409b4d5f1603c51e0ba38c421ab39e5136205d76390c7f018a44aea72540",
-        "size_bytes": 432938
+        "sha256": "df7a1dded0010dc9ee0f2dbe60035bb316e3dcdc144dd1e6048e704b3d677021",
+        "size_bytes": 12198
       }
     },
     {
@@ -206,8 +254,8 @@
         "package_url": "/p/priya_inbox_alchemist/1.0.0",
         "preview_url": "/v/priya_inbox_alchemist/1.0.0",
         "card_url": "/c/priya_inbox_alchemist/1.0.0",
-        "sha256": "8b0c57f9994ca7b43255bc5b9359be853e95a9cc7b47109c39375ed24f82d87d",
-        "size_bytes": 407328
+        "sha256": "6ad821ee2961c6c091b5294194125d9b2493fe8d60ebe1141a19c0fd1a7c37e9",
+        "size_bytes": 11800
       }
     },
     {
@@ -229,8 +277,8 @@
         "package_url": "/p/raven_code_reviewer/1.0.0",
         "preview_url": "/v/raven_code_reviewer/1.0.0",
         "card_url": "/c/raven_code_reviewer/1.0.0",
-        "sha256": "48e88ec100c44a28070fecb3f1bfd89a789750f15acbbf053ada7a356890eb53",
-        "size_bytes": 411025
+        "sha256": "d9becf78b64abadd707e9e28f9c78369025e55a4373feb81f564c3b275957e84",
+        "size_bytes": 12889
       }
     },
     {
@@ -275,31 +323,8 @@
         "package_url": "/p/soren_shell_operator/1.0.0",
         "preview_url": "/v/soren_shell_operator/1.0.0",
         "card_url": "/c/soren_shell_operator/1.0.0",
-        "sha256": "8022b3624b78b7d477cf87c30cad50bfa2dacee4a338a03d29138e0d98cba881",
-        "size_bytes": 421265
-      }
-    },
-    {
-      "id": "david_news_anchor",
-      "name": "David Mercer",
-      "short": "News anchor \u2014 delivers real-time headlines, searches stories, and tracks global events",
-      "tags": [
-        "news",
-        "headlines",
-        "current-affairs"
-      ],
-      "nsfw": false,
-      "author": "HomePilot Community",
-      "downloads": 0,
-      "class_id": "assistant",
-      "has_avatar": true,
-      "latest": {
-        "version": "1.0.0",
-        "package_url": "/p/david_news_anchor/1.0.0",
-        "preview_url": "/v/david_news_anchor/1.0.0",
-        "card_url": "/c/david_news_anchor/1.0.0",
-        "sha256": "c7a75b87808d2a6f0dbe904e6534baa880db2b08f3c93e5b269da37076171204",
-        "size_bytes": 418267
+        "sha256": "d8ddea887294b1e7cad93ac3f58f9efa3b8204ff929b28ef2553c493241dad8d",
+        "size_bytes": 10115
       }
     }
   ]

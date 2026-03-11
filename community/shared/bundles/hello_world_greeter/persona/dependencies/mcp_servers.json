@@ -10,7 +10,7 @@
         "bundle_id": "hello_world_greeter",
         "install_dir": "community/shared/bundles/hello_world_greeter",
         "git": "https://github.com/HomePilotAI/hp-bundle-greeter",
-        "ref": "main"
+        "ref": "master"
       },
       "transport": "HTTP",
       "protocol": "MCP",

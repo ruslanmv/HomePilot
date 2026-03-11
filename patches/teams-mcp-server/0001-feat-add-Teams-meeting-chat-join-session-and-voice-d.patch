@@ -1,0 +1,688 @@
+From 90a82f9271164cd3c0349916a3c67f6edf8ca377 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Mar 2026 09:01:36 +0000
+Subject: [PATCH] feat: add Teams meeting chat, join session, and voice
+ detection tools
+
+- tools_meeting_chat: resolve meeting chat from join URL, read/post messages, list members
+- tools_meeting_join: connect/disconnect/status for meeting sessions
+- tools_voice: toggle voice detection (STT) on/off, configure backend (whisper/deepgram/azure)
+- Extended OAuth scopes: ChatMessage.Read, ChatMember.Read, OnlineMeetings.Read
+
+https://claude.ai/code/session_01CQnRTUVEvENRF3114ijbvw
+---
+ src/teams_mcp/auth/scopes.py              |   5 +-
+ src/teams_mcp/tools/__init__.py           |  13 +-
+ src/teams_mcp/tools/tools_meeting_chat.py | 203 ++++++++++++++++++
+ src/teams_mcp/tools/tools_meeting_join.py | 239 ++++++++++++++++++++++
+ src/teams_mcp/tools/tools_voice.py        | 160 +++++++++++++++
+ 5 files changed, 618 insertions(+), 2 deletions(-)
+ create mode 100644 src/teams_mcp/tools/tools_meeting_chat.py
+ create mode 100644 src/teams_mcp/tools/tools_meeting_join.py
+ create mode 100644 src/teams_mcp/tools/tools_voice.py
+
+diff --git a/src/teams_mcp/auth/scopes.py b/src/teams_mcp/auth/scopes.py
+index 0401425f..29cdcf2d 100644
+--- a/src/teams_mcp/auth/scopes.py
++++ b/src/teams_mcp/auth/scopes.py
+@@ -1,11 +1,14 @@
+-# Minimal read/write set for Teams + Calendar
++# Minimal read/write set for Teams + Calendar + Meeting Chat
+ DEFAULT_SCOPES = [
+     "offline_access",
+     "User.Read",
+     "Chat.Read",
+     "Chat.ReadWrite",
++    "ChatMessage.Read",
++    "ChatMember.Read",
+     "ChannelMessage.Send",
+     "Team.ReadBasic.All",
+     "Channel.ReadBasic.All",
+     "Calendars.Read",
++    "OnlineMeetings.Read",
+ ]
+diff --git a/src/teams_mcp/tools/__init__.py b/src/teams_mcp/tools/__init__.py
+index 150d4878..fb9110e9 100644
+--- a/src/teams_mcp/tools/__init__.py
++++ b/src/teams_mcp/tools/__init__.py
+@@ -2,5 +2,16 @@ from .tools_auth import TOOLS as AUTH_TOOLS
+ from .tools_calendar import TOOLS as CAL_TOOLS
+ from .tools_chat import TOOLS as CHAT_TOOLS
+ from .tools_calls import TOOLS as CALL_TOOLS
++from .tools_meeting_chat import TOOLS as MEETING_CHAT_TOOLS
++from .tools_meeting_join import TOOLS as MEETING_JOIN_TOOLS
++from .tools_voice import TOOLS as VOICE_TOOLS
+ 
+-ALL_TOOLS = [*AUTH_TOOLS, *CAL_TOOLS, *CHAT_TOOLS, *CALL_TOOLS]
++ALL_TOOLS = [
++    *AUTH_TOOLS,
++    *CAL_TOOLS,
++    *CHAT_TOOLS,
++    *CALL_TOOLS,
++    *MEETING_CHAT_TOOLS,
++    *MEETING_JOIN_TOOLS,
++    *VOICE_TOOLS,
++]
+diff --git a/src/teams_mcp/tools/tools_meeting_chat.py b/src/teams_mcp/tools/tools_meeting_chat.py
+new file mode 100644
+index 00000000..46cb6e56
+--- /dev/null
++++ b/src/teams_mcp/tools/tools_meeting_chat.py
+@@ -0,0 +1,203 @@
++"""Tools for reading and posting to Microsoft Teams meeting chats.
++
++Unlike regular 1:1 chats, meeting chats are associated with online meetings.
++The Graph API path is /chats/{meeting-chat-id}/messages — the meeting-chat-id
++can be discovered from the onlineMeeting resource or by listing chats with
++chatType == "meeting".
++"""
++from __future__ import annotations
++
++import re
++from typing import Any, Dict
++
++from ..auth.token_store import TokenStore
++from ..graph.client import GraphClient
++from ..rpc.types import Json, ToolDef, text_content
++
++_store = TokenStore()
++_graph = GraphClient(_store)
++
++
++# ---------------------------------------------------------------------------
++# Helpers
++# ---------------------------------------------------------------------------
++
++def _extract_thread_id(join_url: str) -> str | None:
++    """Try to pull the encoded thread ID from a Teams join URL.
++
++    Teams join links look like:
++      https://teams.microsoft.com/l/meetup-join/19%3ameeting_xxx%40thread.v2/...
++    The chat ID is the URL-decoded segment between meetup-join/ and the next /
++    """
++    m = re.search(r"meetup-join/([^/]+)", join_url)
++    if not m:
++        return None
++    from urllib.parse import unquote
++    return unquote(m.group(1))
++
++
++# ---------------------------------------------------------------------------
++# Tool: discover meeting chat ID from a join link
++# ---------------------------------------------------------------------------
++
++async def tool_resolve_meeting_chat(args: Json) -> Json:
++    """Resolve a Teams meeting join URL to its chat ID.
++
++    Strategy:
++      1. Try extracting thread-id from the URL directly
++      2. Fall back to listing recent meeting-type chats
++    """
++    join_url = str(args.get("join_url", "")).strip()
++    if not join_url:
++        return text_content("Provide a Teams meeting join_url.")
++
++    # Strategy 1: parse the thread ID from the URL
++    thread_id = _extract_thread_id(join_url)
++    if thread_id:
++        return {
++            "content": [{"type": "text", "text": f"Resolved meeting chat ID:\n{thread_id}"}],
++            "chat_id": thread_id,
++        }
++
++    # Strategy 2: list recent meeting chats and let the caller pick
++    data = await _graph.get("/chats", params={
++        "$filter": "chatType eq 'meeting'",
++        "$top": "20",
++        "$orderby": "lastUpdatedDateTime desc",
++    })
++    items = data.get("value", [])
++    if not items:
++        return text_content("No meeting chats found. The meeting may not have started yet.")
++
++    lines = [f"Could not parse chat from URL. Recent meeting chats ({len(items)}):"]
++    for c in items:
++        topic = c.get("topic") or "(no topic)"
++        lines.append(f"- {c.get('id')} | {topic} | updated: {c.get('lastUpdatedDateTime')}")
++    return text_content("\n".join(lines))
++
++
++# ---------------------------------------------------------------------------
++# Tool: read meeting chat messages
++# ---------------------------------------------------------------------------
++
++async def tool_read_meeting_chat(args: Json) -> Json:
++    """Read messages from a meeting chat by chat_id.
++
++    Returns the latest N messages (default 25) in chronological order.
++    """
++    chat_id = str(args.get("chat_id", "")).strip()
++    if not chat_id:
++        return text_content("Provide chat_id (from teams.meeting_chat.resolve).")
++
++    top = int(args.get("top", 25) or 25)
++    top = max(1, min(top, 50))
++
++    data = await _graph.get(
++        f"/chats/{chat_id}/messages",
++        params={"$top": str(top), "$orderby": "createdDateTime desc"},
++    )
++    items = data.get("value", [])
++    items.reverse()  # chronological
++
++    lines = [f"Meeting chat messages ({len(items)}):"]
++    for msg in items:
++        sender = "(system)"
++        if msg.get("from") and msg["from"].get("user"):
++            sender = msg["from"]["user"].get("displayName") or msg["from"]["user"].get("id", "?")
++        body = msg.get("body", {}).get("content", "").strip()
++        ts = msg.get("createdDateTime", "")
++        msg_type = msg.get("messageType", "message")
++        if msg_type == "message" and body:
++            lines.append(f"[{ts}] {sender}: {body}")
++        elif msg_type == "systemEventMessage":
++            lines.append(f"[{ts}] SYSTEM: {body or '(event)'}")
++    return text_content("\n".join(lines))
++
++
++# ---------------------------------------------------------------------------
++# Tool: post message to meeting chat
++# ---------------------------------------------------------------------------
++
++async def tool_post_meeting_chat(args: Json) -> Json:
++    """Send a message to the meeting chat on behalf of the authenticated user."""
++    chat_id = str(args.get("chat_id", "")).strip()
++    text = str(args.get("text", "")).strip()
++    if not chat_id or not text:
++        return text_content("Provide chat_id and text.")
++    body = {"body": {"contentType": "text", "content": text}}
++    await _graph.post(f"/chats/{chat_id}/messages", body)
++    return text_content("Message posted to meeting chat.")
++
++
++# ---------------------------------------------------------------------------
++# Tool: list meeting chat members (who's in the meeting)
++# ---------------------------------------------------------------------------
++
++async def tool_list_meeting_members(args: Json) -> Json:
++    """List members/participants of a meeting chat."""
++    chat_id = str(args.get("chat_id", "")).strip()
++    if not chat_id:
++        return text_content("Provide chat_id.")
++    data = await _graph.get(f"/chats/{chat_id}/members")
++    items = data.get("value", [])
++    lines = [f"Meeting members ({len(items)}):"]
++    for m in items:
++        name = m.get("displayName", "(unknown)")
++        email = m.get("email", "")
++        roles = ", ".join(m.get("roles", []))
++        lines.append(f"- {name} <{email}> [{roles}]")
++    return text_content("\n".join(lines))
++
++
++# ---------------------------------------------------------------------------
++# Registry
++# ---------------------------------------------------------------------------
++
++TOOLS = [
++    ToolDef(
++        name="teams.meeting_chat.resolve",
++        description="Resolve a Teams meeting join URL to its chat ID.",
++        input_schema={
++            "type": "object",
++            "properties": {"join_url": {"type": "string", "description": "Teams meeting join URL"}},
++            "required": ["join_url"],
++        },
++        handler=tool_resolve_meeting_chat,
++    ),
++    ToolDef(
++        name="teams.meeting_chat.read",
++        description="Read recent messages from a Teams meeting chat.",
++        input_schema={
++            "type": "object",
++            "properties": {
++                "chat_id": {"type": "string", "description": "Meeting chat ID"},
++                "top": {"type": "integer", "default": 25, "description": "Number of messages (max 50)"},
++            },
++            "required": ["chat_id"],
++        },
++        handler=tool_read_meeting_chat,
++    ),
++    ToolDef(
++        name="teams.meeting_chat.post",
++        description="Post a message to a Teams meeting chat.",
++        input_schema={
++            "type": "object",
++            "properties": {
++                "chat_id": {"type": "string"},
++                "text": {"type": "string"},
++            },
++            "required": ["chat_id", "text"],
++        },
++        handler=tool_post_meeting_chat,
++    ),
++    ToolDef(
++        name="teams.meeting_chat.members",
++        description="List participants/members of a Teams meeting chat.",
++        input_schema={
++            "type": "object",
++            "properties": {"chat_id": {"type": "string"}},
++            "required": ["chat_id"],
++        },
++        handler=tool_list_meeting_members,
++    ),
++]
+diff --git a/src/teams_mcp/tools/tools_meeting_join.py b/src/teams_mcp/tools/tools_meeting_join.py
+new file mode 100644
+index 00000000..24898e61
+--- /dev/null
++++ b/src/teams_mcp/tools/tools_meeting_join.py
+@@ -0,0 +1,239 @@
++"""Tools for joining a Teams meeting and managing the active connection.
++
++This module manages the lifecycle of a meeting bridge session:
++  1. Parse a meeting join URL
++  2. Connect to the meeting (resolve chat, start polling)
++  3. Monitor connection status
++  4. Disconnect
++
++The actual "join as bot participant" requires Azure Bot Framework for real-time
++audio. This module provides the control-plane tools; the bridge does the work.
++"""
++from __future__ import annotations
++
++import asyncio
++import logging
++import re
++import time
++from typing import Any, Dict, Optional
++from urllib.parse import unquote
++
++from ..auth.token_store import TokenStore
++from ..graph.client import GraphClient
++from ..rpc.types import Json, ToolDef, text_content
++
++log = logging.getLogger("teams_mcp.meeting_join")
++
++_store = TokenStore()
++_graph = GraphClient(_store)
++
++
++# ---------------------------------------------------------------------------
++# Active session state
++# ---------------------------------------------------------------------------
++
++_sessions: Dict[str, Dict[str, Any]] = {}
++
++
++def get_active_session(session_id: str) -> Optional[Dict[str, Any]]:
++    """Get an active meeting session (for bridge integration)."""
++    return _sessions.get(session_id)
++
++
++def list_sessions() -> Dict[str, Dict[str, Any]]:
++    """List all active sessions."""
++    return dict(_sessions)
++
++
++# ---------------------------------------------------------------------------
++# Helpers
++# ---------------------------------------------------------------------------
++
++def _parse_join_url(url: str) -> Dict[str, str]:
++    """Extract metadata from a Teams meeting join URL."""
++    info: Dict[str, str] = {"raw_url": url}
++
++    # Thread ID
++    m = re.search(r"meetup-join/([^/]+)", url)
++    if m:
++        info["thread_id"] = unquote(m.group(1))
++
++    # Meeting ID (sometimes in path or query)
++    m2 = re.search(r"meeting[_-]?id[=:]([^&/]+)", url, re.IGNORECASE)
++    if m2:
++        info["meeting_id"] = unquote(m2.group(1))
++
++    # Organizer tenant
++    m3 = re.search(r"context=(.+?)(?:&|$)", url)
++    if m3:
++        info["context_raw"] = unquote(m3.group(1))
++
++    return info
++
++
++# ---------------------------------------------------------------------------
++# Tool: connect to a Teams meeting
++# ---------------------------------------------------------------------------
++
++async def tool_meeting_connect(args: Json) -> Json:
++    """Connect to a Teams meeting by join URL.
++
++    This:
++      1. Parses the join URL to extract the chat thread ID
++      2. Resolves the meeting chat via Graph API
++      3. Creates an active session for chat polling
++      4. Returns session_id for subsequent operations
++    """
++    join_url = str(args.get("join_url", "")).strip()
++    room_id = str(args.get("room_id", "")).strip()  # HomePilot room to bridge into
++    if not join_url:
++        return text_content("Provide join_url (Teams meeting link).")
++
++    # Parse URL
++    parsed = _parse_join_url(join_url)
++    thread_id = parsed.get("thread_id")
++
++    # Try to resolve chat ID
++    chat_id = thread_id
++    if not chat_id:
++        # Fall back: search meeting chats
++        try:
++            data = await _graph.get("/chats", params={
++                "$filter": "chatType eq 'meeting'",
++                "$top": "10",
++                "$orderby": "lastUpdatedDateTime desc",
++            })
++            items = data.get("value", [])
++            if items:
++                chat_id = items[0].get("id")
++        except Exception as e:
++            log.warning(f"Failed to list meeting chats: {e}")
++
++    session_id = f"session-{int(time.time() * 1000)}"
++    session = {
++        "session_id": session_id,
++        "join_url": join_url,
++        "chat_id": chat_id,
++        "room_id": room_id or None,
++        "status": "connected" if chat_id else "pending_chat",
++        "connected_at": time.time(),
++        "last_poll_at": None,
++        "messages_ingested": 0,
++        "voice_enabled": False,
++        "parsed": parsed,
++    }
++    _sessions[session_id] = session
++
++    if chat_id:
++        lines = [
++            f"Connected to Teams meeting.",
++            f"Session: {session_id}",
++            f"Chat ID: {chat_id}",
++            f"Status: connected",
++            "",
++            "You can now use:",
++            "- teams.meeting_chat.read to read chat messages",
++            "- teams.meeting_chat.post to post to the meeting chat",
++            "- teams.voice.toggle to enable voice detection",
++        ]
++    else:
++        lines = [
++            f"Session created but could not resolve meeting chat yet.",
++            f"Session: {session_id}",
++            f"The meeting may not have started. Try again or provide chat_id manually.",
++        ]
++
++    return {
++        "content": [{"type": "text", "text": "\n".join(lines)}],
++        "session_id": session_id,
++        "chat_id": chat_id,
++        "status": session["status"],
++    }
++
++
++# ---------------------------------------------------------------------------
++# Tool: session status
++# ---------------------------------------------------------------------------
++
++async def tool_meeting_status(args: Json) -> Json:
++    """Get status of an active meeting session (or list all sessions)."""
++    session_id = str(args.get("session_id", "")).strip()
++
++    if session_id and session_id in _sessions:
++        s = _sessions[session_id]
++        lines = [
++            f"Session: {s['session_id']}",
++            f"Status: {s['status']}",
++            f"Chat ID: {s.get('chat_id') or '(not resolved)'}",
++            f"Room ID: {s.get('room_id') or '(none)'}",
++            f"Messages ingested: {s['messages_ingested']}",
++            f"Voice: {'enabled' if s['voice_enabled'] else 'disabled'}",
++            f"Connected at: {time.strftime('%H:%M:%S', time.localtime(s['connected_at']))}",
++        ]
++        return text_content("\n".join(lines))
++
++    # List all
++    if not _sessions:
++        return text_content("No active meeting sessions.")
++    lines = [f"Active sessions ({len(_sessions)}):"]
++    for sid, s in _sessions.items():
++        lines.append(f"- {sid} | {s['status']} | chat:{s.get('chat_id','?')[:20]}... | msgs:{s['messages_ingested']}")
++    return text_content("\n".join(lines))
++
++
++# ---------------------------------------------------------------------------
++# Tool: disconnect
++# ---------------------------------------------------------------------------
++
++async def tool_meeting_disconnect(args: Json) -> Json:
++    """Disconnect from a Teams meeting session."""
++    session_id = str(args.get("session_id", "")).strip()
++    if not session_id or session_id not in _sessions:
++        return text_content("Provide a valid session_id.")
++    s = _sessions.pop(session_id)
++    s["status"] = "disconnected"
++    return text_content(f"Disconnected session {session_id}. Messages ingested: {s['messages_ingested']}")
++
++
++# ---------------------------------------------------------------------------
++# Registry
++# ---------------------------------------------------------------------------
++
++TOOLS = [
++    ToolDef(
++        name="teams.meeting.connect",
++        description="Connect to a Teams meeting by pasting the join URL. Returns a session_id for tracking.",
++        input_schema={
++            "type": "object",
++            "properties": {
++                "join_url": {"type": "string", "description": "Microsoft Teams meeting join URL"},
++                "room_id": {"type": "string", "description": "Optional HomePilot room ID to bridge into"},
++            },
++            "required": ["join_url"],
++        },
++        handler=tool_meeting_connect,
++    ),
++    ToolDef(
++        name="teams.meeting.status",
++        description="Get status of an active meeting session or list all sessions.",
++        input_schema={
++            "type": "object",
++            "properties": {
++                "session_id": {"type": "string", "description": "Session ID (omit to list all)"},
++            },
++        },
++        handler=tool_meeting_status,
++    ),
++    ToolDef(
++        name="teams.meeting.disconnect",
++        description="Disconnect from a Teams meeting session.",
++        input_schema={
++            "type": "object",
++            "properties": {
++                "session_id": {"type": "string"},
++            },
++            "required": ["session_id"],
++        },
++        handler=tool_meeting_disconnect,
++    ),
++]
+diff --git a/src/teams_mcp/tools/tools_voice.py b/src/teams_mcp/tools/tools_voice.py
+new file mode 100644
+index 00000000..f2e91ff8
+--- /dev/null
++++ b/src/teams_mcp/tools/tools_voice.py
+@@ -0,0 +1,160 @@
++"""Voice detection toggle and status tools.
++
++The MCP server can operate in two input modes:
++  - "chat" (default): reads meeting chat messages via Graph API
++  - "voice": enables server-side STT pipeline for audio transcription
++
++Voice mode requires an external STT service (Whisper, Deepgram, Azure Speech).
++This module provides tools to toggle and query the voice detection mode,
++and to configure the STT backend.
++"""
++from __future__ import annotations
++
++import logging
++from typing import Any, Dict
++
++from ..rpc.types import Json, ToolDef, text_content
++
++log = logging.getLogger("teams_mcp.voice")
++
++# ---------------------------------------------------------------------------
++# In-process state — voice detection settings
++# ---------------------------------------------------------------------------
++
++_voice_state: Dict[str, Any] = {
++    "enabled": False,            # default: chat-only mode
++    "stt_backend": "whisper",    # "whisper" | "deepgram" | "azure_speech"
++    "language": "en",
++    "sample_rate": 16000,
++    "chunk_duration_ms": 3000,   # process audio in 3s chunks
++    "silence_threshold_ms": 800, # silence gap to end an utterance
++    "whisper_model": "base",     # tiny | base | small | medium | large-v3
++    "deepgram_api_key": "",
++    "azure_speech_key": "",
++    "azure_speech_region": "",
++}
++
++
++def get_voice_state() -> Dict[str, Any]:
++    """Return current voice detection state (for bridge integration)."""
++    return dict(_voice_state)
++
++
++# ---------------------------------------------------------------------------
++# Tool: toggle voice detection on/off
++# ---------------------------------------------------------------------------
++
++async def tool_voice_toggle(args: Json) -> Json:
++    """Toggle voice detection (STT) on or off. Default mode is chat-only."""
++    enabled = args.get("enabled")
++    if enabled is None:
++        # Toggle
++        _voice_state["enabled"] = not _voice_state["enabled"]
++    else:
++        _voice_state["enabled"] = bool(enabled)
++
++    status = "ENABLED" if _voice_state["enabled"] else "DISABLED"
++    log.info(f"Voice detection {status} (backend: {_voice_state['stt_backend']})")
++    return text_content(
++        f"Voice detection: {status}\n"
++        f"STT backend: {_voice_state['stt_backend']}\n"
++        f"Language: {_voice_state['language']}"
++    )
++
++
++# ---------------------------------------------------------------------------
++# Tool: get voice status
++# ---------------------------------------------------------------------------
++
++async def tool_voice_status(_: Json) -> Json:
++    """Get current voice detection status and configuration."""
++    lines = [
++        f"Voice detection: {'ENABLED' if _voice_state['enabled'] else 'DISABLED'}",
++        f"STT backend: {_voice_state['stt_backend']}",
++        f"Language: {_voice_state['language']}",
++        f"Sample rate: {_voice_state['sample_rate']}Hz",
++        f"Chunk duration: {_voice_state['chunk_duration_ms']}ms",
++        f"Silence threshold: {_voice_state['silence_threshold_ms']}ms",
++        f"Whisper model: {_voice_state['whisper_model']}",
++    ]
++    return text_content("\n".join(lines))
++
++
++# ---------------------------------------------------------------------------
++# Tool: configure voice settings
++# ---------------------------------------------------------------------------
++
++async def tool_voice_configure(args: Json) -> Json:
++    """Configure voice detection / STT pipeline settings.
++
++    Settable fields: stt_backend, language, whisper_model, chunk_duration_ms,
++    silence_threshold_ms, deepgram_api_key, azure_speech_key, azure_speech_region.
++    """
++    changed = []
++    for key in [
++        "stt_backend", "language", "whisper_model", "chunk_duration_ms",
++        "silence_threshold_ms", "sample_rate", "deepgram_api_key",
++        "azure_speech_key", "azure_speech_region",
++    ]:
++        if key in args and args[key] is not None:
++            old = _voice_state.get(key)
++            _voice_state[key] = args[key]
++            changed.append(f"  {key}: {old} -> {args[key]}")
++    if not changed:
++        return text_content("No settings changed. Provide at least one field to update.")
++    return text_content("Voice settings updated:\n" + "\n".join(changed))
++
++
++# ---------------------------------------------------------------------------
++# Registry
++# ---------------------------------------------------------------------------
++
++TOOLS = [
++    ToolDef(
++        name="teams.voice.toggle",
++        description="Toggle voice detection (STT) on or off. Default mode is chat-only.",
++        input_schema={
++            "type": "object",
++            "properties": {
++                "enabled": {
++                    "type": "boolean",
++                    "description": "Explicit on/off. Omit to toggle.",
++                },
++            },
++        },
++        handler=tool_voice_toggle,
++    ),
++    ToolDef(
++        name="teams.voice.status",
++        description="Get current voice detection status and STT configuration.",
++        input_schema={"type": "object", "properties": {}},
++        handler=tool_voice_status,
++    ),
++    ToolDef(
++        name="teams.voice.configure",
++        description="Configure STT pipeline: backend, language, model, thresholds.",
++        input_schema={
++            "type": "object",
++            "properties": {
++                "stt_backend": {
++                    "type": "string",
++                    "enum": ["whisper", "deepgram", "azure_speech"],
++                    "description": "STT engine to use.",
++                },
++                "language": {"type": "string", "description": "BCP-47 language code (e.g. 'en', 'es', 'de')."},
++                "whisper_model": {
++                    "type": "string",
++                    "enum": ["tiny", "base", "small", "medium", "large-v3"],
++                    "description": "Whisper model size (only when stt_backend=whisper).",
++                },
++                "chunk_duration_ms": {"type": "integer", "description": "Audio chunk duration in ms."},
++                "silence_threshold_ms": {"type": "integer", "description": "Silence gap to end utterance."},
++                "sample_rate": {"type": "integer", "description": "Audio sample rate in Hz."},
++                "deepgram_api_key": {"type": "string", "description": "Deepgram API key (if using deepgram)."},
++                "azure_speech_key": {"type": "string", "description": "Azure Speech key (if using azure_speech)."},
++                "azure_speech_region": {"type": "string", "description": "Azure Speech region (if using azure_speech)."},
++            },
++        },
++        handler=tool_voice_configure,
++    ),
++]
+-- 
+2.43.0
+

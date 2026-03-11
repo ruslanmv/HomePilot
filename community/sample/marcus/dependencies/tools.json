@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Simple tool IDs from PersonalityAgent.allowed_tools",
+    "tools": [
+      "teams_auth_status",
+      "teams_chats_list",
+      "teams_chats_send",
+      "teams_list_joined",
+      "teams_channels_list",
+      "teams_channels_send",
+      "teams_meetings_today",
+      "teams_meetings_range",
+      "teams_meetings_join_link"
+    ]
+  },
+  "forge_tools": {
+    "description": "Tool references from Context Forge / MCP",
+    "tools": [
+      "teams.auth.device_code_start",
+      "teams.auth.device_code_poll",
+      "teams.auth.status",
+      "teams.auth.logout",
+      "teams.chats.list_recent",
+      "teams.chats.send_message",
+      "teams.teams.list_joined",
+      "teams.channels.list",
+      "teams.channels.send_message",
+      "teams.meetings.list_today",
+      "teams.meetings.list_range",
+      "teams.meetings.get_join_link",
+      "teams.calls.join_meeting"
+    ]
+  },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": [
+      "teams",
+      "calendar",
+      "chat"
+    ],
+    "optional": []
+  }
+}

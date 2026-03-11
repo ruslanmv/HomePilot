@@ -13,7 +13,7 @@
  * Designed like an MMORPG character profile card.
  */
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   X,
   Sparkles,
@@ -266,6 +266,60 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   const [catalogAgents, setCatalogAgents] = useState<CatalogItem[]>([])
   const [catalogServers, setCatalogServers] = useState<CatalogServer[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
+
+  // --- Auto-pin tools on first load when tool_ids is empty ---
+  // When a persona is imported or created without pinned tools, derive
+  // default pins from tool_details (package metadata) or by matching
+  // the persona's role keywords against available catalog tool names.
+  const autoPopulated = useRef(false)
+  useEffect(() => {
+    if (autoPopulated.current || catalogLoading || catalogTools.length === 0) return
+    if (toolIds.length > 0) { autoPopulated.current = true; return }
+    autoPopulated.current = true
+
+    const enabled = catalogTools.filter((t) => t.enabled !== false)
+    const ids: string[] = []
+
+    // Strategy 1: use tool_details from the agentic data (set by .hpersona import)
+    const details = ag.tool_details as Array<{ id: string; name?: string }> | undefined
+    if (Array.isArray(details) && details.length > 0) {
+      const catalogIds = new Set(enabled.map((t) => t.id))
+      for (const d of details) {
+        const tid = d.id || d.name || ''
+        if (tid && catalogIds.has(tid) && !ids.includes(tid)) ids.push(tid)
+      }
+    }
+
+    // Strategy 2: match role / system_prompt keywords against tool name prefixes
+    if (ids.length === 0) {
+      const haystack = [role, systemPrompt, goal].join(' ').toLowerCase()
+      // Build keyword→prefix map for profession-based matching
+      const KEYWORD_PREFIXES: Array<[string[], string]> = [
+        [['news', 'journalist', 'reporter', 'headlines'], 'news-'],
+        [['teams', 'meeting', 'conference', 'calendar'], 'teams-'],
+        [['email', 'mail', 'gmail', 'outlook'], 'hp-email'],
+        [['web', 'search', 'research', 'browse'], 'hp-web'],
+        [['brief', 'digest', 'executive', 'summary'], 'hp-brief'],
+        [['decision', 'risk', 'options', 'strategy'], 'hp-decision'],
+        [['inventory', 'photos', 'images', 'files', 'assets'], 'hp-inventory'],
+      ]
+      const matchedPrefixes = new Set<string>()
+      for (const [kws, prefix] of KEYWORD_PREFIXES) {
+        if (kws.some((kw) => haystack.includes(kw))) matchedPrefixes.add(prefix)
+      }
+      if (matchedPrefixes.size > 0) {
+        for (const t of enabled) {
+          for (const prefix of matchedPrefixes) {
+            if (t.id.startsWith(prefix) || t.name.toLowerCase().startsWith(prefix)) {
+              if (!ids.includes(t.id)) ids.push(t.id)
+            }
+          }
+        }
+      }
+    }
+
+    if (ids.length > 0) setToolIds(ids)
+  }, [catalogLoading, catalogTools]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Avatar state (sets is stateful so individual image deletions trigger re-render)
   // For imported personas: sets may be empty but selected_filename exists on disk.
