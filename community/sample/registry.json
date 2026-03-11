@@ -45,7 +45,7 @@
         "package_url": "/p/david_news_anchor/1.0.0",
         "preview_url": "/v/david_news_anchor/1.0.0",
         "card_url": "/c/david_news_anchor/1.0.0",
-        "sha256": "ecbd5f69e35e6929daaf94381190f7af5c5230c102fd9cf012a44dc278480895",
+        "sha256": "be001e9b5a7253781495731bb04a53a2f7121fa0410be301d453234b183e1a87",
         "size_bytes": 417925
       }
     },
@@ -68,8 +68,8 @@
         "package_url": "/p/diana_office_navigator/1.0.0",
         "preview_url": "/v/diana_office_navigator/1.0.0",
         "card_url": "/c/diana_office_navigator/1.0.0",
-        "sha256": "8dbef0fc591fefe2a4198458eb7fa4e317fa3d90fa08de2dcfe4f683f7b8e0e4",
-        "size_bytes": 11439
+        "sha256": "b2a6883c3236fd05c34c1bca530deed9275cf1fd7a661bc949ef213528a322f2",
+        "size_bytes": 391851
       }
     },
     {
@@ -91,8 +91,8 @@
         "package_url": "/p/elena_knowledge_curator/1.0.0",
         "preview_url": "/v/elena_knowledge_curator/1.0.0",
         "card_url": "/c/elena_knowledge_curator/1.0.0",
-        "sha256": "488096fd457e4678bf50aa28cf4da91c5a31befd332aa2c65833bd8fccc90b3a",
-        "size_bytes": 8312
+        "sha256": "84003a8c514a338cce3763efc9d6ca9443c0307efad6119b139dd88a4c4ddf7b",
+        "size_bytes": 429684
       }
     },
     {
@@ -114,8 +114,8 @@
         "package_url": "/p/felix_project_navigator/1.0.0",
         "preview_url": "/v/felix_project_navigator/1.0.0",
         "card_url": "/c/felix_project_navigator/1.0.0",
-        "sha256": "78b57e3b751c04f9174b255227aa676f8b53aea3b49b402cf20ef5f87ce10268",
-        "size_bytes": 7603
+        "sha256": "16ec04953f0319960f20c93396ffa2cd75d718fa4e4ca765c2aafb1e6e7aae13",
+        "size_bytes": 388040
       }
     },
     {
@@ -137,8 +137,8 @@
         "package_url": "/p/kai_channel_whisperer/1.0.0",
         "preview_url": "/v/kai_channel_whisperer/1.0.0",
         "card_url": "/c/kai_channel_whisperer/1.0.0",
-        "sha256": "9dc48d7bac41655fb6dfaec23dda3f84fca2528f25623017e68d85fe65089275",
-        "size_bytes": 8929
+        "sha256": "e1763dab472e285f60ea66711e6114e0536ad12bdc45d37b0be3a9e3d0f55946",
+        "size_bytes": 421775
       }
     },
     {
@@ -160,8 +160,8 @@
         "package_url": "/p/luca_calendar_strategist/1.0.0",
         "preview_url": "/v/luca_calendar_strategist/1.0.0",
         "card_url": "/c/luca_calendar_strategist/1.0.0",
-        "sha256": "b16aec31ec97c528252aa26e730e2105ff8f220d7c955697e456301f9bf6b827",
-        "size_bytes": 8030
+        "sha256": "b8dc3dd79c7ee40cc365c950abba1355a2072944dd7164b3d56214a1e4d3109f",
+        "size_bytes": 406794
       }
     },
     {
@@ -208,8 +208,8 @@
         "package_url": "/p/maya_web_researcher/1.0.0",
         "preview_url": "/v/maya_web_researcher/1.0.0",
         "card_url": "/c/maya_web_researcher/1.0.0",
-        "sha256": "a2b4655aa277c29f94d671c26fcbea8224cf24361b94fdaaa219556d9e32a7cf",
-        "size_bytes": 11643
+        "sha256": "56426b1c9f09fd291af618bb73362ce9b97cb3a6e4ccd3a8085aecd711528aeb",
+        "size_bytes": 405486
       }
     },
     {
@@ -231,8 +231,8 @@
         "package_url": "/p/nora_memory_keeper/1.0.0",
         "preview_url": "/v/nora_memory_keeper/1.0.0",
         "card_url": "/c/nora_memory_keeper/1.0.0",
-        "sha256": "df7a1dded0010dc9ee0f2dbe60035bb316e3dcdc144dd1e6048e704b3d677021",
-        "size_bytes": 12198
+        "sha256": "680b007099a82b51d9a555daf2d7de0a1377fce05c9abd1e8968b6931a9547c9",
+        "size_bytes": 432938
       }
     },
     {
@@ -254,8 +254,8 @@
         "package_url": "/p/priya_inbox_alchemist/1.0.0",
         "preview_url": "/v/priya_inbox_alchemist/1.0.0",
         "card_url": "/c/priya_inbox_alchemist/1.0.0",
-        "sha256": "6ad821ee2961c6c091b5294194125d9b2493fe8d60ebe1141a19c0fd1a7c37e9",
-        "size_bytes": 11800
+        "sha256": "90df7c5675068284b004faeef3718d57fb4f210670610384cf4885a1c681e484",
+        "size_bytes": 407328
       }
     },
     {
@@ -277,8 +277,8 @@
         "package_url": "/p/raven_code_reviewer/1.0.0",
         "preview_url": "/v/raven_code_reviewer/1.0.0",
         "card_url": "/c/raven_code_reviewer/1.0.0",
-        "sha256": "d9becf78b64abadd707e9e28f9c78369025e55a4373feb81f564c3b275957e84",
-        "size_bytes": 12889
+        "sha256": "f816c6898450542ee59c71e8e0bc07cc6df9c03a2973966c5f5f6ad0633510f3",
+        "size_bytes": 411025
       }
     },
     {
@@ -323,8 +323,8 @@
         "package_url": "/p/soren_shell_operator/1.0.0",
         "preview_url": "/v/soren_shell_operator/1.0.0",
         "card_url": "/c/soren_shell_operator/1.0.0",
-        "sha256": "d8ddea887294b1e7cad93ac3f58f9efa3b8204ff929b28ef2553c493241dad8d",
-        "size_bytes": 10115
+        "sha256": "f6ccfd50c82d1e6451b2aed41637ab4f168b708466faad77b9d54c265dbf57b5",
+        "size_bytes": 421264
       }
     }
   ]
