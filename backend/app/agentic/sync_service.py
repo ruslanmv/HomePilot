@@ -39,21 +39,40 @@ _CORE_SERVERS = [
 
 
 def _get_mcp_servers() -> List[tuple]:
-    """Return the list of MCP servers to sync: core + installed optional.
+    """Return the list of MCP servers to sync: core + installed optional + external.
 
     Dynamically includes optional servers that are currently installed via
-    the ServerManager so sync only touches servers that are actually running.
+    the ServerManager and external community servers from registry.json
+    so sync touches all servers that are actually running.
     """
     servers = list(_CORE_SERVERS)
+    seen_names = {s[0] for s in servers}
+
+    # Optional servers from server_catalog.yaml
     try:
         from .server_manager import get_server_manager
         mgr = get_server_manager()
         for sid in mgr.installed_ids():
             sdef = mgr.get_server(sid)
-            if sdef and not sdef.is_core:
+            if sdef and not sdef.is_core and sdef.id not in seen_names:
                 servers.append((sdef.id, sdef.port, sdef.description))
+                seen_names.add(sdef.id)
     except Exception:
         pass  # server_manager unavailable — sync core only
+
+    # External community servers from registry.json (e.g. mcp-news)
+    try:
+        from .mcp_installer import _read_external_registry
+        reg = _read_external_registry()
+        for entry in reg.get("servers", []):
+            name = entry.get("name", "")
+            port = entry.get("port")
+            if name and port and entry.get("status") == "installed" and name not in seen_names:
+                servers.append((name, port, f"External MCP server: {name}"))
+                seen_names.add(name)
+    except Exception:
+        pass  # mcp_installer unavailable — skip external
+
     return servers
 
 
