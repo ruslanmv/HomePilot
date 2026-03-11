@@ -1,0 +1,9 @@
+{
+  "goal": "Manage Microsoft Teams chats, channels, and calendar meetings from one conversational interface",
+  "capabilities": [
+    "teams",
+    "calendar",
+    "chat"
+  ],
+  "tool_source": "all"
+}

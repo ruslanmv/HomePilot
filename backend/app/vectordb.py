@@ -165,7 +165,11 @@ def delete_project_knowledge(project_id: str) -> bool:
     try:
         client = get_chroma_client()
         collection_name = f"project_{hashlib.md5(project_id.encode()).hexdigest()[:16]}"
-        client.delete_collection(name=collection_name)
+        # Collection may already be absent — that counts as success.
+        try:
+            client.delete_collection(name=collection_name)
+        except ValueError:
+            pass  # "Collection … does not exist" — nothing to delete
         return True
     except Exception as e:
         print(f"Error deleting project knowledge: {e}")

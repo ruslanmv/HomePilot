@@ -93,3 +93,9 @@ gateways:
     url: "http://localhost:9200/rpc"
     transport: "SSE"
     description: "HomePilot Community Greeter MCP server"
+
+  # ── Community: Microsoft Teams [BETA] ──
+  - name: hp-teams
+    url: "http://localhost:9106/rpc"
+    transport: "SSE"
+    description: "Microsoft Teams MCP server — chats, channels, meetings"

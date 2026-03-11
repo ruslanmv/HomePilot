@@ -63,6 +63,8 @@ MCP_SERVERS = [
     # Dev & Knowledge (9118–9119)
     ("hp-github", 9118, "HomePilot GitHub MCP server"),
     ("hp-notion", 9119, "HomePilot Notion MCP server"),
+    # Community (9106, 9200+)
+    ("hp-teams", 9106, "Microsoft Teams MCP server (chats, channels, meetings)"),
 ]
 
 

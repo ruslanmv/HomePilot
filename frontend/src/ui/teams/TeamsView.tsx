@@ -12,7 +12,9 @@ import type { MeetingRoom as MeetingRoomT, PersonaSummary, PlayModeStyle } from 
 import { useTeamsRooms } from './useTeamsRooms'
 import { TeamsLandingPage } from './TeamsLandingPage'
 import { CreateSessionWizard } from './CreateSessionWizard'
+import { JoinMeetingWizard } from './JoinMeetingWizard'
 import { MeetingRoom } from './MeetingRoom'
+import { useBridge } from './useBridge'
 
 // ---------------------------------------------------------------------------
 // Props
@@ -28,7 +30,7 @@ export interface TeamsViewProps {
 // ---------------------------------------------------------------------------
 
 export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
-  const [viewMode, setViewMode] = useState<'landing' | 'wizard' | 'room'>('landing')
+  const [viewMode, setViewMode] = useState<'landing' | 'wizard' | 'join-meeting' | 'room'>('landing')
   const [activeRoom, setActiveRoom] = useState<MeetingRoomT | null>(null)
   const [personas, setPersonas] = useState<PersonaSummary[]>([])
 
@@ -361,7 +363,65 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
     return () => clearInterval(interval)
   }, [activeRoom?.id, activeRoom?.play_mode?.enabled, getRoom])
 
+  // ── Bridge: join external Teams meeting ──
+
+  const bridge = useBridge({
+    backendUrl,
+    apiKey,
+    roomId: activeRoom?.id,
+    statusPollInterval: activeRoom ? 10000 : 0, // poll every 10s when in a room
+  })
+
+  const handleJoinMeeting = useCallback(
+    async (params: {
+      name: string
+      description: string
+      participant_ids: string[]
+      join_url: string
+      voice_enabled: boolean
+      poll_interval: number
+      mcp_base_url: string
+    }) => {
+      // 1. Create the HomePilot room
+      const room = await createRoom({
+        name: params.name,
+        description: params.description,
+        participant_ids: params.participant_ids,
+        turn_mode: 'reactive',
+      })
+      // 2. Connect the bridge — clean up the room if this fails
+      try {
+        await bridge.connect({
+          room_id: room.id,
+          join_url: params.join_url,
+          mcp_base_url: params.mcp_base_url,
+          poll_interval: params.poll_interval,
+          voice_enabled: params.voice_enabled,
+        })
+      } catch (e) {
+        // Remove the orphaned room so it doesn't clutter the session list
+        try { await deleteRoom(room.id) } catch { /* best effort */ }
+        throw e
+      }
+      // 3. Open the room
+      setActiveRoom(room)
+      setViewMode('room')
+    },
+    [createRoom, bridge, deleteRoom],
+  )
+
   // --- Render ---
+
+  if (viewMode === 'join-meeting') {
+    return (
+      <JoinMeetingWizard
+        personas={personas}
+        backendUrl={backendUrl}
+        onCancel={() => setViewMode('landing')}
+        onJoin={handleJoinMeeting}
+      />
+    )
+  }
 
   if (viewMode === 'wizard') {
     return (
@@ -409,6 +469,7 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
       personas={personas}
       backendUrl={backendUrl}
       onNewSession={() => setViewMode('wizard')}
+      onJoinMeeting={() => setViewMode('join-meeting')}
       onOpenRoom={handleOpenRoom}
       onDeleteRoom={deleteRoom}
     />
