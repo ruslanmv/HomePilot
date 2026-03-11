@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "servers": [
+    {
+      "name": "mcp-teams",
+      "description": "Microsoft Teams integration — chats, channels, calendar, and meetings via Graph API",
+      "default_port": 9106,
+      "source": {
+        "type": "external",
+        "git": "https://github.com/ruslanmv/teams-mcp-server",
+        "ref": "master",
+        "subdir": ""
+      },
+      "transport": "HTTP",
+      "protocol": "MCP",
+      "tools_provided": [
+        "teams.auth.device_code_start",
+        "teams.auth.device_code_poll",
+        "teams.auth.status",
+        "teams.auth.logout",
+        "teams.chats.list_recent",
+        "teams.chats.send_message",
+        "teams.teams.list_joined",
+        "teams.channels.list",
+        "teams.channels.send_message",
+        "teams.meetings.list_today",
+        "teams.meetings.list_range",
+        "teams.meetings.get_join_link",
+        "teams.calls.join_meeting"
+      ],
+      "health_check": {
+        "method": "POST",
+        "path": "/rpc",
+        "body": {
+          "jsonrpc": "2.0",
+          "method": "initialize",
+          "id": 1
+        }
+      }
+    }
+  ]
+}

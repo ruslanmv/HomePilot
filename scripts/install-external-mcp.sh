@@ -10,7 +10,7 @@
 #    ./scripts/install-external-mcp.sh \
 #        --name mcp-news \
 #        --git  https://github.com/HomePilotAI/hp-news \
-#        --ref  main \
+#        --ref  master \
 #        --port 8787 \
 #        --tools-file /path/to/tools.json
 #
@@ -43,7 +43,7 @@ info()   { echo -e "  ${CYAN}▶${NC} $1"; }
 rocket() { echo -e "  ${BLUE}🚀${NC} $1"; }
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
-NAME="" GIT_URL="" GIT_REF="main" PORT="" SUBDIR=""
+NAME="" GIT_URL="" GIT_REF="master" PORT="" SUBDIR=""
 HEALTH_PATH="/health" REGISTER_TOOLS="true" TOOLS_FILE="" QUIET="false"
 SKIP_START="false"  # --status / --stop modes
 
@@ -62,7 +62,7 @@ while [[ $# -gt 0 ]]; do
         --stop)        SKIP_START="stop";   shift ;;
         --help|-h)
             echo "Usage: $0 --name <name> --git <url> --port <port> [options]"
-            echo "  --ref <branch>      Git ref          (default: main)"
+            echo "  --ref <branch>      Git ref          (default: master)"
             echo "  --subdir <path>     Subdir in repo   (default: root)"
             echo "  --health <path>     Health endpoint   (default: /health)"
             echo "  --tools-file <json> Tool schemas file (from .hpersona)"

@@ -146,3 +146,16 @@ optional:
     description: "Greeting tools — personalized hellos, farewells, and compliments"
     category: community
     icon: smile
+
+  # ── Community: Microsoft Teams [BETA] ──
+  - id: hp-teams
+    port: 9106
+    label: "Microsoft Teams"
+    description: "Teams chats, channels, calendar, and meetings via Graph API"
+    category: communication
+    icon: message-circle
+    requires_config: MS_TEAMS_AUTH
+    source:
+      type: external
+      git: https://github.com/ruslanmv/teams-mcp-server
+      ref: master

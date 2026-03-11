@@ -19,6 +19,7 @@ import {
   Crown,
   User,
   ArrowRight,
+  Wifi,
 } from 'lucide-react'
 import type { MeetingRoom, PersonaSummary } from './types'
 
@@ -31,6 +32,7 @@ export interface TeamsLandingPageProps {
   personas: PersonaSummary[]
   backendUrl: string
   onNewSession: () => void
+  onJoinMeeting?: () => void
   onOpenRoom: (room: MeetingRoom) => void
   onDeleteRoom: (id: string) => void
 }
@@ -72,6 +74,7 @@ export function TeamsLandingPage({
   personas,
   backendUrl,
   onNewSession,
+  onJoinMeeting,
   onOpenRoom,
   onDeleteRoom,
 }: TeamsLandingPageProps) {
@@ -103,14 +106,26 @@ export function TeamsLandingPage({
           </div>
         </div>
 
-        <button
-          className="flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:brightness-110 border border-cyan-500/20 px-5 py-2.5 rounded-xl text-sm font-semibold shadow-lg shadow-cyan-500/10 hover:shadow-cyan-500/20 transition-all"
-          type="button"
-          onClick={onNewSession}
-        >
-          <Plus size={16} />
-          <span>New Session</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {onJoinMeeting && (
+            <button
+              className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:brightness-110 border border-blue-500/20 px-5 py-2.5 rounded-xl text-sm font-semibold shadow-lg shadow-blue-500/10 hover:shadow-blue-500/20 transition-all"
+              type="button"
+              onClick={onJoinMeeting}
+            >
+              <Wifi size={16} />
+              <span>Join Meeting</span>
+            </button>
+          )}
+          <button
+            className="flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:brightness-110 border border-cyan-500/20 px-5 py-2.5 rounded-xl text-sm font-semibold shadow-lg shadow-cyan-500/10 hover:shadow-cyan-500/20 transition-all"
+            type="button"
+            onClick={onNewSession}
+          >
+            <Plus size={16} />
+            <span>New Session</span>
+          </button>
+        </div>
       </div>
 
       {/* ═══════════════ ROOM GRID ═══════════════ */}

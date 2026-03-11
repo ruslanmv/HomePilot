@@ -152,6 +152,10 @@ app.include_router(agentic_router)
 from .teams.routes import router as teams_router
 app.include_router(teams_router)
 
+# Include Teams Bridge routes (/v1/teams/bridge/*)
+from .teams.bridge_routes import router as teams_bridge_router
+app.include_router(teams_bridge_router)
+
 # Include Marketplace routes (/v1/marketplace/*)
 app.include_router(marketplace_router)
 
@@ -801,6 +805,49 @@ try:
     init_db()
 except Exception:
     pass
+
+
+# ── Graceful signal handling ───────────────────────────────────────────────
+# Register an atexit handler as a safety net for MCP server cleanup.
+# This ensures child processes are reaped even if uvicorn's shutdown event
+# doesn't fire (e.g. forced kill, double Ctrl+C, or test harness exit).
+import atexit as _atexit
+import signal as _signal
+
+def _atexit_cleanup() -> None:
+    """Last-resort cleanup: stop all MCP server child processes."""
+    if os.getenv("AGENTIC_ENABLED", "true").lower() not in ("1", "true", "yes"):
+        return
+    try:
+        from .agentic.server_manager import get_server_manager
+        mgr = get_server_manager()
+        mgr.shutdown_all()
+    except Exception:
+        pass
+
+_atexit.register(_atexit_cleanup)
+
+
+def _signal_handler(signum: int, _frame: Any) -> None:
+    """Handle SIGTERM/SIGINT for clean process-tree shutdown."""
+    import logging
+    logging.getLogger("homepilot.shutdown").info(
+        "Received signal %s — initiating graceful shutdown",
+        _signal.Signals(signum).name,
+    )
+    _atexit_cleanup()
+    raise SystemExit(0)
+
+# Only install signal handlers when running as the main process
+# (not in test harnesses or multiprocessing workers)
+if os.environ.get("HOMEPILOT_NO_SIGNAL_HANDLER") != "1":
+    try:
+        _signal.signal(_signal.SIGTERM, _signal_handler)
+        # SIGINT is normally handled by uvicorn; only override if running standalone
+        if os.environ.get("HOMEPILOT_STANDALONE") == "1":
+            _signal.signal(_signal.SIGINT, _signal_handler)
+    except (ValueError, OSError):
+        pass  # Can't set signal handlers from non-main thread
 
 # Mount at import-time too (needed for some test setups and for immediate serving)
 _ensure_static_mount()
@@ -4952,12 +4999,34 @@ def get_edit_session_client() -> httpx.AsyncClient:
 
 
 @app.on_event("shutdown")
-async def close_edit_session_client():
-    """Clean up the httpx client on shutdown."""
+async def _shutdown() -> None:
+    """Graceful shutdown — stop all MCP servers and clean up resources.
+
+    Called by uvicorn on SIGINT (Ctrl+C) or SIGTERM.  Ensures every child
+    process started by the ServerManager (core, optional, and external MCP
+    servers) receives SIGTERM and is reaped before the backend exits.
+    """
+    import logging
+    _log = logging.getLogger("homepilot.shutdown")
+    _log.info("Shutdown initiated — stopping all MCP servers...")
+
+    # 1. Stop all managed MCP server subprocesses
+    if os.getenv("AGENTIC_ENABLED", "true").lower() in ("1", "true", "yes"):
+        try:
+            from .agentic.server_manager import get_server_manager
+            mgr = get_server_manager()
+            mgr.shutdown_all()
+            _log.info("All MCP servers stopped")
+        except Exception as exc:
+            _log.warning("Error stopping MCP servers: %s", exc)
+
+    # 2. Close the httpx client for edit sessions
     global _edit_session_client
     if _edit_session_client is not None:
         await _edit_session_client.aclose()
         _edit_session_client = None
+
+    _log.info("Shutdown complete")
 
 
 async def _proxy_to_edit_session(
@@ -5806,6 +5875,7 @@ async def persona_import_preview(file: UploadFile = File(...)) -> JSONResponse:
 async def persona_import_atomic(
     file: UploadFile = File(...),
     auto_install_servers: bool = True,
+    force_reinstall: bool = False,
 ) -> JSONResponse:
     """Atomic one-click persona import: install MCP servers + create project.
 
@@ -5816,6 +5886,7 @@ async def persona_import_atomic(
       4. Return the complete result (plan + project)
 
     Set auto_install_servers=False to skip server installation (same as /persona/import).
+    Set force_reinstall=True to purge and reinstall already-installed MCP servers.
     """
     from .agentic.mcp_installer import resolve_persona_mcp_deps
 
@@ -5850,6 +5921,7 @@ async def persona_import_atomic(
             auth_user=auth_user,
             auth_pass=auth_pass,
             bearer_token=token,
+            force_reinstall=force_reinstall,
         )
 
     # Phase 2: Import the persona project

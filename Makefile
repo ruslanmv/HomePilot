@@ -338,7 +338,10 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 		set -e; \
 		ROOT="$$(pwd)"; \
 		pids=""; \
+		_cleaned=0; \
 		cleanup() { \
+			[ "$$_cleaned" = "1" ] && return; \
+			_cleaned=1; \
 			echo ""; \
 			echo "════════════════════════════════════════════════════════════════════════════════"; \
 			echo "  Stopping all services..."; \
@@ -1130,7 +1133,10 @@ start-agentic-servers: ## Start HomePilot MCP servers + A2A agents + seed Forge 
 	@bash -c ' \
 		ROOT="$$(pwd)"; \
 		pids=""; \
+		_cleaned=0; \
 		cleanup() { \
+			[ "$$_cleaned" = "1" ] && return; \
+			_cleaned=1; \
 			echo ""; \
 			echo "Stopping agentic servers..."; \
 			[ -n "$$pids" ] && kill $$pids 2>/dev/null || true; \
@@ -1323,7 +1329,8 @@ mcp-start-full: ## Start MCP Gateway + servers + agent (full agentic stack)
 	@bash -c ' \
 		ROOT="$$(pwd)"; \
 		pids=""; \
-		cleanup() { echo ""; echo "Stopping MCP stack..."; [ -n "$$pids" ] && kill $$pids 2>/dev/null || true; wait 2>/dev/null || true; echo "Done."; }; \
+		_cleaned=0; \
+		cleanup() { [ "$$_cleaned" = "1" ] && return; _cleaned=1; echo ""; echo "Stopping MCP stack..."; [ -n "$$pids" ] && kill $$pids 2>/dev/null || true; wait 2>/dev/null || true; echo "Done."; }; \
 		trap cleanup INT TERM EXIT; \
 		mcp_pids=$$(bash "$$ROOT/scripts/mcp-start.sh" --all 2>&1 | tail -1); \
 		pids="$$mcp_pids"; \

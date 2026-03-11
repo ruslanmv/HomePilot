@@ -54,6 +54,37 @@ done
 
 PIDS=""
 
+# ── Graceful shutdown: stop all child processes on exit ───────────────────
+cleanup() {
+    echo ""
+    echo "  Shutting down MCP servers..."
+    for pid in $PIDS; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+    # Give processes up to 5 seconds to exit gracefully
+    for _ in $(seq 1 10); do
+        all_dead=true
+        for pid in $PIDS; do
+            if kill -0 "$pid" 2>/dev/null; then
+                all_dead=false
+                break
+            fi
+        done
+        if $all_dead; then break; fi
+        sleep 0.5
+    done
+    # Force-kill any remaining
+    for pid in $PIDS; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+    echo "  All MCP servers stopped"
+}
+trap cleanup EXIT INT TERM
+
 # ── Helper: start a uvicorn process ──────────────────────────────────────────
 start_server() {
     local label="$1"   # e.g. "MCP personal-assistant"

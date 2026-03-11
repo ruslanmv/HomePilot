@@ -209,6 +209,7 @@ export async function importPersonaAtomic(params: {
   apiKey?: string
   file: File
   autoInstallServers?: boolean
+  forceReinstall?: boolean
 }): Promise<{ ok: boolean; project: Record<string, any>; install_plan: McpInstallPlan | null }> {
   const formData = new FormData()
   formData.append('file', params.file)
@@ -217,8 +218,9 @@ export async function importPersonaAtomic(params: {
   if (params.apiKey) headers['x-api-key'] = params.apiKey
 
   const autoInstall = params.autoInstallServers !== false
+  const qs = `auto_install_servers=${autoInstall}&force_reinstall=${!!params.forceReinstall}`
   const res = await fetch(
-    `${params.backendUrl}/persona/import/atomic?auto_install_servers=${autoInstall}`,
+    `${params.backendUrl}/persona/import/atomic?${qs}`,
     { method: 'POST', headers, body: formData },
   )
 

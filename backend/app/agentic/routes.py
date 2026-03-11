@@ -747,19 +747,55 @@ async def agentic_server_uninstall(server_id: str, _key: str = Depends(require_a
     return result
 
 
-@router.post("/servers/external/{server_name}/uninstall")
-async def agentic_external_server_uninstall(server_name: str, _key: str = Depends(require_api_key)):
-    """Uninstall an external/community MCP server: stop process, deactivate tools.
+@router.get("/servers/external/{server_name}/uninstall-preview")
+async def agentic_external_uninstall_preview(server_name: str, _key: str = Depends(require_api_key)):
+    """Preview what will happen if an external MCP server is uninstalled.
 
-    External servers are those installed from git (persona import) or community
-    bundles. Marks the server as 'uninstalled' in community/external/registry.json
-    so it won't auto-start on next launch.
+    Returns affected personas, tools that will be deactivated, and warnings.
+    Safe to call — does not make any changes.
     """
     if not _ENABLED:
         raise HTTPException(status_code=503, detail="Agentic features are disabled")
 
-    mgr = get_server_manager()
-    result = await mgr.uninstall_external(
+    from .mcp_uninstaller import preview_uninstall
+    from .mcp_installer import _find_in_external_registry
+
+    entry = _find_in_external_registry(server_name)
+    port = entry.get("port") if entry else None
+
+    preview = await preview_uninstall(
+        server_name,
+        server_port=port,
+        forge_url=_FORGE_URL,
+        auth_user=_AUTH_USER,
+        auth_pass=_AUTH_PASS,
+        bearer_token=_TOKEN or None,
+    )
+    return preview.to_dict()
+
+
+@router.post("/servers/external/{server_name}/uninstall")
+async def agentic_external_server_uninstall(server_name: str, _key: str = Depends(require_api_key)):
+    """Uninstall an external/community MCP server.
+
+    Full lifecycle:
+      1. Scan affected personas and warn
+      2. Deactivate tools in Context Forge
+      3. Stop server process
+      4. Record disabled tools (so reinstall can re-enable them)
+      5. Mark as uninstalled in registry
+      6. Sync with Forge to update virtual servers
+
+    Personas that depended on this server will have their tools disabled
+    automatically. Reinstalling the server or re-importing the persona
+    will re-enable them.
+    """
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    from .mcp_uninstaller import uninstall_external_server
+
+    result = await uninstall_external_server(
         server_name,
         forge_url=_FORGE_URL,
         auth_user=_AUTH_USER,
@@ -767,26 +803,106 @@ async def agentic_external_server_uninstall(server_name: str, _key: str = Depend
         bearer_token=_TOKEN or None,
     )
 
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Uninstall failed"))
+    if not result.ok:
+        raise HTTPException(status_code=400, detail=result.error or "Uninstall failed")
 
-    # Trigger sync to refresh virtual server associations
-    try:
-        sync_result = await sync_homepilot(
-            base_url=_FORGE_URL,
-            auth_user=_AUTH_USER,
-            auth_pass=_AUTH_PASS,
-            bearer_token=_TOKEN or None,
-        )
-        result["sync"] = {
-            "tools_total": sync_result.get("tools_total_in_forge", 0),
-            "virtual_servers_updated": sync_result.get("virtual_servers_updated", 0),
-        }
-    except Exception as exc:
-        result["sync_error"] = str(exc)
     _catalog_service.invalidate()
+    return result.to_dict()
 
-    return result
+
+@router.post("/servers/external/{server_name}/restart")
+async def agentic_external_restart(server_name: str, _key: str = Depends(require_api_key)):
+    """Restart a stopped external server without reinstalling.
+
+    Finds the server in the external registry and uses the same startup
+    logic as auto_start_external() to relaunch the process.
+    """
+    from .server_manager import get_server_manager
+    mgr = get_server_manager()
+
+    # Run auto-start which skips already-healthy servers
+    started = await mgr.auto_start_external()
+
+    if server_name in started:
+        return {"status": "started", "server_name": server_name}
+
+    # Check if it's now healthy (may have already been running)
+    from .mcp_installer import _read_external_registry
+    reg = _read_external_registry()
+    entry = next((s for s in reg.get("servers", []) if s.get("name") == server_name), None)
+    if entry and entry.get("port"):
+        healthy = await mgr._check_health(entry["port"], timeout=3)
+        if healthy:
+            return {"status": "already_running", "server_name": server_name}
+
+    return {"status": "failed", "server_name": server_name, "error": "Server did not start"}
+
+
+@router.post("/servers/external/{server_name}/reinstall")
+async def agentic_external_reinstall(server_name: str, _key: str = Depends(require_api_key)):
+    """Reinstall a previously uninstalled external server.
+
+    Re-starts the server from its existing install_path, re-discovers
+    tools, and sets status back to "installed" in the registry.
+    """
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    from .mcp_installer import _read_external_registry, _write_external_registry
+
+    reg = _read_external_registry()
+    entry = next((s for s in reg.get("servers", []) if s.get("name") == server_name), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"External server '{server_name}' not in registry")
+
+    # Mark as installed so auto_start_external can pick it up
+    entry["status"] = "installed"
+    _write_external_registry(reg)
+
+    # Use auto_start_external to start the server
+    mgr = get_server_manager()
+    started = await mgr.auto_start_external()
+
+    if server_name in started:
+        # Re-discover and register tools in Forge
+        port = entry.get("port")
+        if port:
+            try:
+                tools = await mgr._discover_tools(port)
+                tool_ids = await mgr._register_tools_in_forge(
+                    tools, port, _FORGE_URL, _AUTH_USER, _AUTH_PASS, _TOKEN or None,
+                )
+                # Sync
+                await sync_homepilot(
+                    base_url=_FORGE_URL, auth_user=_AUTH_USER,
+                    auth_pass=_AUTH_PASS, bearer_token=_TOKEN or None,
+                )
+                _catalog_service.invalidate()
+                return {
+                    "ok": True, "status": "installed", "server_name": server_name,
+                    "tools_discovered": len(tools), "tools_registered": len(tool_ids),
+                }
+            except Exception as exc:
+                return {"ok": True, "status": "installed", "server_name": server_name, "sync_error": str(exc)}
+        return {"ok": True, "status": "installed", "server_name": server_name}
+
+    # Failed to start — revert status
+    entry["status"] = "uninstalled"
+    _write_external_registry(reg)
+    raise HTTPException(status_code=500, detail=f"Failed to restart server '{server_name}'")
+
+
+@router.get("/servers/external/{server_name}/disabled-tools")
+async def agentic_external_disabled_tools(server_name: str, _key: str = Depends(require_api_key)):
+    """Check if a server was previously uninstalled and has disabled tools.
+
+    Returns the disabled tools record if it exists, or null if the server
+    was never uninstalled (or tools were already re-enabled).
+    Useful for the frontend to show a "re-enable tools" prompt on reinstall.
+    """
+    from .mcp_uninstaller import get_disabled_tools
+    record = get_disabled_tools(server_name)
+    return {"server_name": server_name, "disabled": record}
 
 
 # ── POST /v1/agentic/invoke ──────────────────────────────────────────────────
@@ -938,3 +1054,41 @@ async def agentic_invoke(body: InvokeIn, _key: str = Depends(require_api_key)):
         media=result.get("media"),
         meta={k: v for k, v in result.items() if k not in ("result", "text", "media")},
     )
+
+
+# ── GET /v1/agentic/servers/install-logs ─────────────────────────────────
+# Provides detailed installation logs for tracking external MCP server
+# installation progress (clone, deps, start, health, discover, register).
+
+
+@router.get("/servers/install-logs")
+async def agentic_install_logs(
+    server: str = "",
+    since: int = 0,
+    _key: str = Depends(require_api_key),
+):
+    """Return installation logs for MCP servers.
+
+    Query params:
+      - server: filter to a specific server name (optional)
+      - since:  return entries starting from this index (for polling)
+
+    Returns all servers' logs if no server name given.
+    """
+    from .mcp_installer import install_logger
+
+    if server:
+        return {
+            "server": server,
+            "logs": install_logger.get_logs(server, since_idx=since),
+            "log_file": install_logger.get_log_file(server),
+        }
+
+    # Return logs for all servers
+    servers = install_logger.get_all_servers()
+    return {
+        "servers": servers,
+        "logs": {
+            s: install_logger.get_logs(s, since_idx=since) for s in servers
+        },
+    }

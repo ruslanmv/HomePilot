@@ -30,8 +30,11 @@ import {
   StickyNote,
   Package,
   RefreshCw,
+  ExternalLink,
+  Play,
 } from 'lucide-react'
 import { useAvailableServers, type McpServerEntry } from './useAvailableServers'
+import { ExternalUninstallDialog } from './ExternalUninstallDialog'
 
 type Props = {
   backendUrl: string
@@ -65,10 +68,11 @@ const CATEGORY_LABELS: Record<string, string> = {
   local: 'Local Integrations',
   communication: 'Communication',
   dev: 'Development & Knowledge',
+  external: 'External Servers',
   other: 'Other',
 }
 
-const CATEGORY_ORDER = ['core', 'local', 'communication', 'dev', 'other']
+const CATEGORY_ORDER = ['core', 'local', 'communication', 'dev', 'external', 'other']
 
 type ActionFeedback = {
   serverId: string
@@ -85,15 +89,22 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
     refresh,
     install,
     uninstall,
+    uninstallExternal,
+    reinstallExternal,
+    restartExternal,
     actionLoading,
   } = useAvailableServers({ backendUrl, apiKey })
 
   const [feedback, setFeedback] = useState<ActionFeedback | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [externalUninstallTarget, setExternalUninstallTarget] = useState<McpServerEntry | null>(null)
 
   const handleInstall = async (server: McpServerEntry) => {
     setFeedback(null)
-    const result = await install(server.id)
+    // External servers use the reinstall endpoint (they're already cloned)
+    const result = server.source_type === 'external'
+      ? await reinstallExternal(server.id)
+      : await install(server.id)
     if (result.ok) {
       setFeedback({
         serverId: server.id,
@@ -111,6 +122,11 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
   }
 
   const handleUninstall = async (server: McpServerEntry) => {
+    // External servers get a confirmation dialog with persona warnings
+    if (server.source_type === 'external') {
+      setExternalUninstallTarget(server)
+      return
+    }
     setFeedback(null)
     const result = await uninstall(server.id)
     if (result.ok) {
@@ -125,6 +141,49 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
         serverId: server.id,
         ok: false,
         message: result.error || 'Uninstall failed',
+      })
+    }
+  }
+
+  const handleConfirmExternalUninstall = async () => {
+    if (!externalUninstallTarget) return
+    const server = externalUninstallTarget
+    setExternalUninstallTarget(null)
+    setFeedback(null)
+    const result = await uninstallExternal(server.id)
+    if (result.ok) {
+      const extra = result.personas_affected
+        ? ` (${result.personas_affected} persona${result.personas_affected > 1 ? 's' : ''} affected)`
+        : ''
+      setFeedback({
+        serverId: server.id,
+        ok: true,
+        message: `${server.label} uninstalled — ${result.tools_deactivated ?? 0} tools deactivated${extra}`,
+      })
+      onInstallChange?.()
+    } else {
+      setFeedback({
+        serverId: server.id,
+        ok: false,
+        message: result.error || 'Uninstall failed',
+      })
+    }
+  }
+
+  const handleRestart = async (server: McpServerEntry) => {
+    setFeedback(null)
+    const result = await restartExternal(server.id)
+    if (result.ok) {
+      setFeedback({
+        serverId: server.id,
+        ok: true,
+        message: `${server.label} started successfully`,
+      })
+    } else {
+      setFeedback({
+        serverId: server.id,
+        ok: false,
+        message: result.error || 'Failed to start server',
       })
     }
   }
@@ -174,6 +233,15 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
             </span>
             <span className="w-px h-3 bg-white/10" />
             <span>{counts.installed} optional installed</span>
+            {counts.external > 0 && (
+              <>
+                <span className="w-px h-3 bg-white/10" />
+                <span className="flex items-center gap-1.5">
+                  <ExternalLink size={10} className="text-purple-400/60" />
+                  {counts.externalInstalled} external
+                </span>
+              </>
+            )}
             <span className="w-px h-3 bg-white/10" />
             <span>{counts.optional - counts.installed} available</span>
           </div>
@@ -214,6 +282,11 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
         <div key={group.category}>
           <h4 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-3">
             {group.label}
+            {group.category === 'external' && (
+              <span className="ml-2 text-[10px] font-normal text-purple-400/60 normal-case tracking-normal">
+                Installed from git / persona import
+              </span>
+            )}
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {group.servers.map((server) => (
@@ -223,11 +296,23 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
                 isLoading={actionLoading[server.id] || false}
                 onInstall={() => handleInstall(server)}
                 onUninstall={() => handleUninstall(server)}
+                onRestart={() => handleRestart(server)}
               />
             ))}
           </div>
         </div>
       ))}
+
+      {/* External server uninstall confirmation dialog */}
+      {externalUninstallTarget && (
+        <ExternalUninstallDialog
+          server={externalUninstallTarget}
+          backendUrl={backendUrl}
+          apiKey={apiKey}
+          onClose={() => setExternalUninstallTarget(null)}
+          onConfirmUninstall={handleConfirmExternalUninstall}
+        />
+      )}
     </div>
   )
 }
@@ -239,9 +324,10 @@ type CardProps = {
   isLoading: boolean
   onInstall: () => void
   onUninstall: () => void
+  onRestart: () => void
 }
 
-function ServerCard({ server, isLoading, onInstall, onUninstall }: CardProps) {
+function ServerCard({ server, isLoading, onInstall, onUninstall, onRestart }: CardProps) {
   const IconComp = ICON_MAP[server.icon] || Server
 
   const statusColor = server.healthy
@@ -262,6 +348,8 @@ function ServerCard({ server, isLoading, onInstall, onUninstall }: CardProps) {
       <div className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center border border-white/10 ${
         server.is_core
           ? 'bg-gradient-to-br from-blue-500/20 to-cyan-500/20 text-blue-400'
+          : server.source_type === 'external' && server.healthy
+            ? 'bg-gradient-to-br from-purple-500/20 to-fuchsia-500/20 text-purple-400'
           : server.healthy
             ? 'bg-gradient-to-br from-emerald-500/20 to-teal-500/20 text-emerald-400'
             : 'bg-white/5 text-white/40'
@@ -277,6 +365,12 @@ function ServerCard({ server, isLoading, onInstall, onUninstall }: CardProps) {
             <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-semibold uppercase shrink-0">
               <Shield size={9} />
               Core
+            </span>
+          )}
+          {server.source_type === 'external' && (
+            <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-semibold uppercase shrink-0">
+              <ExternalLink size={9} />
+              External
             </span>
           )}
         </div>
@@ -301,15 +395,29 @@ function ServerCard({ server, isLoading, onInstall, onUninstall }: CardProps) {
             <span>{server.installed ? 'Removing...' : 'Installing...'}</span>
           </div>
         ) : server.installed ? (
-          <button
-            onClick={onUninstall}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-              bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20
-              transition-colors"
-          >
-            <Trash2 size={12} />
-            Uninstall
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* Start button for stopped external servers */}
+            {server.source_type === 'external' && !server.healthy && (
+              <button
+                onClick={onRestart}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                  bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20
+                  transition-colors"
+              >
+                <Play size={12} />
+                Start
+              </button>
+            )}
+            <button
+              onClick={onUninstall}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/20
+                transition-colors"
+            >
+              <Trash2 size={12} />
+              Uninstall
+            </button>
+          </div>
         ) : (
           <button
             onClick={onInstall}

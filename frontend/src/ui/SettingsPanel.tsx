@@ -93,6 +93,7 @@ export type SettingsModelV2 = {
 
   // Teams concurrent LLM calls (1-3, default 1)
   teamsConcurrentCalls?: number;
+
 };
 
 // ── Agentic Status sub-component (Phase 1, additive) ─────────────────────────
@@ -210,6 +211,7 @@ export default function SettingsPanel({
 
   // Profile & Integrations modal (additive)
   const [showProfileSettings, setShowProfileSettings] = useState(false);
+
 
   async function fetchHealth() {
     setHealthErr(null);
@@ -1195,6 +1197,7 @@ export default function SettingsPanel({
                 Use 1 for single-GPU setups (Ollama default). Increase to 2-3 if your provider supports parallel inference.
               </div>
             </div>
+
           </div>
         </div>
 

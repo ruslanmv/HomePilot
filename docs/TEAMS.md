@@ -26,6 +26,13 @@ You send a message  ──>  Orchestrator scores every persona
                    raise their hand and speak
 ```
 
+## Teams MCP Integration (Optional)
+
+Install `teams-mcp-server` from the MCP Servers panel to connect personas
+to live Microsoft Teams meetings (chat, audio, calendar).  The Teams nav
+tab appears automatically when the server is installed and healthy — no
+manual toggle required.  Uninstalling the server hides the tab.
+
 ## Architecture
 
 The meeting UI is a 3-column layout inspired by Microsoft Teams:

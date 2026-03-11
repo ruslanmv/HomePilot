@@ -16,7 +16,7 @@
  *
  * Also provides an export button component for project cards.
  */
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import {
   X,
   Upload,
@@ -39,6 +39,7 @@ import {
   CheckCircle,
   XCircle,
   SkipForward,
+  RefreshCw,
 } from 'lucide-react'
 
 import type { PersonaPreview, DependencyItem, McpInstallPlan, ServerInstallStatus } from './personaPortability'
@@ -133,7 +134,15 @@ const PHASE_LABELS: Record<string, string> = {
   skipped: 'Already Installed',
 }
 
-function McpInstallCard({ status }: { status: ServerInstallStatus }) {
+function McpInstallCard({
+  status,
+  backendUrl,
+  apiKey,
+}: {
+  status: ServerInstallStatus
+  backendUrl?: string
+  apiKey?: string
+}) {
   const isComplete = status.phase === 'complete' || status.phase === 'skipped'
   const isFailed = status.phase === 'failed'
   const isActive = !isComplete && !isFailed
@@ -208,6 +217,117 @@ function McpInstallCard({ status }: { status: ServerInstallStatus }) {
           {status.elapsed_ms > 0 && <span>{(status.elapsed_ms / 1000).toFixed(1)}s</span>}
         </div>
       )}
+
+      {/* Install logs — show for failed installs so user can debug */}
+      {isFailed && backendUrl && (
+        <InstallLogViewer
+          backendUrl={backendUrl}
+          apiKey={apiKey}
+          serverName={status.server_name}
+          active={false}
+        />
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Live install log viewer — polls /v1/agentic/servers/install-logs
+// ---------------------------------------------------------------------------
+
+type InstallLogEntry = {
+  timestamp: string
+  server_name: string
+  phase: string
+  level: string
+  message: string
+  detail?: string
+}
+
+function InstallLogViewer({
+  backendUrl,
+  apiKey,
+  serverName,
+  active,
+}: {
+  backendUrl: string
+  apiKey?: string
+  serverName: string
+  active: boolean
+}) {
+  const [logs, setLogs] = useState<InstallLogEntry[]>([])
+  const [expanded, setExpanded] = useState(false)
+  const sinceRef = useRef(0)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchLogs = async () => {
+      try {
+        const headers: Record<string, string> = {}
+        if (apiKey) headers['x-api-key'] = apiKey
+        const res = await fetch(
+          `${backendUrl}/v1/agentic/servers/install-logs?server=${encodeURIComponent(serverName)}&since=${sinceRef.current}`,
+          { headers },
+        )
+        if (res.ok) {
+          const data = await res.json()
+          const newLogs: InstallLogEntry[] = data.logs || []
+          if (newLogs.length > 0) {
+            sinceRef.current += newLogs.length
+            setLogs((prev) => [...prev, ...newLogs].slice(-100))
+            requestAnimationFrame(() => {
+              scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+            })
+          }
+        }
+      } catch {
+        // non-critical
+      }
+      // If active, keep polling; otherwise one-time fetch
+      if (!cancelled && active) {
+        setTimeout(fetchLogs, 1500)
+      }
+    }
+    fetchLogs()
+    return () => { cancelled = true }
+  }, [active, backendUrl, apiKey, serverName])
+
+  if (logs.length === 0 && !active) return null
+
+  const visibleLogs = expanded ? logs : logs.slice(-5)
+
+  const levelColor = (level: string) => {
+    if (level === 'error') return 'text-red-400'
+    if (level === 'warning') return 'text-amber-400'
+    if (level === 'debug') return 'text-white/20'
+    return 'text-white/40'
+  }
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="text-[10px] text-white/30 hover:text-white/50 transition-colors mb-1"
+      >
+        {expanded ? 'Hide' : 'Show'} install logs ({logs.length} entries)
+      </button>
+      {(expanded || logs.length <= 5) && (
+        <div
+          ref={scrollRef}
+          className="bg-black/30 border border-white/5 rounded-lg p-2 max-h-40 overflow-y-auto font-mono text-[10px] leading-relaxed custom-scrollbar"
+        >
+          {visibleLogs.map((log, i) => (
+            <div key={i} className={`flex gap-2 ${levelColor(log.level)}`}>
+              <span className="text-white/15 shrink-0">{log.phase}</span>
+              <span className="break-all">{log.message}</span>
+            </div>
+          ))}
+          {logs.length === 0 && active && (
+            <div className="text-white/20 italic">Waiting for install logs...</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -267,6 +387,7 @@ export function PersonaImportModal({
   const [mcpPlan, setMcpPlan] = useState<McpInstallPlan | null>(null)
   const [mcpInstalling, setMcpInstalling] = useState(false)
   const [mcpResult, setMcpResult] = useState<McpInstallPlan | null>(null)
+  const [forceReinstall, setForceReinstall] = useState(false)
 
   // Do we need MCP server installation? (installable, downloadable, or external missing)
   const needsMcpInstall = preview?.dependency_check?.mcp_servers?.some(
@@ -275,6 +396,11 @@ export function PersonaImportModal({
   ) ?? false
   // Alias for backwards compat in the component
   const hasMissingMcpServers = needsMcpInstall
+
+  // Are there MCP servers that are already installed? (user may want to reinstall)
+  const hasAlreadyInstalledServers = preview?.dependency_check?.mcp_servers?.some(
+    (s) => s.status === 'available' && s.source_type === 'external'
+  ) ?? false
 
   // Total steps: 4 if MCP install needed, 3 otherwise
   const totalSteps = hasMissingMcpServers ? 4 : 3
@@ -393,6 +519,7 @@ export function PersonaImportModal({
     try {
       const result = await importPersonaAtomic({
         backendUrl, apiKey, file, autoInstallServers: true,
+        forceReinstall,
       })
       setImportedProject(result.project)
       if (result.install_plan) {
@@ -706,6 +833,59 @@ export function PersonaImportModal({
                   </div>
                 </div>
               )}
+
+              {/* Reinstall option — shown when servers are already installed */}
+              {hasAlreadyInstalledServers && (
+                <div className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.08]">
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center shrink-0">
+                      <RefreshCw size={18} className="text-amber-400" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="text-sm font-semibold text-white/80 mb-1">
+                        MCP Server Already Installed
+                      </h4>
+                      <p className="text-xs text-white/40 leading-relaxed mb-3">
+                        The required MCP server(s) are already running. Choose whether to reuse them or reinstall from scratch.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setForceReinstall(false)}
+                          className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${
+                            !forceReinstall
+                              ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                              : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/8'
+                          }`}
+                        >
+                          Reuse existing
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setForceReinstall(true)}
+                          className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${
+                            forceReinstall
+                              ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                              : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/8'
+                          }`}
+                        >
+                          Purge &amp; reinstall
+                        </button>
+                      </div>
+                      {depCheck?.mcp_servers
+                        .filter(s => s.status === 'available' && s.source_type === 'external')
+                        .map((s, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs mt-2">
+                            <CheckCircle size={11} className="text-emerald-400" />
+                            <span className="font-medium text-white/60">{s.name}</span>
+                            <span className="text-white/30">running{s.port ? ` on port ${s.port}` : ''}</span>
+                          </div>
+                        ))
+                      }
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -791,13 +971,29 @@ export function PersonaImportModal({
                 </div>
               )}
 
-              {/* Installing progress */}
+              {/* Installing progress — live log viewer */}
               {mcpInstalling && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-center gap-2 text-sm text-purple-300">
                     <Loader2 size={16} className="animate-spin" />
                     Installing MCP servers... This may take a moment.
                   </div>
+                  {/* Live install logs for each server being installed */}
+                  {mcpPlan?.servers_to_install?.map((srv, i) => (
+                    <div key={i} className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Server size={14} className="text-purple-400" />
+                        <span className="text-sm font-medium text-white">{srv.name}</span>
+                        <Loader2 size={12} className="text-purple-400/60 animate-spin" />
+                      </div>
+                      <InstallLogViewer
+                        backendUrl={backendUrl}
+                        apiKey={apiKey}
+                        serverName={srv.name}
+                        active={true}
+                      />
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -805,7 +1001,7 @@ export function PersonaImportModal({
               {mcpResult && (
                 <div className="space-y-3">
                   {mcpResult.install_statuses.map((s, i) => (
-                    <McpInstallCard key={i} status={s} />
+                    <McpInstallCard key={i} status={s} backendUrl={backendUrl} apiKey={apiKey} />
                   ))}
 
                   {/* Summary */}

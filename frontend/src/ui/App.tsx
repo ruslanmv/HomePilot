@@ -52,7 +52,7 @@ import { detectAgenticIntent, type AgenticIntent } from './agentic/intent'
 import { ImageViewer } from './ImageViewer'
 import { EditTab } from './edit'
 import { AvatarStudio } from './avatar'
-import { TeamsView } from './teams'
+import { TeamsView, useTeamsMcpAvailable } from './teams'
 import type { GalleryItem } from './avatar/galleryTypes'
 import { SaveAsPersonaModal } from './avatar/SaveAsPersonaModal'
 import { PersonaWizard } from './PersonaWizard'
@@ -928,6 +928,12 @@ function Sidebar({
   const [showSystemStatus, setShowSystemStatus] = useState(false)
   const { user: authUser, logout } = useAuth()
 
+  // Auto-detect Teams MCP server — show Teams tab only when installed & healthy
+  const { available: teamsMcpAvailable } = useTeamsMcpAvailable(
+    settingsDraft.backendUrl,
+    settingsDraft.apiKey,
+  )
+
   // Build AccountMenuUser from auth context (fallback for pre-auth setups)
   const currentUser = useMemo<AccountMenuUser>(() => {
     if (authUser) {
@@ -1010,10 +1016,12 @@ function Sidebar({
         {/* Divider */}
         <div className="border-t border-white/5" />
 
-        {/* Teams */}
-        <div className="flex flex-col gap-px">
-          <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} />
-        </div>
+        {/* Teams — visible only when teams-mcp-server is installed & healthy */}
+        {teamsMcpAvailable && (
+          <div className="flex flex-col gap-px">
+            <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} />
+          </div>
+        )}
 
         {/* Divider */}
         <div className="border-t border-white/5" />
@@ -2279,6 +2287,12 @@ export default function App() {
   useEffect(() => localStorage.setItem('homepilot_conversation', chatConversationId), [chatConversationId])
   useEffect(() => localStorage.setItem('homepilot_mode', mode), [mode])
 
+  // Teams MCP feature detection — only show Teams nav when server is available
+  const { available: teamsMcpAvailable } = useTeamsMcpAvailable(
+    settingsDraft.backendUrl,
+    settingsDraft.apiKey,
+  )
+
   // Clear voice session when exiting Voice mode — BUT NOT when linked to persona.
   // Linked persona sessions persist across mode switches (companion-grade).
   // Unlinked voice stays ephemeral (like Alexa/Grok).
@@ -2458,7 +2472,6 @@ export default function App() {
 
     // Teams settings
     localStorage.setItem('homepilot_teams_concurrent_calls', String(settingsDraft.teamsConcurrentCalls ?? 1))
-
     // Multimodal (Vision) settings
     localStorage.setItem('homepilot_provider_multimodal', settingsDraft.providerMultimodal || 'ollama')
     localStorage.setItem('homepilot_base_url_multimodal', settingsDraft.baseUrlMultimodal || '')

@@ -678,7 +678,7 @@ cmd_launch() {
             ext_name=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null)
             ext_port=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])" 2>/dev/null)
             ext_git=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['git'])" 2>/dev/null)
-            ext_ref=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ref','main'))" 2>/dev/null)
+            ext_ref=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ref','master'))" 2>/dev/null)
             ext_subdir=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('subdir',''))" 2>/dev/null)
             ext_desc=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('description','External MCP server'))" 2>/dev/null)
 
@@ -740,7 +740,7 @@ cmd_launch() {
                     ext_name=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['name'])" 2>/dev/null)
                     ext_port=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['port'])" 2>/dev/null)
                     ext_git=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['git'])" 2>/dev/null)
-                    ext_ref=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ref','main'))" 2>/dev/null)
+                    ext_ref=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ref','master'))" 2>/dev/null)
                     ext_subdir=$(echo "$ext_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('subdir',''))" 2>/dev/null)
 
                     echo -e "  ${BOLD}Installing $ext_name...${NC}"

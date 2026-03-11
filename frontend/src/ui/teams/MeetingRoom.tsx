@@ -60,6 +60,8 @@ import { MeetingVoiceSettings } from './MeetingVoiceSettings'
 import { MeetingPlayMode } from './MeetingPlayMode'
 import { usePersonaVoices } from './usePersonaVoices'
 import { useMeetingTts } from './useMeetingTts'
+import { BridgeStatusPanel } from './BridgeStatusPanel'
+import { useBridge } from './useBridge'
 import type { PlayModeStyle, PlayModeState } from './types'
 
 // ---------------------------------------------------------------------------
@@ -236,6 +238,13 @@ export function MeetingRoom({
   // ── STT mic state (additive) ──
   const [sttActive, setSttActive] = useState(false)
   const [sttInterim, setSttInterim] = useState('')
+
+  // ── Teams bridge state ──
+  const bridge = useBridge({
+    backendUrl,
+    roomId: room.id,
+    statusPollInterval: 10000,
+  })
 
   // ── Seat paging state ──
   const [visibleSeatIds, setVisibleSeatIds] = useState<string[]>([])
@@ -1097,14 +1106,28 @@ export function MeetingRoom({
 
         {/* ── RIGHT RAIL ── */}
         {rightRailOpen && (
-          <MeetingRightRail
-            room={room}
-            personas={personas}
-            backendUrl={backendUrl}
-            onClose={() => setRightRailOpen(false)}
-            onUpdateAgenda={onUpdateAgenda}
-            onUpdateTopic={onUpdateTopic}
-          />
+          <div className="flex-shrink-0 w-64 flex flex-col overflow-hidden">
+            {/* Bridge status panel — shown when Teams bridge is connected */}
+            {bridge.status?.connected && (
+              <div className="px-2 pt-2">
+                <BridgeStatusPanel
+                  status={bridge.status}
+                  onDisconnect={() => bridge.disconnect()}
+                  onToggleVoice={(enabled) => bridge.toggleVoice(enabled)}
+                  onRefresh={() => bridge.fetchStatus()}
+                  loading={bridge.loading}
+                />
+              </div>
+            )}
+            <MeetingRightRail
+              room={room}
+              personas={personas}
+              backendUrl={backendUrl}
+              onClose={() => setRightRailOpen(false)}
+              onUpdateAgenda={onUpdateAgenda}
+              onUpdateTopic={onUpdateTopic}
+            />
+          </div>
         )}
       </div>
 
