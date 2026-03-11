@@ -475,9 +475,22 @@ async def main() -> int:
             print(f"  a2a: {agent_def['name']}")
 
         # ── 3. Register gateways (admin visibility) ────────────────────
-        for gw in templates_gateways.get("gateways", []):
-            await ensure_gateway(client, gw, existing_gateways)
-            print(f"  gateway: {gw['name']}")
+        #
+        # DISABLED: HomePilot MCP servers expose plain HTTP POST /rpc
+        # (JSON-RPC 2.0), not SSE.  Forge gateway registration triggers
+        # an SSE handshake (GET /rpc) that always fails with 404 or 405,
+        # flooding the log with GatewayConnectionError stack traces.
+        # Tool discovery (step 1) already registers tools correctly.
+        #
+        # Clean up any stale gateway records from previous seed runs
+        # so Forge doesn't try to reconnect to them on startup.
+        for gw_name, gw_id in list(existing_gateways.items()):
+            try:
+                await client.delete(f"{BASE_URL}/gateways/{gw_id}")
+                print(f"  gateway: {gw_name} (removed stale record)")
+            except Exception:
+                pass
+        gateways_skipped = len(templates_gateways.get("gateways", []))
 
         # ── 4. Create virtual servers ──────────────────────────────────
         # Re-fetch all tools from Forge to ensure tool_id_map has current

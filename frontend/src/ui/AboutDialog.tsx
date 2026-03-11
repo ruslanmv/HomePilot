@@ -4,13 +4,14 @@
  * Displays version, author, and project links in a centered modal overlay.
  */
 import React, { useEffect, useRef } from 'react'
-import { X, ExternalLink, Github, Globe, Heart } from 'lucide-react'
+import { X, ExternalLink, Github, Globe, Heart, Activity } from 'lucide-react'
 
 interface AboutDialogProps {
   onClose: () => void
+  onOpenSystemStatus?: () => void
 }
 
-export default function AboutDialog({ onClose }: AboutDialogProps) {
+export default function AboutDialog({ onClose, onOpenSystemStatus }: AboutDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
 
   // Close on Escape
@@ -135,6 +136,18 @@ export default function AboutDialog({ onClose }: AboutDialogProps) {
               <ExternalLink size={10} className="text-white/30" />
             </a>
           </div>
+
+          {/* Overview button */}
+          {onOpenSystemStatus && (
+            <button
+              type="button"
+              onClick={() => { onClose(); onOpenSystemStatus() }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500/10 to-cyan-500/10 border border-emerald-500/20 text-emerald-300 hover:text-white hover:border-emerald-400/30 transition-colors text-[12px] font-medium mb-5"
+            >
+              <Activity size={14} />
+              Overview
+            </button>
+          )}
 
           {/* Footer */}
           <div className="flex items-center gap-1.5 text-[11px] text-white/25">

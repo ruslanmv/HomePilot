@@ -123,9 +123,16 @@ def _normalize_view_pack(raw: Any) -> Dict[str, str]:
     return out
 
 
-def _available_views(view_pack: Dict[str, str]) -> List[str]:
-    """Return list of angles that have a URL in the view pack."""
-    return [a for a in VIEW_ANGLES if view_pack.get(a)]
+def _available_views(view_pack: Dict[str, str], has_main_image: bool = False) -> List[str]:
+    """Return list of angles that have a URL in the view pack.
+
+    If the view_pack has other angles but no explicit "front", and the
+    outfit has a main image, include "front" (the main image IS the front).
+    """
+    views = [a for a in VIEW_ANGLES if view_pack.get(a)]
+    if views and "front" not in views and has_main_image:
+        views.insert(0, "front")
+    return views
 
 
 def _get_equipped_outfit(appearance: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -242,7 +249,7 @@ def _collect_outfit_items(appearance: Dict[str, Any]) -> List[Dict[str, Any]]:
 
         # View pack — angle-grouped images for 360° preview
         view_pack = _normalize_view_pack(o.get("view_pack"))
-        avail_views = _available_views(view_pack)
+        avail_views = _available_views(view_pack, has_main_image=bool(asset_ids))
 
         # If no preview_asset_id from images but view_pack has front, use that
         if not preview_asset_id and view_pack.get("front"):
@@ -769,7 +776,8 @@ async def resolve_persona_outfit_view(
         return JSONResponse(status_code=403, content={"ok": False, "message": "FORBIDDEN_SENSITIVITY"})
 
     view_pack = _normalize_view_pack(outfit.get("view_pack"))
-    avail_views = _available_views(view_pack)
+    _outfit_has_images = bool(outfit.get("images"))
+    avail_views = _available_views(view_pack, has_main_image=_outfit_has_images)
     outfit_id = str(outfit.get("id") or "").strip()
     label = str(outfit.get("label") or "Outfit").strip()
 
