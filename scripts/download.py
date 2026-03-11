@@ -411,7 +411,7 @@ def install_from_install_block(model_id: str, model_data: Dict[str, Any]) -> boo
             result = subprocess.run(
                 ["git", "clone", "--depth", "1", repo_url, str(dest_dir)],
                 capture_output=True,
-                text=True
+                encoding="utf-8", errors="replace"
             )
             if result.returncode != 0:
                 print(f"ERROR: git clone failed: {result.stderr}")
