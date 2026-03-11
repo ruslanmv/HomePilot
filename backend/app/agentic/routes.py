@@ -747,6 +747,48 @@ async def agentic_server_uninstall(server_id: str, _key: str = Depends(require_a
     return result
 
 
+@router.post("/servers/external/{server_name}/uninstall")
+async def agentic_external_server_uninstall(server_name: str, _key: str = Depends(require_api_key)):
+    """Uninstall an external/community MCP server: stop process, deactivate tools.
+
+    External servers are those installed from git (persona import) or community
+    bundles. Marks the server as 'uninstalled' in community/external/registry.json
+    so it won't auto-start on next launch.
+    """
+    if not _ENABLED:
+        raise HTTPException(status_code=503, detail="Agentic features are disabled")
+
+    mgr = get_server_manager()
+    result = await mgr.uninstall_external(
+        server_name,
+        forge_url=_FORGE_URL,
+        auth_user=_AUTH_USER,
+        auth_pass=_AUTH_PASS,
+        bearer_token=_TOKEN or None,
+    )
+
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Uninstall failed"))
+
+    # Trigger sync to refresh virtual server associations
+    try:
+        sync_result = await sync_homepilot(
+            base_url=_FORGE_URL,
+            auth_user=_AUTH_USER,
+            auth_pass=_AUTH_PASS,
+            bearer_token=_TOKEN or None,
+        )
+        result["sync"] = {
+            "tools_total": sync_result.get("tools_total_in_forge", 0),
+            "virtual_servers_updated": sync_result.get("virtual_servers_updated", 0),
+        }
+    except Exception as exc:
+        result["sync_error"] = str(exc)
+    _catalog_service.invalidate()
+
+    return result
+
+
 # ── POST /v1/agentic/invoke ──────────────────────────────────────────────────
 # Phase 3: built-in intents route to the local HomePilot orchestrator.
 # Other intents fall through to Context Forge tool invocation.

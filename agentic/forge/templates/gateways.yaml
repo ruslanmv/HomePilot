@@ -1,8 +1,11 @@
 version: 1
 
-# These gateways are registered for admin UI catalog visibility.
-# Tool discovery is done DIRECTLY (not via SSE auto-discovery) by
-# the seed script querying each server's /rpc endpoint for tools/list.
+# REFERENCE ONLY — gateway registration is DISABLED in seed_all.py.
+#
+# HomePilot MCP servers expose HTTP POST /rpc (JSON-RPC 2.0), not SSE.
+# Forge gateway registration triggers an SSE handshake that always fails.
+# Tool discovery is done DIRECTLY by the seed script querying each
+# server's /rpc endpoint for tools/list.
 
 gateways:
   # ── Core (9101–9105) ──────────────────────────────────────────────────────
