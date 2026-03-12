@@ -32,9 +32,17 @@ import {
   RefreshCw,
   ExternalLink,
   Play,
+  Settings,
 } from 'lucide-react'
 import { useAvailableServers, type McpServerEntry } from './useAvailableServers'
 import { ExternalUninstallDialog } from './ExternalUninstallDialog'
+import { ServerConfigDrawer } from './ServerConfigDrawer'
+import { MCP_SERVERS_CHANGED_EVENT } from '../teams/useBridge'
+
+/** Notify other parts of the UI (e.g. Teams tab) that servers changed. */
+function notifyServersChanged() {
+  window.dispatchEvent(new CustomEvent(MCP_SERVERS_CHANGED_EVENT))
+}
 
 type Props = {
   backendUrl: string
@@ -98,6 +106,7 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
   const [feedback, setFeedback] = useState<ActionFeedback | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [externalUninstallTarget, setExternalUninstallTarget] = useState<McpServerEntry | null>(null)
+  const [configTarget, setConfigTarget] = useState<McpServerEntry | null>(null)
 
   const handleInstall = async (server: McpServerEntry) => {
     setFeedback(null)
@@ -112,6 +121,7 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
         message: `${server.label} installed — ${result.tools_discovered ?? 0} tools registered in Forge`,
       })
       onInstallChange?.()
+      notifyServersChanged()
     } else {
       setFeedback({
         serverId: server.id,
@@ -136,6 +146,7 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
         message: `${server.label} uninstalled — tools deactivated in Forge`,
       })
       onInstallChange?.()
+      notifyServersChanged()
     } else {
       setFeedback({
         serverId: server.id,
@@ -161,6 +172,7 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
         message: `${server.label} uninstalled — ${result.tools_deactivated ?? 0} tools deactivated${extra}`,
       })
       onInstallChange?.()
+      notifyServersChanged()
     } else {
       setFeedback({
         serverId: server.id,
@@ -179,6 +191,7 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
         ok: true,
         message: `${server.label} started successfully`,
       })
+      notifyServersChanged()
     } else {
       setFeedback({
         serverId: server.id,
@@ -297,6 +310,7 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
                 onInstall={() => handleInstall(server)}
                 onUninstall={() => handleUninstall(server)}
                 onRestart={() => handleRestart(server)}
+                onConfigure={server.requires_config ? () => setConfigTarget(server) : undefined}
               />
             ))}
           </div>
@@ -313,6 +327,22 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
           onConfirmUninstall={handleConfirmExternalUninstall}
         />
       )}
+
+      {/* Server config drawer for builtin servers that need credentials */}
+      {configTarget && (
+        <ServerConfigDrawer
+          server={configTarget}
+          backendUrl={backendUrl}
+          apiKey={apiKey}
+          onClose={() => setConfigTarget(null)}
+          onComplete={() => {
+            setConfigTarget(null)
+            void refresh()
+            onInstallChange?.()
+            notifyServersChanged()
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -325,9 +355,10 @@ type CardProps = {
   onInstall: () => void
   onUninstall: () => void
   onRestart: () => void
+  onConfigure?: () => void
 }
 
-function ServerCard({ server, isLoading, onInstall, onUninstall, onRestart }: CardProps) {
+function ServerCard({ server, isLoading, onInstall, onUninstall, onRestart, onConfigure }: CardProps) {
   const IconComp = ICON_MAP[server.icon] || Server
 
   const statusColor = server.healthy
@@ -385,7 +416,7 @@ function ServerCard({ server, isLoading, onInstall, onUninstall, onRestart }: Ca
         </div>
       </div>
 
-      {/* Action button */}
+      {/* Action buttons */}
       <div className="shrink-0">
         {server.is_core ? (
           <span className="text-[10px] text-white/20 px-2 py-1">Always on</span>
@@ -396,6 +427,18 @@ function ServerCard({ server, isLoading, onInstall, onUninstall, onRestart }: Ca
           </div>
         ) : server.installed ? (
           <div className="flex items-center gap-1.5">
+            {/* Configure button for servers that need config */}
+            {onConfigure && (
+              <button
+                onClick={onConfigure}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                  bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/20
+                  transition-colors"
+              >
+                <Settings size={12} />
+                Configure
+              </button>
+            )}
             {/* Start button for stopped external servers */}
             {server.source_type === 'external' && !server.healthy && (
               <button
@@ -419,15 +462,29 @@ function ServerCard({ server, isLoading, onInstall, onUninstall, onRestart }: Ca
             </button>
           </div>
         ) : (
-          <button
-            onClick={onInstall}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-              bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20
-              transition-colors"
-          >
-            <Download size={12} />
-            Install
-          </button>
+          <div className="flex items-center gap-1.5">
+            {/* Configure button before install for servers that need config */}
+            {onConfigure && (
+              <button
+                onClick={onConfigure}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                  bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/20
+                  transition-colors"
+              >
+                <Settings size={12} />
+                Configure
+              </button>
+            )}
+            <button
+              onClick={onInstall}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20
+                transition-colors"
+            >
+              <Download size={12} />
+              Install
+            </button>
+          </div>
         )}
       </div>
     </div>

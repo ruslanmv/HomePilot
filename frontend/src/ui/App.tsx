@@ -928,12 +928,6 @@ function Sidebar({
   const [showSystemStatus, setShowSystemStatus] = useState(false)
   const { user: authUser, logout } = useAuth()
 
-  // Auto-detect Teams MCP server — show Teams tab only when installed & healthy
-  const { available: teamsMcpAvailable } = useTeamsMcpAvailable(
-    settingsDraft.backendUrl,
-    settingsDraft.apiKey,
-  )
-
   // Build AccountMenuUser from auth context (fallback for pre-auth setups)
   const currentUser = useMemo<AccountMenuUser>(() => {
     if (authUser) {
@@ -1016,12 +1010,10 @@ function Sidebar({
         {/* Divider */}
         <div className="border-t border-white/5" />
 
-        {/* Teams — visible only when teams-mcp-server is installed & healthy */}
-        {teamsMcpAvailable && (
-          <div className="flex flex-col gap-px">
-            <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} />
-          </div>
-        )}
+        {/* Teams — always visible in sidebar */}
+        <div className="flex flex-col gap-px">
+          <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} />
+        </div>
 
         {/* Divider */}
         <div className="border-t border-white/5" />
@@ -2207,6 +2199,10 @@ export default function App() {
     const modelMultimodal = localStorage.getItem('homepilot_model_multimodal') || ''
     const multimodalTopology = (localStorage.getItem('homepilot_multimodal_topology') as ('direct' | 'smart' | 'agent' | 'knowledge')) || 'smart'
 
+    // OllaBridge integration
+    const ollaBridgeEnabled = localStorage.getItem('homepilot_ollabridge_enabled') === 'true'
+    const ollaBridgeApiKey = localStorage.getItem('homepilot_ollabridge_api_key') || 'my-secret'
+
     return {
       backendUrl,
       apiKey,
@@ -2228,6 +2224,8 @@ export default function App() {
       baseUrlMultimodal,
       modelMultimodal,
       multimodalTopology,
+      ollaBridgeEnabled,
+      ollaBridgeApiKey,
     }
   })
 
@@ -2477,6 +2475,23 @@ export default function App() {
     localStorage.setItem('homepilot_base_url_multimodal', settingsDraft.baseUrlMultimodal || '')
     localStorage.setItem('homepilot_model_multimodal', settingsDraft.modelMultimodal || '')
     localStorage.setItem('homepilot_multimodal_topology', settingsDraft.multimodalTopology || 'smart')
+
+    // OllaBridge integration
+    localStorage.setItem('homepilot_ollabridge_enabled', String(!!settingsDraft.ollaBridgeEnabled))
+    localStorage.setItem('homepilot_ollabridge_api_key', settingsDraft.ollaBridgeApiKey || 'my-secret')
+
+    // Sync OllaBridge toggle with backend (sets API_KEY + enables/disables compat endpoint)
+    const backendBase = (settingsDraft.backendUrl || 'http://localhost:8000').replace(/\/+$/, '')
+    fetch(`${backendBase}/settings/ollabridge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': settingsDraft.apiKey || '' },
+      body: JSON.stringify({
+        enabled: !!settingsDraft.ollaBridgeEnabled,
+        api_key: settingsDraft.ollaBridgeApiKey || 'my-secret',
+      }),
+    }).catch(() => {
+      // Backend may not be reachable — settings still saved locally
+    })
 
     // Save TTS settings to nexus_settings_v1 format (used by SpeechService)
     // This ensures the selected voice is actually used for TTS
@@ -4801,6 +4816,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           <TeamsView
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
+            teamsMcpAvailable={teamsMcpAvailable}
           />
         ) : mode === 'animate' ? (
           // Animate mode: Grok-style video generation gallery

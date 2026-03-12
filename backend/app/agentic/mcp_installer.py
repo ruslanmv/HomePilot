@@ -425,9 +425,18 @@ async def analyze_mcp_dependencies(
         available_servers = await mgr.get_available()
         available_ids = {s["id"] for s in available_servers}
         running_ids = {s["id"] for s in available_servers if s.get("status") == "running"}
+        # IDs of servers that are actually installed or core (not just "available" in catalog)
+        installed_ids = {
+            s["id"] for s in available_servers
+            if s.get("status") in ("running", "installed") or s.get("is_core")
+        }
+        # Core server IDs (always running, never need install)
+        core_ids = {s["id"] for s in available_servers if s.get("is_core")}
     except Exception:
         available_ids = set()
         running_ids = set()
+        installed_ids = set()
+        core_ids = set()
 
     # Check external registry
     ext_registry = _read_external_registry()
@@ -453,17 +462,29 @@ async def analyze_mcp_dependencies(
         source = server_info.get("source", {})
         source_type = source.get("type", "unknown")
         git_url = source.get("git", "")
+        builtin_id = source.get("builtin_id", "")
 
-        # Check if already available (builtin/installed/running)
-        is_available = (
-            name in available_ids
-            or name in running_ids
-            or name in ext_names
-            or source_type == "builtin"
-        )
+        # For builtin servers, only mark as available if actually
+        # installed/running (core = always available, optional = must check)
+        if source_type == "builtin":
+            resolved_id = builtin_id or name
+            is_available = (
+                resolved_id in core_ids
+                or resolved_id in installed_ids
+                or resolved_id in running_ids
+            )
+        else:
+            is_available = (
+                name in installed_ids
+                or name in running_ids
+                or name in ext_names
+            )
 
         if is_available:
             plan.servers_already_available.append(server_info)
+        elif source_type == "builtin" and (builtin_id or name) in available_ids:
+            # Optional builtin server exists in catalog but not installed — auto-install
+            plan.servers_to_install.append(server_info)
         elif source_type == "community_bundle" and name.lower() in local_bundle_ids:
             # Bundle present locally — installable
             plan.servers_to_install.append(server_info)
@@ -1663,6 +1684,73 @@ async def install_external_server(
     return status
 
 
+async def _install_builtin_server(
+    server_info: Dict[str, Any],
+    forge_url: str,
+    auth_user: str = "admin",
+    auth_pass: str = "changeme",
+    bearer_token: Optional[str] = None,
+) -> ServerInstallStatus:
+    """Install an optional builtin server via the ServerManager.
+
+    Builtin servers are already part of the catalog (server_catalog.yaml)
+    but may not be installed.  This delegates to ServerManager.install()
+    which starts the process and registers tools in Forge.
+    """
+    name = server_info.get("name", "unknown")
+    builtin_id = server_info.get("source", {}).get("builtin_id", "") or name
+    status = ServerInstallStatus(
+        server_name=name,
+        source_type="builtin",
+        phase=InstallPhase.STARTING,
+        message=f"Installing builtin server {builtin_id}...",
+    )
+    start_time = time.monotonic()
+
+    try:
+        from .server_manager import get_server_manager
+        mgr = get_server_manager()
+
+        result = await mgr.install(
+            builtin_id,
+            forge_url=forge_url,
+            auth_user=auth_user,
+            auth_pass=auth_pass,
+            bearer_token=bearer_token,
+        )
+
+        if result.get("ok"):
+            status.phase = InstallPhase.COMPLETE
+            status.port = result.get("port")
+            status.tools_discovered = result.get("tools_discovered", 0)
+            status.tools_registered = result.get("tools_registered", 0)
+            status.progress_pct = 100
+            status.message = (
+                f"Installed {builtin_id}: "
+                f"{status.tools_discovered} tools discovered"
+            )
+            logger.info("Builtin server %s installed: %s", builtin_id, result)
+        else:
+            error_msg = result.get("error", "Unknown error")
+            # "already installed" is not a failure
+            if "already" in error_msg.lower():
+                status.phase = InstallPhase.SKIPPED
+                status.progress_pct = 100
+                status.message = f"{builtin_id} already installed"
+            else:
+                status.phase = InstallPhase.FAILED
+                status.error = error_msg
+                status.message = f"Failed to install {builtin_id}: {error_msg}"
+    except Exception as exc:
+        status.phase = InstallPhase.FAILED
+        status.error = str(exc)
+        status.message = f"Failed to install {builtin_id}: {exc}"
+        logger.warning("Builtin server %s install failed: %s", builtin_id, exc)
+
+    status.elapsed_ms = int((time.monotonic() - start_time) * 1000)
+    return status
+
+
 async def install_servers_from_plan(
     plan: InstallPlan,
     forge_url: str,
@@ -1678,7 +1766,11 @@ async def install_servers_from_plan(
     """
     for server_info in plan.servers_to_install:
         source_type = server_info.get("source", {}).get("type", "external")
-        if source_type == "community_bundle":
+        if source_type == "builtin":
+            install_status = await _install_builtin_server(
+                server_info, forge_url, auth_user, auth_pass, bearer_token,
+            )
+        elif source_type == "community_bundle":
             install_status = await install_community_bundle(
                 server_info, forge_url, auth_user, auth_pass, bearer_token,
             )

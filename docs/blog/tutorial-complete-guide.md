@@ -970,6 +970,30 @@ A comprehensive **Udemy course** covering every section of this guide — with v
 
 ---
 
+## Bonus: OllaBridge + 3D Avatar Integration
+
+Extend your HomePilot personas beyond the web UI. With [OllaBridge](https://github.com/ruslanmv/ollabridge) as a gateway, any OpenAI-compatible client can talk to your personas — including the [3D Avatar Chatbot](https://github.com/ruslanmv/3D-Avatar-Chatbot) for an immersive VR experience with voice, lip sync, and animated gestures.
+
+<p align="center">
+  <img src="../../assets/ollabridge-architecture.svg" alt="OllaBridge Architecture" width="800" /><br>
+  <em>OllaBridge unifies Ollama models and HomePilot personas behind a single API endpoint.</em>
+</p>
+
+<p align="center">
+  <img src="../../assets/3d-avatar-pipeline.svg" alt="3D Avatar + HomePilot Pipeline" width="800" /><br>
+  <em>The full pipeline: speak to a 3D avatar, which routes through OllaBridge to a HomePilot persona that remembers you.</em>
+</p>
+
+**Setup in 3 steps:**
+
+1. Start HomePilot: `make install && make run`
+2. Start OllaBridge: `ollabridge start --auth-mode pairing`
+3. Open 3D Avatar, select OllaBridge, enter the 6-digit pairing code
+
+Read the full integration guide: **[OllaBridge Integration](../OLLABRIDGE.md)**
+
+---
+
 <p align="center">
   <img src="../../assets/homepilot-logo.svg" alt="HomePilot" width="300" /><br><br>
   <strong>HomePilot</strong> — Your AI. Your data. Your rules.<br><br>

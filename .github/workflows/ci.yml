@@ -32,6 +32,20 @@ jobs:
         env:
           SKIP_NETWORK_TESTS: "1"
 
+  openai-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r backend/requirements.txt
+      - name: OpenAI-compatible persona API tests (models, chat, auth, toggle)
+        run: pytest tests/test_openai_compat.py -v --tb=short
+        working-directory: backend
+        env:
+          SKIP_NETWORK_TESTS: "1"
+
   frontend:
     runs-on: ubuntu-latest
     steps:

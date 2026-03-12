@@ -23,13 +23,15 @@ import { useBridge } from './useBridge'
 export interface TeamsViewProps {
   backendUrl: string
   apiKey?: string
+  /** When true the "Join Meeting" bridge button is shown (requires Teams MCP server) */
+  teamsMcpAvailable?: boolean
 }
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
+export function TeamsView({ backendUrl, apiKey, teamsMcpAvailable }: TeamsViewProps) {
   const [viewMode, setViewMode] = useState<'landing' | 'wizard' | 'join-meeting' | 'room'>('landing')
   const [activeRoom, setActiveRoom] = useState<MeetingRoomT | null>(null)
   const [personas, setPersonas] = useState<PersonaSummary[]>([])
@@ -469,7 +471,7 @@ export function TeamsView({ backendUrl, apiKey }: TeamsViewProps) {
       personas={personas}
       backendUrl={backendUrl}
       onNewSession={() => setViewMode('wizard')}
-      onJoinMeeting={() => setViewMode('join-meeting')}
+      onJoinMeeting={teamsMcpAvailable ? () => setViewMode('join-meeting') : undefined}
       onOpenRoom={handleOpenRoom}
       onDeleteRoom={deleteRoom}
     />

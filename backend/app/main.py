@@ -117,6 +117,9 @@ from .avatar.hybrid_router import router as hybrid_avatar_router
 # Multimodal Vision Layer (additive — on-demand image understanding)
 from .multimodal import analyze_image, is_vision_intent, VISION_MODEL_PATTERNS
 
+# OpenAI-compatible endpoint (additive — exposes personas as /v1/chat/completions)
+from .openai_compat_endpoint import router as openai_compat_router
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -164,6 +167,11 @@ app.include_router(agent_router)
 
 # Include Community Gallery proxy routes (/community/*)
 app.include_router(community_router)
+
+# Include OpenAI-compatible persona endpoint (/v1/chat/completions, /v1/models)
+# Enables external tools (OllaBridge, 3D-Avatar-Chatbot) to chat with personas
+# Controlled at runtime via /settings/ollabridge toggle
+app.include_router(openai_compat_router)
 
 # Include User Profile routes (/v1/profile/*)
 app.include_router(profile_router)
@@ -1695,6 +1703,57 @@ async def test_api_key_endpoint(req: ApiKeyTestRequest) -> JSONResponse:
         })
 
     return JSONResponse(content={"ok": True, "valid": False, "message": "Unknown error"})
+
+
+# ---------------------------------------------------------------------------
+# OllaBridge / Shared Persona API settings
+# ---------------------------------------------------------------------------
+
+class OllaBridgeSettings(BaseModel):
+    enabled: bool = Field(False, description="Enable/disable the OpenAI-compatible persona API")
+    api_key: str = Field("my-secret", description="API key for external clients")
+
+
+@app.get("/settings/ollabridge")
+async def get_ollabridge_settings() -> JSONResponse:
+    """Return current OllaBridge integration status."""
+    from . import config as _cfg
+    from . import openai_compat_endpoint as _compat
+
+    return JSONResponse(content={
+        "ok": True,
+        "enabled": getattr(_compat, "_compat_enabled", True),
+        "api_key_set": bool(_cfg.API_KEY),
+        "endpoint": "/v1/chat/completions",
+        "models_endpoint": "/v1/models",
+    })
+
+
+@app.post("/settings/ollabridge")
+async def set_ollabridge_settings(req: OllaBridgeSettings) -> JSONResponse:
+    """Toggle the OpenAI-compatible persona API and set its API key at runtime.
+
+    When enabled, external clients (OllaBridge, 3D-Avatar-Chatbot, any OpenAI SDK)
+    can chat with HomePilot personas via /v1/chat/completions.
+    """
+    from . import config as _cfg
+    from . import openai_compat_endpoint as _compat
+
+    # Update the runtime API key
+    _cfg.API_KEY = req.api_key.strip() if req.api_key else ""
+
+    # Store the enabled flag on the compat module so the endpoint can gate itself
+    _compat._compat_enabled = req.enabled
+
+    status = "enabled" if req.enabled else "disabled"
+    print(f"[OllaBridge] Persona API {status}, API_KEY={'set' if _cfg.API_KEY else 'unset'}")
+
+    return JSONResponse(content={
+        "ok": True,
+        "enabled": req.enabled,
+        "api_key_set": bool(_cfg.API_KEY),
+        "message": f"Persona API {status}",
+    })
 
 
 @app.get("/models")
