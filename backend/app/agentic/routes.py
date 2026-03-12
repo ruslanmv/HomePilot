@@ -38,6 +38,7 @@ from .client import ContextForgeClient
 from .policy import apply_policy, is_allowed, resolve_profile
 from .suite_manifest import list_suites, read_suite
 from .runtime_tool_router import RuntimeToolRouter
+from .server_config import read_server_config, save_server_config, validate_config
 from .server_manager import get_server_manager
 from .sync_service import sync_homepilot
 from .types import (
@@ -653,6 +654,117 @@ async def agentic_registry_unregister(
 
     _catalog_service.invalidate()
     return {"success": True, "message": f"Successfully unregistered {target_name}"}
+
+
+# ── MCP Server Configuration ──────────────────────────────────────────────────
+# Get/set credentials for optional MCP servers that require config (OAuth,
+# API tokens, etc.).  Config is stored in each server's .env file and
+# optionally in the per-user secrets vault.
+
+
+@router.get("/servers/{server_id}/config")
+async def agentic_server_config(server_id: str, _key: str = Depends(require_api_key)):
+    """Return the config schema and current (masked) values for a server.
+
+    Only meaningful for servers with `requires_config` set in the catalog.
+    Returns schema fields, setup guide, and whether the server is already configured.
+    """
+    mgr = get_server_manager()
+    server = mgr.get_server(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail=f"Unknown server: {server_id}")
+    if not server.requires_config:
+        return {"server_id": server_id, "requires_config": None, "configured": True, "fields": []}
+    return read_server_config(server_id, server.requires_config)
+
+
+@router.post("/servers/{server_id}/config")
+async def agentic_server_config_save(
+    server_id: str,
+    request: Request,
+    _key: str = Depends(require_api_key),
+):
+    """Save config for a server, then restart it.
+
+    Expects JSON body: { "fields": { "KEY": "value", ... } }
+    Saves to the server's .env file, then stops + starts the server process.
+    Returns the restart result including health check.
+    """
+    mgr = get_server_manager()
+    server = mgr.get_server(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail=f"Unknown server: {server_id}")
+    if not server.requires_config:
+        raise HTTPException(status_code=400, detail=f"Server '{server_id}' does not require configuration")
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    values = body.get("fields", {})
+    if not isinstance(values, dict):
+        raise HTTPException(status_code=400, detail="'fields' must be a JSON object")
+
+    # Validate
+    validation = validate_config(server.requires_config, values)
+    if not validation["valid"]:
+        raise HTTPException(status_code=422, detail="; ".join(validation["errors"]))
+
+    # Save
+    save_result = save_server_config(server_id, server.requires_config, values)
+    if not save_result.get("ok"):
+        raise HTTPException(status_code=500, detail=save_result.get("error", "Save failed"))
+
+    # Restart the server if it was installed
+    restarted = False
+    healthy = False
+    if mgr.is_installed(server_id):
+        mgr._stop_process(server_id)
+        result = await mgr.install(
+            server_id,
+            forge_url=_FORGE_URL,
+            auth_user=_AUTH_USER,
+            auth_pass=_AUTH_PASS,
+            bearer_token=_TOKEN or None,
+        )
+        restarted = True
+        healthy = result.get("healthy", False)
+        _catalog_service.invalidate()
+
+    return {
+        "ok": True,
+        "saved": True,
+        "restarted": restarted,
+        "healthy": healthy,
+    }
+
+
+@router.post("/servers/{server_id}/config/test")
+async def agentic_server_config_test(
+    server_id: str,
+    request: Request,
+    _key: str = Depends(require_api_key),
+):
+    """Validate server config without saving (dry-run).
+
+    Checks that required fields are present and basic format validation passes.
+    Does NOT write to .env or restart the server.
+    """
+    mgr = get_server_manager()
+    server = mgr.get_server(server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail=f"Unknown server: {server_id}")
+    if not server.requires_config:
+        return {"valid": True, "errors": []}
+
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    values = body.get("fields", {})
+    return validate_config(server.requires_config, values)
 
 
 # ── MCP Server Management ────────────────────────────────────────────────────
