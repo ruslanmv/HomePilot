@@ -721,6 +721,31 @@ For a comprehensive, step-by-step walkthrough of every HomePilot feature — fro
 
 ---
 
+## OllaBridge + 3D Avatar Integration
+
+Extend HomePilot personas beyond the web UI. Connect any OpenAI-compatible client — or talk to your personas through an animated 3D avatar with voice, lip sync, and gestures.
+
+<p align="center">
+  <img src="../assets/ollabridge-architecture.svg" alt="OllaBridge Architecture" width="800" />
+</p>
+
+<p align="center">
+  <img src="../assets/3d-avatar-pipeline.svg" alt="3D Avatar + HomePilot Pipeline" width="800" />
+</p>
+
+**Quick start:**
+
+```bash
+# Start HomePilot + OllaBridge + 3D Avatar
+make install && make run                          # HomePilot :8000
+ollabridge start --auth-mode pairing              # OllaBridge :11435
+# Open 3D Avatar, select OllaBridge, enter pairing code
+```
+
+Read the full guide: **[OllaBridge Integration](OLLABRIDGE.md)**
+
+---
+
 <p align="center">
   <img src="../assets/homepilot-logo.svg" alt="HomePilot" width="300" /><br><br>
   <b>HomePilot</b> — Your AI. Your data. Your rules.<br>

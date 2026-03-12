@@ -91,6 +91,10 @@ export type SettingsModelV2 = {
   matrixHubEnabled?: boolean;
   matrixHubUrl?: string;
 
+  // OllaBridge integration — expose personas as OpenAI-compatible API
+  ollaBridgeEnabled?: boolean;
+  ollaBridgeApiKey?: string;
+
   // Teams concurrent LLM calls (1-3, default 1)
   teamsConcurrentCalls?: number;
 
@@ -1243,6 +1247,59 @@ export default function SettingsPanel({
                 />
                 <div className="text-[10px] text-white/30">
                   The endpoint URL for your MatrixHub instance. When enabled, a MatrixHub tab appears in Discover MCP Servers.
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* OllaBridge Integration — expose personas as OpenAI API */}
+        <div className="border-t border-white/5 pt-3">
+          <div className="text-[11px] uppercase tracking-wider text-white/40 mb-2 font-semibold">OllaBridge Gateway</div>
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs text-white/70">Enable Shared API</div>
+                <div className="text-[10px] text-white/40 mt-0.5">
+                  Expose personas as an OpenAI-compatible API for OllaBridge &amp; 3D Avatar
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onChangeDraft({ ...value, ollaBridgeEnabled: !value.ollaBridgeEnabled })}
+                className={`w-9 h-5 rounded-full transition-colors relative ${
+                  value.ollaBridgeEnabled ? 'bg-emerald-500' : 'bg-white/20'
+                }`}
+              >
+                <span className={`block w-3.5 h-3.5 rounded-full bg-white shadow transition-transform absolute top-[3px] ${
+                  value.ollaBridgeEnabled ? 'left-[19px]' : 'left-[3px]'
+                }`} />
+              </button>
+            </div>
+
+            {value.ollaBridgeEnabled && (
+              <div className="space-y-2">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] text-white/50 block">API Key</label>
+                  <input
+                    type="text"
+                    value={value.ollaBridgeApiKey || 'my-secret'}
+                    onChange={(e) => onChangeDraft({ ...value, ollaBridgeApiKey: e.target.value })}
+                    placeholder="my-secret"
+                    className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/25 focus:outline-none focus:border-emerald-500/50 transition-colors font-mono"
+                  />
+                  <div className="text-[10px] text-white/30">
+                    API key for external clients. Used as Bearer token or X-API-Key header.
+                  </div>
+                </div>
+                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                  <div className="text-[10px] text-emerald-400 font-semibold mb-1">Endpoint Ready</div>
+                  <div className="text-[10px] text-white/50 font-mono">
+                    {value.backendUrl?.replace(/\/+$/, '') || 'http://localhost:8000'}/v1/chat/completions
+                  </div>
+                  <div className="text-[10px] text-white/30 mt-1">
+                    Point OllaBridge or any OpenAI SDK to this URL with the API key above.
+                  </div>
                 </div>
               </div>
             )}

@@ -200,8 +200,20 @@ def scan_affected_personas(
         matched_tools: List[str] = []
 
         # Method 1: Check tool_details for tools pointing at this server's port
-        tool_details = agentic_data.get("tool_details") or {}
+        raw_tool_details = agentic_data.get("tool_details") or {}
+        # tool_details may be a list (of dicts) or a dict keyed by tool id
+        if isinstance(raw_tool_details, list):
+            tool_details: dict = {}
+            for entry in raw_tool_details:
+                if isinstance(entry, dict):
+                    key = entry.get("id") or entry.get("name") or str(len(tool_details))
+                    tool_details[key] = entry
+        else:
+            tool_details = raw_tool_details
+
         for tool_id, detail in tool_details.items():
+            if not isinstance(detail, dict):
+                continue
             tool_url = detail.get("url", "")
             tool_name = detail.get("name", tool_id)
             if rpc_url and tool_url == rpc_url:
@@ -212,7 +224,8 @@ def scan_affected_personas(
         # Method 2: Check tool_ids list against known tool names
         tool_ids = agentic_data.get("tool_ids") or []
         for tid in tool_ids:
-            name_from_id = (tool_details.get(tid, {}).get("name") or tid)
+            td = tool_details.get(tid, {})
+            name_from_id = (td.get("name") or tid) if isinstance(td, dict) else tid
             if name_from_id in tools_set and name_from_id not in matched_tools:
                 matched_tools.append(name_from_id)
 

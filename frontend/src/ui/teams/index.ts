@@ -1,6 +1,6 @@
 export { TeamsView } from './TeamsView'
 export type { TeamsViewProps } from './TeamsView'
-export { useTeamsMcpAvailable } from './useBridge'
+export { useTeamsMcpAvailable, MCP_SERVERS_CHANGED_EVENT } from './useBridge'
 
 // Per-persona voice for Teams meetings (additive)
 export { usePersonaVoices } from './usePersonaVoices'
