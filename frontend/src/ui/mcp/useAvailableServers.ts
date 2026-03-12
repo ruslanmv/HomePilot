@@ -187,6 +187,34 @@ export function useAvailableServers({ backendUrl, apiKey }: Args) {
     }
   }, [backendUrl, headers, fetchServers])
 
+  /** Fetch config schema and current values for a server. */
+  const getServerConfig = useCallback(async (serverId: string) => {
+    try {
+      const res = await fetch(`${backendUrl}/v1/agentic/servers/${encodeURIComponent(serverId)}/config`, { headers })
+      if (!res.ok) return null
+      return await res.json()
+    } catch {
+      return null
+    }
+  }, [backendUrl, headers])
+
+  /** Save config and restart server. */
+  const saveServerConfig = useCallback(async (serverId: string, fields: Record<string, string>): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const res = await fetch(`${backendUrl}/v1/agentic/servers/${encodeURIComponent(serverId)}/config`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+      })
+      const data = await res.json()
+      if (!res.ok) return { ok: false, error: data?.detail || `HTTP ${res.status}` }
+      await fetchServers()
+      return { ok: true }
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Save failed' }
+    }
+  }, [backendUrl, headers, fetchServers])
+
   const counts = useMemo(() => {
     const core = servers.filter((s) => s.is_core)
     const optional = servers.filter((s) => !s.is_core && s.source_type !== 'external')
@@ -217,6 +245,8 @@ export function useAvailableServers({ backendUrl, apiKey }: Args) {
     reinstallExternal,
     restartExternal,
     previewUninstallExternal,
+    getServerConfig,
+    saveServerConfig,
     actionLoading,
   }
 }

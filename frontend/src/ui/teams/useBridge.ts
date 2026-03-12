@@ -216,13 +216,21 @@ export function useBridge({ backendUrl, apiKey, roomId, statusPollInterval = 0 }
 // ---------------------------------------------------------------------------
 
 /**
+ * Event name dispatched by the MCP server management panel after
+ * install / uninstall so listeners can immediately re-check availability.
+ */
+export const MCP_SERVERS_CHANGED_EVENT = 'homepilot:mcp-servers-changed'
+
+/**
  * useTeamsMcpAvailable — auto-detection for Teams MCP server.
  *
  * Probes the backend bridge health endpoint on mount.  If the server
  * is installed and healthy, `available` becomes true and the Teams tab
  * appears automatically — no manual toggle needed.
  *
- * A single check runs on mount; no periodic polling.
+ * Re-checks every 15 s **and** immediately when the MCP server panel
+ * dispatches a `homepilot:mcp-servers-changed` custom event (install /
+ * uninstall), so the Join Meeting button syncs without delay.
  */
 export function useTeamsMcpAvailable(backendUrl: string, apiKey?: string) {
   const [available, setAvailable] = useState(false)
@@ -248,7 +256,16 @@ export function useTeamsMcpAvailable(backendUrl: string, apiKey?: string) {
       }
     }
     check()
-    return () => { cancelled = true }
+    // Re-check every 15s so we detect a server that starts after page load
+    const interval = setInterval(check, 15_000)
+    // Also re-check immediately when the MCP server panel signals a change
+    const onServersChanged = () => { check() }
+    window.addEventListener(MCP_SERVERS_CHANGED_EVENT, onServersChanged)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+      window.removeEventListener(MCP_SERVERS_CHANGED_EVENT, onServersChanged)
+    }
   }, [backendUrl, apiKey])
 
   return { available, checking }

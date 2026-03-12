@@ -267,26 +267,95 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   const [catalogServers, setCatalogServers] = useState<CatalogServer[]>([])
   const [catalogLoading, setCatalogLoading] = useState(true)
 
-  // --- Auto-pin tools on first load when tool_ids is empty ---
-  // When a persona is imported or created without pinned tools, derive
-  // default pins from tool_details (package metadata) or by matching
-  // the persona's role keywords against available catalog tool names.
+  // --- Auto-pin & reconcile tools when catalog loads ---
+  // 1. If toolIds is empty: derive pins from tool_details or keyword matching.
+  // 2. If toolIds is populated but some IDs don't exist in the catalog:
+  //    reconcile by matching tool names so checkboxes render correctly.
   const autoPopulated = useRef(false)
   useEffect(() => {
     if (autoPopulated.current || catalogLoading || catalogTools.length === 0) return
-    if (toolIds.length > 0) { autoPopulated.current = true; return }
     autoPopulated.current = true
 
     const enabled = catalogTools.filter((t) => t.enabled !== false)
+    const catalogIdSet = new Set(enabled.map((t) => t.id))
+
+    // -- Reconcile existing pinned IDs that may not match catalog --
+    if (toolIds.length > 0) {
+      const allMatch = toolIds.every((id) => catalogIdSet.has(id))
+      if (allMatch) return // everything already matches, nothing to do
+
+      // Build lookup maps for fuzzy matching: by name and by suffix
+      const catalogByName = new Map<string, string>() // lowercase name → catalog id
+      const catalogBySuffix = new Map<string, string>() // last segment → catalog id
+      for (const t of enabled) {
+        catalogByName.set(t.name.toLowerCase(), t.id)
+        // e.g. "mcp-news__get-headlines" → "get-headlines"
+        const parts = t.id.split(/__|\/|:/)
+        const suffix = parts[parts.length - 1]
+        if (suffix && !catalogBySuffix.has(suffix)) catalogBySuffix.set(suffix, t.id)
+      }
+
+      // Also index tool_details by id for name lookups
+      const detailsMap = new Map<string, string>() // old id → name
+      const details = ag.tool_details as Array<{ id: string; name?: string }> | undefined
+      if (Array.isArray(details)) {
+        for (const d of details) {
+          if (d.id && d.name) detailsMap.set(d.id, d.name)
+        }
+      }
+
+      const reconciled: string[] = []
+      const seen = new Set<string>()
+      for (const oldId of toolIds) {
+        let resolved: string | undefined
+        if (catalogIdSet.has(oldId)) {
+          resolved = oldId
+        } else {
+          // Try matching by tool name from tool_details
+          const name = detailsMap.get(oldId)
+          if (name) resolved = catalogByName.get(name.toLowerCase())
+          // Try matching by suffix (last segment of the id)
+          if (!resolved) {
+            const parts = oldId.split(/__|\/|:/)
+            const suffix = parts[parts.length - 1]
+            if (suffix) resolved = catalogBySuffix.get(suffix)
+          }
+          // Try direct name match on the old id itself
+          if (!resolved) resolved = catalogByName.get(oldId.toLowerCase())
+        }
+        if (resolved && !seen.has(resolved)) {
+          reconciled.push(resolved)
+          seen.add(resolved)
+        }
+      }
+
+      if (reconciled.length > 0 && (reconciled.length !== toolIds.length || reconciled.some((id, i) => id !== toolIds[i]))) {
+        setToolIds(reconciled)
+      }
+      return
+    }
+
+    // -- No pinned tools yet: auto-populate --
     const ids: string[] = []
 
     // Strategy 1: use tool_details from the agentic data (set by .hpersona import)
     const details = ag.tool_details as Array<{ id: string; name?: string }> | undefined
     if (Array.isArray(details) && details.length > 0) {
-      const catalogIds = new Set(enabled.map((t) => t.id))
+      // Match by id first, then fall back to name
+      const catalogByName = new Map<string, string>()
+      for (const t of enabled) catalogByName.set(t.name.toLowerCase(), t.id)
+
       for (const d of details) {
         const tid = d.id || d.name || ''
-        if (tid && catalogIds.has(tid) && !ids.includes(tid)) ids.push(tid)
+        let resolved: string | undefined
+        if (tid && catalogIdSet.has(tid)) {
+          resolved = tid
+        } else if (d.name) {
+          resolved = catalogByName.get(d.name.toLowerCase())
+        } else if (tid) {
+          resolved = catalogByName.get(tid.toLowerCase())
+        }
+        if (resolved && !ids.includes(resolved)) ids.push(resolved)
       }
     }
 

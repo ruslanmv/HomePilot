@@ -692,4 +692,10 @@ Apache-2.0
   <sub>Built with ❤️ for creators, by creators</sub>
   <br><br>
   <sub>🎭 15 personality agents with conversation memory, dynamic prompts, and per-turn engagement — plus portable persona packages you can share with the world.</sub>
+  <br>
+  <sub>🔗 Integrate with <a href="https://github.com/ruslanmv/ollabridge">OllaBridge</a> and <a href="https://github.com/ruslanmv/3D-Avatar-Chatbot">3D Avatar Chatbot</a> for an immersive VR persona experience — <a href="docs/OLLABRIDGE.md">learn more</a>.</sub>
+  <br><br>
+  <img src="assets/ollabridge-architecture.svg" alt="OllaBridge Architecture" width="800" />
+  <br><br>
+  <img src="assets/3d-avatar-pipeline.svg" alt="3D Avatar + HomePilot Pipeline" width="800" />
 </p>
