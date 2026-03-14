@@ -19,6 +19,7 @@ The endpoint handles:
 """
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -107,6 +108,7 @@ class ModelObject(BaseModel):
     object: str = "model"
     created: int = 0
     owned_by: str = "homepilot"
+    name: Optional[str] = None
 
 
 class ModelListResponse(BaseModel):
@@ -133,6 +135,83 @@ def _parse_model(model: str) -> tuple[str, str]:
     if personality_registry.get(model):
         return ("personality", model)
     return ("default", model)
+
+
+def _build_external_id(proj: Dict[str, Any]) -> str:
+    """Build a stable external model ID for a published persona.
+
+    Format: persona:<alias>--<short_uuid>  (if alias set)
+            persona:<name>--<short_uuid>   (auto-derived from persona name)
+            persona:<short_uuid>           (last-resort fallback)
+    """
+    shared = proj.get("shared_api") or {}
+    alias = (shared.get("alias") or "").strip()
+    pid = proj.get("id", "")
+    short = pid[:8]
+
+    if alias:
+        safe = re.sub(r'[^a-z0-9-]', '', alias.lower().replace(' ', '-'))
+        return f"persona:{safe}--{short}"
+
+    # Auto-derive from persona label or project name
+    label = ""
+    pa = proj.get("persona_agent")
+    if isinstance(pa, dict):
+        label = (pa.get("label") or "").strip()
+    if not label:
+        label = (proj.get("name") or "").strip()
+    if label:
+        safe = re.sub(r'[^a-z0-9-]', '', label.lower().replace(' ', '-'))
+        if safe:
+            return f"persona:{safe}--{short}"
+
+    return f"persona:{short}"
+
+
+def _resolve_published_persona(raw_id: str) -> Dict[str, Any]:
+    """Resolve an external persona model ID to its project data.
+
+    Checks published status and returns structured 404 if not found/unpublished.
+    """
+    projects = _get_projects()
+    all_projects = projects.list_all_projects()
+
+    for proj in all_projects:
+        if proj.get("project_type") != "persona":
+            continue
+        shared = proj.get("shared_api") or {}
+        if not shared.get("enabled"):
+            continue
+        ext_id = _build_external_id(proj)
+        # Match full external_id (without prefix) or raw project_id
+        if ext_id == f"persona:{raw_id}" or proj["id"] == raw_id:
+            return proj
+
+    # Check if it exists but is unpublished (for better error message)
+    for proj in all_projects:
+        if proj.get("project_type") != "persona":
+            continue
+        if proj["id"] == raw_id or _build_external_id(proj) == f"persona:{raw_id}":
+            label = (proj.get("persona_agent") or {}).get("label", raw_id)
+            raise HTTPException(404, detail={
+                "error": {
+                    "type": "model_not_available",
+                    "code": "persona_unpublished",
+                    "message": f"Persona '{label}' is not published to the shared API.",
+                    "model": f"persona:{raw_id}",
+                    "available_models_hint": True,
+                }
+            })
+
+    raise HTTPException(404, detail={
+        "error": {
+            "type": "model_not_available",
+            "code": "model_not_found",
+            "message": f"No persona found for model 'persona:{raw_id}'.",
+            "model": f"persona:{raw_id}",
+            "available_models_hint": True,
+        }
+    })
 
 
 def _build_persona_system_prompt(project_data: Dict[str, Any]) -> str:
@@ -194,15 +273,27 @@ async def _chat_with_persona_project(
     if capabilities:
         # Use agent chat with tool use
         try:
-            agent_chat = _get_agent_chat()
-            result = await agent_chat.run_agent_loop(
+            _ac = _get_agent_chat()
+            provider = _config.DEFAULT_PROVIDER
+            if provider == "ollama":
+                base_url = _config.OLLAMA_BASE_URL
+                model = _config.OLLAMA_MODEL or None
+            else:
+                base_url = _config.LLM_BASE_URL
+                model = _config.LLM_MODEL or None
+            result = await _ac.agent_chat(
                 user_text=user_message,
                 conversation_id=conversation_id,
                 project_id=project_id,
-                system_prompt=system_prompt,
-                provider=_config.DEFAULT_PROVIDER,
+                llm_provider=provider,
+                llm_base_url=base_url,
+                llm_model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                vision_provider=provider,
+                vision_base_url=base_url,
+                vision_model=model,
+                nsfw_mode=False,
             )
             return result.get("text", "I couldn't generate a response.")
         except Exception as e:
@@ -300,8 +391,9 @@ async def openai_chat_completions(req: ChatCompletionRequest) -> ChatCompletionR
     max_tokens = req.max_tokens if req.max_tokens is not None else 800
 
     if model_type == "persona":
+        project_data = _resolve_published_persona(model_id)
         content = await _chat_with_persona_project(
-            model_id, req.messages, temperature, max_tokens,
+            project_data["id"], req.messages, temperature, max_tokens,
         )
     elif model_type == "personality":
         content = await _chat_with_personality(
@@ -351,24 +443,33 @@ async def openai_list_models() -> ModelListResponse:
 
     # Built-in personalities
     for agent in personality_registry.all():
+        display_name = agent.id.replace("_", " ").title()
         models.append(ModelObject(
             id=f"personality:{agent.id}",
+            name=display_name,
             created=now,
             owned_by="homepilot-personality",
         ))
 
-    # Persona projects
+    # Persona projects (only those published via shared_api)
     try:
         projects = _get_projects()
-        all_projects = projects.list_projects()
+        all_projects = projects.list_all_projects()
         for proj in all_projects:
-            if proj.get("project_type") == "persona":
-                pid = proj.get("id", "")
-                models.append(ModelObject(
-                    id=f"persona:{pid}",
-                    created=now,
-                    owned_by="homepilot-persona",
-                ))
+            if proj.get("project_type") != "persona":
+                continue
+            shared = proj.get("shared_api") or {}
+            if not shared.get("enabled"):
+                continue
+            external_id = _build_external_id(proj)
+            pa = proj.get("persona_agent") or {}
+            label = pa.get("label") or proj.get("name") or external_id
+            models.append(ModelObject(
+                id=external_id,
+                name=label,
+                created=now,
+                owned_by="homepilot-persona",
+            ))
     except Exception as e:
         print(f"[COMPAT] Error listing persona projects: {e}")
 
