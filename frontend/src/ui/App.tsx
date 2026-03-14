@@ -2285,10 +2285,11 @@ export default function App() {
   useEffect(() => localStorage.setItem('homepilot_conversation', chatConversationId), [chatConversationId])
   useEffect(() => localStorage.setItem('homepilot_mode', mode), [mode])
 
-  // Teams MCP feature detection — only show Teams nav when server is available
+  // Teams MCP feature detection — only poll while the Teams tab is open
   const { available: teamsMcpAvailable } = useTeamsMcpAvailable(
     settingsDraft.backendUrl,
     settingsDraft.apiKey,
+    mode === 'teams',
   )
 
   // Clear voice session when exiting Voice mode — BUT NOT when linked to persona.

@@ -269,6 +269,11 @@ def create_new_project(data: Dict[str, Any]) -> Dict[str, Any]:
     if persona_appearance and isinstance(persona_appearance, dict):
         new_project["persona_appearance"] = persona_appearance
 
+    # Store shared API publishing metadata for persona projects
+    shared_api = data.get("shared_api")
+    if shared_api and isinstance(shared_api, dict):
+        new_project["shared_api"] = shared_api
+
     db[project_id] = new_project
     _save_projects_db(db)
     return new_project
@@ -381,6 +386,11 @@ def update_project(project_id: str, data: Dict[str, Any]) -> Optional[Dict[str, 
     if "persona_appearance" in data and isinstance(data["persona_appearance"], dict):
         existing_pap = project.get("persona_appearance") or {}
         project["persona_appearance"] = {**existing_pap, **data["persona_appearance"]}
+
+    # Update shared API publishing metadata
+    if "shared_api" in data and isinstance(data["shared_api"], dict):
+        existing_sa = project.get("shared_api") or {}
+        project["shared_api"] = {**existing_sa, **data["shared_api"]}
 
     project["updated_at"] = time.time()
 

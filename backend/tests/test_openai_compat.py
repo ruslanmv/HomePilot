@@ -208,3 +208,121 @@ class TestOllaBridgeToggle:
         client.post("/settings/ollabridge", json={
             "enabled": True, "api_key": "",
         })
+
+
+# ---------------------------------------------------------------------------
+# Shared API — per-persona publish/unpublish
+# ---------------------------------------------------------------------------
+
+class TestSharedApiPublishing:
+    """Per-persona publish toggle and stable external model IDs."""
+
+    def _create_persona(self, client):
+        """Create a persona project and return the project data."""
+        resp = client.post("/projects", json={
+            "name": "Test Bot",
+            "description": "A test persona",
+            "project_type": "persona",
+            "persona_agent": {
+                "label": "Test Bot",
+                "role": "tester",
+                "system_prompt": "You are a test bot.",
+            },
+        })
+        assert resp.status_code in (200, 201)
+        return resp.json()["project"]
+
+    def test_unpublished_persona_not_in_models(self, client, mock_outbound):
+        """Persona without shared_api.enabled should NOT appear in /v1/models."""
+        proj = self._create_persona(client)
+        resp = client.get("/v1/models")
+        ids = [m["id"] for m in resp.json()["data"]]
+        assert f"persona:{proj['id']}" not in ids
+
+    def test_published_persona_in_models(self, client, mock_outbound):
+        """Persona with shared_api.enabled=True should appear in /v1/models."""
+        proj = self._create_persona(client)
+        # Publish via dedicated endpoint
+        resp = client.post(f"/projects/{proj['id']}/shared-api", json={
+            "enabled": True, "alias": "test-bot",
+        })
+        assert resp.status_code == 200
+
+        # Should now appear in models with aliased ID
+        resp = client.get("/v1/models")
+        ids = [m["id"] for m in resp.json()["data"]]
+        expected_id = f"persona:test-bot--{proj['id'][:8]}"
+        assert expected_id in ids
+
+    def test_published_persona_chat_succeeds(self, client, mock_outbound):
+        """Chat with a published persona should return 200."""
+        proj = self._create_persona(client)
+        client.post(f"/projects/{proj['id']}/shared-api", json={
+            "enabled": True, "alias": "chat-test",
+        })
+        external_id = f"persona:chat-test--{proj['id'][:8]}"
+        resp = client.post("/v1/chat/completions", json={
+            "model": external_id,
+            "messages": [{"role": "user", "content": "Hello"}],
+        })
+        assert resp.status_code == 200
+
+    def test_unpublished_persona_chat_returns_404(self, client, mock_outbound):
+        """Chat with an unpublished persona should return 404 with structured error."""
+        proj = self._create_persona(client)
+        # Do NOT publish — try chatting directly by project ID
+        resp = client.post("/v1/chat/completions", json={
+            "model": f"persona:{proj['id']}",
+            "messages": [{"role": "user", "content": "Hello"}],
+        })
+        assert resp.status_code == 404
+        error = resp.json().get("detail", {}).get("error", {})
+        assert error.get("code") == "persona_unpublished"
+
+    def test_unknown_persona_returns_404(self, client, mock_outbound):
+        """Chat with a completely unknown persona should return 404."""
+        resp = client.post("/v1/chat/completions", json={
+            "model": "persona:totally-fake-id-999",
+            "messages": [{"role": "user", "content": "Hello"}],
+        })
+        assert resp.status_code == 404
+        error = resp.json().get("detail", {}).get("error", {})
+        assert error.get("code") == "model_not_found"
+
+    def test_personalities_always_visible(self, client, mock_outbound):
+        """Built-in personality:* models must always appear regardless of shared_api."""
+        resp = client.get("/v1/models")
+        ids = [m["id"] for m in resp.json()["data"]]
+        assert "personality:assistant" in ids
+
+    def test_unpublish_removes_from_models(self, client, mock_outbound):
+        """After disabling shared_api, persona should disappear from /v1/models."""
+        proj = self._create_persona(client)
+        # Publish
+        client.post(f"/projects/{proj['id']}/shared-api", json={
+            "enabled": True, "alias": "temp-bot",
+        })
+        expected_id = f"persona:temp-bot--{proj['id'][:8]}"
+        # Verify visible
+        ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
+        assert expected_id in ids
+        # Unpublish
+        client.post(f"/projects/{proj['id']}/shared-api", json={
+            "enabled": False,
+        })
+        # Verify gone
+        ids = [m["id"] for m in client.get("/v1/models").json()["data"]]
+        assert expected_id not in ids
+
+    def test_shared_api_only_persona_projects(self, client, mock_outbound):
+        """Non-persona projects should be rejected by /shared-api."""
+        resp = client.post("/projects", json={
+            "name": "Chat Project",
+            "project_type": "chat",
+        })
+        assert resp.status_code in (200, 201)
+        proj = resp.json()["project"]
+        resp = client.post(f"/projects/{proj['id']}/shared-api", json={
+            "enabled": True,
+        })
+        assert resp.status_code == 400

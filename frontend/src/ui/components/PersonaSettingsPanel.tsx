@@ -40,6 +40,7 @@ import {
   Upload,
   RefreshCw,
   Package,
+  Share2,
 } from 'lucide-react'
 import { ImageViewer } from '../ImageViewer'
 import { InventoryView } from './InventoryView'
@@ -73,6 +74,11 @@ export type PersonaProjectData = {
     tool_source?: string
     ask_before_acting?: boolean
     execution_profile?: 'fast' | 'balanced' | 'quality'
+  }
+  shared_api?: {
+    enabled?: boolean
+    alias?: string
+    featured_slot?: number | null
   }
 }
 
@@ -447,6 +453,12 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   const [documents, setDocuments] = useState<Array<{ name: string; size?: string; chunks?: number }>>(
     project.files || [],
   )
+
+  // Shared API (publish as model)
+  const sa = project.shared_api || {}
+  const [sharedEnabled, setSharedEnabled] = useState(sa.enabled ?? false)
+  const [sharedAlias, setSharedAlias] = useState(sa.alias ?? '')
+  const [featuredSlot, setFeaturedSlot] = useState<number | null>(sa.featured_slot ?? null)
 
   // UI state
   const [saving, setSaving] = useState(false)
@@ -1007,6 +1019,11 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
           tool_source: toolSource,
           ask_before_acting: askFirst,
           execution_profile: profile,
+        },
+        shared_api: {
+          enabled: sharedEnabled,
+          alias: sharedAlias,
+          featured_slot: featuredSlot,
         },
       }
 
@@ -2229,6 +2246,114 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
                       </button>
                     </div>
                   ))}
+                </div>
+              )}
+            </section>
+
+            {/* --- Shared API — Publish as Model --- */}
+            <section>
+              <SectionHeader
+                icon={Share2}
+                title="Shared API"
+                color="text-emerald-400"
+              />
+
+              {/* Toggle row */}
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <div className="text-xs text-white/70">Publish as API Model</div>
+                  <div className="text-[10px] text-white/40 mt-0.5">
+                    Make this persona discoverable by OllaBridge and external apps
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setSharedEnabled(!sharedEnabled); markDirty() }}
+                  className={`w-9 h-5 rounded-full transition-colors relative ${
+                    sharedEnabled ? 'bg-emerald-500' : 'bg-white/20'
+                  }`}
+                >
+                  <span className={`block w-3.5 h-3.5 rounded-full bg-white shadow transition-transform absolute top-[3px] ${
+                    sharedEnabled ? 'left-[19px]' : 'left-[3px]'
+                  }`} />
+                </button>
+              </div>
+
+              {/* Expanded settings (when enabled) */}
+              {sharedEnabled && (
+                <div className="space-y-3 mt-2">
+                  {/* Model alias */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-white/50 block">Model Alias</label>
+                    <input
+                      type="text"
+                      value={sharedAlias}
+                      onChange={(e) => { setSharedAlias(e.target.value); markDirty() }}
+                      placeholder={`e.g. ${(name || 'my-persona').toLowerCase().replace(/\s+/g, '-')}`}
+                      className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder-white/25 focus:outline-none focus:border-emerald-500/50 transition-colors font-mono"
+                    />
+                    <div className="text-[10px] text-white/30">
+                      Short name for the API model. Letters, numbers, and hyphens only.
+                    </div>
+                  </div>
+
+                  {/* Featured slot */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] text-white/50 block">Featured Slot (optional)</label>
+                    <select
+                      value={featuredSlot ?? ''}
+                      onChange={(e) => {
+                        setFeaturedSlot(e.target.value ? Number(e.target.value) : null)
+                        markDirty()
+                      }}
+                      className="w-full bg-black/30 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/50 transition-colors"
+                    >
+                      <option value="">None</option>
+                      {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                        <option key={n} value={n}>Slot {n}</option>
+                      ))}
+                    </select>
+                    <div className="text-[10px] text-white/30">
+                      Featured slot controls display order in external apps.
+                    </div>
+                  </div>
+
+                  {/* Generated model ID (read-only, copyable) */}
+                  {(() => {
+                    const aliasText = sharedAlias.trim()
+                    const derivedName = (name || '').trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+                    const shortId = project.id.slice(0, 8)
+                    const modelId = aliasText
+                      ? `persona:${aliasText.toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/\s+/g, '-')}--${shortId}`
+                      : derivedName
+                        ? `persona:${derivedName}--${shortId}`
+                        : `persona:${shortId}`
+                    return (
+                      <div className="bg-black/30 border border-emerald-500/20 rounded-lg px-3 py-2.5">
+                        <div className="text-[10px] text-emerald-400 font-semibold mb-1">
+                          OpenAI Model ID
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <code className="text-[11px] text-white/70 font-mono flex-1 truncate">
+                            {modelId}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={() => navigator.clipboard.writeText(modelId)}
+                            className="p-1 text-white/30 hover:text-emerald-400 transition-colors"
+                            title="Copy model ID"
+                          >
+                            <Copy size={12} />
+                          </button>
+                        </div>
+                        <div className="text-[10px] text-white/30 mt-1">
+                          {aliasText
+                            ? 'Use this in OllaBridge, OpenAI SDKs, or any compatible client.'
+                            : 'Set an alias above for a custom model name, or the persona name will be used.'}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               )}
             </section>
