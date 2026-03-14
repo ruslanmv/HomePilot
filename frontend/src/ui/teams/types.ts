@@ -206,4 +206,9 @@ export type PersonaSummary = {
     tool_details?: Array<{ name: string; description?: string }>
     agent_details?: Array<{ name: string; description?: string }>
   }
+  shared_api?: {
+    enabled?: boolean
+    alias?: string
+    featured_slot?: number | null
+  }
 }

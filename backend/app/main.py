@@ -1756,6 +1756,38 @@ async def set_ollabridge_settings(req: OllaBridgeSettings) -> JSONResponse:
     })
 
 
+class SharedApiUpdate(BaseModel):
+    enabled: bool = Field(False, description="Publish this persona as an API model")
+    alias: Optional[str] = Field(None, description="Short model alias (letters, numbers, hyphens)")
+    featured_slot: Optional[int] = Field(None, description="Featured slot 1-10 for display ordering")
+
+
+@app.post("/projects/{project_id}/shared-api")
+async def update_project_shared_api(
+    project_id: str,
+    body: SharedApiUpdate,
+) -> JSONResponse:
+    """Toggle a persona project's shared API publishing status.
+
+    When enabled, the persona appears in /v1/models and can be called via
+    /v1/chat/completions by external clients (OllaBridge, 3D Avatar, etc.).
+    """
+    project = projects.get_project_by_id(project_id)
+    if not project:
+        raise HTTPException(404, "Project not found")
+    if project.get("project_type") != "persona":
+        raise HTTPException(400, "Only persona projects can be published to the shared API")
+
+    update_data: Dict[str, Any] = {"enabled": body.enabled}
+    if body.alias is not None:
+        update_data["alias"] = body.alias.strip()
+    if body.featured_slot is not None:
+        update_data["featured_slot"] = body.featured_slot if 1 <= body.featured_slot <= 10 else None
+
+    updated = projects.update_project(project_id, {"shared_api": update_data})
+    return JSONResponse(content={"ok": True, "project": updated})
+
+
 @app.get("/models")
 async def list_models(
     provider: str = Query("openai_compat", description="Provider to list models from"),
