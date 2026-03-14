@@ -228,11 +228,19 @@ export const MCP_SERVERS_CHANGED_EVENT = 'homepilot:mcp-servers-changed'
  * is installed and healthy, `available` becomes true and the Teams tab
  * appears automatically — no manual toggle needed.
  *
- * Re-checks every 15 s **and** immediately when the MCP server panel
- * dispatches a `homepilot:mcp-servers-changed` custom event (install /
- * uninstall), so the Join Meeting button syncs without delay.
+ * Polling behaviour:
+ *   - **Always:** checks once on mount and re-checks immediately when
+ *     the MCP server panel dispatches `homepilot:mcp-servers-changed`.
+ *   - **Only when `active` is true:** polls every 15 s so the Teams
+ *     view stays up-to-date while the user is looking at it.
+ *   - When the user switches away from the Teams tab, polling stops
+ *     to avoid noisy background requests.
  */
-export function useTeamsMcpAvailable(backendUrl: string, apiKey?: string) {
+export function useTeamsMcpAvailable(
+  backendUrl: string,
+  apiKey?: string,
+  active = false,
+) {
   const [available, setAvailable] = useState(false)
   const [checking, setChecking] = useState(true)
 
@@ -255,18 +263,24 @@ export function useTeamsMcpAvailable(backendUrl: string, apiKey?: string) {
         if (!cancelled) setChecking(false)
       }
     }
+    // Always check once on mount / dependency change
     check()
-    // Re-check every 15s so we detect a server that starts after page load
-    const interval = setInterval(check, 15_000)
-    // Also re-check immediately when the MCP server panel signals a change
+
+    // Only poll while the Teams tab is active
+    let interval: ReturnType<typeof setInterval> | undefined
+    if (active) {
+      interval = setInterval(check, 15_000)
+    }
+
+    // Re-check immediately when the MCP server panel signals a change
     const onServersChanged = () => { check() }
     window.addEventListener(MCP_SERVERS_CHANGED_EVENT, onServersChanged)
     return () => {
       cancelled = true
-      clearInterval(interval)
+      if (interval) clearInterval(interval)
       window.removeEventListener(MCP_SERVERS_CHANGED_EVENT, onServersChanged)
     }
-  }, [backendUrl, apiKey])
+  }, [backendUrl, apiKey, active])
 
   return { available, checking }
 }
