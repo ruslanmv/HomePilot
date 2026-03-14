@@ -83,6 +83,10 @@ def _resolve_user(
     """
     Resolve authenticated user from Bearer header, cookie, or query token.
     The query token fallback is needed for <img> tags which can't set headers.
+
+    Also accepts the OllaBridge compat API key (from auth.py) so that
+    server-to-server media proxy requests can fetch non-public files
+    (e.g. outfit images that don't start with 'avatar_').
     """
     from .users import ensure_users_tables, get_current_user
     ensure_users_tables()
@@ -93,7 +97,27 @@ def _resolve_user(
     # Fallback: query parameter token (for <img> tags)
     if token_param:
         from .users import _validate_token
-        return _validate_token(token_param)
+        result = _validate_token(token_param)
+        if result:
+            return result
+
+    # Fallback: accept the compat API key (X-API-Key header or Bearer token
+    # or ?token= param).  This allows OllaBridge's media proxy to fetch
+    # non-public files (outfit images, view-pack angles) without needing a
+    # real user session.
+    from . import config as _cfg
+    api_key = _cfg.API_KEY
+    if api_key:
+        _synthetic_user = {"id": "__api__", "username": "api"}
+        # Check Authorization header
+        if authorization:
+            parts = authorization.split(" ", 1)
+            if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1].strip() == api_key:
+                return _synthetic_user
+        # Check ?token= param against API key
+        if token_param and token_param.strip() == api_key:
+            return _synthetic_user
+
     return None
 
 
@@ -479,8 +503,15 @@ async def upload_file(
 # ---------------------------------------------------------------------------
 
 def _is_public_file(name: str) -> bool:
-    """User avatars are public (shown on login screen before auth)."""
-    return name.startswith("avatar_") and "/" not in name and ".." not in name
+    """Persona appearance images are public — served without auth.
+
+    Covers avatar images (login screen) AND outfit / thumbnail images
+    so that external services (VR chatbot via OllaBridge) can fetch
+    persona visuals without a user session token.
+    """
+    if "/" in name or ".." in name:
+        return False
+    return name.startswith(("avatar_", "outfit_", "thumb_"))
 
 
 def _find_persona_file(filename: str) -> Optional[Path]:
@@ -513,9 +544,9 @@ def download_file(
     Requires auth and ownership check.
     This is the endpoint used by <img src="/files/...">.
     Supports ?token=<session_token> for <img> tags that can't set headers.
-    Exception: user avatars (avatar_*) are served without auth for login screen.
+    Exception: persona appearance images (avatar_*, outfit_*, thumb_*) are public.
     """
-    # Public files (avatars) can be served without auth
+    # Public persona images can be served without auth
     if _is_public_file(asset_id):
         safe = Path(asset_id)
         abs_path = _upload_root() / safe
@@ -573,14 +604,14 @@ def download_file_legacy(
     Serves files from the flat UPLOAD_DIR if the user is authenticated.
     This preserves backward compatibility for existing chat history images.
     Supports ?token=<session_token> for <img> tags that can't set headers.
-    Exception: user avatars (avatar_*) are served without auth for login screen.
+    Exception: persona appearance images (avatar_*, outfit_*, thumb_*) are public.
     """
     # Prevent path traversal
     safe = Path(subpath)
     if ".." in safe.parts:
         raise HTTPException(400, "Invalid path")
 
-    # Public files (avatars) can be served without auth
+    # Public persona images can be served without auth
     if _is_public_file(safe.name):
         abs_path = _upload_root() / safe
         if abs_path.exists() and abs_path.is_file():

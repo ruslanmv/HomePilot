@@ -1778,11 +1778,11 @@ async def update_project_shared_api(
     if project.get("project_type") != "persona":
         raise HTTPException(400, "Only persona projects can be published to the shared API")
 
-    update_data: Dict[str, Any] = {"enabled": body.enabled}
-    if body.alias is not None:
-        update_data["alias"] = body.alias.strip()
-    if body.featured_slot is not None:
-        update_data["featured_slot"] = body.featured_slot if 1 <= body.featured_slot <= 10 else None
+    update_data: Dict[str, Any] = {
+        "enabled": body.enabled,
+        "alias": (body.alias or "").strip(),
+        "featured_slot": body.featured_slot if body.featured_slot and 1 <= body.featured_slot <= 10 else None,
+    }
 
     updated = projects.update_project(project_id, {"shared_api": update_data})
     return JSONResponse(content={"ok": True, "project": updated})
