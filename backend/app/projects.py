@@ -1428,7 +1428,7 @@ You have access to the project's context. When relevant context from the knowled
 
         # 6d. Safety net — LLM talked about showing a photo but forgot the
         #     [show:Label] tag.  Detect "here's my", "here you go", "current look",
-        #     etc. and inject the next photo from the catalog via round-robin.
+        #     etc. and inject the best-match photo (angle-aware).
         if not text_media:
             _photo_cues = _re.search(
                 r"here(?:'s| is| are)|current look|my photo|take a look|have a look|"
@@ -1437,20 +1437,85 @@ You have access to the project's context. When relevant context from the knowled
             )
             if _photo_cues:
                 try:
-                    from .media_resolver import _build_label_index
+                    from .media_resolver import _build_label_index, _lookup_label
                     idx = _build_label_index(project_id)
-                    _urls = list(dict.fromkeys(
-                        v for k, v in idx.items() if k != "default"
-                    ))
-                    if idx.get("default"):
-                        _urls.insert(0, idx["default"])
-                    if _urls:
-                        if not hasattr(run_project_chat, "_fallback_ctr"):
-                            run_project_chat._fallback_ctr = {}  # type: ignore[attr-defined]
-                        _c = run_project_chat._fallback_ctr.get(project_id, 0)  # type: ignore[attr-defined]
-                        text_media = {"images": [_urls[_c % len(_urls)]]}
-                        run_project_chat._fallback_ctr[project_id] = _c + 1  # type: ignore[attr-defined]
-                        print(f"[PROJECT CHAT] photo-fallback: LLM forgot [show:] tag, injecting photo {_c % len(_urls) + 1} of {len(_urls)}")
+
+                    # --- Angle-aware fallback ---
+                    # Check user's message for angle/view keywords and try to
+                    # match a view-pack angle from the label index.
+                    _user_lower = message.lower()
+                    _angle_map = {
+                        "back": "Back", "behind": "Back", "rear": "Back",
+                        "turn around": "Back", "from behind": "Back",
+                        "front": "Front", "facing me": "Front",
+                        "left": "Left", "right": "Right", "side": "Left",
+                    }
+                    _detected_angle = None
+                    for _kw, _ang in _angle_map.items():
+                        if _kw in _user_lower:
+                            _detected_angle = _ang
+                            break
+
+                    _matched_url = None
+
+                    # Collect base outfit labels (skip angle variants, Default, Portrait)
+                    _outfit_labels = []
+                    for key in idx:
+                        if key.startswith("label:"):
+                            _lbl = key[6:]
+                            if any(_lbl.endswith(f" {a}") for a in ("Front", "Back", "Left", "Right")):
+                                continue
+                            if _lbl.lower() in ("default look", "portrait"):
+                                continue
+                            _outfit_labels.append(_lbl)
+
+                    # Step 1: Combined outfit + angle (e.g. "show me your lingerie back")
+                    if _detected_angle:
+                        for _lbl in _outfit_labels:
+                            if _lbl.lower() in _user_lower:
+                                _combined = f"{_lbl} {_detected_angle}"
+                                _combined_url = _lookup_label(idx, _combined)
+                                if _combined_url:
+                                    _matched_url = _combined_url
+                                    text_media = {"images": [_combined_url]}
+                                    print(f"[PROJECT CHAT] photo-fallback: LLM forgot [show:] tag, injecting angle photo ({_combined})")
+                                    break
+
+                    # Step 2: Angle-only match (e.g. "show me your back")
+                    if not _matched_url and _detected_angle:
+                        _angle_suffix = f" {_detected_angle}"
+                        for key, url in idx.items():
+                            if key.startswith("label:") and key.endswith(_angle_suffix):
+                                _matched_url = url
+                                text_media = {"images": [url]}
+                                print(f"[PROJECT CHAT] photo-fallback: LLM forgot [show:] tag, injecting angle photo ({key[6:]})")
+                                break
+
+                    # Step 3: Outfit label match (e.g. "show me your lingerie")
+                    if not _matched_url:
+                        for _lbl in _outfit_labels:
+                            if _lbl.lower() in _user_lower:
+                                url = _lookup_label(idx, _lbl)
+                                if url:
+                                    _matched_url = url
+                                    text_media = {"images": [url]}
+                                    print(f"[PROJECT CHAT] photo-fallback: LLM forgot [show:] tag, injecting outfit photo ({_lbl})")
+                                    break
+
+                    # Step 3: Fall back to round-robin
+                    if not _matched_url:
+                        _urls = list(dict.fromkeys(
+                            v for k, v in idx.items() if k != "default"
+                        ))
+                        if idx.get("default"):
+                            _urls.insert(0, idx["default"])
+                        if _urls:
+                            if not hasattr(run_project_chat, "_fallback_ctr"):
+                                run_project_chat._fallback_ctr = {}  # type: ignore[attr-defined]
+                            _c = run_project_chat._fallback_ctr.get(project_id, 0)  # type: ignore[attr-defined]
+                            text_media = {"images": [_urls[_c % len(_urls)]]}
+                            run_project_chat._fallback_ctr[project_id] = _c + 1  # type: ignore[attr-defined]
+                            print(f"[PROJECT CHAT] photo-fallback: LLM forgot [show:] tag, injecting photo {_c % len(_urls) + 1} of {len(_urls)}")
                 except Exception:
                     pass
 
