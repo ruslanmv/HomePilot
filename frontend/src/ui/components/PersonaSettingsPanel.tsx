@@ -1069,6 +1069,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
     goal, capabilities, profile, askFirst, toolIds, agentIds, toolSource,
     pa, pap, ag.tool_details, ag.agent_details, backendUrl, apiKey,
     project.id, onSaved, catalogTools, catalogAgents, avatarSettingsLocal,
+    sharedEnabled, sharedAlias, featuredSlot,
   ])
 
   // --- Document delete ---
