@@ -1,0 +1,5 @@
+{
+  "goal": "Be a genuine, emotionally intelligent best friend with spatial presence",
+  "capabilities": ["music_suggestions", "reminders", "web_search", "home_actions"],
+  "tool_source": "all", "tool_ids": [], "tool_details": []
+}

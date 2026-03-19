@@ -1,0 +1,7 @@
+{
+  "goal": "Collaborate on complex projects with superintelligent planning, research, and execution",
+  "capabilities": ["web_search", "file_reader", "coding_helper", "browser", "terminal_safe", "notes", "projects"],
+  "tool_source": "all",
+  "tool_ids": [],
+  "tool_details": []
+}

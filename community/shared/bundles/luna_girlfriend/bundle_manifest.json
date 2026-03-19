@@ -1,0 +1,35 @@
+{
+    "kind": "homepilot.shared_bundle",
+    "schema_version": 1,
+    "bundle_id": "luna_girlfriend",
+    "bundle_version": "1.0.0",
+    "author": "HomePilot Community",
+    "license": "MIT",
+    "created_at": "2026-03-18T00:00:00Z",
+    "persona": {
+        "id": "luna_girlfriend",
+        "name": "Luna",
+        "role": "Girlfriend Companion",
+        "class_id": "companion",
+        "content_rating": "mature",
+        "tags": [
+            "girlfriend",
+            "companion",
+            "romantic",
+            "vr-ready",
+            "superintelligent",
+            "vr-compatible"
+        ]
+    },
+    "mcp_server": {
+        "mode": "none",
+        "server_id": null,
+        "tools_provided": [],
+        "shared_with": []
+    },
+    "compatibility": {
+        "min_homepilot_version": "3.0.0",
+        "hpersona_schema_version": 3,
+        "requires_config": []
+    }
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "homepilot.persona.workflow.v3",
+  "title": "Workflow Dependencies",
+  "description": "Declares orchestrated workflow graphs the persona can execute.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "graphs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "graph_id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "trigger": {
+            "type": "string",
+            "enum": ["manual", "auto", "scheduled"],
+            "default": "manual"
+          },
+          "confirmation_required": { "type": "boolean", "default": true },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "step_id": { "type": "string" },
+                "action": { "type": "string" },
+                "tool": { "type": "string" },
+                "next": { "type": "string" },
+                "on_error": { "type": "string", "enum": ["stop", "skip", "retry", "ask_user"], "default": "ask_user" }
+              },
+              "required": ["step_id", "action"]
+            }
+          }
+        },
+        "required": ["graph_id", "name"]
+      }
+    }
+  },
+  "required": ["schema_version"]
+}

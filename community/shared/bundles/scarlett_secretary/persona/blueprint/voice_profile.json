@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "voice_id": "nova",
+  "voice_provider": "openai_tts",
+  "pitch_bias": 0.05,
+  "rate_bias": 0.1,
+  "pause_style": "brisk",
+  "emotional_modulation": true,
+  "language": "en-US",
+  "warmth": 0.4
+}

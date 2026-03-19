@@ -1,0 +1,1 @@
+{ "schema_version": 1, "personality_tools": { "description": "Light friend tools", "tools": ["music_suggestions", "reminders", "web_search", "home_actions"] }, "forge_tools": { "description": "Context Forge tool references", "tools": [] }, "tool_schemas": [], "capability_summary": { "required": [], "optional": ["music_suggestions", "reminders", "web_search", "home_actions"] } }

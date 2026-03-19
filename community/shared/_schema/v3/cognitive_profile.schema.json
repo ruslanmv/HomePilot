@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "homepilot.persona.cognitive_profile.v3",
+  "title": "Cognitive Profile",
+  "description": "Defines how the persona reasons, remembers, and orchestrates tasks.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "reasoning_mode": {
+      "type": "string",
+      "enum": ["direct", "guided", "orchestrated"],
+      "description": "direct = single-turn; guided = multi-turn with memory; orchestrated = full workflow engine"
+    },
+    "memory_strategy": {
+      "type": "string",
+      "enum": ["basic", "adaptive", "hybrid"],
+      "description": "basic = factual/deterministic; adaptive = emotional/relational; hybrid = both"
+    },
+    "initiative_level": {
+      "type": "string",
+      "enum": ["reactive", "proactive", "autonomous"],
+      "description": "How much the persona acts without being asked"
+    },
+    "action_confirmation": {
+      "type": "string",
+      "enum": ["always", "risky_only", "never"],
+      "description": "When to ask user before executing actions"
+    },
+    "allowed_tool_categories": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Categories of tools the persona may use"
+    },
+    "spatial_intelligence": {
+      "type": "object",
+      "description": "Spatial reasoning capabilities",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "world_state_aware": { "type": "boolean", "default": false },
+        "proximity_reasoning": { "type": "boolean", "default": false },
+        "gesture_interpretation": { "type": "boolean", "default": false },
+        "environment_mapping": { "type": "boolean", "default": false }
+      }
+    },
+    "superintelligence_traits": {
+      "type": "object",
+      "description": "Enhanced cognitive capabilities",
+      "properties": {
+        "multi_step_planning": { "type": "boolean", "default": false },
+        "self_reflection": { "type": "boolean", "default": false },
+        "context_persistence": { "type": "boolean", "default": true },
+        "tool_chaining": { "type": "boolean", "default": false },
+        "emotional_continuity": { "type": "boolean", "default": false },
+        "workflow_graphs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "LangGraph graph IDs this persona can invoke"
+        }
+      }
+    },
+    "safety_policy": {
+      "type": "object",
+      "properties": {
+        "content_rating": { "type": "string", "enum": ["sfw", "mature", "adult"] },
+        "tool_autonomy_cap": { "type": "string", "enum": ["none", "read_only", "limited", "full"] },
+        "external_action_gate": { "type": "boolean", "default": true },
+        "relationship_boundary": { "type": "string", "enum": ["professional", "friendly", "intimate", "unrestricted"] }
+      }
+    }
+  },
+  "required": ["schema_version", "reasoning_mode", "memory_strategy"]
+}

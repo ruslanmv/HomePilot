@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "reasoning_mode": "guided",
+  "memory_strategy": "adaptive",
+  "initiative_level": "reactive",
+  "action_confirmation": "always",
+  "allowed_tool_categories": ["media_suggestions", "home_ambiance"],
+  "spatial_intelligence": {
+    "enabled": true,
+    "world_state_aware": true,
+    "proximity_reasoning": true,
+    "gesture_interpretation": true,
+    "environment_mapping": false
+  },
+  "superintelligence_traits": {
+    "multi_step_planning": false,
+    "self_reflection": true,
+    "context_persistence": true,
+    "tool_chaining": false,
+    "emotional_continuity": true,
+    "workflow_graphs": []
+  },
+  "safety_policy": {
+    "content_rating": "adult",
+    "tool_autonomy_cap": "none",
+    "external_action_gate": true,
+    "relationship_boundary": "unrestricted"
+  }
+}

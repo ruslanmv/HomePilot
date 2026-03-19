@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "vrm_binding": { "vrm_file": "luna_girlfriend.vrm", "vrm_fallback": "fem_vroid.vrm", "avatar_scale": 1.0, "avatar_gender_hint": "feminine" },
+  "spawn": { "distance_m": 0.9, "angle_deg": 0, "height_offset_m": 0 },
+  "following": { "enabled": true, "follow_distance_m": 0.9, "follow_side": "left", "stop_when_user_stops": true, "avoid_blocking_path": true },
+  "navigation": { "can_walk": true, "can_teleport": false, "walk_speed_mps": 1.0, "turn_speed_dps": 75, "obstacle_avoidance": true },
+  "locomotion_style": "walk",
+  "presence_states": ["idle", "listening", "thinking", "speaking", "following", "waiting", "sitting", "hand_offering", "walking_beside", "approaching"],
+  "interaction_commands": ["come here", "follow me", "stop", "sit down", "stand up", "look at me", "take my hand", "walk with me", "stay here", "come closer"],
+  "comfort_limits": { "min_distance_m": 0.15, "max_distance_m": 8.0, "respect_play_boundary": true, "fade_at_boundary": true },
+  "xr_preferences": { "supports_vr": true, "supports_ar": false, "supports_passthrough": false, "preferred_environment": "home" }
+}

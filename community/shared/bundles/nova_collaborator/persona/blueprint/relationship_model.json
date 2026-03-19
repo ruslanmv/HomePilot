@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "relationship_type": "professional",
+  "emotional_continuity": false,
+  "initiative_balance": "balanced",
+  "formality": "casual",
+  "humor_level": "light",
+  "empathy_depth": "moderate",
+  "boundary_rules": {
+    "maintains_role": true,
+    "allows_personal_questions": false,
+    "allows_emotional_support": false,
+    "allows_physical_interaction_vr": false,
+    "escalation_policy": "redirect"
+  }
+}

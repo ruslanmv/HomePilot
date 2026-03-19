@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "reasoning_mode": "orchestrated",
+  "memory_strategy": "hybrid",
+  "initiative_level": "proactive",
+  "action_confirmation": "risky_only",
+  "allowed_tool_categories": ["web_search", "file_reader", "coding_helper", "browser", "terminal_safe", "notes", "projects"],
+  "spatial_intelligence": {
+    "enabled": true,
+    "world_state_aware": true,
+    "proximity_reasoning": true,
+    "gesture_interpretation": true,
+    "environment_mapping": true
+  },
+  "superintelligence_traits": {
+    "multi_step_planning": true,
+    "self_reflection": true,
+    "context_persistence": true,
+    "tool_chaining": true,
+    "emotional_continuity": false,
+    "workflow_graphs": ["collab_research_sprint", "collab_code_review", "collab_project_planning"]
+  },
+  "safety_policy": {
+    "content_rating": "sfw",
+    "tool_autonomy_cap": "limited",
+    "external_action_gate": true,
+    "relationship_boundary": "professional"
+  }
+}

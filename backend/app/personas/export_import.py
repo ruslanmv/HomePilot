@@ -46,8 +46,9 @@ from .. import projects
 PACKAGE_VERSION = 2
 SCHEMA_VERSION = 2
 
-# We still accept v1 packages on import
-_MAX_IMPORT_SCHEMA = SCHEMA_VERSION
+# We accept v1–v3 packages on import; v3 adds cognitive/embodiment/VR profiles
+# that the LangGraph runtime loads directly from the bundle directory.
+_MAX_IMPORT_SCHEMA = 3
 
 
 def _normalize_details_to_dict(
