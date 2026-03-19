@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "vrm_binding": { "vrm_file": "milo_friend.vrm", "vrm_fallback": "AvatarSample_B.vrm", "avatar_scale": 1.0, "avatar_gender_hint": "masculine" },
+  "spawn": { "distance_m": 1.2, "angle_deg": 15, "height_offset_m": 0 },
+  "following": { "enabled": true, "follow_distance_m": 1.2, "follow_side": "adaptive", "stop_when_user_stops": true, "avoid_blocking_path": true },
+  "navigation": { "can_walk": true, "can_teleport": false, "walk_speed_mps": 1.3, "turn_speed_dps": 120, "obstacle_avoidance": true },
+  "locomotion_style": "walk",
+  "presence_states": ["idle", "listening", "thinking", "speaking", "following", "waiting", "sitting", "walking_beside"],
+  "interaction_commands": ["come here", "follow me", "stop", "sit down", "stand up", "look at me", "walk with me", "stay here"],
+  "comfort_limits": { "min_distance_m": 0.3, "max_distance_m": 8.0, "respect_play_boundary": true, "fade_at_boundary": true },
+  "xr_preferences": { "supports_vr": true, "supports_ar": true, "supports_passthrough": true, "preferred_environment": "any" }
+}

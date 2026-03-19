@@ -218,6 +218,11 @@ app.include_router(system_dashboard_router)
 from .system_resources import router as system_resources_router
 app.include_router(system_resources_router)
 
+# Include LangGraph Persona Agent routes (/v1/persona-graph/*, /v1/world-state/*, /world-state/*)
+# Additive — enables graph-based reasoning for v3 personas with embodiment awareness
+from .langgraph_personas.persona_graph_routes import router as persona_graph_router
+app.include_router(persona_graph_router)
+
 
 # ----------------------------
 # ComfyUI image proxy

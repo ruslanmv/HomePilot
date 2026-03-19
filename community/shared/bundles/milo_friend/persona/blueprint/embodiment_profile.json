@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "expression_style": "expressive",
+  "look_at": { "default_target": "user_head", "intensity": 0.6, "gaze_shift_frequency": "frequent", "avert_when_thinking": false },
+  "gestures": { "amplitude": "broad", "talk_style": "hand_talker", "idle_style": "casual_fidget" },
+  "posture": { "default_pose": "casual", "can_sit": true, "sitting_style": "relaxed" },
+  "personal_distance": { "default_m": 1.0, "intimate_m": 0.5, "social_m": 1.8, "approach_speed": "normal" },
+  "hand_interactions": { "can_offer_hand": false, "can_accept_hand": false, "can_point": true, "can_wave": true, "can_high_five": true },
+  "emotional_expressions": { "happy": 0.8, "sad": 0.5, "surprised": 0.7, "thinking": 0.4, "angry": 0.3, "neutral": 0.2 }
+}

@@ -1,0 +1,11 @@
+{
+  "style_preset": "professional",
+  "aspect_ratio": "portrait",
+  "gender_hint": "feminine",
+  "avatar_settings": {
+    "style": "realistic",
+    "hair": "elegant updo",
+    "outfit": "tailored business suit",
+    "accessories": "smart glasses, earpiece"
+  }
+}

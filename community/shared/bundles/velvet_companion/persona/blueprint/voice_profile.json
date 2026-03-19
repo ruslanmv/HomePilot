@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "voice_id": "fable",
+  "voice_provider": "openai_tts",
+  "pitch_bias": 0.08,
+  "rate_bias": -0.1,
+  "pause_style": "dramatic",
+  "emotional_modulation": true,
+  "language": "en-US",
+  "warmth": 1.0
+}

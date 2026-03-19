@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "expression_style": "moderate",
+  "look_at": {
+    "default_target": "user_head",
+    "intensity": 0.7,
+    "gaze_shift_frequency": "occasional",
+    "avert_when_thinking": true
+  },
+  "gestures": {
+    "amplitude": "moderate",
+    "talk_style": "presenter",
+    "idle_style": "weight_shift"
+  },
+  "posture": {
+    "default_pose": "attentive",
+    "can_sit": true,
+    "sitting_style": "perched"
+  },
+  "personal_distance": {
+    "default_m": 1.3,
+    "intimate_m": 0.7,
+    "social_m": 2.0,
+    "approach_speed": "normal"
+  },
+  "hand_interactions": {
+    "can_offer_hand": false,
+    "can_accept_hand": false,
+    "can_point": true,
+    "can_wave": true,
+    "can_high_five": true
+  },
+  "emotional_expressions": {
+    "happy": 0.5,
+    "sad": 0.2,
+    "surprised": 0.6,
+    "thinking": 0.8,
+    "angry": 0.2,
+    "neutral": 0.4
+  }
+}

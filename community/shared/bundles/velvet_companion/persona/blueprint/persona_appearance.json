@@ -1,0 +1,11 @@
+{
+  "style_preset": "glamorous",
+  "aspect_ratio": "portrait",
+  "gender_hint": "feminine",
+  "avatar_settings": {
+    "style": "realistic",
+    "hair": "long wavy auburn hair",
+    "outfit": "elegant evening wear",
+    "accessories": "subtle jewelry"
+  }
+}

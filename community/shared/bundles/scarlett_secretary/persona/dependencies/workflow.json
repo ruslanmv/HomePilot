@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "graphs": [
+    {
+      "graph_id": "secretary_daily_briefing",
+      "name": "Daily Briefing",
+      "description": "Compile calendar, unread emails, and pending tasks into a morning briefing",
+      "trigger": "scheduled",
+      "confirmation_required": false,
+      "steps": [
+        {"step_id": "fetch_calendar", "action": "Read today's calendar events", "tool": "calendar", "next": "fetch_email"},
+        {"step_id": "fetch_email", "action": "Summarize unread emails", "tool": "email", "next": "fetch_tasks"},
+        {"step_id": "fetch_tasks", "action": "List pending reminders", "tool": "reminders", "next": "compile"},
+        {"step_id": "compile", "action": "Compile and present briefing to user", "tool": "notes"}
+      ]
+    },
+    {
+      "graph_id": "secretary_email_triage",
+      "name": "Email Triage",
+      "description": "Categorize and prioritize incoming emails",
+      "trigger": "auto",
+      "confirmation_required": true,
+      "steps": [
+        {"step_id": "scan", "action": "Scan unread emails", "tool": "email", "next": "categorize"},
+        {"step_id": "categorize", "action": "Categorize by urgency and topic", "next": "summarize"},
+        {"step_id": "summarize", "action": "Present summary with recommended actions"}
+      ]
+    },
+    {
+      "graph_id": "secretary_meeting_prep",
+      "name": "Meeting Preparation",
+      "description": "Research attendees and prepare agenda before meetings",
+      "trigger": "auto",
+      "confirmation_required": true,
+      "steps": [
+        {"step_id": "check_meeting", "action": "Get next meeting details", "tool": "calendar", "next": "research"},
+        {"step_id": "research", "action": "Research attendees and topics", "tool": "web_search", "next": "prepare"},
+        {"step_id": "prepare", "action": "Draft agenda and talking points", "tool": "notes"}
+      ]
+    }
+  ]
+}

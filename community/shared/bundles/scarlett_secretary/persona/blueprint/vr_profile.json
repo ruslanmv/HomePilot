@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "vrm_binding": {
+    "vrm_file": "scarlett_secretary.vrm",
+    "vrm_fallback": "AvatarSample_A.vrm",
+    "avatar_scale": 1.0,
+    "avatar_gender_hint": "feminine"
+  },
+  "spawn": {
+    "distance_m": 1.8,
+    "angle_deg": 0,
+    "height_offset_m": 0
+  },
+  "following": {
+    "enabled": true,
+    "follow_distance_m": 1.8,
+    "follow_side": "right",
+    "stop_when_user_stops": true,
+    "avoid_blocking_path": true
+  },
+  "navigation": {
+    "can_walk": true,
+    "can_teleport": false,
+    "walk_speed_mps": 1.2,
+    "turn_speed_dps": 90,
+    "obstacle_avoidance": true
+  },
+  "locomotion_style": "walk",
+  "presence_states": ["idle", "listening", "thinking", "speaking", "following", "waiting", "sitting", "task_active"],
+  "interaction_commands": ["come here", "follow me", "stop", "sit down", "stand up", "look at me", "stay here"],
+  "comfort_limits": {
+    "min_distance_m": 0.5,
+    "max_distance_m": 8.0,
+    "respect_play_boundary": true,
+    "fade_at_boundary": true
+  },
+  "xr_preferences": {
+    "supports_vr": true,
+    "supports_ar": true,
+    "supports_passthrough": true,
+    "preferred_environment": "office"
+  }
+}
