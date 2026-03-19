@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "homepilot.persona.voice_profile.v3",
+  "title": "Voice Profile",
+  "description": "Defines how the persona sounds — voice selection, modulation, and style.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "voice_id": {
+      "type": "string",
+      "description": "TTS voice identifier (provider-specific)"
+    },
+    "voice_provider": {
+      "type": "string",
+      "enum": ["web_speech", "openai_tts", "google_tts", "elevenlabs", "auto"],
+      "default": "auto"
+    },
+    "pitch_bias": {
+      "type": "number",
+      "minimum": -1.0,
+      "maximum": 1.0,
+      "default": 0.0
+    },
+    "rate_bias": {
+      "type": "number",
+      "minimum": -1.0,
+      "maximum": 1.0,
+      "default": 0.0,
+      "description": "Negative = slower, positive = faster"
+    },
+    "pause_style": {
+      "type": "string",
+      "enum": ["brisk", "natural", "deliberate", "dramatic"],
+      "default": "natural"
+    },
+    "emotional_modulation": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether voice adapts to emotional context"
+    },
+    "language": {
+      "type": "string",
+      "default": "en-US"
+    },
+    "warmth": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.5,
+      "description": "0 = clinical, 1 = warm and intimate"
+    }
+  },
+  "required": ["schema_version"]
+}

@@ -1,0 +1,7 @@
+{
+  "goal": "Manage schedules, communications, and administrative tasks with superintelligent precision",
+  "capabilities": ["calendar", "email", "notes", "reminders", "web_search", "home_control"],
+  "tool_source": "all",
+  "tool_ids": [],
+  "tool_details": []
+}

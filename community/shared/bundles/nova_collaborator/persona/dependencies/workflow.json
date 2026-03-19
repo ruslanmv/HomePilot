@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "graphs": [
+    {
+      "graph_id": "collab_research_sprint",
+      "name": "Research Sprint",
+      "description": "Conduct deep research on a topic and produce a structured report",
+      "trigger": "manual",
+      "confirmation_required": true,
+      "steps": [
+        {"step_id": "define_scope", "action": "Clarify research question and scope", "next": "search"},
+        {"step_id": "search", "action": "Search multiple sources for information", "tool": "web_search", "next": "analyze"},
+        {"step_id": "analyze", "action": "Analyze and cross-reference findings", "next": "synthesize"},
+        {"step_id": "synthesize", "action": "Produce structured research report", "tool": "notes"}
+      ]
+    },
+    {
+      "graph_id": "collab_code_review",
+      "name": "Code Review",
+      "description": "Review code files for quality, bugs, and improvements",
+      "trigger": "manual",
+      "confirmation_required": false,
+      "steps": [
+        {"step_id": "read_files", "action": "Read target code files", "tool": "file_reader", "next": "analyze"},
+        {"step_id": "analyze", "action": "Analyze for bugs, style, and architecture issues", "next": "report"},
+        {"step_id": "report", "action": "Generate detailed review with suggestions", "tool": "notes"}
+      ]
+    },
+    {
+      "graph_id": "collab_project_planning",
+      "name": "Project Planning",
+      "description": "Break a project idea into phases, tasks, and milestones",
+      "trigger": "manual",
+      "confirmation_required": true,
+      "steps": [
+        {"step_id": "gather_requirements", "action": "Clarify project goals and constraints", "next": "research"},
+        {"step_id": "research", "action": "Research approaches and technologies", "tool": "web_search", "next": "plan"},
+        {"step_id": "plan", "action": "Create phased project plan with milestones", "tool": "notes"}
+      ]
+    }
+  ]
+}

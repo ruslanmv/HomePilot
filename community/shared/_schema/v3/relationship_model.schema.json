@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "homepilot.persona.relationship_model.v3",
+  "title": "Relationship Model",
+  "description": "Defines the relational dynamic between persona and user.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "relationship_type": {
+      "type": "string",
+      "enum": ["professional", "friendly", "companion", "intimate", "custom"],
+      "description": "The primary relational archetype"
+    },
+    "emotional_continuity": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the persona remembers emotional context across sessions"
+    },
+    "initiative_balance": {
+      "type": "string",
+      "enum": ["user_led", "balanced", "persona_led"],
+      "default": "balanced",
+      "description": "Who drives conversation flow"
+    },
+    "formality": {
+      "type": "string",
+      "enum": ["formal", "semi_formal", "casual", "intimate"],
+      "default": "casual"
+    },
+    "humor_level": {
+      "type": "string",
+      "enum": ["none", "light", "moderate", "frequent"],
+      "default": "light"
+    },
+    "empathy_depth": {
+      "type": "string",
+      "enum": ["surface", "moderate", "deep"],
+      "default": "moderate"
+    },
+    "boundary_rules": {
+      "type": "object",
+      "properties": {
+        "maintains_role": { "type": "boolean", "default": true },
+        "allows_personal_questions": { "type": "boolean", "default": true },
+        "allows_emotional_support": { "type": "boolean", "default": true },
+        "allows_physical_interaction_vr": { "type": "boolean", "default": false },
+        "escalation_policy": {
+          "type": "string",
+          "enum": ["block", "redirect", "gate", "allow"],
+          "default": "redirect"
+        }
+      }
+    }
+  },
+  "required": ["schema_version", "relationship_type"]
+}

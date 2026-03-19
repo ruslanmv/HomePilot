@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "voice_id": "shimmer",
+  "voice_provider": "openai_tts",
+  "pitch_bias": 0.0,
+  "rate_bias": 0.05,
+  "pause_style": "natural",
+  "emotional_modulation": true,
+  "language": "en-US",
+  "warmth": 0.5
+}

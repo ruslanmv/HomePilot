@@ -601,6 +601,7 @@ ProjectTemplate(
 - [x] GitHub-native persona submission pipeline (Issue template → Actions → Release → Pages gallery)
 - [x] Persona submission moderation workflow (admin-gated label approval)
 - [x] Community Gallery web page on GitHub Pages with search, filters, and download
+- [x] Superintelligent Personas v3: five VR-ready personas with cognitive profiles, spatial intelligence, embodiment, motion DSL, and workflow orchestration — see [docs/PERSONA.md](docs/PERSONA.md)
 
 ### In Progress
 - [ ] Background music integration

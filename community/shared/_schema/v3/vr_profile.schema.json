@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "homepilot.persona.vr_profile.v3",
+  "title": "VR Profile",
+  "description": "Defines how the persona behaves in VR/AR environments.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "vrm_binding": {
+      "type": "object",
+      "description": "Preferred VRM avatar binding",
+      "properties": {
+        "vrm_file": { "type": "string", "description": "Recommended VRM filename or URL" },
+        "vrm_fallback": { "type": "string", "description": "Fallback VRM if primary unavailable" },
+        "avatar_scale": { "type": "number", "default": 1.0 },
+        "avatar_gender_hint": { "type": "string", "enum": ["feminine", "masculine", "neutral"] }
+      }
+    },
+    "spawn": {
+      "type": "object",
+      "properties": {
+        "distance_m": { "type": "number", "default": 1.5 },
+        "angle_deg": { "type": "number", "default": 0, "description": "0 = directly in front of user" },
+        "height_offset_m": { "type": "number", "default": 0 }
+      }
+    },
+    "following": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "follow_distance_m": { "type": "number", "default": 1.5 },
+        "follow_side": { "type": "string", "enum": ["left", "right", "behind", "adaptive"], "default": "adaptive" },
+        "stop_when_user_stops": { "type": "boolean", "default": true },
+        "avoid_blocking_path": { "type": "boolean", "default": true }
+      }
+    },
+    "navigation": {
+      "type": "object",
+      "properties": {
+        "can_walk": { "type": "boolean", "default": true },
+        "can_teleport": { "type": "boolean", "default": false },
+        "walk_speed_mps": { "type": "number", "default": 1.2 },
+        "turn_speed_dps": { "type": "number", "default": 90 },
+        "obstacle_avoidance": { "type": "boolean", "default": true }
+      }
+    },
+    "locomotion_style": {
+      "type": "string",
+      "enum": ["walk", "glide", "teleport", "stationary"],
+      "default": "walk"
+    },
+    "presence_states": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle", "listening", "thinking", "speaking", "following",
+          "waiting", "approaching", "sitting", "hand_offering",
+          "task_active", "retreating", "walking_beside"
+        ]
+      },
+      "default": ["idle", "listening", "thinking", "speaking"]
+    },
+    "interaction_commands": {
+      "type": "array",
+      "description": "Voice commands the persona understands as spatial instructions",
+      "items": { "type": "string" },
+      "default": ["come here", "go there", "follow me", "stop", "sit down", "stand up", "look at me"]
+    },
+    "comfort_limits": {
+      "type": "object",
+      "properties": {
+        "min_distance_m": { "type": "number", "default": 0.3 },
+        "max_distance_m": { "type": "number", "default": 10.0 },
+        "respect_play_boundary": { "type": "boolean", "default": true },
+        "fade_at_boundary": { "type": "boolean", "default": true }
+      }
+    },
+    "xr_preferences": {
+      "type": "object",
+      "properties": {
+        "supports_vr": { "type": "boolean", "default": true },
+        "supports_ar": { "type": "boolean", "default": false },
+        "supports_passthrough": { "type": "boolean", "default": false },
+        "preferred_environment": { "type": "string", "enum": ["any", "indoor", "outdoor", "office", "home"], "default": "any" }
+      }
+    }
+  },
+  "required": ["schema_version"]
+}

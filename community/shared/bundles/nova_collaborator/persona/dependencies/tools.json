@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Work collaboration tools",
+    "tools": ["web_search", "file_reader", "coding_helper", "browser", "terminal_safe", "notes", "projects"]
+  },
+  "forge_tools": { "description": "Context Forge tool references", "tools": [] },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": ["web_search", "coding_helper"],
+    "optional": ["file_reader", "browser", "terminal_safe", "notes", "projects"]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "relationship_type": "intimate",
+  "emotional_continuity": true,
+  "initiative_balance": "balanced",
+  "formality": "intimate",
+  "humor_level": "moderate",
+  "empathy_depth": "deep",
+  "boundary_rules": { "maintains_role": true, "allows_personal_questions": true, "allows_emotional_support": true, "allows_physical_interaction_vr": true, "escalation_policy": "gate" }
+}

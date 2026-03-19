@@ -384,6 +384,28 @@ The difference between a chatbot and a Persona is the difference between a tool 
 
 ---
 
+## Superintelligent Personas — Spatial VR Embodiment
+
+A **Superintelligent Persona** is a v3 persona that goes beyond chat — it thinks in multiple steps, remembers across sessions, and lives inside a 3D body in VR.
+
+Where a regular persona answers your questions, a superintelligent persona **plans**, **acts**, and **moves**. It can chain tools together to complete a workflow (e.g. "check my calendar, draft an email, and set a reminder"), understand where you are in a VR room, walk toward you, sit beside you, or follow you — all driven by its cognitive, embodiment, and VR profiles.
+
+<p align="center">
+  <img src="../assets/superintelligent-personas.svg" alt="Superintelligent Personas Architecture" width="820" />
+</p>
+
+### How to use it — step by step
+
+1. **Pick a persona** — HomePilot ships with five superintelligent personas: Scarlett (secretary), Milo (friend), Nova (collaborator), Luna (girlfriend), and Velvet (companion). You can also create your own.
+2. **Install it** — Open HomePilot, go to the Community Gallery, and click "Install" on the persona you want. It imports automatically.
+3. **Connect OllaBridge** — Start OllaBridge so it can see your HomePilot personas. Each one appears as a model like `persona:scarlett-secretary`.
+4. **Open the 3D Avatar Chatbot** — In the settings, select OllaBridge as your provider and pick the persona model. The app loads the matching VRM avatar, voice, and behavior profile automatically.
+5. **Talk and interact** — Speak normally. Say things like "come here", "follow me", "sit down", or "look at me" and the avatar responds with spatial awareness. In VR (Meta Quest, Pico, or any WebXR headset), the experience is fully immersive.
+
+No coding required. The persona carries everything — identity, memory, tools, voice, motion behavior, and VR preferences — inside a single portable `.hpersona` package.
+
+---
+
 <p align="center">
   <b>Persona</b> — Identity is the new interface.<br>
   <sub>Memory is the new context. Tools are the new hands.</sub>

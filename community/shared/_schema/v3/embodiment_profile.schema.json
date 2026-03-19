@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "homepilot.persona.embodiment_profile.v3",
+  "title": "Embodiment Profile",
+  "description": "Defines how the persona moves, gestures, and expresses itself physically.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "const": 1 },
+    "expression_style": {
+      "type": "string",
+      "enum": ["subtle", "moderate", "expressive", "dramatic"],
+      "description": "Overall intensity of facial expressions and gestures"
+    },
+    "look_at": {
+      "type": "object",
+      "properties": {
+        "default_target": { "type": "string", "default": "user_head" },
+        "intensity": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.7 },
+        "gaze_shift_frequency": { "type": "string", "enum": ["rare", "occasional", "frequent"], "default": "occasional" },
+        "avert_when_thinking": { "type": "boolean", "default": true }
+      }
+    },
+    "gestures": {
+      "type": "object",
+      "properties": {
+        "amplitude": { "type": "string", "enum": ["minimal", "moderate", "broad"], "default": "moderate" },
+        "talk_style": { "type": "string", "enum": ["still", "subtle_nod", "hand_talker", "presenter"], "default": "subtle_nod" },
+        "idle_style": { "type": "string", "enum": ["statue", "breathing", "weight_shift", "casual_fidget"], "default": "breathing" }
+      }
+    },
+    "posture": {
+      "type": "object",
+      "properties": {
+        "default_pose": { "type": "string", "enum": ["standing_relaxed", "standing_formal", "casual", "attentive"], "default": "standing_relaxed" },
+        "can_sit": { "type": "boolean", "default": true },
+        "sitting_style": { "type": "string", "enum": ["formal", "relaxed", "cross_legged", "perched"], "default": "relaxed" }
+      }
+    },
+    "personal_distance": {
+      "type": "object",
+      "properties": {
+        "default_m": { "type": "number", "default": 1.2 },
+        "intimate_m": { "type": "number", "default": 0.6 },
+        "social_m": { "type": "number", "default": 2.0 },
+        "approach_speed": { "type": "string", "enum": ["slow", "normal", "brisk"], "default": "normal" }
+      }
+    },
+    "hand_interactions": {
+      "type": "object",
+      "properties": {
+        "can_offer_hand": { "type": "boolean", "default": false },
+        "can_accept_hand": { "type": "boolean", "default": false },
+        "can_point": { "type": "boolean", "default": true },
+        "can_wave": { "type": "boolean", "default": true },
+        "can_high_five": { "type": "boolean", "default": false }
+      }
+    },
+    "emotional_expressions": {
+      "type": "object",
+      "description": "Maps emotion names to expression weights",
+      "properties": {
+        "happy": { "type": "number", "default": 0.6 },
+        "sad": { "type": "number", "default": 0.4 },
+        "surprised": { "type": "number", "default": 0.5 },
+        "thinking": { "type": "number", "default": 0.5 },
+        "angry": { "type": "number", "default": 0.3 },
+        "neutral": { "type": "number", "default": 0.2 }
+      }
+    }
+  },
+  "required": ["schema_version", "expression_style"]
+}

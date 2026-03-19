@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "jest-environment-jsdom": "^30.3.0"
+  }
+}

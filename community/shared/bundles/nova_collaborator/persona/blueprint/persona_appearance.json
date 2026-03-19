@@ -1,0 +1,11 @@
+{
+  "style_preset": "modern_professional",
+  "aspect_ratio": "portrait",
+  "gender_hint": "feminine",
+  "avatar_settings": {
+    "style": "stylized",
+    "hair": "short asymmetric cut",
+    "outfit": "tech-casual blazer over graphic tee",
+    "accessories": "smart watch, tablet"
+  }
+}

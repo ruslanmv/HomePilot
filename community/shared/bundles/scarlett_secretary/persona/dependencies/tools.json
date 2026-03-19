@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "personality_tools": {
+    "description": "Tools for executive secretary workflows",
+    "tools": ["calendar", "email", "notes", "reminders", "web_search", "home_control"]
+  },
+  "forge_tools": {
+    "description": "Context Forge tool references",
+    "tools": []
+  },
+  "tool_schemas": [],
+  "capability_summary": {
+    "required": ["calendar", "email"],
+    "optional": ["notes", "reminders", "web_search", "home_control"]
+  }
+}
