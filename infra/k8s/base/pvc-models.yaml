@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: homepilot-models
+  namespace: homepilot
+  labels:
+    app.kubernetes.io/part-of: homepilot
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: homepilot-uploads
+  namespace: homepilot
+  labels:
+    app.kubernetes.io/part-of: homepilot
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi

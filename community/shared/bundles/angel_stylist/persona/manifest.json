@@ -1,0 +1,33 @@
+{
+  "kind": "homepilot.persona",
+  "schema_version": 2,
+  "package_version": 2,
+  "project_type": "persona",
+  "source_homepilot_version": "3.0.0",
+  "content_rating": "sfw",
+  "created_at": "2026-03-28T11:15:48Z",
+  "contents": {
+    "has_avatar": true,
+    "has_outfits": false,
+    "outfit_count": 0,
+    "has_tool_dependencies": false,
+    "has_mcp_servers": false,
+    "has_a2a_agents": false,
+    "has_model_requirements": false
+  },
+  "capability_summary": {
+    "personality_tools": [
+      "web_search",
+      "media_suggestions",
+      "home_ambiance",
+      "reminders"
+    ],
+    "capabilities": [
+      "fashion_advice",
+      "lifestyle",
+      "style_companion"
+    ],
+    "mcp_servers_count": 0,
+    "a2a_agents_count": 0
+  }
+}

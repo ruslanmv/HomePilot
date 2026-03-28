@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepilot-config
+  namespace: homepilot
+  labels:
+    app.kubernetes.io/part-of: homepilot
+data:
+  # Avatar service
+  AVATAR_SERVICE_PORT: "8020"
+  AVATAR_OUTPUT_DIR: /shared/uploads
+  STYLEGAN_ENABLED: "false"
+  STYLEGAN_WEIGHTS_PATH: /models/stylegan2-ffhq-1024x1024.pkl
+  STYLEGAN_DEVICE: auto
+
+  # Backend
+  COMFYUI_URL: http://comfyui:8188
+  AVATAR_SERVICE_URL: http://avatar-service:8020
+  ALLOW_NON_COMMERCIAL_MODELS: "true"

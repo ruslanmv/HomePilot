@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import CFG
 from .router import router
+from .quickface_router import router as quickface_router
 
 _log = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ app = FastAPI(
     description="Optional StyleGAN2 face generation microservice for Avatar Studio.",
 )
 app.include_router(router, prefix="/v1")
+app.include_router(quickface_router, prefix="/v1")
 
 # Serve generated avatar images as static files
 _output_dir = CFG.avatar_output_dir or "../backend/data/avatars"

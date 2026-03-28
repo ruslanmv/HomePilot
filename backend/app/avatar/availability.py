@@ -129,6 +129,9 @@ def enabled_modes() -> List[str]:
     if "studio_random" not in modes:
         modes.append("studio_random")
 
+    # Quick Face is always available (local GPU → web → placeholder fallback)
+    modes.append("studio_quickface")
+
     final = sorted(set(modes))
     _log.info("[Availability] enabled_modes=%s", final)
     return final

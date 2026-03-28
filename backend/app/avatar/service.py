@@ -58,6 +58,12 @@ async def generate(req: AvatarGenerateRequest) -> AvatarGenerateResponse:
     audit_event("generate_request", mode=req.mode, count=req.count, seed=req.seed)
 
     # ------------------------------------------------------------------
+    # studio_quickface → avatar-service /quickface endpoint
+    # ------------------------------------------------------------------
+    if req.mode == "studio_quickface":
+        return await _generate_quickface(req)
+
+    # ------------------------------------------------------------------
     # studio_random → StyleGAN microservice → ComfyUI fallback → placeholder
     # ------------------------------------------------------------------
     if req.mode == "studio_random":
@@ -236,6 +242,43 @@ async def _fallback_comfyui_or_placeholder(
         warnings=["No AI generator available. Using placeholder faces. "
                    "Start ComfyUI or the avatar-service for real AI faces."],
     )
+
+async def _generate_quickface(req: AvatarGenerateRequest) -> AvatarGenerateResponse:
+    """studio_quickface: avatar-service /quickface → placeholder fallback."""
+    url = f"{CFG.avatar_service_url}/v1/avatars/quickface"
+    seeds = _make_seeds(req.seed, req.count)
+    payload = {
+        "count": req.count,
+        "seed": seeds[0] if seeds else None,
+        "truncation": req.truncation,
+        "output_size": 512,
+    }
+
+    _log.info("[AvatarGen] QuickFace: trying avatar-service at %s", url)
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(url, json=payload)
+            r.raise_for_status()
+            data = r.json()
+
+        results = [
+            AvatarResult(url=x["url"], seed=x.get("seed"), metadata=x.get("metadata", {}))
+            for x in data.get("results", [])
+        ]
+        warnings = data.get("warnings", [])
+        _log.info("[AvatarGen] QuickFace: %d results via %s", len(results), data.get("engine", "unknown"))
+        return AvatarGenerateResponse(mode=req.mode, results=results, warnings=warnings)
+
+    except Exception as exc:
+        _log.warning("[AvatarGen] QuickFace: avatar-service failed (%s), using placeholder", exc)
+        results = generate_placeholder_faces(count=req.count, seed=req.seed, truncation=req.truncation)
+        return AvatarGenerateResponse(
+            mode=req.mode,
+            results=results,
+            warnings=[f"Quick Face service unavailable ({exc}). Using placeholder faces."],
+        )
+
 
 def _make_seeds(seed: int | None, count: int) -> List[int]:
     if seed is not None:

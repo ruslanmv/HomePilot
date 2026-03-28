@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../gpu
+  - scc.yaml
+
+patches:
+  # OpenShift: add NVIDIA runtime class for GPU access
+  - target:
+      kind: Deployment
+      name: avatar-service
+    patch: |
+      - op: add
+        path: /spec/template/spec/runtimeClassName
+        value: nvidia
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
