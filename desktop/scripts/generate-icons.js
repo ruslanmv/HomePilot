@@ -207,4 +207,87 @@ for (const size of [16, 32, 48, 64, 128]) {
   console.log(`  ${size}x${size}.png  (${buf.length} bytes)`);
 }
 
+// ── ICO generation (Windows) ─────────────────────────────────────────────
+// ICO format: header + directory entries + PNG image data for each size.
+// Modern ICO files can embed PNG data directly (Vista+), which is what we do.
+
+function createICO(pngBuffers) {
+  const count = pngBuffers.length;
+  const headerSize = 6;
+  const dirEntrySize = 16;
+  const dirSize = dirEntrySize * count;
+  let dataOffset = headerSize + dirSize;
+
+  // ICO header: reserved(2) + type(2, 1=icon) + count(2)
+  const header = Buffer.alloc(headerSize);
+  header.writeUInt16LE(0, 0); // reserved
+  header.writeUInt16LE(1, 2); // type = icon
+  header.writeUInt16LE(count, 4);
+
+  const dirEntries = [];
+  const imageDataParts = [];
+
+  for (const { width, png } of pngBuffers) {
+    const entry = Buffer.alloc(dirEntrySize);
+    entry[0] = width >= 256 ? 0 : width; // width (0 = 256)
+    entry[1] = width >= 256 ? 0 : width; // height
+    entry[2] = 0; // color palette
+    entry[3] = 0; // reserved
+    entry.writeUInt16LE(1, 4); // color planes
+    entry.writeUInt16LE(32, 6); // bits per pixel
+    entry.writeUInt32LE(png.length, 8); // image data size
+    entry.writeUInt32LE(dataOffset, 12); // offset to image data
+
+    dirEntries.push(entry);
+    imageDataParts.push(png);
+    dataOffset += png.length;
+  }
+
+  return Buffer.concat([header, ...dirEntries, ...imageDataParts]);
+}
+
+const icoSizes = [16, 32, 48, 64, 128, 256];
+const icoPngs = icoSizes.map((size) => ({
+  width: size,
+  png: createPNG(size, size, renderLogo),
+}));
+const ico = createICO(icoPngs);
+fs.writeFileSync(path.join(ICONS_DIR, "icon.ico"), ico);
+console.log(`  icon.ico     (${icoSizes.join("+")}px, ${ico.length} bytes)`);
+
+// ── ICNS generation (macOS) ──────────────────────────────────────────────
+// ICNS format: 4-byte magic + 4-byte total size + entries.
+// Each entry: 4-byte OSType + 4-byte size (incl header) + PNG data.
+// Modern macOS reads PNG-in-ICNS for ic07 (128), ic08 (256), ic09 (512), ic10 (1024).
+
+function createICNS(entries) {
+  const magic = Buffer.from("icns");
+  let totalSize = 8; // magic + size field
+  const parts = [];
+
+  for (const { osType, png } of entries) {
+    const entrySize = 8 + png.length;
+    const header = Buffer.alloc(8);
+    header.write(osType, 0, 4, "ascii");
+    header.writeUInt32BE(entrySize, 4);
+    parts.push(header, png);
+    totalSize += entrySize;
+  }
+
+  const sizeBuffer = Buffer.alloc(4);
+  sizeBuffer.writeUInt32BE(totalSize);
+
+  return Buffer.concat([magic, sizeBuffer, ...parts]);
+}
+
+const icnsEntries = [
+  { osType: "ic07", png: createPNG(128, 128, renderLogo) },
+  { osType: "ic08", png: createPNG(256, 256, renderLogo) },
+  { osType: "ic09", png: createPNG(512, 512, renderLogo) },
+  { osType: "ic10", png: createPNG(1024, 1024, renderLogo) },
+];
+const icns = createICNS(icnsEntries);
+fs.writeFileSync(path.join(ICONS_DIR, "icon.icns"), icns);
+console.log(`  icon.icns    (128+256+512+1024px, ${icns.length} bytes)`);
+
 console.log("\nDone! Icons written to desktop/icons/");

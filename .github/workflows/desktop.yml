@@ -16,6 +16,9 @@ concurrency:
   group: desktop-build
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     strategy:
@@ -42,7 +45,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       # Derive version from release tag, manual input, or package.json
       - name: Derive version
@@ -92,14 +95,29 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      # Generate all icon sizes (zero external deps — pure Node PNG encoder)
-      - name: Generate icons
+      # Generate all icons: PNG (all sizes), ICO (Windows), ICNS (macOS)
+      # Pure Node.js — zero external dependencies
+      - name: Generate icons (PNG + ICO + ICNS)
         working-directory: desktop
         run: node scripts/generate-icons.js
 
-      # electron-builder auto-converts PNG → .ico/.icns, but we need
-      # png2icns or iconutil on Mac for the .icns. On Linux/Win the
-      # builder handles .ico from PNG natively.
+      # Verify platform-specific icon exists before building
+      - name: Verify icons
+        working-directory: desktop/icons
+        shell: bash
+        run: |
+          echo "Generated icon files:"
+          ls -lh icon.png icon.ico icon.icns 2>/dev/null
+          if [ "${{ matrix.platform }}" = "win" ] && [ ! -f icon.ico ]; then
+            echo "ERROR: icon.ico missing for Windows build"; exit 1
+          fi
+          if [ "${{ matrix.platform }}" = "mac" ] && [ ! -f icon.icns ]; then
+            echo "ERROR: icon.icns missing for macOS build"; exit 1
+          fi
+          if [ "${{ matrix.platform }}" = "linux" ] && [ ! -f icon.png ]; then
+            echo "ERROR: icon.png missing for Linux build"; exit 1
+          fi
+          echo "OK: platform icon verified"
 
       - name: Build installer
         working-directory: desktop
@@ -111,7 +129,7 @@ jobs:
       - name: List outputs
         working-directory: desktop/dist
         shell: bash
-        run: ls -lh *.exe *.dmg *.AppImage *.deb 2>/dev/null || echo "See dist/ contents:" && ls -lh
+        run: ls -lh *.exe *.dmg *.AppImage *.deb 2>/dev/null || ls -lh
 
       # Upload as CI artifacts (always — even on non-release builds)
       - name: Upload artifacts
