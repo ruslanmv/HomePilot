@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>HomePilot — Setup</title>
+<style>
+  :root {
+    --bg-deep: #050a18;
+    --bg-card: #0d1424;
+    --bg-input: #111827;
+    --border: #1e293b;
+    --border-focus: #3b82f6;
+    --accent-blue: #3b82f6;
+    --accent-purple: #8b5cf6;
+    --accent-cyan: #06b6d4;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --danger: #ef4444;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    height: 100vh;
+    overflow: hidden;
+    -webkit-app-region: drag;
+    user-select: none;
+  }
+
+  /* ── Layout ── */
+  .wizard {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding: 40px 48px 32px;
+    -webkit-app-region: no-drag;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 36px;
+    -webkit-app-region: drag;
+  }
+
+  .header-logo {
+    width: 56px; height: 56px;
+    margin: 0 auto 16px;
+  }
+
+  .header-logo svg {
+    width: 100%; height: 100%;
+    filter: drop-shadow(0 2px 16px rgba(59, 130, 246, 0.3));
+  }
+
+  .header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .header p {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  /* ── Steps indicator ── */
+  .steps {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 32px;
+  }
+
+  .step-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: all 0.3s ease;
+  }
+
+  .step-dot.active {
+    background: var(--accent-blue);
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+  }
+
+  .step-dot.done {
+    background: var(--accent-cyan);
+  }
+
+  /* ── Pages ── */
+  .page {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    animation: fade-in 0.3s ease;
+  }
+
+  .page.active { display: flex; }
+
+  .page-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .page-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 24px;
+    line-height: 1.5;
+  }
+
+  /* ── Form elements ── */
+  .field {
+    margin-bottom: 20px;
+  }
+
+  .field label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+
+  .field input {
+    width: 100%;
+    padding: 12px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .field input::placeholder {
+    color: var(--text-muted);
+    font-family: 'Segoe UI', sans-serif;
+  }
+
+  .field input:focus {
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+  }
+
+  .field-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  /* ── Backend selector ── */
+  .backend-options {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .backend-card {
+    flex: 1;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1.5px solid var(--border);
+    background: var(--bg-card);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+  }
+
+  .backend-card:hover {
+    border-color: rgba(59, 130, 246, 0.3);
+    background: rgba(59, 130, 246, 0.05);
+  }
+
+  .backend-card.selected {
+    border-color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.1);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  }
+
+  .backend-card .name {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .backend-card .desc {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  /* ── Buttons ── */
+  .actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: auto;
+    padding-top: 24px;
+  }
+
+  .btn {
+    padding: 10px 28px;
+    border-radius: 10px;
+    border: none;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    color: white;
+    box-shadow: 0 2px 12px rgba(59, 130, 246, 0.3);
+  }
+
+  .btn-primary:hover {
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.5);
+    transform: translateY(-1px);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+
+  .btn-ghost:hover {
+    color: var(--text-secondary);
+    border-color: var(--text-muted);
+  }
+
+  .btn-link {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 13px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .btn-link:hover { color: var(--text-secondary); }
+
+  /* ── Feature cards (welcome page) ── */
+  .features {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .feature {
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+  }
+
+  .feature .icon {
+    font-size: 20px;
+    margin-bottom: 6px;
+  }
+
+  .feature .name {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+
+  .feature .desc {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateX(12px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+</style>
+</head>
+<body>
+
+<div class="wizard">
+  <div class="header">
+    <div class="header-logo">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+        <defs>
+          <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#2563eb"/>
+            <stop offset="100%" stop-color="#7c3aed"/>
+          </linearGradient>
+        </defs>
+        <rect width="100" height="100" rx="22" fill="url(#g)"/>
+        <path d="M 50 18 L 78 44 L 67 44 L 67 72 L 33 72 L 33 44 L 22 44 Z" fill="white"/>
+        <circle cx="50" cy="54" r="7" fill="#2563eb" opacity="0.9"/>
+        <circle cx="50" cy="54" r="3" fill="#60a5fa"/>
+      </svg>
+    </div>
+    <h1>Welcome to HomePilot</h1>
+    <p>Let's get you set up in under a minute</p>
+  </div>
+
+  <div class="steps">
+    <div class="step-dot active" id="dot-0"></div>
+    <div class="step-dot" id="dot-1"></div>
+    <div class="step-dot" id="dot-2"></div>
+  </div>
+
+  <!-- Page 0: Welcome -->
+  <div class="page active" id="page-0">
+    <div class="features">
+      <div class="feature">
+        <div class="icon">&#x1f4ac;</div>
+        <div class="name">AI Chat</div>
+        <div class="desc">Talk with custom personas</div>
+      </div>
+      <div class="feature">
+        <div class="icon">&#x1f3a8;</div>
+        <div class="name">Image Gen</div>
+        <div class="desc">Create with FLUX & SDXL</div>
+      </div>
+      <div class="feature">
+        <div class="icon">&#x2728;</div>
+        <div class="name">Face Editing</div>
+        <div class="desc">Swap, enhance, restore</div>
+      </div>
+      <div class="feature">
+        <div class="icon">&#x1f916;</div>
+        <div class="name">Agents</div>
+        <div class="desc">MCP-powered assistants</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn-link" onclick="skip()">Skip setup</button>
+      <button class="btn btn-primary" onclick="goPage(1)">Get Started</button>
+    </div>
+  </div>
+
+  <!-- Page 1: API Keys -->
+  <div class="page" id="page-1">
+    <p class="page-title">Connect your AI provider</p>
+    <p class="page-desc">Enter at least one API key. You can change these later in Settings.</p>
+
+    <div class="backend-options">
+      <div class="backend-card selected" id="card-openai" onclick="selectBackend('openai')">
+        <div class="name">OpenAI</div>
+        <div class="desc">GPT-4o, DALL-E</div>
+      </div>
+      <div class="backend-card" id="card-anthropic" onclick="selectBackend('anthropic')">
+        <div class="name">Anthropic</div>
+        <div class="desc">Claude 4, Opus</div>
+      </div>
+      <div class="backend-card" id="card-ollama" onclick="selectBackend('ollama')">
+        <div class="name">Ollama</div>
+        <div class="desc">Local, free</div>
+      </div>
+    </div>
+
+    <div class="field" id="field-openai">
+      <label>OpenAI API Key</label>
+      <input type="password" id="openai-key" placeholder="sk-..." autocomplete="off" />
+      <p class="field-hint">Get yours at platform.openai.com/api-keys</p>
+    </div>
+
+    <div class="field" id="field-anthropic" style="display:none">
+      <label>Anthropic API Key</label>
+      <input type="password" id="anthropic-key" placeholder="sk-ant-..." autocomplete="off" />
+      <p class="field-hint">Get yours at console.anthropic.com</p>
+    </div>
+
+    <div class="field" id="field-ollama" style="display:none">
+      <p class="field-hint">Ollama runs locally — no API key needed. Make sure Ollama is installed and running on your machine.</p>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="goPage(0)">Back</button>
+      <button class="btn btn-primary" onclick="goPage(2)">Continue</button>
+    </div>
+  </div>
+
+  <!-- Page 2: Ready -->
+  <div class="page" id="page-2">
+    <p class="page-title">You're all set!</p>
+    <p class="page-desc">
+      HomePilot will now download and start its services.
+      This may take a few minutes on first launch.
+    </p>
+
+    <div style="flex:1; display:flex; align-items:center; justify-content:center;">
+      <div style="text-align:center;">
+        <div style="font-size:48px; margin-bottom:16px;">&#x1f680;</div>
+        <p style="font-size:14px; color:var(--text-secondary);">Ready to launch</p>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="goPage(1)">Back</button>
+      <button class="btn btn-primary" onclick="finish()">Launch HomePilot</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentPage = 0;
+  let selectedBackend = 'openai';
+
+  function goPage(n) {
+    document.getElementById(`page-${currentPage}`).classList.remove('active');
+    document.getElementById(`page-${n}`).classList.add('active');
+
+    for (let i = 0; i < 3; i++) {
+      const dot = document.getElementById(`dot-${i}`);
+      dot.className = 'step-dot' + (i < n ? ' done' : '') + (i === n ? ' active' : '');
+    }
+    currentPage = n;
+  }
+
+  function selectBackend(name) {
+    selectedBackend = name;
+    document.querySelectorAll('.backend-card').forEach(c => c.classList.remove('selected'));
+    document.getElementById(`card-${name}`).classList.add('selected');
+
+    document.getElementById('field-openai').style.display = name === 'openai' ? '' : 'none';
+    document.getElementById('field-anthropic').style.display = name === 'anthropic' ? '' : 'none';
+    document.getElementById('field-ollama').style.display = name === 'ollama' ? '' : 'none';
+  }
+
+  function finish() {
+    const data = {
+      openaiKey: document.getElementById('openai-key').value.trim(),
+      anthropicKey: document.getElementById('anthropic-key').value.trim(),
+      llmBackend: selectedBackend,
+    };
+    if (window.homepilot) window.homepilot.setupComplete(data);
+  }
+
+  function skip() {
+    if (window.homepilot) window.homepilot.setupSkip();
+  }
+</script>
+
+</body>
+</html>
