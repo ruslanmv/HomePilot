@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HomePilot</title>
+<style>
+  :root {
+    --bg-deep: #050a18;
+    --bg-mid: #0a1628;
+    --accent-blue: #3b82f6;
+    --accent-purple: #8b5cf6;
+    --accent-cyan: #06b6d4;
+    --text-primary: #f1f5f9;
+    --text-secondary: #64748b;
+    --text-muted: #475569;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, sans-serif;
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    -webkit-app-region: drag;
+    user-select: none;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ── Animated background particles ── */
+  .bg-canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+  }
+
+  .orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.15;
+    animation: float 8s ease-in-out infinite;
+  }
+
+  .orb-1 {
+    width: 300px; height: 300px;
+    background: var(--accent-blue);
+    top: -80px; left: -60px;
+    animation-delay: 0s;
+  }
+
+  .orb-2 {
+    width: 250px; height: 250px;
+    background: var(--accent-purple);
+    bottom: -60px; right: -40px;
+    animation-delay: -3s;
+    animation-duration: 10s;
+  }
+
+  .orb-3 {
+    width: 200px; height: 200px;
+    background: var(--accent-cyan);
+    top: 50%; left: 60%;
+    transform: translate(-50%, -50%);
+    animation-delay: -5s;
+    animation-duration: 12s;
+    opacity: 0.08;
+  }
+
+  /* ── Grid overlay ── */
+  .grid-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background-image:
+      linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* ── Content ── */
+  .content {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* ── Logo ── */
+  .logo-container {
+    position: relative;
+    width: 96px;
+    height: 96px;
+    margin-bottom: 32px;
+  }
+
+  .logo-glow {
+    position: absolute;
+    inset: -20px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(59, 130, 246, 0.3) 0%, transparent 70%);
+    animation: glow-pulse 3s ease-in-out infinite;
+  }
+
+  .logo-ring {
+    position: absolute;
+    inset: -6px;
+    border-radius: 24px;
+    border: 1.5px solid rgba(59, 130, 246, 0.2);
+    animation: ring-spin 20s linear infinite;
+  }
+
+  .logo-ring::before {
+    content: '';
+    position: absolute;
+    top: -2px; left: 50%;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--accent-cyan);
+    box-shadow: 0 0 8px var(--accent-cyan);
+  }
+
+  .logo {
+    position: relative;
+    width: 96px;
+    height: 96px;
+    animation: logo-breathe 4s ease-in-out infinite;
+  }
+
+  .logo svg {
+    width: 100%;
+    height: 100%;
+    filter: drop-shadow(0 4px 24px rgba(59, 130, 246, 0.4));
+  }
+
+  /* ── Title ── */
+  .title {
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin-bottom: 4px;
+    background: linear-gradient(135deg, #e2e8f0 0%, #60a5fa 50%, #a78bfa 100%);
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: title-shimmer 4s ease-in-out infinite;
+  }
+
+  .subtitle {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 40px;
+  }
+
+  /* ── Status ── */
+  .status-container {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+
+  .status {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    min-height: 18px;
+    transition: opacity 0.3s ease;
+  }
+
+  /* ── Progress bar ── */
+  .progress-container {
+    width: 320px;
+  }
+
+  .progress-track {
+    width: 100%;
+    height: 3px;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .progress-track::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 3px;
+    border: 0.5px solid rgba(59, 130, 246, 0.15);
+  }
+
+  .progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple), var(--accent-cyan));
+    background-size: 200% 100%;
+    border-radius: 3px;
+    transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+    animation: bar-shimmer 2s linear infinite;
+  }
+
+  .progress-bar.indeterminate {
+    width: 30%;
+    animation: slide 2s cubic-bezier(0.4, 0, 0.2, 1) infinite, bar-shimmer 2s linear infinite;
+  }
+
+  .progress-percent {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
+    margin-top: 8px;
+    font-variant-numeric: tabular-nums;
+    min-height: 16px;
+  }
+
+  /* ── Version badge ── */
+  .version {
+    position: absolute;
+    bottom: 20px;
+    font-size: 10px;
+    color: var(--text-muted);
+    letter-spacing: 1px;
+  }
+
+  /* ── Animations ── */
+  @keyframes float {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33%      { transform: translate(20px, -20px) scale(1.05); }
+    66%      { transform: translate(-10px, 15px) scale(0.95); }
+  }
+
+  @keyframes glow-pulse {
+    0%, 100% { opacity: 0.5; transform: scale(1); }
+    50%      { opacity: 1; transform: scale(1.15); }
+  }
+
+  @keyframes ring-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  @keyframes logo-breathe {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.03); }
+  }
+
+  @keyframes title-shimmer {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  @keyframes slide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(1000%); }
+  }
+
+  @keyframes bar-shimmer {
+    0%   { background-position: 0% 0%; }
+    100% { background-position: 200% 0%; }
+  }
+
+  /* ── Fade-in entrance ── */
+  .content {
+    animation: fade-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    opacity: 0;
+  }
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-canvas">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+</div>
+<div class="grid-overlay"></div>
+
+<div class="content">
+  <div class="logo-container">
+    <div class="logo-glow"></div>
+    <div class="logo-ring"></div>
+    <div class="logo">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+        <defs>
+          <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#2563eb"/>
+            <stop offset="100%" stop-color="#7c3aed"/>
+          </linearGradient>
+          <linearGradient id="house-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#ffffff"/>
+            <stop offset="100%" stop-color="#cbd5e1"/>
+          </linearGradient>
+          <filter id="inner-shadow">
+            <feDropShadow dx="0" dy="1" stdDeviation="1" flood-color="#000" flood-opacity="0.2"/>
+          </filter>
+        </defs>
+        <rect width="100" height="100" rx="22" fill="url(#bg-grad)"/>
+        <g filter="url(#inner-shadow)">
+          <path d="M 50 18 L 78 44 L 67 44 L 67 72 L 33 72 L 33 44 L 22 44 Z" fill="url(#house-grad)"/>
+        </g>
+        <circle cx="50" cy="54" r="7" fill="#2563eb" opacity="0.9"/>
+        <circle cx="50" cy="54" r="3" fill="#60a5fa"/>
+      </svg>
+    </div>
+  </div>
+
+  <h1 class="title">HomePilot</h1>
+  <p class="subtitle">AI Assistant</p>
+
+  <div class="status-container">
+    <p class="status" id="status">Initializing...</p>
+  </div>
+
+  <div class="progress-container">
+    <div class="progress-track">
+      <div class="progress-bar indeterminate" id="progress"></div>
+    </div>
+    <p class="progress-percent" id="percent"></p>
+  </div>
+</div>
+
+<p class="version">v1.0.0</p>
+
+<script>
+  const statusEl = document.getElementById('status');
+  const progressEl = document.getElementById('progress');
+  const percentEl = document.getElementById('percent');
+
+  if (window.homepilot) {
+    window.homepilot.onSplashUpdate(({ message, percent }) => {
+      statusEl.textContent = message;
+      if (percent >= 0) {
+        progressEl.classList.remove('indeterminate');
+        progressEl.style.width = Math.min(percent, 100) + '%';
+        percentEl.textContent = percent + '%';
+      } else {
+        progressEl.classList.add('indeterminate');
+        progressEl.style.width = '30%';
+        percentEl.textContent = '';
+      }
+    });
+  }
+</script>
+
+</body>
+</html>
