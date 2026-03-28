@@ -16,7 +16,6 @@ from fastapi.responses import JSONResponse
 
 from .config import (
     OLLAMA_BASE_URL,
-    LLM_BASE_URL,
     COMFY_BASE_URL,
 )
 
@@ -47,12 +46,15 @@ async def system_overview() -> JSONResponse:
     # Probe external services
     backend_status: Dict[str, Any] = {"ok": True, "service": "homepilot-backend", "latency_ms": 0}
     ollama = await _probe(OLLAMA_BASE_URL, "/api/tags")
-    llm = await _probe(LLM_BASE_URL, "/models")
     comfy = await _probe(COMFY_BASE_URL, "/system_stats")
 
     # Probe Context Forge gateway
     forge_url = os.getenv("CONTEXT_FORGE_URL", "http://127.0.0.1:4444")
     forge = await _probe(forge_url, "/health")
+
+    # Probe Avatar Service (Quick Face / StyleGAN2)
+    avatar_svc_url = os.getenv("AVATAR_SERVICE_URL", "http://localhost:8020")
+    avatar_svc = await _probe(avatar_svc_url, "/v1/avatars/capabilities")
 
     # SQLite is always in-process
     sqlite_status: Dict[str, Any] = {"ok": True, "status": "connected", "latency_ms": 0}
@@ -108,7 +110,7 @@ async def system_overview() -> JSONResponse:
     services: Dict[str, Dict[str, Any]] = {
         "backend": backend_status,
         "ollama": ollama,
-        "llm": llm,
+        "avatar_svc": avatar_svc,
         "comfyui": comfy,
         "forge": forge,
         "sqlite": sqlite_status,

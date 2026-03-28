@@ -31,6 +31,7 @@ import {
   EyeOff,
   CheckCircle2,
   Maximize2,
+  Zap,
 } from 'lucide-react'
 
 import { useAvatarPacks } from './useAvatarPacks'
@@ -99,6 +100,7 @@ const MODE_OPTIONS: { label: string; value: AvatarMode; icon: React.ReactNode; d
   { label: 'Design Character', value: 'studio_random',    icon: <Sparkles size={14} />, description: 'Build a character from gender, style, and personality' },
   { label: 'From Reference', value: 'studio_reference', icon: <User size={14} />,    description: 'Upload a photo to generate identity-consistent portraits' },
   { label: 'Face + Style',   value: 'studio_faceswap',  icon: <Palette size={14} />, description: 'Combine your face with a styled body and scene' },
+  { label: 'Quick Face',     value: 'studio_quickface', icon: <Zap size={14} />,     description: 'Instant AI face from seed — sub-second on GPU, web fallback' },
 ]
 
 // ---------------------------------------------------------------------------
@@ -124,6 +126,12 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
 
   const enabledModes = packs.data?.enabled_modes ?? []
   const [mode, setMode] = useState<AvatarMode>('studio_random')
+
+  // When switching to Quick Face, force headshot framing (StyleGAN2 FFHQ only produces square face crops)
+  const setModeWithFramingGuard = useCallback((next: AvatarMode) => {
+    setMode(next)
+    if (next === 'studio_quickface') setSelectedFraming('headshot')
+  }, [])
   const [referenceUrl, setReferenceUrl] = useState('')
   const [referencePreview, setReferencePreview] = useState<string | null>(null)
   const [count, setCount] = useState(1)
@@ -166,6 +174,10 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
 
   // Portrait framing — half_body (default, head-to-waist) vs headshot (close-up)
   const [selectedFraming, setSelectedFraming] = useState<FramingType>('half_body')
+
+  // Quick Face state (used for studio_quickface mode)
+  const [quickfaceTruncation, setQuickfaceTruncation] = useState(0.7)
+  const [quickfaceSeed, setQuickfaceSeed] = useState<string>('')
 
   // MMORPG Genetics & Features (additive — enhances character prompt)
   const [showGenetics, setShowGenetics] = useState(false)
@@ -320,20 +332,29 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
       ? { width: 512, height: 512 }
       : framingOption.sd15
     try {
-      const result = await gen.run({
-        mode,
-        count,
-        prompt: resolvedPrompt || undefined,
-        reference_image_url:
-          mode === 'studio_reference' || mode === 'studio_faceswap'
-            ? referenceUrl || undefined
-            : undefined,
-        truncation: 0.7,
-        checkpoint_override: checkpoint,
-        width: framingDims.width,
-        height: framingDims.height,
-        negative_prompt: negativePrompt || undefined,
-      })
+      // Quick Face mode uses a minimal payload (seed + truncation only)
+      const requestPayload = mode === 'studio_quickface'
+        ? {
+            mode: 'studio_quickface' as const,
+            count,
+            seed: quickfaceSeed ? parseInt(quickfaceSeed, 10) : undefined,
+            truncation: quickfaceTruncation,
+          }
+        : {
+            mode,
+            count,
+            prompt: resolvedPrompt || undefined,
+            reference_image_url:
+              mode === 'studio_reference' || mode === 'studio_faceswap'
+                ? referenceUrl || undefined
+                : undefined,
+            truncation: 0.7,
+            checkpoint_override: checkpoint,
+            width: framingDims.width,
+            height: framingDims.height,
+            negative_prompt: negativePrompt || undefined,
+          }
+      const result = await gen.run(requestPayload)
       if (result?.results?.length) {
         // Always show the selection UI — user must click "Create Avatar" to commit.
         // No auto-commit, even for single results.
@@ -540,7 +561,7 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
               const enabled = enabledModes.includes(o.value)
               const active = mode === o.value
               return (
-                <button key={o.value} disabled={!enabled} onClick={() => setMode(o.value)} title={o.description}
+                <button key={o.value} disabled={!enabled} onClick={() => setModeWithFramingGuard(o.value)} title={o.description}
                   role="radio" aria-checked={active}
                   className={[
                     'flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all',
@@ -832,6 +853,86 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
                 </div>
               )}
             </>
+          ) : mode === 'studio_quickface' ? (
+            /* ═══════════ QUICK FACE PANEL (studio_quickface mode) ═══════════ */
+            <>
+              {/* Engine info banner */}
+              <div className="text-[10px] text-white/25 text-center -mt-4 mb-5 flex items-center justify-center gap-1.5">
+                <Zap size={10} className="text-yellow-400/60" />
+                <span>Instant photorealistic faces via StyleGAN2 FFHQ — seed-reproducible</span>
+              </div>
+
+              {/* Step 1: Diversity (truncation) */}
+              <div className="mb-6">
+                <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                  1. Diversity
+                </div>
+                <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
+                  {([
+                    { value: 0.4, label: 'Conservative', icon: '🎯', sub: 'More average, conventionally attractive' },
+                    { value: 0.7, label: 'Balanced', icon: '⚖️', sub: 'Default — good variety' },
+                    { value: 1.0, label: 'Creative', icon: '🎲', sub: 'More unique, unusual features' },
+                  ] as const).map((opt) => {
+                    const active = quickfaceTruncation === opt.value
+                    return (
+                      <button
+                        key={opt.value}
+                        onClick={() => setQuickfaceTruncation(opt.value)}
+                        className={[
+                          'flex-1 flex flex-col items-center gap-1 px-3 py-3 rounded-xl text-sm font-medium transition-all',
+                          active
+                            ? 'bg-white/10 text-white border border-white/15 shadow-sm'
+                            : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04] border border-transparent',
+                        ].join(' ')}
+                      >
+                        <span className="text-lg">{opt.icon}</span>
+                        <span className="text-[12px]">{opt.label}</span>
+                        <span className="text-[9px] text-white/25">{opt.sub}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Step 2: Seed */}
+              <div className="mb-6">
+                <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                  2. Seed (Optional)
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 rounded-2xl border border-white/[0.06] bg-white/[0.03] overflow-hidden">
+                    <input
+                      type="number"
+                      value={quickfaceSeed}
+                      onChange={(e) => setQuickfaceSeed(e.target.value)}
+                      onKeyDown={(e) => {
+                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && canGenerate) { e.preventDefault(); onGenerate() }
+                      }}
+                      placeholder="Leave empty for random"
+                      className="w-full bg-transparent text-white text-sm px-4 py-3 placeholder:text-white/20 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                  <button
+                    onClick={() => setQuickfaceSeed(String(Math.floor(Math.random() * 2147483647)))}
+                    className="h-[44px] w-[44px] rounded-xl border border-white/[0.06] bg-white/[0.03] grid place-items-center text-white/40 hover:text-white/70 hover:bg-white/[0.06] transition-all"
+                    title="Random seed"
+                  >
+                    <Shuffle size={16} />
+                  </button>
+                </div>
+                <p className="text-[10px] text-white/20 mt-1.5">
+                  Same seed always produces the same face — great for reproducing a face you like
+                </p>
+              </div>
+
+              {/* Source indicator */}
+              <div className="mb-2 flex items-center gap-2 px-1">
+                <div className="h-1.5 w-1.5 rounded-full bg-emerald-400/70" />
+                <span className="text-[10px] text-white/25">
+                  Source: StyleGAN2 FFHQ 1024 — local GPU or web fallback
+                </span>
+              </div>
+            </>
           ) : (
             /* ═══════════ UPLOAD + VIBES (Reference / Face+Style modes) ═══════════ */
             <>
@@ -992,35 +1093,56 @@ export default function AvatarStudio({ backendUrl, apiKey, globalModelImages, on
           )}
 
           {/* ═══ Portrait Framing Toggle ═══ */}
-          <div className="mb-6">
-            <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
-              {mode === 'studio_random' ? '4' : '3'}. Photo Style
+          {mode === 'studio_quickface' ? (
+            /* Quick Face: StyleGAN2 FFHQ only produces square face crops — lock to Headshot */
+            <div className="mb-6">
+              <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                3. Photo Style
+              </div>
+              <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
+                <div className="flex-1 flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl bg-white/10 text-white border border-white/15 shadow-sm text-sm font-medium">
+                  <span className="text-lg">🙂</span>
+                  <div className="flex flex-col items-start">
+                    <span className="text-xs">Headshot</span>
+                    <span className="text-[9px] text-white/25 font-normal">Close-up — head &amp; shoulders, cinematic portrait</span>
+                  </div>
+                </div>
+              </div>
+              <p className="text-[10px] text-white/20 mt-1.5">
+                StyleGAN2 FFHQ produces square face crops only — headshot is the native output
+              </p>
             </div>
-            <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
-              {FRAMING_OPTIONS.map((f) => {
-                const active = selectedFraming === f.id
-                return (
-                  <button
-                    key={f.id}
-                    onClick={() => setSelectedFraming(f.id)}
-                    className={[
-                      'flex-1 flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium transition-all',
-                      active
-                        ? 'bg-white/10 text-white border border-white/15 shadow-sm'
-                        : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04] border border-transparent',
-                    ].join(' ')}
-                    title={f.description}
-                  >
-                    <span className="text-lg">{f.icon}</span>
-                    <div className="flex flex-col items-start">
-                      <span className="text-xs">{f.label}</span>
-                      <span className="text-[9px] text-white/25 font-normal">{f.description}</span>
-                    </div>
-                  </button>
-                )
-              })}
+          ) : (
+            <div className="mb-6">
+              <div className="text-[10px] text-white/40 mb-2.5 font-semibold uppercase tracking-wider">
+                {mode === 'studio_random' ? '4' : '3'}. Photo Style
+              </div>
+              <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-white/[0.03] border border-white/[0.06]">
+                {FRAMING_OPTIONS.map((f) => {
+                  const active = selectedFraming === f.id
+                  return (
+                    <button
+                      key={f.id}
+                      onClick={() => setSelectedFraming(f.id)}
+                      className={[
+                        'flex-1 flex items-center justify-center gap-2.5 px-4 py-3 rounded-xl text-sm font-medium transition-all',
+                        active
+                          ? 'bg-white/10 text-white border border-white/15 shadow-sm'
+                          : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04] border border-transparent',
+                      ].join(' ')}
+                      title={f.description}
+                    >
+                      <span className="text-lg">{f.icon}</span>
+                      <div className="flex flex-col items-start">
+                        <span className="text-xs">{f.label}</span>
+                        <span className="text-[9px] text-white/25 font-normal">{f.description}</span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* ═══ Generate Button + Count ═══ */}
           <div className="flex items-center justify-center gap-3 mb-8">

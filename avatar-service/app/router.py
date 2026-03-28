@@ -57,6 +57,10 @@ def capabilities() -> dict:
         CFG.stylegan_enabled, CFG.stylegan_weights_path, CFG.model_exists,
     )
 
+    # Quick Face engine status (additive — does not change existing fields)
+    from .quickface_router import quickface_status
+    qf_status = quickface_status()
+
     return {
         "default_engine": "stylegan" if stylegan_available else "placeholder",
         "engines": {
@@ -66,6 +70,7 @@ def capabilities() -> dict:
                 "reason": reason,
                 "details": details,
             },
+            "quickface": qf_status,
         },
     }
 

@@ -25,7 +25,7 @@ function statusTone(ok?: boolean) {
 const SERVICE_LABELS: Record<string, string> = {
   backend: 'Backend',
   ollama: 'Ollama',
-  llm: 'LLM',
+  avatar_svc: 'Avatar Svc',
   comfyui: 'ComfyUI',
   forge: 'ContextForge',
   sqlite: 'SQLite',
@@ -214,7 +214,7 @@ export default function SystemStatusDialog({
                           <div className="h-9 w-9 rounded-xl bg-white/[0.04] border border-white/[0.04] grid place-items-center text-white/50">
                             {key === 'sqlite' ? <Database size={15} /> :
                              key === 'backend' ? <Server size={15} /> :
-                             key === 'llm' ? <Cpu size={15} /> :
+                             key === 'avatar_svc' ? <Cpu size={15} /> :
                              <Activity size={15} />}
                           </div>
                           <div>

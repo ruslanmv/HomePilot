@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: avatar-service
+  namespace: homepilot
+  labels:
+    app.kubernetes.io/name: avatar-service
+    app.kubernetes.io/part-of: homepilot
+    app.kubernetes.io/component: ai-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: avatar-service
+  template:
+    metadata:
+      labels:
+        app: avatar-service
+        app.kubernetes.io/name: avatar-service
+        app.kubernetes.io/part-of: homepilot
+    spec:
+      containers:
+        - name: avatar-service
+          image: homepilot/avatar-service:latest
+          ports:
+            - containerPort: 8020
+              name: http
+          envFrom:
+            - configMapRef:
+                name: homepilot-config
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: uploads
+              mountPath: /shared/uploads
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+          readinessProbe:
+            httpGet:
+              path: /v1/avatars/capabilities
+              port: 8020
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /v1/avatars/capabilities
+              port: 8020
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: homepilot-models
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: homepilot-uploads

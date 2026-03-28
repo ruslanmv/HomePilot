@@ -61,16 +61,55 @@ async def get_capabilities() -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Quick Face engine status (additive — probes the avatar-service)
+    quickface_cap = await _probe_quickface()
+
     return {
         "default_engine": "comfyui",
         "engines": {
             "comfyui": comfyui_cap,
             "stylegan": stylegan_cap,
+            "quickface": quickface_cap,
         },
         "enabled_modes": modes,
         "stylegan_status": sg_status,
         "openpose_available": openpose_ok,
+        "quickface_status": quickface_cap,
     }
+
+
+async def _probe_quickface() -> Dict[str, Any]:
+    """Probe the avatar-service for Quick Face availability.
+
+    Additive: does not modify _probe_stylegan or any existing function.
+    Quick Face is always available (web + placeholder fallbacks), but
+    we probe for local GPU status for richer UI feedback.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                f"{CFG.avatar_service_url}/v1/avatars/capabilities"
+            )
+            r.raise_for_status()
+            data = r.json()
+
+        qf = data.get("engines", {}).get("quickface", {})
+        return {
+            "available": True,  # Always available via fallback chain
+            "local_gpu": bool(qf.get("local_gpu", False)),
+            "web_fallback": True,
+            "source": qf.get("source", "web_or_placeholder"),
+            "resolution": qf.get("resolution"),
+        }
+    except Exception:
+        # avatar-service offline — Quick Face still works via web fallback
+        return {
+            "available": True,
+            "local_gpu": False,
+            "web_fallback": True,
+            "source": "web_or_placeholder",
+            "resolution": None,
+        }
 
 
 async def _probe_stylegan() -> Dict[str, Any]:

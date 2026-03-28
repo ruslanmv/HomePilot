@@ -1,0 +1,13 @@
+{
+  "style_preset": "glamorous",
+  "aspect_ratio": "portrait",
+  "gender_hint": "feminine",
+  "avatar_settings": {
+    "style": "semi-realistic",
+    "hair": "long flowing blonde hair with soft waves",
+    "outfit": "trendy casual-chic — crop top with high-waisted jeans or stylish athleisure",
+    "accessories": "gold hoop earrings, layered necklaces, smart fitness watch"
+  },
+  "selected_filename": "avatar_angel.png",
+  "selected_thumb_filename": "thumb_avatar_angel.webp"
+}

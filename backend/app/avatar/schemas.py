@@ -17,6 +17,7 @@ AvatarMode = Literal[
     "studio_random",      # StyleGAN microservice (no reference image)
     "studio_reference",   # InstantID / PhotoMaker (identity-preserving)
     "studio_faceswap",    # body prompt → swap face → restore
+    "studio_quickface",   # Quick Face — seed-based StyleGAN / web fallback
 ]
 
 # ---------------------------------------------------------------------------

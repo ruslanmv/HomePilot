@@ -36,6 +36,7 @@ export function useAvatarCapabilities(backendUrl: string, apiKey?: string) {
   // Convenience helpers
   const styleganAvailable = data?.engines?.stylegan?.available ?? false
   const comfyuiAvailable = data?.engines?.comfyui?.available ?? false
+  const quickfaceAvailable = data?.engines?.quickface?.available ?? false
 
   return {
     data,
@@ -44,5 +45,6 @@ export function useAvatarCapabilities(backendUrl: string, apiKey?: string) {
     refresh,
     styleganAvailable,
     comfyuiAvailable,
+    quickfaceAvailable,
   }
 }

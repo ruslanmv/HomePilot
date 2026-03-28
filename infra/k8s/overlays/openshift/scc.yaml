@@ -1,0 +1,25 @@
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: homepilot-gpu
+  labels:
+    app.kubernetes.io/part-of: homepilot
+allowPrivilegedContainer: false
+allowHostNetwork: false
+allowHostPorts: false
+allowHostPID: false
+allowHostIPC: false
+readOnlyRootFilesystem: false
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: RunAsAny
+fsGroup:
+  type: RunAsAny
+volumes:
+  - configMap
+  - emptyDir
+  - persistentVolumeClaim
+  - secret
+users:
+  - system:serviceaccount:homepilot:default

@@ -116,6 +116,7 @@ const MODE_LABELS: Record<AvatarMode, string> = {
   studio_reference: 'Reference',
   studio_random: 'Random',
   studio_faceswap: 'Face + Style',
+  studio_quickface: 'Quick Face',
   creative: 'Creative',
 }
 
@@ -123,6 +124,7 @@ const MODE_ICONS: Record<AvatarMode, React.ReactNode> = {
   studio_reference: <User size={12} />,
   studio_random: <Shuffle size={12} />,
   studio_faceswap: <Palette size={12} />,
+  studio_quickface: <Sparkles size={12} />,
   creative: <Sparkles size={12} />,
 }
 

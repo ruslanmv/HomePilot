@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Enable StyleGAN + GPU resources for avatar-service
+patches:
+  - target:
+      kind: ConfigMap
+      name: homepilot-config
+    patch: |
+      - op: replace
+        path: /data/STYLEGAN_ENABLED
+        value: "true"
+
+  - target:
+      kind: Deployment
+      name: avatar-service
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/image
+        value: homepilot/avatar-service:gpu
+      - op: add
+        path: /spec/template/spec/containers/0/resources/limits/nvidia.com~1gpu
+        value: "1"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "4Gi"

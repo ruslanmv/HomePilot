@@ -7,6 +7,7 @@ export type AvatarMode =
   | 'studio_random'
   | 'studio_reference'
   | 'studio_faceswap'
+  | 'studio_quickface'
 
 // ---------------------------------------------------------------------------
 // Avatar Settings — checkpoint source selection
@@ -176,7 +177,7 @@ export interface AvatarGenerateResponse {
 // Capabilities — additive types for engine availability detection
 // ---------------------------------------------------------------------------
 
-export type AvatarEngine = 'comfyui' | 'stylegan'
+export type AvatarEngine = 'comfyui' | 'stylegan' | 'quickface'
 
 export interface AvatarEngineCapability {
   available: boolean
@@ -196,6 +197,15 @@ export interface StyleGANStatus {
   packs: Record<string, StyleGANPackStatus>
 }
 
+/** Quick Face engine status (additive). */
+export interface QuickFaceStatus {
+  available: boolean
+  local_gpu: boolean
+  web_fallback: boolean
+  source: string
+  resolution: number | null
+}
+
 export interface AvatarCapabilitiesResponse {
   default_engine: AvatarEngine
   engines: Record<AvatarEngine, AvatarEngineCapability>
@@ -203,6 +213,8 @@ export interface AvatarCapabilitiesResponse {
   stylegan_status?: StyleGANStatus
   /** Whether an OpenPose ControlNet is installed in ComfyUI (for Pose Guided body generation). */
   openpose_available?: boolean
+  /** Quick Face engine availability (additive). */
+  quickface_status?: QuickFaceStatus
 }
 
 // ---------------------------------------------------------------------------
