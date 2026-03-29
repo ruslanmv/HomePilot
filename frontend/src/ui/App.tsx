@@ -24,6 +24,8 @@ import {
   Users,
   EyeOff,
   BookOpen,
+  PanelLeftClose,
+  PanelLeft,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import ProfileSettingsModal from './ProfileSettingsModal'
@@ -259,30 +261,35 @@ function NavItem({
   active,
   shortcut,
   onClick,
+  collapsed,
 }: {
   icon: any
   label: string
   active?: boolean
   shortcut?: string
   onClick?: () => void
+  collapsed?: boolean
 }) {
   return (
     <button
       onClick={onClick}
       className={[
-        'group/menu-item relative w-full',
-        'peer/menu-button flex items-center gap-2 overflow-hidden rounded-xl text-left',
-        'outline-none transition-colors select-none',
-        'h-[36px] px-3 text-sm font-semibold',
+        'group/menu-item relative',
+        'peer/menu-button flex items-center overflow-hidden rounded-xl text-left',
+        'outline-none transition-all duration-150 select-none',
+        collapsed
+          ? 'h-[40px] w-[40px] justify-center mx-auto'
+          : 'h-[36px] w-full gap-2 px-3 text-sm font-semibold',
         active ? 'bg-white/10 text-white' : 'text-white/70 hover:bg-white/5 hover:text-white',
       ].join(' ')}
       type="button"
+      title={collapsed ? label : undefined}
     >
       <span className="size-6 flex items-center justify-center shrink-0">
         <Icon size={18} strokeWidth={2} />
       </span>
-      <span className="truncate">{label}</span>
-      {shortcut ? (
+      {!collapsed && <span className="truncate">{label}</span>}
+      {!collapsed && shortcut ? (
         <span className="absolute top-1/2 right-2 -translate-y-1/2 text-xs text-white/40 opacity-0 group-hover/menu-item:opacity-100 transition-opacity duration-100">
           {shortcut}
         </span>
@@ -905,6 +912,8 @@ function Sidebar({
   onSaveSettings,
   showHistory,
   setShowHistory,
+  collapsed,
+  onToggleCollapse,
 }: {
   mode: Mode
   setMode: (m: Mode) => void
@@ -921,6 +930,8 @@ function Sidebar({
   onSaveSettings: () => void
   showHistory: boolean
   setShowHistory: React.Dispatch<React.SetStateAction<boolean>>
+  collapsed: boolean
+  onToggleCollapse: () => void
 }) {
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
@@ -968,51 +979,146 @@ function Sidebar({
   }, [logout])
 
   return (
-    <aside className="w-[280px] flex-shrink-0 flex flex-col h-full bg-black border-r border-white/5 py-4 px-3 gap-3 relative">
-      {/* Search */}
-      <div className="px-1.5">
-        <button
-          type="button"
-          className="w-full text-left bg-[#121212] hover:bg-[#1a1a1a] text-white/60 text-sm px-3 py-2.5 rounded-xl flex items-center gap-2 transition-colors group border border-white/5"
-          onClick={() => {
-            setShowSettings(false)
-            setShowHistory(true)
-            // Focus search input after a brief delay to allow panel to render
-            setTimeout(() => {
-              const searchInput = document.querySelector('[placeholder="Search conversations..."]') as HTMLInputElement
-              searchInput?.focus()
-            }, 100)
-          }}
-        >
-          <Search size={16} className="group-hover:text-white/80 transition-colors" />
-          <span className="group-hover:text-white/80 transition-colors">Search chats</span>
-          <span className="ml-auto text-xs opacity-40 bg-white/5 px-1.5 py-0.5 rounded border border-white/10">
-            Ctrl+K
-          </span>
-        </button>
+    <aside
+      className={[
+        'flex-shrink-0 flex flex-col h-full bg-black border-r border-white/5 py-4 gap-3 relative',
+        'transition-[width,padding] duration-200 ease-in-out',
+        collapsed ? 'w-[64px] px-1.5' : 'w-[280px] px-3',
+      ].join(' ')}
+    >
+      {/* Brand mark + collapse toggle */}
+      <div className={[
+        'flex items-center',
+        collapsed ? 'justify-center px-0' : 'justify-between px-1.5',
+      ].join(' ')}>
+        {/* HomePilot logo mark — inline SVG derived from favicon + logo gradient */}
+        <div className={[
+          'flex items-center gap-2.5 overflow-hidden',
+          collapsed ? '' : 'pl-1',
+        ].join(' ')}>
+          <svg
+            width={collapsed ? 28 : 24}
+            height={collapsed ? 28 : 24}
+            viewBox="0 0 100 100"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            className="shrink-0 transition-all duration-200"
+            aria-label="HomePilot"
+          >
+            <defs>
+              <linearGradient id="hp-sidebar-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#06b6d4" />
+                <stop offset="50%" stopColor="#3b82f6" />
+                <stop offset="100%" stopColor="#8b5cf6" />
+              </linearGradient>
+            </defs>
+            {/* House silhouette */}
+            <path
+              d="M50 15 L88 42 L88 88 L12 88 L12 42 Z"
+              stroke="url(#hp-sidebar-grad)"
+              strokeWidth="5"
+              fill="none"
+              strokeLinejoin="round"
+            />
+            {/* AI core — concentric circles */}
+            <circle cx="50" cy="48" r="12" fill="url(#hp-sidebar-grad)" opacity="0.2" />
+            <circle cx="50" cy="48" r="7" fill="url(#hp-sidebar-grad)" opacity="0.5" />
+            <circle cx="50" cy="48" r="3" fill="url(#hp-sidebar-grad)" />
+            {/* Door */}
+            <rect x="38" y="64" width="24" height="24" rx="3" fill="url(#hp-sidebar-grad)" opacity="0.15" stroke="url(#hp-sidebar-grad)" strokeWidth="2" />
+          </svg>
+          {!collapsed && (
+            <span className="text-[15px] font-bold tracking-tight whitespace-nowrap">
+              <span className="text-white/90">Home</span>
+              <span className="bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">Pilot</span>
+            </span>
+          )}
+        </div>
+        {/* Collapse toggle */}
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            aria-label="Collapse sidebar"
+            title="Collapse sidebar"
+            className="h-7 w-7 rounded-lg grid place-items-center text-white/25 hover:text-white/60 hover:bg-white/[0.06] transition-all duration-150 active:scale-90"
+          >
+            <PanelLeftClose size={16} strokeWidth={1.8} />
+          </button>
+        )}
       </div>
+      {/* Expand toggle — shown only when collapsed (centered below logo) */}
+      {collapsed && (
+        <div className="flex justify-center -mt-1">
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+            className="h-7 w-7 rounded-lg grid place-items-center text-white/25 hover:text-white/60 hover:bg-white/[0.06] transition-all duration-150 active:scale-90"
+          >
+            <PanelLeft size={16} strokeWidth={1.8} />
+          </button>
+        </div>
+      )}
+
+      {/* Search */}
+      {!collapsed && (
+        <div className="px-1.5">
+          <button
+            type="button"
+            className="w-full text-left bg-[#121212] hover:bg-[#1a1a1a] text-white/60 text-sm px-3 py-2.5 rounded-xl flex items-center gap-2 transition-colors group border border-white/5"
+            onClick={() => {
+              setShowSettings(false)
+              setShowHistory(true)
+              setTimeout(() => {
+                const searchInput = document.querySelector('[placeholder="Search conversations..."]') as HTMLInputElement
+                searchInput?.focus()
+              }, 100)
+            }}
+          >
+            <Search size={16} className="group-hover:text-white/80 transition-colors" />
+            <span className="group-hover:text-white/80 transition-colors">Search chats</span>
+            <span className="ml-auto text-xs opacity-40 bg-white/5 px-1.5 py-0.5 rounded border border-white/10">
+              Ctrl+K
+            </span>
+          </button>
+        </div>
+      )}
+      {collapsed && (
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => { setShowSettings(false); setShowHistory(true) }}
+            className="h-9 w-9 rounded-xl grid place-items-center text-white/40 hover:text-white/70 hover:bg-white/[0.06] transition-colors"
+            title="Search chats (Ctrl+K)"
+          >
+            <Search size={18} />
+          </button>
+        </div>
+      )}
 
       {/* Nav groups */}
-      <div className="flex flex-col gap-3 px-1.5">
+      <div className={collapsed ? 'flex flex-col gap-3' : 'flex flex-col gap-3 px-1.5'}>
         {/* Main modes */}
         <div className="flex flex-col gap-px">
-          <NavItem icon={MessageSquare} label="Chat" active={mode === 'chat'} shortcut="Ctrl+J" onClick={() => setMode('chat')} />
-          <NavItem icon={Mic} label="Voice" active={mode === 'voice'} shortcut="Ctrl+V" onClick={() => setMode('voice')} />
-          <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} />
-          <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} />
-          <NavItem icon={PenLine} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} />
-          <NavItem icon={Users} label="Avatar" active={mode === 'avatar'} onClick={() => setMode('avatar')} />
-          <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} />
-          <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} />
-          <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} />
+          <NavItem icon={MessageSquare} label="Chat" active={mode === 'chat'} shortcut="Ctrl+J" onClick={() => setMode('chat')} collapsed={collapsed} />
+          <NavItem icon={Mic} label="Voice" active={mode === 'voice'} shortcut="Ctrl+V" onClick={() => setMode('voice')} collapsed={collapsed} />
+          <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} collapsed={collapsed} />
+          <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} collapsed={collapsed} />
+          <NavItem icon={PenLine} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} collapsed={collapsed} />
+          <NavItem icon={Users} label="Avatar" active={mode === 'avatar'} onClick={() => setMode('avatar')} collapsed={collapsed} />
+          <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} collapsed={collapsed} />
+          <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} collapsed={collapsed} />
+          <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} collapsed={collapsed} />
         </div>
 
         {/* Divider */}
         <div className="border-t border-white/5" />
 
-        {/* Teams — always visible in sidebar */}
+        {/* Teams */}
         <div className="flex flex-col gap-px">
-          <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} />
+          <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} collapsed={collapsed} />
         </div>
 
         {/* Divider */}
@@ -1020,7 +1126,7 @@ function Sidebar({
 
         {/* History */}
         <div className="flex flex-col gap-px">
-          <NavItem icon={Clock} label="History" active={showHistory} onClick={() => setShowHistory(true)} />
+          <NavItem icon={Clock} label="History" active={showHistory} onClick={() => setShowHistory(true)} collapsed={collapsed} />
         </div>
 
         {/* Divider */}
@@ -1028,51 +1134,72 @@ function Sidebar({
 
         {/* Documentation (external) */}
         <div className="flex flex-col gap-px">
-          <NavItem icon={BookOpen} label="Docs" active={false} onClick={() => window.open('https://ruslanmv.com/HomePilot/', '_blank')} />
+          <NavItem icon={BookOpen} label="Docs" active={false} onClick={() => window.open('https://ruslanmv.com/HomePilot/', '_blank')} collapsed={collapsed} />
         </div>
       </div>
 
-      {/* Recents list (time-bucketed from conversations) */}
-      <div className="flex-1 overflow-y-auto min-h-0 px-1.5 pt-1">
-        <button
-          type="button"
-          className="w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
-          onClick={onNewConversation}
-        >
-          New conversation
-        </button>
+      {/* Recents list (time-bucketed from conversations) — hidden when collapsed */}
+      {!collapsed && (
+        <div className="flex-1 overflow-y-auto min-h-0 px-1.5 pt-1">
+          <button
+            type="button"
+            className="w-full text-left px-3 py-2 text-[13px] text-white/70 hover:bg-white/5 hover:text-white rounded-xl truncate transition-colors"
+            onClick={onNewConversation}
+          >
+            New conversation
+          </button>
 
-        <SidebarRecents
-          conversations={conversations}
-          activeConversationId={activeConversationId}
-          onLoadConversation={onLoadConversation}
-          onViewAll={() => setShowHistory(true)}
-        />
-      </div>
-
-      {/* User footer — avatar click opens AccountMenu (settings accessible via menu) */}
-      <div className="mt-auto px-2 pt-4 border-t border-white/5">
-        <button
-          type="button"
-          className="w-full flex items-center gap-3 min-w-0 hover:bg-white/5 rounded-xl px-2 py-2 transition-colors cursor-pointer"
-          onClick={() => setShowAccountMenu((v) => !v)}
-          aria-haspopup="menu"
-          aria-expanded={showAccountMenu}
-          aria-label="Account menu"
-        >
-          <UserAvatar
-            displayName={currentUser.display_name || currentUser.username}
-            avatarUrl={currentUser.avatar_url}
-            size={32}
+          <SidebarRecents
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            onLoadConversation={onLoadConversation}
+            onViewAll={() => setShowHistory(true)}
           />
-          <div className="text-sm font-medium text-white/90 truncate flex-1 text-left">
-            {currentUser.display_name || currentUser.username}
-          </div>
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white/30 shrink-0">
-            <path d="M3 5L6 2L9 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M3 7L6 10L9 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
+        </div>
+      )}
+      {collapsed && <div className="flex-1" />}
+
+      {/* User footer */}
+      <div className={collapsed ? 'mt-auto flex justify-center pt-4 border-t border-white/5' : 'mt-auto px-2 pt-4 border-t border-white/5'}>
+        {collapsed ? (
+          <button
+            type="button"
+            onClick={() => setShowAccountMenu((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={showAccountMenu}
+            aria-label="Account menu"
+            title={currentUser.display_name || currentUser.username}
+            className="h-10 w-10 rounded-xl grid place-items-center hover:bg-white/[0.06] transition-colors"
+          >
+            <UserAvatar
+              displayName={currentUser.display_name || currentUser.username}
+              avatarUrl={currentUser.avatar_url}
+              size={28}
+            />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="w-full flex items-center gap-3 min-w-0 hover:bg-white/5 rounded-xl px-2 py-2 transition-colors cursor-pointer"
+            onClick={() => setShowAccountMenu((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={showAccountMenu}
+            aria-label="Account menu"
+          >
+            <UserAvatar
+              displayName={currentUser.display_name || currentUser.username}
+              avatarUrl={currentUser.avatar_url}
+              size={32}
+            />
+            <div className="text-sm font-medium text-white/90 truncate flex-1 text-left">
+              {currentUser.display_name || currentUser.username}
+            </div>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-white/30 shrink-0">
+              <path d="M3 5L6 2L9 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M3 7L6 10L9 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Account menu popover (anchored above avatar) */}
@@ -2028,6 +2155,16 @@ export default function App() {
 
   const [showSettings, setShowSettings] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('homepilot_sidebar_collapsed') === 'true' } catch { return false }
+  })
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      try { localStorage.setItem('homepilot_sidebar_collapsed', String(next)) } catch { /* ignore */ }
+      return next
+    })
+  }, [])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [currentProject, setCurrentProject] = useState<{
@@ -4281,6 +4418,8 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         onSaveSettings={onSaveSettings}
         showHistory={showHistory}
         setShowHistory={setShowHistory}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
       />
 
       <main className="flex-1 flex flex-col relative min-w-0">
