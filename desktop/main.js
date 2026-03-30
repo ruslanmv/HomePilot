@@ -341,16 +341,24 @@ async function bootstrap() {
   createMainWindow();
   createTray();
 
-  // Step 6: Background update check (after 60s, then every 6 hours)
-  setTimeout(() => checkForContainerUpdate(false), 60 * 1000);
-  setInterval(() => checkForContainerUpdate(false), 6 * 60 * 60 * 1000);
+  // Step 6: Check for updates once at launch (non-blocking, after UI is ready)
+  setTimeout(() => checkForContainerUpdate(false), 30 * 1000);
 }
 
 // ── Container updates ─────────────────────────────────────────────────────
+//
+// Best-practice update flow (like VS Code, Slack, Spotify):
+//   1. Check once at app launch (non-blocking, after UI is ready).
+//   2. If an update exists, show a non-intrusive native notification.
+//   3. User clicks "Update Now" → apply; or "Later" → dismiss.
+//   4. Manual "Check for Updates" in tray menu always works.
+//   5. No recurring timers or scheduled polling.
+//
 
 async function checkForContainerUpdate(userInitiated) {
   try {
-    if (userInitiated) {
+    // Only show a blocking "checking" dialog when the user explicitly asks
+    if (userInitiated && mainWindow && !mainWindow.isDestroyed()) {
       dialog.showMessageBox(mainWindow, {
         type: "info",
         title: "Checking for Updates",
@@ -361,8 +369,9 @@ async function checkForContainerUpdate(userInitiated) {
 
     const result = await docker.checkForUpdate();
 
+    // ── Network / registry error ──
     if (result.error) {
-      if (userInitiated) {
+      if (userInitiated && mainWindow && !mainWindow.isDestroyed()) {
         dialog.showMessageBox(mainWindow, {
           type: "warning",
           title: "Update Check Failed",
@@ -374,8 +383,9 @@ async function checkForContainerUpdate(userInitiated) {
       return;
     }
 
+    // ── Already up to date ──
     if (!result.available) {
-      if (userInitiated) {
+      if (userInitiated && mainWindow && !mainWindow.isDestroyed()) {
         dialog.showMessageBox(mainWindow, {
           type: "info",
           title: "No Updates",
@@ -386,34 +396,54 @@ async function checkForContainerUpdate(userInitiated) {
       return;
     }
 
-    // New version available — ask user to apply
-    const { response } = await dialog.showMessageBox(mainWindow, {
-      type: "info",
-      title: "Update Available",
-      message: "A new version of HomePilot is available.",
-      detail:
-        "The update has been downloaded. Applying it will restart HomePilot.\n\n" +
-        "Your data and settings are preserved.",
-      buttons: ["Update Now", "Later"],
-      defaultId: 0,
-    });
-
-    if (response === 0) {
-      const envVars = {
-        OPENAI_API_KEY: store.get("openaiKey"),
-        ANTHROPIC_API_KEY: store.get("anthropicKey"),
-        HOMEPILOT_LLM_BACKEND: store.get("llmBackend"),
-      };
-      await docker.applyUpdate(envVars);
-
-      // Reload the main window to pick up any frontend changes
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.loadURL(`http://localhost:${PORT}`);
-      }
+    // ── Update available ──
+    // For automatic (launch) checks: show a non-intrusive OS notification
+    // For manual checks: show a dialog immediately
+    if (!userInitiated) {
+      const notification = new (require("electron").Notification)({
+        title: "HomePilot Update Available",
+        body: "A new version is ready. Click to update.",
+        icon: getIconPath(),
+        silent: true,
+      });
+      notification.on("click", () => promptAndApplyUpdate());
+      notification.show();
+    } else {
+      await promptAndApplyUpdate();
     }
   } catch (err) {
     if (userInitiated) {
       dialog.showErrorBox("Update Error", err.message);
+    }
+  }
+}
+
+async function promptAndApplyUpdate() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: "info",
+    title: "Update Available",
+    message: "A new version of HomePilot is available.",
+    detail:
+      "The update has been downloaded. Applying it will restart HomePilot.\n\n" +
+      "Your data and settings are preserved.",
+    buttons: ["Update Now", "Later"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+
+  if (response === 0) {
+    const envVars = {
+      OPENAI_API_KEY: store.get("openaiKey"),
+      ANTHROPIC_API_KEY: store.get("anthropicKey"),
+      HOMEPILOT_LLM_BACKEND: store.get("llmBackend"),
+    };
+    await docker.applyUpdate(envVars);
+
+    // Reload the main window to pick up any frontend changes
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadURL(`http://localhost:${PORT}`);
     }
   }
 }

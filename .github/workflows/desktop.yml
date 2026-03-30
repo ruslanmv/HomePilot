@@ -8,6 +8,10 @@ on:
       version:
         description: "Version to build (e.g., 1.0.0). Leave empty to use package.json version."
         required: false
+      create_release:
+        description: "Create a GitHub Release with the built installers"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -20,6 +24,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # ── Build installers on each platform ──────────────────────────────────
   build:
     strategy:
       fail-fast: false
@@ -37,6 +42,9 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.platform }})
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout
@@ -64,8 +72,10 @@ jobs:
             echo "version=$SEMVER" >> $GITHUB_OUTPUT
             echo "Resolved version: $SEMVER"
           else
-            echo "version=" >> $GITHUB_OUTPUT
-            echo "Using package.json version"
+            # Read from package.json as fallback
+            SEMVER=$(node -p "require('./desktop/package.json').version")
+            echo "version=$SEMVER" >> $GITHUB_OUTPUT
+            echo "Using package.json version: $SEMVER"
           fi
 
       # Inject version into package.json if provided
@@ -144,13 +154,63 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
-      # Attach to GitHub Release (download page)
-      - name: Attach to release
+  # ── Collect all artifacts and attach to a GitHub Release ────────────────
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      # Flatten all installers into a single directory
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name '*.exe' -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp {} release-assets/ \;
+          echo "Release assets:"
+          ls -lh release-assets/
+
+      # On release event: attach to the existing release
+      - name: Attach to existing release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            desktop/dist/*.exe
-            desktop/dist/*.dmg
-            desktop/dist/*.AppImage
-            desktop/dist/*.deb
+          files: release-assets/*
+
+      # On workflow_dispatch: create a new release with the installers
+      - name: Create release (manual build)
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build.outputs.version }}
+          name: HomePilot Desktop v${{ needs.build.outputs.version }}
+          body: |
+            ## HomePilot Desktop v${{ needs.build.outputs.version }}
+
+            ### Downloads
+
+            | Platform | File | Notes |
+            |----------|------|-------|
+            | Windows | `.exe` | NSIS installer, x64 |
+            | macOS | `.dmg` | Universal (Intel + Apple Silicon) |
+            | Linux | `.AppImage` | Portable, runs on any distro |
+            | Linux | `.deb` | Debian / Ubuntu package |
+
+            ### Prerequisites
+            - [Docker Desktop](https://www.docker.com/products/docker-desktop/) must be installed and running
+
+            Full docs: [README.md](https://github.com/${{ github.repository }}/blob/master/README.md) · [DESKTOP.md](https://github.com/${{ github.repository }}/blob/master/DESKTOP.md) · [CONTAINER.md](https://github.com/${{ github.repository }}/blob/master/CONTAINER.md)
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: release-assets/*

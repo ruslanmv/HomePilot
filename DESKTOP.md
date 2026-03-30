@@ -13,7 +13,7 @@ Wraps the HomePilot web UI in an Electron shell and manages the Docker container
 4. A container starts on **port 7860** with GPU support when available.
 5. The HomePilot UI opens in a native window.
 6. The app lives in the **system tray** — close the window and it keeps running.
-7. Every 6 hours the app checks for a newer image and offers a one-click update.
+7. Each time you open the app, it checks for updates in the background and notifies you if a new version is available.
 
 ---
 
@@ -96,6 +96,20 @@ To replace the default generated icons with your own artwork:
 1. Place a `1024x1024` PNG named `icon-1024.png` in `desktop/icons/`.
 2. Run `node desktop/scripts/generate-icons.js` to regenerate all platform formats.
 3. Rebuild the installer.
+
+---
+
+## Updates
+
+HomePilot follows industry best practices for updates (the same pattern used by VS Code, Slack, and Spotify):
+
+1. **On launch**: The app checks for a newer Docker image in the background (non-blocking).
+2. **If available**: A native OS notification appears — "A new version is ready. Click to update."
+3. **Your choice**: Click the notification or choose "Update Now" in the dialog. Or dismiss and update later.
+4. **Manual check**: Right-click the system tray icon → "Check for Updates" at any time.
+5. **No polling**: There are no recurring timers or scheduled checks. Updates are checked once per launch only.
+
+Data and settings are always preserved across updates.
 
 ---
 
