@@ -1,0 +1,88 @@
+{
+  "name": "homepilot",
+  "version": "1.0.0",
+  "description": "HomePilot — AI-powered assistant for your desktop",
+  "main": "main.js",
+  "author": {
+    "name": "ruslanmv",
+    "email": "ruslanmv@gmail.com"
+  },
+  "homepage": "https://github.com/ruslanmv/HomePilot",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "NODE_ENV=development electron .",
+    "build": "electron-builder --publish never",
+    "build:win": "electron-builder --win --publish never",
+    "build:mac": "electron-builder --mac --publish never",
+    "build:linux": "electron-builder --linux --publish never",
+    "build:all": "electron-builder -mwl --publish never",
+    "publish": "electron-builder --publish always"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.4",
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.ruslanmv.homepilot",
+    "productName": "HomePilot",
+    "copyright": "Copyright © 2024-2026 ruslanmv",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "docker-manager.js",
+      "splash.html",
+      "setup.html",
+      "loading.html",
+      "assets/**/*",
+      "icons/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "icons/icon.icns",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "icon": "icons/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "HomePilot",
+      "installerIcon": "icons/icon.ico",
+      "uninstallerIcon": "icons/icon.ico",
+      "installerHeaderIcon": "icons/icon.ico",
+      "license": "LICENSE.txt"
+    },
+    "linux": {
+      "icon": "icons",
+      "category": "Utility",
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ]
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "ruslanmv",
+      "repo": "HomePilot"
+    }
+  }
+}

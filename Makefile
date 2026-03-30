@@ -28,7 +28,8 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
         mcp-inventory \
         install-mcp-servers test-mcp-new-servers \
-        persona-launch persona-check persona-stop persona-status persona-list
+        persona-launch persona-check persona-stop persona-status persona-list \
+        build-installer build-container
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -1502,3 +1503,105 @@ local: start  ## Alias for 'make start' (backward compatibility)
 local-backend: start-backend  ## Alias for 'make start-backend' (backward compatibility)
 
 local-frontend: start-frontend  ## Alias for 'make start-frontend' (backward compatibility)
+
+# --- Desktop Installer & Container Build ---------------------------------------
+
+build-installer: ## Build desktop installer for current OS (auto-detects Linux/Mac/Windows)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Building HomePilot Desktop Installer"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@# Ensure Node.js is available
+	@command -v node >/dev/null 2>&1 || { \
+		echo "ERROR: Node.js is required but not found."; \
+		echo "Install it from https://nodejs.org/ or via your package manager."; \
+		exit 1; \
+	}
+	@# Install desktop deps if needed
+	@if [ ! -d desktop/node_modules ]; then \
+		echo "Installing desktop dependencies..."; \
+		cd desktop && npm ci --no-audit --no-fund; \
+	fi
+	@# Generate icons
+	@echo "Generating icons..."
+	@cd desktop && node scripts/generate-icons.js
+	@echo ""
+	@# Detect OS and build
+	@OS_NAME=$$(uname -s); \
+	case "$$OS_NAME" in \
+		Linux*) \
+			echo "Detected: Linux (x64)"; \
+			echo "Building AppImage + .deb..."; \
+			echo ""; \
+			cd desktop && npm run build:linux; \
+			echo ""; \
+			echo "════════════════════════════════════════════════════════════════════════════════"; \
+			echo "  Build complete!"; \
+			echo ""; \
+			echo "  Installers:"; \
+			ls -1h dist/*.AppImage dist/*.deb 2>/dev/null | sed 's/^/    /'; \
+			echo "════════════════════════════════════════════════════════════════════════════════"; \
+			;; \
+		Darwin*) \
+			echo "Detected: macOS"; \
+			echo "Building .dmg..."; \
+			echo ""; \
+			cd desktop && npm run build:mac; \
+			echo ""; \
+			echo "════════════════════════════════════════════════════════════════════════════════"; \
+			echo "  Build complete!"; \
+			echo ""; \
+			echo "  Installer:"; \
+			ls -1h dist/*.dmg 2>/dev/null | sed 's/^/    /'; \
+			echo "════════════════════════════════════════════════════════════════════════════════"; \
+			;; \
+		MINGW*|MSYS*|CYGWIN*) \
+			echo "Detected: Windows (x64)"; \
+			echo "Building .exe installer..."; \
+			echo ""; \
+			cd desktop && npm run build:win; \
+			echo ""; \
+			echo "════════════════════════════════════════════════════════════════════════════════"; \
+			echo "  Build complete!"; \
+			echo ""; \
+			echo "  Installer:"; \
+			ls -1h dist/*.exe 2>/dev/null | sed 's/^/    /'; \
+			echo "════════════════════════════════════════════════════════════════════════════════"; \
+			;; \
+		*) \
+			echo "ERROR: Unknown OS '$$OS_NAME'. Build manually:"; \
+			echo "  cd desktop && npm run build:linux   # or build:mac / build:win"; \
+			exit 1; \
+			;; \
+	esac
+
+build-container: ## Build the HomePilot Docker container image
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Building HomePilot Container"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@# Check Docker
+	@command -v docker >/dev/null 2>&1 || { \
+		echo "ERROR: Docker is required but not found."; \
+		echo "Install it from https://www.docker.com/products/docker-desktop/"; \
+		exit 1; \
+	}
+	@docker info >/dev/null 2>&1 || { \
+		echo "ERROR: Docker daemon is not running."; \
+		echo "Please start Docker Desktop and try again."; \
+		exit 1; \
+	}
+	@echo "Building image: homepilot:latest"
+	@echo "Dockerfile:     container/Dockerfile"
+	@echo ""
+	docker build -f container/Dockerfile -t homepilot:latest .
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Build complete!"
+	@echo ""
+	@echo "  Image:  homepilot:latest"
+	@echo "  Size:   $$(docker image inspect homepilot:latest --format='{{.Size}}' | awk '{printf "%.0f MB", $$1/1024/1024}')"
+	@echo ""
+	@echo "  Run with GPU:  docker run --gpus all -p 7860:7860 homepilot:latest"
+	@echo "  Run CPU only:  docker run -p 7860:7860 homepilot:latest"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
