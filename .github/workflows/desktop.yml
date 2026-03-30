@@ -1,0 +1,156 @@
+name: "\U0001F5A5 Build Desktop Installers"
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (e.g., 1.0.0). Leave empty to use package.json version."
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-build
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            build_cmd: build:linux
+          - os: macos-latest
+            platform: mac
+            build_cmd: build:mac
+          - os: windows-latest
+            platform: win
+            build_cmd: build:win
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.platform }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Derive version from release tag, manual input, or package.json
+      - name: Derive version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            RAW="${GITHUB_REF#refs/tags/}"
+          elif [ -n "${{ github.event.inputs.version }}" ]; then
+            RAW="${{ github.event.inputs.version }}"
+          else
+            RAW=""
+          fi
+          if [ -n "$RAW" ]; then
+            SEMVER="${RAW#v}"
+            echo "version=$SEMVER" >> $GITHUB_OUTPUT
+            echo "Resolved version: $SEMVER"
+          else
+            echo "version=" >> $GITHUB_OUTPUT
+            echo "Using package.json version"
+          fi
+
+      # Inject version into package.json if provided
+      - name: Set version in package.json
+        if: steps.version.outputs.version != ''
+        working-directory: desktop
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${{ steps.version.outputs.version }}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            console.log('Set version to', pkg.version);
+          "
+
+      # Inject version into splash.html
+      - name: Set version in splash screen
+        if: steps.version.outputs.version != ''
+        working-directory: desktop
+        shell: bash
+        run: |
+          sed -i.bak "s/v1.0.0/v${{ steps.version.outputs.version }}/g" splash.html
+          rm -f splash.html.bak
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+
+      # Generate all icons: PNG (all sizes), ICO (Windows), ICNS (macOS)
+      # Pure Node.js — zero external dependencies
+      - name: Generate icons (PNG + ICO + ICNS)
+        working-directory: desktop
+        run: node scripts/generate-icons.js
+
+      # Verify platform-specific icon exists before building
+      - name: Verify icons
+        working-directory: desktop/icons
+        shell: bash
+        run: |
+          echo "Generated icon files:"
+          ls -lh icon.png icon.ico icon.icns 2>/dev/null
+          if [ "${{ matrix.platform }}" = "win" ] && [ ! -f icon.ico ]; then
+            echo "ERROR: icon.ico missing for Windows build"; exit 1
+          fi
+          if [ "${{ matrix.platform }}" = "mac" ] && [ ! -f icon.icns ]; then
+            echo "ERROR: icon.icns missing for macOS build"; exit 1
+          fi
+          if [ "${{ matrix.platform }}" = "linux" ] && [ ! -f icon.png ]; then
+            echo "ERROR: icon.png missing for Linux build"; exit 1
+          fi
+          echo "OK: platform icon verified"
+
+      - name: Build installer
+        working-directory: desktop
+        run: npm run ${{ matrix.build_cmd }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # List what was built
+      - name: List outputs
+        working-directory: desktop/dist
+        shell: bash
+        run: ls -lh *.exe *.dmg *.AppImage *.deb 2>/dev/null || ls -lh
+
+      # Upload as CI artifacts (always — even on non-release builds)
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: HomePilot-${{ matrix.platform }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+          if-no-files-found: warn
+          retention-days: 90
+
+      # Attach to GitHub Release (download page)
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb

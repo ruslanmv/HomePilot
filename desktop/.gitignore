@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.dmg
+*.exe
+*.AppImage
+*.deb
+*.snap
+*.blockmap
+*.yml.bak
