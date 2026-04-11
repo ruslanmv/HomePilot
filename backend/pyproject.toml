@@ -27,6 +27,9 @@ dependencies = [
   "pooch>=1.6.0",
   "scikit-image>=0.21.0",
   "psutil>=5.9.0",
+  # LangGraph persona agent (graph-based reasoning for /v1/persona-graph/*).
+  # Required at runtime by backend/app/langgraph_personas/graph_builder.py.
+  "langgraph>=0.2,<0.5",
 ]
 
 [project.optional-dependencies]

@@ -61,6 +61,7 @@ from .civitai import (
 
 # Studio module routes
 from .studio.routes import router as studio_router
+from .studio.video_export import router as studio_video_export_router
 from .studio.repo import init_studio_db
 
 # Upscale module routes
@@ -132,6 +133,7 @@ app.add_middleware(
 
 # Include Studio routes (/studio/*)
 app.include_router(studio_router)
+app.include_router(studio_video_export_router)
 
 # Include Upscale routes (/v1/upscale)
 app.include_router(upscale_router)
