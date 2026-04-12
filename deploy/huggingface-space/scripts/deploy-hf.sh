@@ -151,11 +151,16 @@ if [[ -d "$INSTALLER_DIR" ]]; then
     git -C "$INST_STAGE" remote add origin "$INST_REMOTE"
   fi
 
-  # Wipe and copy installer files
+  # Wipe and copy installer files (Docker-based: server.py + static/ + Dockerfile)
   find "$INST_STAGE" -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
-  cp "$INSTALLER_DIR/app.py"           "$INST_STAGE/"
+  cp "$INSTALLER_DIR/Dockerfile"       "$INST_STAGE/" 2>/dev/null || true
+  cp "$INSTALLER_DIR/server.py"        "$INST_STAGE/" 2>/dev/null || true
   cp "$INSTALLER_DIR/requirements.txt" "$INST_STAGE/"
   cp "$INSTALLER_DIR/README.md"        "$INST_STAGE/"
+  cp "$INSTALLER_DIR/app.py"           "$INST_STAGE/" 2>/dev/null || true
+  if [[ -d "$INSTALLER_DIR/static" ]]; then
+    cp -R "$INSTALLER_DIR/static"      "$INST_STAGE/"
+  fi
 
   cd "$INST_STAGE"
   git -c user.email="bot@homepilot.dev" -c user.name="HomePilot Deploy Bot" add -A

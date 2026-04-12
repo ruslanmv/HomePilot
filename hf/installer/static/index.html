@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>HomePilot — Deploy Your Private AI</title>
+<style>
+/* ── Reset + Base ── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#09090b; --surface:#111113; --card:#161618; --elevated:#1c1c1f;
+  --border:rgba(255,255,255,0.06); --border-h:rgba(255,255,255,0.12);
+  --text:#e4e4e7; --muted:#a1a1aa; --dim:#71717a; --faint:#3f3f46;
+  --cyan:#06b6d4; --blue:#3b82f6; --purple:#8b5cf6; --pink:#ec4899; --green:#22c55e;
+  --grad:linear-gradient(135deg,#06b6d4,#3b82f6,#8b5cf6);
+  --glow:0 0 40px rgba(59,130,246,0.12);
+  --r:12px;
+  --font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+}
+html{background:var(--bg);color:var(--text);font-family:var(--font);-webkit-text-size-adjust:100%}
+body{min-height:100dvh;display:flex;flex-direction:column;align-items:center;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+a{color:var(--blue);text-decoration:none}
+a:hover{color:var(--cyan)}
+
+/* ── Layout ── */
+.wrap{width:100%;max-width:580px;padding:0 20px}
+
+/* ── Hero ── */
+.hero{text-align:center;padding:56px 20px 8px;position:relative}
+.hero::before{content:'';position:absolute;top:-50%;left:50%;transform:translateX(-50%);
+  width:140%;height:120%;background:radial-gradient(ellipse 50% 40% at 50% 0%,rgba(59,130,246,0.1),transparent);pointer-events:none}
+.hero-logo{width:clamp(140px,30vw,200px);height:auto;position:relative;filter:drop-shadow(0 0 24px rgba(59,130,246,.25))}
+.hero h1{font-size:clamp(1.7rem,4.5vw,2.4rem);font-weight:800;letter-spacing:-0.03em;
+  line-height:1.15;margin-top:16px;position:relative}
+.hero h1 span{background:var(--grad);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.hero p{color:var(--dim);font-size:14px;line-height:1.6;margin:10px auto 0;max-width:420px;position:relative}
+.alt-link{margin-top:16px;font-size:12px;color:var(--faint);position:relative;display:flex;align-items:center;justify-content:center;gap:6px}
+.alt-link a{color:var(--muted);font-weight:600;transition:color .2s}
+.alt-link a:hover{color:var(--cyan)}
+
+/* ── Trust bar ── */
+.trust{display:flex;justify-content:center;gap:20px;padding:24px 0 36px;flex-wrap:wrap}
+.trust-item{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:500;color:var(--muted)}
+
+/* ── Steps ── */
+.step{margin-bottom:20px}
+.step-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.step-num{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+  font-size:12px;font-weight:800;color:white;flex-shrink:0}
+.step-num.s1{background:linear-gradient(135deg,var(--cyan),var(--blue))}
+.step-num.s2{background:linear-gradient(135deg,var(--blue),var(--purple))}
+.step-num.s3{background:linear-gradient(135deg,var(--purple),var(--pink))}
+.step-label{font-size:15px;font-weight:700;color:var(--text)}
+.step-desc{font-size:12px;color:var(--dim);margin-top:1px}
+
+/* ── Card ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+  padding:20px;transition:border-color .2s}
+.card:hover{border-color:var(--border-h)}
+
+/* ── Inputs ── */
+.field{margin-bottom:14px}
+.field:last-child{margin-bottom:0}
+.field label{display:block;font-size:11px;font-weight:600;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.field input,.field select{width:100%;height:44px;padding:0 14px;font-size:15px;font-family:var(--font);
+  color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:10px;
+  outline:none;transition:border-color .2s}
+.field input:focus,.field select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,130,246,.1)}
+.field input::placeholder{color:var(--faint)}
+.field select{appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 14px center}
+.field select option{background:var(--card);color:var(--text)}
+.row{display:flex;gap:12px}
+.row>.field{flex:1}
+
+/* ── Toggle ── */
+.toggle{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;color:var(--muted);
+  user-select:none;height:44px}
+.toggle input{display:none}
+.toggle .track{width:36px;height:20px;border-radius:10px;background:var(--faint);position:relative;transition:.2s}
+.toggle input:checked+.track{background:var(--blue)}
+.toggle .track::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;
+  border-radius:50%;background:white;transition:.2s}
+.toggle input:checked+.track::after{left:18px}
+
+/* ── Buttons ── */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;
+  padding:0 24px;border:none;border-radius:10px;font-size:14px;font-weight:700;
+  font-family:var(--font);cursor:pointer;transition:all .2s;letter-spacing:-.01em}
+.btn-primary{background:var(--grad);color:white;box-shadow:var(--glow);width:100%}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 0 48px rgba(59,130,246,.2)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn-sm{height:36px;padding:0 16px;font-size:13px;border-radius:8px;background:var(--blue);color:white}
+.btn-sm:hover{background:var(--cyan)}
+.btn-sm:disabled{opacity:.5;cursor:not-allowed}
+.btn-outline{height:40px;padding:0 20px;font-size:13px;border-radius:8px;
+  background:transparent;border:1px solid var(--border);color:var(--muted)}
+.btn-outline:hover{border-color:var(--border-h);color:var(--text)}
+
+/* ── Status ── */
+.status{font-size:13px;margin-top:8px;min-height:20px;font-weight:500}
+.status.ok{color:var(--green)} .status.err{color:#ef4444}
+
+/* ── Accordion ── */
+.accordion-btn{width:100%;display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+  color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;
+  font-family:var(--font)}
+.accordion-btn:hover{border-color:var(--border-h);color:var(--text)}
+.accordion-btn .arrow{transition:transform .2s}
+.accordion-btn.open .arrow{transform:rotate(180deg)}
+.accordion-body{overflow:hidden;max-height:0;transition:max-height .3s ease}
+.accordion-body.open{max-height:500px}
+.accordion-inner{padding:16px;background:var(--surface);border:1px solid var(--border);
+  border-top:none;border-radius:0 0 var(--r) var(--r)}
+
+/* ── Persona chips ── */
+.pack-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--dim);margin:12px 0 6px}
+.pack-label:first-child{margin-top:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{padding:5px 10px;border-radius:8px;font-size:12px;font-weight:500;color:var(--text);
+  background:var(--card);border:1px solid var(--border);transition:all .15s;white-space:nowrap}
+.chip:hover{border-color:var(--border-h);transform:translateY(-1px)}
+
+/* ── Log ── */
+.log{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);
+  padding:16px;margin-top:12px;font-family:'SF Mono','Fira Code',monospace;font-size:13px;
+  line-height:1.8;color:var(--muted);min-height:0;display:none;white-space:pre-wrap}
+.log.visible{display:block}
+.log .ok{color:var(--green)} .log .info{color:var(--blue)} .log .err{color:#ef4444}
+
+/* ── Success ── */
+.success{text-align:center;padding:32px 20px;display:none}
+.success.visible{display:block}
+.success h2{font-size:22px;font-weight:800;margin:12px 0 8px}
+.success p{color:var(--dim);font-size:14px;margin-bottom:20px}
+.success .links{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+
+/* ── Footer ── */
+.footer{padding:40px 0 24px;text-align:center;border-top:1px solid var(--border);
+  margin-top:auto;width:100%;max-width:580px}
+.footer p{font-size:12px;color:var(--faint)}
+
+/* ── Lang picker ── */
+.lang-btn{background:transparent;border:1px solid var(--border);color:var(--dim);
+  padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;
+  font-family:var(--font);transition:all .15s}
+.lang-btn:hover{border-color:var(--border-h);color:var(--text)}
+.lang-btn.active{background:var(--blue);border-color:var(--blue);color:white}
+
+/* ── Responsive ── */
+@media(max-width:640px){
+  .hero{padding:36px 16px 8px}
+  .hero h1{font-size:1.6rem}
+  .hero p{font-size:13px}
+  .trust{gap:10px 16px;padding:16px 0 24px}
+  .trust-item{font-size:11px}
+  .wrap{padding:0 12px}
+  .row{flex-direction:column;gap:8px}
+  .card{padding:16px}
+  .field input,.field select{height:48px;font-size:16px}
+  .btn{height:48px;font-size:15px}
+  .btn-sm{height:44px;font-size:14px}
+  .step-head{gap:8px}
+  .alt-link{flex-direction:column;gap:2px}
+  .chips{gap:4px}
+  .chip{padding:4px 8px;font-size:11px}
+  .lang-btn{padding:5px 12px;font-size:12px}
+  .footer{padding:24px 12px 16px}
+}
+@media(max-width:360px){
+  .hero-logo{width:120px}
+  .hero h1{font-size:1.35rem}
+  .trust{flex-direction:column;align-items:center;gap:6px}
+}
+
+/* ── Animations ── */
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.step{animation:fadeUp .4s ease both}
+.step:nth-child(2){animation-delay:.1s}
+.step:nth-child(3){animation-delay:.2s}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);
+  border-top-color:white;border-radius:50%;animation:spin .6s linear infinite}
+</style>
+</head>
+<body>
+
+<!-- ── HERO ── -->
+<div class="hero">
+  <img src="https://raw.githubusercontent.com/ruslanmv/HomePilot/master/assets/homepilot-logo.svg"
+       alt="HomePilot" class="hero-logo">
+  <h1><span>Your private AI in 2 minutes</span></h1>
+  <p>Deploy HomePilot with Ollama and 14 AI personas on your own Hugging Face Space. No code. Private by default.</p>
+  <div class="alt-link">
+    <span>Prefer to run locally?</span>
+    <a href="https://ruslanmv.com/HomePilot/getting-started.html" target="_blank" id="desktop-link">Desktop version →</a>
+  </div>
+</div>
+
+<!-- Language picker -->
+<div style="display:flex;justify-content:center;gap:4px;padding:0 0 8px">
+  <button class="lang-btn active" data-lang="en" onclick="setLang('en')">EN</button>
+  <button class="lang-btn" data-lang="es" onclick="setLang('es')">ES</button>
+  <button class="lang-btn" data-lang="pt" onclick="setLang('pt')">PT</button>
+  <button class="lang-btn" data-lang="fr" onclick="setLang('fr')">FR</button>
+  <button class="lang-btn" data-lang="de" onclick="setLang('de')">DE</button>
+</div>
+
+<div class="trust">
+  <div class="trust-item"><span style="color:var(--green)">🔒</span> Privado</div>
+  <div class="trust-item"><span style="color:var(--blue)">🧠</span> Ollama</div>
+  <div class="trust-item"><span style="color:var(--purple)">⚡</span> GPU ready</div>
+  <div class="trust-item"><span style="color:var(--pink)">🎭</span> 14 personas</div>
+</div>
+
+<div class="wrap" id="main-flow">
+
+  <!-- ── STEP 1 ── -->
+  <div class="step">
+    <div class="step-head">
+      <div class="step-num s1">1</div>
+      <div>
+        <div class="step-label" id="s1-label">Connect your account</div>
+        <div class="step-desc" id="s1-desc">A <a href="https://huggingface.co/settings/tokens" target="_blank">HF token</a> with write permission. We don't store credentials.</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <div class="field" style="flex:3">
+          <label id="lbl-token">Token</label>
+          <input type="password" id="token" placeholder="hf_..." autocomplete="off">
+        </div>
+        <div style="flex:1;display:flex;align-items:flex-end">
+          <button class="btn-sm" id="verify-btn" style="width:100%">Conectar</button>
+        </div>
+      </div>
+      <div class="status" id="auth-status"></div>
+    </div>
+  </div>
+
+  <!-- ── STEP 2 ── -->
+  <div class="step">
+    <div class="step-head">
+      <div class="step-num s2">2</div>
+      <div>
+        <div class="step-label" id="s2-label">Configure</div>
+        <div class="step-desc" id="s2-desc">Everything has defaults — only change if you want.</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row">
+        <div class="field">
+          <label id="lbl-space">Space name</label>
+          <input type="text" id="space-name" value="HomePilot">
+        </div>
+        <div style="display:flex;align-items:flex-end;padding-bottom:2px">
+          <label class="toggle" id="lbl-private">
+            <input type="checkbox" id="private" checked>
+            <div class="track"></div>
+             Private
+          </label>
+        </div>
+      </div>
+      <div class="field">
+        <label id="lbl-model">LLM Model</label>
+        <select id="model">
+          <option value="qwen2.5:1.5b" selected>qwen2.5 1.5b — fast, ideal to start</option>
+          <option value="qwen2.5:3b">qwen2.5 3b — better quality</option>
+          <option value="llama3:8b">llama3 8b — powerful (needs GPU)</option>
+          <option value="gemma:2b">gemma 2b — balanced</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PERSONAS ── -->
+  <div style="margin-bottom:20px">
+    <button class="accordion-btn" id="acc-btn">
+      🎭 14 AI personas included
+      <svg class="arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="accordion-body" id="acc-body">
+      <div class="accordion-inner">
+        <p style="color:var(--dim);font-size:12px;margin-bottom:12px" id="acc-sub">Auto-imported on first start.</p>
+        <div class="pack-label">Starter Pack</div>
+        <div class="chips">
+          <div class="chip">🌙 LunaLite</div>
+          <div class="chip">😎 ChillBro</div>
+          <div class="chip">🔍 Curiosa</div>
+          <div class="chip">⚡ HypeKid</div>
+        </div>
+        <div class="pack-label">Retro Pack</div>
+        <div class="chips">
+          <div class="chip">🔋 Volt</div>
+          <div class="chip">⚔️ Ronin</div>
+          <div class="chip">🦖 Kaiju</div>
+          <div class="chip">💾 Glitch</div>
+          <div class="chip">🗺️ Quest</div>
+          <div class="chip">🧠 Sigma</div>
+          <div class="chip">🃏 Loki</div>
+          <div class="chip">🌳 OldRoot</div>
+          <div class="chip">🔮 Morphling</div>
+          <div class="chip">🌌 Nova</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── STEP 3 ── -->
+  <div class="step">
+    <div class="step-head">
+      <div class="step-num s3">3</div>
+      <div>
+        <div class="step-label" id="s3-label">Deploy</div>
+        <div class="step-desc" id="s3-desc">One click. Your HomePilot will be ready in ~3 minutes.</div>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="install-btn" disabled>
+      🚀 Deploy HomePilot
+    </button>
+    <div class="log" id="log"></div>
+  </div>
+
+  <!-- ── SUCCESS ── -->
+  <div class="success" id="success">
+    <div style="font-size:48px">🎉</div>
+    <h2>Your HomePilot is running!</h2>
+    <p id="success-msg">Wait ~3 minutes for the first build.</p>
+    <div class="links">
+      <a class="btn-outline" id="open-space" href="#" target="_blank">Open Space →</a>
+      <a class="btn-outline" id="go-chata" href="https://huggingface.co/spaces/ruslanmv/Chata" target="_blank">Go to Chata</a>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── FOOTER ── -->
+<div class="footer">
+  <p>
+    <a href="https://ruslanmv.com/HomePilot/">HomePilot</a> ·
+    <a href="https://huggingface.co/spaces/ruslanmv/Chata">Chata</a> ·
+    <a href="https://github.com/ruslanmv/HomePilot">GitHub</a>
+  </p>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let username = '';
+
+// ── i18n ──
+const T = {
+  en: {
+    hero: 'Your private AI in 2 minutes',
+    heroSub: 'Deploy HomePilot with Ollama and 14 AI personas on your own Hugging Face Space. No code. Private by default.',
+    trust: ['Private', 'Ollama', 'GPU ready', '14 personas'],
+    s1: 'Connect your account', s1d: 'with write permission. We don\'t store credentials.',
+    s1token: 'A <a href="https://huggingface.co/settings/tokens" target="_blank">HF token</a>',
+    connect: 'Connect', connected: 'Connected as',
+    s2: 'Configure', s2d: 'Everything has defaults — only change if you want.',
+    spaceName: 'Space name', private: 'Private', model: 'LLM Model',
+    m1: 'fast, ideal to start', m2: 'better quality', m3: 'powerful (needs GPU)', m4: 'balanced',
+    personas: '14 AI personas included', personaSub: 'Auto-imported on first start.',
+    s3: 'Deploy', s3d: 'One click. Your HomePilot will be ready in ~3 minutes.',
+    deployBtn: '🚀 Deploy HomePilot', deploying: 'Deploying...', retry: '🚀 Retry',
+    starting: 'Starting installation...', deployed: 'Deployed successfully!',
+    successH: 'Your HomePilot is running!', successP: 'Wait ~3 minutes for the first build.',
+    openSpace: 'Open Space →', goChata: 'Go to Chata',
+    tokenEmpty: 'Empty or invalid token', verifyFirst: 'Connect your account first (Step 1)',
+    altPref: 'Prefer to run locally?', altLink: 'Desktop version →',
+  },
+  es: {
+    hero: 'Tu IA privada en 2 minutos',
+    heroSub: 'Despliega HomePilot con Ollama y 14 personas AI en tu propio Hugging Face Space. Sin código. Privado por defecto.',
+    trust: ['Privado', 'Ollama', 'GPU ready', '14 personas'],
+    s1: 'Conecta tu cuenta', s1d: 'con permiso write. No almacenamos credenciales.',
+    s1token: 'Un <a href="https://huggingface.co/settings/tokens" target="_blank">token de HF</a>',
+    connect: 'Conectar', connected: 'Conectado como',
+    s2: 'Configura', s2d: 'Todo tiene valores por defecto — solo cambia si quieres.',
+    spaceName: 'Nombre del Space', private: 'Privado', model: 'Modelo LLM',
+    m1: 'rápido, ideal para empezar', m2: 'mejor calidad', m3: 'poderoso (necesita GPU)', m4: 'equilibrado',
+    personas: '14 personas AI incluidas', personaSub: 'Se importan automáticamente al iniciar.',
+    s3: 'Despliega', s3d: 'Un clic. Tu HomePilot estará listo en ~3 minutos.',
+    deployBtn: '🚀 Desplegar HomePilot', deploying: 'Desplegando...', retry: '🚀 Reintentar',
+    starting: 'Iniciando instalación...', deployed: '¡Desplegado exitosamente!',
+    successH: '¡Tu HomePilot está en marcha!', successP: 'Espera ~3 minutos para el primer build.',
+    openSpace: 'Abrir Space →', goChata: 'Ir a Chata',
+    tokenEmpty: 'Token vacío o inválido', verifyFirst: 'Conecta tu cuenta primero (Paso 1)',
+    altPref: '¿Prefieres ejecutar localmente?', altLink: 'Versión de escritorio →',
+  },
+  pt: {
+    hero: 'Sua IA privada em 2 minutos',
+    heroSub: 'Implante o HomePilot com Ollama e 14 personas AI no seu próprio Hugging Face Space. Sem código. Privado por padrão.',
+    trust: ['Privado', 'Ollama', 'GPU ready', '14 personas'],
+    s1: 'Conecte sua conta', s1d: 'com permissão write. Não armazenamos credenciais.',
+    s1token: 'Um <a href="https://huggingface.co/settings/tokens" target="_blank">token do HF</a>',
+    connect: 'Conectar', connected: 'Conectado como',
+    s2: 'Configure', s2d: 'Tudo tem valores padrão — mude apenas se quiser.',
+    spaceName: 'Nome do Space', private: 'Privado', model: 'Modelo LLM',
+    m1: 'rápido, ideal para começar', m2: 'melhor qualidade', m3: 'poderoso (precisa GPU)', m4: 'equilibrado',
+    personas: '14 personas AI incluídas', personaSub: 'Importadas automaticamente ao iniciar.',
+    s3: 'Implante', s3d: 'Um clique. Seu HomePilot estará pronto em ~3 minutos.',
+    deployBtn: '🚀 Implantar HomePilot', deploying: 'Implantando...', retry: '🚀 Tentar novamente',
+    starting: 'Iniciando instalação...', deployed: 'Implantado com sucesso!',
+    successH: 'Seu HomePilot está rodando!', successP: 'Aguarde ~3 minutos para o primeiro build.',
+    openSpace: 'Abrir Space →', goChata: 'Ir para Chata',
+    tokenEmpty: 'Token vazio ou inválido', verifyFirst: 'Conecte sua conta primeiro (Passo 1)',
+    altPref: 'Prefere executar localmente?', altLink: 'Versão desktop →',
+  },
+  fr: {
+    hero: 'Votre IA privée en 2 minutes',
+    heroSub: 'Déployez HomePilot avec Ollama et 14 personas AI sur votre propre Hugging Face Space. Sans code. Privé par défaut.',
+    trust: ['Privé', 'Ollama', 'GPU ready', '14 personas'],
+    s1: 'Connectez votre compte', s1d: 'avec permission write. Nous ne stockons pas vos identifiants.',
+    s1token: 'Un <a href="https://huggingface.co/settings/tokens" target="_blank">token HF</a>',
+    connect: 'Connecter', connected: 'Connecté en tant que',
+    s2: 'Configurez', s2d: 'Tout a des valeurs par défaut — changez seulement si vous voulez.',
+    spaceName: 'Nom du Space', private: 'Privé', model: 'Modèle LLM',
+    m1: 'rapide, idéal pour commencer', m2: 'meilleure qualité', m3: 'puissant (nécessite GPU)', m4: 'équilibré',
+    personas: '14 personas AI incluses', personaSub: 'Importées automatiquement au démarrage.',
+    s3: 'Déployez', s3d: 'Un clic. Votre HomePilot sera prêt en ~3 minutes.',
+    deployBtn: '🚀 Déployer HomePilot', deploying: 'Déploiement...', retry: '🚀 Réessayer',
+    starting: 'Début de l\'installation...', deployed: 'Déployé avec succès !',
+    successH: 'Votre HomePilot est en marche !', successP: 'Attendez ~3 minutes pour le premier build.',
+    openSpace: 'Ouvrir Space →', goChata: 'Aller sur Chata',
+    tokenEmpty: 'Token vide ou invalide', verifyFirst: 'Connectez votre compte d\'abord (Étape 1)',
+    altPref: 'Préférez-vous exécuter localement ?', altLink: 'Version bureau →',
+  },
+  de: {
+    hero: 'Ihre private KI in 2 Minuten',
+    heroSub: 'Deployen Sie HomePilot mit Ollama und 14 AI-Personas auf Ihrem eigenen Hugging Face Space. Ohne Code. Standardmäßig privat.',
+    trust: ['Privat', 'Ollama', 'GPU ready', '14 Personas'],
+    s1: 'Konto verbinden', s1d: 'mit Schreibberechtigung. Wir speichern keine Zugangsdaten.',
+    s1token: 'Ein <a href="https://huggingface.co/settings/tokens" target="_blank">HF-Token</a>',
+    connect: 'Verbinden', connected: 'Verbunden als',
+    s2: 'Konfigurieren', s2d: 'Alles hat Standardwerte — ändern Sie nur, was Sie möchten.',
+    spaceName: 'Space-Name', private: 'Privat', model: 'LLM-Modell',
+    m1: 'schnell, ideal zum Starten', m2: 'bessere Qualität', m3: 'leistungsstark (GPU nötig)', m4: 'ausgewogen',
+    personas: '14 AI-Personas enthalten', personaSub: 'Werden beim ersten Start automatisch importiert.',
+    s3: 'Deployen', s3d: 'Ein Klick. Ihr HomePilot ist in ~3 Minuten bereit.',
+    deployBtn: '🚀 HomePilot deployen', deploying: 'Wird deployed...', retry: '🚀 Erneut versuchen',
+    starting: 'Installation wird gestartet...', deployed: 'Erfolgreich deployed!',
+    successH: 'Ihr HomePilot läuft!', successP: 'Warten Sie ~3 Minuten auf den ersten Build.',
+    openSpace: 'Space öffnen →', goChata: 'Zu Chata',
+    tokenEmpty: 'Token leer oder ungültig', verifyFirst: 'Verbinden Sie zuerst Ihr Konto (Schritt 1)',
+    altPref: 'Lieber lokal ausführen?', altLink: 'Desktop-Version →',
+  },
+};
+
+let lang = 'en';
+function detectLang() {
+  const nav = (navigator.language || '').slice(0,2).toLowerCase();
+  return T[nav] ? nav : 'en';
+}
+function setLang(l) {
+  lang = l;
+  const t = T[l];
+  // Hero
+  document.querySelector('.hero h1 span').textContent = t.hero;
+  document.querySelector('.hero p').textContent = t.heroSub;
+  // Trust
+  const ti = document.querySelectorAll('.trust-item');
+  t.trust.forEach((v,i) => { if(ti[i]) ti[i].lastChild.textContent = ' '+v; });
+  // Steps
+  document.querySelector('#s1-label').textContent = t.s1;
+  document.querySelector('#s1-desc').innerHTML = t.s1token + ' ' + t.s1d;
+  document.querySelector('#s2-label').textContent = t.s2;
+  document.querySelector('#s2-desc').textContent = t.s2d;
+  document.querySelector('#s3-label').textContent = t.s3;
+  document.querySelector('#s3-desc').textContent = t.s3d;
+  // Labels
+  document.querySelector('#lbl-token').textContent = 'Token';
+  document.querySelector('#lbl-space').textContent = t.spaceName;
+  document.querySelector('#lbl-private').lastChild.textContent = ' '+t.private;
+  document.querySelector('#lbl-model').textContent = t.model;
+  // Buttons
+  document.querySelector('#verify-btn').textContent = t.connect;
+  document.querySelector('#install-btn').innerHTML = t.deployBtn;
+  // Accordion
+  document.querySelector('#acc-btn').firstChild.textContent = '🎭 ' + t.personas + ' ';
+  document.querySelector('#acc-sub').textContent = t.personaSub;
+  // Models
+  const opts = document.querySelectorAll('#model option');
+  const ms = [t.m1, t.m2, t.m3, t.m4];
+  opts.forEach((o,i) => { if(ms[i]) o.textContent = o.value.split(':').join(' ') + ' — ' + ms[i]; });
+  // Success
+  document.querySelector('#success h2').textContent = t.successH;
+  document.querySelector('#open-space').textContent = t.openSpace;
+  document.querySelector('#go-chata').textContent = t.goChata;
+  // Alt link
+  const altLink = document.querySelector('.alt-link');
+  if (altLink) {
+    altLink.querySelector('span').textContent = t.altPref;
+    altLink.querySelector('a').textContent = t.altLink;
+  }
+  // Lang picker
+  document.querySelectorAll('.lang-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.lang === l);
+  });
+}
+
+
+// Accordion
+$('#acc-btn').onclick = () => {
+  $('#acc-btn').classList.toggle('open');
+  $('#acc-body').classList.toggle('open');
+};
+
+// Verify
+$('#verify-btn').onclick = async () => {
+  const btn = $('#verify-btn');
+  const token = $('#token').value.trim();
+  if (!token) return;
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    const r = await fetch('/api/verify', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token})
+    });
+    const d = await r.json();
+    const st = $('#auth-status');
+    if (d.ok) {
+      username = d.username;
+      st.textContent = '✅ Conectado como ' + d.username;
+      st.className = 'status ok';
+      $('#install-btn').disabled = false;
+    } else {
+      st.textContent = '❌ ' + (d.error || 'Error');
+      st.className = 'status err';
+    }
+  } catch(e) {
+    $('#auth-status').textContent = '❌ ' + e.message;
+    $('#auth-status').className = 'status err';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Conectar';
+};
+
+// Install
+$('#install-btn').onclick = async () => {
+  const btn = $('#install-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Desplegando...';
+
+  const log = $('#log');
+  log.classList.add('visible');
+  log.innerHTML = '<span class="info">▸ Iniciando instalación...</span>\n';
+
+  try {
+    const r = await fetch('/api/install', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        token: $('#token').value.trim(),
+        username,
+        space_name: $('#space-name').value.trim() || 'HomePilot',
+        private: $('#private').checked,
+        model: $('#model').value
+      })
+    });
+    const d = await r.json();
+
+    if (d.steps) {
+      log.innerHTML = d.steps.map(s => `<span class="info">✓ ${s}</span>`).join('\n') + '\n';
+    }
+
+    if (d.ok) {
+      log.innerHTML += '<span class="ok">✅ ¡Desplegado exitosamente!</span>';
+      // Show success
+      $('#success').classList.add('visible');
+      $('#open-space').href = d.url;
+      $('#success-msg').textContent = d.repo_id + ' — espera ~3 min para el build.';
+      btn.style.display = 'none';
+    } else {
+      log.innerHTML += `<span class="err">❌ ${d.error || 'Error desconocido'}</span>`;
+      btn.disabled = false;
+      btn.innerHTML = '🚀 Reintentar';
+    }
+  } catch(e) {
+    log.innerHTML += `<span class="err">❌ ${e.message}</span>`;
+    btn.disabled = false;
+    btn.innerHTML = '🚀 Reintentar';
+  }
+};
+
+// Enter key on token
+$('#token').onkeydown = e => { if (e.key === 'Enter') $('#verify-btn').click(); };
+
+// Auto-detect language on load
+setLang(detectLang());
+</script>
+</body>
+</html>

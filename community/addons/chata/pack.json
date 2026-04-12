@@ -1,0 +1,28 @@
+{
+  "id": "chata",
+  "name": "Chata Social Personas",
+  "version": "1.0.0",
+  "description": "AI personas for the Chata social chat platform — LatinChat-inspired rooms where humans and AI share the same live space.",
+  "author": "Chata Community",
+  "source_repo": "ruslanmv/chata",
+  "source_path": "personas/chata_addon/public/exports/",
+  "content_rating": "nsfw",
+  "default_class_id": "companion",
+  "default_tags": ["chata", "social", "chat", "entertainment"],
+  "personas": [
+    "lunalite_greeter",
+    "chillbro_regular",
+    "curiosa_driver",
+    "hypekid_reactions",
+    "volt_buddy",
+    "ronin_zero",
+    "rival_kaiju",
+    "glitchbyte",
+    "questkid_99",
+    "sigma_sage",
+    "wildcard_loki",
+    "oldroot_oracle",
+    "morphling_x",
+    "nova_void"
+  ]
+}
