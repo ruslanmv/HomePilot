@@ -58,6 +58,7 @@ import {
   LS_PERSONA_CACHE,
 } from './voice/personalityGating';
 import { resolveFileUrl } from './resolveFileUrl';
+import { resolveBackendUrl } from './lib/backendUrl';
 
 // localStorage keys
 const LS_SPEED = 'homepilot_speech_speed';
@@ -122,7 +123,7 @@ function parseInlineMarkdown(
 
     // Resolve media:// refs via backend /media/resolve endpoint
     if (url.startsWith('media://')) {
-      const base = (localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000').replace(/\/+$/, '')
+      const base = resolveBackendUrl()
       const tok = localStorage.getItem('homepilot_auth_token') || ''
       const qp = tok ? `&token=${encodeURIComponent(tok)}` : ''
       url = `${base}/media/resolve?ref=${encodeURIComponent(url)}${qp}`

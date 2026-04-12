@@ -7,6 +7,8 @@
  * Additive: does not modify any existing API calls.
  */
 
+import { resolveBackendUrl } from '../lib/backendUrl'
+
 export interface PersonaSession {
   id: string
   project_id: string
@@ -36,7 +38,7 @@ export interface PersonaMemoryEntry {
 // ---------------------------------------------------------------------------
 
 function getBackendUrl(): string {
-  return (localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000').replace(/\/+$/, '')
+  return resolveBackendUrl()
 }
 
 function getAuthHeaders(): Record<string, string> {

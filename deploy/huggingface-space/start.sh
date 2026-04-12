@@ -4,9 +4,18 @@
 # =============================================================================
 # Starts Ollama (sidecar) + HomePilot (FastAPI + React frontend) in a single
 # container. Chata personas are auto-imported on first run.
+#
+# Production-grade behaviours:
+#   - Ollama health check waits up to 60s (HF cold-starts can be slow).
+#   - Model pull retries up to 3 times, falls through a chain of lightweight
+#     free-tier-friendly models, and is NEVER fatal: the app still boots so
+#     the admin UI can show the setup wizard even when Ollama is offline.
+#   - All paths under /tmp (HF Spaces only grants write access there).
 # =============================================================================
 
-set -e
+# NOTE: no `set -e` at the top. We want the boot to continue even if the
+# model pull fails — the admin UI can guide the user through a manual pull.
+set -uo pipefail
 
 echo ""
 echo "  ┌──────────────────────────────────────┐"
@@ -26,7 +35,12 @@ export UPLOAD_DIR=/tmp/homepilot/uploads
 export OUTPUT_DIR=/tmp/homepilot/outputs
 export DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-ollama}
 export OLLAMA_BASE_URL=http://127.0.0.1:11434
+# Primary model — small, multilingual, instruction-tuned, free-tier friendly.
 export OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
+# Comma-separated fallback chain tried if the primary fails to pull. Each is
+# under ~1.5 GB on disk and runs comfortably in the HF free tier (16 GB RAM,
+# no GPU). Order: strong-but-larger → smaller → tiny last-resort.
+export OLLAMA_FALLBACK_MODELS=${OLLAMA_FALLBACK_MODELS:-qwen2.5:0.5b,llama3.2:1b,smollm2:360m}
 export COMFY_BASE_URL=""
 export MEDIA_BASE_URL=""
 export AVATAR_SERVICE_URL=""
@@ -38,34 +52,98 @@ echo "[1/4] Starting Ollama..."
 ollama serve &
 OLLAMA_PID=$!
 
-for i in $(seq 1 30); do
+OLLAMA_READY=false
+for i in $(seq 1 60); do
     if curl -sf http://127.0.0.1:11434/api/tags > /dev/null 2>&1; then
         echo "       ✓ Ollama ready (${i}s)"
+        OLLAMA_READY=true
         break
     fi
     sleep 1
 done
 
-# ── 2. Pull default model ───────────────────────────────
-echo "[2/4] Checking model: ${OLLAMA_MODEL}..."
-MODEL_CHECK=$(curl -sf http://127.0.0.1:11434/api/tags 2>/dev/null || echo '{"models":[]}')
-if echo "$MODEL_CHECK" | grep -q "${OLLAMA_MODEL}"; then
-    echo "       ✓ Model ${OLLAMA_MODEL} available"
+if [ "$OLLAMA_READY" != "true" ]; then
+    echo "       ⚠ Ollama did not come up within 60s — continuing anyway"
+    echo "         The UI setup wizard can retry the model pull after boot."
+fi
+
+# ── 2. Pull default model (with retries + fallback chain) ───
+#
+# We try the primary model up to 3 times. If all retries fail, we walk the
+# OLLAMA_FALLBACK_MODELS chain. The app boots regardless — a missing model
+# degrades gracefully to the setup wizard, which is vastly better UX than a
+# container crash loop.
+pull_with_retries () {
+    local model="$1"
+    local tries=3
+    for attempt in $(seq 1 "$tries"); do
+        echo "       ↓ Pulling ${model} (attempt ${attempt}/${tries})..."
+        if ollama pull "$model" 2>&1 | tail -3; then
+            echo "       ✓ ${model} pulled"
+            return 0
+        fi
+        echo "       ✗ pull failed for ${model}"
+        sleep $((attempt * 2))
+    done
+    return 1
+}
+
+MODEL_OK=false
+if [ "$OLLAMA_READY" = "true" ]; then
+    echo "[2/4] Checking model: ${OLLAMA_MODEL}..."
+    MODEL_CHECK=$(curl -sf http://127.0.0.1:11434/api/tags 2>/dev/null || echo '{"models":[]}')
+    if echo "$MODEL_CHECK" | grep -q "${OLLAMA_MODEL}"; then
+        echo "       ✓ Model ${OLLAMA_MODEL} already available"
+        MODEL_OK=true
+    else
+        # Try primary, then fallback chain.
+        if pull_with_retries "$OLLAMA_MODEL"; then
+            MODEL_OK=true
+        else
+            echo "       ↪ Trying fallback chain: ${OLLAMA_FALLBACK_MODELS}"
+            IFS=',' read -ra FALLBACKS <<< "$OLLAMA_FALLBACK_MODELS"
+            for fb in "${FALLBACKS[@]}"; do
+                fb=$(echo "$fb" | xargs)  # trim whitespace
+                [ -z "$fb" ] && continue
+                if pull_with_retries "$fb"; then
+                    export OLLAMA_MODEL="$fb"
+                    MODEL_OK=true
+                    echo "       ℹ Using fallback model: ${fb}"
+                    break
+                fi
+            done
+        fi
+    fi
+
+    if [ "$MODEL_OK" != "true" ]; then
+        echo "       ⚠ No model could be pulled. App will boot without a default."
+        echo "         Users can pull a model later via the Models page or:"
+        echo "         curl -X POST http://127.0.0.1:11434/api/pull -d '{\"name\":\"qwen2.5:1.5b\"}'"
+    fi
 else
-    echo "       ↓ Pulling ${OLLAMA_MODEL} (first start only)..."
-    ollama pull "${OLLAMA_MODEL}" 2>&1 | tail -3
-    echo "       ✓ Model pulled"
+    echo "[2/4] Skipping model pull — Ollama not ready."
 fi
 
 # ── 3. Auto-import Chata personas ────────────────────────
 echo "[3/4] Importing Chata personas..."
 MARKER="/tmp/homepilot/data/.personas_imported"
+CHATA_PERSONAS_DIR="${CHATA_PERSONAS_DIR:-/app/chata-personas}"
 if [ -f "$MARKER" ]; then
     echo "       ✓ Already imported ($(cat "$MARKER"))"
 else
-    python3 /app/auto_import_personas.py /app/chata-personas /tmp/homepilot/data
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$MARKER"
-    echo "       ✓ Personas imported"
+    # Additional sources (colon/comma-separated) and an optional remote pack
+    # are picked up by the importer from the environment:
+    #   EXTRA_PERSONAS_DIRS=/app/extra-personas,/app/my-custom
+    #   SHARED_PERSONAS_URL=https://example.com/packs/latest.zip
+    EXTRA_ARGS=""
+    if [ -d "/app/custom-personas" ]; then EXTRA_ARGS="$EXTRA_ARGS /app/custom-personas"; fi
+    if [ -d "/app/shared-personas" ]; then EXTRA_ARGS="$EXTRA_ARGS /app/shared-personas"; fi
+    if python3 /app/auto_import_personas.py "$CHATA_PERSONAS_DIR" /tmp/homepilot/data $EXTRA_ARGS; then
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$MARKER"
+        echo "       ✓ Personas imported"
+    else
+        echo "       ⚠ Persona import reported an error — continuing"
+    fi
 fi
 
 # ── 4. Start HomePilot ───────────────────────────────────

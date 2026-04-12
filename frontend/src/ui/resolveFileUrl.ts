@@ -19,6 +19,8 @@
  * - URLs containing /files/ get a ?token= query parameter appended
  * - External URLs (not /files/) are returned as-is
  */
+import { resolveBackendUrl } from './lib/backendUrl'
+
 export function resolveFileUrl(url: string, backendUrl?: string): string {
   if (!url) return url
 
@@ -28,7 +30,7 @@ export function resolveFileUrl(url: string, backendUrl?: string): string {
   // Step 1: Make the URL absolute if it's relative
   let fullUrl = url
   if (!url.startsWith('http')) {
-    const base = (backendUrl || localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000').replace(/\/+$/, '')
+    const base = resolveBackendUrl(backendUrl)
     fullUrl = `${base}${url.startsWith('/') ? '' : '/'}${url}`
   }
 

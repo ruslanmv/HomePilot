@@ -1,6 +1,12 @@
 import axios from "axios";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+import { getDefaultBackendUrl } from "./lib/backendUrl";
+
+// Resolve at module load. Priority:
+//   1. VITE_API_URL build-time env (used in custom builds)
+//   2. window.location.origin when served from a non-dev host (HF Space, Docker)
+//   3. http://localhost:8000 for local dev only
+const API_URL = getDefaultBackendUrl();
 
 // Optional API key stored in localStorage (set in UI if you enable backend API_KEY)
 export function getApiKey() {
