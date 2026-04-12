@@ -2297,16 +2297,7 @@ def project_available_exports(project_id: str):
 
 class ProjectExportRequest(BaseModel):
     """Request to export a professional project."""
-    kind: Literal[
-        "json_metadata",
-        "storyboard_pdf",
-        "slides_pdf",
-        "slides_pptx",
-        "zip_assets",
-        "video_mp4",
-        "youtube_mp4",
-        "shorts_mp4",
-    ] = "json_metadata"
+    kind: Literal["json_metadata", "storyboard_pdf", "slides_pdf", "slides_pptx", "zip_assets"] = "json_metadata"
 
 
 @router.post("/projects/{project_id}/export")

@@ -14,13 +14,14 @@ Mature content exports may have additional restrictions.
 """
 from __future__ import annotations
 
+import io
+import json
 import time
-from typing import Any, Dict
+import zipfile
+from typing import Any, Dict, List, Optional
 
-from .repo import get_video, get_project, list_assets, list_audio_tracks, list_captions
+from .repo import get_video, get_project, list_assets, list_scenes
 from .audit import log_event
-from ..config import PUBLIC_BASE_URL
-from .video_export.composer import compose_project_export
 
 
 # Export targets that are NOT allowed (safety baseline)
@@ -331,94 +332,6 @@ def export_project_assets_zip(project_id: str, actor: str = "system") -> Dict[st
     }
 
 
-def _build_project_render_payload(project_id: str) -> Dict[str, Any]:
-    """Build a render-friendly payload from current project records."""
-    proj = get_project(project_id)
-    if not proj:
-        return {}
-
-    assets = sorted(list_assets(project_id), key=lambda a: a.createdAt)
-    tracks = list_audio_tracks(project_id)
-    captions = sorted(list_captions(project_id), key=lambda c: c.startSec)
-
-    media_assets = [a for a in assets if a.kind in ("video", "image")]
-    if not media_assets:
-        media_assets = assets
-
-    scene_count = max(len(media_assets), 1)
-    default_duration = max(2.0, float((proj.targetDurationSec or (scene_count * 4)) / scene_count))
-
-    scenes = []
-    for i, asset in enumerate(media_assets, start=1):
-        scene: Dict[str, Any] = {
-            "id": f"scene_{i}",
-            "title": asset.filename,
-            "durationSec": default_duration,
-        }
-        if asset.kind == "video":
-            scene["videoUrl"] = asset.url
-        elif asset.kind == "image":
-            scene["imageUrl"] = asset.url
-        else:
-            continue
-        if i <= len(captions):
-            scene["subtitle_text"] = captions[i - 1].text
-        scenes.append(scene)
-
-    voice_track = next((t for t in tracks if t.kind == "voiceover" and t.url), None)
-    music_track = next((t for t in tracks if t.kind == "music" and t.url), None)
-
-    payload = proj.model_dump()
-    payload["scenes"] = scenes
-    if voice_track and voice_track.url:
-        payload["voiceover_url"] = voice_track.url
-    if music_track and music_track.url:
-        payload["music_url"] = music_track.url
-    return payload
-
-
-def export_project_video_mp4(project_id: str, actor: str = "system") -> Dict[str, Any]:
-    """Export project as generic MP4 video."""
-    proj = get_project(project_id)
-    if not proj:
-        return {"ok": False, "error": "Project not found"}
-    payload = _build_project_render_payload(project_id)
-    try:
-        result = compose_project_export(project_id, payload, "video_mp4", PUBLIC_BASE_URL or "http://localhost:8000")
-    except Exception as exc:
-        return {"ok": False, "error": f"video_mp4 export failed: {exc}"}
-    log_event(project_id, "export_video_mp4", {"projectType": proj.projectType}, actor=actor)
-    return {"ok": True, "projectId": project_id, "kind": "video_mp4", "export": result.to_dict()}
-
-
-def export_project_youtube_mp4(project_id: str, actor: str = "system") -> Dict[str, Any]:
-    """Export project as YouTube 16:9 MP4."""
-    proj = get_project(project_id)
-    if not proj:
-        return {"ok": False, "error": "Project not found"}
-    payload = _build_project_render_payload(project_id)
-    try:
-        result = compose_project_export(project_id, payload, "youtube_mp4", PUBLIC_BASE_URL or "http://localhost:8000")
-    except Exception as exc:
-        return {"ok": False, "error": f"youtube_mp4 export failed: {exc}"}
-    log_event(project_id, "export_youtube_mp4", {"projectType": proj.projectType}, actor=actor)
-    return {"ok": True, "projectId": project_id, "kind": "youtube_mp4", "export": result.to_dict()}
-
-
-def export_project_shorts_mp4(project_id: str, actor: str = "system") -> Dict[str, Any]:
-    """Export project as YouTube Shorts 9:16 MP4."""
-    proj = get_project(project_id)
-    if not proj:
-        return {"ok": False, "error": "Project not found"}
-    payload = _build_project_render_payload(project_id)
-    try:
-        result = compose_project_export(project_id, payload, "shorts_mp4", PUBLIC_BASE_URL or "http://localhost:8000")
-    except Exception as exc:
-        return {"ok": False, "error": f"shorts_mp4 export failed: {exc}"}
-    log_event(project_id, "export_shorts_mp4", {"projectType": proj.projectType}, actor=actor)
-    return {"ok": True, "projectId": project_id, "kind": "shorts_mp4", "export": result.to_dict()}
-
-
 def get_project_available_exports(project_id: str) -> Dict[str, Any]:
     """Get list of available export formats for a professional project."""
     proj = get_project(project_id)
@@ -433,9 +346,6 @@ def get_project_available_exports(project_id: str) -> Dict[str, Any]:
         {"kind": "zip_assets", "label": "Asset Pack (ZIP)", "available": True},
         {"kind": "slides_pdf", "label": "Slides (PDF)", "available": is_slides},
         {"kind": "slides_pptx", "label": "Slides (PowerPoint)", "available": is_slides},
-        {"kind": "video_mp4", "label": "Video (MP4)", "available": True},
-        {"kind": "youtube_mp4", "label": "YouTube Video (MP4)", "available": True},
-        {"kind": "shorts_mp4", "label": "YouTube Shorts (MP4)", "available": True},
     ]
 
     return {
@@ -469,9 +379,6 @@ def export_project(
         "slides_pdf": export_project_slides_pdf,
         "slides_pptx": export_project_slides_pptx,
         "zip_assets": export_project_assets_zip,
-        "video_mp4": export_project_video_mp4,
-        "youtube_mp4": export_project_youtube_mp4,
-        "shorts_mp4": export_project_shorts_mp4,
     }
 
     exporter = exporters.get(kind)

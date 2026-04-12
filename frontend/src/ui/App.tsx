@@ -1481,7 +1481,7 @@ function QueryBar({
               'focus:outline-none resize-none',
               'min-h-14 py-4 px-2',
               'max-h-[400px] overflow-y-auto',
-              'text-[15px] leading-relaxed',
+              'text-[16px] leading-relaxed',
             ].join(' ')}
           />
         </div>
@@ -2158,13 +2158,34 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('homepilot_sidebar_collapsed') === 'true' } catch { return false }
   })
+
+  // ── Mobile sidebar: auto-hide on small screens, show as overlay ──
+  const [isMobile, setIsMobile] = useState(false)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
+
+  // Auto-close mobile sidebar on navigation
+  useEffect(() => {
+    if (isMobile) setMobileSidebarOpen(false)
+  }, [mode, isMobile])
+
   const toggleSidebar = useCallback(() => {
+    if (isMobile) {
+      setMobileSidebarOpen((prev) => !prev)
+      return
+    }
     setSidebarCollapsed((prev) => {
       const next = !prev
       try { localStorage.setItem('homepilot_sidebar_collapsed', String(next)) } catch { /* ignore */ }
       return next
     })
-  }, [])
+  }, [isMobile])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [currentProject, setCurrentProject] = useState<{
@@ -4402,27 +4423,58 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
   return (
     <div className="flex h-screen bg-black text-white font-sans selection:bg-white/20 overflow-hidden relative">
-      <Sidebar
-        mode={mode}
-        setMode={setMode}
-        messages={messages}
-        conversations={conversations}
-        activeConversationId={conversationId}
-        onLoadConversation={loadConversation}
-        onNewConversation={onNewConversation}
-        onScrollToBottom={onScrollToBottom}
-        showSettings={showSettings}
-        setShowSettings={setShowSettings}
-        settingsDraft={settingsDraft}
-        setSettingsDraft={setSettingsDraft}
-        onSaveSettings={onSaveSettings}
-        showHistory={showHistory}
-        setShowHistory={setShowHistory}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={toggleSidebar}
-      />
+      {/* ── Mobile sidebar overlay ── */}
+      {isMobile && mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+          onClick={() => setMobileSidebarOpen(false)}
+          aria-hidden
+        />
+      )}
+      <div
+        className={
+          isMobile
+            ? `fixed inset-y-0 left-0 z-50 transition-transform duration-200 ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`
+            : ''
+        }
+      >
+        <Sidebar
+          mode={mode}
+          setMode={setMode}
+          messages={messages}
+          conversations={conversations}
+          activeConversationId={conversationId}
+          onLoadConversation={loadConversation}
+          onNewConversation={onNewConversation}
+          onScrollToBottom={onScrollToBottom}
+          showSettings={showSettings}
+          setShowSettings={setShowSettings}
+          settingsDraft={settingsDraft}
+          setSettingsDraft={setSettingsDraft}
+          onSaveSettings={onSaveSettings}
+          showHistory={showHistory}
+          setShowHistory={setShowHistory}
+          collapsed={isMobile ? false : sidebarCollapsed}
+          onToggleCollapse={toggleSidebar}
+        />
+      </div>
 
       <main className="flex-1 flex flex-col relative min-w-0">
+        {/* Mobile hamburger — fixed bottom-left FAB to avoid header overlap */}
+        {isMobile && !mobileSidebarOpen && (
+          <button
+            type="button"
+            onClick={() => setMobileSidebarOpen(true)}
+            className="fixed bottom-6 left-4 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-[#1a1a2e] border border-white/15 text-white/80 shadow-lg shadow-black/50 hover:bg-[#252540] transition-colors"
+            aria-label="Open menu"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+        )}
         {/* History Panel */}
         {showHistory && (
           <HistoryPanel
