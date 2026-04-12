@@ -25,6 +25,50 @@ sys.path.insert(0, "/app")
 # Import the real HomePilot app.
 from app.main import app  # noqa: E402
 
+# ── Response headers ─────────────────────────────────────
+# HF Space embeds the app in an iframe whose parent sends a Permissions-Policy
+# header listing features that are no longer recognised by modern Chromium
+# (``ambient-light-sensor``, ``battery``, ``document-domain``,
+# ``layout-animations``, ``legacy-image-formats``, ``oversized-images``,
+# ``vr``, ``wake-lock``). Those emit noisy console warnings.
+#
+# We can't remove the parent's header but we *can* send our own on every
+# response — the browser merges the policies, and a shorter, current list
+# silences the warnings for anything served by this app.
+_PERMISSIONS_POLICY = (
+    "accelerometer=(), "
+    "autoplay=(self), "
+    "camera=(), "
+    "clipboard-read=(self), "
+    "clipboard-write=(self), "
+    "cross-origin-isolated=(self), "
+    "display-capture=(), "
+    "encrypted-media=(self), "
+    "fullscreen=(self), "
+    "geolocation=(), "
+    "gyroscope=(), "
+    "magnetometer=(), "
+    "microphone=(self), "
+    "midi=(), "
+    "payment=(), "
+    "picture-in-picture=(self), "
+    "publickey-credentials-get=(self), "
+    "screen-wake-lock=(self), "
+    "sync-xhr=(self), "
+    "usb=(), "
+    "xr-spatial-tracking=()"
+)
+
+
+@app.middleware("http")
+async def _permissions_policy(request, call_next):
+    response = await call_next(request)
+    # Set a policy that only lists currently-recognised features; this quiets
+    # the warnings emitted against the parent frame's outdated list.
+    response.headers.setdefault("Permissions-Policy", _PERMISSIONS_POLICY)
+    return response
+
+
 # ── Frontend serving ─────────────────────────────────────
 
 FRONTEND_DIR = Path(os.environ.get("FRONTEND_DIR", "/app/frontend"))

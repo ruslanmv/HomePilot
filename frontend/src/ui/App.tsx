@@ -28,6 +28,7 @@ import {
   PanelLeft,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
+import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
 import ProfileSettingsModal from './ProfileSettingsModal'
 import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
@@ -2124,8 +2125,7 @@ export default function App() {
 
   // Unified settings model
   const [settings, setSettings] = useState<SettingsModel>(() => {
-    const backendUrl =
-      localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
+    const backendUrl = resolveBackendUrl()
     const provider = (localStorage.getItem('homepilot_provider') as Provider) || 'backend'
     const ollamaUrl = localStorage.getItem('homepilot_ollama_url') || 'http://localhost:11434'
     const ollamaModel = localStorage.getItem('homepilot_ollama_model') || 'llama3:8b'
@@ -2317,7 +2317,7 @@ export default function App() {
 
   // Settings draft for new enterprise panel
   const [settingsDraft, setSettingsDraft] = useState<SettingsModelV2>(() => {
-    const backendUrl = localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
+    const backendUrl = resolveBackendUrl()
     const apiKey = localStorage.getItem('homepilot_api_key') || ''
     const providerChat = (localStorage.getItem('homepilot_provider_chat') || 'ollama') as string
     const providerImages = (localStorage.getItem('homepilot_provider_images') || 'comfyui') as string
@@ -2400,7 +2400,7 @@ export default function App() {
     if (hasExistingSettings) return  // User already has saved settings
     autoDetectRanRef.current = true
 
-    const backendUrl = settingsDraft.backendUrl || 'http://localhost:8000'
+    const backendUrl = resolveBackendUrl(settingsDraft.backendUrl)
     fetch(`${backendUrl}/auto-detect`)
       .then((r) => r.json())
       .then((data) => {
@@ -2640,7 +2640,7 @@ export default function App() {
     localStorage.setItem('homepilot_ollabridge_api_key', settingsDraft.ollaBridgeApiKey || 'my-secret')
 
     // Sync OllaBridge toggle with backend (sets API_KEY + enables/disables compat endpoint)
-    const backendBase = (settingsDraft.backendUrl || 'http://localhost:8000').replace(/\/+$/, '')
+    const backendBase = resolveBackendUrl(settingsDraft.backendUrl)
     fetch(`${backendBase}/settings/ollabridge`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': settingsDraft.apiKey || '' },

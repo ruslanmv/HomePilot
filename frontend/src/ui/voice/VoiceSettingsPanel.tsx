@@ -13,6 +13,7 @@ import { User } from 'lucide-react';
 import VoiceGrid from './VoiceGrid';
 import PersonalityList from './PersonalityList';
 import SpeedSlider from './SpeedSlider';
+import { resolveBackendUrl } from '../lib/backendUrl';
 import { VoiceDef } from './voices';
 import { PersonalityDef } from './personalities';
 import { isPersonasEnabled, LS_PERSONA_CACHE } from './personalityGating';
@@ -76,9 +77,7 @@ export default function VoiceSettingsPanel({
       setPersonaEntries([]);
       return;
     }
-    const backendUrl =
-      (typeof window !== 'undefined' && localStorage.getItem('homepilot_backend_url')) ||
-      'http://localhost:8000';
+    const backendUrl = resolveBackendUrl();
     const apiKey =
       typeof window !== 'undefined' ? localStorage.getItem('homepilot_api_key') || '' : '';
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
 import ProfileSettingsModal from "./ProfileSettingsModal";
+import { resolveBackendUrl } from "./lib/backendUrl";
 import {
   getModelSettings,
   getPresetDescription,
@@ -220,7 +221,7 @@ export default function SettingsPanel({
   async function fetchHealth() {
     setHealthErr(null);
     try {
-      const res = await fetch(`${value.backendUrl}/health`);
+      const res = await fetch(`${resolveBackendUrl(value.backendUrl)}/health`);
       const data = await res.json();
       setHealth(data);
     } catch (e: any) {
@@ -232,7 +233,7 @@ export default function SettingsPanel({
     setLoadingProviders(true);
     setProvidersErr(null);
     try {
-      const res = await fetch(`${value.backendUrl}/providers`);
+      const res = await fetch(`${resolveBackendUrl(value.backendUrl)}/providers`);
       const data = await res.json();
       if (!data.ok) throw new Error(data.message || "Failed to load providers");
       setProviders(data.providers || {});
@@ -1295,7 +1296,7 @@ export default function SettingsPanel({
                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
                   <div className="text-[10px] text-emerald-400 font-semibold mb-1">Endpoint Ready</div>
                   <div className="text-[10px] text-white/50 font-mono">
-                    {value.backendUrl?.replace(/\/+$/, '') || 'http://localhost:8000'}/v1/chat/completions
+                    {resolveBackendUrl(value.backendUrl)}/v1/chat/completions
                   </div>
                   <div className="text-[10px] text-white/30 mt-1">
                     Point OllaBridge or any OpenAI SDK to this URL with the API key above.

@@ -455,6 +455,154 @@ def logout(authorization: str = Header(default="")):
     return resp
 
 
+# ---------------------------------------------------------------------------
+# Password management (additive — account security tab)
+# ---------------------------------------------------------------------------
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(default="", max_length=128)
+    new_password: str = Field(max_length=128)
+    sign_out_others: bool = Field(default=False)
+
+
+_MIN_PASSWORD_LEN = 8
+
+
+def _invalidate_other_sessions(user_id: str, keep_token: str) -> int:
+    """Invalidate every session for ``user_id`` except ``keep_token``.
+
+    Returns the number of sessions invalidated.
+    """
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "DELETE FROM user_sessions WHERE user_id = ? AND token != ?",
+        (user_id, keep_token),
+    )
+    count = cur.rowcount or 0
+    con.commit()
+    con.close()
+    return count
+
+
+@router.post("/change-password")
+def change_password(
+    body: ChangePasswordRequest,
+    authorization: str = Header(default=""),
+):
+    """Change the current user's password.
+
+    Rules:
+    * Caller must be authenticated (Bearer token).
+    * ``current_password`` must match the stored hash, **unless** the account
+      has no password yet (first-time set from a legacy auto-created user).
+    * ``new_password`` must be at least ``_MIN_PASSWORD_LEN`` characters.
+    * ``new_password`` must differ from the current one.
+    * When ``sign_out_others`` is true, all of the user's other sessions are
+      invalidated; the caller's own token stays valid.
+
+    Returns: ``{ok: true, sessions_revoked: <int>}``
+    """
+    ensure_users_tables()
+    token = authorization.replace("Bearer ", "").strip()
+    user = _validate_token(token) if token else None
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    # Pull the latest password hash (user dict from _validate_token may not
+    # include it — read straight from the DB to be sure).
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],))
+    row = cur.fetchone()
+    con.close()
+    stored_hash = row[0] if row else ""
+
+    # 1. Verify current password (allow empty when the account never had one).
+    if stored_hash:
+        if not _verify_password(body.current_password, stored_hash):
+            raise HTTPException(400, "Current password is incorrect")
+
+    # 2. Validate new password.
+    new_password = body.new_password or ""
+    if len(new_password) < _MIN_PASSWORD_LEN:
+        raise HTTPException(400, f"New password must be at least {_MIN_PASSWORD_LEN} characters")
+    if stored_hash and _verify_password(new_password, stored_hash):
+        raise HTTPException(400, "New password must differ from the current one")
+
+    # 3. Persist.
+    new_hash = _hash_password(new_password)
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+        (new_hash, now, user["id"]),
+    )
+    con.commit()
+    con.close()
+
+    # 4. Optional: invalidate other sessions.
+    revoked = 0
+    if body.sign_out_others:
+        revoked = _invalidate_other_sessions(user["id"], token)
+
+    return {"ok": True, "sessions_revoked": revoked}
+
+
+@router.get("/sessions")
+def list_sessions(authorization: str = Header(default="")):
+    """List active sessions for the current user (count + current flag).
+
+    Returns ``{current_session_id, sessions: [{id, created_at, expires_at,
+    is_current}]}``. Session tokens themselves are never returned — only
+    truncated public IDs so the UI can show "Log out other sessions".
+    """
+    ensure_users_tables()
+    token = authorization.replace("Bearer ", "").strip()
+    user = _validate_token(token) if token else None
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+
+    path = _get_db_path()
+    con = sqlite3.connect(path)
+    cur = con.cursor()
+    cur.execute(
+        "SELECT token, created_at, expires_at FROM user_sessions WHERE user_id = ? AND expires_at > datetime('now') ORDER BY created_at DESC",
+        (user["id"],),
+    )
+    rows = cur.fetchall()
+    con.close()
+
+    sessions = []
+    for row_token, created_at, expires_at in rows:
+        public_id = row_token[:8]  # just enough to identify; never the full token
+        sessions.append(
+            {
+                "id": public_id,
+                "created_at": created_at,
+                "expires_at": expires_at,
+                "is_current": row_token == token,
+            }
+        )
+    current = next((s["id"] for s in sessions if s["is_current"]), None)
+    return {"current_session_id": current, "sessions": sessions}
+
+
+@router.post("/sessions/revoke-others")
+def revoke_other_sessions(authorization: str = Header(default="")):
+    """Invalidate every session except the caller's own."""
+    ensure_users_tables()
+    token = authorization.replace("Bearer ", "").strip()
+    user = _validate_token(token) if token else None
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    revoked = _invalidate_other_sessions(user["id"], token)
+    return {"ok": True, "sessions_revoked": revoked}
+
+
 @router.get("/me")
 def get_me(
     authorization: str = Header(default=""),
@@ -489,6 +637,9 @@ def get_me(
                     "email": users[0]["email"],
                     "avatar_url": users[0].get("avatar_url", ""),
                     "onboarding_complete": bool(users[0].get("onboarding_complete")),
+                    # Always false on the auto-login branch (entered only
+                    # when the lone user has no password set).
+                    "has_password": False,
                 },
                 "token": auto_token,
             })
@@ -513,6 +664,10 @@ def get_me(
             "email": user["email"],
             "avatar_url": user.get("avatar_url", ""),
             "onboarding_complete": bool(user.get("onboarding_complete")),
+            # Additive: lets the Security tab render "Set password" vs
+            # "Change password" without a second round-trip. False for the
+            # default admin created on first boot (no password set yet).
+            "has_password": bool(user.get("password_hash")),
         },
     }
 

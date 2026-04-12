@@ -17,6 +17,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import AuthScreen from './AuthScreen'
 import OnboardingWizard from './OnboardingWizard'
+import { resolveBackendUrl } from '../lib/backendUrl'
 
 export interface AuthUser {
   id: string
@@ -40,7 +41,7 @@ const LS_USER_KEY = 'homepilot_auth_user'
 const LS_RECENT_USERS_KEY = 'homepilot_recent_users'
 
 function getBackendUrl(): string {
-  return localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
+  return resolveBackendUrl()
 }
 
 function loadRecentUsers(): RecentUser[] {

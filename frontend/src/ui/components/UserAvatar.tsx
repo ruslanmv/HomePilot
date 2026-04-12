@@ -8,6 +8,7 @@
  * ADDITIVE ONLY — new component, does not modify existing code.
  */
 import React, { useState } from 'react'
+import { resolveBackendUrl } from '../lib/backendUrl'
 
 interface UserAvatarProps {
   displayName: string
@@ -60,7 +61,7 @@ export default function UserAvatar({
 
   if (hasImage) {
     // Resolve relative URLs against the backend, append auth token for /files/ paths
-    const backendUrl = localStorage.getItem('homepilot_backend_url') || 'http://localhost:8000'
+    const backendUrl = resolveBackendUrl()
     let fullUrl = avatarUrl.startsWith('http') ? avatarUrl : `${backendUrl}${avatarUrl}`
     if (fullUrl.includes('/files/')) {
       const tok = localStorage.getItem('homepilot_auth_token') || ''

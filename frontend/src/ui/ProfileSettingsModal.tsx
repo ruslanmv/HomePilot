@@ -30,6 +30,7 @@ import {
   deleteUserMemoryItem,
 } from './profileApi'
 import AvatarUploader from './components/AvatarUploader'
+import SecurityTab from './components/SecurityTab'
 import {
   COUNTRIES,
   LANGUAGES,
@@ -38,7 +39,7 @@ import {
   formatTimezoneLabel,
 } from './localeData'
 
-type TabKey = 'profile' | 'prefs' | 'integrations'
+type TabKey = 'profile' | 'prefs' | 'integrations' | 'security'
 
 const emptyProfile: UserProfile = {
   display_name: '',
@@ -346,9 +347,9 @@ export default function ProfileSettingsModal({
         {/* Header */}
         <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
           <div>
-            <div className="text-white/90 font-semibold">Profile &amp; Integrations</div>
+            <div className="text-white/90 font-semibold">Account Settings</div>
             <div className="text-xs text-white/40">
-              Profile, preferences, memory, and integrations for personalization.
+              Profile, preferences, integrations, and security for your account.
             </div>
           </div>
           <button
@@ -367,6 +368,7 @@ export default function ProfileSettingsModal({
               { key: 'profile', label: 'Profile' },
               { key: 'prefs', label: 'Preferences' },
               { key: 'integrations', label: 'Integrations' },
+              { key: 'security', label: 'Security' },
             ].map((t) => (
               <button
                 key={t.key}
@@ -885,6 +887,27 @@ export default function ProfileSettingsModal({
                 )}
               </div>
             </div>
+          ) : null}
+
+          {/* ================================================================ */}
+          {/* TAB 4 — Security                                                 */}
+          {/* ================================================================ */}
+          {!loading && tab === 'security' ? (
+            usePerUser && authToken ? (
+              <SecurityTab
+                backendUrl={backendUrl}
+                token={authToken}
+                onSaved={() => {
+                  setSavedMsg(true)
+                  window.setTimeout(() => setSavedMsg(false), 2500)
+                }}
+              />
+            ) : (
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-white/60">
+                Security settings require signing in with a user account. This
+                instance is running in instance-wide (API key) mode.
+              </div>
+            )
           ) : null}
         </div>
 
