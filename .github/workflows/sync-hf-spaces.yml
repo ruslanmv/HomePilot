@@ -1,0 +1,37 @@
+name: Sync HomePilot to Hugging Face Spaces
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'community/**'
+      - 'hf/**'
+      - 'deploy/huggingface-space/**'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    name: Deploy Builder + Installer to HF Spaces
+    runs-on: ubuntu-latest
+    concurrency:
+      group: hf-space-sync-homepilot
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install git-lfs
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq git-lfs
+          git lfs install
+
+      - name: Deploy to HF Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          bash deploy/huggingface-space/scripts/deploy-hf.sh

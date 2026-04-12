@@ -38,3 +38,4 @@ community/external/
 mcp.db
 mcp.db-shm
 mcp.db-wal
+.hf-stage/
