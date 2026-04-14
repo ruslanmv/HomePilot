@@ -61,9 +61,10 @@ async def install(request: Request):
     space_name = body.get("space_name", "HomePilot")
     private = body.get("private", True)
     model = body.get("model", "qwen2.5:1.5b")
-    # Additive: default True preserves current behavior exactly.
-    # Set to False to ship a clean HomePilot without the Chata
-    # persona pack pre-installed.
+    # Default True — mirrors the installer UI where the checkbox is
+    # pre-ticked.  Callers that omit the field get the 14-persona
+    # Starter + Retro pack auto-imported on first boot.  Set to
+    # False (or untick the checkbox) for a clean HomePilot.
     include_personas = bool(body.get("include_personas", True))
 
     if not token or not username:
@@ -176,12 +177,15 @@ async def install(request: Request):
                     f"OLLAMA_MODEL=${{OLLAMA_MODEL:-{model}}}"))
             steps.append(f"Modelo: {model}")
 
-            # Additive: honor include_personas toggle.
-            # - include_personas=True (default): chata-personas bundle stays; the
-            #   in-container bootstrap auto-populates Projects on first boot.
-            # - include_personas=False: we inject an explicit disable into start.sh
-            #   AND delete the bundled chata-personas directory so the user's
-            #   HomePilot boots completely clean.
+            # Honor include_personas toggle.
+            # - include_personas=True (default, UI checkbox pre-ticked):
+            #   chata-personas bundle stays on disk and the in-container
+            #   bootstrap auto-populates the 14-persona Starter + Retro
+            #   pack as Projects on first boot.
+            # - include_personas=False (user unchecked the box): clean
+            #   HomePilot.  We inject ``export ENABLE_PROJECT_BOOTSTRAP=false``
+            #   into start.sh AND delete the bundled chata-personas
+            #   directory so no personas ship in the user's Space at all.
             if not include_personas and start.exists():
                 st = start.read_text()
                 if "ENABLE_PROJECT_BOOTSTRAP" not in st:
