@@ -82,4 +82,30 @@ echo "  │  Chat:     /v1/chat/completions       │"
 echo "  └──────────────────────────────────────┘"
 echo ""
 
+# ── Chata: additive persona -> project bootstrap ──────────────────
+# Imports every bundled .hpersona as a HomePilot Project so the UI
+# is populated on first visit.  Optional — can be disabled via env:
+#   ENABLE_PROJECT_BOOTSTRAP=false
+# to ship a clean HomePilot without any pre-installed personas.
+#
+# Runs in the background AFTER the main server starts (so /health is
+# reachable).  Output is tee'd to stdout so failures are visible in
+# the HF Space run logs.  Idempotent — gated by a marker file.
+if [ "${ENABLE_PROJECT_BOOTSTRAP:-true}" = "true" ] \
+   && [ -f /app/chata_project_bootstrap.py ]; then
+    (
+        sleep 5
+        for attempt in 1 2; do
+            python3 /app/chata_project_bootstrap.py \
+                --personas-dir "${CHATA_PERSONAS_DIR:-/app/chata-personas}" \
+                --api-base http://127.0.0.1:7860 \
+                --marker /tmp/homepilot/data/.projects_bootstrapped \
+                $([ "$attempt" -gt 1 ] && echo "--force") \
+                && break
+            echo "[chata-bootstrap] retry in 30s..."
+            sleep 30
+        done
+    ) 2>&1 | tee -a /tmp/homepilot/data/bootstrap.log &
+fi
+
 exec python3 /app/hf_wrapper.py

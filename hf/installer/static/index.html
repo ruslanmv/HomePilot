@@ -275,6 +275,12 @@ a:hover{color:var(--cyan)}
           <option value="gemma:2b">gemma 2b — balanced</option>
         </select>
       </div>
+      <div class="field">
+        <label class="toggle" id="lbl-personas">
+          <input type="checkbox" id="include-personas" checked>
+          <span id="txt-personas">Include Chata personas (14 Starter + Retro pack)</span>
+        </label>
+      </div>
     </div>
   </div>
 
@@ -561,7 +567,8 @@ $('#install-btn').onclick = async () => {
         username,
         space_name: $('#space-name').value.trim() || 'HomePilot',
         private: $('#private').checked,
-        model: $('#model').value
+        model: $('#model').value,
+        include_personas: $('#include-personas') ? $('#include-personas').checked : true
       })
     });
     const d = await r.json();
