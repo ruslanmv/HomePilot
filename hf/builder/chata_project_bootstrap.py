@@ -35,6 +35,8 @@ Usage (called from ``start.sh``):
 
 from __future__ import annotations
 
+import os
+
 import argparse
 import json
 import sys
@@ -227,6 +229,103 @@ def bootstrap(
     return 0 if failed == 0 else 2
 
 
+def enable_ollabridge(api_base: str, *, enabled: bool = True, api_key: str = "") -> None:
+    """Flip the OllaBridge Gateway on so personas are reachable via the
+    OpenAI-compat ``/v1/chat/completions`` endpoint with zero extra UI
+    clicks.
+
+    Industry best practice for self-hosted AI deployments: sane defaults,
+    converge state on every boot.  Idempotent — safe to run repeatedly.
+
+    * ``enabled=True``  → HomePilot exposes ``/v1/chat/completions`` and
+                          ``/v1/models``, which is what OllaBridge / Chata /
+                          3D avatar clients hit.
+    * ``api_key=""``    → no auth required.  Private Spaces are already
+                          gated by HF's own auth; an extra key inside is
+                          redundant and is the exact thing that caused the
+                          2026-04-14 auth-lockout incident.  Operators who
+                          want a key can set one explicitly in Settings.
+
+    Override: ``ENABLE_OLLABRIDGE_AUTO=false`` disables this step entirely.
+    """
+    url = f"{api_base.rstrip('/')}/settings/ollabridge"
+    body = json.dumps({"enabled": enabled, "api_key": api_key}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json",
+                 "Content-Length": str(len(body))},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if 200 <= resp.status < 300:
+                log(f"ollabridge: enabled={enabled} api_key_set={bool(api_key)}")
+                return
+            log(f"ollabridge: unexpected status {resp.status}")
+    except Exception as e:  # noqa: BLE001
+        log(f"ollabridge: skipped ({e})")
+
+
+def publish_all_personas(api_base: str) -> tuple[int, int]:
+    """Publish every persona Project to the shared API so it is addressable
+    via the OpenAI-compat ``/v1/chat/completions`` endpoint as
+    ``persona:<slug>--<shortid>``.
+
+    Without this step the 14 auto-imported personas exist as Projects but
+    are invisible to OllaBridge / Chata / any OpenAI-compat client — the
+    bridge returns 404 ``persona_unpublished``.
+
+    Idempotent — re-publishing an already-published persona is a no-op on
+    the backend side.  Returns ``(published, failed)`` counts.
+
+    Disable with ``ENABLE_PERSONA_PUBLISH=false``.
+    """
+    try:
+        with urllib.request.urlopen(
+            f"{api_base.rstrip('/')}/projects", timeout=15
+        ) as resp:
+            data: Any = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:  # noqa: BLE001
+        log(f"publish: could not list projects ({e})")
+        return 0, 0
+
+    items = data if isinstance(data, list) else (
+        data.get("items") or data.get("projects") or []
+    )
+    published = failed = 0
+    for proj in items:
+        if not isinstance(proj, dict):
+            continue
+        if proj.get("project_type") not in (None, "persona"):
+            continue
+        pid = proj.get("id")
+        name = proj.get("name", pid)
+        if not pid:
+            continue
+        body = json.dumps({"enabled": True}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{api_base.rstrip('/')}/projects/{pid}/shared-api",
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json",
+                     "Content-Length": str(len(body))},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                if 200 <= resp.status < 300:
+                    published += 1
+                else:
+                    failed += 1
+                    log(f"publish: {name} HTTP {resp.status}")
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            log(f"publish: {name} failed ({str(e)[:80]})")
+    log(f"publish: {published} personas now on /v1/chat/completions "
+        f"(failed={failed})")
+    return published, failed
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--personas-dir", type=Path, default=Path("/app/chata-personas"))
@@ -242,8 +341,24 @@ def main(argv: list[str] | None = None) -> int:
         help="Re-run even if the marker exists (still idempotent per-file).",
     )
     args = ap.parse_args(argv)
-    return bootstrap(args.personas_dir, args.api_base, args.marker, args.force)
+    rc = bootstrap(args.personas_dir, args.api_base, args.marker, args.force)
 
+    # Zero-config UX: expose personas via the OpenAI-compat endpoint so
+    # OllaBridge / Chata / 3D-avatar clients connect without extra UI
+    # steps.  Runs regardless of persona-import outcome — a clean-install
+    # HomePilot still benefits from a working /v1/chat/completions.
+    # Disable with ENABLE_OLLABRIDGE_AUTO=false.
+    if os.environ.get("ENABLE_OLLABRIDGE_AUTO", "true").lower() == "true":
+        enable_ollabridge(args.api_base)
 
+    # Zero-config: publish every persona Project so OllaBridge / Chata
+    # can see them via ``/v1/models`` and chat via
+    # ``persona:<slug>--<shortid>``.  Without this step the imported
+    # personas exist as Projects but are invisible to external clients.
+    # Disable with ENABLE_PERSONA_PUBLISH=false.
+    if os.environ.get("ENABLE_PERSONA_PUBLISH", "true").lower() == "true":
+        publish_all_personas(args.api_base)
+
+    return rc
 if __name__ == "__main__":
     raise SystemExit(main())
