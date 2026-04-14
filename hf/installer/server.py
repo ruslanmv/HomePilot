@@ -61,6 +61,10 @@ async def install(request: Request):
     space_name = body.get("space_name", "HomePilot")
     private = body.get("private", True)
     model = body.get("model", "qwen2.5:1.5b")
+    # Additive: default True preserves current behavior exactly.
+    # Set to False to ship a clean HomePilot without the Chata
+    # persona pack pre-installed.
+    include_personas = bool(body.get("include_personas", True))
 
     if not token or not username:
         return JSONResponse({"ok": False, "error": "Missing token/username"})
@@ -126,6 +130,32 @@ async def install(request: Request):
                     "OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}",
                     f"OLLAMA_MODEL=${{OLLAMA_MODEL:-{model}}}"))
             steps.append(f"Modelo: {model}")
+
+            # Additive: honor include_personas toggle.
+            # - include_personas=True (default): chata-personas bundle stays; the
+            #   in-container bootstrap auto-populates Projects on first boot.
+            # - include_personas=False: we inject an explicit disable into start.sh
+            #   AND delete the bundled chata-personas directory so the user's
+            #   HomePilot boots completely clean.
+            if not include_personas and start.exists():
+                st = start.read_text()
+                if "ENABLE_PROJECT_BOOTSTRAP" not in st:
+                    marker = "# ── Environment ──────────────────────────────────────────"
+                    st = st.replace(
+                        marker,
+                        marker + "\nexport ENABLE_PROJECT_BOOTSTRAP=false",
+                        1,
+                    )
+                    start.write_text(st)
+                for cand in ("chata-personas",
+                             "deploy/huggingface-space/chata-personas"):
+                    d = sp / cand
+                    if d.exists():
+                        shutil.rmtree(d, ignore_errors=True)
+                steps.append("Chata personas: omitted (clean install)")
+            else:
+                steps.append("Chata personas: included (auto-imported on first boot)")
+
 
             # Git push
             subprocess.run(["git", "lfs", "install", "--local"],

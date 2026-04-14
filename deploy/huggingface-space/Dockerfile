@@ -60,6 +60,7 @@ COPY --from=frontend /build/dist ./frontend
 # HF Space wrapper (serves frontend + patches config)
 COPY deploy/huggingface-space/hf_wrapper.py ./hf_wrapper.py
 COPY deploy/huggingface-space/auto_import_personas.py ./auto_import_personas.py
+COPY deploy/huggingface-space/chata_project_bootstrap.py ./chata_project_bootstrap.py
 
 # Startup script (copied to root by deploy script)
 COPY start.sh ./start.sh
