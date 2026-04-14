@@ -26,6 +26,12 @@ export UPLOAD_DIR=/tmp/homepilot/uploads
 export OUTPUT_DIR=/tmp/homepilot/outputs
 export DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-ollama}
 export OLLAMA_BASE_URL=http://127.0.0.1:11434
+# On HF Spaces (SPACE_ID is set) default to qwen2.5:0.5b for faster
+# first-token latency on CPU-basic.  Non-destructive — explicit
+# OLLAMA_MODEL env always wins.
+if [ -z "${OLLAMA_MODEL:-}" ] && [ -n "${SPACE_ID:-}" ]; then
+    export OLLAMA_MODEL="qwen2.5:0.5b"
+fi
 export OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
 export COMFY_BASE_URL=""
 export MEDIA_BASE_URL=""
@@ -55,6 +61,19 @@ else
     echo "       ↓ Pulling ${OLLAMA_MODEL} (first start only)..."
     ollama pull "${OLLAMA_MODEL}" 2>&1 | tail -3
     echo "       ✓ Model pulled"
+fi
+
+# ── 2b. Pre-warm the Ollama runner (non-blocking) ───────
+# Loads the model into RAM so the first real user chat doesn't pay
+# the cold-start cost.  Override: OLLAMA_WARMUP=false
+if [ "${OLLAMA_WARMUP:-true}" = "true" ]; then
+    echo "       · pre-warming runner (background)..."
+    (
+        curl -sSf -X POST http://127.0.0.1:11434/api/chat \
+            -H "Content-Type: application/json" \
+            -d "{\"model\":\"${OLLAMA_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":false,\"options\":{\"num_predict\":1}}" \
+            > /dev/null 2>&1 || true
+    ) &
 fi
 
 # ── 3. Auto-import Chata personas ────────────────────────

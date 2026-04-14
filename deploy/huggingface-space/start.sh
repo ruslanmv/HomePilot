@@ -35,7 +35,14 @@ export UPLOAD_DIR=/tmp/homepilot/uploads
 export OUTPUT_DIR=/tmp/homepilot/outputs
 export DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-ollama}
 export OLLAMA_BASE_URL=http://127.0.0.1:11434
-# Primary model — small, multilingual, instruction-tuned, free-tier friendly.
+# Primary model.  On HF Spaces (SPACE_ID is always set) default to the
+# lighter qwen2.5:0.5b — CPU-basic runs it ~3-4x faster than the 1.5b
+# variant, keeping first-token latency inside the SSE timeout budget.
+# Outside HF (local dev, other hosts) the previous 1.5b default stands.
+# Users who set OLLAMA_MODEL explicitly are always honored.
+if [ -z "${OLLAMA_MODEL:-}" ] && [ -n "${SPACE_ID:-}" ]; then
+    export OLLAMA_MODEL="qwen2.5:0.5b"
+fi
 export OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:1.5b}
 # Comma-separated fallback chain tried if the primary fails to pull. Each is
 # under ~1.5 GB on disk and runs comfortably in the HF free tier (16 GB RAM,
@@ -122,6 +129,22 @@ if [ "$OLLAMA_READY" = "true" ]; then
     fi
 else
     echo "[2/4] Skipping model pull — Ollama not ready."
+fi
+
+# ── 2b. Pre-warm the Ollama runner ───────────────────────
+# Fire one tiny throwaway inference so the model is already loaded in
+# RAM when the first real user chat arrives.  Without this, the first
+# chat pays a 2-3s cold-load cost on top of generation.  Non-blocking
+# so it never delays app startup.
+# Override:  OLLAMA_WARMUP=false
+if [ "${MODEL_OK:-false}" = "true" ] && [ "${OLLAMA_WARMUP:-true}" = "true" ]; then
+    echo "       · pre-warming runner (background)..."
+    (
+        curl -sSf -X POST http://127.0.0.1:11434/api/chat \
+            -H "Content-Type: application/json" \
+            -d "{\"model\":\"${OLLAMA_MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stream\":false,\"options\":{\"num_predict\":1}}" \
+            > /dev/null 2>&1 || true
+    ) &
 fi
 
 # ── 3. Auto-import Chata personas ────────────────────────
