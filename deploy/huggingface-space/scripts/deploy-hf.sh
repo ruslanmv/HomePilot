@@ -57,6 +57,7 @@ install -m 0755 "$SPACE_DIR/start.sh"    "$STAGE_DIR/start.sh"
 mkdir -p "$STAGE_DIR/deploy/huggingface-space"
 install -m 0644 "$SPACE_DIR/hf_wrapper.py"          "$STAGE_DIR/deploy/huggingface-space/hf_wrapper.py"
 install -m 0644 "$SPACE_DIR/auto_import_personas.py" "$STAGE_DIR/deploy/huggingface-space/auto_import_personas.py"
+install -m 0644 "$SPACE_DIR/chata_project_bootstrap.py" "$STAGE_DIR/deploy/huggingface-space/chata_project_bootstrap.py"
 
 echo ">> copying backend/"
 mkdir -p "$STAGE_DIR/backend"

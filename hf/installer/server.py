@@ -93,8 +93,53 @@ async def install(request: Request):
             remote = f"https://user:{token}@huggingface.co/spaces/{repo_id}"
             tpl_remote = f"https://user:{token}@huggingface.co/spaces/{TEMPLATE}"
 
-            subprocess.run(["git", "-c", "credential.helper=", "clone", "--depth", "1",
-                            tpl_remote, f"{tmp}/tpl"], capture_output=True, timeout=60)
+            # Clone the template Space (preferred) OR fall back to the public
+            # GitHub source.  HF Spaces 404 until ``sync-hf-spaces.yml`` has
+            # successfully run at least once; in that window the installer
+            # would previously silently fail later when the staged tpl/
+            # directory didn't exist, producing the cryptic
+            #   "[Errno 2] No such file or directory: '/tmp/.../tpl'"
+            tpl_path = Path(f"{tmp}/tpl")
+            tpl_source = None
+            tpl_clone = subprocess.run(
+                ["git", "-c", "credential.helper=", "clone", "--depth", "1",
+                 tpl_remote, str(tpl_path)],
+                capture_output=True, timeout=60,
+            )
+            if tpl_clone.returncode == 0 and tpl_path.exists():
+                tpl_source = f"spaces/{TEMPLATE}"
+            else:
+                # Fallback: clone HomePilot from GitHub master.
+                gh_fallback = os.environ.get(
+                    "TEMPLATE_GITHUB",
+                    f"https://github.com/{TEMPLATE}.git",
+                )
+                fb = subprocess.run(
+                    ["git", "clone", "--depth", "1", gh_fallback, str(tpl_path)],
+                    capture_output=True, timeout=120,
+                )
+                if fb.returncode == 0 and tpl_path.exists():
+                    tpl_source = f"github.com/{TEMPLATE} (fallback)"
+                else:
+                    tpl_err = (
+                        tpl_clone.stderr or tpl_clone.stdout or b""
+                    ).decode("utf-8", errors="replace")[:300]
+                    fb_err = (
+                        fb.stderr or fb.stdout or b""
+                    ).decode("utf-8", errors="replace")[:300]
+                    return JSONResponse({
+                        "ok": False,
+                        "error": (
+                            "HomePilot template is not yet available.  The "
+                            "sync-hf-spaces.yml workflow must publish the "
+                            f"template Space at {TEMPLATE} first.\n"
+                            f"HF clone: {tpl_err.strip() or '<empty>'}\n"
+                            f"GH clone: {fb_err.strip() or '<empty>'}"
+                        ),
+                        "steps": steps,
+                    })
+
+            steps.append(f"Template: {tpl_source}")
 
             clone = subprocess.run(["git", "-c", "credential.helper=", "clone", "--depth", "1",
                                     remote, f"{tmp}/sp"], capture_output=True, timeout=30)
