@@ -7,6 +7,7 @@ Mount this router in your main app:
 """
 from __future__ import annotations
 
+import os
 import re
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional, Literal, List, Tuple
@@ -2304,6 +2305,163 @@ class ProjectExportRequest(BaseModel):
 def project_do_export(project_id: str, req: ProjectExportRequest):
     """Export a professional project in the specified format."""
     return export_project(project_id, kind=req.kind)
+
+
+# ============================================================================
+# Creator Studio MP4 Export
+# ----------------------------------------------------------------------------
+# Renders a Studio video's scenes into a single downloadable MP4 file.
+# Two encode profiles:
+#
+#   mp4_plain   — balanced size/quality, edit-friendly, plays anywhere.
+#   mp4_youtube — matches YouTube's recommended upload spec
+#                 (H.264 high / yuv420p / AAC 48 kHz / faststart).
+#
+# Renders are async because they take seconds-to-minutes. The POST returns
+# 202 + a job id; clients poll GET /studio/videos/{id}/export/jobs/{job_id}
+# until status == "done" then GET /studio/videos/{id}/export/jobs/{job_id}/download.
+# ============================================================================
+
+from fastapi import Header, Cookie, Response
+from fastapi.responses import FileResponse
+from .render_mp4 import (
+    SceneInput,
+    ffmpeg_available,
+)
+from . import render_jobs
+
+
+def _resolve_user_or_401(authorization: str, homepilot_session: Optional[str]) -> dict:
+    """Local auth resolver — mirrors main._scoped_user_or_none without the
+    circular import (main imports the studio router)."""
+    from ..users import (
+        ensure_users_tables,
+        _validate_token,
+        get_or_create_default_user,
+        count_users,
+    )
+    ensure_users_tables()
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    if not token and homepilot_session:
+        token = homepilot_session.strip()
+    user = _validate_token(token) if token else None
+    if user:
+        return user
+    if count_users() > 1:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return get_or_create_default_user()
+
+
+class VideoMp4ExportRequest(BaseModel):
+    """Request body for POST /studio/videos/{video_id}/export/mp4.
+
+    ``kind`` selects the encode profile; the platform preset (canvas
+    aspect, fps) is read from the StudioVideo record so the same project
+    always renders to the same canvas regardless of the chosen profile.
+    """
+    kind: Literal["mp4_plain", "mp4_youtube"] = "mp4_plain"
+
+
+@router.post("/videos/{video_id}/export/mp4", status_code=202)
+def video_export_mp4(
+    video_id: str,
+    req: VideoMp4ExportRequest,
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+):
+    """Queue an MP4 render for a Studio video. Returns 202 + job descriptor.
+
+    The actual encoding runs in a background worker thread; clients poll
+    the companion ``GET .../export/jobs/{job_id}`` endpoint for progress
+    and finally hit ``.../download`` when ``status == "done"``.
+    """
+    if not ffmpeg_available():
+        raise HTTPException(
+            status_code=503,
+            detail="ffmpeg is not installed on the server; MP4 export is unavailable.",
+        )
+
+    user = _resolve_user_or_401(authorization, homepilot_session)
+
+    video = get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    scenes = list_scenes(video_id)
+    if not scenes:
+        raise HTTPException(status_code=400, detail="Video has no scenes to render")
+
+    # Translate StudioScene records into the renderer's SceneInput shape.
+    inputs = [
+        SceneInput(
+            idx=i,
+            duration_sec=float(s.durationSec or 5.0),
+            image_path=s.imageUrl,
+            video_path=s.videoUrl,
+            audio_path=s.audioUrl,
+        )
+        for i, s in enumerate(scenes)
+    ]
+
+    job = render_jobs.submit_render(
+        user_id=user["id"],
+        video_id=video_id,
+        kind=req.kind,
+        preset=video.platformPreset,
+        scenes=inputs,
+    )
+    return job.to_dict()
+
+
+@router.get("/videos/{video_id}/export/jobs/{job_id}")
+def video_export_job_status(
+    video_id: str,
+    job_id: str,
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+):
+    """Poll a render job's status. Owners only — returns 404 to everyone else."""
+    user = _resolve_user_or_401(authorization, homepilot_session)
+    job = render_jobs.get_job_for_owner(job_id, user["id"])
+    if not job or job.video_id != video_id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job.to_dict()
+
+
+@router.get("/videos/{video_id}/export/jobs/{job_id}/download")
+def video_export_job_download(
+    video_id: str,
+    job_id: str,
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+    token: Optional[str] = Query(default=None, description="Bearer token alternative for <a download>"),
+):
+    """Stream the rendered MP4 to its owner.
+
+    Browsers that follow ``<a href download>`` cannot send custom headers,
+    so the endpoint also accepts ``?token=<bearer>`` for that one path.
+    """
+    auth_header = authorization
+    if not auth_header and token:
+        auth_header = f"Bearer {token}"
+    user = _resolve_user_or_401(auth_header, homepilot_session)
+
+    job = render_jobs.get_job_for_owner(job_id, user["id"])
+    if not job or job.video_id != video_id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status != "done" or not job.output_path:
+        raise HTTPException(status_code=409, detail=f"Job not ready (status={job.status})")
+    if not os.path.exists(job.output_path):
+        raise HTTPException(status_code=410, detail="Rendered file no longer available")
+
+    filename = f"{video_id}_{job.kind}.mp4"
+    return FileResponse(
+        job.output_path,
+        media_type="video/mp4",
+        filename=filename,
+    )
 
 
 # ============================================================================
