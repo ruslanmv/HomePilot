@@ -40,6 +40,7 @@ import CreatorStudioSettings, {
   CREATOR_STUDIO_PARAM_DEFAULTS,
   type CreatorStudioGenerationParams,
 } from "./CreatorStudioSettings";
+import CreatorExportWizard from "./components/CreatorExportWizard";
 
 // Types
 type SceneStatus = "pending" | "generating" | "ready" | "error";
@@ -168,6 +169,7 @@ export function CreatorStudioEditor({
   const [storyOutline, setStoryOutline] = useState<StoryOutline | null>(null);
   const [isGeneratingOutline, setIsGeneratingOutline] = useState(false);
   const [showOutlinePanel, setShowOutlinePanel] = useState(false);
+  const [showExportWizard, setShowExportWizard] = useState(false);
 
   // Scene editor state
   const [showSceneEditor, setShowSceneEditor] = useState(false);
@@ -1823,8 +1825,10 @@ export function CreatorStudioEditor({
             <span className="hidden sm:inline">Outline</span>
           </button>
 
-          {/* Export Button */}
+          {/* Export Button — opens the 2-step MP4 export wizard. */}
           <button
+            type="button"
+            onClick={() => setShowExportWizard(true)}
             className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm transition-all"
             title="Export project"
           >
@@ -1833,6 +1837,25 @@ export function CreatorStudioEditor({
           </button>
         </div>
       </header>
+
+      {/* Export Wizard — mounts only while open. The wizard self-cleans
+          its in-flight polling when closed (epoch guard). */}
+      {showExportWizard && (
+        <CreatorExportWizard
+          open={showExportWizard}
+          onClose={() => setShowExportWizard(false)}
+          backendUrl={backendUrl}
+          videoId={projectId}
+          videoTitle={project?.title}
+          disabledReason={
+            scenes.length === 0
+              ? "Add at least one scene before exporting."
+              : scenes.some((s) => s.status !== "ready")
+              ? "All scenes must finish generating before export."
+              : null
+          }
+        />
+      )}
 
       {/* Scene Chips Rail - Like Play Story */}
       {scenes.length > 0 && (
