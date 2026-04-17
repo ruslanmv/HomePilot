@@ -23,6 +23,7 @@
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVoiceController, type VoiceState } from './voice/useVoiceController'
+import { useCallSession } from './call/useCallSession'
 
 export type CallState =
   | 'dialing'
@@ -35,10 +36,10 @@ export type CallState =
 
 // ── Staged lifecycle timings. Numbers chosen so the user *feels* the
 //    handshake instead of getting a hard screen flip: dial (ringing) →
-//    connecting → listening (live). Kept as constants so the whole
-//    cadence is tweakable in one place without editing the state
-//    machine.
-const DIAL_MS = 900      // 📞  "calling…"  — pulse-ring phase
+//    connecting → listening (live). Dial is long enough for ~one full
+//    PSTN ringback cadence (2 s on / 4 s off in the US) so the user
+//    actually hears the phone "ring" before pickup.
+const DIAL_MS = 2200     // 📞  "calling…"  — pulse-ring phase + one PSTN ring
 const CONNECT_MS = 500   // 🔵  "connecting…" — dots-pulse phase
 const END_FADE_MS = 220  // 🔴  end button → modal fade-out → onClose
 
@@ -507,12 +508,24 @@ export interface CallOverlayProps {
    *  seconds. Used by App.tsx to show the "call ended · Ns" toast. */
   onEnded?: (durationSec: number) => void
   /** Route a captured user utterance into the chat pipeline. When
-   *  omitted the call runs in visual-only mode (no STT hook mounts). */
+   *  omitted the call runs in visual-only mode (no STT hook mounts).
+   *  Only used as a fallback when the backend voice_call WS is
+   *  unavailable (VOICE_CALL_ENABLED=false). */
   onSendText?: (text: string) => void
   /** When true the assistant is currently producing its reply (LLM
    *  is thinking). Maps CallState → 'thinking'. Reserved — the
    *  voice controller surfaces this itself once TTS events land. */
   isAssistantThinking?: boolean
+  /** Backend config for the dedicated voice_call session. When
+   *  supplied, the overlay will POST /v1/voice-call/sessions and
+   *  open the WebSocket; if the backend responds with 404/501 we
+   *  cleanly fall back to onSendText (chat REST). */
+  backend?: {
+    backendUrl: string
+    authToken: string | null
+    conversationId?: string | null
+    personaId?: string | null
+  }
 }
 
 // Outer shell — renders nothing when closed so the voice hook inside
@@ -535,6 +548,7 @@ function CallOverlayInner({
   skipDialing = false,
   onEnded,
   onSendText,
+  backend,
 }: CallOverlayProps) {
   const initial: CallState = skipDialing ? 'connecting' : 'dialing'
   const [state, setState] = useState<CallState>(initial)
@@ -567,49 +581,60 @@ function CallOverlayInner({
     return () => window.clearInterval(iv)
   }, [state])
 
-  // Ringtone — two-tone DTMF-ish pulse via WebAudio during dialing.
-  // Kept short, quiet, and strictly confined to the dialing phase so
-  // nothing plays over the persona's TTS or the user's voice.
+  // Ringback tone — PSTN-standard two-frequency synthesis via
+  // WebAudio. US telephony uses 440 Hz + 480 Hz played together, 2 s
+  // on / 4 s off. We play one full on-phase (2 s) during dialing so
+  // the user hears a real phone-style ring before pickup. Nothing
+  // plays during connecting or live — a phone that keeps ringing
+  // after pickup is a broken phone.
   useEffect(() => {
     if (state !== 'dialing') return
+    const AC =
+      (window as unknown as { AudioContext?: typeof AudioContext }).AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AC) return
     let ctx: AudioContext | null = null
-    let stopped = false
-    try {
-      const AC: typeof AudioContext = (window as unknown as {
-        AudioContext?: typeof AudioContext
-        webkitAudioContext?: typeof AudioContext
-      }).AudioContext || (window as unknown as {
-        webkitAudioContext: typeof AudioContext
-      }).webkitAudioContext
-      if (!AC) return
-      ctx = new AC()
-      const playRing = (startAt: number) => {
-        if (!ctx) return
-        const osc = ctx.createOscillator()
-        const gain = ctx.createGain()
-        osc.type = 'sine'
-        osc.frequency.setValueAtTime(440, startAt)
-        osc.frequency.setValueAtTime(480, startAt + 0.4)
-        gain.gain.setValueAtTime(0, startAt)
-        gain.gain.linearRampToValueAtTime(0.05, startAt + 0.05)
-        gain.gain.linearRampToValueAtTime(0, startAt + 0.8)
-        osc.connect(gain).connect(ctx.destination)
-        osc.start(startAt)
-        osc.stop(startAt + 0.85)
-      }
-      playRing(ctx.currentTime + 0.05)
-    } catch {
-      /* audio unavailable — silent fallback is fine */
+    try { ctx = new AC() } catch { return }
+
+    const start = ctx.currentTime + 0.03
+    const durationSec = 2.0     // "on" portion of the 2-on-4-off cadence
+    const peakGain = 0.07       // loud enough to be heard, soft enough to sit
+                                // under the persona's TTS once it lands
+
+    // 440 Hz + 480 Hz fundamentals — the exact CCITT-spec recipe for
+    // "ringing signal, North American" (Precise Tone Plan).
+    const freqs = [440, 480] as const
+    const oscs: OscillatorNode[] = []
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0, start)
+    gain.gain.linearRampToValueAtTime(peakGain, start + 0.08)
+    gain.gain.setValueAtTime(peakGain, start + durationSec - 0.2)
+    gain.gain.linearRampToValueAtTime(0, start + durationSec)
+    gain.connect(ctx.destination)
+
+    for (const f of freqs) {
+      const o = ctx.createOscillator()
+      o.type = 'sine'
+      o.frequency.setValueAtTime(f, start)
+      o.connect(gain)
+      o.start(start)
+      o.stop(start + durationSec + 0.05)
+      oscs.push(o)
     }
+
     return () => {
-      stopped = true
+      for (const o of oscs) { try { o.stop() } catch { /* ignore */ } }
       try { ctx?.close() } catch { /* ignore */ }
-      void stopped
     }
   }, [state])
 
   const handleEnd = useCallback(() => {
     setState('ended')
+    // If the backend session is live, send a graceful call.control
+    // 'end' envelope so the server-side ledger closes cleanly.
+    if (useBackendRef.current) {
+      try { sessionRef.current.end() } catch { /* ignore */ }
+    }
     // Capture the live-phase duration NOW — durationSec is frozen at
     // the last tick because the interval effect tears down on
     // state==='ended'. Close after a short fade so the backdrop +
@@ -628,16 +653,110 @@ function CallOverlayInner({
     return () => window.removeEventListener('keydown', onKey)
   }, [handleEnd])
 
+  // ── Backend voice_call session (preferred transport) ───────────
+  // When a `backend` prop is supplied we attempt the dedicated
+  // voice_call WebSocket. If the backend responds 404/501 we stay
+  // in 'unavailable' and the chat-REST fallback takes over below.
+  const session = useCallSession({
+    enabled: !!backend,
+    backendUrl: backend?.backendUrl ?? '',
+    authToken: backend?.authToken ?? null,
+    request: useMemo(() => ({
+      conversation_id: backend?.conversationId ?? null,
+      persona_id: backend?.personaId ?? null,
+      entry_mode: 'call',
+      device_info: {
+        tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        platform: navigator.platform,
+      },
+    }), [backend?.conversationId, backend?.personaId]),
+  })
+
+  const useBackend =
+    !!backend &&
+    session.status !== 'unavailable' &&
+    session.status !== 'error'
+
   // ── Real voice pipeline ────────────────────────────────────────
-  // The STT callback sends the final transcript through the app's
-  // normal chat path (onSendText === sendTextOrIntent in App.tsx).
-  // If no sink is wired we fall back to a no-op so the hook still
-  // mounts cleanly (e.g. for Storybook / tests).
+  // STT capture → preferred transport. If the backend session is
+  // live we route transcripts through the voice_call WS; otherwise
+  // we fall back to onSendText (regular chat REST) so the overlay
+  // still works when VOICE_CALL_ENABLED is off server-side.
   const onSendTextRef = useRef(onSendText)
   useEffect(() => { onSendTextRef.current = onSendText }, [onSendText])
+  const sessionRef = useRef(session)
+  useEffect(() => { sessionRef.current = session }, [session])
+  const useBackendRef = useRef(useBackend)
+  useEffect(() => { useBackendRef.current = useBackend }, [useBackend])
+
   const voice = useVoiceController((text: string) => {
-    onSendTextRef.current?.(text)
+    if (useBackendRef.current) {
+      sessionRef.current.sendTranscript(text)
+    } else {
+      onSendTextRef.current?.(text)
+    }
   })
+
+  // Speak assistant replies that land over the WS. (In the chat-REST
+  // fallback path, the existing assistant-message pipeline already
+  // triggers TTS — so this effect is a no-op there.)
+  useEffect(() => {
+    if (!useBackend) return
+    const unsub = session.onAssistantTranscript((p) => {
+      try {
+        const w = window as unknown as {
+          SpeechService?: { speak?: (t: string) => void }
+        }
+        if (w.SpeechService?.speak) { w.SpeechService.speak(p.text); return }
+        if ('speechSynthesis' in window) {
+          window.speechSynthesis.speak(new SpeechSynthesisUtterance(p.text))
+        }
+      } catch { /* TTS unavailable — silent fallback */ }
+    })
+    return unsub
+  }, [useBackend, session])
+
+  // Call-center-style auto-greeting — the moment the backend session
+  // goes live, prompt the persona to answer first (the way a real
+  // person picks up the phone). We send a short synthetic transcript
+  // the backend's persona_call phase machine will treat as turn 0 of
+  // the opening sequence — it responds with a contextual "hello?" /
+  // "hey, what's up?" in the persona's own voice.
+  //
+  // This is a one-shot per call session. `greetedRef` guards against
+  // reconnect storms triggering a second "hello".
+  const greetedRef = useRef(false)
+  useEffect(() => {
+    if (!useBackend) return
+    if (session.callState !== 'live') return
+    if (greetedRef.current) return
+    greetedRef.current = true
+    // One very short open-channel ping. persona_call reads this as the
+    // caller-initiated summons in the Schegloff opening structure and
+    // the persona answers.
+    session.sendTranscript('[phone-call-open]')
+  }, [useBackend, session])
+
+  // Reset the greet guard when a fresh session is (re)created.
+  useEffect(() => {
+    if (session.status === 'creating') greetedRef.current = false
+  }, [session.status])
+
+  // Backchannel + filler events are short, low-volume TTS clips.
+  // We route them through the same speak path; they're short enough
+  // (one token) that interrupting a reply mid-stream is fine.
+  useEffect(() => {
+    if (!useBackend) return
+    const unsub1 = session.onAssistantBackchannel((p) => {
+      try { window.speechSynthesis?.speak?.(new SpeechSynthesisUtterance(p.token)) }
+      catch { /* ignore */ }
+    })
+    const unsub2 = session.onAssistantFiller((p) => {
+      try { window.speechSynthesis?.speak?.(new SpeechSynthesisUtterance(p.token)) }
+      catch { /* ignore */ }
+    })
+    return () => { unsub1(); unsub2() }
+  }, [useBackend, session])
 
   // Enter hands-free as soon as the line is "connected" so the user
   // can just start talking. Drop it when the modal unmounts.
@@ -675,6 +794,9 @@ function CallOverlayInner({
       } else {
         voice.setHandsFree(true)
         setState('listening')
+      }
+      if (useBackendRef.current) {
+        try { sessionRef.current.sendUiState({ muted: next }) } catch { /* ignore */ }
       }
       return next
     })

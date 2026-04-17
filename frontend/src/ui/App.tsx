@@ -5219,6 +5219,14 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           return `${base}/files/${clean}${tok ? `?token=${encodeURIComponent(tok)}` : ''}`
         })()}
         onSendText={(text) => sendTextOrIntent(text)}
+        backend={{
+          backendUrl: settings.backendUrl,
+          authToken: localStorage.getItem('homepilot_auth_token'),
+          conversationId: chatConversationId,
+          personaId: currentProject?.persona_agent
+            ? (currentProject.persona_agent.id as string | undefined) || null
+            : null,
+        }}
       />
 
       {/* Call-ended summary toast. Appears once per end, sits above
