@@ -87,7 +87,47 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
     setSettings(readTtsProviderSettings(activeId))
   }, [activeId])
 
-  const schema = active?.getSettingsSchema() ?? []
+  // When the default engine is selected the host panel already renders
+  // a dedicated "Assistant Voice" / "System Voice" dropdown above us
+  // that covers voice + rate + pitch for Web Speech. Rendering our
+  // schema-driven twin on top of it is pure duplication — skip it
+  // unless the user has opted into a non-default engine (Piper etc.).
+  const isDefaultEngine = activeId === 'web-speech-api'
+  const schema = active && !isDefaultEngine ? active.getSettingsSchema() : []
+
+  // Test-voice state: the button speaks through whichever engine is
+  // active right now so the user can hear their pick without leaving
+  // Settings. Mirrors the Preview button in the Creator Studio wizard.
+  const [testing, setTesting] = useState(false)
+  const [testError, setTestError] = useState<string | null>(null)
+  const onTest = () => {
+    setTestError(null)
+    if (!active) return
+    if (testing) {
+      try { active.stop() } catch { /* ignore */ }
+      setTesting(false)
+      return
+    }
+    setTesting(true)
+    const voiceId = typeof settings.voiceId === 'string' ? settings.voiceId : undefined
+    const rate = typeof settings.rate === 'number' ? settings.rate : undefined
+    const pitch = typeof settings.pitch === 'number' ? settings.pitch : undefined
+    active
+      .speak('Hello, this is a preview of your selected voice.', {
+        voiceId,
+        rate,
+        pitch,
+        onEnd: () => setTesting(false),
+        onError: (err) => {
+          setTestError(String(err?.message || err))
+          setTesting(false)
+        },
+      })
+      .catch((err) => {
+        setTestError(String(err?.message || err))
+        setTesting(false)
+      })
+  }
 
   const onChangeField = (key: string, value: string | number | boolean) => {
     const next = { ...settings, [key]: value }
@@ -124,7 +164,29 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
           )}
         </div>
 
-        {active ? (
+        {/* Test voice button — always visible so the user can verify
+            their pick works (matches the "Preview voice" affordance
+            in the Creator Studio export wizard). */}
+        {active && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onTest}
+              className="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white/80"
+              aria-pressed={testing}
+            >
+              {testing ? 'Stop' : 'Test voice'}
+            </button>
+            <span className="text-[10px] text-white/40">
+              Hello, this is a preview of your selected voice.
+            </span>
+          </div>
+        )}
+        {testError ? (
+          <div className="text-[10px] text-red-300/80">{testError}</div>
+        ) : null}
+
+        {active && !isDefaultEngine ? (
           schema.map((field) => {
             const resolved =
               active.id === 'web-speech-api' && field.kind === 'select' && field.key === 'voiceId'
@@ -197,13 +259,13 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
               </label>
             )
           })
-        ) : (
+        ) : !active ? (
           <div className="text-[10px] text-white/40">
             No TTS engine available in this environment.
           </div>
-        )}
+        ) : null}
 
-        {active && !active.capabilities.pitch && (
+        {active && !isDefaultEngine && !active.capabilities.pitch && (
           <div className="text-[10px] text-white/40 italic">
             The {active.displayName.split(' (')[0]} engine does not support a pitch control in
             playback. The Creator Studio export applies pitch post-synthesis via ffmpeg.

@@ -16,6 +16,11 @@
 // Side-effect imports: each provider self-registers on first import.
 import './providers/webSpeech/provider'
 import './providers/piper/provider'
+// Side-effect import: wraps window.SpeechService (the legacy in-app TTS
+// path at App.tsx:4012) so picking Piper from Settings actually plays
+// Piper audio. No-op when engine=web-speech-api so default users are
+// unaffected.
+import './shimSpeechService'
 
 export type {
   TtsProvider,
