@@ -21,6 +21,7 @@ import {
   Copy,
   RotateCw,
   PenLine,
+  Phone,
   Users,
   EyeOff,
   BookOpen,
@@ -1580,6 +1581,7 @@ function ChatState({
   endRef,
   mode,
   onNewConversation,
+  onStartCall,
   onRetryMessage,
   chatSettings,
   onUpdateChatSettings,
@@ -1598,6 +1600,9 @@ function ChatState({
   endRef: React.RefObject<HTMLDivElement>
   mode: Mode
   onNewConversation: () => void
+  /** Primary call action — opens the live-voice mode. Optional so
+   *  callers that don't want the button can omit it. */
+  onStartCall?: () => void
   onRetryMessage: (id: string) => void
   chatSettings: ChatScopedSettings
   onUpdateChatSettings: (next: ChatScopedSettings) => void
@@ -1613,6 +1618,24 @@ function ChatState({
 }) {
   const { copied, copy } = useCopyMessage()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
+  // One-shot "Talk live" tooltip — shown once per user, persisted in
+  // localStorage so it never reappears. Dismissed on any call button
+  // interaction.
+  const [showCallHint, setShowCallHint] = useState<boolean>(() => {
+    try {
+      return (
+        !!onStartCall &&
+        localStorage.getItem('homepilot_call_hint_seen_v1') !== '1'
+      )
+    } catch {
+      return false
+    }
+  })
+  const handleStartCall = useCallback(() => {
+    try { localStorage.setItem('homepilot_call_hint_seen_v1', '1') } catch {}
+    setShowCallHint(false)
+    onStartCall?.()
+  }, [onStartCall])
   // Local overrides for view-pack angle switching (keyed by message id)
   const [angleOverrides, setAngleOverrides] = useState<Record<string, { angle: string; url: string }>>({})
 
@@ -1650,27 +1673,55 @@ function ChatState({
 
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
-      {/* Top-right fixed: Chat settings gear + New Chat icon (Phase 2, additive) */}
+      {/* Top-right fixed: primary Call action + utility tools.
+          Layout rule: the call button is a standalone primary action
+          and is visually separated from the grouped utility icons by a
+          12 px spacer (best practice — different meaning, different
+          group). */}
       <div className="fixed top-3 right-5 z-50">
-        <div className="relative flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setChatSettingsOpen((v) => !v)}
-            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-            title="Chat settings"
-            aria-label="Chat settings"
-          >
-            <Settings size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={onNewConversation}
-            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-            title="New Chat"
-            aria-label="New Chat"
-          >
-            <PenLine size={16} />
-          </button>
+        <div className="relative flex items-center">
+          {onStartCall && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={handleStartCall}
+                className="w-10 h-10 flex items-center justify-center rounded-full bg-emerald-500 text-white shadow-[0_0_0_6px_rgba(16,185,129,0.20)] hover:bg-emerald-600 hover:shadow-[0_0_0_8px_rgba(16,185,129,0.28)] hover:scale-[1.05] transition-all duration-150"
+                title="Start live call"
+                aria-label="Start live call"
+              >
+                <Phone size={18} />
+              </button>
+              {showCallHint && (
+                <div
+                  role="status"
+                  className="absolute right-0 top-full mt-2 whitespace-nowrap rounded-lg border border-emerald-300/35 bg-black/85 px-2.5 py-1.5 text-[11px] text-emerald-200 shadow-xl pointer-events-none"
+                >
+                  📞 Talk live
+                </div>
+              )}
+            </div>
+          )}
+          {onStartCall && <div className="w-3" aria-hidden="true" />}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setChatSettingsOpen((v) => !v)}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              title="Chat settings"
+              aria-label="Chat settings"
+            >
+              <Settings size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={onNewConversation}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              title="New Chat"
+              aria-label="New Chat"
+            >
+              <PenLine size={16} />
+            </button>
+          </div>
           <ChatSettingsPopover
             open={chatSettingsOpen}
             onClose={() => setChatSettingsOpen(false)}
@@ -5049,6 +5100,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               endRef={endRef}
               mode={mode}
               onNewConversation={onNewConversation}
+              onStartCall={() => setMode('voice')}
               onRetryMessage={retryFailedMessage}
               chatSettings={chatSettings}
               onUpdateChatSettings={updateChatSettings}
@@ -5124,6 +5176,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             endRef={endRef}
             mode={mode}
             onNewConversation={onNewConversation}
+            onStartCall={() => setMode('voice')}
             onRetryMessage={retryFailedMessage}
             chatSettings={chatSettings}
             onUpdateChatSettings={updateChatSettings}
