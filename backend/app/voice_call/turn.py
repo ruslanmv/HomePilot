@@ -44,6 +44,7 @@ async def run_turn(
     model: str,
     auth_bearer: Optional[str] = None,
     system_prompt: Optional[str] = None,
+    additional_system: Optional[str] = None,
     history: Optional[List[Dict[str, str]]] = None,
     extra_headers: Optional[Dict[str, str]] = None,
 ) -> str:
@@ -63,6 +64,12 @@ async def run_turn(
     system_prompt / history:
         Optional pre-built context. Left empty the endpoint will attach
         its own persona / memory context based on the model.
+    additional_system:
+        Optional extra system message appended AFTER ``system_prompt``
+        (or on its own if no ``system_prompt`` is provided). Additive
+        only — used by ``persona_call`` to inject a per-turn phone-call
+        suffix WITHOUT touching the persona's own system prompt that
+        the compat endpoint already injects for ``persona:*`` models.
 
     Returns
     -------
@@ -73,6 +80,8 @@ async def run_turn(
     messages: List[Dict[str, str]] = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
+    if additional_system:
+        messages.append({"role": "system", "content": additional_system})
     if history:
         messages.extend(history)
     messages.append({"role": "user", "content": user_text})

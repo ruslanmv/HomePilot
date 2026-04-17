@@ -199,19 +199,107 @@ async def run_session_ws(
                     and f"persona:{session['persona_id']}"
                     or "llama3:8b"
                 )
+
+                # ── persona_call hook ───────────────────────────────
+                # Additive, behind its own feature flag. Composes a
+                # per-turn system SUFFIX (never touches the persona's
+                # base system prompt) and — if cfg.apply is True —
+                # appends it as an extra system message on the chat
+                # call. Wraps the turn in a filler scheduler so a long
+                # LLM wait produces a "hmm…" event within 600 ms.
+                pc_additional_system: Optional[str] = None
+                pc_persona_id: Optional[str] = session.get("persona_id")
                 try:
-                    assistant_text = await turn.run_turn(
-                        user_text=text_in,
-                        model=model,
-                        auth_bearer=query_bearer,
+                    from ..persona_call import (
+                        config as _pc_cfg_mod,
+                        context as _pc_context,
+                        directive as _pc_directive,
+                        facets as _pc_facets,
+                        latency as _pc_latency,
                     )
+                    _pc_cfg = _pc_cfg_mod.load()
+                except Exception:
+                    _pc_cfg = None  # persona_call not importable; skip
+
+                _pc_facets_obj = None
+                if _pc_cfg is not None and _pc_cfg.enabled:
+                    try:
+                        _pc_env = _pc_context.compute_env(
+                            tz=(session.get("client_platform") and None),
+                            weeks_since_last_call=-1,
+                        )
+                        _pc_facets_obj = _pc_facets.for_persona_id(pc_persona_id)
+                        composed = _pc_directive.compose(
+                            session_id=sid,
+                            persona_id=pc_persona_id,
+                            user_text=text_in,
+                            env=_pc_env,
+                            cfg=_pc_cfg,
+                            facets=_pc_facets_obj,
+                        )
+                        if _pc_cfg.apply and composed.system_suffix:
+                            pc_additional_system = composed.system_suffix
+                    except Exception as _pc_err:
+                        # Shadow fail — turn still runs without the
+                        # phone-call suffix. persona_call must never
+                        # break an otherwise-working call.
+                        logger.warning(
+                            "[persona_call] compose skipped: %s", _pc_err
+                        )
+
+                async def _pc_send(env_: dict) -> None:
+                    try:
+                        await ws.send_text(
+                            json.dumps(env_, separators=(",", ":"))
+                        )
+                    except Exception:
+                        pass
+
+                try:
+                    if _pc_cfg is not None and _pc_cfg.enabled and _pc_facets_obj is not None:
+                        async with _pc_latency.FillerScheduler(
+                            send=_pc_send,
+                            facets=_pc_facets_obj,
+                            cfg=_pc_cfg,
+                            session_id=sid,
+                        ):
+                            assistant_text = await turn.run_turn(
+                                user_text=text_in,
+                                model=model,
+                                auth_bearer=query_bearer,
+                                additional_system=pc_additional_system,
+                            )
+                    else:
+                        assistant_text = await turn.run_turn(
+                            user_text=text_in,
+                            model=model,
+                            auth_bearer=query_bearer,
+                            additional_system=pc_additional_system,
+                        )
                 except Exception as exc:
                     logger.warning("[voice_call] turn failed: %s", exc)
                     await _send_error(ws, sid, "turn_failed", str(exc)[:400])
                     continue
+
                 await _send(ws, "transcript.final",
                             {"role": "assistant", "text": assistant_text},
                             session_id=sid)
+
+                # Record the reply into the anti-repetition ledger so
+                # the NEXT turn can forbid the just-used opener/ack.
+                if _pc_cfg is not None and _pc_cfg.enabled:
+                    try:
+                        _pc_directive.record_persona_reply(
+                            session_id=sid,
+                            persona_id=pc_persona_id,
+                            reply=assistant_text,
+                            cfg=_pc_cfg,
+                        )
+                    except Exception as _pc_err:
+                        logger.warning(
+                            "[persona_call] record_reply skipped: %s",
+                            _pc_err,
+                        )
 
             else:
                 # Forward-compat: unknown event type is a no-op, not an

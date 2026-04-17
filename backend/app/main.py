@@ -177,6 +177,26 @@ except Exception as _vc_err:  # noqa: BLE001
     # Deliberate broad catch: this entire feature is optional. Log and move on.
     print(f"[voice_call] DISABLED due to import error: {_vc_err}")
 
+# --- Persona call (/v1/persona-call/*) — ADDITIVE, FEATURE-FLAGGED -----------
+# Phone-call conversational dynamics + per-turn system suffix composer.
+# Off by default. Enable with ``PERSONA_CALL_ENABLED=true``. The module
+# operates behind voice_call/ws.py — the HTTP router is minor (facets
+# lookup, state inspection, shadow-directive audit). Independent flag so
+# it can ship in shadow-compose mode (``PERSONA_CALL_APPLY=false``)
+# before any prompt surface actually changes.
+try:
+    from .persona_call.config import load as _persona_call_load_config
+    _persona_call_cfg = _persona_call_load_config()
+    if _persona_call_cfg.enabled:
+        from .persona_call.router import build_router as _build_pc_router
+        app.include_router(_build_pc_router(_persona_call_cfg))
+        print(
+            f"[persona_call] enabled (apply={_persona_call_cfg.apply}) — "
+            "routes mounted under /v1/persona-call"
+        )
+except Exception as _pc_err:  # noqa: BLE001
+    print(f"[persona_call] DISABLED due to import error: {_pc_err}")
+
 # Include Marketplace routes (/v1/marketplace/*)
 app.include_router(marketplace_router)
 
