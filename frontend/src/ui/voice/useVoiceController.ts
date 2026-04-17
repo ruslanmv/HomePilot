@@ -127,16 +127,23 @@ export function useVoiceController(
     stateRef.current = state;
   }, [state]);
 
-  // THINKING state timeout - recover from stuck state if TTS doesn't start
+  // THINKING state timeout — safety net for when the backend answers in
+  // text-only (no TTS) and no SPEAKING transition ever fires. Previously
+  // 30 s, which left the user unable to speak again for half a minute
+  // after every text-only AI reply. 4 s matches human turn-taking: if
+  // the AI hasn't started to speak within 4 s of receiving the user's
+  // utterance we assume it is not going to, and return to IDLE so the
+  // mic becomes available again. When TTS DOES start, the SPEAKING
+  // transition below clears this timer, so it never interrupts real
+  // speech playback — only the no-TTS corner case.
   useEffect(() => {
     if (state === 'THINKING' && isHandsFree) {
-      // Set a 30-second timeout to recover from stuck THINKING state
       thinkingTimeoutRef.current = setTimeout(() => {
         if (stateRef.current === 'THINKING') {
           console.warn('[VoiceController] THINKING timeout - returning to IDLE');
           setState('IDLE');
         }
-      }, 30000);
+      }, 4000);
     } else {
       // Clear timeout when leaving THINKING state
       if (thinkingTimeoutRef.current) {

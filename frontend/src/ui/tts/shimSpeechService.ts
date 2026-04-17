@@ -98,22 +98,56 @@ export function install(): void {
       onEnd?: () => void
       onError?: (err: unknown) => void
     }
+
+    // CRITICAL: the legacy VoiceController polls ``svc.isSpeaking`` at 50 ms
+    // to drive its SPEAKING → IDLE transition. The legacy speak() path
+    // flipped this flag directly on itself when speechSynthesis fired
+    // start/end events. Our provider path plays audio via Web Audio (for
+    // Piper) or speechSynthesis (for the Web Speech provider with no
+    // isSpeaking mirror), so we have to mirror the flag ourselves —
+    // otherwise the controller's SPEAKING state never clears and the
+    // user has to wait for the ~30s THINKING-timeout safety net after
+    // every AI response before they can talk again.
+    const markSpeaking = (v: boolean) => {
+      try {
+        svc.isSpeaking = v as unknown as AnyFn
+      } catch {
+        /* best-effort — some implementations may freeze the object */
+      }
+    }
+    markSpeaking(true)
+
+    const clearFlag = () => markSpeaking(false)
     return provider
       .speak(text, {
         voiceId,
         rate,
         pitch,
         onStart: cb.onStart,
-        onEnd: cb.onEnd,
-        onError: (err) => cb.onError?.(err),
+        onEnd: () => {
+          clearFlag()
+          try { cb.onEnd?.() } catch { /* ignore */ }
+        },
+        onError: (err) => {
+          clearFlag()
+          try { cb.onError?.(err) } catch { /* ignore */ }
+        },
       })
-      .catch((err) => {
-        // Last-resort fallback: if the provider blows up mid-synthesis
-        // (e.g. Piper model download failure), speak through the
-        // browser engine so the user still hears the message.
-        try { cb.onError?.(err) } catch { /* ignore */ }
-        if (_originalSpeak) return _originalSpeak(text, callbacks)
-      })
+      .then(
+        () => {
+          // Providers that resolve without calling onEnd still need the
+          // flag cleared — belt-and-braces for both WebSpeech and Piper.
+          clearFlag()
+        },
+        (err) => {
+          clearFlag()
+          // Last-resort fallback: if the provider blows up mid-synthesis
+          // (e.g. Piper model download failure), speak through the
+          // browser engine so the user still hears the message.
+          try { cb.onError?.(err) } catch { /* ignore */ }
+          if (_originalSpeak) return _originalSpeak(text, callbacks)
+        },
+      )
   }) as AnyFn
 
   svc.stopSpeaking = (() => {
@@ -121,6 +155,9 @@ export function install(): void {
     if (engineId !== 'web-speech-api') {
       const provider = getTtsProvider(engineId)
       try { provider?.stop() } catch { /* ignore */ }
+      // Mirror the legacy behavior: isSpeaking drops to false on stop
+      // so the VoiceController's SPEAKING→IDLE transition fires.
+      try { svc.isSpeaking = false as unknown as AnyFn } catch { /* ignore */ }
     }
     return _originalStop ? _originalStop() : undefined
   }) as AnyFn
