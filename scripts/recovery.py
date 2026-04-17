@@ -397,6 +397,179 @@ def cmd_clear_sessions(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_asset_file(rel_path: str, uploads_dir: Path) -> Optional[Path]:
+    """Map a file_assets.rel_path to an on-disk file. The backend stores
+    rel_path either as a relative segment under UPLOAD_DIR ("users/<u>/
+    images/foo.png") or, for some legacy rows, as an absolute path.
+    Return whichever exists, or None."""
+    if not rel_path:
+        return None
+    p = Path(rel_path)
+    if p.is_absolute() and p.exists():
+        return p
+    candidate = (uploads_dir / rel_path).resolve()
+    if candidate.exists():
+        return candidate
+    return None
+
+
+def _sanitize_for_path(name: str) -> str:
+    """Make a username safe to use as a directory segment."""
+    import re
+    clean = re.sub(r"[^A-Za-z0-9_.-]+", "_", name or "unknown").strip("._-")
+    return clean or "unknown"
+
+
+def cmd_recover_images(args: argparse.Namespace) -> int:
+    """Export every image asset for each user into
+    recovery-images/<username>/, optionally zipping each one.
+
+    Rationale: when the HDD fills up or the backend breaks, the files in
+    UPLOAD_DIR are still on disk — but without the running app it's
+    impossible to tell which image belongs to which account. This walks
+    file_assets and produces a per-user folder (or ZIP) containing every
+    image the user owns, so people can recover their own data from a
+    broken install.
+    """
+    import shutil as _shutil
+    import zipfile
+
+    db = _resolve_db_path()
+    if not db.exists():
+        _die(f"No DB at {db}.")
+    uploads = _resolve_uploads_dir()
+    if not uploads.exists():
+        print(f"  Uploads dir {uploads} does not exist — no files to recover.")
+        return 0
+
+    out_root = Path(args.out).expanduser().resolve() if args.out else (REPO_ROOT / "recovery-images").resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    con = sqlite3.connect(str(db))
+    con.row_factory = sqlite3.Row
+    cur = con.cursor()
+
+    # Resolve target users.
+    where = ""
+    params: tuple = ()
+    if args.user:
+        cur.execute(
+            "SELECT id, username FROM users WHERE username = ? COLLATE NOCASE",
+            (args.user.strip(),),
+        )
+        row = cur.fetchone()
+        if row is None:
+            con.close()
+            _die(f"No user named {args.user!r} found. Run `make recovery-list-users`.")
+            return 1
+        users = [(row["id"], row["username"])]
+    else:
+        cur.execute("SELECT id, username FROM users ORDER BY username COLLATE NOCASE")
+        users = [(r["id"], r["username"]) for r in cur.fetchall()]
+    if not users:
+        con.close()
+        print("  No users in the database.")
+        return 0
+
+    summary: list[tuple[str, int, int, int]] = []  # (username, copied, missing, bytes)
+    grand_copied = 0
+    grand_missing = 0
+    grand_bytes = 0
+
+    for uid, uname in users:
+        cur.execute(
+            """
+            SELECT id, rel_path, mime, size_bytes, original_name, project_id, created_at
+              FROM file_assets
+             WHERE user_id = ?
+               AND (kind = 'image' OR mime LIKE 'image/%')
+             ORDER BY created_at
+            """,
+            (uid,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            summary.append((uname, 0, 0, 0))
+            continue
+
+        safe = _sanitize_for_path(uname)
+        user_dir = out_root / safe
+        # Re-use the same bucket on re-run so duplicates don't explode
+        # disk, but ensure the directory exists.
+        user_dir.mkdir(parents=True, exist_ok=True)
+
+        copied = 0
+        missing = 0
+        total_bytes = 0
+        manifest_lines = [
+            "# HomePilot recovery-images manifest",
+            f"# username={uname}",
+            f"# user_id={uid}",
+            f"# generated_at={_dt.datetime.now().isoformat()}",
+            "# columns: asset_id | size | original_name | rel_path | on_disk",
+            "",
+        ]
+
+        zip_target: Optional[zipfile.ZipFile] = None
+        if args.zip:
+            zip_path = out_root / f"{safe}.zip"
+            zip_target = zipfile.ZipFile(
+                str(zip_path), "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True,
+            )
+
+        for r in rows:
+            src = _resolve_asset_file(r["rel_path"] or "", uploads)
+            original = r["original_name"] or Path(r["rel_path"] or "").name or f"{r['id']}.bin"
+            if src is None:
+                missing += 1
+                manifest_lines.append(
+                    f"MISSING | {r['id']} | {r['size_bytes']} | {original} | {r['rel_path']} | (not on disk)"
+                )
+                continue
+            # Namespace the file in the output by asset id so we never
+            # collide when two images share an original_name.
+            out_name = f"{r['id'][:12]}__{original}"
+            if zip_target is not None:
+                zip_target.write(str(src), arcname=out_name)
+            else:
+                dst = user_dir / out_name
+                if not dst.exists():
+                    _shutil.copy2(src, dst)
+            copied += 1
+            total_bytes += (r["size_bytes"] or src.stat().st_size)
+            manifest_lines.append(
+                f"OK      | {r['id']} | {r['size_bytes']} | {original} | {r['rel_path']} | {src}"
+            )
+
+        if zip_target is not None:
+            # Stash the manifest inside the zip too.
+            zip_target.writestr(
+                "MANIFEST.txt", "\n".join(manifest_lines) + "\n",
+            )
+            zip_target.close()
+        else:
+            (user_dir / "MANIFEST.txt").write_text(
+                "\n".join(manifest_lines) + "\n", encoding="utf-8",
+            )
+        summary.append((uname, copied, missing, total_bytes))
+        grand_copied += copied
+        grand_missing += missing
+        grand_bytes += total_bytes
+
+    con.close()
+
+    print(f"  Output:  {out_root}")
+    print(f"  Users:   {len(users)}")
+    print(f"  Files:   {grand_copied} recovered, {grand_missing} missing-on-disk")
+    print(f"  Bytes:   {_fmt_size(grand_bytes)}")
+    print()
+    print(f"  {'username':<24} {'images':>8} {'missing':>8} {'size':>12}")
+    print(f"  {'-' * 24} {'-' * 8} {'-' * 8} {'-' * 12}")
+    for uname, copied, missing, nbytes in summary:
+        print(f"  {uname:<24} {copied:>8} {missing:>8} {_fmt_size(nbytes):>12}")
+    return 0
+
+
 def cmd_prune_uploads(args: argparse.Namespace) -> int:
     uploads = _resolve_uploads_dir()
     if not uploads.exists():
@@ -466,6 +639,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     pr.add_argument("--min-mb", type=int, default=100)
 
+    ri = sub.add_parser(
+        "recover-images",
+        help="Export every image asset per user into recovery-images/<name>/ "
+             "(or a per-user ZIP). Works from the file_assets table so each "
+             "image lands under the account that owns it.",
+    )
+    ri.add_argument("--user", default="", help="limit to one username (default: all users)")
+    ri.add_argument("--zip", action="store_true", help="produce one ZIP per user instead of a folder")
+    ri.add_argument("--out", default="", help="output root (default: recovery-images/ in the repo)")
+
     return p
 
 
@@ -477,6 +660,7 @@ _COMMANDS = {
     "unlock-all": cmd_unlock_all,
     "clear-sessions": cmd_clear_sessions,
     "prune-uploads": cmd_prune_uploads,
+    "recover-images": cmd_recover_images,
 }
 
 

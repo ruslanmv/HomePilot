@@ -32,7 +32,7 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         build-installer build-container \
         recovery recovery-status recovery-backup recovery-list-users \
         recovery-reset-password recovery-unlock-all recovery-clear-sessions \
-        recovery-prune-uploads
+        recovery-prune-uploads recovery-images file-manager file-manager-scan
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -1651,6 +1651,14 @@ recovery: ## Show the recovery menu
 	@echo "                                                        Reset EVERY account"
 	@echo "    make recovery-clear-sessions                        Invalidate all tokens"
 	@echo ""
+	@echo "  Per-user data recovery:"
+	@echo "    make recovery-images [USER=<name>] [ZIP=1] [OUT=<path>]"
+	@echo "                                  Export every image tied to each account"
+	@echo "                                  into recovery-images/<username>/ (folder)"
+	@echo "                                  or recovery-images/<username>.zip (ZIP=1)."
+	@echo "    make file-manager             Start the File Manager at :9090"
+	@echo "                                  (browse + ZIP-export every generated asset)"
+	@echo ""
 	@echo "  Tip: if make start fails with 'out of disk space', run recovery-status"
 	@echo "       first, then prune-uploads, then restart."
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -1686,3 +1694,38 @@ recovery-clear-sessions: ## Invalidate every auth token; forces re-login
 
 recovery-prune-uploads: ## List uploaded files ≥ MIN_MB (default 100; read-only)
 	@$(RECOVERY_PY) prune-uploads --min-mb $(if $(MIN_MB),$(MIN_MB),100)
+
+recovery-images: ## Export every image per user to recovery-images/<user>/ (USER=<name> [ZIP=1] [OUT=<path>])
+	@$(RECOVERY_PY) recover-images \
+		$(if $(USER),--user "$(USER)",) \
+		$(if $(ZIP),--zip,) \
+		$(if $(OUT),--out "$(OUT)",)
+
+# --- File Manager -------------------------------------------------------------
+# Browse + ZIP-export every generated image/video across the HomePilot stack
+# (UPLOAD_DIR, ComfyUI output/input, project assets). Runs a small HTTP
+# gallery at http://localhost:9090.
+
+FILE_MANAGER_PY ?= python3 scripts/file-manager.py
+
+file-manager: ## Start the HomePilot File Manager (web gallery on :9090)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  HomePilot File Manager"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Open:        http://localhost:$(if $(PORT),$(PORT),9090)"
+	@echo "  Stop:        Ctrl+C"
+	@echo "  Hint:        to include extra folders, pass EXTRA_DIRS=\"/a /b\""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@$(FILE_MANAGER_PY) \
+		--port $(if $(PORT),$(PORT),9090) \
+		$(if $(EXTRA_DIRS),--extra-dirs $(EXTRA_DIRS),) \
+		$(if $(SESSION),--session "$(SESSION)",) \
+		$(if $(BACKEND_URL),--backend-url "$(BACKEND_URL)",) \
+		$(if $(COMFY_URL),--comfy-url "$(COMFY_URL)",)
+
+file-manager-scan: ## Dry-run: scan every source and print a file list (no server)
+	@$(FILE_MANAGER_PY) --scan-only \
+		$(if $(EXTRA_DIRS),--extra-dirs $(EXTRA_DIRS),) \
+		$(if $(SESSION),--session "$(SESSION)",) \
+		$(if $(BACKEND_URL),--backend-url "$(BACKEND_URL)",) \
+		$(if $(COMFY_URL),--comfy-url "$(COMFY_URL)",)
