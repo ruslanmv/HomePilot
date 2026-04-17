@@ -27,6 +27,17 @@ dependencies = [
   "pooch>=1.6.0",
   "scikit-image>=0.21.0",
   "psutil>=5.9.0",
+  # Configuration files (agentic suite manifests, MCP installer, server
+  # manager, and sync service all import yaml).
+  "PyYAML>=6.0",
+  # Password hashing for the multi-user auth backend (app/users.py imports
+  # bcrypt with a SHA-256+salt fallback when missing; ship bcrypt by default
+  # so production deployments use the strong path).
+  "bcrypt>=4.0.0",
+  # LangGraph persona orchestration (app/langgraph_personas/*). Without
+  # these, tests/test_langgraph_personas.py fails at import time.
+  "langgraph>=0.2.0",
+  "langchain-core>=0.3.0",
 ]
 
 [project.optional-dependencies]
