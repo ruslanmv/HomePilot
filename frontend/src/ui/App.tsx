@@ -5202,6 +5202,23 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         }}
         skipDialing={callSkipDialing}
         onEnded={(durationSec) => setLastEndedCall({ durationSec })}
+        personaName={currentProject?.name || 'Assistant'}
+        avatarUrl={(() => {
+          // Resolve the persona's thumbnail the same way
+          // PersonaSettingsPanel does: prefer
+          // persona_appearance.selected_thumb_filename, then
+          // .selected_filename, wrapped in the /files/ auth URL.
+          const pap = (currentProject?.persona_appearance as Record<string, unknown> | undefined) || {}
+          const rel =
+            (pap.selected_thumb_filename as string | undefined) ||
+            (pap.selected_filename as string | undefined)
+          if (!rel) return null
+          const base = settings.backendUrl.replace(/\/+$/, '')
+          const tok = localStorage.getItem('homepilot_auth_token') || ''
+          const clean = rel.replace(/^\/+/, '')
+          return `${base}/files/${clean}${tok ? `?token=${encodeURIComponent(tok)}` : ''}`
+        })()}
+        onSendText={(text) => sendTextOrIntent(text)}
       />
 
       {/* Call-ended summary toast. Appears once per end, sits above

@@ -21,7 +21,8 @@
  * This pass wires the visual shell. Real STT/TTS plumbing from
  * useVoiceController maps `listening/thinking/speaking` later.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useVoiceController, type VoiceState } from './voice/useVoiceController'
 
 export type CallState =
   | 'dialing'
@@ -71,6 +72,20 @@ function hpCallStateColor(state: CallState): string {
     case 'muted':
     case 'ended':     return HP_CALL.text3
     default:          return HP_CALL.text2
+  }
+}
+
+// Map the voice-controller's internal machine onto our UI machine.
+// Returns null for states we don't want to reflect (OFF — overlay is
+// open so "off" is not a meaningful UI frame; render last mapped).
+function mapVoiceState(s: VoiceState): CallState | null {
+  switch (s) {
+    case 'LISTENING': return 'listening'
+    case 'THINKING':  return 'thinking'
+    case 'SPEAKING':  return 'speaking'
+    case 'IDLE':      return 'listening'
+    case 'OFF':       return null
+    default:          return null
   }
 }
 
@@ -491,10 +506,27 @@ export interface CallOverlayProps {
   /** Fired when the call ends; receives the live-phase duration in
    *  seconds. Used by App.tsx to show the "call ended · Ns" toast. */
   onEnded?: (durationSec: number) => void
+  /** Route a captured user utterance into the chat pipeline. When
+   *  omitted the call runs in visual-only mode (no STT hook mounts). */
+  onSendText?: (text: string) => void
+  /** When true the assistant is currently producing its reply (LLM
+   *  is thinking). Maps CallState → 'thinking'. Reserved — the
+   *  voice controller surfaces this itself once TTS events land. */
+  isAssistantThinking?: boolean
 }
 
-export default function CallOverlay({
-  open, onClose,
+// Outer shell — renders nothing when closed so the voice hook inside
+// CallOverlayInner only mounts during an active call. This matters: the
+// voice controller requests mic permission + starts the VAD as soon as
+// it mounts. Keeping it gated behind `open` means the mic is only
+// touched while the user is in a call.
+export default function CallOverlay(props: CallOverlayProps) {
+  if (!props.open) return null
+  return <CallOverlayInner {...props} />
+}
+
+function CallOverlayInner({
+  onClose,
   personaName = 'Assistant',
   avatarUrl = null,
   accentColor = null,
@@ -502,22 +534,17 @@ export default function CallOverlay({
   onSwitchToChat,
   skipDialing = false,
   onEnded,
+  onSendText,
 }: CallOverlayProps) {
   const initial: CallState = skipDialing ? 'connecting' : 'dialing'
   const [state, setState] = useState<CallState>(initial)
-  const [, setMuted] = useState(false)
+  const [muted, setMuted] = useState(false)
   const [durationSec, setDurationSec] = useState(0)
 
-  // Staged lifecycle:
+  // Staged lifecycle on mount:
   //   dialing (DIAL_MS) → connecting (CONNECT_MS) → listening
   //   (or: connecting → listening when skipDialing).
   useEffect(() => {
-    if (!open) return
-    const nextInitial: CallState = skipDialing ? 'connecting' : 'dialing'
-    setState(nextInitial)
-    setMuted(false)
-    setDurationSec(0)
-
     const timers: number[] = []
     if (!skipDialing) {
       timers.push(window.setTimeout(() => {
@@ -531,15 +558,55 @@ export default function CallOverlay({
     }, (skipDialing ? 0 : DIAL_MS) + CONNECT_MS))
 
     return () => { timers.forEach(t => window.clearTimeout(t)) }
-  }, [open, skipDialing])
+  }, [skipDialing])
 
   // Live timer during active call (dialing + connecting don't count).
   useEffect(() => {
-    if (!open) return
     if (state === 'dialing' || state === 'connecting' || state === 'ended') return
     const iv = window.setInterval(() => setDurationSec((n) => n + 1), 1000)
     return () => window.clearInterval(iv)
-  }, [open, state])
+  }, [state])
+
+  // Ringtone — two-tone DTMF-ish pulse via WebAudio during dialing.
+  // Kept short, quiet, and strictly confined to the dialing phase so
+  // nothing plays over the persona's TTS or the user's voice.
+  useEffect(() => {
+    if (state !== 'dialing') return
+    let ctx: AudioContext | null = null
+    let stopped = false
+    try {
+      const AC: typeof AudioContext = (window as unknown as {
+        AudioContext?: typeof AudioContext
+        webkitAudioContext?: typeof AudioContext
+      }).AudioContext || (window as unknown as {
+        webkitAudioContext: typeof AudioContext
+      }).webkitAudioContext
+      if (!AC) return
+      ctx = new AC()
+      const playRing = (startAt: number) => {
+        if (!ctx) return
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.type = 'sine'
+        osc.frequency.setValueAtTime(440, startAt)
+        osc.frequency.setValueAtTime(480, startAt + 0.4)
+        gain.gain.setValueAtTime(0, startAt)
+        gain.gain.linearRampToValueAtTime(0.05, startAt + 0.05)
+        gain.gain.linearRampToValueAtTime(0, startAt + 0.8)
+        osc.connect(gain).connect(ctx.destination)
+        osc.start(startAt)
+        osc.stop(startAt + 0.85)
+      }
+      playRing(ctx.currentTime + 0.05)
+    } catch {
+      /* audio unavailable — silent fallback is fine */
+    }
+    return () => {
+      stopped = true
+      try { ctx?.close() } catch { /* ignore */ }
+      void stopped
+    }
+  }, [state])
 
   const handleEnd = useCallback(() => {
     setState('ended')
@@ -556,29 +623,67 @@ export default function CallOverlay({
 
   // Esc ends.
   useEffect(() => {
-    if (!open) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleEnd() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, handleEnd])
+  }, [handleEnd])
+
+  // ── Real voice pipeline ────────────────────────────────────────
+  // The STT callback sends the final transcript through the app's
+  // normal chat path (onSendText === sendTextOrIntent in App.tsx).
+  // If no sink is wired we fall back to a no-op so the hook still
+  // mounts cleanly (e.g. for Storybook / tests).
+  const onSendTextRef = useRef(onSendText)
+  useEffect(() => { onSendTextRef.current = onSendText }, [onSendText])
+  const voice = useVoiceController((text: string) => {
+    onSendTextRef.current?.(text)
+  })
+
+  // Enter hands-free as soon as the line is "connected" so the user
+  // can just start talking. Drop it when the modal unmounts.
+  const connected = state !== 'dialing' && state !== 'connecting' && state !== 'ended'
+  useEffect(() => {
+    if (!connected) return
+    voice.setHandsFree(true)
+    return () => { voice.setHandsFree(false) }
+  }, [connected, voice])
+
+  // Mirror the voice-controller's machine onto our UI state so the
+  // halo + waveform + label actually reflect what's happening:
+  //   LISTENING     → 'listening'
+  //   THINKING      → 'thinking'
+  //   SPEAKING      → 'speaking'
+  //   IDLE          → 'listening' (ready, nothing to say yet)
+  //   OFF / muted   → preserved
+  useEffect(() => {
+    if (!connected) return
+    if (muted) return
+    const mapped = mapVoiceState(voice.state)
+    if (!mapped) return
+    setState(prev => {
+      if (prev === 'ended' || prev === 'muted') return prev
+      return mapped
+    })
+  }, [voice.state, connected, muted])
 
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       const next = !m
-      setState((s) => {
-        if (next) return 'muted'
-        return s === 'muted' ? 'listening' : s
-      })
+      if (next) {
+        voice.setHandsFree(false)
+        setState('muted')
+      } else {
+        voice.setHandsFree(true)
+        setState('listening')
+      }
       return next
     })
-  }, [])
+  }, [voice])
 
   const handleMinimize = useCallback(() => {
     if (onMinimize) onMinimize()
     else onClose()
   }, [onMinimize, onClose])
-
-  if (!open) return null
 
   return (
     <div
