@@ -35,7 +35,7 @@ import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
 import { useAuth } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
-import CallOverlay from './CallOverlay'
+import CallOverlay, { CallEndedToast } from './CallOverlay'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
@@ -2067,6 +2067,17 @@ export default function App() {
   // Call mode — a dedicated session distinct from Voice mode. The
   // header 📞 opens a centered CallOverlay; it does not swap modes.
   const [callOpen, setCallOpen] = useState(false)
+  // `skipDialing` is flipped on for the "Speak again" re-entry so the
+  // user doesn't have to sit through "calling…" twice in a row.
+  const [callSkipDialing, setCallSkipDialing] = useState(false)
+  // Last-ended-call summary shown as a bottom-center toast with a
+  // "Speak again" affordance. Auto-clears after ~15s.
+  const [lastEndedCall, setLastEndedCall] = useState<{ durationSec: number } | null>(null)
+  useEffect(() => {
+    if (!lastEndedCall) return
+    const t = window.setTimeout(() => setLastEndedCall(null), 15000)
+    return () => window.clearTimeout(t)
+  }, [lastEndedCall])
 
   // Persona Integration — "Save as Persona Avatar" from AvatarStudio (additive)
   const [saveAsPersonaData, setSaveAsPersonaData] = useState<{ item: GalleryItem; outfits: GalleryItem[]; batchSiblings?: GalleryItem[] } | null>(null)
@@ -5190,8 +5201,30 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           inside the overlay. Not the same as Voice mode. */}
       <CallOverlay
         open={callOpen}
-        onClose={() => setCallOpen(false)}
+        onClose={() => {
+          setCallOpen(false)
+          // Reset the skip flag once the overlay has closed so the
+          // next fresh tap on 📞 starts with the full dial phase.
+          setCallSkipDialing(false)
+        }}
+        skipDialing={callSkipDialing}
+        onEnded={(durationSec) => setLastEndedCall({ durationSec })}
       />
+
+      {/* Call-ended summary toast. Appears once per end, sits above
+          the input area, and offers "Speak again" re-entry that
+          bypasses the dial phase. */}
+      {lastEndedCall && (
+        <CallEndedToast
+          durationSec={lastEndedCall.durationSec}
+          onSpeakAgain={() => {
+            setLastEndedCall(null)
+            setCallSkipDialing(true)
+            setCallOpen(true)
+          }}
+          onDismiss={() => setLastEndedCall(null)}
+        />
+      )}
 
 
       {/* Save as Persona Avatar modal (from AvatarStudio gallery) */}

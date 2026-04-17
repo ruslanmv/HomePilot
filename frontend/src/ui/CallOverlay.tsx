@@ -24,12 +24,22 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 export type CallState =
+  | 'dialing'
   | 'connecting'
   | 'listening'
   | 'thinking'
   | 'speaking'
   | 'muted'
   | 'ended'
+
+// ── Staged lifecycle timings. Numbers chosen so the user *feels* the
+//    handshake instead of getting a hard screen flip: dial (ringing) →
+//    connecting → listening (live). Kept as constants so the whole
+//    cadence is tweakable in one place without editing the state
+//    machine.
+const DIAL_MS = 900      // 📞  "calling…"  — pulse-ring phase
+const CONNECT_MS = 500   // 🔵  "connecting…" — dots-pulse phase
+const END_FADE_MS = 220  // 🔴  end button → modal fade-out → onClose
 
 // ── Design tokens (ported from phone/tokens.jsx) ──────────────────
 
@@ -56,6 +66,7 @@ function hpCallStateColor(state: CallState): string {
     case 'listening': return HP_CALL.stateListening
     case 'thinking':  return HP_CALL.stateThinking
     case 'speaking':  return HP_CALL.stateSpeaking
+    case 'dialing':
     case 'connecting': return HP_CALL.accent
     case 'muted':
     case 'ended':     return HP_CALL.text3
@@ -63,9 +74,10 @@ function hpCallStateColor(state: CallState): string {
   }
 }
 
-function hpCallStateLabel(state: CallState): string {
+function hpCallStateLabel(state: CallState, personaName: string): string {
   switch (state) {
-    case 'connecting': return 'connecting'
+    case 'dialing':    return `calling ${personaName.toLowerCase()}…`
+    case 'connecting': return 'connecting…'
     case 'listening':  return 'listening'
     case 'thinking':   return 'thinking'
     case 'speaking':   return 'speaking'
@@ -190,7 +202,12 @@ const CallAvatar: React.FC<{
   accentColor?: string | null
 }> = ({ size = 156, state, imageUrl = null, accentColor = null }) => {
   const stateColor = hpCallStateColor(state)
-  const breathes = state === 'listening' || state === 'connecting' || state === 'speaking'
+  const breathes =
+    state === 'listening' ||
+    state === 'connecting' ||
+    state === 'speaking' ||
+    state === 'dialing'
+  const showPulseRings = state === 'dialing'
   const haloOuter = size + 28
 
   const seed = (imageUrl || accentColor || 'homepilot').toString()
@@ -204,6 +221,18 @@ const CallAvatar: React.FC<{
       position: 'relative', width: haloOuter, height: haloOuter,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
+      {/* Expanding pulse rings — only while dialing. Three rings on
+          staggered delays so the modal reads as "ringing", not just
+          "spinning up". */}
+      {showPulseRings && [0, 1, 2].map(i => (
+        <div key={i} aria-hidden="true" style={{
+          position: 'absolute', inset: 0, borderRadius: '50%',
+          border: `1.5px solid ${stateColor}`,
+          animation: 'hp-call-pulse-ring 1600ms ease-out infinite',
+          animationDelay: `${i * 420}ms`,
+          opacity: 0,
+        }} />
+      ))}
       <div style={{
         position: 'absolute', inset: 0, borderRadius: '50%',
         background: `radial-gradient(circle, ${stateColor}55 0%, transparent 68%)`,
@@ -301,10 +330,11 @@ const CallModal: React.FC<CallModalProps> = ({
   durationSec, onEnd, onToggleMute, onMinimize, onSwitchToChat,
 }) => {
   const stateColor = hpCallStateColor(state)
-  const stateLabel = hpCallStateLabel(state)
+  const stateLabel = hpCallStateLabel(state, personaName)
   const mm = Math.floor(durationSec / 60).toString().padStart(2, '0')
   const ss = (durationSec % 60).toString().padStart(2, '0')
-  const timer = state === 'connecting' ? '—:—' : `${mm}:${ss}`
+  const preConnect = state === 'dialing' || state === 'connecting'
+  const timer = preConnect ? '—:—' : `${mm}:${ss}`
 
   return (
     <div style={{
@@ -376,14 +406,14 @@ const CallModal: React.FC<CallModalProps> = ({
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         gap: 10, marginBottom: 22, minHeight: 52,
       }}>
-        {state === 'connecting' ? (
+        {preConnect ? (
           <div style={{ display: 'flex', gap: 5 }}>
             {[0, 1, 2].map(i => (
               <div key={i} style={{
                 width: 5, height: 5, borderRadius: '50%',
                 background: HP_CALL.text,
                 opacity: 0.35 + i * 0.2,
-                animation: 'hp-dot-pulse 1s ease-in-out infinite',
+                animation: `hp-dot-pulse ${state === 'dialing' ? 1.2 : 0.8}s ease-in-out infinite`,
                 animationDelay: `${i * 0.12}s`,
               }} />
             ))}
@@ -414,7 +444,7 @@ const CallModal: React.FC<CallModalProps> = ({
           active={state === 'muted'}
           ariaLabel={state === 'muted' ? 'Unmute microphone' : 'Mute microphone'}
           onClick={onToggleMute}
-          disabled={state === 'connecting' || state === 'ended'}
+          disabled={state === 'dialing' || state === 'connecting' || state === 'ended'}
         >
           {state === 'muted'
             ? <IconMicOff size={22} color="#0b0b0c" />
@@ -431,7 +461,7 @@ const CallModal: React.FC<CallModalProps> = ({
         <ControlBtn
           size={56} ariaLabel="Switch to text chat"
           onClick={onSwitchToChat}
-          disabled={!onSwitchToChat || state === 'connecting' || state === 'ended'}
+          disabled={!onSwitchToChat || state === 'dialing' || state === 'connecting' || state === 'ended'}
         >
           <IconChat size={22} />
         </ControlBtn>
@@ -455,6 +485,12 @@ export interface CallOverlayProps {
   onMinimize?: () => void
   /** Optional: "Switch to text chat" handler. */
   onSwitchToChat?: () => void
+  /** Skip the dial-ring phase. Used by "Speak again" re-entry so the
+   *  user doesn't have to sit through "calling…" twice in a row. */
+  skipDialing?: boolean
+  /** Fired when the call ends; receives the live-phase duration in
+   *  seconds. Used by App.tsx to show the "call ended · Ns" toast. */
+  onEnded?: (durationSec: number) => void
 }
 
 export default function CallOverlay({
@@ -464,30 +500,59 @@ export default function CallOverlay({
   accentColor = null,
   onMinimize,
   onSwitchToChat,
+  skipDialing = false,
+  onEnded,
 }: CallOverlayProps) {
-  const [state, setState] = useState<CallState>('connecting')
-  const [muted, setMuted] = useState(false)
+  const initial: CallState = skipDialing ? 'connecting' : 'dialing'
+  const [state, setState] = useState<CallState>(initial)
+  const [, setMuted] = useState(false)
   const [durationSec, setDurationSec] = useState(0)
 
-  // Reset + simulated connect on open.
+  // Staged lifecycle:
+  //   dialing (DIAL_MS) → connecting (CONNECT_MS) → listening
+  //   (or: connecting → listening when skipDialing).
   useEffect(() => {
     if (!open) return
-    setState('connecting')
+    const nextInitial: CallState = skipDialing ? 'connecting' : 'dialing'
+    setState(nextInitial)
     setMuted(false)
     setDurationSec(0)
-    const t = window.setTimeout(() => {
-      setState((s) => (s === 'connecting' ? 'listening' : s))
-    }, 1200)
-    return () => window.clearTimeout(t)
-  }, [open])
 
-  // Live timer during active call.
+    const timers: number[] = []
+    if (!skipDialing) {
+      timers.push(window.setTimeout(() => {
+        setState(s => (s === 'dialing' ? 'connecting' : s))
+      }, DIAL_MS))
+    }
+    timers.push(window.setTimeout(() => {
+      setState(s =>
+        (s === 'connecting' || s === 'dialing') ? 'listening' : s
+      )
+    }, (skipDialing ? 0 : DIAL_MS) + CONNECT_MS))
+
+    return () => { timers.forEach(t => window.clearTimeout(t)) }
+  }, [open, skipDialing])
+
+  // Live timer during active call (dialing + connecting don't count).
   useEffect(() => {
     if (!open) return
-    if (state === 'connecting' || state === 'ended') return
+    if (state === 'dialing' || state === 'connecting' || state === 'ended') return
     const iv = window.setInterval(() => setDurationSec((n) => n + 1), 1000)
     return () => window.clearInterval(iv)
   }, [open, state])
+
+  const handleEnd = useCallback(() => {
+    setState('ended')
+    // Capture the live-phase duration NOW — durationSec is frozen at
+    // the last tick because the interval effect tears down on
+    // state==='ended'. Close after a short fade so the backdrop +
+    // modal get a chance to animate out.
+    const endedWith = durationSec
+    window.setTimeout(() => {
+      if (onEnded) onEnded(endedWith)
+      onClose()
+    }, END_FADE_MS)
+  }, [onClose, onEnded, durationSec])
 
   // Esc ends.
   useEffect(() => {
@@ -495,13 +560,7 @@ export default function CallOverlay({
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') handleEnd() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-
-  }, [open])
-
-  const handleEnd = useCallback(() => {
-    setState('ended')
-    window.setTimeout(() => onClose(), 180)
-  }, [onClose])
+  }, [open, handleEnd])
 
   const toggleMute = useCallback(() => {
     setMuted((m) => {
@@ -565,7 +624,98 @@ export default function CallOverlay({
           0%, 100% { transform: translateY(0);   opacity: 0.35; }
           50%      { transform: translateY(-3px); opacity: 1; }
         }
+        @keyframes hp-call-pulse-ring {
+          0%   { transform: scale(1);    opacity: 0.65; }
+          80%  { opacity: 0; }
+          100% { transform: scale(1.55); opacity: 0; }
+        }
+        @keyframes hp-call-toast-in {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
       `}</style>
+    </div>
+  )
+}
+
+
+// ── Call-ended toast — the "you just hung up, want to call back?" chip
+
+export interface CallEndedToastProps {
+  /** Duration of the live phase (seconds). Rendered as "42s" / "3m 12s". */
+  durationSec: number
+  onSpeakAgain: () => void
+  onDismiss: () => void
+}
+
+function formatEndedDuration(s: number): string {
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  const rest = s % 60
+  return rest === 0 ? `${m}m` : `${m}m ${rest}s`
+}
+
+export const CallEndedToast: React.FC<CallEndedToastProps> = ({
+  durationSec, onSpeakAgain, onDismiss,
+}) => {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-6 left-1/2 z-[95] -translate-x-1/2"
+      style={{
+        animation: 'hp-call-toast-in 220ms ease-out',
+        fontFamily: HP_CALL.font,
+      }}
+    >
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '8px 10px 8px 14px',
+        borderRadius: 9999,
+        background: HP_CALL.surface,
+        border: `1px solid ${HP_CALL.border}`,
+        boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04)',
+        color: HP_CALL.text,
+      }}>
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          fontSize: 13, fontWeight: 500, color: HP_CALL.text2,
+        }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: '50%',
+            background: HP_CALL.text3,
+          }} />
+          Call ended · <span style={{
+            color: HP_CALL.text,
+            fontFamily: HP_CALL.fontTabular,
+            fontVariantNumeric: 'tabular-nums',
+          }}>{formatEndedDuration(durationSec)}</span>
+        </span>
+        <button
+          type="button"
+          onClick={onSpeakAgain}
+          style={{
+            height: 30, padding: '0 14px', borderRadius: 9999,
+            background: HP_CALL.accent,
+            color: '#052c33', border: 'none', cursor: 'pointer',
+            fontSize: 12, fontWeight: 600, letterSpacing: 0.2,
+          }}
+        >
+          Speak again
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          style={{
+            width: 28, height: 28, borderRadius: 9999,
+            background: 'transparent', border: 'none', cursor: 'pointer',
+            color: HP_CALL.text3, fontSize: 18, lineHeight: 1, padding: 0,
+          }}
+        >
+          ×
+        </button>
+      </div>
     </div>
   )
 }
