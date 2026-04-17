@@ -35,7 +35,7 @@ import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
 import { useAuth } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
-import CallOverlay, { CallEndedToast } from './CallOverlay'
+import CallOverlay from './CallOverlay'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
@@ -114,6 +114,15 @@ export type Msg = {
   confirm?: {
     intent: 'generate_images' | 'generate_videos'
     prompt: string
+  }
+  // "Call memory card" — when present the message renders as an
+  // inline record of a just-ended voice call instead of a regular
+  // bubble. Additive: untouched by every existing code path.
+  callMemory?: {
+    durationSec: number
+    /** Short warm sign-off line rendered under the header. Optional
+     *  so we don't force a pre-baked string on every culture. */
+    closingLine?: string
   }
 }
 
@@ -1576,6 +1585,83 @@ function useCopyMessage(timeoutMs = 900) {
   return { copied, copy }
 }
 
+/**
+ * CallMemoryCard — inline "we just talked" record rendered as a
+ * chat message (left-aligned, assistant-side) instead of a floating
+ * toast. Designed to feel like a memory of an interaction, not a
+ * system notification:
+ *   • subtle gradient surface, soft border glow in the brand accent
+ *   • short warm sign-off line beneath the duration header
+ *   • a single "Speak again" CTA that re-opens the call modal
+ *   • no fixed positioning — scrolls with the chat history
+ */
+function CallMemoryCard({
+  durationSec,
+  closingLine,
+  onSpeakAgain,
+}: {
+  durationSec: number
+  closingLine?: string
+  onSpeakAgain?: () => void
+}) {
+  const fmt = (s: number) => {
+    if (s < 60) return `${s}s`
+    const m = Math.floor(s / 60)
+    const r = s % 60
+    return r === 0 ? `${m}m` : `${m}m ${r}s`
+  }
+  return (
+    <div
+      className="flex items-start gap-5 w-full hp-fade-in"
+      role="note"
+      aria-label="Call memory"
+    >
+      <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 text-white/60 flex items-center justify-center flex-shrink-0 mt-1">
+        <Phone size={14} />
+      </div>
+      <div
+        className="max-w-[85%] rounded-[18px] p-4 border"
+        style={{
+          background:
+            'linear-gradient(180deg, rgba(34,211,238,0.06) 0%, rgba(255,255,255,0.02) 100%)',
+          borderColor: 'rgba(34,211,238,0.18)',
+          boxShadow:
+            'inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 24px rgba(0,0,0,0.25)',
+        }}
+      >
+        <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.14em] text-white/55">
+          <span>Live call</span>
+          <span className="text-white/25">·</span>
+          <span
+            className="font-mono tabular-nums text-white/75"
+            style={{ fontFeatureSettings: '"tnum"' }}
+          >
+            {fmt(durationSec)}
+          </span>
+        </div>
+        {closingLine ? (
+          <div className="mt-2 text-[14px] leading-relaxed text-white/80">
+            {closingLine}
+          </div>
+        ) : null}
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={onSpeakAgain}
+            disabled={!onSpeakAgain}
+            className="inline-flex items-center gap-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white/90 px-3.5 py-1.5 text-[12.5px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label="Speak again"
+          >
+            <Phone size={13} />
+            Speak again
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 function ChatState({
   messages,
   setLightbox,
@@ -1725,6 +1811,17 @@ function ChatState({
             key={m.id}
             className={`flex gap-5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
+            {/* Inline "call memory card" — renders instead of a bubble
+                when this message represents a just-ended voice call.
+                Treated as assistant-aligned (left) so it reads as "a
+                moment we shared" rather than a system toast. */}
+            {m.callMemory ? (
+              <CallMemoryCard
+                durationSec={m.callMemory.durationSec}
+                closingLine={m.callMemory.closingLine}
+                onSpeakAgain={onStartCall}
+              />
+            ) : (<>
             {m.role === 'assistant' ? (
               <div className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center flex-shrink-0 font-bold text-sm mt-1">
                 /
@@ -1882,6 +1979,7 @@ function ChatState({
                 ) : null}
               </div>
             )}
+            </>)}
           </div>
         ))}
         <div ref={endRef} className="h-6" />
@@ -2070,14 +2168,16 @@ export default function App() {
   // `skipDialing` is flipped on for the "Speak again" re-entry so the
   // user doesn't have to sit through "calling…" twice in a row.
   const [callSkipDialing, setCallSkipDialing] = useState(false)
-  // Last-ended-call summary shown as a bottom-center toast with a
-  // "Speak again" affordance. Auto-clears after ~15s.
-  const [lastEndedCall, setLastEndedCall] = useState<{ durationSec: number } | null>(null)
-  useEffect(() => {
-    if (!lastEndedCall) return
-    const t = window.setTimeout(() => setLastEndedCall(null), 15000)
-    return () => window.clearTimeout(t)
-  }, [lastEndedCall])
+  // Call-ended "memory" lines — picked at random per call to give
+  // the inline card a warm sign-off without shipping the same text
+  // every time. Pure display; no persona plumbing.
+  const CALL_CLOSING_LINES = useMemo(() => ([
+    'It was nice talking to you.',
+    'Good to hear your voice.',
+    'Glad we got to catch up.',
+    'Thanks for calling.',
+    'That was fun.',
+  ]), [])
 
   // Persona Integration — "Save as Persona Avatar" from AvatarStudio (additive)
   const [saveAsPersonaData, setSaveAsPersonaData] = useState<{ item: GalleryItem; outfits: GalleryItem[]; batchSiblings?: GalleryItem[] } | null>(null)
@@ -5201,7 +5301,26 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           setCallSkipDialing(false)
         }}
         skipDialing={callSkipDialing}
-        onEnded={(durationSec) => setLastEndedCall({ durationSec })}
+        onEnded={(durationSec) => {
+          // Append an inline "call memory card" to the chat stream
+          // instead of showing a floating toast. The card scrolls
+          // with history, never overlaps the input, and reads as
+          // part of the conversation ("a moment we had") rather
+          // than a system notification.
+          const closingLine =
+            CALL_CLOSING_LINES[
+              Math.floor(Math.random() * CALL_CLOSING_LINES.length)
+            ]
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              id: `call-memory-${Date.now()}`,
+              role: 'assistant',
+              text: '',
+              callMemory: { durationSec, closingLine },
+            },
+          ])
+        }}
         personaName={currentProject?.name || 'Assistant'}
         avatarUrl={(() => {
           // Resolve the persona's thumbnail the same way
@@ -5229,20 +5348,10 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         }}
       />
 
-      {/* Call-ended summary toast. Appears once per end, sits above
-          the input area, and offers "Speak again" re-entry that
-          bypasses the dial phase. */}
-      {lastEndedCall && (
-        <CallEndedToast
-          durationSec={lastEndedCall.durationSec}
-          onSpeakAgain={() => {
-            setLastEndedCall(null)
-            setCallSkipDialing(true)
-            setCallOpen(true)
-          }}
-          onDismiss={() => setLastEndedCall(null)}
-        />
-      )}
+      {/* Previous floating "call ended" toast has been replaced by an
+          inline CallMemoryCard rendered directly in the chat stream
+          (see the messages.map branch on m.callMemory). Keeping this
+          comment as a breadcrumb for reviewers. */}
 
 
       {/* Save as Persona Avatar modal (from AvatarStudio gallery) */}
