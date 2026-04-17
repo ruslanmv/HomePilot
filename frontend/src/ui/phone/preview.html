@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>HomePilot · Call UI · design canvas</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; }
+  #root { height: 100%; }
+  /* no external fonts — the components use the Inter / system stack */
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<!-- React (dev builds, loaded from a CDN so this file opens with a
+     plain file:// or a local static server — no build step needed) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+
+<!--
+  Load order matters:
+    1. Reference frames + canvas (these are yours — drop the files next
+       to this HTML or adjust the src paths).
+    2. HomePilot call tokens / icons / primitives.
+    3. HomePilot call composite components.
+    4. HomePilot showcase (renders into #root).
+
+  All the call/* files register themselves onto `window`; the showcase
+  consumes them as globals exactly like your existing mockup set.
+-->
+
+<!-- 1. reference frames + design-canvas primitive -->
+<script type="text/babel" src="./design-canvas.jsx"></script>
+<script type="text/babel" src="./ios-frame.jsx"></script>
+<script type="text/babel" src="./android-frame.jsx"></script>
+<script type="text/babel" src="./macos-window.jsx"></script>
+
+<!-- 2. tokens + icons + primitives (order matters — avatar uses tokens) -->
+<script type="text/babel" src="./tokens.jsx"></script>
+<script type="text/babel" src="./icons.jsx"></script>
+<script type="text/babel" src="./controls.jsx"></script>
+<script type="text/babel" src="./avatar.jsx"></script>
+<script type="text/babel" src="./waveform.jsx"></script>
+
+<!-- 3. composite components -->
+<script type="text/babel" src="./call-button.jsx"></script>
+<script type="text/babel" src="./call-modal.jsx"></script>
+<script type="text/babel" src="./call-pip.jsx"></script>
+<script type="text/babel" src="./first-time-tooltip.jsx"></script>
+
+<!-- 4. the showcase -->
+<script type="text/babel" src="./showcase.jsx"></script>
+
+<!-- Babel standalone — the reference files are vanilla JSX, not compiled.
+     Keeps the designer's workflow identical to what you already have for
+     call-screen.jsx / ios-frame.jsx. -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel">
+  // Mount the showcase once all globals have registered.
+  // Small deferral guards against Babel finishing file compilation
+  // after the inline script runs.
+  window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<HPCallShowcase />);
+    }, 0);
+  });
+</script>
+
+</body>
+</html>
