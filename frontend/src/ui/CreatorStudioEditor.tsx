@@ -1847,6 +1847,12 @@ export function CreatorStudioEditor({
           backendUrl={backendUrl}
           videoId={projectId}
           videoTitle={project?.title}
+          scenes={scenes.map((s) => ({
+            id: s.id,
+            idx: s.idx,
+            narration: s.narration || "",
+            audioUrl: s.audioUrl || null,
+          }))}
           disabledReason={
             scenes.length === 0
               ? "Add at least one scene before exporting."
