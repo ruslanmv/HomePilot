@@ -19,7 +19,12 @@
  */
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
-const DEV_VITE_PORTS = new Set(["5173", "5174"]);
+// Vite dev ports used across the repo. The Makefile's `make start` target
+// launches vite with --port 3000; earlier tooling used Vite's defaults
+// 5173/5174. All of them must route API traffic to the backend at :8000
+// rather than to the Vite origin (which would SPA-fallback every request
+// to index.html and break JSON.parse).
+const DEV_VITE_PORTS = new Set(["3000", "5173", "5174"]);
 
 function isLocalHost(hostname: string): boolean {
   return LOCAL_HOSTS.has(hostname);
