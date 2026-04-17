@@ -32,9 +32,17 @@ const CDN_URL =
 
 const STORAGE_VOICE_KEY = 'homepilot_piper_voice'
 
-/** Shape of the upstream `@mintplex-labs/piper-tts-web` module we care about. */
+/** Shape of the upstream `@mintplex-labs/piper-tts-web` module we care about.
+ *
+ *  The library's ``predict`` accepts an optional ``baseUrl`` since v1.0.4;
+ *  we forward it to support mirror fallback without patching the library.
+ *  The field is typed optional so older bundles still satisfy the shape. */
 type PiperModule = {
-  predict: (args: { voiceId: string; text: string }) => Promise<Blob>
+  predict: (args: {
+    voiceId: string
+    text: string
+    baseUrl?: string
+  }) => Promise<Blob>
   flush?: () => Promise<void>
   TtsSession?: { _instance: unknown }
 }
@@ -130,6 +138,12 @@ export function isSupported(): boolean {
 export interface SynthOptions {
   /** Voice id from listVoices(). Default: getSelectedVoiceId(). */
   voiceId?: string
+  /** Optional override for the voice-model base URL. When unset, the
+   *  upstream library's default (HuggingFace ``rhasspy/piper-voices``)
+   *  is used. The Piper plugin passes a mirror URL here on retry after
+   *  an upstream fetch failure so users behind flaky CDNs still get
+   *  audio. */
+  baseUrl?: string
 }
 
 export interface SpeakOptions extends SynthOptions {
@@ -156,9 +170,10 @@ export async function synthesizeToBlob(text: string, opts: SynthOptions = {}): P
     _resetTtsSessionSingleton(mod)
   }
 
+  const baseUrl = opts.baseUrl
   let audio: Blob
   try {
-    audio = await mod.predict({ voiceId, text })
+    audio = await mod.predict({ voiceId, text, ...(baseUrl ? { baseUrl } : {}) })
   } catch (err) {
     const msg = String(err || '')
     // OPFS quota hit → flush cache + retry once.
@@ -166,7 +181,7 @@ export async function synthesizeToBlob(text: string, opts: SynthOptions = {}): P
     if (quota && mod.flush) {
       await mod.flush()
       _resetTtsSessionSingleton(mod)
-      audio = await mod.predict({ voiceId, text })
+      audio = await mod.predict({ voiceId, text, ...(baseUrl ? { baseUrl } : {}) })
     } else {
       throw err
     }
