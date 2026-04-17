@@ -4527,7 +4527,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         {/* Top-right Project Indicator - Only shown in chat mode when a project is active */}
         {mode === 'chat' && (
-        <header className="absolute top-0 left-0 right-0 pr-[7rem] pl-5 py-3 z-20 flex items-center justify-end gap-3 pointer-events-none">
+        <header className="absolute top-0 left-0 right-0 pr-[9rem] pl-5 py-3 z-20 flex items-center justify-end gap-3 pointer-events-none">
           {/* Project Indicator */}
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')
@@ -4572,38 +4572,31 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                       </button>
                     </>
                   )}
-                  {/* Agent projects keep Settings + Exit inline; persona
-                      projects delegate those to the chat header (⚙ / ✏)
-                      so persona / header responsibilities don't collide. */}
-                  {currentProject?.project_type !== 'persona' && (
-                    <>
-                      <button
-                        onClick={() => setShowAgentSettings(true)}
-                        className={`ml-0.5 p-0.5 ${
-                          currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
-                        } rounded-full transition-colors`}
-                        title="Project settings"
-                      >
-                        <Settings size={12} />
-                      </button>
-                      <button
-                        onClick={() => {
-                          localStorage.removeItem('homepilot_current_project')
-                          setCurrentProject(null)
-                          setShowAgentSettings(false)
-                          setShowSessionPanel(false)
-                          setInput('')
-                          onNewConversation()
-                        }}
-                        className={`p-0.5 ${
-                          currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
-                        } rounded-full transition-colors`}
-                        title="Exit project mode"
-                      >
-                        <X size={12} />
-                      </button>
-                    </>
-                  )}
+                  <button
+                    onClick={() => setShowAgentSettings(true)}
+                    className={`ml-0.5 p-0.5 ${
+                      currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
+                    } rounded-full transition-colors`}
+                    title="Project settings"
+                  >
+                    <Settings size={12} />
+                  </button>
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem('homepilot_current_project')
+                      setCurrentProject(null)
+                      setShowAgentSettings(false)
+                      setShowSessionPanel(false)
+                      setInput('')
+                      onNewConversation()
+                    }}
+                    className={`p-0.5 ${
+                      currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
+                    } rounded-full transition-colors`}
+                    title="Exit project mode"
+                  >
+                    <X size={12} />
+                  </button>
                 </div>
               )
             }
