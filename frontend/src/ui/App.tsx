@@ -4561,31 +4561,38 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                       </button>
                     </>
                   )}
-                  <button
-                    onClick={() => setShowAgentSettings(true)}
-                    className={`ml-0.5 p-0.5 ${
-                      currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
-                    } rounded-full transition-colors`}
-                    title="Project settings"
-                  >
-                    <Settings size={12} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      localStorage.removeItem('homepilot_current_project')
-                      setCurrentProject(null)
-                      setShowAgentSettings(false)
-                      setShowSessionPanel(false)
-                      setInput('')
-                      onNewConversation()
-                    }}
-                    className={`p-0.5 ${
-                      currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
-                    } rounded-full transition-colors`}
-                    title="Exit project mode"
-                  >
-                    <X size={12} />
-                  </button>
+                  {/* Agent projects keep Settings + Exit inline; persona
+                      projects delegate those to the chat header (⚙ / ✏)
+                      so persona / header responsibilities don't collide. */}
+                  {currentProject?.project_type !== 'persona' && (
+                    <>
+                      <button
+                        onClick={() => setShowAgentSettings(true)}
+                        className={`ml-0.5 p-0.5 ${
+                          currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
+                        } rounded-full transition-colors`}
+                        title="Project settings"
+                      >
+                        <Settings size={12} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          localStorage.removeItem('homepilot_current_project')
+                          setCurrentProject(null)
+                          setShowAgentSettings(false)
+                          setShowSessionPanel(false)
+                          setInput('')
+                          onNewConversation()
+                        }}
+                        className={`p-0.5 ${
+                          currentProject?.project_type === 'agent' ? 'hover:bg-amber-600/30' : 'hover:bg-blue-600/30'
+                        } rounded-full transition-colors`}
+                        title="Exit project mode"
+                      >
+                        <X size={12} />
+                      </button>
+                    </>
+                  )}
                 </div>
               )
             }
