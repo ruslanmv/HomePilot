@@ -34,6 +34,13 @@ import {
   setVoiceLinkedToProject,
   LS_PERSONA_CACHE,
 } from './personalityGating';
+import TtsEngineSection from '../components/TtsEngineSection';
+// Side-effect import: ensures the TTS plugin registry is populated the
+// first time the System Settings modal mounts — same registry the
+// Enterprise Settings voice block already uses, so both UIs are in
+// sync automatically (single active-engine pointer in localStorage,
+// scoped per user).
+import '../tts';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -238,6 +245,14 @@ export default function SettingsModal({
                 </p>
               </div>
             )}
+
+            {/* TTS Engine — additive plugin picker.
+                Shares the SAME registry used by Enterprise Settings →
+                Voice Assistant, so picking Piper here is reflected
+                there on next render (and vice versa). Uses the native
+                browser voice list so the Web Speech path keeps
+                showing the user's actually-installed voices. */}
+            <TtsEngineSection systemVoices={browserVoices} />
           </div>
 
           {/* Language Section */}
