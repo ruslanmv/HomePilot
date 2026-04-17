@@ -113,7 +113,12 @@ export default function CreatorExportWizard({
   const [rate, setRate] = useState<number>(0.9)
   const [pitch, setPitch] = useState<number>(1.0)
   const [subtitlesBurnIn, setSubtitlesBurnIn] = useState<boolean>(true)
-  const [regenerateAll, setRegenerateAll] = useState<boolean>(false)
+  // Default: synthesize every scene that has narration text, even if an
+  // audioUrl already exists. The user's invariant is "audio from all
+  // scenes" at export time, so freshness beats speed by default.
+  // "Keep existing audio" below is the opt-in for re-exports of an
+  // unchanged project, where regenerating every take is wasted work.
+  const [keepExisting, setKeepExisting] = useState<boolean>(false)
   const [previewing, setPreviewing] = useState<boolean>(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
 
@@ -190,16 +195,19 @@ export default function CreatorExportWizard({
 
   // ── Step 3 — Generate all scene narrations ───────────────────────────────
 
-  /** Scenes that need synthesis under the current toggle state. */
+  /** Scenes that need synthesis under the current toggle state.
+   *  Default ("keep existing" off): every scene with narration text.
+   *  Opt-in ("keep existing" on):   only scenes that do NOT already
+   *                                 have an uploaded audioUrl. */
   const scenesToSynthesize = useMemo(
     () =>
       scenes.filter((s) => {
         const hasText = (s.narration || '').trim().length > 0
         if (!hasText) return false
-        if (regenerateAll) return true
-        return !s.audioUrl
+        if (keepExisting && s.audioUrl) return false
+        return true
       }),
-    [scenes, regenerateAll],
+    [scenes, keepExisting],
   )
 
   const handleGenerate = useCallback(async () => {
@@ -572,17 +580,18 @@ export default function CreatorExportWizard({
               <label className="flex items-center gap-2 text-sm text-white/80 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={regenerateAll}
-                  onChange={(e) => setRegenerateAll(e.target.checked)}
+                  checked={keepExisting}
+                  onChange={(e) => setKeepExisting(e.target.checked)}
                   className="accent-cyan-400"
                 />
-                Regenerate narration for all scenes (otherwise keep existing audio)
+                Keep existing narration audio where present
+                <span className="text-[11px] text-white/40">(skip scenes that already have a take)</span>
               </label>
 
               <div className="text-[11px] text-white/40">
                 {scenesToSynthesize.length === 0
-                  ? 'All scenes already have narration audio — nothing to synthesize.'
-                  : `${scenesToSynthesize.length} scene${scenesToSynthesize.length === 1 ? '' : 's'} will be synthesized with the selected voice.`}
+                  ? 'No scenes have narration text — the export will have silent audio.'
+                  : `${scenesToSynthesize.length} of ${scenes.length} scene${scenes.length === 1 ? '' : 's'} will be synthesized with the selected voice.`}
               </div>
 
               <div className="flex justify-between gap-2 pt-2">
