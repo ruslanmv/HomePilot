@@ -38,6 +38,7 @@ from app.persona_call import (
     directive as directive_mod,
     facets as facets_mod,
     latency as latency_mod,
+    openings as openings_mod,
     state as state_mod,
     store as pc_store,
 )
@@ -309,3 +310,133 @@ def test_persona_call_never_overrides_system_prompt():
         "ComposedDirective must not carry a 'system_prompt' field — "
         "persona_call only composes a suffix, never a replacement prompt."
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 9. Theory of answering — the opening template bank
+# ══════════════════════════════════════════════════════════════════════
+
+def test_openings_bank_non_empty_and_covers_seven_families():
+    """The bank must cover all seven documented families so every
+    persona/time-of-day combination lands on at least one eligible
+    template. Regression guard against accidental family deletion."""
+    families = {t.family for t in openings_mod.OPENING_BANK}
+    required = {
+        "summons_answer", "identification", "greeting_plus_name",
+        "time_of_day", "intimate_reopen", "call_center_formal",
+        "late_night_brief",
+    }
+    assert required.issubset(families), families
+
+
+def test_openings_choose_is_deterministic_for_same_session_turn():
+    """Selection must be stable under (session_id, turn_index) so
+    tests don't flake across runs (CPython hash randomization)."""
+    f = facets_mod.default_facets()
+    env = ctx_mod.compute_env(
+        tz="UTC",
+        now=_dt.datetime(2025, 1, 1, 15, 0, tzinfo=_dt.timezone.utc),
+    )
+    a = openings_mod.choose(f, env, session_id="vcs_det", turn_index=1)
+    b = openings_mod.choose(f, env, session_id="vcs_det", turn_index=1)
+    assert a is not None and b is not None
+    assert a.id == b.id, (a.id, b.id)
+
+
+def test_openings_respects_formality_range():
+    """High-formality persona should NOT land on "Yeah?" / "Hey — …".
+    Call-center-formal family should become reachable."""
+    f = facets_mod.default_facets()
+    # Simulate a formal persona by replacing the formality scalar.
+    from dataclasses import replace
+    formal = replace(f, formality=0.85)
+    env = ctx_mod.compute_env(
+        tz="UTC",
+        now=_dt.datetime(2025, 1, 1, 15, 0, tzinfo=_dt.timezone.utc),
+    )
+    pool_ids = {t.id for t in openings_mod.eligible_templates(formal, env)}
+    assert "sa_yeah" not in pool_ids, "casual summons leaked into formal pool"
+    assert "gn_hey_name" not in pool_ids, "casual greeting leaked into formal pool"
+    # The call-center family should be reachable at formality=0.85.
+    assert any(tid.startswith("cc_") for tid in pool_ids), pool_ids
+
+
+def test_openings_late_night_only_at_late_hours():
+    """late_night_brief templates must be filtered out at daytime."""
+    f = facets_mod.default_facets()
+    day = ctx_mod.compute_env(
+        tz="UTC",
+        now=_dt.datetime(2025, 1, 1, 14, 0, tzinfo=_dt.timezone.utc),
+    )
+    night = ctx_mod.compute_env(
+        tz="UTC",
+        now=_dt.datetime(2025, 1, 1, 23, 0, tzinfo=_dt.timezone.utc),
+    )
+    day_pool = {t.id for t in openings_mod.eligible_templates(f, day)}
+    night_pool = {t.id for t in openings_mod.eligible_templates(f, night)}
+    assert "ln_hey" not in day_pool
+    assert "ln_hey" in night_pool
+
+
+def test_openings_forbidden_ids_excluded():
+    """Rotation — an id passed in ``forbidden_ids`` must never be
+    chosen, matching the anti-repetition ledger semantics."""
+    f = facets_mod.default_facets()
+    env = ctx_mod.compute_env(
+        tz="UTC",
+        now=_dt.datetime(2025, 1, 1, 15, 0, tzinfo=_dt.timezone.utc),
+    )
+    # Build the expected pool and pick any one id to forbid.
+    pool_ids = [t.id for t in openings_mod.eligible_templates(f, env)]
+    assert pool_ids, "empty pool, test premise invalid"
+    banned = pool_ids[0]
+    for turn in range(1, 30):
+        tpl = openings_mod.choose(
+            f, env, session_id="vcs_rot", turn_index=turn,
+            forbidden_ids=[banned],
+        )
+        assert tpl is not None
+        assert tpl.id != banned, (banned, tpl.id)
+
+
+def test_openings_render_interpolates_or_collapses_name():
+    """Render must substitute ``{name}`` when the caller has a name,
+    and collapse cleanly when they don't — never ship literal
+    ``{name}`` into a transcript."""
+    f = facets_mod.default_facets()
+    env = ctx_mod.compute_env(
+        tz="UTC",
+        now=_dt.datetime(2025, 1, 1, 15, 0, tzinfo=_dt.timezone.utc),
+    )
+    with_name = openings_mod.render(
+        f, env,
+        persona_display_name="Atlas",
+        session_id="vcs_render_named",
+    )
+    without = openings_mod.render(
+        f, env,
+        persona_display_name="",
+        session_id="vcs_render_nameless",
+    )
+    assert with_name and "{name}" not in with_name
+    assert without and "{name}" not in without
+
+
+def test_openings_fallback_to_summons_answer_when_all_else_banned():
+    """If every non-summons_answer template is in the ledger, the
+    selector should still return something from summons_answer
+    (no preconditions, any formality) — the call must NOT be silent."""
+    f = facets_mod.default_facets()
+    env = ctx_mod.compute_env(
+        tz="UTC",
+        now=_dt.datetime(2025, 1, 1, 15, 0, tzinfo=_dt.timezone.utc),
+    )
+    # Forbid everything except summons_answer.
+    banned = [t.id for t in openings_mod.OPENING_BANK
+              if t.family != "summons_answer"]
+    tpl = openings_mod.choose(
+        f, env, session_id="vcs_fallback", turn_index=1,
+        forbidden_ids=banned,
+    )
+    assert tpl is not None
+    assert tpl.family == "summons_answer", tpl.family

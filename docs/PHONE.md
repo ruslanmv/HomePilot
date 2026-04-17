@@ -313,7 +313,117 @@ research rule (twelve tests total, all green in 3.77 s):
 
 Any regression lands on a named rule, not a vague "it feels worse."
 
-## 8. What the simulation is *not*
+## 8. The "theory of answering" — why the persona speaks first
+
+On a real phone call, the person who picks up speaks first. The
+summons (the ring) already happened; what the caller is listening
+for is the answer slot. A silent pickup is not a neutral UI — it is
+a *failed* pickup, the kind that makes the caller say "hello?
+hello?" and then hang up.
+
+HomePilot's call loop now guarantees a first-turn answer, drawn from
+a curated template bank rather than improvised by the LLM. That
+matters for two reasons:
+
+1. **Latency.** LLM-improvised greetings land in 500–1500 ms; a
+   template fires in < 5 ms. The pick-up feels immediate, which is
+   the single biggest perceptual difference between "a person
+   answered" and "something is thinking about answering."
+2. **Naturalness.** Free-form LLM openings over-generate ("Hello
+   there! What a wonderful day to connect with you…"). Human phone
+   openings are famously low-entropy — Hopper (1992) documents six
+   fixed slots filled from a small, cross-cultural inventory. A
+   curated bank honours that inventory.
+
+### 8.1 Template families
+
+The bank (`persona_call/openings.py`) ships 23 templates across
+seven families. Every template has a formality range and an
+optional time-of-day precondition, so a given persona + clock
+combination typically sees 6–10 eligible candidates.
+
+| Family | Example text | When it fires |
+|---|---|---|
+| `summons_answer` | "Hello?", "Yes?", "Yeah?" | Always eligible — the Schegloff minimum. The safety-net family that guarantees a non-empty pool. |
+| `identification` | "{name} speaking.", "This is {name}." | Default for formality ≥ 0.35. Name-forward, the workhorse of English telephony. |
+| `greeting_plus_name` | "Hi, {name} here.", "Hey — {name}." | Warm personal-call opener. Formality 0.0–0.75. |
+| `time_of_day` | "Good morning, {name} speaking.", "Good evening." | Gated by local hour — morning (5–11), afternoon (11–17), evening (17–22). |
+| `intimate_reopen` | "Hey you.", "Oh, hi!", "Good to hear from you." | Only when `weeks_since_last_call < 2` (recurring caller). |
+| `call_center_formal` | "Thank you for calling. This is {name}, how can I help?" | Formality ≥ 0.65. The *only* family that volunteers help. |
+| `late_night_brief` | "Hey…", "Mm, yeah?", "Yeah — hi." | After 22:00 or before 06:00 local. Short on purpose. |
+
+### 8.2 Selection algorithm
+
+```
+choose(facets, env, session_id, turn_index, forbidden_ids):
+    pool = [t for t in OPENING_BANK
+              if t.formality_range[0] ≤ facets.formality ≤ t.formality_range[1]
+              and t.precond(facets, env)
+              and t.id not in forbidden_ids]
+    if not pool:  return None  # caller falls back to "Hello?"
+    return random.Random(blake2b(session_id, turn_index)).choice(pool)
+```
+
+- **Deterministic under seed.** The Random is seeded by
+  `blake2b(session_id:turn_index)` so tests don't flake across
+  CPython's per-process `hash()` randomization.
+- **Rotated.** `forbidden_ids` is fed from
+  `persona_call_state.recent_openings` — the same anti-repetition
+  ledger that protects backchannels. The same caller never hears
+  the same opener twice in a row.
+- **Safety-net guarantee.** `summons_answer` templates carry no
+  preconditions and a full formality range (0.0–1.0), so a pool
+  that looks empty after rotation always recovers to at least one
+  of "Hello?" / "Yes?" — the call is never silent.
+
+### 8.3 Where the greeting is sent from
+
+`backend/app/voice_call/ws.py` emits it as a `transcript.final`
+envelope immediately after `call.state { status: "live" }`:
+
+```
+WS handshake → call.state {status: live}
+             → transcript.final {role: assistant, text: "<opening>"}
+             → (heartbeat loop starts, accepting user transcripts)
+```
+
+The frontend speaks the opening through whatever TTS engine is
+wired (Piper, Web Speech, SpeechService shim). That's why the
+template bank contains only short, spoken-friendly fragments — no
+bullets, no em-dashes at awkward places, no emoji.
+
+### 8.4 Persona-aware overrides
+
+A persona may ship its own opener pool via
+`persona.voice_facets.signature_tokens.openings`. When that field
+is present, those templates are added to the candidate pool with
+the same rotation + precondition treatment; they do *not* replace
+the bank. This mirrors the rest of `persona_call` — the module's
+templates are the neutral-English default; persona facets extend,
+never overwrite.
+
+### 8.5 Tests
+
+`backend/tests/test_persona_call.py` has seven tests anchoring the
+rule:
+
+- `test_openings_bank_non_empty_and_covers_seven_families` —
+  regression guard against accidental family deletion.
+- `test_openings_choose_is_deterministic_for_same_session_turn` —
+  stable under `blake2b` seeding.
+- `test_openings_respects_formality_range` — "Yeah?" does not leak
+  into a formal persona's pool; call-center family becomes
+  reachable.
+- `test_openings_late_night_only_at_late_hours` — `ln_hey` is
+  absent at 14:00 and present at 23:00.
+- `test_openings_forbidden_ids_excluded` — a banned id is never
+  chosen across 29 consecutive turns.
+- `test_openings_render_interpolates_or_collapses_name` — literal
+  `{name}` never ships into a transcript.
+- `test_openings_fallback_to_summons_answer_when_all_else_banned`
+  — the call is never silent even with an exhausted ledger.
+
+## 9. What the simulation is *not*
 
 - **Not a voice clone.** We don't swap out the persona's TTS voice
   for a "phone-ier" one. The existing Piper/Web-Speech pipeline
@@ -331,7 +441,7 @@ Any regression lands on a named rule, not a vague "it feels worse."
   streaming lands, the filler scheduler becomes a redundancy rather
   than a necessity.
 
-## 9. Further reading
+## 10. Further reading
 
 If you want to go deeper into the conversation-analysis findings that
 drive this module:

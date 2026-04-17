@@ -143,6 +143,60 @@ async def run_session_ws(
     service.mark_live(sid)
     await _send(ws, "call.state", {"status": "live"}, session_id=sid)
 
+    # ── "Theory of answering" hook ────────────────────────────────
+    # When persona_call is on, the persona answers first — the way a
+    # real callee picks up the phone — instead of sitting silent
+    # until the caller speaks. The opening text comes from the
+    # curated bank in persona_call/openings.py; selection is
+    # deterministic (seeded by session_id) + persona-aware + rotated
+    # against the anti-repetition ledger, so the same caller never
+    # hears the same greeting twice in a row.
+    try:
+        from ..persona_call import (
+            config as _pc_cfg_mod,
+            context as _pc_context,
+            facets as _pc_facets,
+            openings as _pc_openings,
+            store as _pc_store,
+        )
+        _pc_cfg = _pc_cfg_mod.load()
+        if _pc_cfg.enabled:
+            _pc_store.ensure_schema()
+            _pc_store.ensure_state(sid)
+            _state = _pc_store.get_state(sid) or {}
+            forbidden = list(_state.get("recent_openings") or [])
+            _pc_env = _pc_context.compute_env(tz=None, weeks_since_last_call=-1)
+            _pc_facets_obj = _pc_facets.for_persona_id(session.get("persona_id"))
+            # We need the template *id* too so we can push it into
+            # the ledger, so call choose() (not render() directly).
+            tpl = _pc_openings.choose(
+                _pc_facets_obj, _pc_env,
+                session_id=sid,
+                turn_index=1,
+                forbidden_ids=forbidden,
+            )
+            greeting_text = None
+            if tpl is not None:
+                greeting_text = _pc_openings._interpolate(
+                    tpl.text,
+                    # Fall back to "Assistant" only if the session row
+                    # has no persona_id — matches the frontend label.
+                    (session.get("persona_id") or "Assistant").replace("persona:", "").strip(),
+                )
+                # Append the chosen id to the opener ledger so the
+                # next call won't repeat it.
+                new_openers = (list(forbidden) + [tpl.id])[-max(
+                    1, _pc_cfg.opener_ledger_window,
+                )]
+                _pc_store.update_state(sid, recent_openings=new_openers)
+            if greeting_text:
+                await _send(ws, "transcript.final",
+                            {"role": "assistant", "text": greeting_text},
+                            session_id=sid)
+    except Exception as _pc_err:
+        # Shadow-fail — the call still works without a greeting.
+        logger.warning("[persona_call] opening greeting skipped: %s", _pc_err)
+
     # Heartbeat keeps idle TCP paths alive on mobile networks.
     hb_task = asyncio.create_task(_heartbeat_loop(ws, sid, cfg))
 
