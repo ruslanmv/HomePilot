@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
 import ProfileSettingsModal from "./ProfileSettingsModal";
+import TtsEngineSection from "./components/TtsEngineSection";
+// Side-effect import: registers the bundled TTS providers (web-speech-api,
+// piper-wasm). Importing here guarantees the registry is populated the
+// first time the Settings panel mounts, before TtsEngineSection reads it.
+import "./tts";
 import { resolveBackendUrl } from "./lib/backendUrl";
 import {
   getModelSettings,
@@ -1105,6 +1110,14 @@ export default function SettingsPanel({
                   : 'Loading voices...'}
               </div>
             </div>
+
+            {/* TTS Engine picker — additive plugin system. The existing
+                System Voice selector above stays as the default path; this
+                section lets the user opt into alternative engines (Piper
+                WASM today; more can register themselves without touching
+                this file). Schema-driven controls so future engines
+                require zero Settings edits. */}
+            <TtsEngineSection systemVoices={availableVoices} />
           </div>
         </div>
 
