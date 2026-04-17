@@ -164,28 +164,6 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
           )}
         </div>
 
-        {/* Test voice button — always visible so the user can verify
-            their pick works (matches the "Preview voice" affordance
-            in the Creator Studio export wizard). */}
-        {active && (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onTest}
-              className="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white/80"
-              aria-pressed={testing}
-            >
-              {testing ? 'Stop' : 'Test voice'}
-            </button>
-            <span className="text-[10px] text-white/40">
-              Hello, this is a preview of your selected voice.
-            </span>
-          </div>
-        )}
-        {testError ? (
-          <div className="text-[10px] text-red-300/80">{testError}</div>
-        ) : null}
-
         {active && !isDefaultEngine ? (
           schema.map((field) => {
             const resolved =
@@ -271,6 +249,30 @@ export default function TtsEngineSection({ systemVoices }: Props): JSX.Element {
             playback. The Creator Studio export applies pitch post-synthesis via ffmpeg.
           </div>
         )}
+
+        {/* Test voice button — positioned AFTER the voice + rate + pitch
+            controls so users pick their voice first, then preview it
+            (best-practice: action sits at the end of the configuration
+            flow). Always visible; mirrors the "Preview voice" affordance
+            in the Creator Studio export wizard. */}
+        {active && (
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onTest}
+              className="text-[11px] px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 text-white/80"
+              aria-pressed={testing}
+            >
+              {testing ? 'Stop' : 'Test voice'}
+            </button>
+            <span className="text-[10px] text-white/40">
+              Hello, this is a preview of your selected voice.
+            </span>
+          </div>
+        )}
+        {testError ? (
+          <div className="text-[10px] text-red-300/80">{testError}</div>
+        ) : null}
       </div>
     </div>
   )

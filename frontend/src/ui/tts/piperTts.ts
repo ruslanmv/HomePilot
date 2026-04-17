@@ -27,8 +27,17 @@
 
 import { DEFAULT_PIPER_VOICE_ID, PIPER_VOICES, type PiperVoice } from './piperVoices'
 
+// Load the library from jsDelivr's ``/+esm`` variant rather than from
+// ``/dist/piper-tts-web.js``.
+// The raw dist file ships bare ESM imports like ``import 'onnxruntime-web'``
+// which browsers cannot resolve without an import map, producing
+//   "Failed to resolve module specifier 'onnxruntime-web'"
+// at the first speak()/synthesizeToBlob() call.
+// The ``/+esm`` endpoint is jsDelivr's on-the-fly rollup bundle that
+// rewrites every bare specifier to an absolute jsDelivr URL, so the
+// module loads cleanly from a plain dynamic ``import()``.
 const CDN_URL =
-  'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.4/dist/piper-tts-web.js'
+  'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.4/+esm'
 
 const STORAGE_VOICE_KEY = 'homepilot_piper_voice'
 
