@@ -29,7 +29,10 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         mcp-inventory \
         install-mcp-servers test-mcp-new-servers \
         persona-launch persona-check persona-stop persona-status persona-list \
-        build-installer build-container
+        build-installer build-container \
+        recovery recovery-status recovery-backup recovery-list-users \
+        recovery-reset-password recovery-unlock-all recovery-clear-sessions \
+        recovery-prune-uploads
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -1605,3 +1608,81 @@ build-container: ## Build the HomePilot Docker container image
 	@echo "  Run with GPU:  docker run --gpus all -p 7860:7860 homepilot:latest"
 	@echo "  Run CPU only:  docker run -p 7860:7860 homepilot:latest"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+# --- Recovery -----------------------------------------------------------------
+# Offline user + DB recovery. Useful when the HDD filled up, the backend
+# will not start, or you forgot a password. Every sub-target shells out
+# to scripts/recovery.py, which imports only the stdlib (+ optional
+# bcrypt) so it works even when the backend venv is broken.
+#
+# Safety:
+#   * Listed-only (status, list-users, prune-uploads) never touch data.
+#   * Mutating targets (reset-password, unlock-all, clear-sessions)
+#     auto-backup the DB into recovery-backups/<ts>/ before changing
+#     anything.
+#   * unlock-all additionally requires YES=I-UNDERSTAND to run.
+#
+# Usage examples:
+#   make recovery-status
+#   make recovery-list-users
+#   make recovery-reset-password USER=alice
+#   make recovery-reset-password USER=alice PASSWORD=mynewpass
+#   make recovery-unlock-all YES=I-UNDERSTAND
+#   make recovery-clear-sessions
+#   make recovery-prune-uploads MIN_MB=200
+
+RECOVERY_PY ?= python3 scripts/recovery.py
+
+recovery: ## Show the recovery menu
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  HomePilot recovery — offline account + DB repair tools"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "  Diagnostic (read-only):"
+	@echo "    make recovery-status          Disk / DB / users / sessions summary"
+	@echo "    make recovery-list-users      Show every account in the DB"
+	@echo "    make recovery-prune-uploads   List uploads ≥ 100 MB (MIN_MB=N to filter)"
+	@echo ""
+	@echo "  Repair (auto-backs up first):"
+	@echo "    make recovery-backup                                Snapshot DB now"
+	@echo "    make recovery-reset-password USER=<name> [PASSWORD=<new>]"
+	@echo "                                                        Reset ONE account"
+	@echo "    make recovery-unlock-all [PASSWORD=<new>] YES=I-UNDERSTAND"
+	@echo "                                                        Reset EVERY account"
+	@echo "    make recovery-clear-sessions                        Invalidate all tokens"
+	@echo ""
+	@echo "  Tip: if make start fails with 'out of disk space', run recovery-status"
+	@echo "       first, then prune-uploads, then restart."
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+recovery-status: ## Disk + DB + users summary (read-only)
+	@$(RECOVERY_PY) status
+
+recovery-backup: ## Manual DB snapshot into recovery-backups/
+	@$(RECOVERY_PY) backup
+
+recovery-list-users: ## Show every account (no password hashes printed)
+	@$(RECOVERY_PY) list-users
+
+recovery-reset-password: ## Reset one user's password (USER=<name> [PASSWORD=<new>])
+	@if [ -z "$(USER)" ]; then \
+		echo "Usage: make recovery-reset-password USER=<username> [PASSWORD=<new>]"; \
+		echo "  If PASSWORD is omitted a strong random one is generated and printed."; \
+		exit 1; \
+	fi
+	@$(RECOVERY_PY) reset-password --user "$(USER)" $(if $(PASSWORD),--password "$(PASSWORD)",)
+
+recovery-unlock-all: ## Reset EVERY password ([PASSWORD=<new>] YES=I-UNDERSTAND required)
+	@if [ "$(YES)" != "I-UNDERSTAND" ]; then \
+		echo "Refusing to run without YES=I-UNDERSTAND."; \
+		echo "This resets the password of EVERY user in the DB."; \
+		echo "Re-run: make recovery-unlock-all YES=I-UNDERSTAND [PASSWORD=<new>]"; \
+		exit 2; \
+	fi
+	@$(RECOVERY_PY) unlock-all $(if $(PASSWORD),--password "$(PASSWORD)",) --yes I-UNDERSTAND
+
+recovery-clear-sessions: ## Invalidate every auth token; forces re-login
+	@$(RECOVERY_PY) clear-sessions
+
+recovery-prune-uploads: ## List uploaded files ≥ MIN_MB (default 100; read-only)
+	@$(RECOVERY_PY) prune-uploads --min-mb $(if $(MIN_MB),$(MIN_MB),100)
