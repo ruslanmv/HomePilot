@@ -159,6 +159,24 @@ app.include_router(teams_router)
 from .teams.bridge_routes import router as teams_bridge_router
 app.include_router(teams_bridge_router)
 
+# --- Voice call (/v1/voice-call/*) — ADDITIVE, FEATURE-FLAGGED ---------------
+# Fully off by default. Enable with ``VOICE_CALL_ENABLED=true``. If anything
+# in the voice_call module raises on import (bad migration, missing dep, …)
+# we swallow it so the rest of the app stays up — this feature is optional
+# and must never take production down.
+try:
+    from .voice_call.config import load as _voice_call_load_config
+    _voice_call_cfg = _voice_call_load_config()
+    if _voice_call_cfg.enabled:
+        from .voice_call.router import build_router as _build_vc_router
+        from .voice_call.router import build_ws_router as _build_vc_ws_router
+        app.include_router(_build_vc_router(_voice_call_cfg))
+        app.include_router(_build_vc_ws_router(_voice_call_cfg))
+        print("[voice_call] enabled — routes mounted under /v1/voice-call")
+except Exception as _vc_err:  # noqa: BLE001
+    # Deliberate broad catch: this entire feature is optional. Log and move on.
+    print(f"[voice_call] DISABLED due to import error: {_vc_err}")
+
 # Include Marketplace routes (/v1/marketplace/*)
 app.include_router(marketplace_router)
 
