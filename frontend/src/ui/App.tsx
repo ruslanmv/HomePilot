@@ -35,6 +35,7 @@ import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
 import { useAuth } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
+import CallOverlay from './CallOverlay'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
@@ -1618,22 +1619,7 @@ function ChatState({
 }) {
   const { copied, copy } = useCopyMessage()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
-  // One-shot "Talk live" tooltip — shown once per user, persisted in
-  // localStorage so it never reappears. Dismissed on any call button
-  // interaction.
-  const [showCallHint, setShowCallHint] = useState<boolean>(() => {
-    try {
-      return (
-        !!onStartCall &&
-        localStorage.getItem('homepilot_call_hint_seen_v1') !== '1'
-      )
-    } catch {
-      return false
-    }
-  })
   const handleStartCall = useCallback(() => {
-    try { localStorage.setItem('homepilot_call_hint_seen_v1', '1') } catch {}
-    setShowCallHint(false)
     onStartCall?.()
   }, [onStartCall])
   // Local overrides for view-pack angle switching (keyed by message id)
@@ -1673,55 +1659,42 @@ function ChatState({
 
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
-      {/* Top-right fixed: primary Call action + utility tools.
-          Layout rule: the call button is a standalone primary action
-          and is visually separated from the grouped utility icons by a
-          12 px spacer (best practice — different meaning, different
-          group). */}
+      {/* Top-right fixed: a single flat group of neutral header icons.
+          The call button is intentionally *not* a CTA — it sits inline
+          with the other utility icons and only opens a dedicated call
+          overlay (see CallOverlay). Call mode is a distinct session,
+          not a styling of the header. */}
       <div className="fixed top-3 right-5 z-50">
-        <div className="relative flex items-center">
+        <div className="relative flex items-center gap-2">
           {onStartCall && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={handleStartCall}
-                className="w-10 h-10 flex items-center justify-center rounded-full bg-emerald-500 text-white shadow-[0_0_0_6px_rgba(16,185,129,0.20)] hover:bg-emerald-600 hover:shadow-[0_0_0_8px_rgba(16,185,129,0.28)] hover:scale-[1.05] transition-all duration-150"
-                title="Start live call"
-                aria-label="Start live call"
-              >
-                <Phone size={18} />
-              </button>
-              {showCallHint && (
-                <div
-                  role="status"
-                  className="absolute right-0 top-full mt-2 whitespace-nowrap rounded-lg border border-emerald-300/35 bg-black/85 px-2.5 py-1.5 text-[11px] text-emerald-200 shadow-xl pointer-events-none"
-                >
-                  📞 Talk live
-                </div>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={handleStartCall}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              title="Start call"
+              aria-label="Start call"
+            >
+              <Phone size={16} />
+            </button>
           )}
-          {onStartCall && <div className="w-3" aria-hidden="true" />}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setChatSettingsOpen((v) => !v)}
-              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-              title="Chat settings"
-              aria-label="Chat settings"
-            >
-              <Settings size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={onNewConversation}
-              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-              title="New Chat"
-              aria-label="New Chat"
-            >
-              <PenLine size={16} />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setChatSettingsOpen((v) => !v)}
+            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            title="Chat settings"
+            aria-label="Chat settings"
+          >
+            <Settings size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={onNewConversation}
+            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            title="New Chat"
+            aria-label="New Chat"
+          >
+            <PenLine size={16} />
+          </button>
           <ChatSettingsPopover
             open={chatSettingsOpen}
             onClose={() => setChatSettingsOpen(false)}
@@ -2091,6 +2064,9 @@ export default function App() {
   })
   const [voiceConversationId, setVoiceConversationId] = useState<string>(() => uuid())
   const [lightbox, setLightbox] = useState<string | null>(null)
+  // Call mode — a dedicated session distinct from Voice mode. The
+  // header 📞 opens a centered CallOverlay; it does not swap modes.
+  const [callOpen, setCallOpen] = useState(false)
 
   // Persona Integration — "Save as Persona Avatar" from AvatarStudio (additive)
   const [saveAsPersonaData, setSaveAsPersonaData] = useState<{ item: GalleryItem; outfits: GalleryItem[]; batchSiblings?: GalleryItem[] } | null>(null)
@@ -5100,7 +5076,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               endRef={endRef}
               mode={mode}
               onNewConversation={onNewConversation}
-              onStartCall={() => setMode('voice')}
+              onStartCall={() => setCallOpen(true)}
               onRetryMessage={retryFailedMessage}
               chatSettings={chatSettings}
               onUpdateChatSettings={updateChatSettings}
@@ -5176,7 +5152,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             endRef={endRef}
             mode={mode}
             onNewConversation={onNewConversation}
-            onStartCall={() => setMode('voice')}
+            onStartCall={() => setCallOpen(true)}
             onRetryMessage={retryFailedMessage}
             chatSettings={chatSettings}
             onUpdateChatSettings={updateChatSettings}
@@ -5201,6 +5177,15 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           onEdit={handleEditFromViewer}
         />
       ) : null}
+
+      {/* Call overlay — a distinct session layered over the chat.
+          Open it with the 📞 header icon; end it with the red button
+          inside the overlay. Not the same as Voice mode. */}
+      <CallOverlay
+        open={callOpen}
+        onClose={() => setCallOpen(false)}
+      />
+
 
       {/* Save as Persona Avatar modal (from AvatarStudio gallery) */}
       {saveAsPersonaData && (

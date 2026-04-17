@@ -22,7 +22,6 @@ import {
   SlidersHorizontal,
   ChevronDown,
   PenLine,
-  PhoneOff,
   Zap,
   Radio,
   AlertCircle,
@@ -944,32 +943,21 @@ export default function VoiceModeGrok({
       <Starfield />
 
       {/* Top Header */}
-      <header className="absolute top-0 right-0 z-30 p-4 flex items-center hp-fade-in">
+      <header className="absolute top-0 right-0 z-30 p-4 flex items-center gap-2 hp-fade-in">
         <button
-          onClick={() => onClose?.()}
-          className="w-10 h-10 flex items-center justify-center rounded-full bg-red-500 text-white shadow-[0_0_0_6px_rgba(239,68,68,0.2)] hover:bg-red-600 hover:shadow-[0_0_0_8px_rgba(239,68,68,0.3)] hover:scale-[1.05] transition-all duration-150"
-          title="End call"
-          aria-label="End call"
+          onClick={() => setShowSystemSettings(true)}
+          className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+          title="System Settings"
         >
-          <PhoneOff size={18} />
+          <Settings size={18} />
         </button>
-        <div className="w-3" aria-hidden="true" />
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowSystemSettings(true)}
-            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-            title="System Settings"
-          >
-            <Settings size={18} />
-          </button>
-          <button
-            onClick={clearConversation}
-            className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-            title="New Chat"
-          >
-            <PenLine size={16} />
-          </button>
-        </div>
+        <button
+          onClick={clearConversation}
+          className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+          title="New Chat"
+        >
+          <PenLine size={16} />
+        </button>
       </header>
 
       {/* Center Content Area */}
