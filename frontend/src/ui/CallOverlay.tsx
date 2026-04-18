@@ -27,6 +27,7 @@ import { useCallSession } from './call/useCallSession'
 import Waveform, { type WaveformMode } from './phone/primitives/Waveform'
 import Aura from './phone/primitives/Aura'
 import { createStreamingTts, type StreamingTts } from './call/streamTts'
+import { clog, speakOwned, isCallFullDuplexEnabled } from './call/log'
 import { useBargeInDetector } from './call/bargeIn'
 
 export type CallState =
@@ -733,6 +734,11 @@ function CallOverlayInner({
   useEffect(() => { useBackendRef.current = useBackend }, [useBackend])
 
   const voice = useVoiceController((text: string) => {
+    clog({
+      e: 'turn',
+      action: 'user_out',
+      route: useBackendRef.current ? 'ws' : 'chat_rest',
+    })
     if (useBackendRef.current) {
       sessionRef.current.sendTranscript(text)
     } else {
@@ -754,13 +760,69 @@ function CallOverlayInner({
   // mounted session is treated as the opener (locks the mic gate
   // via openerPlaying / openerDoneRef); subsequent utterances play
   // freely so the user can barge in.
+
+  // ── Turn-lock state machine (full-duplex fix) ─────────────────
+  // The overlay owns a simple 3-state machine:
+  //   'ai'   — AI is speaking; VAD events from the mic must be
+  //            suppressed (the AI's own voice bleeding through the
+  //            laptop speaker would otherwise trigger a false user
+  //            turn — this is the "AI says yes, hears itself, then
+  //            stops" bug reported in the log).
+  //   'user' — user is actively speaking (voice.state === LISTENING)
+  //   'idle' — nobody has the floor; VAD drives transitions normally
+  //
+  // Transitions fire setListeningSuppressed on the voice controller
+  // so suppression is a single source of truth. 300 ms release
+  // margin on 'ai → idle' lets echo tail die before we trust the
+  // mic again. Gated behind isCallFullDuplexEnabled() so the old
+  // behaviour is restorable via localStorage override.
+  type TurnLock = 'ai' | 'user' | 'idle'
+  const turnLockRef = useRef<TurnLock>('idle')
+  const turnUnlockTimerRef = useRef<number | null>(null)
+  const fullDuplexEnabledRef = useRef<boolean>(isCallFullDuplexEnabled())
+
+  const setTurnLock = useCallback((next: TurnLock, trigger: string) => {
+    if (!fullDuplexEnabledRef.current) return
+    const prev = turnLockRef.current
+    if (prev === next) return
+    turnLockRef.current = next
+    voice.setListeningSuppressed(next === 'ai', `turn_lock:${trigger}`)
+    clog({ e: 'state', from: prev, to: next, trigger })
+  }, [voice])
+
+  const releaseAiTurnWithMargin = useCallback((trigger: string) => {
+    if (turnUnlockTimerRef.current) {
+      window.clearTimeout(turnUnlockTimerRef.current)
+      turnUnlockTimerRef.current = null
+    }
+    turnUnlockTimerRef.current = window.setTimeout(() => {
+      setTurnLock('idle', `${trigger}:margin_release`)
+      turnUnlockTimerRef.current = null
+    }, 300)
+  }, [setTurnLock])
+
+  useEffect(() => {
+    return () => {
+      if (turnUnlockTimerRef.current) {
+        window.clearTimeout(turnUnlockTimerRef.current)
+        turnUnlockTimerRef.current = null
+      }
+    }
+  }, [])
+
   const speakText = useCallback((text: string) => {
     if (!text || !text.trim()) return
+    setTurnLock('ai', 'speak:start')
     const isOpener = !openerDoneRef.current
     if (isOpener) setOpenerPlaying(true)
     const markDone = () => {
       openerDoneRef.current = true
       setOpenerPlaying(false)
+      // 300 ms margin before we flip the lock back to 'idle'. Echo
+      // tail can linger after TTS says "ended"; releasing immediately
+      // would let the mic re-open while our own voice is still in
+      // the air.
+      releaseAiTurnWithMargin('speak:end')
     }
     // Length-based estimate for the SpeechService path (the shim
     // doesn't expose onend). ~12 chars/sec; floor 1.5 s so "Yes?"
@@ -769,13 +831,30 @@ function CallOverlayInner({
     const estimateSpeechMs = (t: string) =>
       Math.max(1500, Math.min(8000, t.length * 80))
     try {
-      const w = window as unknown as {
-        SpeechService?: { speak?: (t: string) => void }
-      }
-      if (w.SpeechService?.speak) {
-        w.SpeechService.speak(text)
-        if (isOpener) window.setTimeout(markDone, estimateSpeechMs(text))
-        return
+      // Prefer the owned TTS path when full-duplex is on. speakOwned
+      // handles both the window.SpeechService route AND the
+      // cross-source dedupe (see call/log.ts). Returns true iff this
+      // caller owns the utterance; false means another source
+      // (App-level TTS) was mid-speak — we fall through to the legacy
+      // speechSynthesis path unchanged so the overlay isn't silent.
+      if (fullDuplexEnabledRef.current) {
+        const spoke = speakOwned('overlay', text, {
+          onEnd: markDone,
+          onError: () => markDone(),
+        })
+        if (spoke) {
+          if (isOpener) window.setTimeout(markDone, estimateSpeechMs(text))
+          return
+        }
+      } else {
+        const w = window as unknown as {
+          SpeechService?: { speak?: (t: string) => void }
+        }
+        if (w.SpeechService?.speak) {
+          w.SpeechService.speak(text)
+          if (isOpener) window.setTimeout(markDone, estimateSpeechMs(text))
+          return
+        }
       }
       if ('speechSynthesis' in window) {
         const utt = new SpeechSynthesisUtterance(text)
@@ -791,7 +870,7 @@ function CallOverlayInner({
     } catch {
       if (isOpener) markDone()
     }
-  }, [])
+  }, [setTurnLock, releaseAiTurnWithMargin])
 
   // WS path — speak every assistant transcript.final (the opening
   // greeting from ws.py, and in unary mode every reply). In
@@ -801,6 +880,7 @@ function CallOverlayInner({
   useEffect(() => {
     if (!useBackend) return
     const unsub = session.onAssistantTranscript((p) => {
+      clog({ e: 'turn', action: 'assistant_in', route: 'ws' })
       speakText(p.text)
     })
     return unsub
@@ -939,6 +1019,7 @@ function CallOverlayInner({
     enabled: bargeInEnabled,
     onBargeIn: () => {
       const tid = currentTurnIdRef.current
+      clog({ e: 'turn', action: 'barge_in', route: 'ws' })
       ttsRef.current?.stop()
       if (tid) session.sendBargeIn(tid)
     },
@@ -995,9 +1076,13 @@ function CallOverlayInner({
   useEffect(() => {
     if (!connected) return
     if (openerPlaying) return
+    setTurnLock('idle', 'connected_open_mic')
     voice.setHandsFree(true)
-    return () => { voice.setHandsFree(false) }
-  }, [connected, openerPlaying, voice])
+    return () => {
+      voice.setHandsFree(false)
+      setTurnLock('idle', 'cleanup')
+    }
+  }, [connected, openerPlaying, voice, setTurnLock])
 
   // Mirror the voice-controller's machine onto our UI state so the
   // halo + waveform + label actually reflect what's happening:
@@ -1016,6 +1101,25 @@ function CallOverlayInner({
       return mapped
     })
   }, [voice.state, connected, muted])
+
+  // Mirror the voice-controller's LISTENING / THINKING onto the
+  // turn-lock 'user' slot. The AI owns 'ai' (see speakText); VAD
+  // drives 'user' only when the AI isn't already speaking. This is
+  // the industry-standard "who has the floor" gate — with it, the
+  // AI's TTS bleed through the speaker can't trip a false user turn
+  // (the root cause of the "AI says yes, hears itself, stops" bug).
+  useEffect(() => {
+    if (!fullDuplexEnabledRef.current) return
+    if (!connected) return
+    if (muted) return
+    if (voice.state === 'LISTENING' && turnLockRef.current === 'idle') {
+      clog({ e: 'vad', action: 'speech_start', state: voice.state })
+      setTurnLock('user', 'voice_listening')
+    } else if (voice.state === 'THINKING' && turnLockRef.current === 'user') {
+      clog({ e: 'vad', action: 'speech_end', state: voice.state })
+      setTurnLock('idle', 'voice_thinking')
+    }
+  }, [voice.state, connected, muted, setTurnLock])
 
   // While the opener TTS is playing, the UI label must read
   // 'speaking' — the persona is literally talking. Default state
