@@ -9,6 +9,8 @@ Production posture:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 from typing import Dict, List
@@ -22,6 +24,11 @@ INSTALL_STATE = os.getenv("INSTALL_STATE", "INSTALLED_DISABLED").strip().upper()
 PERSONA_ALLOWLIST = json.loads(
     os.getenv("WHATSAPP_PERSONA_ALLOWLIST", '{"secretary": true, "analyst": false}')
 )
+# WhatsApp Cloud API signs webhooks with HMAC-SHA256 using the App Secret,
+# sent as ``X-Hub-Signature-256: sha256=<hex>``. The orchestrator's
+# webhook handler calls ``hp.whatsapp.webhook.verify`` with the raw
+# request body + header value to filter spoofed callbacks at the edge.
+WEBHOOK_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "").strip()
 _AUDIT_EVENTS: List[Json] = []
 _OUTBOUND_BY_IDEMPOTENCY: Dict[str, Json] = {}
 
@@ -158,6 +165,40 @@ async def whatsapp_receive_webhook(args: Json) -> Json:
     }
 
 
+async def whatsapp_webhook_verify(args: Json) -> Json:
+    """Verify X-Hub-Signature-256 against the raw webhook body using the
+    Meta App Secret. Accepts a per-call ``secret`` override for tests or
+    multi-tenant setups where each tenant has its own app.
+    """
+    state = _state_gate("whatsapp.webhook.verify")
+    if state:
+        return state
+    payload = str(args.get("payload", ""))
+    header = str(args.get("signature", "")).strip()
+    secret = str(args.get("secret", "")).strip() or WEBHOOK_APP_SECRET
+    if not secret:
+        return {
+            "content": [{"type": "text", "text": "No WHATSAPP_APP_SECRET configured; verification skipped."}],
+            "verified": False,
+            "reason": "no_secret",
+        }
+    if not header:
+        return {
+            "content": [{"type": "text", "text": "Missing X-Hub-Signature-256 header."}],
+            "verified": False,
+            "reason": "missing_signature",
+        }
+    computed = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    expected = header.split("=", 1)[1] if "=" in header else header
+    verified = hmac.compare_digest(computed, expected.lower())
+    _audit({"action": "webhook_verify", "channel": "whatsapp", "verified": verified})
+    return {
+        "content": [{"type": "text", "text": f"Webhook verify: {'ok' if verified else 'failed'}."}],
+        "verified": verified,
+        "algorithm": "sha256",
+    }
+
+
 async def whatsapp_server_status(_: Json) -> Json:
     return {
         "content": [{"type": "text", "text": f"Server install_state={INSTALL_STATE}"}],
@@ -234,6 +275,20 @@ TOOLS: List[ToolDef] = [
             },
         },
         handler=whatsapp_receive_webhook,
+    ),
+    ToolDef(
+        name="hp.whatsapp.webhook.verify",
+        description="Verify X-Hub-Signature-256 against raw webhook body using the Meta App Secret.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "payload": {"type": "string", "description": "Raw request body (exact bytes)"},
+                "signature": {"type": "string", "description": "Value of X-Hub-Signature-256 header"},
+                "secret": {"type": "string", "description": "Override of WHATSAPP_APP_SECRET"},
+            },
+            "required": ["payload", "signature"],
+        },
+        handler=whatsapp_webhook_verify,
     ),
     ToolDef(
         name="hp.whatsapp.server.status",

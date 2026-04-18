@@ -112,3 +112,46 @@ async def test_send_message_requires_consent_when_writes_enabled():
         whatsapp_app.INSTALL_STATE = original_state
         whatsapp_app.WRITE_ENABLED = original_write
     assert "consent" in data["result"]["content"][0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_webhook_verify_accepts_valid_meta_signature():
+    import hashlib
+    import hmac
+    original_state = whatsapp_app.INSTALL_STATE
+    whatsapp_app.INSTALL_STATE = "ENABLED"
+    try:
+        payload = '{"entry":[{"changes":[{"value":{"messages":[{"from":"+391234","text":{"body":"ACK"}}]}}]}]}'
+        secret = "meta-app-secret-test"
+        sig = "sha256=" + hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        data = await _post_rpc(
+            "tools/call",
+            {
+                "name": "hp.whatsapp.webhook.verify",
+                "arguments": {"payload": payload, "signature": sig, "secret": secret},
+            },
+        )
+    finally:
+        whatsapp_app.INSTALL_STATE = original_state
+    assert data["result"]["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_webhook_verify_rejects_bad_signature():
+    original_state = whatsapp_app.INSTALL_STATE
+    whatsapp_app.INSTALL_STATE = "ENABLED"
+    try:
+        data = await _post_rpc(
+            "tools/call",
+            {
+                "name": "hp.whatsapp.webhook.verify",
+                "arguments": {
+                    "payload": "body",
+                    "signature": "sha256=" + "0" * 64,
+                    "secret": "meta-app-secret-test",
+                },
+            },
+        )
+    finally:
+        whatsapp_app.INSTALL_STATE = original_state
+    assert data["result"]["verified"] is False
