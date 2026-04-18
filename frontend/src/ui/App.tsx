@@ -2463,6 +2463,26 @@ export default function App() {
   // Track last spoken message to avoid re-speaking
   const lastSpokenMessageIdRef = useRef<string | null>(null)
 
+  // Call-open history guard — when the overlay opens, seed the
+  // last-spoken pointer to the CURRENT tail of ``messages``. Without
+  // this the TTS-on-assistant-reply effect treats the previous
+  // chat-history tail as a fresh reply the moment ``callOpen`` flips
+  // true, producing a pre-existing message read-aloud that collides
+  // with CallOverlay's own fallback opener (the "two openings
+  // overlapping" symptom). Only NEW assistant messages that land
+  // DURING the call will be spoken by App.tsx from here on; the
+  // call-itself-opener is owned by CallOverlay via speakOwned().
+  useEffect(() => {
+    if (!callOpen) return
+    const tail = messages[messages.length - 1]
+    lastSpokenMessageIdRef.current = tail ? tail.id : null
+    // Intentionally single-shot on callOpen flip — we don't want this
+    // to re-run on every message mutation during the call, otherwise
+    // the guard would swallow the very replies it's supposed to let
+    // through.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callOpen])
+
   // When a voice session is explicitly chosen from Session Hub, skip the auto-link resolve
   // to prevent the useEffect from overwriting the chosen session with the active one.
   const voiceSessionExplicitRef = useRef(false)
