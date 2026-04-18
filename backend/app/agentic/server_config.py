@@ -262,6 +262,179 @@ CONFIG_SCHEMAS: Dict[str, List[ConfigField]] = {
             default="false",
         ),
     ],
+    # ── Communication: WhatsApp Cloud API (Meta) ───────────────────────
+    "WHATSAPP_CLOUD_API": [
+        ConfigField(
+            key="WHATSAPP_ACCESS_TOKEN",
+            label="Access Token",
+            type="secret",
+            hint="System User token from business.facebook.com → System Users → Generate Token. Select whatsapp_business_messaging + whatsapp_business_management scopes.",
+            placeholder="EAAG...",
+        ),
+        ConfigField(
+            key="WHATSAPP_PHONE_NUMBER_ID",
+            label="Phone Number ID",
+            hint="Meta Business Manager → WhatsApp → API Setup → Phone Number ID (not the number itself).",
+            placeholder="1234567890123456",
+        ),
+        ConfigField(
+            key="WHATSAPP_BUSINESS_ACCOUNT_ID",
+            label="Business Account ID (WABA ID)",
+            required=False,
+            hint="Optional; only needed for template list / media uploads.",
+            placeholder="9876543210987654",
+        ),
+        ConfigField(
+            key="WHATSAPP_APP_SECRET",
+            label="App Secret",
+            type="secret",
+            hint="From developers.facebook.com → App Dashboard → Settings → Basic → App Secret. Used to verify X-Hub-Signature-256 on inbound webhooks.",
+            placeholder="abc123...",
+        ),
+        ConfigField(
+            key="WHATSAPP_WEBHOOK_VERIFY_TOKEN",
+            label="Webhook Verify Token",
+            type="secret",
+            required=False,
+            hint="Arbitrary string you choose. Enter the SAME value in Meta → WhatsApp → Configuration → Webhook.",
+            placeholder="any-secure-token",
+        ),
+        ConfigField(
+            key="WHATSAPP_DEFAULT_FROM",
+            label="Default Sender Display Number",
+            required=False,
+            hint="E.164 number shown to recipients. Leave empty to use the Phone Number ID's registered number.",
+            placeholder="+14155551212",
+        ),
+        ConfigField(
+            key="INSTALL_STATE",
+            label="Install state",
+            type="select",
+            required=False,
+            default="INSTALLED_DISABLED",
+            options=["INSTALLED_DISABLED", "ENABLED", "DEGRADED", "DISABLED"],
+            hint="Set to ENABLED once credentials are validated. Start with INSTALLED_DISABLED for safety.",
+        ),
+        ConfigField(
+            key="WRITE_ENABLED",
+            label="Allow outbound sends",
+            type="toggle",
+            required=False,
+            default="false",
+            hint="When off, the server stays in DRY_RUN — handlers return preview strings instead of hitting the Cloud API.",
+        ),
+    ],
+    # ── Communication: Telegram Bot API ────────────────────────────────
+    "TELEGRAM_BOT": [
+        ConfigField(
+            key="TELEGRAM_BOT_TOKEN",
+            label="Bot Token",
+            type="secret",
+            hint="From t.me/BotFather → /newbot (or /token for an existing bot). Format: <id>:<hash>",
+            placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+        ),
+        ConfigField(
+            key="TELEGRAM_WEBHOOK_SECRET_TOKEN",
+            label="Webhook Secret Token",
+            type="secret",
+            required=False,
+            hint="Arbitrary 1–256 chars. Send this to Telegram via setWebhook?secret_token=…; Telegram echoes it back as X-Telegram-Bot-Api-Secret-Token on every webhook.",
+            placeholder="any-secure-token",
+        ),
+        ConfigField(
+            key="TELEGRAM_DEFAULT_CHAT_ID",
+            label="Default Chat ID (optional)",
+            required=False,
+            hint="Auto-fill this in send_message. Get it from a test message via getUpdates or by messaging @userinfobot.",
+            placeholder="123456789",
+        ),
+        ConfigField(
+            key="INSTALL_STATE",
+            label="Install state",
+            type="select",
+            required=False,
+            default="INSTALLED_DISABLED",
+            options=["INSTALLED_DISABLED", "ENABLED", "DEGRADED", "DISABLED"],
+        ),
+        ConfigField(
+            key="WRITE_ENABLED",
+            label="Allow outbound sends",
+            type="toggle",
+            required=False,
+            default="false",
+        ),
+    ],
+    # ── Communication: VoIP (Twilio / Telnyx / Infobip) ────────────────
+    "VOIP_PROVIDER": [
+        ConfigField(
+            key="TELEPHONY_PROVIDER",
+            label="Provider",
+            type="select",
+            default="twilio",
+            options=["twilio", "telnyx", "infobip"],
+            hint="Pick the programmable-voice provider that owns your DID.",
+        ),
+        ConfigField(
+            key="TWILIO_ACCOUNT_SID",
+            label="Account SID",
+            type="secret",
+            hint="Twilio Console → Account Info → Account SID. (Telnyx/Infobip: use your equivalent API key here.)",
+            placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            condition="TELEPHONY_PROVIDER=twilio",
+        ),
+        ConfigField(
+            key="TWILIO_AUTH_TOKEN",
+            label="Auth Token",
+            type="secret",
+            hint="Twilio Console → Account Info → Auth Token. Also signs webhooks via HMAC-SHA1.",
+            placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            condition="TELEPHONY_PROVIDER=twilio",
+        ),
+        ConfigField(
+            key="VOIP_APP_DID",
+            label="App Phone Number (E.164)",
+            hint="The ONE phone number this app instance answers on. Must be E.164 (+<country><number>). Single-DID policy rejects inbound calls to any other number.",
+            placeholder="+14155551212",
+        ),
+        ConfigField(
+            key="VOIP_DEFAULT_FROM",
+            label="Default Outbound From (optional)",
+            required=False,
+            hint="Override the From number for outbound persona calls. Leave empty to reuse VOIP_APP_DID.",
+            placeholder="+14155551212",
+        ),
+        ConfigField(
+            key="VOIP_WEBHOOK_SECRET",
+            label="Webhook Signing Secret (optional)",
+            type="secret",
+            required=False,
+            hint="For Twilio, usually the same as Auth Token. For Telnyx/Infobip, the provider-specific webhook secret.",
+        ),
+        ConfigField(
+            key="TELEPHONY_ENABLED",
+            label="Enable Ingress (answer inbound calls)",
+            type="toggle",
+            required=False,
+            default="false",
+            hint="When off, only outbound tools work. When on, the ingress bridge accepts provider callbacks and creates voice_call sessions.",
+        ),
+        ConfigField(
+            key="INSTALL_STATE",
+            label="Install state",
+            type="select",
+            required=False,
+            default="INSTALLED_DISABLED",
+            options=["INSTALLED_DISABLED", "ENABLED", "DEGRADED", "DISABLED"],
+        ),
+        ConfigField(
+            key="WRITE_ENABLED",
+            label="Allow outbound calls",
+            type="toggle",
+            required=False,
+            default="false",
+            hint="Must be ON for the persona to actually place calls. Off = DRY_RUN preview only.",
+        ),
+    ],
 }
 
 # ── Setup guides per requires_config value ────────────────────────────────
@@ -392,6 +565,116 @@ SETUP_GUIDES: Dict[str, SetupGuide] = {
             SetupStep(
                 "Copy Application ID",
                 "Copy the Application (client) ID and optionally a client secret, then fill in below.",
+            ),
+        ],
+    ),
+    # ── Communication: WhatsApp Cloud API wizard ───────────────────────
+    "WHATSAPP_CLOUD_API": SetupGuide(
+        title="WhatsApp Cloud API setup",
+        subtitle="Register a Meta Business app, point its webhook at HomePilot, and paste the Access Token + Phone Number ID below.",
+        doc_url="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started",
+        steps=[
+            SetupStep(
+                "1. Create or reuse a Meta Business app",
+                "Open Meta for Developers → My Apps → Create App → type 'Business'. Give it a name; link it to your Business Manager account.",
+                link_label="Open Meta for Developers",
+                link_url="https://developers.facebook.com/apps/",
+            ),
+            SetupStep(
+                "2. Add the WhatsApp product",
+                "In the app dashboard → Products → Add Product → WhatsApp → Set up. Meta provisions a test phone number automatically so you can start before porting your real DID.",
+            ),
+            SetupStep(
+                "3. Copy the Phone Number ID + Access Token",
+                "WhatsApp → API Setup panel shows both values. The temporary 24-hour token is fine for testing; generate a long-lived System User token before production.",
+                link_label="System User token howto",
+                link_url="https://developers.facebook.com/docs/whatsapp/business-management-api/get-started",
+            ),
+            SetupStep(
+                "4. Set the webhook",
+                "WhatsApp → Configuration → Edit callback URL. Point it at https://<your-host>/mcp/whatsapp/webhook, choose a Verify Token (paste the SAME value in the field below), and subscribe to the 'messages' field.",
+            ),
+            SetupStep(
+                "5. Copy the App Secret",
+                "App Dashboard → Settings → Basic → App Secret → Show. This is the HMAC-SHA256 key HomePilot uses to verify every inbound webhook.",
+            ),
+            SetupStep(
+                "6. Paste + Save → Test",
+                "Fill every field below, flip INSTALL_STATE to ENABLED, hit Save, then Test. A green 'webhook verify: ok' and a dry-run message preview mean you're ready for WRITE_ENABLED=true.",
+            ),
+        ],
+    ),
+    # ── Communication: Telegram Bot wizard ─────────────────────────────
+    "TELEGRAM_BOT": SetupGuide(
+        title="Telegram Bot setup",
+        subtitle="Create a bot with @BotFather, choose a webhook secret, then paste the token + secret below.",
+        doc_url="https://core.telegram.org/bots/tutorial",
+        steps=[
+            SetupStep(
+                "1. Talk to BotFather",
+                "Open Telegram, message @BotFather, send /newbot. Choose a display name (e.g. 'HomePilot Secretary') and a unique username ending in 'bot'. BotFather replies with the Bot Token.",
+                link_label="Open BotFather",
+                link_url="https://t.me/BotFather",
+            ),
+            SetupStep(
+                "2. Paste the Bot Token below",
+                "Copy the 123456:ABC-DEF… string into the 'Bot Token' field. This is a secret — anyone with it can impersonate your bot.",
+            ),
+            SetupStep(
+                "3. Choose a webhook secret token",
+                "Pick any 1–256 character string. Paste it in 'Webhook Secret Token' below, and Telegram will echo it back on every webhook so HomePilot can reject spoofed POSTs.",
+            ),
+            SetupStep(
+                "4. Register the webhook with Telegram",
+                "Call https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-host>/mcp/telegram/webhook&secret_token=<your-secret>. A one-liner curl works fine.",
+                link_label="setWebhook reference",
+                link_url="https://core.telegram.org/bots/api#setwebhook",
+            ),
+            SetupStep(
+                "5. (Optional) Find your chat ID",
+                "Send any message to your new bot, then hit https://api.telegram.org/bot<TOKEN>/getUpdates. The first result's message.chat.id is what goes in 'Default Chat ID'.",
+            ),
+            SetupStep(
+                "6. Save → Test",
+                "Fill the fields, flip INSTALL_STATE to ENABLED, Save, then Test. Green = webhook verify works end-to-end.",
+            ),
+        ],
+    ),
+    # ── Communication: VoIP / Phone wizard ─────────────────────────────
+    "VOIP_PROVIDER": SetupGuide(
+        title="VoIP / Phone setup",
+        subtitle="Register one phone number (DID) with a programmable-voice provider, point its webhook at HomePilot, and map the DID to a persona.",
+        doc_url="https://www.twilio.com/docs/voice/quickstart",
+        steps=[
+            SetupStep(
+                "1. Pick a provider and buy one phone number",
+                "Twilio / Telnyx / Infobip all work. In the provider console, buy a phone number ('DID') with Voice capability. Single-DID mode in HomePilot means ONE number per app instance — phase 1 design.",
+                link_label="Twilio: buy a number",
+                link_url="https://console.twilio.com/us1/develop/phone-numbers/manage/search",
+            ),
+            SetupStep(
+                "2. Paste Account SID + Auth Token",
+                "Twilio Console home page shows both under 'Account Info'. For Telnyx/Infobip, use your API key / Public key in the SID field and the secret in Auth Token.",
+                link_label="Twilio Console",
+                link_url="https://console.twilio.com/",
+            ),
+            SetupStep(
+                "3. Set the App Phone Number (VOIP_APP_DID)",
+                "Paste the number you just bought in E.164 format (+<country><number>, e.g. +14155551212). HomePilot's single-DID policy rejects inbound calls to any other number.",
+            ),
+            SetupStep(
+                "4. Point the provider webhook at HomePilot",
+                "Provider console → your number → 'A CALL COMES IN' / 'Inbound Webhook' → https://<your-host>/mcp/voip/webhook (HTTP POST). Twilio signs with HMAC-SHA1 using your Auth Token; Telnyx with HMAC-SHA256 using the webhook secret.",
+            ),
+            SetupStep(
+                "5. Create a DID → persona route",
+                "After install, call hp.voip.did_route.upsert with your DID + the persona_id that should answer (e.g. 'secretary'). You can also set allow_source_cidrs to restrict to provider IP ranges.",
+                link_label="Twilio IP ranges",
+                link_url="https://www.twilio.com/docs/voice/webhooks#ip-address-whitelist",
+            ),
+            SetupStep(
+                "6. Enable + Test",
+                "Flip TELEPHONY_ENABLED=true and WRITE_ENABLED=true, Save, then Test. A green result means webhook signatures verify and the ingress bridge can open voice_call sessions. Dial your DID — the persona picks up.",
             ),
         ],
     ),
