@@ -1783,3 +1783,25 @@ file-manager-scan: ## Dry-run: scan every source and print a file list (no serve
 		$(if $(SESSION),--session "$(SESSION)",) \
 		$(if $(BACKEND_URL),--backend-url "$(BACKEND_URL)",) \
 		$(if $(COMFY_URL),--comfy-url "$(COMFY_URL)",)
+
+# ─────────────────────────────────────────────────────────────────────
+# Recovery — rebuild file_assets ownership for orphan avatar / image
+# files that exist on disk but aren't registered in the database.
+# Useful when projects_metadata.json has been wiped but the underlying
+# avatar PNGs are still present in UPLOAD_DIR.
+#
+# Idempotent: skips files already registered. Safe to run multiple
+# times. Pass DRY_RUN=1 to preview without writing. Pass USER=<id|name>
+# to assign restored files to a specific user instead of the admin.
+#
+# Examples:
+#   make restore-avatars                  # restore as admin
+#   make restore-avatars DRY_RUN=1        # preview only
+#   make restore-avatars USER=ruslanmv    # assign to a named user
+# ─────────────────────────────────────────────────────────────────────
+
+restore-avatars: ## Reassign orphan image files in UPLOAD_DIR to the admin user (or USER=<id|name>). DRY_RUN=1 to preview.
+	@test -x backend/.venv/bin/python || (echo "❌ backend venv missing — run 'make install' first"; exit 1)
+	@cd backend && .venv/bin/python -m app.scripts.restore_avatars \
+		$(if $(DRY_RUN),--dry-run,) \
+		$(if $(USER),--user "$(USER)",)
