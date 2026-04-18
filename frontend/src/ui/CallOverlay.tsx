@@ -595,6 +595,22 @@ export interface CallOverlayProps {
     conversationId?: string | null
     personaId?: string | null
   }
+  /** Optional chat thread. When present AND the call runs in
+   *  fallback mode (VOICE_CALL_ENABLED=false or unreachable),
+   *  CallOverlay watches this array for new assistant replies
+   *  that arrive DURING the call and speaks them via TTS — so
+   *  the user hears the persona even without the voice_call WS.
+   *
+   *  We also synthesize a short opener the moment the call
+   *  connects in fallback mode, so the AI still "answers first"
+   *  the way a real callee would. The baseline is captured at
+   *  call-open so pre-existing chat history isn't re-spoken. */
+  messages?: ReadonlyArray<{
+    id: string
+    role: 'user' | 'assistant' | string
+    text: string
+    callMemory?: unknown
+  }>
 }
 
 // Outer shell — renders nothing when closed so the voice hook inside
@@ -618,6 +634,7 @@ function CallOverlayInner({
   onEnded,
   onSendText,
   backend,
+  messages,
 }: CallOverlayProps) {
   const initial: CallState = skipDialing ? 'connecting' : 'dialing'
   const [state, setState] = useState<CallState>(initial)
@@ -765,6 +782,11 @@ function CallOverlayInner({
   // user turns) do NOT relock the mic; the user can barge-in on
   // those freely, which is the correct UX.
   const [openerPlaying, setOpenerPlaying] = useState(false)
+  // ``connected`` is a pure derivation from ``state``; declared early
+  // so effects that fire before the setHandsFree gate (fallback opener
+  // below) can reference it without a forward-ref.
+  const connected =
+    state !== 'dialing' && state !== 'connecting' && state !== 'ended'
   const openerDoneRef = useRef(false)
   useEffect(() => {
     if (session.status === 'creating') {
@@ -802,64 +824,132 @@ function CallOverlayInner({
   // transcript.final the server emits OUTSIDE a streamed turn —
   // e.g. the opening greeting, which the current ws.py path sends
   // as transcript.final regardless of streaming mode.
-  useEffect(() => {
-    if (!useBackend) return
+  // Shared TTS helper — called by both the WS path AND the
+  // fallback-mode openers/replies below. The FIRST utterance on a
+  // mounted session is treated as the opener (locks the mic gate
+  // via openerPlaying / openerDoneRef); subsequent utterances play
+  // freely so the user can barge in.
+  const speakText = useCallback((text: string) => {
+    if (!text || !text.trim()) return
+    const isOpener = !openerDoneRef.current
+    if (isOpener) setOpenerPlaying(true)
+    const markDone = () => {
+      openerDoneRef.current = true
+      setOpenerPlaying(false)
+    }
     // Length-based estimate for the SpeechService path (the shim
-    // doesn't expose onend). Chosen to match typical Web Speech
-    // cadence: ~12 chars/sec for English; floor 1.5 s so "Yes?"
+    // doesn't expose onend). ~12 chars/sec; floor 1.5 s so "Yes?"
     // still gives the user a beat; ceiling 8 s so a runaway
     // greeting can't lock the mic indefinitely.
-    const estimateSpeechMs = (text: string) =>
-      Math.max(1500, Math.min(8000, text.length * 80))
+    const estimateSpeechMs = (t: string) =>
+      Math.max(1500, Math.min(8000, t.length * 80))
+    try {
+      const w = window as unknown as {
+        SpeechService?: { speak?: (t: string) => void }
+      }
+      if (w.SpeechService?.speak) {
+        w.SpeechService.speak(text)
+        if (isOpener) window.setTimeout(markDone, estimateSpeechMs(text))
+        return
+      }
+      if ('speechSynthesis' in window) {
+        const utt = new SpeechSynthesisUtterance(text)
+        if (isOpener) {
+          utt.onend = markDone
+          utt.onerror = markDone
+          window.setTimeout(markDone, estimateSpeechMs(text))
+        }
+        window.speechSynthesis.speak(utt)
+        return
+      }
+      if (isOpener) markDone()
+    } catch {
+      if (isOpener) markDone()
+    }
+  }, [])
+
+  // WS path — speak every assistant transcript.final (the opening
+  // greeting from ws.py, and in unary mode every reply). In
+  // streaming mode, per-token partials go through streamTts below
+  // and THIS path fires only for transcript.final emitted outside
+  // a streamed turn — e.g. the opener itself.
+  useEffect(() => {
+    if (!useBackend) return
     const unsub = session.onAssistantTranscript((p) => {
-      // Mark the opener window only once — the FIRST assistant
-      // utterance on this session. Subsequent replies don't gate
-      // the mic; the user can barge in on them.
-      const isOpener = !openerDoneRef.current
-      if (isOpener) setOpenerPlaying(true)
-      const markDone = () => {
-        openerDoneRef.current = true
-        setOpenerPlaying(false)
-      }
-      try {
-        const w = window as unknown as {
-          SpeechService?: { speak?: (t: string) => void }
-        }
-        if (w.SpeechService?.speak) {
-          w.SpeechService.speak(p.text)
-          // Fallback timeout — the shim doesn't fire onend.
-          if (isOpener) {
-            window.setTimeout(markDone, estimateSpeechMs(p.text))
-          }
-          return
-        }
-        if ('speechSynthesis' in window) {
-          const utt = new SpeechSynthesisUtterance(p.text)
-          if (isOpener) {
-            // Primary signal — fires reliably on Chromium + Safari
-            // when TTS finishes. onerror catches the rarer cases
-            // (cancelled, interrupted by barge-in).
-            utt.onend = markDone
-            utt.onerror = markDone
-            // Belt-and-suspenders: if the browser drops the event
-            // silently (mobile Safari has a known quirk where
-            // onend can get lost after tab switch), the timeout
-            // still releases the gate.
-            window.setTimeout(markDone, estimateSpeechMs(p.text))
-          }
-          window.speechSynthesis.speak(utt)
-          return
-        }
-        // No TTS at all — release the gate immediately; we have
-        // nothing to wait for.
-        if (isOpener) markDone()
-      } catch {
-        // TTS threw — release the gate so the call isn't stuck.
-        if (isOpener) markDone()
-      }
+      speakText(p.text)
     })
     return unsub
-  }, [useBackend, session])
+  }, [useBackend, session, speakText])
+
+  // ── Fallback mode (VOICE_CALL_ENABLED=false on backend) ───────
+  // When the backend voice_call route isn't mounted, the session
+  // POST 404s, useBackend stays false, and the STT pipeline routes
+  // through the regular chat-REST path (onSendText above). That
+  // works for text round-tripping — but without the hooks below,
+  // the assistant's replies land in chatMessages and are never
+  // spoken, so the user hears nothing.
+  //
+  // These two effects close that gap so the overlay is functional
+  // even with the WS disabled:
+  //   (a) a synthetic opener fires when the call connects, so the
+  //       AI still "answers first"
+  //   (b) every new assistant message arriving in ``messages``
+  //       during the call is spoken via the same TTS path the WS
+  //       reply path uses
+
+  // (a) Fallback opener — once per session, when the line connects
+  // and we're running fallback mode, pick a short greeting and
+  // speak it. The greeting is marked as opener via speakText's
+  // first-utterance heuristic, so the mic gate stays closed
+  // exactly like the WS path.
+  const fallbackOpeners = useMemo(
+    () => [
+      'Hello?',
+      'Yes?',
+      `Hi, this is ${personaName}.`,
+      `${personaName} speaking.`,
+      `Hey — ${personaName}.`,
+      `Hi, ${personaName} here.`,
+    ],
+    [personaName],
+  )
+  const fallbackOpenerFiredRef = useRef(false)
+  useEffect(() => {
+    if (useBackend) return
+    if (!connected) return
+    if (fallbackOpenerFiredRef.current) return
+    fallbackOpenerFiredRef.current = true
+    const g = fallbackOpeners[
+      Math.floor(Math.random() * fallbackOpeners.length)
+    ]
+    speakText(g)
+  }, [useBackend, connected, fallbackOpeners, speakText])
+
+  // (b) Watch for new assistant messages during the call and
+  // speak them. ``baselineMsgCount`` freezes the chat length at
+  // call-open so pre-call history isn't re-spoken; ``spokenIds``
+  // is a belt-and-suspenders guard against double-fire when
+  // messages rerender with stable ids.
+  const baselineMsgCountRef = useRef<number | null>(null)
+  const spokenIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (baselineMsgCountRef.current !== null) return
+    baselineMsgCountRef.current = messages?.length ?? 0
+  }, [messages])
+  useEffect(() => {
+    if (useBackend) return
+    if (!messages) return
+    const baseline = baselineMsgCountRef.current ?? 0
+    for (let i = baseline; i < messages.length; i++) {
+      const m = messages[i]
+      if (m.role !== 'assistant') continue
+      if (!m.text || !m.text.trim()) continue
+      if (m.callMemory) continue   // PostCallCard marker — skip
+      if (spokenIdsRef.current.has(m.id)) continue
+      spokenIdsRef.current.add(m.id)
+      speakText(m.text)
+    }
+  }, [messages, useBackend, speakText])
 
   // ── Phase 2: streaming TTS pipeline ───────────────────────────
   // Holds one streamTts instance per mounted overlay. Stopped on
@@ -990,7 +1080,7 @@ function CallOverlayInner({
   // rule — the AI speaks its greeting and the user hears it out
   // before the mic opens; otherwise a natural early "hello?" trips
   // the barge-in detector and cuts the persona off mid-greeting.
-  const connected = state !== 'dialing' && state !== 'connecting' && state !== 'ended'
+  // ``connected`` is declared earlier (near state).
   useEffect(() => {
     if (!connected) return
     if (openerPlaying) return

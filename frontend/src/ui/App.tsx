@@ -5354,6 +5354,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           ])
         }}
         personaName={currentProject?.name || 'Assistant'}
+        messages={chatMessages}
         avatarUrl={(() => {
           // Resolve the persona's thumbnail the same way
           // PersonaSettingsPanel does: prefer
