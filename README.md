@@ -38,6 +38,9 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 ### 📞 Phone — Live Voice Calls with Your Persona
 Tap the emerald 📞 in the chat header and the persona picks up the phone — a full-duplex voice conversation with persona-aware openings, turn-taking modelled on fifty years of conversation-analysis research, post-TTS echo margins, and sub-50 ms server-side barge-in. No audio effects, no voice swap — your persona stays itself, it just obeys the rhythm of a real call. See [docs/PHONE.md](docs/PHONE.md) for the full architecture.
 
+### 📬 Communication — Real Phone, WhatsApp, Telegram (bidirectional)
+Give your persona a real phone number, WhatsApp, or Telegram handle and it can call you back (or you can call it) — ACK/SNOOZE/ESCALATE keypad flow, opt-in consent wall, single-DID policy, webhook signature verification on every channel. Installed as removable MCP servers behind a Configure wizard. See [docs/COMMUNICATION.md](docs/COMMUNICATION.md).
+
 ### 🎭 Personas — Persistent AI Identities
 A **Persona** in HomePilot is not a chatbot, not a voice skin, and not a prompt template. It is a **persistent AI identity** — a named, visual, voice-enabled entity with its own personality, appearance, long-term memory, and session history that evolves with you over time. Where traditional assistants forget you between conversations, a Persona remembers. Where traditional UIs give you a text box, a Persona gives you a face, a voice, and a relationship. One identity, many sessions, continuous context — this is the foundation for AI that actually knows who it's talking to. See [docs/PERSONA.md](docs/PERSONA.md) for the full specification.
 
