@@ -54,12 +54,17 @@ class SceneInput:
     Either ``image_path`` or ``video_path`` should be provided. If both are
     set, ``video_path`` wins (it is the higher-fidelity asset). If neither
     is set, the scene is rendered as a black frame of ``duration_sec``.
+
+    ``narration`` is the source text used to synthesize subtitles when
+    the caller passes ``subtitles="burn_in"`` to :func:`render_scenes`.
+    It does not affect rendering when subtitles are off.
     """
     idx: int
     duration_sec: float = 5.0
     image_path: Optional[str] = None
     video_path: Optional[str] = None
     audio_path: Optional[str] = None
+    narration: str = ""
 
 
 @dataclass
@@ -243,6 +248,119 @@ def _per_scene_args(
     return inputs, filters, f"v{scene.idx}"
 
 
+def _audio_transform_chain(rate: float, pitch: float) -> Optional[str]:
+    """Build the ffmpeg audio-filter chain for the chosen rate + pitch.
+
+    Returns None when both are 1.0 (caller skips the transform stage).
+
+    Rate is applied with ``atempo``. Pitch uses the industry-standard
+    ``asetrate=48000*pitch, atempo=1/pitch`` compound so the tempo is
+    preserved while the pitch shifts. When both are non-unit we stack the
+    pitch compound first, then an outer atempo for rate.
+
+    ``atempo`` only accepts 0.5–2.0 per stage; we clamp inputs upstream
+    to stay within that range so we never need to chain multiple stages.
+    """
+    rate = max(0.5, min(2.0, float(rate or 1.0)))
+    pitch = max(0.5, min(2.0, float(pitch or 1.0)))
+    if rate == 1.0 and pitch == 1.0:
+        return None
+    parts: list[str] = []
+    if pitch != 1.0:
+        parts.append(f"asetrate=48000*{pitch:.6f}")
+        parts.append(f"atempo={1.0 / pitch:.6f}")
+    if rate != 1.0:
+        parts.append(f"atempo={rate:.6f}")
+    return ",".join(parts)
+
+
+def _ass_escape(text: str) -> str:
+    """Escape a string for embedding inside a libass SRT/ASS cue."""
+    return (text or "").replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}")
+
+
+def _srt_timestamp(seconds: float) -> str:
+    """Convert seconds to an SRT timestamp (HH:MM:SS,mmm)."""
+    if seconds < 0:
+        seconds = 0.0
+    ms = int(round(seconds * 1000))
+    hours, ms = divmod(ms, 3_600_000)
+    minutes, ms = divmod(ms, 60_000)
+    secs, ms = divmod(ms, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
+
+
+def _split_narration_for_subtitles(text: str, max_chars: int = 42) -> list[str]:
+    """Chunk narration into subtitle-sized lines.
+
+    Subtitles read best at ~42 chars/line (YouTube's auto-caption default).
+    We split on sentence boundaries first, then on commas when a chunk is
+    still too long, falling back to hard-wrap at word boundaries.
+    """
+    import re
+    if not text:
+        return []
+    # Sentence split on ., !, ?, or newline.
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", text) if s.strip()]
+    chunks: list[str] = []
+    for s in sentences:
+        if len(s) <= max_chars:
+            chunks.append(s)
+            continue
+        # Try splitting on commas first.
+        sub = [p.strip() for p in s.split(",") if p.strip()]
+        if all(len(p) <= max_chars for p in sub):
+            chunks.extend(sub)
+            continue
+        # Fallback: greedy word-wrap.
+        cur = ""
+        for word in s.split():
+            if not cur:
+                cur = word
+            elif len(cur) + 1 + len(word) <= max_chars:
+                cur = f"{cur} {word}"
+            else:
+                chunks.append(cur)
+                cur = word
+        if cur:
+            chunks.append(cur)
+    return chunks
+
+
+def _write_srt_for_scene(
+    narration: str,
+    duration_sec: float,
+    srt_path: Path,
+    *,
+    start_offset: float = 0.0,
+) -> bool:
+    """Write an SRT file whose cues span [0, duration_sec] for a single scene.
+
+    Returns True on success, False when the narration is empty (no SRT
+    should be emitted — and the caller should not try to burn an empty
+    subtitle file, which would fail).
+    """
+    chunks = _split_narration_for_subtitles(narration)
+    if not chunks:
+        return False
+    dur = max(0.5, float(duration_sec or 5.0))
+    # Distribute the duration evenly across chunks. Cap per-cue at 5s so
+    # slow voices don't hold a single cue on screen forever.
+    per = min(dur / len(chunks), 5.0)
+    lines: list[str] = []
+    for i, chunk in enumerate(chunks):
+        start = start_offset + i * per
+        end = min(start_offset + dur, start + per)
+        if end <= start:
+            end = start + 0.1
+        lines.append(str(i + 1))
+        lines.append(f"{_srt_timestamp(start)} --> {_srt_timestamp(end)}")
+        lines.append(_ass_escape(chunk))
+        lines.append("")
+    srt_path.write_text("\n".join(lines), encoding="utf-8")
+    return True
+
+
 def _has_audio(path: str) -> bool:
     """Probe a media file and return True iff it has at least one audio stream."""
     try:
@@ -277,6 +395,9 @@ def render_scenes(
     kind: RenderKind,
     output_path: str,
     on_progress: Optional[Callable[[float], None]] = None,
+    audio_rate: float = 1.0,
+    audio_pitch: float = 1.0,
+    subtitles: str = "none",
 ) -> RenderResult:
     """Render a list of scenes into a single MP4 at ``output_path``.
 
@@ -284,6 +405,18 @@ def render_scenes(
     then concatenates the intermediates with ffmpeg's concat demuxer. This
     is slower than a single filter graph but far more robust against scenes
     with very different codecs / resolutions / sample rates / pixel formats.
+
+    Extra knobs:
+
+    - ``audio_rate`` (0.5–2.0, default 1.0): tempo multiplier for the
+      narration/audio track. Applied as ffmpeg ``atempo``.
+    - ``audio_pitch`` (0.5–2.0, default 1.0): pitch-shift multiplier.
+      Implemented via ``asetrate=48000*pitch, atempo=1/pitch`` so the
+      output duration is unchanged (tempo is preserved, pitch shifts).
+    - ``subtitles`` (``"burn_in"`` | ``"none"``, default ``"none"``):
+      when ``burn_in``, each scene's ``narration`` is chunked into an
+      SRT file and burned into the video via libass. A sidecar .srt
+      is also written next to the MP4 so editors can re-style.
     """
     if not ffmpeg_available():
         raise RuntimeError(
@@ -294,6 +427,8 @@ def render_scenes(
 
     width, height, fps = _resolution_for_preset(preset)
     encode_args = _encode_args_for_kind(kind, preset)
+    audio_transform = _audio_transform_chain(audio_rate, audio_pitch)
+    burn_subtitles = (subtitles or "none").lower() == "burn_in"
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -325,11 +460,41 @@ def render_scenes(
                 image_path=image_local,
                 video_path=video_local,
                 audio_path=audio_local,
+                narration=scene.narration,
             )
 
-            inputs, filters, _vlabel = _per_scene_args(
+            inputs, filters, vlabel = _per_scene_args(
                 normalized, width, height, fps, scratch
             )
+
+            # If subtitles are burning in, write a per-scene SRT into
+            # scratch and append a ``subtitles`` filter to the video chain.
+            # ffmpeg's subtitles filter uses libass under the hood. A
+            # sidecar .srt is also written next to the final MP4 below.
+            if burn_subtitles and scene.narration:
+                srt_path = scratch / f"scene_{i:04d}.srt"
+                wrote = _write_srt_for_scene(
+                    scene.narration,
+                    normalized.duration_sec,
+                    srt_path,
+                )
+                if wrote:
+                    # Escape the path for ffmpeg's filter-arg parser.
+                    esc = str(srt_path).replace("\\", "/").replace(":", r"\:")
+                    force_style = (
+                        "Fontname=DejaVu Sans,Fontsize=28,"
+                        "PrimaryColour=&H00FFFFFF&,"
+                        "OutlineColour=&H80000000&,"
+                        "BorderStyle=3,Outline=2,Shadow=0,MarginV=48"
+                    )
+                    # Replace the last video-chain step's output label so
+                    # the subtitle filter sits at the end of the pipeline.
+                    new_last = (
+                        f"[{vlabel}]subtitles='{esc}':"
+                        f"force_style='{force_style}'[{vlabel}_sub]"
+                    )
+                    filters.append(new_last)
+                    vlabel = f"{vlabel}_sub"
 
             # Audio handling: prefer explicit audio_path; otherwise reuse the
             # video's audio track if present; otherwise generate silence so
@@ -337,12 +502,19 @@ def render_scenes(
             audio_inputs: list[str] = []
             audio_filter: list[str] = []
             audio_label = "a0"
+            # Common tail applied to every audio path: resample to 48 kHz
+            # stereo + apply the optional rate/pitch transform the caller
+            # requested. Consolidating the tail here keeps the three
+            # branches below in sync.
+            tail = "aresample=48000,aformat=channel_layouts=stereo"
+            if audio_transform:
+                tail = f"{tail},{audio_transform}"
             if audio_local:
                 audio_inputs += ["-i", audio_local]
                 # Index 1 is the audio file (after the single video input).
-                audio_filter.append(f"[1:a]aresample=48000,aformat=channel_layouts=stereo[{audio_label}]")
+                audio_filter.append(f"[1:a]{tail}[{audio_label}]")
             elif video_local and _has_audio(video_local):
-                audio_filter.append(f"[0:a]aresample=48000,aformat=channel_layouts=stereo[{audio_label}]")
+                audio_filter.append(f"[0:a]{tail}[{audio_label}]")
             else:
                 audio_inputs += [
                     "-f", "lavfi",
@@ -362,7 +534,7 @@ def render_scenes(
                 *inputs,
                 *audio_inputs,
                 "-filter_complex", filter_complex,
-                "-map", "[v0]",
+                "-map", f"[{vlabel}]",
                 "-map", f"[{audio_label}]",
                 "-r", str(fps),
                 "-shortest",
@@ -395,6 +567,36 @@ def render_scenes(
             str(out),
         ]
         _run(concat_cmd)
+
+        # Sidecar SRT: full-video timeline, cue timings chained across
+        # scenes. Written whenever burn_subtitles=True, so editors get the
+        # same timing they saw burned in. Named <output>.srt.
+        if burn_subtitles:
+            sidecar = out.with_suffix(".srt")
+            running_offset = 0.0
+            cue_idx = 1
+            lines: list[str] = []
+            for s in scenes:
+                dur = max(0.5, float(s.duration_sec or 5.0))
+                chunks = _split_narration_for_subtitles(s.narration or "")
+                if chunks:
+                    per = min(dur / len(chunks), 5.0)
+                    for j, chunk in enumerate(chunks):
+                        start = running_offset + j * per
+                        end = min(running_offset + dur, start + per)
+                        if end <= start:
+                            end = start + 0.1
+                        lines.append(str(cue_idx))
+                        lines.append(f"{_srt_timestamp(start)} --> {_srt_timestamp(end)}")
+                        lines.append(_ass_escape(chunk))
+                        lines.append("")
+                        cue_idx += 1
+                running_offset += dur
+            try:
+                sidecar.write_text("\n".join(lines), encoding="utf-8")
+            except OSError:
+                # Non-fatal — the burned-in subs are still present.
+                pass
 
         if on_progress:
             on_progress(100.0)

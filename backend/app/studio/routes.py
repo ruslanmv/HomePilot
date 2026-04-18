@@ -2360,8 +2360,24 @@ class VideoMp4ExportRequest(BaseModel):
     ``kind`` selects the encode profile; the platform preset (canvas
     aspect, fps) is read from the StudioVideo record so the same project
     always renders to the same canvas regardless of the chosen profile.
+
+    Audio / subtitle options are additive: the defaults reproduce the
+    original concat-only behavior so the endpoint stays backward
+    compatible for clients that don't send them.
     """
     kind: Literal["mp4_plain", "mp4_youtube"] = "mp4_plain"
+    # Audio rate (tempo) multiplier applied during render, 0.5–2.0. 1.0 is
+    # untouched; <1 slows narration, >1 speeds it up. Duration of the
+    # output clip stretches / shrinks accordingly.
+    audio_rate: float = 1.0
+    # Audio pitch shift, 0.5–2.0. 1.0 is untouched. Implemented with the
+    # industry-standard asetrate + atempo compound so tempo is preserved
+    # while only pitch shifts.
+    audio_pitch: float = 1.0
+    # When "burn_in", scene narration is wrapped into timed SRT cues and
+    # burned into the video via ffmpeg's libass subtitle filter. A sidecar
+    # .srt is always written alongside the MP4 when subtitles != "none".
+    subtitles: Literal["burn_in", "none"] = "none"
 
 
 @router.post("/videos/{video_id}/export/mp4", status_code=202)
@@ -2394,6 +2410,8 @@ def video_export_mp4(
         raise HTTPException(status_code=400, detail="Video has no scenes to render")
 
     # Translate StudioScene records into the renderer's SceneInput shape.
+    # ``narration`` is the source text for subtitles; it is the same field
+    # the Piper WASM wizard used to synthesize the uploaded audioUrl.
     inputs = [
         SceneInput(
             idx=i,
@@ -2401,9 +2419,16 @@ def video_export_mp4(
             image_path=s.imageUrl,
             video_path=s.videoUrl,
             audio_path=s.audioUrl,
+            narration=s.narration or "",
         )
         for i, s in enumerate(scenes)
     ]
+
+    # Clamp audio-transform inputs. The renderer itself has additional
+    # defensive clamps, but rejecting absurd values at the API boundary
+    # makes error messages clearer.
+    audio_rate = max(0.5, min(2.0, float(req.audio_rate or 1.0)))
+    audio_pitch = max(0.5, min(2.0, float(req.audio_pitch or 1.0)))
 
     job = render_jobs.submit_render(
         user_id=user["id"],
@@ -2411,8 +2436,81 @@ def video_export_mp4(
         kind=req.kind,
         preset=video.platformPreset,
         scenes=inputs,
+        audio_rate=audio_rate,
+        audio_pitch=audio_pitch,
+        subtitles=req.subtitles,
     )
     return job.to_dict()
+
+
+# ----------------------------------------------------------------------------
+# Narration upload
+# ----------------------------------------------------------------------------
+# The Creator Studio export wizard synthesizes per-scene narration with the
+# Piper WASM engine (in-browser), then uploads each WAV here. The server
+# persists the file under UPLOAD_DIR/studio/narration/<scene_id>.wav and
+# writes scene.audioUrl. During render the concat pipeline mixes this audio
+# into the final MP4.
+
+from fastapi import UploadFile, File
+
+
+@router.post("/videos/{video_id}/scenes/{scene_id}/narration")
+async def upload_scene_narration(
+    video_id: str,
+    scene_id: str,
+    file: UploadFile = File(..., description="Audio file (Piper-synthesized WAV)"),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+):
+    """Accept a narration audio upload for a scene. Writes ``scene.audioUrl``."""
+    _user = _resolve_user_or_401(authorization, homepilot_session)
+
+    video = get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    scene = get_scene(scene_id)
+    if not scene or scene.videoId != video_id:
+        raise HTTPException(status_code=404, detail="Scene not found")
+
+    # Piper produces 16-bit PCM WAV. Accept common audio types; the
+    # renderer normalizes anyway.
+    allowed_prefixes = ("audio/", "application/octet-stream")
+    ctype = (file.content_type or "").lower()
+    if ctype and not any(ctype.startswith(p) for p in allowed_prefixes):
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported narration content-type: {file.content_type}",
+        )
+
+    # Cap the upload at 50 MB — a minute of 48 kHz 16-bit stereo WAV is
+    # ~11 MB, so this is generous even for long scenes.
+    MAX_BYTES = 50 * 1024 * 1024
+    payload = await file.read(MAX_BYTES + 1)
+    if len(payload) > MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Narration file too large (>50 MB)")
+    if not payload:
+        raise HTTPException(status_code=400, detail="Empty narration file")
+
+    from ..config import UPLOAD_DIR
+    narration_dir = os.path.join(UPLOAD_DIR, "studio", "narration")
+    os.makedirs(narration_dir, exist_ok=True)
+    # Use the scene_id as the filename so re-uploads replace the previous
+    # take cleanly and there is no growing pile of orphan wav files.
+    dest_path = os.path.join(narration_dir, f"{scene_id}.wav")
+    with open(dest_path, "wb") as fh:
+        fh.write(payload)
+
+    # Write back via the existing scene update path so everything
+    # downstream (frontend list, exporter) reads a consistent record.
+    update_scene(scene_id, StudioSceneUpdate(audioUrl=dest_path))
+
+    return {
+        "ok": True,
+        "scene_id": scene_id,
+        "audioUrl": dest_path,
+        "bytes": len(payload),
+    }
 
 
 @router.get("/videos/{video_id}/export/jobs/{job_id}")

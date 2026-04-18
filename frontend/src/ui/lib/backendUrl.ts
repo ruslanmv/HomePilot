@@ -19,7 +19,12 @@
  */
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1"]);
-const DEV_VITE_PORTS = new Set(["5173", "5174"]);
+// Vite dev ports used across the repo. The Makefile's `make start` target
+// launches vite with --port 3000; earlier tooling used Vite's defaults
+// 5173/5174. All of them must route API traffic to the backend at :8000
+// rather than to the Vite origin (which would SPA-fallback every request
+// to index.html and break JSON.parse).
+const DEV_VITE_PORTS = new Set(["3000", "5173", "5174"]);
 
 function isLocalHost(hostname: string): boolean {
   return LOCAL_HOSTS.has(hostname);
@@ -70,12 +75,24 @@ export function resolveBackendUrl(override?: string | null): string {
       if (stored && stored.trim()) {
         const clean = stripTrailingSlash(stored.trim());
         const pageIsRemote = !isLocalHost(window.location.hostname);
-        const storedHost = parsedHostname(clean);
+        const storedUrl = (() => { try { return new URL(clean); } catch { return null; } })();
+        const storedHost = storedUrl?.hostname ?? null;
+        const storedPort = storedUrl?.port ?? "";
         const storedIsLocal = storedHost !== null && isLocalHost(storedHost);
         if (pageIsRemote && storedIsLocal) {
           // Stale setting from a previous local dev session. Ignore it and
           // let getDefaultBackendUrl() take over (same origin).
           return getDefaultBackendUrl();
+        }
+        // Stale setting pointing at a Vite DEV port on localhost (3000 / 5173
+        // / 5174). The frontend origin serves the SPA — POSTing JSON there
+        // SPA-falls-back to index.html and the caller sees a 404, which the
+        // voice-call path reads as "feature unavailable" and flips to the
+        // chat-REST fallback. Redirect to :8000 (the default backend port)
+        // so the stored preference doesn't silently break voice-call
+        // session creation.
+        if (storedIsLocal && DEV_VITE_PORTS.has(storedPort)) {
+          return "http://localhost:8000";
         }
         return clean;
       }

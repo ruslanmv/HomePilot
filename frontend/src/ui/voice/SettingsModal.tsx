@@ -34,6 +34,17 @@ import {
   setVoiceLinkedToProject,
   LS_PERSONA_CACHE,
 } from './personalityGating';
+import TtsEngineSection from '../components/TtsEngineSection';
+// Side-effect import: ensures the TTS plugin registry is populated the
+// first time the System Settings modal mounts — same registry the
+// Enterprise Settings voice block already uses, so both UIs are in
+// sync automatically (single active-engine pointer in localStorage,
+// scoped per user).
+import '../tts';
+import {
+  getActiveTtsEngineId,
+  onActiveTtsEngineChange,
+} from '../tts';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -65,6 +76,12 @@ export default function SettingsModal({
 
   // Linked-to-project state
   const [linkedToProject, setLinkedToProjectState] = useState(false);
+
+  // Track active TTS engine so we can hide the legacy "System Voice"
+  // dropdown when the user picks a non-default engine (Piper etc.) —
+  // prevents the confusing two-voice-pickers state.
+  const [ttsEngineId, setTtsEngineId] = useState<string>(() => getActiveTtsEngineId());
+  useEffect(() => onActiveTtsEngineChange(setTtsEngineId), []);
 
   // Load settings on mount
   useEffect(() => {
@@ -199,8 +216,10 @@ export default function SettingsModal({
               </div>
             )}
 
-            {/* Browser Voice Selection */}
-            {browserVoices && browserVoices.length > 0 && setSelectedBrowserVoice && (
+            {/* Browser Voice Selection — only shown for the default
+                engine. On Piper (or any other non-default engine) the
+                engine owns its own voice picker below. */}
+            {ttsEngineId === 'web-speech-api' && browserVoices && browserVoices.length > 0 && setSelectedBrowserVoice && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2 px-1">
                   <Volume2 size={14} className="text-white/50" />
@@ -238,6 +257,14 @@ export default function SettingsModal({
                 </p>
               </div>
             )}
+
+            {/* TTS Engine — additive plugin picker.
+                Shares the SAME registry used by Enterprise Settings →
+                Voice Assistant, so picking Piper here is reflected
+                there on next render (and vice versa). Uses the native
+                browser voice list so the Web Speech path keeps
+                showing the user's actually-installed voices. */}
+            <TtsEngineSection systemVoices={browserVoices} />
           </div>
 
           {/* Language Section */}

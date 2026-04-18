@@ -21,6 +21,7 @@ import {
   Copy,
   RotateCw,
   PenLine,
+  Phone,
   Users,
   EyeOff,
   BookOpen,
@@ -34,6 +35,9 @@ import UserAvatar from './components/UserAvatar'
 import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
 import { useAuth } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
+import CallOverlay from './CallOverlay'
+import { clog, speakOwned, isCallFullDuplexEnabled } from './call/log'
+import PostCallCard from './phone/PostCallCard'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
@@ -112,6 +116,22 @@ export type Msg = {
   confirm?: {
     intent: 'generate_images' | 'generate_videos'
     prompt: string
+  }
+  // "Call memory card" — when present the message renders as an
+  // inline record of a just-ended voice call instead of a regular
+  // bubble. Additive: untouched by every existing code path.
+  callMemory?: {
+    durationSec: number
+    /** Epoch-ms timestamp of when the call ended. Rendered as an
+     *  auditable stamp (e.g. "7:36 PM") in the card header. */
+    endedAt?: number
+    /** Persona the user was speaking with during this call — feeds
+     *  PostCallCard's "Call with X" / "X remembers" headers. */
+    personaName?: string
+    /** Optional transcript the user can expand inline from the card.
+     *  Populated by App.tsx at call-end by slicing chatMessages
+     *  between the call's open + close timestamps. */
+    transcript?: Array<{ who: 'user' | 'assistant'; text: string }>
   }
 }
 
@@ -1574,12 +1594,92 @@ function useCopyMessage(timeoutMs = 900) {
   return { copied, copy }
 }
 
+/**
+ * CallMemoryCard — enterprise-style inline record of a just-ended
+ * call. Rendered inside the chat stream as a neutral system event
+ * rather than a floating toast or an emotional "moment" card. The
+ * tone is auditable, not expressive: the card states what happened,
+ * when, and offers one standard system action to resume.
+ */
+function CallMemoryCard({
+  durationSec,
+  endedAt,
+  onSpeakAgain,
+}: {
+  durationSec: number
+  endedAt?: number
+  onSpeakAgain?: () => void
+}) {
+  const fmt = (s: number) => {
+    if (s < 60) return `${s}s`
+    const m = Math.floor(s / 60)
+    const r = s % 60
+    return r === 0 ? `${m}m` : `${m}m ${r}s`
+  }
+  const stamp = endedAt
+    ? new Date(endedAt).toLocaleTimeString(undefined, {
+        hour: 'numeric', minute: '2-digit',
+      })
+    : ''
+  return (
+    <div
+      className="flex items-start gap-5 w-full hp-fade-in"
+      role="note"
+      aria-label="Call record"
+    >
+      <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 text-white/50 flex items-center justify-center flex-shrink-0 mt-1">
+        <Phone size={12} />
+      </div>
+      <div
+        className="max-w-[85%] rounded-[12px] px-4 py-3 bg-white/[0.03] border border-white/10"
+      >
+        {/* Meta row — factual header, low emphasis */}
+        <div className="flex items-center gap-2 text-[11px] text-white/50">
+          <span>Call</span>
+          <span className="text-white/25">·</span>
+          <span
+            className="font-mono tabular-nums text-white/70"
+            style={{ fontFeatureSettings: '"tnum"' }}
+          >
+            {fmt(durationSec)}
+          </span>
+          {stamp ? (
+            <>
+              <span className="text-white/25">·</span>
+              <span className="font-mono tabular-nums text-white/50">{stamp}</span>
+            </>
+          ) : null}
+        </div>
+        {/* Body — neutral factual line, no emotional copy */}
+        <div className="mt-1.5 text-[13.5px] leading-snug text-white/75">
+          Voice session completed
+        </div>
+        {/* CTA — system-style outline button, same weight as header icons */}
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={onSpeakAgain}
+            disabled={!onSpeakAgain}
+            className="inline-flex items-center gap-1.5 rounded-md bg-transparent hover:bg-white/5 border border-white/15 hover:border-white/25 text-white/80 hover:text-white px-3 py-1 text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label="Resume call"
+          >
+            <Phone size={12} />
+            Resume call
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 function ChatState({
   messages,
   setLightbox,
   endRef,
   mode,
   onNewConversation,
+  onStartCall,
   onRetryMessage,
   chatSettings,
   onUpdateChatSettings,
@@ -1598,6 +1698,9 @@ function ChatState({
   endRef: React.RefObject<HTMLDivElement>
   mode: Mode
   onNewConversation: () => void
+  /** Primary call action — opens the live-voice mode. Optional so
+   *  callers that don't want the button can omit it. */
+  onStartCall?: () => void
   onRetryMessage: (id: string) => void
   chatSettings: ChatScopedSettings
   onUpdateChatSettings: (next: ChatScopedSettings) => void
@@ -1613,6 +1716,9 @@ function ChatState({
 }) {
   const { copied, copy } = useCopyMessage()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
+  const handleStartCall = useCallback(() => {
+    onStartCall?.()
+  }, [onStartCall])
   // Local overrides for view-pack angle switching (keyed by message id)
   const [angleOverrides, setAngleOverrides] = useState<Record<string, { angle: string; url: string }>>({})
 
@@ -1650,9 +1756,24 @@ function ChatState({
 
   return (
     <div className="flex flex-col h-full w-full max-w-[52rem] mx-auto">
-      {/* Top-right fixed: Chat settings gear + New Chat icon (Phase 2, additive) */}
+      {/* Top-right fixed: a single flat group of neutral header icons.
+          The call button is intentionally *not* a CTA — it sits inline
+          with the other utility icons and only opens a dedicated call
+          overlay (see CallOverlay). Call mode is a distinct session,
+          not a styling of the header. */}
       <div className="fixed top-3 right-5 z-50">
-        <div className="relative flex items-center gap-3">
+        <div className="relative flex items-center gap-2">
+          {onStartCall && (
+            <button
+              type="button"
+              onClick={handleStartCall}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              title="Start call"
+              aria-label="Start call"
+            >
+              <Phone size={16} />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setChatSettingsOpen((v) => !v)}
@@ -1701,6 +1822,20 @@ function ChatState({
             key={m.id}
             className={`flex gap-5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
+            {/* Inline "call memory card" — renders instead of a bubble
+                when this message represents a just-ended voice call.
+                Treated as assistant-aligned (left) so it reads as "a
+                moment we shared" rather than a system toast. */}
+            {m.callMemory ? (
+              <PostCallCard
+                durationSec={m.callMemory.durationSec}
+                endedAt={m.callMemory.endedAt}
+                personaName={m.callMemory.personaName || 'Assistant'}
+                variant="expand"
+                transcript={m.callMemory.transcript}
+                onResume={onStartCall}
+              />
+            ) : (<>
             {m.role === 'assistant' ? (
               <div className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center flex-shrink-0 font-bold text-sm mt-1">
                 /
@@ -1858,6 +1993,7 @@ function ChatState({
                 ) : null}
               </div>
             )}
+            </>)}
           </div>
         ))}
         <div ref={endRef} className="h-6" />
@@ -2040,6 +2176,22 @@ export default function App() {
   })
   const [voiceConversationId, setVoiceConversationId] = useState<string>(() => uuid())
   const [lightbox, setLightbox] = useState<string | null>(null)
+  // Call mode — a dedicated session distinct from Voice mode. The
+  // header 📞 opens a centered CallOverlay; it does not swap modes.
+  const [callOpen, setCallOpen] = useState(false)
+  // `skipDialing` is flipped on for the "Speak again" re-entry so the
+  // user doesn't have to sit through "calling…" twice in a row.
+  const [callSkipDialing, setCallSkipDialing] = useState(false)
+  // Snapshot of chatMessages.length at the moment a call opens —
+  // used at call-end to slice the transcript of turns that happened
+  // during the call, for PostCallCard's expandable transcript.
+  const callOpenMsgIndexRef = useRef<number>(-1)
+  useEffect(() => {
+    if (callOpen) {
+      callOpenMsgIndexRef.current = chatMessages.length
+    }
+  }, [callOpen]) // intentionally miss chatMessages — we want the
+                 // snapshot at OPEN time, not every keystroke after
 
   // Persona Integration — "Save as Persona Avatar" from AvatarStudio (additive)
   const [saveAsPersonaData, setSaveAsPersonaData] = useState<{ item: GalleryItem; outfits: GalleryItem[]; batchSiblings?: GalleryItem[] } | null>(null)
@@ -2310,6 +2462,26 @@ export default function App() {
 
   // Track last spoken message to avoid re-speaking
   const lastSpokenMessageIdRef = useRef<string | null>(null)
+
+  // Call-open history guard — when the overlay opens, seed the
+  // last-spoken pointer to the CURRENT tail of ``messages``. Without
+  // this the TTS-on-assistant-reply effect treats the previous
+  // chat-history tail as a fresh reply the moment ``callOpen`` flips
+  // true, producing a pre-existing message read-aloud that collides
+  // with CallOverlay's own fallback opener (the "two openings
+  // overlapping" symptom). Only NEW assistant messages that land
+  // DURING the call will be spoken by App.tsx from here on; the
+  // call-itself-opener is owned by CallOverlay via speakOwned().
+  useEffect(() => {
+    if (!callOpen) return
+    const tail = messages[messages.length - 1]
+    lastSpokenMessageIdRef.current = tail ? tail.id : null
+    // Intentionally single-shot on callOpen flip — we don't want this
+    // to re-run on every message mutation during the call, otherwise
+    // the guard would swallow the very replies it's supposed to let
+    // through.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callOpen])
 
   // When a voice session is explicitly chosen from Session Hub, skip the auto-link resolve
   // to prevent the useEffect from overwriting the chosen session with the active one.
@@ -3985,10 +4157,21 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     [authHeaders, conversationId, messages, settings.backendUrl, settings.funMode, settingsDraft]
   )
 
-  // TTS for assistant responses (speak-once pattern) - ONLY IN VOICE MODE
+  // TTS for assistant responses (speak-once pattern). Fires when
+  // the user is in Voice mode OR the CallOverlay is open. The
+  // second branch matters in the chat-REST fallback path: when
+  // VOICE_CALL_ENABLED is false server-side, the call runs through
+  // the regular chat pipeline, assistant replies land in the
+  // current ``messages`` array, and without this nothing speaks
+  // them — the user hears silence during the call.
+  //
+  // SpeechService.speak + stripMarkdownForSpeech are the canonical
+  // app-level TTS primitives; reusing them here keeps call-mode
+  // TTS consistent with voice-mode TTS (same voice pick, same
+  // markdown sanitation, same single-utterance dedupe via
+  // lastSpokenMessageIdRef).
   useEffect(() => {
-    // Only enable TTS when in Voice mode
-    if (mode !== 'voice') return
+    if (mode !== 'voice' && !callOpen) return
 
     const ttsEnabled = settingsDraft.ttsEnabled ?? true
     if (!ttsEnabled || !window.SpeechService) return
@@ -4001,6 +4184,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       lastMessage.role === 'assistant' &&
       !lastMessage.pending &&
       lastMessage.text &&
+      !lastMessage.callMemory &&
       lastMessage.id !== lastSpokenMessageIdRef.current
     ) {
       // Mark this message as spoken
@@ -4009,9 +4193,21 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       // Speak the assistant's response — strip markdown images/links so TTS
       // doesn't read raw URLs aloud. Images are shown visually instead.
       const speechText = stripMarkdownForSpeech(lastMessage.text)
-      if (speechText) window.SpeechService.speak(speechText)
+      if (!speechText) return
+      // During a call, route through the shared speakOwned lock so
+      // this app-level path can't double-speak alongside the overlay's
+      // fallback opener (both targeting the same assistant message).
+      // Outside a call, keep the legacy SpeechService.speak path —
+      // voice-mode has no peer TTS source so the lock would add noise
+      // without benefit.
+      if (callOpen && isCallFullDuplexEnabled()) {
+        clog({ e: 'turn', action: 'assistant_in', route: 'chat_rest' })
+        speakOwned('app-level', speechText)
+      } else {
+        window.SpeechService.speak(speechText)
+      }
     }
-  }, [messages, settingsDraft.ttsEnabled, mode])
+  }, [messages, settingsDraft.ttsEnabled, mode, callOpen])
 
   const uploadAndSend = useCallback(
     async (file: File) => {
@@ -4489,7 +4685,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         {/* Top-right Project Indicator - Only shown in chat mode when a project is active */}
         {mode === 'chat' && (
-        <header className="absolute top-0 left-0 right-0 pr-[7rem] pl-5 py-3 z-20 flex items-center justify-end gap-3 pointer-events-none">
+        <header className="absolute top-0 left-0 right-0 pr-[9rem] pl-5 py-3 z-20 flex items-center justify-end gap-3 pointer-events-none">
           {/* Project Indicator */}
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')
@@ -5049,6 +5245,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               endRef={endRef}
               mode={mode}
               onNewConversation={onNewConversation}
+              onStartCall={() => setCallOpen(true)}
               onRetryMessage={retryFailedMessage}
               chatSettings={chatSettings}
               onUpdateChatSettings={updateChatSettings}
@@ -5124,6 +5321,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             endRef={endRef}
             mode={mode}
             onNewConversation={onNewConversation}
+            onStartCall={() => setCallOpen(true)}
             onRetryMessage={retryFailedMessage}
             chatSettings={chatSettings}
             onUpdateChatSettings={updateChatSettings}
@@ -5148,6 +5346,91 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           onEdit={handleEditFromViewer}
         />
       ) : null}
+
+      {/* Call overlay — a distinct session layered over the chat.
+          Open it with the 📞 header icon; end it with the red button
+          inside the overlay. Not the same as Voice mode. */}
+      <CallOverlay
+        open={callOpen}
+        onClose={() => {
+          setCallOpen(false)
+          // Reset the skip flag once the overlay has closed so the
+          // next fresh tap on 📞 starts with the full dial phase.
+          setCallSkipDialing(false)
+        }}
+        skipDialing={callSkipDialing}
+        onEnded={(durationSec) => {
+          // Append an inline PostCallCard to the chat stream. Captures
+          // the slice of turns exchanged during the call — which the
+          // user can expand inline from the card (no modal) — plus
+          // the persona name + end-of-call timestamp.
+          const endedAt = Date.now()
+          const personaName = currentProject?.name || 'Assistant'
+          const startIdx = callOpenMsgIndexRef.current
+          // Build a transcript only when we have a valid open-time
+          // snapshot AND new messages landed during the call.
+          let transcript:
+            | Array<{ who: 'user' | 'assistant'; text: string }>
+            | undefined
+          if (startIdx >= 0 && startIdx <= chatMessages.length) {
+            const slice = chatMessages.slice(startIdx)
+            const lines = slice
+              .filter((m) => !m.callMemory && (m.text || '').trim())
+              .map((m) => ({
+                who: (m.role === 'user' ? 'user' : 'assistant') as
+                  | 'user' | 'assistant',
+                text: m.text.trim(),
+              }))
+            if (lines.length > 0) transcript = lines
+          }
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              id: `call-memory-${endedAt}`,
+              role: 'assistant',
+              text: '',
+              callMemory: {
+                durationSec,
+                endedAt,
+                personaName,
+                transcript,
+              },
+            },
+          ])
+        }}
+        personaName={currentProject?.name || 'Assistant'}
+        messages={chatMessages}
+        avatarUrl={(() => {
+          // Resolve the persona's thumbnail the same way
+          // PersonaSettingsPanel does: prefer
+          // persona_appearance.selected_thumb_filename, then
+          // .selected_filename, wrapped in the /files/ auth URL.
+          const pap = (currentProject?.persona_appearance as Record<string, unknown> | undefined) || {}
+          const rel =
+            (pap.selected_thumb_filename as string | undefined) ||
+            (pap.selected_filename as string | undefined)
+          if (!rel) return null
+          const base = settings.backendUrl.replace(/\/+$/, '')
+          const tok = localStorage.getItem('homepilot_auth_token') || ''
+          const clean = rel.replace(/^\/+/, '')
+          return `${base}/files/${clean}${tok ? `?token=${encodeURIComponent(tok)}` : ''}`
+        })()}
+        onSendText={(text) => sendTextOrIntent(text)}
+        backend={{
+          backendUrl: settings.backendUrl,
+          authToken: localStorage.getItem('homepilot_auth_token'),
+          conversationId: chatConversationId,
+          personaId: currentProject?.persona_agent
+            ? (currentProject.persona_agent.id as string | undefined) || null
+            : null,
+        }}
+      />
+
+      {/* Previous floating "call ended" toast has been replaced by an
+          inline CallMemoryCard rendered directly in the chat stream
+          (see the messages.map branch on m.callMemory). Keeping this
+          comment as a breadcrumb for reviewers. */}
+
 
       {/* Save as Persona Avatar modal (from AvatarStudio gallery) */}
       {saveAsPersonaData && (

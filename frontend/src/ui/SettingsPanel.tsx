@@ -1,6 +1,15 @@
 import React, { useEffect, useMemo, useState } from "react";
 import OllamaHealthBanner from "./OllamaHealthBanner";
 import ProfileSettingsModal from "./ProfileSettingsModal";
+import TtsEngineSection from "./components/TtsEngineSection";
+// Side-effect import: registers the bundled TTS providers (web-speech-api,
+// piper-wasm). Importing here guarantees the registry is populated the
+// first time the Settings panel mounts, before TtsEngineSection reads it.
+import "./tts";
+import {
+  getActiveTtsEngineId,
+  onActiveTtsEngineChange,
+} from "./tts";
 import { resolveBackendUrl } from "./lib/backendUrl";
 import {
   getModelSettings,
@@ -208,6 +217,12 @@ export default function SettingsPanel({
 
   // Voice state
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  // Track the active TTS engine so we can hide the legacy "Assistant
+  // Voice" select when the user picks a non-default engine (Piper etc.).
+  // Purely cosmetic: the underlying value.selectedVoice state is not
+  // touched — only the control rendering it.
+  const [ttsEngineId, setTtsEngineId] = useState<string>(() => getActiveTtsEngineId());
+  useEffect(() => onActiveTtsEngineChange(setTtsEngineId), []);
   const [voicesInitialized, setVoicesInitialized] = useState(false);
 
   // Video presets state (fetched from backend based on selected model)
@@ -1084,27 +1099,40 @@ export default function SettingsPanel({
               <span className="text-xs text-white">Enable Text-to-Speech (TTS)</span>
             </label>
 
-            {/* Voice Selection */}
-            <div>
-              <label className="block text-[10px] text-white/50 mb-2">Assistant Voice</label>
-              <select
-                className="w-full bg-black border border-white/10 rounded-lg px-3 py-2 text-xs text-white"
-                value={value.selectedVoice ?? ''}
-                onChange={(e) => onChangeDraft({ ...value, selectedVoice: e.target.value })}
-              >
-                <option value="">System Default</option>
-                {availableVoices.map((voice) => (
-                  <option key={voice.voiceURI} value={voice.name}>
-                    {voice.name} ({voice.lang})
-                  </option>
-                ))}
-              </select>
-              <div className="mt-1 text-[10px] text-white/40">
-                {availableVoices.length > 0
-                  ? `Choose from ${availableVoices.length} available voices`
-                  : 'Loading voices...'}
+            {/* Voice Selection — only shown for the default engine. When
+                the user picks a non-default engine (Piper etc.) the engine
+                owns its own voice picker below, and showing two would be
+                confusing duplication. */}
+            {ttsEngineId === 'web-speech-api' && (
+              <div>
+                <label className="block text-[10px] text-white/50 mb-2">Assistant Voice</label>
+                <select
+                  className="w-full bg-black border border-white/10 rounded-lg px-3 py-2 text-xs text-white"
+                  value={value.selectedVoice ?? ''}
+                  onChange={(e) => onChangeDraft({ ...value, selectedVoice: e.target.value })}
+                >
+                  <option value="">System Default</option>
+                  {availableVoices.map((voice) => (
+                    <option key={voice.voiceURI} value={voice.name}>
+                      {voice.name} ({voice.lang})
+                    </option>
+                  ))}
+                </select>
+                <div className="mt-1 text-[10px] text-white/40">
+                  {availableVoices.length > 0
+                    ? `Choose from ${availableVoices.length} available voices`
+                    : 'Loading voices...'}
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* TTS Engine picker — additive plugin system. The existing
+                System Voice selector above stays as the default path; this
+                section lets the user opt into alternative engines (Piper
+                WASM today; more can register themselves without touching
+                this file). Schema-driven controls so future engines
+                require zero Settings edits. */}
+            <TtsEngineSection systemVoices={availableVoices} />
           </div>
         </div>
 

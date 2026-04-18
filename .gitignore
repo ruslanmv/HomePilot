@@ -39,3 +39,10 @@ mcp.db
 mcp.db-shm
 mcp.db-wal
 .hf-stage/
+
+# `make recovery-*` writes timestamped DB snapshots here before every
+# mutating op (reset-password, unlock-all, clear-sessions). These are
+# local safety copies, not source; never commit them.
+/recovery-backups/
+# `make recovery-images` exports per-user images (files / ZIPs) here.
+/recovery-images/

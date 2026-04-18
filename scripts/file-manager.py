@@ -220,13 +220,18 @@ def scan_database():
                 full_path = os.path.join(upload_root, rel_path)
                 ext = Path(rel_path).suffix.lower()
                 if ext in MEDIA_EXTS:
+                    display_name = orig_name or os.path.basename(rel_path)
                     found.append({
                         "path": full_path,
-                        "name": orig_name or os.path.basename(rel_path),
+                        "name": display_name,
                         "size": size or 0,
                         "modified": 0,
                         "ext": ext,
-                        "type": _classify_media_type(f, ext),
+                        # Was ``_classify_media_type(f, ext)`` — ``f`` was never
+                        # defined in this scope and swallowed every DB row
+                        # with "name 'f' is not defined". Use the display
+                        # name we already computed.
+                        "type": _classify_media_type(display_name, ext),
                         "source": f"DB (project: {proj_id or 'none'})",
                     })
         conn.close()

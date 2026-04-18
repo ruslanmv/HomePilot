@@ -29,7 +29,11 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         mcp-inventory \
         install-mcp-servers test-mcp-new-servers \
         persona-launch persona-check persona-stop persona-status persona-list \
-        build-installer build-container
+        build-installer build-container \
+        recovery recovery-status recovery-backup recovery-list-users \
+        recovery-reset-password recovery-unlock-all recovery-clear-sessions \
+        recovery-prune-uploads recovery-images file-manager file-manager-scan \
+        preflight
 
 help: ## Show help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -196,9 +200,30 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 		echo "  ⏭ avatar-service/ not found (optional)"; \
 	fi
 	@echo ""
+	@# ffmpeg/ffprobe are required at runtime by the Creator Studio MP4
+	@# export path (backend/app/studio/render_mp4.py) and the narration
+	@# upload pipeline. They are system-level packages we cannot safely
+	@# install from make (requires sudo / varies by OS). Detect + print
+	@# a clear platform-appropriate hint rather than silently producing
+	@# a broken install.
+	@echo "✓ Checking media tooling (ffmpeg)..."
+	@if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then \
+		echo "  ✓ ffmpeg + ffprobe found on PATH"; \
+	else \
+		echo "  ⚠ ffmpeg / ffprobe NOT on PATH."; \
+		echo "    Creator Studio MP4 export will return 503 until you install them."; \
+		echo "    Install with:"; \
+		echo "      Ubuntu/Debian:  sudo apt install -y ffmpeg"; \
+		echo "      macOS (brew):   brew install ffmpeg"; \
+		echo "      Windows:        winget install Gyan.FFmpeg   (or download from ffmpeg.org)"; \
+		echo "    Chat, image, and video generation still work without it."; \
+	fi
+	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ Installation Complete!"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "Run a post-install sanity check any time with:  make preflight"
 	@echo ""
 	@echo "Next steps:"
 	@echo "  1. Start Ollama:              ollama serve"
@@ -288,7 +313,57 @@ setup: ## Setup Docker environment (install deps + build images)
 
 # --- Local development (no Docker) --------------------------------------------
 
-start: ## Start HomePilot locally (backend + frontend + ComfyUI)
+preflight: ## Verify install is complete + every critical dep is reachable (no services started)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  HomePilot preflight — installation & runtime-dep check"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@fail=0; \
+	check_fs() { \
+		if [ -e "$$1" ]; then echo "  ✓ $$2"; else echo "  ✗ $$2 (missing: $$1)"; fail=1; fi; \
+	}; \
+	check_cmd() { \
+		if command -v "$$1" >/dev/null 2>&1; then echo "  ✓ $$2 ($$1 on PATH)"; else echo "  ✗ $$2 (command not found: $$1)"; fail=1; fi; \
+	}; \
+	check_import() { \
+		venv="$$1"; mod="$$2"; label="$$3"; \
+		if [ ! -x "$$venv/bin/python" ]; then echo "  · $$label skipped (venv missing)"; return; fi; \
+		if "$$venv/bin/python" -c "import $$mod" 2>/dev/null; then \
+			echo "  ✓ $$label ($$mod importable)"; \
+		else \
+			echo "  ✗ $$label ($$mod NOT importable — run: make install)"; \
+			fail=1; \
+		fi; \
+	}; \
+	echo "- Python / uv"; \
+	check_cmd python3 "python3"; \
+	check_cmd uv      "uv"; \
+	echo "- Virtualenvs + node_modules"; \
+	check_fs backend/.venv/bin/python    "backend venv"; \
+	check_fs edit-session/.venv/bin/uvicorn "edit-session venv"; \
+	check_fs frontend/node_modules       "frontend node_modules"; \
+	check_fs ComfyUI/main.py             "ComfyUI checkout"; \
+	check_fs ComfyUI/.venv/bin/python    "ComfyUI venv"; \
+	echo "- Backend Python modules that have drifted before (pyproject.toml must ship them)"; \
+	check_import backend/.venv langgraph      "langgraph"; \
+	check_import backend/.venv bcrypt         "bcrypt (password hashing)"; \
+	check_import backend/.venv yaml           "PyYAML"; \
+	check_import backend/.venv fastapi        "fastapi"; \
+	echo "- Media tooling (Creator Studio MP4 export + narration upload need this)"; \
+	check_cmd ffmpeg  "ffmpeg"; \
+	check_cmd ffprobe "ffprobe"; \
+	echo "- Helpful but optional (warn only, never fail)"; \
+	command -v ollama >/dev/null 2>&1 && echo "  ✓ ollama present"   || echo "  · ollama not on PATH (chat via OllaBridge still works)"; \
+	command -v docker >/dev/null 2>&1 && echo "  ✓ docker present"   || echo "  · docker not on PATH (needed only for make run / build-container)"; \
+	echo "════════════════════════════════════════════════════════════════════════════════"; \
+	if [ $$fail -ne 0 ]; then \
+		echo "  ✗ Preflight FAILED — fix the items above (typically: make install)"; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		exit 1; \
+	fi; \
+	echo "  ✅ Preflight OK — every critical dependency is in place."; \
+	echo "════════════════════════════════════════════════════════════════════════════════"
+
+start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Starting HomePilot LOCALLY (All Services)"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -298,24 +373,6 @@ start: ## Start HomePilot locally (backend + frontend + ComfyUI)
 	@echo "  ✓ Ollama running: ollama serve"
 	@echo "  ✓ Ollama model: ollama pull llama3:8b (or your preferred model)"
 	@echo ""
-	@if [ ! -d "backend/.venv" ]; then \
-		echo "❌ Backend not installed. Run: make install"; \
-		exit 1; \
-	fi
-	@if [ ! -d "frontend/node_modules" ]; then \
-		echo "❌ Frontend not installed. Run: make install"; \
-		exit 1; \
-	fi
-	@if [ ! -f "edit-session/.venv/bin/uvicorn" ]; then \
-		echo "❌ Edit-session not installed or incomplete. Run: make install"; \
-		echo "   Or manually: cd edit-session && uv pip install -e ."; \
-		exit 1; \
-	fi
-	@if [ ! -f "ComfyUI/main.py" ]; then \
-		echo "⚠️  ComfyUI not found. Run: make install"; \
-		echo "    Image/video generation will not work without ComfyUI."; \
-		echo ""; \
-	fi
 	@echo "Services:"
 	@echo "  Backend:      http://localhost:8000"
 	@echo "  Edit-Session: http://localhost:8010"
@@ -1605,3 +1662,124 @@ build-container: ## Build the HomePilot Docker container image
 	@echo "  Run with GPU:  docker run --gpus all -p 7860:7860 homepilot:latest"
 	@echo "  Run CPU only:  docker run -p 7860:7860 homepilot:latest"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+# --- Recovery -----------------------------------------------------------------
+# Offline user + DB recovery. Useful when the HDD filled up, the backend
+# will not start, or you forgot a password. Every sub-target shells out
+# to scripts/recovery.py, which imports only the stdlib (+ optional
+# bcrypt) so it works even when the backend venv is broken.
+#
+# Safety:
+#   * Listed-only (status, list-users, prune-uploads) never touch data.
+#   * Mutating targets (reset-password, unlock-all, clear-sessions)
+#     auto-backup the DB into recovery-backups/<ts>/ before changing
+#     anything.
+#   * unlock-all additionally requires YES=I-UNDERSTAND to run.
+#
+# Usage examples:
+#   make recovery-status
+#   make recovery-list-users
+#   make recovery-reset-password USER=alice
+#   make recovery-reset-password USER=alice PASSWORD=mynewpass
+#   make recovery-unlock-all YES=I-UNDERSTAND
+#   make recovery-clear-sessions
+#   make recovery-prune-uploads MIN_MB=200
+
+RECOVERY_PY ?= python3 scripts/recovery.py
+
+recovery: ## Show the recovery menu
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  HomePilot recovery — offline account + DB repair tools"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@echo "  Diagnostic (read-only):"
+	@echo "    make recovery-status          Disk / DB / users / sessions summary"
+	@echo "    make recovery-list-users      Show every account in the DB"
+	@echo "    make recovery-prune-uploads   List uploads ≥ 100 MB (MIN_MB=N to filter)"
+	@echo ""
+	@echo "  Repair (auto-backs up first):"
+	@echo "    make recovery-backup                                Snapshot DB now"
+	@echo "    make recovery-reset-password USER=<name> [PASSWORD=<new>]"
+	@echo "                                                        Reset ONE account"
+	@echo "    make recovery-unlock-all [PASSWORD=<new>] YES=I-UNDERSTAND"
+	@echo "                                                        Reset EVERY account"
+	@echo "    make recovery-clear-sessions                        Invalidate all tokens"
+	@echo ""
+	@echo "  Per-user data recovery:"
+	@echo "    make recovery-images [USER=<name>] [ZIP=1] [OUT=<path>]"
+	@echo "                                  Export every image tied to each account"
+	@echo "                                  into recovery-images/<username>/ (folder)"
+	@echo "                                  or recovery-images/<username>.zip (ZIP=1)."
+	@echo "    make file-manager             Start the File Manager at :9090"
+	@echo "                                  (browse + ZIP-export every generated asset)"
+	@echo ""
+	@echo "  Tip: if make start fails with 'out of disk space', run recovery-status"
+	@echo "       first, then prune-uploads, then restart."
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+recovery-status: ## Disk + DB + users summary (read-only)
+	@$(RECOVERY_PY) status
+
+recovery-backup: ## Manual DB snapshot into recovery-backups/
+	@$(RECOVERY_PY) backup
+
+recovery-list-users: ## Show every account (no password hashes printed)
+	@$(RECOVERY_PY) list-users
+
+recovery-reset-password: ## Reset one user's password (USER=<name> [PASSWORD=<new>])
+	@if [ -z "$(USER)" ]; then \
+		echo "Usage: make recovery-reset-password USER=<username> [PASSWORD=<new>]"; \
+		echo "  If PASSWORD is omitted a strong random one is generated and printed."; \
+		exit 1; \
+	fi
+	@$(RECOVERY_PY) reset-password --user "$(USER)" $(if $(PASSWORD),--password "$(PASSWORD)",)
+
+recovery-unlock-all: ## Reset EVERY password ([PASSWORD=<new>] YES=I-UNDERSTAND required)
+	@if [ "$(YES)" != "I-UNDERSTAND" ]; then \
+		echo "Refusing to run without YES=I-UNDERSTAND."; \
+		echo "This resets the password of EVERY user in the DB."; \
+		echo "Re-run: make recovery-unlock-all YES=I-UNDERSTAND [PASSWORD=<new>]"; \
+		exit 2; \
+	fi
+	@$(RECOVERY_PY) unlock-all $(if $(PASSWORD),--password "$(PASSWORD)",) --yes I-UNDERSTAND
+
+recovery-clear-sessions: ## Invalidate every auth token; forces re-login
+	@$(RECOVERY_PY) clear-sessions
+
+recovery-prune-uploads: ## List uploaded files ≥ MIN_MB (default 100; read-only)
+	@$(RECOVERY_PY) prune-uploads --min-mb $(if $(MIN_MB),$(MIN_MB),100)
+
+recovery-images: ## Export every image per user to recovery-images/<user>/ (USER=<name> [ZIP=1] [OUT=<path>])
+	@$(RECOVERY_PY) recover-images \
+		$(if $(USER),--user "$(USER)",) \
+		$(if $(ZIP),--zip,) \
+		$(if $(OUT),--out "$(OUT)",)
+
+# --- File Manager -------------------------------------------------------------
+# Browse + ZIP-export every generated image/video across the HomePilot stack
+# (UPLOAD_DIR, ComfyUI output/input, project assets). Runs a small HTTP
+# gallery at http://localhost:9090.
+
+FILE_MANAGER_PY ?= python3 scripts/file-manager.py
+
+file-manager: ## Start the HomePilot File Manager (web gallery on :9090)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  HomePilot File Manager"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Open:        http://localhost:$(if $(PORT),$(PORT),9090)"
+	@echo "  Stop:        Ctrl+C"
+	@echo "  Hint:        to include extra folders, pass EXTRA_DIRS=\"/a /b\""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@$(FILE_MANAGER_PY) \
+		--port $(if $(PORT),$(PORT),9090) \
+		$(if $(EXTRA_DIRS),--extra-dirs $(EXTRA_DIRS),) \
+		$(if $(SESSION),--session "$(SESSION)",) \
+		$(if $(BACKEND_URL),--backend-url "$(BACKEND_URL)",) \
+		$(if $(COMFY_URL),--comfy-url "$(COMFY_URL)",)
+
+file-manager-scan: ## Dry-run: scan every source and print a file list (no server)
+	@$(FILE_MANAGER_PY) --scan-only \
+		$(if $(EXTRA_DIRS),--extra-dirs $(EXTRA_DIRS),) \
+		$(if $(SESSION),--session "$(SESSION)",) \
+		$(if $(BACKEND_URL),--backend-url "$(BACKEND_URL)",) \
+		$(if $(COMFY_URL),--comfy-url "$(COMFY_URL)",)
