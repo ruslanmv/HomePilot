@@ -26,6 +26,11 @@ export interface VoiceControllerConfig {
   vadConfig?: Partial<VADConfig>;
   ttsEndDelay?: number;        // Delay after TTS ends before resuming detection (ms)
   bargeInEnabled?: boolean;    // Allow interrupting TTS with speech
+  /** Ignore mic-start events for this long after TTS ends. On phone
+   *  speakers AEC can let an echo tail linger for a few hundred ms
+   *  and that echo trips VAD → "user speech" → stale transcript.
+   *  Default 650 ms is enough for laptop + most Bluetooth headsets. */
+  postTtsMicGuardMs?: number;
 }
 
 // Controller interface
@@ -50,6 +55,12 @@ export interface VoiceController {
   startManualListening: () => void;
   stopManualListening: () => void;
   stopSpeaking: () => void;
+  /** Suppress VAD speech-start / speech-end dispatch while the call
+   *  overlay's turn-lock says the AI has the floor. Leaves VAD
+   *  running (no re-calibration cost) — just ignores events. The
+   *  overlay wires this to ``turnLock === 'ai'``. Safe no-op when
+   *  the overlay isn't mounted. */
+  setListeningSuppressed: (suppressed: boolean, reason?: string) => void;
 
   // Voice selection
   voices: SpeechSynthesisVoice[];
@@ -60,6 +71,7 @@ export interface VoiceController {
 const DEFAULT_CONFIG: VoiceControllerConfig = {
   ttsEndDelay: 300,
   bargeInEnabled: true,
+  postTtsMicGuardMs: 650,
   vadConfig: {
     baseThreshold: 0.035,
     hysteresisHigh: 1.8,
@@ -121,6 +133,23 @@ export function useVoiceController(
   const thinkingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingResultRef = useRef<boolean>(false); // Track if we sent a result to API
   const lastSttEndRef = useRef<number>(0); // Track last STT end time for cooldown
+  // Timestamp (ms) below which VAD speech-start events are ignored.
+  // Set by the TTS-end path so the echo tail can't self-trigger a
+  // user-speech turn right after the AI finishes talking.
+  const postTtsMicGuardUntilRef = useRef<number>(0);
+  // Incremented each time the hands-free VAD effect re-runs. VAD's
+  // ``.start()`` promise resolves asynchronously — if hands-free
+  // was turned off while that promise was in flight, the then-
+  // callback would otherwise set state='IDLE' on a stale generation
+  // and leak a VAD instance. Callbacks check that the generation
+  // they closed over still matches the current one before mutating.
+  const handsFreeGenerationRef = useRef<number>(0);
+  // Opt-in listening suppression (overlay's turn-lock wires this
+  // to ``turnLock === 'ai'``). When true, VAD continues running
+  // but speech-start / speech-end events short-circuit before any
+  // state transition; a noisy environment or our own TTS bleed
+  // can no longer drag the controller into LISTENING.
+  const listeningSuppressedRef = useRef<boolean>(false);
 
   // Keep stateRef in sync
   useEffect(() => {
@@ -225,6 +254,10 @@ export function useVoiceController(
           // Pause VAD to prevent speaker audio from triggering false barge-in
           if (vadRef.current?.isRunning() && !vadRef.current.isPaused()) {
             vadRef.current.pause();
+            // Reset the published audio level so any consumer reading
+            // voice.audioLevel (e.g. the overlay's barge-in tap) doesn't
+            // see a stale pre-pause peak and misread it as user speech.
+            setAudioLevel(0);
             console.log('[VoiceController] VAD paused during TTS');
           }
 
@@ -237,9 +270,20 @@ export function useVoiceController(
           // TTS ended - wait before transitioning and resuming VAD
           console.log('[VoiceController] TTS ended - waiting before state transition');
           ttsEndTimeoutRef.current = setTimeout(() => {
+            // Arm the post-TTS mic guard — see ref declaration. Echo
+            // tail can linger ~200-500 ms after TTS ended = true, so
+            // even though VAD is about to resume, speech-start events
+            // it fires inside this window are dropped rather than
+            // starting a stale user turn.
+            postTtsMicGuardUntilRef.current =
+              Date.now() + (cfg.postTtsMicGuardMs ?? 0);
+
             // Resume VAD now that TTS audio has stopped
             if (vadRef.current?.isRunning() && vadRef.current.isPaused()) {
               vadRef.current.resume();
+              // Same reason as the pause path — don't let a stale peak
+              // from the pre-pause buffer re-publish through audioLevel.
+              setAudioLevel(0);
               console.log('[VoiceController] VAD resumed after TTS');
             }
 
@@ -266,7 +310,7 @@ export function useVoiceController(
         ttsEndTimeoutRef.current = null;
       }
     };
-  }, [svc, isHandsFree, cfg.ttsEndDelay]);
+  }, [svc, isHandsFree, cfg.ttsEndDelay, cfg.postTtsMicGuardMs]);
 
   // Setup STT callbacks
   useEffect(() => {
@@ -327,6 +371,12 @@ export function useVoiceController(
 
   // VAD management for hands-free mode
   useEffect(() => {
+    // Each effect-run gets a fresh generation number. Async VAD-start
+    // callbacks capture it and bail out if the generation has moved
+    // on while they were in-flight (e.g. user toggled hands-free off,
+    // re-mounted the call overlay, etc.).
+    const generation = ++handsFreeGenerationRef.current;
+
     if (!isHandsFree || !svc) {
       // Clean up VAD when not in hands-free mode
       if (vadRef.current) {
@@ -350,8 +400,25 @@ export function useVoiceController(
     vadRef.current = createVAD(
       // onSpeechStart
       () => {
+        // Stale event from a previous hands-free generation — ignore.
+        if (!isHandsFree || generation !== handsFreeGenerationRef.current) {
+          return;
+        }
         const currentState = stateRef.current;
         console.log('[VoiceController] VAD speech start, current state:', currentState);
+
+        // Overlay's turn-lock holds the floor — drop the event.
+        if (listeningSuppressedRef.current) {
+          console.log('[VoiceController] VAD speech start suppressed (turn lock)');
+          return;
+        }
+
+        // Post-TTS echo-tail window — TTS just finished, mic might
+        // still be picking up our own voice. Skip this spurious start.
+        if (Date.now() < postTtsMicGuardUntilRef.current) {
+          console.log('[VoiceController] Ignoring speech start during post-TTS mic guard');
+          return;
+        }
 
         // Barge-in: if TTS is speaking, stop it
         if (currentState === 'SPEAKING' && cfg.bargeInEnabled) {
@@ -393,8 +460,20 @@ export function useVoiceController(
       },
       // onSpeechEnd
       () => {
+        if (!isHandsFree || generation !== handsFreeGenerationRef.current) {
+          return;
+        }
         const currentState = stateRef.current;
         console.log('[VoiceController] VAD speech end, current state:', currentState);
+
+        // Suppression applies symmetrically — if we dropped the
+        // start because the AI had the floor, dropping the end is
+        // the consistent thing to do (the STT session we chose not
+        // to start also doesn't need to be told to stop).
+        if (listeningSuppressedRef.current) {
+          console.log('[VoiceController] VAD speech end suppressed (turn lock)');
+          return;
+        }
 
         // Only stop STT if we're actively listening
         // Add 400ms delay to give STT time to finalize any pending recognition
@@ -419,11 +498,19 @@ export function useVoiceController(
     // Start VAD
     vadRef.current.start()
       .then(() => {
+        // Reject results from stale effect-runs — see generation doc.
+        if (!isHandsFree || generation !== handsFreeGenerationRef.current) {
+          vadRef.current?.stop();
+          return;
+        }
         console.log('[VoiceController] VAD started, transitioning to IDLE');
         setLastError(null);
         setState('IDLE');
       })
       .catch((err) => {
+        // Stale generation — don't overwrite state with OFF for a
+        // VAD run the user has since torn down.
+        if (generation !== handsFreeGenerationRef.current) return;
         console.error('[VoiceController] VAD start failed:', err);
         setLastError(err?.message || 'vad_start_failed');
         setState('OFF');
@@ -512,6 +599,30 @@ export function useVoiceController(
     setIsTtsEnabled(enabled);
   }, []);
 
+  /** Overlay-driven suppression of VAD speech events. When the
+   *  overlay's turn-lock says the AI has the floor, we set this to
+   *  true — VAD keeps running (no re-calibration latency on release)
+   *  but the speech-start / speech-end callbacks bail out before
+   *  any state change. On suppression-enable, if we were mid-LISTENING
+   *  we also eject STT cleanly so a stale session doesn't linger.
+   *
+   *  ``reason`` is logged for traceability — e.g. 'turn_lock:speak:start'
+   *  vs 'turn_lock:cleanup' explain two very different code paths that
+   *  both end up calling this setter. */
+  const setListeningSuppressed = useCallback(
+    (suppressed: boolean, reason: string = 'unspecified') => {
+      listeningSuppressedRef.current = suppressed;
+      console.log(
+        `[VoiceController] Listening suppression ${suppressed ? 'enabled' : 'disabled'} (reason=${reason})`,
+      );
+      if (suppressed && stateRef.current === 'LISTENING') {
+        try { svc?.stopSTT?.(); } catch { /* no-op */ }
+        setState(isHandsFree ? 'IDLE' : 'OFF');
+      }
+    },
+    [svc, isHandsFree],
+  );
+
   return {
     // State
     state,
@@ -533,6 +644,7 @@ export function useVoiceController(
     startManualListening,
     stopManualListening,
     stopSpeaking,
+    setListeningSuppressed,
 
     // Voice selection
     voices,
