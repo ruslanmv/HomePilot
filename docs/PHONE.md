@@ -436,12 +436,135 @@ rule:
 - **Not a replacement for the chat endpoint.** The suffix is an
   `additional_system` parameter; `/v1/chat/completions` still gets
   the persona's full base prompt first and the suffix second.
-- **Not streaming.** The current chat path is non-streaming, so the
-  filler-under-wait technique replaces token-level streaming. When
-  streaming lands, the filler scheduler becomes a redundancy rather
-  than a necessity.
+- **Not audio-level AEC.** The browser's `getUserMedia` AEC/NS/AGC
+  is all we have. Consumer smart speakers have hardware DSP; we
+  compensate with an explicit post-TTS echo margin and a shared
+  TTS-ownership lock (see § 10).
 
-## 10. Further reading
+> **Streaming status.** When `VOICE_CALL_STREAMING_ENABLED=true` the
+> backend emits per-token `assistant.partial` frames and supports
+> server-side barge-in cancel with a sub-50 ms ack. With the flag
+> off the persona still speaks, but only once the full turn has
+> landed — the filler scheduler (§ 4) masks the wait.
+
+## 10. Full-duplex client-side architecture
+
+Everything up to § 9 describes the *content* layer — what the persona
+says and when. § 10 describes the *transport* layer — how audio flows
+between your mic, the AI, and the speaker without the AI's own voice
+tripping its own microphone. This is where most voice agents fall
+apart in the browser; HomePilot uses three guardrails that each
+close a distinct failure mode.
+
+### 10.1 Shared TTS ownership (`speakOwned`)
+
+The overlay has two legitimate TTS sources: the **opener** (turn 0,
+synthesized by the overlay) and **mid-call replies** (either from
+the WS `transcript.final` or from `App.tsx`'s `messages[]` watcher
+in REST-fallback mode). A single-owner lock keyed on
+`window.__hp_tts_owner__` ensures only one source speaks at a time:
+whoever calls `speakOwned(source, text, hooks)` first wins the
+utterance; the second caller observes `owner !== source`, returns
+`false`, and emits a `tts: dedupe` log so the drop is auditable.
+
+**File.** `frontend/src/ui/call/log.ts`
+
+### 10.2 Turn-lock state machine
+
+Three explicit states — `'ai' | 'user' | 'idle'` — encode *who has
+the floor*. Transitions are the single source of truth for mic
+suppression:
+
+| Event                           | Transition      | Effect                                    |
+|---------------------------------|-----------------|-------------------------------------------|
+| `speakText` start               | `idle → ai`     | `voice.setListeningSuppressed(true, …)`   |
+| TTS end + 300 ms echo margin    | `ai → idle`     | `voice.setListeningSuppressed(false, …)`  |
+| VAD speech start                | `idle → user`   | STT begins transcribing                   |
+| STT finalises                   | `user → idle`   | transcript routes to backend              |
+| user barge-in over AI           | `ai → user`     | server-ack'd cancel (streaming mode only) |
+
+The lock is gated behind `isCallFullDuplexEnabled()` (see § 10.5) so
+the pre-flag behaviour is restorable via a single localStorage key.
+
+**File.** `frontend/src/ui/CallOverlay.tsx` (`turnLockRef`, `setTurnLock`)
+
+### 10.3 Post-TTS echo margin + VAD generation counter
+
+After the AI finishes speaking, residual audio can linger in the
+speaker for 200–500 ms. If the mic re-opens inside that window the
+persona's tail trips its own VAD and the assistant "hears itself".
+Two layers stop that:
+
+1. **300 ms release margin** on `ai → idle` in `setTurnLock`
+   (`releaseAiTurnWithMargin`).
+2. **650 ms post-TTS mic guard** inside `useVoiceController` — any
+   VAD `speech_start` that fires with `Date.now() < postTtsMicGuardUntilRef`
+   is dropped and logged as `vad: suppressed`.
+
+A **generation counter** (`handsFreeGenerationRef`) ensures stale
+async VAD callbacks from a previous hands-free run-cycle can't
+publish into the current state machine.
+
+**File.** `frontend/src/ui/voice/useVoiceController.ts`
+
+### 10.4 Structured `[call]` observability
+
+Every call-relevant event on both sides emits a tagged log line:
+
+```
+[Call+9023]  {e:'lifecycle', phase:'ready', sid:'…'}
+[Call+9045]  {e:'tts', action:'start', source:'overlay', textLen:24}
+[Call+11920] {e:'turn', action:'user_out', route:'chat_rest'}
+[Call+12480] {e:'state', from:'idle', to:'ai', trigger:'speak:start'}
+```
+
+Backend counterparts (`[call] lifecycle_ready`, `[call] turn_user_in`,
+`[call] barge_in`, …) use the same event vocabulary, so a single
+`grep '\[call\]'` across the browser console and server stderr
+produces a chronological trace of any session. Useful both for
+debugging ("why didn't the AI answer my 'hello'?") and for
+observability pipelines (structured JSON is log-shipper-ready).
+
+**Files.** `frontend/src/ui/call/log.ts` (`clog`, `CallLogEvent`) and
+`backend/app/voice_call/ws.py` (`_clog`).
+
+### 10.5 Transport fallback with graceful degradation
+
+The overlay prefers the dedicated voice_call WebSocket (streaming
+partials, server barge-in, curated opener bank). When the backend
+has `VOICE_CALL_ENABLED=false`, `POST /v1/voice-call/sessions`
+returns 404; `useCallSession` reads that as `isUnavailable`,
+memoises the verdict per-backend for 10 minutes in `sessionStorage`,
+and flips to the chat-REST fallback:
+
+```
+user speaks ─► STT ─► POST /chat ─► messages[] ─► App.tsx
+                                                       └─► speakOwned('app-level')
+```
+
+The two transports deliver identical UX — only the opener source
+and barge-in latency differ. No UI code branches on transport; the
+switch is entirely inside `useCallSession`. StrictMode double-invoke
+is de-duplicated via a module-scope in-flight Promise map so the
+two 404s you'd otherwise see on dev collapse into one.
+
+**Files.** `frontend/src/ui/call/useCallSession.ts`,
+`frontend/src/ui/call/callApi.ts`.
+
+### 10.6 Feature flags
+
+| Flag                                        | Default | Layer    | Purpose                                                  |
+|---------------------------------------------|---------|----------|----------------------------------------------------------|
+| `VOICE_CALL_ENABLED`                        | `false` | Backend  | Mount the voice_call router + WS route                   |
+| `VOICE_CALL_STREAMING_ENABLED`              | `false` | Backend  | Per-token `assistant.partial` + streaming TTS            |
+| `VOICE_CALL_BARGE_IN_ENABLED`               | `false` | Backend  | Server-acked cancel on user interrupt                    |
+| `VITE_CALL_FULL_DUPLEX_ENABLED`             | `true`  | Frontend | Turn-lock + speakOwned + post-TTS guard                  |
+| `localStorage.homepilot_call_full_duplex`   | —       | Frontend | Per-browser override of the Vite flag (values: `true`/`false`) |
+
+All flags are *additive and non-destructive*: flipping any one off
+restores pre-flag behaviour on that layer without touching the rest.
+
+## 11. Further reading
 
 If you want to go deeper into the conversation-analysis findings that
 drive this module:

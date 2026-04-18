@@ -118,6 +118,33 @@ optional:
     icon: message-square
     requires_config: SLACK_TOKEN
 
+  - id: hp-whatsapp
+    port: 9130
+    module: "agentic.integrations.mcp.whatsapp_server:app"
+    label: "WhatsApp"
+    description: "Send/receive WhatsApp messages via Meta Cloud API. Includes ACK/SNOOZE/ESCALATE intent detection."
+    category: communication
+    icon: message-circle
+    requires_config: WHATSAPP_CLOUD_API
+
+  - id: hp-telegram
+    port: 9131
+    module: "agentic.integrations.mcp.telegram_server:app"
+    label: "Telegram"
+    description: "Send messages + voice notes via a Telegram bot. Secret-token webhook verification."
+    category: communication
+    icon: send
+    requires_config: TELEGRAM_BOT
+
+  - id: hp-voip
+    port: 9132
+    module: "agentic.integrations.mcp.voip_server:app"
+    label: "VoIP / Phone"
+    description: "Outbound persona calls + inbound DID→persona routing. Single app-DID mode, HMAC webhook verify, incident escalation."
+    category: communication
+    icon: phone
+    requires_config: VOIP_PROVIDER
+
   # ── Developer ────────────────────────────────────────────────────────
   - id: hp-github
     port: 9118

@@ -8,7 +8,14 @@
  */
 import React, { useEffect, useMemo, useState } from 'react'
 import { useAuth } from './components/AuthGate'
-import type { UserProfile, SecretListItem, MemoryItem } from './profileApi'
+import type {
+  UserProfile,
+  SecretListItem,
+  MemoryItem,
+  CommunicationInfo,
+  FieldAccessTier,
+} from './profileApi'
+import { emptyCommunicationInfo } from './profileApi'
 import {
   // Legacy (global — single-user / API-key mode)
   fetchProfile,
@@ -39,7 +46,7 @@ import {
   formatTimezoneLabel,
 } from './localeData'
 
-type TabKey = 'profile' | 'prefs' | 'integrations' | 'security'
+type TabKey = 'profile' | 'prefs' | 'communication' | 'integrations' | 'security'
 
 const emptyProfile: UserProfile = {
   display_name: '',
@@ -367,6 +374,7 @@ export default function ProfileSettingsModal({
             {[
               { key: 'profile', label: 'Profile' },
               { key: 'prefs', label: 'Preferences' },
+              { key: 'communication', label: 'Communication' },
               { key: 'integrations', label: 'Integrations' },
               { key: 'security', label: 'Security' },
             ].map((t) => (
@@ -819,6 +827,13 @@ export default function ProfileSettingsModal({
           ) : null}
 
           {/* ================================================================ */}
+          {/* TAB — Communication (additive, non-destructive)                  */}
+          {/* ================================================================ */}
+          {!loading && tab === 'communication' ? (
+            <CommunicationTabBody profile={profile} setProfile={setProfile} />
+          ) : null}
+
+          {/* ================================================================ */}
           {/* TAB 3 — Integrations                                             */}
           {/* ================================================================ */}
           {!loading && tab === 'integrations' ? (
@@ -927,6 +942,188 @@ export default function ProfileSettingsModal({
             {saving ? 'Saving...' : 'Save All'}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Communication tab body — additive, non-destructive
+// ─────────────────────────────────────────────────────────────────────
+//
+// Rendered inside ProfileSettingsModal as a sibling of Profile /
+// Preferences / Integrations / Security. Reads/writes the same
+// ``profile`` state object the other tabs do, so the existing "Save
+// All" button persists Communication edits via the existing PUT
+// /v1/profile path — no new endpoints, no new fetch logic.
+//
+// Falls back to ``emptyCommunicationInfo()`` when an old backend
+// response doesn't include the ``communication`` block, so the UI
+// renders correctly even before the backend is upgraded.
+
+function CommunicationTabBody({
+  profile,
+  setProfile,
+}: {
+  profile: UserProfile
+  setProfile: React.Dispatch<React.SetStateAction<UserProfile>>
+}) {
+  const comm: CommunicationInfo = profile.communication ?? emptyCommunicationInfo()
+  const policy = profile.field_access_policy ?? {}
+
+  const setComm = (patch: Partial<CommunicationInfo>) => {
+    setProfile({
+      ...profile,
+      communication: { ...comm, ...patch },
+    })
+  }
+  const setPolicy = (fieldPath: string, tier: FieldAccessTier) => {
+    setProfile({
+      ...profile,
+      field_access_policy: { ...policy, [fieldPath]: tier },
+    })
+  }
+
+  const TierRadio: React.FC<{ fieldPath: string; defaultTier: FieldAccessTier }> = ({
+    fieldPath,
+    defaultTier,
+  }) => {
+    const current: FieldAccessTier = (policy[fieldPath] ?? defaultTier) as FieldAccessTier
+    const options: { key: FieldAccessTier; label: string; color: string }[] = [
+      { key: 'always', label: 'Always', color: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30' },
+      { key: 'on_demand', label: 'On demand', color: 'bg-amber-500/15 text-amber-300 border-amber-400/30' },
+      { key: 'sensitive', label: 'Sensitive — ask first', color: 'bg-rose-500/15 text-rose-300 border-rose-400/30' },
+    ]
+    return (
+      <div className="flex flex-wrap gap-2 mt-1">
+        {options.map(opt => (
+          <button
+            key={opt.key}
+            type="button"
+            onClick={() => setPolicy(fieldPath, opt.key)}
+            className={[
+              'px-3 py-1 rounded-full text-xs border transition',
+              current === opt.key
+                ? opt.color
+                : 'bg-white/5 text-white/50 border-white/10 hover:text-white/70',
+            ].join(' ')}
+          >
+            AI access: {opt.label}
+          </button>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
+        <div className="text-sm text-white/80">Communication — how the AI can reach you</div>
+        <div className="text-xs text-white/40">
+          Stored with your profile. Never exposed to personas directly — every field carries an access
+          policy the persona must respect. API tokens still live in <span className="text-white/70">Integrations → Secrets Vault</span>.
+        </div>
+      </div>
+
+      {/* Phone number */}
+      <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
+        <label className="text-xs text-white/60 block mb-1">Mobile phone (E.164)</label>
+        <input
+          className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-white/20 font-mono"
+          placeholder="+14155551212"
+          value={comm.phone_e164}
+          onChange={(e) => setComm({ phone_e164: e.target.value })}
+        />
+        <TierRadio fieldPath="communication.phone_e164" defaultTier="sensitive" />
+      </div>
+
+      {/* WhatsApp */}
+      <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
+        <label className="text-xs text-white/60 block mb-1">WhatsApp number (E.164)</label>
+        <input
+          className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-white/20 font-mono"
+          placeholder="+14155551212"
+          value={comm.whatsapp_e164}
+          onChange={(e) => setComm({ whatsapp_e164: e.target.value })}
+        />
+        <TierRadio fieldPath="communication.whatsapp_e164" defaultTier="sensitive" />
+      </div>
+
+      {/* Telegram */}
+      <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
+        <label className="text-xs text-white/60 block mb-1">
+          Telegram username <span className="text-white/40">(without @)</span>
+        </label>
+        <input
+          className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-white/20 font-mono"
+          placeholder="ruslanmv"
+          value={comm.telegram_username}
+          onChange={(e) =>
+            setComm({ telegram_username: e.target.value.replace(/^@+/, '') })
+          }
+        />
+        <TierRadio fieldPath="communication.telegram_username" defaultTier="sensitive" />
+      </div>
+
+      {/* Preferences */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
+          <label className="text-xs text-white/60 block mb-1">Preferred contact channel</label>
+          <select
+            className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-white/20"
+            value={comm.preferred_contact_channel}
+            onChange={(e) =>
+              setComm({
+                preferred_contact_channel: e.target.value as CommunicationInfo['preferred_contact_channel'],
+              })
+            }
+          >
+            <option value="none">None — ask me each time</option>
+            <option value="phone">Phone (SMS)</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="telegram">Telegram</option>
+          </select>
+        </div>
+        <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
+          <label className="text-xs text-white/60 block mb-1">Preferred call channel</label>
+          <select
+            className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-white/20"
+            value={comm.preferred_call_channel}
+            onChange={(e) =>
+              setComm({
+                preferred_call_channel: e.target.value as CommunicationInfo['preferred_call_channel'],
+              })
+            }
+          >
+            <option value="none">None</option>
+            <option value="phone">Phone (PSTN)</option>
+            <option value="voip_app_did">VoIP app DID (Twilio/Telnyx)</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Master kill-switch */}
+      <label className="flex items-start gap-3 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 cursor-pointer">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={comm.allow_ai_outbound}
+          onChange={(e) => setComm({ allow_ai_outbound: e.target.checked })}
+        />
+        <div>
+          <div className="text-sm text-white">Allow the AI to contact me without confirmation</div>
+          <div className="text-xs text-white/50">
+            Leave off = every outbound message or call requires a single-click OK.
+            Turn on for secretaries that run recurrent checks (door-left-open, calendar
+            reminders, etc.).
+          </div>
+        </div>
+      </label>
+
+      <div className="text-xs text-white/40 px-1">
+        Future: the <span className="text-white/60">Contacts</span> tab will manage other people
+        (family, team). This Communication tab stays focused on your own reachability.
       </div>
     </div>
   )
