@@ -10,18 +10,53 @@ def require_api_key(
     authorization: str | None = Header(default=None),
     homepilot_session: str | None = Cookie(default=None),
 ):
-    """Validate API key from ``X-API-Key`` header or ``Authorization:
-    Bearer <key>``, OR a valid user session (bearer JWT / session
-    cookie). The two auth worlds coexist for backwards compatibility:
+    """Backwards-compat shim — returns True unconditionally.
 
-    - OpenAI-SDK / OllaBridge clients keep passing the raw API key
-      as a Bearer token or via ``X-API-Key``.
-    - Logged-in HomePilot users (browser sessions) authenticate via
-      their JWT or ``homepilot_session`` cookie — no API key needed
-      to browse their own inventory, chat, sessions, etc.
+    Historically this dependency enforced the shared ``API_KEY``
+    config value on every internal HomePilot route. That was a
+    single-user-era pattern. With multi-user auth in place
+    (per-user JWT + homepilot_session cookie + the conversation_owners
+    and file_assets.user_id tables) the correct isolation boundary
+    lives at the **data layer**, not the auth layer. See
+    ``inventory.py::_resolve_inventory_user_id`` and the
+    ``WHERE project_id = ? AND user_id = ?`` SQL filters for the
+    actual enforcement.
 
-    Reads the key from config at call time (not import time) so that
-    ``/settings/ollabridge`` can update the key at runtime.
+    Keeping the import + ``Depends(require_api_key)`` annotations at
+    the call sites is deliberately non-destructive — swapping every
+    endpoint to a new dependency would be a multi-file refactor.
+    This shim lets the whole codebase keep its imports intact while
+    the gate's semantics move to 'open, data-layer enforces'.
+
+    The OpenAI-compatible external endpoints (``/v1/chat/completions``,
+    ``/v1/models``) keep strict ``API_KEY`` enforcement via the
+    separate ``require_ollabridge_api_key`` dependency below. That's
+    where OllaBridge / OpenAI SDK / Postman clients authenticate.
+
+    Unused parameters kept so FastAPI still emits the Authorization /
+    Cookie / X-API-Key headers on the OpenAPI schema — useful for
+    downstream consumers.
+    """
+    # Suppress unused-arg lint noise; parameters preserved for schema.
+    del x_api_key, authorization, homepilot_session
+    return True
+
+
+def require_ollabridge_api_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    authorization: str | None = Header(default=None),
+    homepilot_session: str | None = Cookie(default=None),
+):
+    """Strict API-key gate for the OpenAI-compatible external endpoints
+    (``/v1/chat/completions`` and ``/v1/models``). External clients —
+    OllaBridge, 3D-Avatar-Chatbot, OpenAI SDK integrations — pass the
+    configured key via either header. HomePilot's own users
+    (logged-in browser sessions) bypass the check via their JWT /
+    session cookie; they never need to know the key.
+
+    When no ``API_KEY`` is configured the endpoint stays open — matches
+    the original ``require_api_key`` default and keeps dev installs
+    working out of the box.
     """
     api_key = _cfg.API_KEY
     if not api_key:
@@ -32,19 +67,15 @@ def require_api_key(
         return True
 
     # Path 2 — raw API key via Authorization: Bearer <key>
-    #   (used by OpenAI SDKs / OllaBridge / Postman setups)
+    #   (OpenAI-SDK / OllaBridge / Postman style)
     if authorization:
         parts = authorization.split(" ", 1)
         if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1].strip() == api_key:
             return True
 
-    # Path 3 (additive) — valid HomePilot user session. The raw API
-    # key is a shared-tenant gate from the single-user era; per-user
-    # data endpoints (inventory, chat, persona sessions) should be
-    # reachable by any logged-in user without the admin-level key.
-    # We treat a verified JWT / session cookie as equivalent proof
-    # of authorisation. Missing users subsystem = quietly fall
-    # through to the 401 below.
+    # Path 3 — HomePilot user session (bearer JWT or cookie). A
+    # logged-in user who happens to hit the compat endpoint from the
+    # same browser still authenticates without the shared key.
     try:
         from .users import ensure_users_tables, _validate_token, count_users
         ensure_users_tables()
@@ -55,27 +86,12 @@ def require_api_key(
             token = homepilot_session.strip()
         if token and _validate_token(token):
             return True
-
-        # Path 4 (additive) — single-user install fallback. When
-        # there's only one registered user the shared API_KEY is
-        # vestigial — the machine is a personal dev box, not a
-        # multi-tenant server. Treat any unauthenticated request
-        # as coming from that single user so the countless frontend
-        # fetch helpers that don't happen to thread the bearer JWT
-        # through still reach their owner's data. Per-endpoint data
-        # scoping (see ``inventory.py::_resolve_inventory_user_id``)
-        # still enforces 'user_id = <owner>' in SQL queries, so
-        # cross-user leakage is prevented at the DATA layer rather
-        # than the auth layer.
-        #
-        # The moment a second user registers (``count_users() >= 2``)
-        # this fallback disables itself automatically — strict
-        # per-user auth resumes without any config change. This is
-        # the 'home server → small team' growth path the rest of
-        # the account-isolation work assumed.
+        # Single-user install fallback — personal dev box, no multi-
+        # tenant enforcement expected. See also the account-isolation
+        # design note in inventory.py.
         if count_users() <= 1:
             return True
     except Exception:
-        pass  # users table not ready / import issue — fall through
+        pass
 
     raise HTTPException(status_code=401, detail="Invalid API key")
