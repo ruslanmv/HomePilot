@@ -38,6 +38,7 @@ import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
 import CallOverlay from './CallOverlay'
 import { clog, speakOwned, isCallFullDuplexEnabled } from './call/log'
 import PostCallCard from './phone/PostCallCard'
+import CallEventRow from './phone/CallEventRow'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
@@ -241,6 +242,31 @@ function collapseCallTurns<T extends Msg>(msgs: T[]): T[] {
     out.push(m)
   }
   return out
+}
+
+/**
+ * Feature flag for the enterprise inline call-event row. When true
+ * (default), phone calls render as a thin centered divider with
+ * hover-revealed actions and an inline expandable transcript.
+ * When false, falls back to the legacy PostCallCard (boxy, big,
+ * primary-colored Resume button).
+ *
+ * Priority:
+ *   1. localStorage ``homepilot_call_card_legacy`` === 'true'  → legacy
+ *   2. build-time ``VITE_CALL_ENTERPRISE_ROW`` === 'false'     → legacy
+ *   3. default                                                 → enterprise
+ */
+function useEnterpriseCallRow(): boolean {
+  try {
+    if (typeof window !== 'undefined') {
+      const legacy = window.localStorage.getItem('homepilot_call_card_legacy')
+      if (legacy === 'true') return false
+    }
+  } catch { /* ignore */ }
+  const envVal = (import.meta as unknown as {
+    env?: Record<string, string | undefined>
+  }).env?.VITE_CALL_ENTERPRISE_ROW
+  return String(envVal ?? 'true') !== 'false'
 }
 
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio' | 'avatar' | 'teams'
@@ -1771,6 +1797,7 @@ function ChatState({
 }) {
   const { copied, copy } = useCopyMessage()
   const displayMessages = useMemo(() => collapseCallTurns(messages), [messages])
+  const enterpriseCallRow = useEnterpriseCallRow()
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
   const handleStartCall = useCallback(() => {
     onStartCall?.()
@@ -1878,19 +1905,35 @@ function ChatState({
             key={m.id}
             className={`flex gap-5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
-            {/* Inline "call memory card" — renders instead of a bubble
-                when this message represents a just-ended voice call.
-                Treated as assistant-aligned (left) so it reads as "a
-                moment we shared" rather than a system toast. */}
+            {/* Inline call-event render. Enterprise mode (default)
+                uses the thin CallEventRow — a centered timeline
+                divider with hover-revealed Transcript / Resume
+                actions and an inline expanded transcript. Legacy
+                mode (localStorage.homepilot_call_card_legacy='true'
+                or VITE_CALL_ENTERPRISE_ROW='false') falls back to
+                the original PostCallCard so the swap is always
+                reversible without a rebuild. */}
             {m.callMemory ? (
-              <PostCallCard
-                durationSec={m.callMemory.durationSec}
-                endedAt={m.callMemory.endedAt}
-                personaName={m.callMemory.personaName || 'Assistant'}
-                variant="expand"
-                transcript={m.callMemory.transcript}
-                onResume={onStartCall}
-              />
+              enterpriseCallRow ? (
+                <div className="w-full">
+                  <CallEventRow
+                    durationSec={m.callMemory.durationSec}
+                    endedAt={m.callMemory.endedAt}
+                    personaName={m.callMemory.personaName || 'Assistant'}
+                    transcript={m.callMemory.transcript}
+                    onResume={onStartCall}
+                  />
+                </div>
+              ) : (
+                <PostCallCard
+                  durationSec={m.callMemory.durationSec}
+                  endedAt={m.callMemory.endedAt}
+                  personaName={m.callMemory.personaName || 'Assistant'}
+                  variant="expand"
+                  transcript={m.callMemory.transcript}
+                  onResume={onStartCall}
+                />
+              )
             ) : (<>
             {m.role === 'assistant' ? (
               <div className="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center flex-shrink-0 font-bold text-sm mt-1">
