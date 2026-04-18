@@ -8,12 +8,20 @@ and what's queued for follow-up sessions.
 
 ```
 phone/
-├── README.md            this file
-├── tokens.ts            CALL palette + POST_CALL layout constants
-├── icons.tsx            shared SVG icon set (mic, phone*, chat, …)
-├── PostCallCard.tsx     inline chat card, expandable transcript,
-│                         3 variants (expand / highlights / missed)
-└── PostCallCard.test.tsx  13 tests — variant matrix + keyboard/click
+├── README.md                        this file
+├── tokens.ts                        CALL palette + POST_CALL layout constants
+├── icons.tsx                        shared SVG icon set (mic, phone*, chat, …)
+├── PostCallCard.tsx                 inline chat card, expandable transcript,
+│                                     3 variants (expand / highlights / missed)
+├── PostCallCard.test.tsx            13 tests — variant matrix + keyboard/click
+└── primitives/
+    ├── index.ts                     barrel — single import path
+    ├── useReducedMotion.ts          OS motion-preference subscription
+    ├── useReducedMotion.test.ts     4 tests
+    ├── useFocusTrap.ts              keyboard-focus containment for dialogs
+    ├── useFocusTrap.test.tsx        6 tests
+    ├── ControlBtn.tsx               circular action button
+    └── ControlBtn.test.tsx          8 tests
 ```
 
 Consumed by:
@@ -22,6 +30,10 @@ Consumed by:
   chat stream for every `Msg` that carries a `callMemory` payload.
   The card is **not** a modal — it sits in the conversation so the
   user can expand the transcript without a context switch.
+- `primitives/` are additive foundation for the next batch
+  (Waveform, Aura, AmbientAura, CallScreen). No consumers yet;
+  `CallOverlay` still has its own inlined versions of waveform +
+  avatar + control buttons, which the next session extracts.
 
 ## What's queued for follow-up sessions
 
@@ -32,10 +44,12 @@ call feature — it's already functional end-to-end with the
 
 | File | Status | Notes |
 |---|---|---|
+| `primitives/ControlBtn.tsx` | **Shipped** | 8 tests green; no consumers yet (CallOverlay still inlines its own). |
+| `primitives/useReducedMotion.ts` | **Shipped** | 4 tests green. Wire into every animated primitive as they land. |
+| `primitives/useFocusTrap.ts` | **Shipped** | 6 tests green. Used by CallScreen + LockScreenIncoming when they land. |
 | `primitives/Aura.tsx` | Pending | Animated gradient avatar — seeded hue, crescent silhouette. Currently inlined in `CallOverlay.tsx::CallAvatar`. |
 | `primitives/AmbientAura.tsx` | Pending | Page-wide blurred glow. Lives behind `CallOverlay`'s backdrop today. |
 | `primitives/Waveform.tsx` | Pending | Live-intensity bars. `CallOverlay` already has an `rAF`-driven variant that reads real mic + synthesised speech envelope. Port will extract it. |
-| `primitives/ControlBtn.tsx` | Pending | Circular glass button. Currently inlined in `CallOverlay`. |
 | `CallScreen.tsx` | Pending | Fullscreen mobile composition. Desktop uses the existing `CallOverlay` modal. |
 | `CallOverlay.tsx` (refactor) | Pending | Route between fullscreen / modal / PiP based on viewport. Today's `CallOverlay.tsx` is desktop-modal-only. |
 | `TextInCall.tsx` | Pending | Mid-call composer sheet — minimize call to a thin bar, slide composer up, send text over the existing chat REST. |
