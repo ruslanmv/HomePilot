@@ -1753,8 +1753,24 @@ async def test_api_key_endpoint(req: ApiKeyTestRequest) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 class OllaBridgeSettings(BaseModel):
-    enabled: bool = Field(False, description="Enable/disable the OpenAI-compatible persona API")
-    api_key: str = Field("my-secret", description="API key for external clients")
+    """OllaBridge runtime settings.
+
+    ``enabled`` defaults to True: OllaBridge is a normal product
+    feature that's on by default; the toggle is a kill-switch, not
+    an opt-in gate.
+
+    ``api_key`` semantics (match the 'Leave empty to keep unchanged'
+    settings-panel UX):
+      - ``null`` / field OMITTED   → keep currently-stored value.
+      - ``""`` (empty string)       → wipe the stored key (auth off).
+      - ``"some-value"``            → set as the new key.
+
+    The UI sends ``null``/omits the field when the user leaves the
+    input blank in edit mode; tests that want to clear the key pass
+    ``api_key: ""`` explicitly.
+    """
+    enabled: bool = Field(True, description="Enable/disable the OpenAI-compatible persona API")
+    api_key: Optional[str] = Field(None, description="API key for external clients. null/omitted=keep, ''=wipe, value=set.")
 
 
 @app.get("/settings/ollabridge")
@@ -1776,14 +1792,27 @@ async def get_ollabridge_settings() -> JSONResponse:
 async def set_ollabridge_settings(req: OllaBridgeSettings) -> JSONResponse:
     """Toggle the OpenAI-compatible persona API and set its API key at runtime.
 
-    When enabled, external clients (OllaBridge, 3D-Avatar-Chatbot, any OpenAI SDK)
-    can chat with HomePilot personas via /v1/chat/completions.
+    When enabled (default), external clients (OllaBridge, 3D-Avatar-
+    Chatbot, any OpenAI SDK) can chat with HomePilot personas via
+    /v1/chat/completions. Local same-machine clients and logged-in
+    HomePilot browser users don't need the key — see
+    auth.require_ollabridge_api_key.
+
+    Semantics for ``api_key``:
+      - ``null`` / field OMITTED  → keep stored value (matches 'Leave
+                                    empty to keep unchanged' UI hint).
+      - ``""`` (empty string)     → wipe the stored key (auth off).
+      - ``"some-value"``          → set as the new key.
     """
     from . import config as _cfg
     from . import openai_compat_endpoint as _compat
 
-    # Update the runtime API key
-    _cfg.API_KEY = req.api_key.strip() if req.api_key else ""
+    # Update the runtime API key per the semantics above.
+    if req.api_key is None:
+        pass  # keep existing
+    else:
+        # Explicit value given — empty string wipes, non-empty sets.
+        _cfg.API_KEY = req.api_key.strip()
 
     # Store the enabled flag on the compat module so the endpoint can gate itself
     _compat._compat_enabled = req.enabled

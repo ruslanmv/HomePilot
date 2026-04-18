@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from fastapi import Cookie, Header, HTTPException
+from fastapi import Cookie, Header, HTTPException, Request
 
 from . import config as _cfg
+
+
+# Hosts treated as 'local' for the OllaBridge gate — a CLI / curl
+# call from the same machine is a trusted dev scenario and doesn't
+# need the API key even when one is configured. Starlette's
+# TestClient uses host='testclient' (NOT one of these), so CI auth
+# tests that check 401-on-bad-key stay authoritative.
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def require_api_key(
@@ -43,6 +51,7 @@ def require_api_key(
 
 
 def require_ollabridge_api_key(
+    request: Request,
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     authorization: str | None = Header(default=None),
     homepilot_session: str | None = Cookie(default=None),
@@ -54,9 +63,16 @@ def require_ollabridge_api_key(
     (logged-in browser sessions) bypass the check via their JWT /
     session cookie; they never need to know the key.
 
-    When no ``API_KEY`` is configured the endpoint stays open — matches
-    the original ``require_api_key`` default and keeps dev installs
-    working out of the box.
+    For local usage — curl / CLI / a script on the same machine —
+    a request coming from ``127.0.0.1`` / ``::1`` / ``localhost`` is
+    treated as trusted dev traffic and bypasses the check too. This
+    matches the 'local installs should be simple' contract:
+    spinning up ``curl localhost:8000/v1/chat/completions`` on your
+    own machine shouldn't require knowing an API key.
+
+    When no ``API_KEY`` is configured the endpoint stays open —
+    matches the original ``require_api_key`` default and keeps dev
+    installs working out of the box.
     """
     api_key = _cfg.API_KEY
     if not api_key:
@@ -89,12 +105,21 @@ def require_ollabridge_api_key(
     except Exception:
         pass
 
-    # NOTE: no 'single-user install bypass' here. The OllaBridge
-    # endpoint is the one place where the configured ``API_KEY``
-    # is actually authoritative — external OpenAI-SDK clients rely
-    # on it being enforced. Mirroring the internal-shim's Path 4
-    # would hand out free access to /v1/chat/completions on any
-    # fresh install, breaking the external-client contract
-    # (see tests/test_openai_compat.py::TestOpenAIAuth).
+    # Path 4 — local (same-machine) request. 127.0.0.1 / ::1 /
+    # localhost are trusted dev traffic; a non-browser client on
+    # the same box doesn't need the API key. Starlette TestClient
+    # uses host='testclient' (NOT one of these), so CI auth tests
+    # that assert 401 on bad keys still fire correctly.
+    try:
+        if request.client and request.client.host in _LOCAL_HOSTS:
+            return True
+    except Exception:
+        pass
+
+    # NOTE: no 'single-user install bypass' here. External clients
+    # reaching OllaBridge from OTHER machines — OpenAI SDKs,
+    # 3D-Avatar-Chatbot, Postman over a LAN — must still present
+    # the configured key. CI tests/test_openai_compat.py::
+    # TestOpenAIAuth depends on this.
 
     raise HTTPException(status_code=401, detail="Invalid API key")
