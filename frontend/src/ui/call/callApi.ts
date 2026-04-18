@@ -21,8 +21,34 @@ export interface CreateCallSessionRequest {
   persona_id?: string | null
   /** How the call was initiated. Matches backend CreateSessionReq. */
   entry_mode?: 'voice' | 'call' | 'handoff'
-  /** Free-form client fingerprint (tz, platform, ua family). */
+  /** Free-form client fingerprint (tz, platform, ua family).
+   *  Also carries Phase 2/3 capability declarations:
+   *    - ``streaming``  client can consume assistant.partial
+   *    - ``barge_in``   client can detect user speech-start during
+   *                     TTS playback and send ``user.barge_in``
+   *  The effective streaming mode for the session is
+   *  ``min(client_declared, server_advertised)`` — both ends must
+   *  agree or the turn runs in unary mode. Mismatches degrade
+   *  gracefully without a hard error. */
   device_info?: Record<string, unknown>
+}
+
+/** Server-advertised capabilities. Fields are optional so older
+ *  servers (which don't emit them) are parsed safely and treated
+ *  as "no". Used by useCallSession to decide whether to subscribe
+ *  to the Phase 2 streaming events. */
+export interface CallCapabilities {
+  /** Server supports assistant.partial / assistant.turn_end /
+   *  assistant.cancel envelopes. */
+  streaming?: boolean
+  /** Server honours user.barge_in / transcript.partial as cancel
+   *  signals. Only meaningful when ``streaming`` is also true. */
+  barge_in?: boolean
+  /** Legacy fields (pre-streaming). Kept in the interface so
+   *  existing consumers don't need to widen the type. */
+  interruptions?: boolean
+  transcript_live?: boolean
+  [k: string]: unknown
 }
 
 export interface CreateCallSessionResponse {
@@ -35,8 +61,8 @@ export interface CreateCallSessionResponse {
   expires_at: string | number
   /** Hard cap enforced by the server. */
   max_duration_sec: number
-  /** Optional backend capability advertisement. */
-  capabilities?: Record<string, unknown>
+  /** Backend capability advertisement (§ 3.1 of the streaming design). */
+  capabilities?: CallCapabilities
 }
 
 /** Error raised for any non-2xx from /v1/voice-call/sessions. The
@@ -89,6 +115,31 @@ export async function createCallSession(
     throw new CallApiError(res.status, 'malformed session payload')
   }
   return json
+}
+
+/** Declare the client's Phase 2/3 capabilities into the
+ *  ``device_info`` blob. Set both to true in build configurations
+ *  that include streamTts + bargeIn modules; set to false to run
+ *  the session in forced-unary mode even against a streaming server
+ *  (useful for bisecting regressions). */
+export function clientStreamingCapabilities(
+  base: Record<string, unknown>,
+  enabled: boolean,
+): Record<string, unknown> {
+  if (!enabled) return base
+  return { ...base, streaming: true, barge_in: true }
+}
+
+/** Compute the effective streaming mode from the server's capability
+ *  response and the client's declared support. Truth table in § 3.1
+ *  of docs/analysis/voice-call-streaming-design.md. */
+export function effectiveStreamingMode(
+  serverCaps: CallCapabilities | undefined,
+  clientStreaming: boolean,
+): { streaming: boolean; barge_in: boolean } {
+  const streaming = !!(serverCaps?.streaming && clientStreaming)
+  const barge_in = streaming && !!serverCaps?.barge_in
+  return { streaming, barge_in }
 }
 
 /** Resolve a potentially-relative ws_url against the current page

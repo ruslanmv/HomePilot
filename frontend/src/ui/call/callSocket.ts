@@ -100,6 +100,29 @@ export interface ServerErrorPayload {
   message: string
 }
 
+// Phase 2/3 payloads (§ 3.2 of the streaming design doc).
+
+export interface AssistantPartialPayload {
+  turn_id: string
+  /** The NEW text only. Callers concatenate deltas per turn_id. */
+  delta: string
+  /** Monotonic per-turn index starting at 0. Advisory (the WS
+   *  already enforces monotonic seq); useful for replay logs. */
+  index: number
+}
+export interface AssistantTurnEndPayload {
+  turn_id: string
+  reason: 'complete' | 'cancelled' | 'error'
+  /** Authoritative concatenation of this turn's deltas (server-side).
+   *  Clients can use this directly instead of maintaining their own
+   *  buffer. Optional in principle — but our server always emits it. */
+  full_text?: string
+}
+export interface AssistantCancelPayload {
+  turn_id: string
+  cause?: 'user_barge_in' | 'user_partial' | string
+}
+
 // Client → server. Keep the types literal so the compiler catches
 // typos at the send() call site.
 
@@ -120,7 +143,16 @@ export type CallControlAction = 'end' | 'ping'
 export interface CallSocketEventMap {
   statusChange: CallLifecycleStatus
   callState: CallStatePayload
+  /** Still fires for turns that ran in unary mode (flag off OR
+   *  capability mismatch). Streaming turns use the three events
+   *  below instead. */
   assistantTranscript: AssistantTranscriptPayload
+  /** Phase 2: one delta per server emission. */
+  assistantPartial: AssistantPartialPayload
+  /** Phase 2: exactly once per streamed turn, with a final reason. */
+  assistantTurnEnd: AssistantTurnEndPayload
+  /** Phase 3: server acks a barge-in; client stops TTS on receipt. */
+  assistantCancel: AssistantCancelPayload
   assistantFiller: AssistantFillerPayload
   assistantBackchannel: AssistantBackchannelPayload
   serverError: ServerErrorPayload
@@ -259,6 +291,30 @@ export class CallSocket {
     this.enqueueLine({ type: 'call.control', ts: Date.now(), payload: { action } })
   }
 
+  /** Phase 2 — interim STT output while the user is still speaking.
+   *  Server uses it as a secondary barge-in trigger and, in a
+   *  future phase, for semantic endpointing. Safe no-op against a
+   *  non-streaming server (unknown type is dropped). */
+  sendTranscriptPartial(p: { text: string; stable_prefix_len?: number }): void {
+    this.enqueueLine({
+      type: 'transcript.partial',
+      ts: Date.now(),
+      payload: p,
+    })
+  }
+
+  /** Phase 3 — explicit interrupt. Fired the instant the client's
+   *  VAD trips above threshold while an assistant turn is in-flight.
+   *  ``turn_id`` disambiguates against a stale signal racing a new
+   *  turn; the server compares ids and silently drops mismatches. */
+  sendBargeIn(turn_id: string): void {
+    this.enqueueLine({
+      type: 'user.barge_in',
+      ts: Date.now(),
+      payload: { turn_id },
+    })
+  }
+
   /** Graceful user-initiated end. Sends control 'end', then closes. */
   end(): void {
     if (this.shuttingDown) return
@@ -356,6 +412,15 @@ export class CallSocket {
       }
       case 'transcript.final':
         this.emit('assistantTranscript', raw as AssistantTranscriptPayload)
+        return
+      case 'assistant.partial':
+        this.emit('assistantPartial', raw as AssistantPartialPayload)
+        return
+      case 'assistant.turn_end':
+        this.emit('assistantTurnEnd', raw as AssistantTurnEndPayload)
+        return
+      case 'assistant.cancel':
+        this.emit('assistantCancel', raw as AssistantCancelPayload)
         return
       case 'assistant.filler':
         this.emit('assistantFiller', raw as AssistantFillerPayload)
