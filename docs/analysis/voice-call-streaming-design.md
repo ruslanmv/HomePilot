@@ -614,5 +614,153 @@ could tap `WebSpeechStreamTts.onBoundary` to modulate the envelope
 with real word boundaries, but that's a polish pass, not a
 prerequisite.
 
-Section 5 ends here. Next commit: §§ 6-9 (failure modes, rollout,
-testing, out-of-scope).
+## 6. Failure modes + graceful degradation
+
+The design assumes the network, the LLM provider, and the
+browser's speech subsystems will all misbehave at some point. Each
+row below is a specific failure with its handler in-tree.
+
+| Failure | Symptom | Handler |
+|---|---|---|
+| Network drop during streaming | `WebSocket close` with a transient code | `callSocket.ts` already reconnects within the resume window. The current in-flight turn is treated as cancelled; `assistant.turn_end` with `reason: "error"` is emitted by the server on the resume or on reconnect timeout. Client stops TTS on cancel. |
+| LLM upstream fault mid-stream | Server sees an exception inside `turn_stream.run_turn_streaming` | Generator raises → caught in `ws.py` → emit `assistant.turn_end` with `reason: "error"` + a fallback `full_text` ("one sec — connection hiccup."). No half-state. |
+| TTS subsystem unavailable | `speechSynthesis` throws, no audio | `WebSpeechStreamTts.stop()` and `appendDelta()` are both no-ops under throw. The turn still writes the transcript into the chat; the user reads instead of hearing. |
+| Barge-in fires but the turn is already over | Race: `user.barge_in` arrives after `assistant.turn_end` | Server's `cancel_active` compares `turn_id`; stale IDs are silent drops (§ 4.3). No `assistant.cancel` is sent. |
+| Barge-in fires twice | User pauses + resumes within one TTS pass | `BargeInToken.cancel()` is idempotent (`asyncio.Event.set()` is idempotent). First cancel wins; second is a no-op. |
+| TTS bleed trips the VAD tap | Persona's own voice causes a false barge-in | `threshold=0.08` + `minSustainMs=80` on the tap. If bleed still trips it, user can hard-mute via the mic button — `sendUiState({muted: true})` also disables the detector via `enabled` gating. |
+| Client advertises streaming, server doesn't support | `capabilities.streaming` missing / false | Effective mode is unary; client's streaming code paths never subscribe; old `onAssistantTranscript` path runs identically to today. |
+| Server advertises streaming, client doesn't | `device_info.streaming` missing / false | Server buffers deltas and emits a single `transcript.final` at turn end. Zero client change. |
+| Partial arrives after a cancel | Late frame for a cancelled `turn_id` | Client tracks `currentTurnIdRef`; any partial whose `turn_id` doesn't match the current one is dropped. Monotonic-seq check already guarantees the frame is in-order, just stale. |
+| Ordering corruption (proxy reorders) | `index` goes backwards | Client logs once (via `callSocket.log.warn`) and appends anyway — text order still wins because seq is monotonic. `index` is advisory, not load-bearing (§ 4.2). |
+| `assistant.turn_end` never arrives | Hung upstream | Client watchdog: if no partial + no turn_end for `idle_timeout_sec`, treat the turn as ended with the last-seen text. Matches the existing idle-timeout path in `ws.py`. |
+
+## 7. Flag rollout (three stages, gated)
+
+Both flags default **off** — the feature is deletable at any stage
+by flipping them back.
+
+### 7.1 Stage 0 — shadow measurement
+
+```
+VOICE_CALL_STREAMING_ENABLED=false   (default)
+```
+
+No behaviour change. Ship the new modules behind the flag; run
+the new backend tests in CI; verify tsc/vitest green on the
+frontend. Zero production impact.
+
+### 7.2 Stage 1 — internal dogfood
+
+```
+VOICE_CALL_STREAMING_ENABLED=true
+PERSONA_CALL_ENABLED=true
+PERSONA_CALL_APPLY=true
+```
+
+Flipped for a small internal allowlist. Watch:
+
+- `pc_turn_ms_p50` should drop from ~1500 ms to ≤ 600 ms.
+- `pc_barge_in_rate` new metric, should be > 0 as soon as anyone
+  interrupts.
+- Error rate on `turn_end {reason: "error"}` should stay < 1 %.
+
+If any of those regress, flip the flag off. The fallback path is
+byte-identical, so the blast radius of a bad rollout is zero.
+
+### 7.3 Stage 2 — public
+
+Default both flags on in the shipped `.env.example`. Keep the
+unary path alive for a full release cycle so we have a rollback
+lever. Remove it only after a deliberate decision, in its own
+commit — not as part of this series.
+
+## 8. Testing plan
+
+Three layers, in the same shape as the existing persona_call test
+suite.
+
+### 8.1 Backend unit
+
+- **`barge_in.py`**: token creation, cancel with matching id
+  cancels, cancel with mismatched id does nothing,
+  double-cancel is idempotent, `clear` on session close tears
+  down everything.
+- **`turn_stream.py`**: mocked SSE source yielding three chunks
+  → generator yields three deltas → matches order. Cancel
+  before chunk 2 → generator stops, no further yield. Upstream
+  exception → generator raises; caller can emit
+  `reason: "error"`.
+- **ws handler** branch for `user.barge_in`: active turn's
+  token is cancelled, `assistant.cancel` is emitted, stale
+  `turn_id` is silent.
+
+### 8.2 Frontend unit (vitest)
+
+- **`callSocket.ts`**: new server events dispatch to the correct
+  listener set; delta concatenation across 10 partials produces
+  the full string; `sendBargeIn` routes through `enqueueLine`
+  with correct envelope shape.
+- **`streamTts.ts::WebSpeechStreamTts`**: sentence-boundary
+  flushing; `stop()` silences within the frame budget (mock
+  `speechSynthesis`).
+- **`bargeIn.ts::useBargeInDetector`**: 80 ms sustained above
+  threshold fires once; a single spike above threshold does not
+  fire; muted state hard-disables.
+
+### 8.3 End-to-end integration (pytest + a fake WS)
+
+- Drive a scripted session through a mocked chat provider that
+  yields 5 chunks over 1 s. Assert the server emits 5
+  `assistant.partial` frames, 1 `assistant.turn_end` with
+  `reason: "complete"`, `full_text` matches concatenation.
+- Drive the same session with a `user.barge_in` after chunk 2.
+  Assert 2 `assistant.partial`, 1 `assistant.cancel`, 1
+  `assistant.turn_end` with `reason: "cancelled"`.
+- Negative: stale `turn_id` in a barge-in → no `assistant.cancel`
+  emitted; the turn completes normally.
+
+Every test above fails loudly on a spec regression, not on a
+rendering regression. The design is defensible by tests, not by
+eyeballs.
+
+## 9. What is explicitly NOT in this design
+
+- **Semantic turn detection** (Phase 4 in the audit). End-of-turn
+  is still VAD silence. A small classifier on partials is the
+  next phase; not here.
+- **Server-side audio rendering.** TTS still runs in the browser.
+  Moving TTS server-side is a separate decision tied to provider
+  choice (Cartesia, ElevenLabs, Piper-CPU) and billing.
+- **Streaming STT.** The browser already emits interim transcripts
+  via `SpeechRecognition.onresult`, but we only consume `final`.
+  Forwarding `interim` as `transcript.partial` is a follow-up
+  that only matters for semantic endpointing.
+- **A new LLM provider.** The streaming path uses the same chat
+  endpoint the unary path uses (`stream: true` switch). Provider
+  swap is orthogonal.
+- **A new persona, new voice facet, new opening template, new
+  backchannel token.** Every persona_call module ships unchanged.
+- **A redesign of `CallOverlay`.** The visual surface is a strict
+  superset of today's (same waveform, same modal, same controls).
+  Only three new `useEffect` blocks + one hook.
+- **Any change to the chat REST fallback.** The existing chat path
+  — and by extension the Call overlay's unavailable-mode fallback
+  — is out of scope. Phase 2 + 3 are additive on top of it.
+
+## 10. Summary (one paragraph)
+
+The call overlay already negotiates a dedicated WS session with
+the backend (`useCallSession` + `callSocket`). Phase 2 + 3 ride on
+that same session, with one new env flag
+(`VOICE_CALL_STREAMING_ENABLED`), one new capability field on the
+session handshake, three new server→client event types, two new
+client→server event types, two new backend modules (`turn_stream`
++ `barge_in`), two new frontend modules (`streamTts` + `bargeIn`),
+and three new `useEffect` blocks in `CallOverlay`. No rename, no
+deletion, no schema migration, no persona change, no chat-endpoint
+change. When the flag is off every byte on the wire and every DOM
+node rendered is identical to today. When the flag is on the
+persona starts speaking inside ~600 ms of user turn-end, and stops
+inside ~200 ms of user barge-in — the two numbers that turn "AI
+on a phone" into "someone on a phone."
+
