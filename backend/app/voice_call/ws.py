@@ -49,6 +49,19 @@ from .config import VoiceCallConfig
 
 logger = logging.getLogger("voice_call.ws")
 
+
+def _clog(event: str, **kwargs: Any) -> None:
+    """Structured ``[call]`` log line — mirrors the frontend's clog()
+    format so a single grep surfaces the whole round-trip. One
+    ``logger.info`` per inflection point; fields stay flat so
+    downstream log-shippers don't have to deserialize.
+
+    Used at: session accept (open), call.state live (ready), opener
+    greeting (greet), user transcript in (turn_user_in), assistant
+    reply out (turn_assistant_out), cooperative cancel (barge_in),
+    user-ended (hangup), WS teardown (close)."""
+    logger.info("[call] %s %s", event, json.dumps(kwargs, separators=(",", ":"), default=str))
+
 HEARTBEAT_INTERVAL_SEC = 10.0
 
 # Protocol sentinels — reserved strings the frontend may send as a
@@ -154,8 +167,10 @@ async def run_session_ws(
     query_bearer = ws.query_params.get("token") or None
 
     sid = session["id"]
+    _clog("lifecycle_open", sid=sid, persona_id=session.get("persona_id"))
     service.mark_live(sid)
     await _send(ws, "call.state", {"status": "live"}, session_id=sid)
+    _clog("lifecycle_ready", sid=sid)
 
     # ── "Theory of answering" hook ────────────────────────────────
     # When persona_call is on, the persona answers first — the way a
@@ -207,6 +222,7 @@ async def run_session_ws(
                 await _send(ws, "transcript.final",
                             {"role": "assistant", "text": greeting_text},
                             session_id=sid)
+                _clog("lifecycle_greet", sid=sid, text_len=len(greeting_text))
     except Exception as _pc_err:
         # Shadow-fail — the call still works without a greeting.
         logger.warning("[persona_call] opening greeting skipped: %s", _pc_err)
@@ -248,6 +264,7 @@ async def run_session_ws(
                     await _send(ws, "call.state", {"status": "ended",
                                                    "reason": "user_ended"},
                                 session_id=sid)
+                    _clog("lifecycle_hangup", sid=sid, reason="user_ended")
                     break
                 if action == "ping":
                     await _send(ws, "pong", {}, session_id=sid)
@@ -270,6 +287,7 @@ async def run_session_ws(
                 # is required here beyond not running the turn.
                 if text_in in _PROTOCOL_SENTINELS:
                     continue
+                _clog("turn_user_in", sid=sid, text_len=len(text_in))
                 model = (
                     payload.get("model")
                     or session.get("persona_id")
@@ -421,6 +439,14 @@ async def run_session_ws(
                             },
                             session_id=sid,
                         )
+                        _clog(
+                            "turn_assistant_out",
+                            sid=sid,
+                            turn_id=turn_id,
+                            reason=end_reason,
+                            text_len=len(assistant_text),
+                            route="stream",
+                        )
                 else:
                     try:
                         if (
@@ -455,6 +481,12 @@ async def run_session_ws(
                     await _send(ws, "transcript.final",
                                 {"role": "assistant", "text": assistant_text},
                                 session_id=sid)
+                    _clog(
+                        "turn_assistant_out",
+                        sid=sid,
+                        text_len=len(assistant_text),
+                        route="unary",
+                    )
 
                 # Record the reply into the anti-repetition ledger so
                 # the NEXT turn can forbid the just-used opener/ack.
@@ -492,6 +524,7 @@ async def run_session_ws(
                         {"turn_id": turn_id, "cause": "user_barge_in"},
                         session_id=sid,
                     )
+                    _clog("barge_in", sid=sid, turn_id=turn_id, cause="user_barge_in")
                 # Else: stale turn_id (turn already ended). Silent drop.
 
             elif evt_type == "transcript.partial":
@@ -532,6 +565,7 @@ async def run_session_ws(
         _barge_in.clear_session(sid)
         service.mark_interrupted(sid)
     finally:
+        _clog("lifecycle_close", sid=sid)
         _barge_in.clear_session(sid)
         hb_task.cancel()
         try:

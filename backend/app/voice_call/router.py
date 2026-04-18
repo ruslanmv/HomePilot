@@ -16,6 +16,7 @@ Mount from main.py ONCE, always behind the feature flag::
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional
 
@@ -32,6 +33,9 @@ from .models import (
     EndSessionResp, HintsResp, Session,
 )
 from .policy import PolicyError
+
+
+logger = logging.getLogger("voice_call.http")
 
 
 # ── shared auth resolver (matches main._scoped_user_or_none) ──────────
@@ -118,10 +122,18 @@ def build_router(cfg: VoiceCallConfig) -> APIRouter:
                 cfg=cfg,
             )
         except PolicyError as exc:
+            logger.warning(
+                "[call] create_session policy_error user=%s code=%s status=%s",
+                user["id"], exc.code, exc.http_status,
+            )
             return JSONResponse(
                 status_code=exc.http_status,
                 content={"ok": False, "code": exc.code, "detail": exc.detail},
             )
+        logger.info(
+            "[call] create_session ok user=%s sid=%s persona=%s conv=%s",
+            user["id"], row["id"], body.persona_id, body.conversation_id,
+        )
         # Token is only returned in the create response — never again.
         expires_at = int(row["created_at"]) + 15 * 60 * 1000
         return CreateSessionResp(
@@ -152,6 +164,7 @@ def build_router(cfg: VoiceCallConfig) -> APIRouter:
         row = service.get(sid, user["id"])
         if row is None:
             # 404, never 403 — probe-safe.
+            logger.info("[call] get_session miss user=%s sid=%s", user["id"], sid)
             raise HTTPException(status_code=404, detail="Session not found")
         return _public_session(row)
 
@@ -164,7 +177,12 @@ def build_router(cfg: VoiceCallConfig) -> APIRouter:
         user = _resolve_user(authorization, homepilot_session)
         row = service.end_session(sid=sid, user_id=user["id"])
         if row is None:
+            logger.info("[call] end_session miss user=%s sid=%s", user["id"], sid)
             raise HTTPException(status_code=404, detail="Session not found")
+        logger.info(
+            "[call] end_session ok user=%s sid=%s reason=%s",
+            user["id"], sid, row.get("ended_reason"),
+        )
         public = _public_session(row)
         return EndSessionResp(
             session_id=public.id,
