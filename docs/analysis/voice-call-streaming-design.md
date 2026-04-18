@@ -245,4 +245,170 @@ These keep their current wire format 100%:
   unchanged (all persona_call events remain orthogonal to the
   streaming path).
 
-Section 3 ends here. Next commit: § 4 backend design.
+## 4. Backend design
+
+Two new files + one additive change to `voice_call/ws.py`. Every
+existing module stays as-is.
+
+```
+backend/app/voice_call/
+├── config.py          (existing — one new flag added)
+├── turn.py            (existing — unchanged)
+├── turn_stream.py     NEW — async-generator streaming runner
+├── barge_in.py        NEW — per-session cancellation registry
+├── ws.py              (existing — one new branch in the turn loop)
+├── router.py          (existing — unchanged)
+└── service.py, store.py, policy.py, models.py (all unchanged)
+```
+
+### 4.1 `turn_stream.py` — streaming turn runner
+
+Pure async generator. Drops into the same call-site shape as
+`turn.run_turn`, but yields chunks instead of returning a string.
+
+```python
+async def run_turn_streaming(
+    *,
+    user_text: str,
+    model: str,
+    auth_bearer: str | None,
+    additional_system: str | None,
+    cancel_token: "BargeInToken",
+) -> AsyncIterator[str]:
+    """Yield token chunks from the chat endpoint.
+
+    Exits early (without exception) when ``cancel_token`` is tripped
+    by a barge-in. The caller is responsible for emitting the final
+    ``assistant.turn_end`` envelope regardless of exit reason.
+    """
+```
+
+Implementation notes:
+
+- Uses the existing chat endpoint's streaming mode (Ollama
+  `stream: true`, OpenAI `stream: true`). The provider abstraction
+  already lives in `turn.py::_call_chat`; `turn_stream.py` reuses
+  it via an `iter_sse` helper factored out of the same file.
+- `cancel_token.is_cancelled()` is polled between chunks. If true,
+  the generator breaks cleanly — no exception, no backend retry
+  storm.
+- The persona_call suffix is attached exactly once, as the first
+  element of the messages list, before the first yield. This
+  matches the current non-streaming behaviour so the persona's
+  first-turn framing is identical byte-for-byte.
+- Shadow mode (`PERSONA_CALL_APPLY=false`) still suppresses the
+  suffix; streaming is orthogonal to whether the suffix is used.
+- Zero changes to `turn.py`. The non-streaming path stays for
+  callers that don't opt in.
+
+### 4.2 Why cumulative-per-chunk (delta-only) wire format
+
+Each `assistant.partial` carries only the *new* text
+(`payload.delta`), not the growing full reply. The alternatives:
+
+| Wire format | Pros | Cons |
+|---|---|---|
+| Delta only (chosen) | Minimum bytes; client concatenates freely; works even if the client only buffers the last N chunks for animation | Ordering matters — we track it via `index` |
+| Cumulative full-text per chunk | Self-correcting if frames are dropped | 3× bandwidth on a 200-token reply; forces the client to diff to animate |
+| Both | Bullet-proof | Over-engineered for a WS that already has seq ordering |
+
+Delta only wins because `callSocket.ts` already guarantees
+monotonic seq; stacking chunks in order is effectively free. The
+`index` field is a defence-in-depth check, not a load-bearing one.
+
+### 4.3 `barge_in.py` — per-session cancellation registry
+
+One small module; no DB. A process-local dict keyed by session
+id, each entry a `BargeInToken` with an `asyncio.Event`.
+
+```python
+class BargeInToken:
+    def __init__(self, turn_id: str) -> None:
+        self.turn_id = turn_id
+        self._ev = asyncio.Event()
+    def cancel(self) -> None: self._ev.set()
+    def is_cancelled(self) -> bool: return self._ev.is_set()
+
+def new_token(session_id: str, turn_id: str) -> BargeInToken: ...
+def cancel_active(session_id: str, turn_id: str) -> bool: ...
+def clear(session_id: str) -> None: ...
+```
+
+- `cancel_active` refuses to cancel if the incoming `turn_id`
+  doesn't match the currently-active turn. Stale barge-ins from
+  a previous turn are no-ops. This is the server half of the
+  race guard described in § 3.3.
+- Lives in memory only. A WS drop clears the session's tokens
+  via `clear`; a subsequent resume starts a fresh turn, fresh
+  token.
+- Tested in isolation — the module has no HTTP, no DB, no
+  asyncio transport. Pure state machine + `asyncio.Event`.
+
+### 4.4 `ws.py` — one new branch in the turn loop
+
+On receipt of a `transcript.final`, the existing handler runs
+`turn.run_turn` and emits one `transcript.final` (assistant). The
+streaming branch:
+
+```text
+on transcript.final (user):
+    if streaming_effective:
+        turn_id = uuid()
+        token = barge_in.new_token(sid, turn_id)
+        async for delta in turn_stream.run_turn_streaming(
+                user_text=..., additional_system=suffix,
+                cancel_token=token, ...):
+            if token.is_cancelled():          # user barged in
+                break
+            await _send("assistant.partial", {turn_id, delta, index})
+        reason = "cancelled" if token.is_cancelled() else "complete"
+        await _send("assistant.turn_end",
+                    {turn_id, reason, full_text=...})
+    else:
+        # current non-streaming path — untouched.
+        reply = await turn.run_turn(...)
+        await _send("transcript.final", {"role": "assistant", "text": reply})
+```
+
+On receipt of `user.barge_in`:
+
+```text
+cancelled = barge_in.cancel_active(sid, payload.turn_id)
+if cancelled:
+    await _send("assistant.cancel",
+                {turn_id: payload.turn_id, cause: "user_barge_in"})
+# else: stale signal (the turn is already over). Silent drop.
+```
+
+The `assistant.cancel` is emitted **immediately** on receipt of
+the barge-in, *before* the streaming generator notices the cancel
+event on its next poll. This cuts ~50–100 ms off the perceived
+barge-in latency — the client stops TTS on the cancel envelope,
+even if the last partial arrives moments later.
+
+`transcript.partial` (user) is accepted but currently only used to
+drive the barge-in detector as a backup signal:
+
+```text
+on transcript.partial (user):
+    if state == 'speaking' and turn_id_active:
+        # late-signal backup for clients whose VAD misses
+        # speech-start but STT picks up the first word
+        barge_in.cancel_active(sid, turn_id_active)
+```
+
+Primary barge-in trigger is the explicit `user.barge_in`;
+`transcript.partial` is secondary defence.
+
+### 4.5 What stays untouched
+
+- `voice_call/turn.py` — not edited. Parallel path.
+- `persona_call/*` — not edited. The composer, openings, ledger,
+  phase machine, backchannels, filler, closings all run exactly
+  as today. The suffix is attached in both paths.
+- REST session create — schema gains one optional server-side
+  field (`capabilities.streaming`) that defaults false. Old
+  clients that never read `capabilities` stay on the unary path.
+- Database schema — no migration. `barge_in.py` is process-local.
+
+Section 4 ends here. Next commit: § 5 frontend design.
