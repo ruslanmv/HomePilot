@@ -36,6 +36,7 @@ import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
 import { useAuth } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
 import CallOverlay from './CallOverlay'
+import PostCallCard from './phone/PostCallCard'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
@@ -123,6 +124,13 @@ export type Msg = {
     /** Epoch-ms timestamp of when the call ended. Rendered as an
      *  auditable stamp (e.g. "7:36 PM") in the card header. */
     endedAt?: number
+    /** Persona the user was speaking with during this call — feeds
+     *  PostCallCard's "Call with X" / "X remembers" headers. */
+    personaName?: string
+    /** Optional transcript the user can expand inline from the card.
+     *  Populated by App.tsx at call-end by slicing chatMessages
+     *  between the call's open + close timestamps. */
+    transcript?: Array<{ who: 'user' | 'assistant'; text: string }>
   }
 }
 
@@ -1818,10 +1826,13 @@ function ChatState({
                 Treated as assistant-aligned (left) so it reads as "a
                 moment we shared" rather than a system toast. */}
             {m.callMemory ? (
-              <CallMemoryCard
+              <PostCallCard
                 durationSec={m.callMemory.durationSec}
                 endedAt={m.callMemory.endedAt}
-                onSpeakAgain={onStartCall}
+                personaName={m.callMemory.personaName || 'Assistant'}
+                variant="expand"
+                transcript={m.callMemory.transcript}
+                onResume={onStartCall}
               />
             ) : (<>
             {m.role === 'assistant' ? (
@@ -2170,6 +2181,16 @@ export default function App() {
   // `skipDialing` is flipped on for the "Speak again" re-entry so the
   // user doesn't have to sit through "calling…" twice in a row.
   const [callSkipDialing, setCallSkipDialing] = useState(false)
+  // Snapshot of chatMessages.length at the moment a call opens —
+  // used at call-end to slice the transcript of turns that happened
+  // during the call, for PostCallCard's expandable transcript.
+  const callOpenMsgIndexRef = useRef<number>(-1)
+  useEffect(() => {
+    if (callOpen) {
+      callOpenMsgIndexRef.current = chatMessages.length
+    }
+  }, [callOpen]) // intentionally miss chatMessages — we want the
+                 // snapshot at OPEN time, not every keystroke after
 
   // Persona Integration — "Save as Persona Avatar" from AvatarStudio (additive)
   const [saveAsPersonaData, setSaveAsPersonaData] = useState<{ item: GalleryItem; outfits: GalleryItem[]; batchSiblings?: GalleryItem[] } | null>(null)
@@ -5294,17 +5315,41 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         }}
         skipDialing={callSkipDialing}
         onEnded={(durationSec) => {
-          // Append an inline, enterprise-style "call record" to the
-          // chat stream — a neutral system event with a timestamp.
-          // Scrolls with history; never overlaps the input.
+          // Append an inline PostCallCard to the chat stream. Captures
+          // the slice of turns exchanged during the call — which the
+          // user can expand inline from the card (no modal) — plus
+          // the persona name + end-of-call timestamp.
           const endedAt = Date.now()
+          const personaName = currentProject?.name || 'Assistant'
+          const startIdx = callOpenMsgIndexRef.current
+          // Build a transcript only when we have a valid open-time
+          // snapshot AND new messages landed during the call.
+          let transcript:
+            | Array<{ who: 'user' | 'assistant'; text: string }>
+            | undefined
+          if (startIdx >= 0 && startIdx <= chatMessages.length) {
+            const slice = chatMessages.slice(startIdx)
+            const lines = slice
+              .filter((m) => !m.callMemory && (m.text || '').trim())
+              .map((m) => ({
+                who: (m.role === 'user' ? 'user' : 'assistant') as
+                  | 'user' | 'assistant',
+                text: m.text.trim(),
+              }))
+            if (lines.length > 0) transcript = lines
+          }
           setChatMessages((prev) => [
             ...prev,
             {
               id: `call-memory-${endedAt}`,
               role: 'assistant',
               text: '',
-              callMemory: { durationSec, endedAt },
+              callMemory: {
+                durationSec,
+                endedAt,
+                personaName,
+                transcript,
+              },
             },
           ])
         }}
