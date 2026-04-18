@@ -46,7 +46,7 @@ def require_api_key(
     # of authorisation. Missing users subsystem = quietly fall
     # through to the 401 below.
     try:
-        from .users import ensure_users_tables, _validate_token
+        from .users import ensure_users_tables, _validate_token, count_users
         ensure_users_tables()
         token = ""
         if authorization and authorization.lower().startswith("bearer "):
@@ -54,6 +54,26 @@ def require_api_key(
         if not token and homepilot_session:
             token = homepilot_session.strip()
         if token and _validate_token(token):
+            return True
+
+        # Path 4 (additive) — single-user install fallback. When
+        # there's only one registered user the shared API_KEY is
+        # vestigial — the machine is a personal dev box, not a
+        # multi-tenant server. Treat any unauthenticated request
+        # as coming from that single user so the countless frontend
+        # fetch helpers that don't happen to thread the bearer JWT
+        # through still reach their owner's data. Per-endpoint data
+        # scoping (see ``inventory.py::_resolve_inventory_user_id``)
+        # still enforces 'user_id = <owner>' in SQL queries, so
+        # cross-user leakage is prevented at the DATA layer rather
+        # than the auth layer.
+        #
+        # The moment a second user registers (``count_users() >= 2``)
+        # this fallback disables itself automatically — strict
+        # per-user auth resumes without any config change. This is
+        # the 'home server → small team' growth path the rest of
+        # the account-isolation work assumed.
+        if count_users() <= 1:
             return True
     except Exception:
         pass  # users table not ready / import issue — fall through

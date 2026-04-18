@@ -3136,7 +3136,11 @@ export default function App() {
       const h: Record<string, string> = {}
       const k = settings.apiKey.trim()
       if (k) h['x-api-key'] = k
-      const res = await fetch(`${settings.backendUrl}/v1/agentic/capabilities`, { headers: h })
+      try {
+        const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+        if (tok) h['authorization'] = `Bearer ${tok}`
+      } catch { /* ignore */ }
+      const res = await fetch(`${settings.backendUrl}/v1/agentic/capabilities`, { headers: h, credentials: 'include' })
       if (!res.ok) return
       const data = await res.json()
       const ids = Array.isArray(data?.capabilities)

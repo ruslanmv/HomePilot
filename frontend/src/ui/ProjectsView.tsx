@@ -489,8 +489,12 @@ const ProjectWizard = ({
       try {
         const headers: Record<string, string> = {}
         if (apiKey) headers['x-api-key'] = apiKey
+        try {
+          const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+          if (tok) headers['authorization'] = `Bearer ${tok}`
+        } catch { /* ignore */ }
 
-        const res = await fetch(`${backendUrl}/v1/agentic/capabilities`, { headers })
+        const res = await fetch(`${backendUrl}/v1/agentic/capabilities`, { headers, credentials: 'include' })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = await res.json()
 
@@ -1855,6 +1859,10 @@ export default function ProjectsView({
       if (apiKey) {
         headers['x-api-key'] = apiKey;
       }
+      try {
+        const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+        if (tok) headers['authorization'] = `Bearer ${tok}`
+      } catch { /* ignore */ }
 
       const files = projectData.files || [];
       const projectDataWithoutFiles = {
@@ -1865,6 +1873,7 @@ export default function ProjectsView({
       const response = await fetch(`${backendUrl}/projects`, {
         method: 'POST',
         headers,
+        credentials: 'include',
         body: JSON.stringify(projectDataWithoutFiles)
       });
 
@@ -1893,8 +1902,12 @@ export default function ProjectsView({
       if (apiKey) {
         headers['x-api-key'] = apiKey;
       }
+      try {
+        const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+        if (tok) headers['authorization'] = `Bearer ${tok}`
+      } catch { /* ignore */ }
 
-      const response = await fetch(`${backendUrl}/projects`, { headers });
+      const response = await fetch(`${backendUrl}/projects`, { headers, credentials: 'include' });
       if (response.ok) {
         const result = await response.json();
         setProjects(result.projects || []);
