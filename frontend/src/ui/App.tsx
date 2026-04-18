@@ -36,6 +36,7 @@ import AccountMenu, { type AccountMenuUser } from './components/AccountMenu'
 import { useAuth } from './components/AuthGate'
 import VoiceMode, { stripMarkdownForSpeech } from './VoiceModeGrok'
 import CallOverlay from './CallOverlay'
+import { clog, speakOwned, isCallFullDuplexEnabled } from './call/log'
 import PostCallCard from './phone/PostCallCard'
 // Legacy voice mode available as: import VoiceModeLegacy from './VoiceModeLegacy'
 import ProjectsView from './ProjectsView'
@@ -4172,7 +4173,19 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       // Speak the assistant's response — strip markdown images/links so TTS
       // doesn't read raw URLs aloud. Images are shown visually instead.
       const speechText = stripMarkdownForSpeech(lastMessage.text)
-      if (speechText) window.SpeechService.speak(speechText)
+      if (!speechText) return
+      // During a call, route through the shared speakOwned lock so
+      // this app-level path can't double-speak alongside the overlay's
+      // fallback opener (both targeting the same assistant message).
+      // Outside a call, keep the legacy SpeechService.speak path —
+      // voice-mode has no peer TTS source so the lock would add noise
+      // without benefit.
+      if (callOpen && isCallFullDuplexEnabled()) {
+        clog({ e: 'turn', action: 'assistant_in', route: 'chat_rest' })
+        speakOwned('app-level', speechText)
+      } else {
+        window.SpeechService.speak(speechText)
+      }
     }
   }, [messages, settingsDraft.ttsEnabled, mode, callOpen])
 

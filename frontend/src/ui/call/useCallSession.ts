@@ -111,6 +111,14 @@ export interface CallSessionHandle {
   onAssistantCancel: (fn: (p: AssistantCancelPayload) => void) => () => void
 }
 
+// When the backend returns 404/501 for voice_call (VOICE_CALL_ENABLED=false)
+// we remember the miss per-backend and short-circuit future session creates
+// for UNAVAILABLE_BACKOFF_MS. Without this, every CallOverlay mount posts a
+// fresh 404 against the same flag, spamming the console and delaying the
+// fallback path by a full network round-trip.
+const UNAVAILABLE_BACKOFF_MS = 30_000
+const unavailableUntilByBackend = new Map<string, number>()
+
 export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
   const { enabled, backendUrl, authToken, request } = args
 
@@ -165,20 +173,50 @@ export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
       setCloseReason(null)
       setCallState(null)
 
+      // Skip the POST entirely if this backend has been 404/501-ing
+      // recently. Saves a round-trip per call re-entry while the flag
+      // is off server-side; the backoff window expires automatically
+      // when we clear the map entry below on a success.
+      const skipUntil = unavailableUntilByBackend.get(backendUrl)
+      if (skipUntil && Date.now() < skipUntil) {
+        // eslint-disable-next-line no-console
+        console.info(
+          '[useCallSession] skipping createCallSession — backend flagged unavailable',
+          { backendUrl, resumesAt: new Date(skipUntil).toISOString() },
+        )
+        setStatus('unavailable')
+        return
+      }
+
       let handshake: CreateCallSessionResponse
       try {
         handshake = await createCallSession(backendUrl, requestRef.current, authToken)
       } catch (err) {
         if (disposed) return
         if (err instanceof CallApiError && err.isUnavailable) {
+          unavailableUntilByBackend.set(
+            backendUrl,
+            Date.now() + UNAVAILABLE_BACKOFF_MS,
+          )
+          // eslint-disable-next-line no-console
+          console.warn(
+            '[useCallSession] voice_call unavailable — falling back to chat REST for',
+            `${UNAVAILABLE_BACKOFF_MS}ms`,
+          )
           setStatus('unavailable')
           return
         }
+        // eslint-disable-next-line no-console
+        console.error('[useCallSession] createCallSession failed', err)
         setStatus('error')
         setLastError(err instanceof Error ? err.message : String(err))
         return
       }
       if (disposed) return
+
+      // Handshake worked — clear any prior backoff so new flag flips
+      // take effect immediately instead of waiting out the window.
+      unavailableUntilByBackend.delete(backendUrl)
 
       sessionRef.current = handshake
       const url = resolveWsUrl(
