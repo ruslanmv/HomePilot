@@ -53,6 +53,11 @@ class RenderJob:
     duration_sec: float = 0.0
     width: int = 0
     height: int = 0
+    # Render-time audio / subtitle options, captured so /jobs/{id}
+    # responses can describe exactly how the file was produced.
+    audio_rate: float = 1.0
+    audio_pitch: float = 1.0
+    subtitles: str = "none"
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -115,6 +120,9 @@ def submit_render(
     kind: RenderKind,
     preset: PlatformPreset,
     scenes: List[SceneInput],
+    audio_rate: float = 1.0,
+    audio_pitch: float = 1.0,
+    subtitles: str = "none",
 ) -> RenderJob:
     """Queue a render and return its job record. Worker thread starts immediately."""
     job_id = _new_job_id()
@@ -128,6 +136,9 @@ def submit_render(
         preset=preset,
         status="queued",
         output_path=output_path,
+        audio_rate=audio_rate,
+        audio_pitch=audio_pitch,
+        subtitles=subtitles,
     )
     _store(job)
 
@@ -169,6 +180,9 @@ def _run_job(job_id: str, scenes: List[SceneInput]) -> None:
             kind=job.kind,
             output_path=job.output_path or "",
             on_progress=_on_progress,
+            audio_rate=job.audio_rate,
+            audio_pitch=job.audio_pitch,
+            subtitles=job.subtitles,
         )
         _update(
             job_id,
