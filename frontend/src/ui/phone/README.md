@@ -1,89 +1,83 @@
-# HomePilot · Call UI design set
+# `ui/phone/` — call surface component library
 
-Static, design‑only mockups for the phone‑call feature. Everything in
-this folder is intentionally **not wired** to the app — no hooks, no
-event handlers, no `useVoiceController` imports. Each component takes
-a `state` prop, renders one frame, and that's it.
+Status: **partial port** of the design system from the engineering
+handoff (`Phone Call UI.html`). This README tracks what ships today
+and what's queued for follow-up sessions.
 
-Hand these to a designer (or load `preview.html` in a browser) to
-review every visual state without touching the live app.
+## What's here now
 
-## Files
-
-| File | Exports (window globals) | What it draws |
-|---|---|---|
-| `tokens.jsx` | `HP_CALL`, `hpCallStateColor`, `hpCallStateLabel` | Palette + state→color / state→label helpers. Single source of truth for every colour used by the other files. |
-| `icons.jsx` | `HPIcon` | Line icons at 1.75 px stroke, 24‑grid: phone, phone‑end, mic, mic‑off, chat, back, minimize, speaker. |
-| `controls.jsx` | `HPControlBtn` | The circular glass button used by the modal + PIP. Neutral, danger, start, or accent tones; 48 / 56 / 72 px. |
-| `avatar.jsx` | `HPCallAvatar` | Persona image with a state‑coloured halo (breathes while listening / speaking / connecting). |
-| `waveform.jsx` | `HPCallWaveform` | Stable‑seeded audio bars in the current state colour. |
-| `call-button.jsx` | `HPCallButton`, `HPCallHeaderMock` | The emerald 📞 in the Voice page header — 5 states. `HPCallHeaderMock` shows it in context next to the existing ⚙ ✏ group. |
-| `call-modal.jsx` | `HPCallModal`, `HPCallModalPresentation` | The centered overlay. Five states (connecting / listening / thinking / speaking / muted). The `Presentation` variant adds the blurred chat backdrop so designer screenshots match what the user really sees. |
-| `call-pip.jsx` | `HPCallPip` | Minimized floating dock (bottom‑right of screen). Four states. |
-| `first-time-tooltip.jsx` | `HPCallFirstTimeTooltip` | One‑shot emerald pill: "Talk live". Arrow points up; sits just below the header button. |
-| `showcase.jsx` | `HPCallShowcase` | Figma‑style canvas that lays out every state + places the modal inside iOS / Android / macOS frames. |
-| `preview.html` | — | Standalone HTML that loads React + Babel standalone + all the files above and renders the showcase into `#root`. Open it in a browser. |
-
-## How the colours were chosen
-
-Everything in `tokens.jsx` was picked to match HomePilot's existing
-dark theme, with two additions specific to telephony:
-
-- **Emerald (`#10b981`)** as the start‑call button. Universal "alive,
-  go live" colour (FaceTime, WhatsApp, Zoom, Google Meet).
-- **Red‑500 (`#ef4444`)** as the end‑call / destructive colour. Same
-  universal pattern.
-
-State‑aware halos (mapped by `hpCallStateColor`):
-
-| State | Halo | Rationale |
-|---|---|---|
-| `listening` | cyan `#22d3ee` | HomePilot brand — receptive, calm |
-| `thinking` | violet `#a78bfa` | Neutral processing colour (cool, not anxious) |
-| `speaking` | emerald `#10b981` | "Alive, talking" — matches the start‑call button |
-| `muted` | neutral text‑3 | Explicit "off" tone, no colour |
-| `error` | red‑400 `#f87171` | Destructive/attention‑needed |
-| `connecting` | cyan | "Brand is spinning up" |
-
-Why four colours instead of one brand cyan: in a voice surface, colour
-is the only channel that tells the user whether to talk, wait, or
-listen. A single colour with different motion fails WCAG
-colour‑and‑motion redundancy and makes the UI feel laggy when the
-actual state is moving.
-
-## Loading the preview
-
-```bash
-cd frontend/src/ui/phone
-python3 -m http.server 7000      # or any static server
-# open http://localhost:7000/preview.html
+```
+phone/
+├── README.md            this file
+├── tokens.ts            CALL palette + POST_CALL layout constants
+├── icons.tsx            shared SVG icon set (mic, phone*, chat, …)
+├── PostCallCard.tsx     inline chat card, expandable transcript,
+│                         3 variants (expand / highlights / missed)
+└── PostCallCard.test.tsx  13 tests — variant matrix + keyboard/click
 ```
 
-Or just double‑click `preview.html` — Babel‑standalone compiles the
-JSX in the browser so no build step is needed.
+Consumed by:
 
-## What's explicitly out of scope here
+- `frontend/src/ui/App.tsx` — renders `PostCallCard` inline in the
+  chat stream for every `Msg` that carries a `callMemory` payload.
+  The card is **not** a modal — it sits in the conversation so the
+  user can expand the transcript without a context switch.
 
-- No React hooks. No `useState`, no `useEffect` in any component.
-- No integration with `useVoiceController`, the TTS registry, or the
-  chat / Voice page header. Those are separate commits (see the
-  voice fix in `e64d0b5` and the TTS plugin registry in `8c83a2e`).
-- No haptic / keyboard wiring for hold‑to‑call — that goes in the
-  real `useHoldToCall` hook when the designer signs off.
-- No tokens compiled into `tailwind.config`. Designers pick visuals
-  here; port to Tailwind tokens in the implementation commit.
+## What's queued for follow-up sessions
 
-## Next step after designer sign‑off
+The handoff defines a much larger set of components. They are
+additive, so shipping them one at a time doesn't block the current
+call feature — it's already functional end-to-end with the
+`CallOverlay` + the inline `PostCallCard`.
 
-Turn each `.jsx` mockup into a real `.tsx` component by:
+| File | Status | Notes |
+|---|---|---|
+| `primitives/Aura.tsx` | Pending | Animated gradient avatar — seeded hue, crescent silhouette. Currently inlined in `CallOverlay.tsx::CallAvatar`. |
+| `primitives/AmbientAura.tsx` | Pending | Page-wide blurred glow. Lives behind `CallOverlay`'s backdrop today. |
+| `primitives/Waveform.tsx` | Pending | Live-intensity bars. `CallOverlay` already has an `rAF`-driven variant that reads real mic + synthesised speech envelope. Port will extract it. |
+| `primitives/ControlBtn.tsx` | Pending | Circular glass button. Currently inlined in `CallOverlay`. |
+| `CallScreen.tsx` | Pending | Fullscreen mobile composition. Desktop uses the existing `CallOverlay` modal. |
+| `CallOverlay.tsx` (refactor) | Pending | Route between fullscreen / modal / PiP based on viewport. Today's `CallOverlay.tsx` is desktop-modal-only. |
+| `TextInCall.tsx` | Pending | Mid-call composer sheet — minimize call to a thin bar, slide composer up, send text over the existing chat REST. |
+| `HangUpTransition.tsx` | Pending | ~1 s "call ended" fade beat before the overlay dismisses. Today the overlay fades inline. |
+| `MutedToast.tsx` | Pending | Brief "you're muted" confirmation pill. Today the muted state is indicated only by the waveform colour. |
+| `LockScreenIncoming.tsx` | Pending | iOS-style full-bleed incoming with slide-to-answer. PWA only. |
+| `PoorConnection.tsx` | Pending | Reconnecting banner when WS has been silent >3 s. Today the socket reconnects silently. |
 
-1. Convert `Object.assign(window, {...})` → named exports.
-2. Drop the inline styles for Tailwind class strings (the colour
-   values in `tokens.jsx` already match the Tailwind palette).
-3. Replace fixed `state` / `durationSec` props with real data from
-   `useVoiceController`.
-4. Wire the button's `onClick` (header) and `onPointerDown` (chat
-   mic, for hold‑to‑call) to open / close the modal.
+## Suggested sequencing for the next session
 
-The visual surface is already complete — the implementation commit
-will be 90 % plumbing.
+Small commits, one per component file, matching the pattern from
+this session:
+
+1. `primitives/Waveform.tsx` — extract the `rAF`-driven version
+   from `CallOverlay.tsx`, swap `CallOverlay`'s inline copy for
+   the import.
+2. `primitives/Aura.tsx` — extract `CallAvatar`, thread through
+   `CallOverlay` + `PostCallCard` so the avatar identity is
+   consistent across surfaces.
+3. `primitives/ControlBtn.tsx` — same.
+4. `CallScreen.tsx` — fullscreen mobile composition on top of the
+   primitives.
+5. `HangUpTransition.tsx` + `MutedToast.tsx` — small polish
+   additions; each a single new render branch in `CallOverlay`.
+6. `TextInCall.tsx` — biggest piece, needs its own focus session.
+7. `LockScreenIncoming.tsx` — PWA-only, coordinates with service-
+   worker push; scope-separate.
+8. `PoorConnection.tsx` — layer on `callSocket`'s existing silence
+   watchdog.
+
+Keep each batch under ~300 LOC and write a vitest for every
+component (the 13-test PostCallCard file is the template).
+
+## Design reference
+
+The pixel-level source of truth is `Phone Call UI.html` in the
+design project — matches every state and surface. Each TSX file in
+this folder maps 1:1 to a named component in the design canvas.
+
+## Not in scope (anywhere in this folder)
+
+- New backend endpoints
+- Replacing the `voice_call` module
+- Replacing `CallOverlay`'s streaming / barge-in plumbing
+- Group calls / add participant
