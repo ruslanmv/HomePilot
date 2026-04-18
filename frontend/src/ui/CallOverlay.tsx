@@ -246,7 +246,14 @@ const CallAvatar: React.FC<{
         <div key={i} aria-hidden="true" style={{
           position: 'absolute', inset: 0, borderRadius: '50%',
           border: `1.5px solid ${stateColor}`,
-          animation: 'hp-call-pulse-ring 1600ms ease-out infinite',
+          // Split to longhand so per-ring animationDelay doesn't race
+          // the shorthand reset — React warns when both are set
+          // (mixing shorthand + longhand produces inconsistent results
+          // across browsers).
+          animationName: 'hp-call-pulse-ring',
+          animationDuration: '1600ms',
+          animationTimingFunction: 'ease-out',
+          animationIterationCount: 'infinite',
           animationDelay: `${i * 420}ms`,
           opacity: 0,
         }} />
@@ -485,7 +492,12 @@ const CallModal: React.FC<CallModalProps> = ({
                 width: 5, height: 5, borderRadius: '50%',
                 background: HP_CALL.text,
                 opacity: 0.35 + i * 0.2,
-                animation: `hp-dot-pulse ${state === 'dialing' ? 1.2 : 0.8}s ease-in-out infinite`,
+                // Longhand — keeps per-dot animationDelay from being
+                // reset by the shorthand during React rerenders.
+                animationName: 'hp-dot-pulse',
+                animationDuration: state === 'dialing' ? '1.2s' : '0.8s',
+                animationTimingFunction: 'ease-in-out',
+                animationIterationCount: 'infinite',
                 animationDelay: `${i * 0.12}s`,
               }} />
             ))}
