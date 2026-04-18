@@ -290,6 +290,12 @@ const CallAvatar: React.FC<{
 }
 
 // ── CallWaveform (ported from phone/waveform.jsx) ─────────────────
+// Each bar carries a stable per-bar seed (amplitude cap + phase
+// offset + oscillation frequency); a single rAF loop reads a shared
+// `intensityRef` (0..1, mutated by the parent based on mic level or
+// synthesised speech envelope) and writes bar scale-Y directly to
+// the DOM. React stays out of the per-frame path so the 60 fps loop
+// doesn't trigger re-renders.
 
 const CallWaveform: React.FC<{
   bars?: number
@@ -297,30 +303,75 @@ const CallWaveform: React.FC<{
   state: CallState
   active?: boolean
   seed?: string
-}> = ({ bars = 26, height = 24, state, active = true, seed = 'homepilot' }) => {
+  /** Live 0..1 intensity. When omitted, bars breathe at a low
+   *  ambient amplitude (the "idle waveform"). */
+  intensityRef?: React.MutableRefObject<number>
+}> = ({
+  bars = 26, height = 24, state, active = true,
+  seed = 'homepilot', intensityRef,
+}) => {
   const color = hpCallStateColor(state)
-  const opacity = active ? 1 : 0.3
-  const heights = useMemo(() => (
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Per-bar seed — stable across renders. Gives each bar its own
+  // amplitude ceiling, phase offset, and natural oscillation rate so
+  // they never move in lockstep.
+  const barSeeds = useMemo(() => (
     Array.from({ length: bars }, (_, i) => {
-      const n =
-        Math.sin(i * 0.8 + seed.length) * 0.4 +
-        Math.sin(i * 1.3 + seed.charCodeAt(0)) * 0.3 +
-        0.55
-      return active ? Math.max(0.15, Math.min(1, Math.abs(n))) : 0.08
+      const amp =
+        0.45 +
+        Math.abs(
+          Math.sin(i * 0.7 + seed.length) * 0.3 +
+          Math.sin(i * 1.3 + seed.charCodeAt(0)) * 0.22,
+        )
+      const phase = ((i * 83) % 1000) / 1000 * Math.PI * 2
+      const freq = 0.7 + ((i * 37) % 100) / 100 // 0.7..1.7
+      return { amp, phase, freq }
     })
-  ), [bars, seed, active])
+  ), [bars, seed])
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    let raf = 0
+    const start = performance.now()
+    const tick = () => {
+      const t = (performance.now() - start) / 1000
+      const lvl = active ? (intensityRef?.current ?? 0.18) : 0.04
+      const children = containerRef.current?.children
+      if (children) {
+        for (let i = 0; i < children.length; i++) {
+          const s = barSeeds[i]
+          // Per-bar 0..1 oscillator layered over the global intensity.
+          const wave = 0.55 + 0.45 * Math.sin(t * s.freq * 4 + s.phase)
+          // Floor at 0.06 so idle bars are still a visible line,
+          // ceiling at 1 so loud bursts can't clip out of the card.
+          const scale = Math.max(
+            0.06,
+            Math.min(1, 0.08 + lvl * s.amp * wave * 1.4),
+          )
+          const el = children[i] as HTMLElement
+          el.style.transform = `scaleY(${scale})`
+          el.style.opacity = String(Math.min(1, 0.45 + lvl * 0.55))
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [barSeeds, active, intensityRef])
 
   return (
-    <div style={{
+    <div ref={containerRef} style={{
       display: 'flex', gap: 3, alignItems: 'center', justifyContent: 'center',
-      height, opacity,
+      height,
     }}>
-      {heights.map((h, i) => (
+      {barSeeds.map((_, i) => (
         <div key={i} style={{
-          width: 3, height: `${h * 100}%`,
+          width: 3, height: '100%',
           background: color, borderRadius: 2,
-          opacity: active ? 0.5 + h * 0.45 : 0.4,
-          transition: 'height 80ms linear, opacity 80ms linear',
+          transformOrigin: 'center',
+          willChange: 'transform, opacity',
+          opacity: 0.45,
         }} />
       ))}
     </div>
@@ -339,11 +390,14 @@ interface CallModalProps {
   onToggleMute: () => void
   onMinimize: () => void
   onSwitchToChat?: () => void
+  /** Live 0..1 intensity. Drives the waveform bars per frame. */
+  intensityRef?: React.MutableRefObject<number>
 }
 
 const CallModal: React.FC<CallModalProps> = ({
   state, personaName, imageUrl = null, accentColor = null,
   durationSec, onEnd, onToggleMute, onMinimize, onSwitchToChat,
+  intensityRef,
 }) => {
   const stateColor = hpCallStateColor(state)
   const stateLabel = hpCallStateLabel(state, personaName)
@@ -441,6 +495,7 @@ const CallModal: React.FC<CallModalProps> = ({
             state={state}
             active={state === 'listening' || state === 'speaking'}
             seed={personaName}
+            intensityRef={intensityRef}
           />
         )}
         <div style={{
@@ -785,6 +840,76 @@ function CallOverlayInner({
     })
   }, [voice.state, connected, muted])
 
+  // ── Live waveform intensity (0..1) ─────────────────────────────
+  // One rAF loop per state-group writes to a ref that CallWaveform
+  // reads directly (no React re-renders). React only sees the state
+  // label; the bars themselves are driven straight from the DOM.
+  //
+  //   listening / muted → voice.audioLevel (real mic RMS)
+  //   speaking          → synthesised speech envelope — browser TTS
+  //                       audio isn't routable through an AnalyserNode,
+  //                       so we generate a natural-sounding envelope
+  //                       (sum of 3 sines + a small noise floor). The
+  //                       visual cadence matches syllable rate + the
+  //                       amplitude range matches what mic analysers
+  //                       produce on voiced speech, so the persona's
+  //                       bars and the user's bars "look like the
+  //                       same kind of thing."
+  //   thinking          → slow 0.15..0.25 drift — "processing"
+  //   dialing/connecting/ended → 0.05 floor — visible but quiet
+  const intensityRef = useRef(0.05)
+  const voiceRef = useRef(voice)
+  useEffect(() => { voiceRef.current = voice }, [voice])
+
+  useEffect(() => {
+    let raf = 0
+    const start = performance.now()
+
+    if (state === 'listening' || state === 'muted') {
+      const tick = () => {
+        // Real mic level. useVoiceController already smooths with
+        // an EMA internally; we pass it through unmodified.
+        intensityRef.current = muted ? 0 : voiceRef.current.audioLevel
+        raf = requestAnimationFrame(tick)
+      }
+      raf = requestAnimationFrame(tick)
+      return () => cancelAnimationFrame(raf)
+    }
+
+    if (state === 'speaking') {
+      const tick = () => {
+        const t = (performance.now() - start) / 1000
+        // Three sines at the frequencies you'd see in actual
+        // voiced speech analysis: ~2 Hz syllable rate, ~5 Hz
+        // mid-band, ~10 Hz high-band flutter. A small noise floor
+        // breaks the periodicity so bars don't pulse in lockstep.
+        const v =
+          0.45 +
+          Math.sin(t * 2.3) * 0.22 +
+          Math.sin(t * 5.7 + 1.3) * 0.16 +
+          Math.sin(t * 11.1 + 2.7) * 0.09 +
+          (Math.random() - 0.5) * 0.07
+        intensityRef.current = Math.max(0, Math.min(1, v))
+        raf = requestAnimationFrame(tick)
+      }
+      raf = requestAnimationFrame(tick)
+      return () => cancelAnimationFrame(raf)
+    }
+
+    if (state === 'thinking') {
+      const tick = () => {
+        const t = (performance.now() - start) / 1000
+        intensityRef.current = 0.18 + Math.sin(t * 1.1) * 0.06
+        raf = requestAnimationFrame(tick)
+      }
+      raf = requestAnimationFrame(tick)
+      return () => cancelAnimationFrame(raf)
+    }
+
+    // dialing / connecting / ended → static low floor.
+    intensityRef.current = 0.05
+  }, [state, muted])
+
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       const next = !m
@@ -835,6 +960,7 @@ function CallOverlayInner({
           onToggleMute={toggleMute}
           onMinimize={handleMinimize}
           onSwitchToChat={onSwitchToChat}
+          intensityRef={intensityRef}
         />
       </div>
 
