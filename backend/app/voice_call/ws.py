@@ -164,7 +164,7 @@ async def run_session_ws(
             _pc_store.ensure_schema()
             _pc_store.ensure_state(sid)
             _state = _pc_store.get_state(sid) or {}
-            forbidden = list(_state.get("recent_openings") or [])
+            forbidden = list(_state.get("recent_openers") or [])
             _pc_env = _pc_context.compute_env(tz=None, weeks_since_last_call=-1)
             _pc_facets_obj = _pc_facets.for_persona_id(session.get("persona_id"))
             # We need the template *id* too so we can push it into
@@ -183,12 +183,12 @@ async def run_session_ws(
                     # has no persona_id — matches the frontend label.
                     (session.get("persona_id") or "Assistant").replace("persona:", "").strip(),
                 )
-                # Append the chosen id to the opener ledger so the
-                # next call won't repeat it.
-                new_openers = (list(forbidden) + [tpl.id])[-max(
-                    1, _pc_cfg.opener_ledger_window,
-                )]
-                _pc_store.update_state(sid, recent_openings=new_openers)
+                # Append the chosen id to the opener ledger, keeping
+                # only the last N so the ledger doesn't grow
+                # unbounded across long-lived sessions.
+                window = max(1, _pc_cfg.opener_ledger_window)
+                new_openers = (list(forbidden) + [tpl.id])[-window:]
+                _pc_store.update_state(sid, recent_openers=new_openers)
             if greeting_text:
                 await _send(ws, "transcript.final",
                             {"role": "assistant", "text": greeting_text},

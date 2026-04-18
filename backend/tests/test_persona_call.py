@@ -422,6 +422,46 @@ def test_openings_render_interpolates_or_collapses_name():
     assert without and "{name}" not in without
 
 
+def test_openings_ledger_rolls_across_calls_without_repeat(flagged_cfg):
+    """The exact guarantee the ws.py greeting hook promises:
+    running ``choose`` N times while pushing each id into the ledger
+    never returns the same id twice within the rotation window."""
+    f = facets_mod.default_facets()
+    env = ctx_mod.compute_env(
+        tz="UTC",
+        now=_dt.datetime(2025, 1, 1, 15, 0, tzinfo=_dt.timezone.utc),
+    )
+    sid = "vcs_ledger_roll"
+    pc_store.ensure_state(sid)
+    window = max(1, flagged_cfg.opener_ledger_window)
+    seen_recent: list = []
+    for turn in range(1, 12):
+        state_row = pc_store.get_state(sid) or {}
+        forbidden = list(state_row.get("recent_openers") or [])
+        tpl = openings_mod.choose(
+            f, env,
+            session_id=f"{sid}:{turn}",   # vary seed per turn
+            turn_index=turn,
+            forbidden_ids=forbidden,
+        )
+        assert tpl is not None, f"pool exhausted at turn {turn}"
+        assert tpl.id not in forbidden, (
+            f"turn {turn}: {tpl.id} leaked past ledger {forbidden}"
+        )
+        # Emulate the exact slice ws.py does after the fix — a SLICE,
+        # not an index — so recent_openers stays a list.
+        new_openers = (forbidden + [tpl.id])[-window:]
+        assert isinstance(new_openers, list)
+        pc_store.update_state(sid, recent_openers=new_openers)
+        seen_recent.append(tpl.id)
+
+    # Across all 11 turns, any window-sized sliding window never
+    # contains a duplicate — the anti-repetition invariant.
+    for i in range(len(seen_recent) - window + 1):
+        segment = seen_recent[i:i + window]
+        assert len(set(segment)) == len(segment), segment
+
+
 def test_openings_fallback_to_summons_answer_when_all_else_banned():
     """If every non-summons_answer template is in the ledger, the
     selector should still return something from summons_answer
