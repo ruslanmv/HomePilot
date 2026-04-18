@@ -102,3 +102,37 @@ async def test_send_message_requires_consent_when_writes_enabled():
         telegram_app.INSTALL_STATE = original_state
         telegram_app.WRITE_ENABLED = original_write
     assert "consent" in data["result"]["content"][0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_webhook_verify_accepts_matching_secret_token():
+    original_state = telegram_app.INSTALL_STATE
+    telegram_app.INSTALL_STATE = "ENABLED"
+    try:
+        data = await _post_rpc(
+            "tools/call",
+            {
+                "name": "hp.telegram.webhook.verify",
+                "arguments": {"header": "s3cret", "secret": "s3cret"},
+            },
+        )
+    finally:
+        telegram_app.INSTALL_STATE = original_state
+    assert data["result"]["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_webhook_verify_rejects_mismatched_secret():
+    original_state = telegram_app.INSTALL_STATE
+    telegram_app.INSTALL_STATE = "ENABLED"
+    try:
+        data = await _post_rpc(
+            "tools/call",
+            {
+                "name": "hp.telegram.webhook.verify",
+                "arguments": {"header": "wrong", "secret": "s3cret"},
+            },
+        )
+    finally:
+        telegram_app.INSTALL_STATE = original_state
+    assert data["result"]["verified"] is False

@@ -7,6 +7,7 @@ Production posture:
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
 from typing import List
@@ -19,6 +20,12 @@ INSTALL_STATE = os.getenv("INSTALL_STATE", "INSTALLED_DISABLED").strip().upper()
 PERSONA_ALLOWLIST = json.loads(
     os.getenv("TELEGRAM_PERSONA_ALLOWLIST", '{"secretary": true, "analyst": false}')
 )
+# Telegram Bot API uses a shared ``secret_token`` (max 256 chars) rather
+# than HMAC — the bot sets it via ``setWebhook`` and Telegram echoes it
+# back as ``X-Telegram-Bot-Api-Secret-Token`` on every webhook POST.
+# Verification is a constant-time equality check; ``hp.telegram.webhook.verify``
+# exposes it so the orchestrator can reject spoofed payloads at the edge.
+WEBHOOK_SECRET_TOKEN = os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "").strip()
 _AUDIT_EVENTS: List[Json] = []
 _OUTBOUND_BY_KEY: dict[str, Json] = {}
 
@@ -137,6 +144,36 @@ async def telegram_receive_webhook(args: Json) -> Json:
     }
 
 
+async def telegram_webhook_verify(args: Json) -> Json:
+    """Verify the X-Telegram-Bot-Api-Secret-Token header against the
+    configured secret. Telegram's scheme is a shared token rather than
+    HMAC — constant-time compare is still the right primitive.
+    """
+    state = _state_gate("telegram.webhook.verify")
+    if state:
+        return state
+    header = str(args.get("header", "")).strip()
+    secret = str(args.get("secret", "")).strip() or WEBHOOK_SECRET_TOKEN
+    if not secret:
+        return {
+            "content": [{"type": "text", "text": "No TELEGRAM_WEBHOOK_SECRET_TOKEN configured; verification skipped."}],
+            "verified": False,
+            "reason": "no_secret",
+        }
+    if not header:
+        return {
+            "content": [{"type": "text", "text": "Missing X-Telegram-Bot-Api-Secret-Token header."}],
+            "verified": False,
+            "reason": "missing_header",
+        }
+    verified = hmac.compare_digest(header, secret)
+    _audit({"action": "webhook_verify", "channel": "telegram", "verified": verified})
+    return {
+        "content": [{"type": "text", "text": f"Webhook verify: {'ok' if verified else 'failed'}."}],
+        "verified": verified,
+    }
+
+
 async def telegram_server_status(_: Json) -> Json:
     return {
         "content": [{"type": "text", "text": f"Server install_state={INSTALL_STATE}"}],
@@ -207,6 +244,19 @@ TOOLS: List[ToolDef] = [
             },
         },
         handler=telegram_receive_webhook,
+    ),
+    ToolDef(
+        name="hp.telegram.webhook.verify",
+        description="Verify X-Telegram-Bot-Api-Secret-Token header against TELEGRAM_WEBHOOK_SECRET_TOKEN.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "header": {"type": "string", "description": "Value of X-Telegram-Bot-Api-Secret-Token header"},
+                "secret": {"type": "string", "description": "Override of TELEGRAM_WEBHOOK_SECRET_TOKEN"},
+            },
+            "required": ["header"],
+        },
+        handler=telegram_webhook_verify,
     ),
     ToolDef(
         name="hp.telegram.server.status",
