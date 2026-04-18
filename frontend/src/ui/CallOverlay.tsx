@@ -25,6 +25,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVoiceController, type VoiceState } from './voice/useVoiceController'
 import { useCallSession } from './call/useCallSession'
 import Waveform, { type WaveformMode } from './phone/primitives/Waveform'
+import Aura from './phone/primitives/Aura'
 import { createStreamingTts, type StreamingTts } from './call/streamTts'
 import { useBargeInDetector } from './call/bargeIn'
 
@@ -240,12 +241,9 @@ const CallAvatar: React.FC<{
     state === 'dialing'
   const showPulseRings = state === 'dialing'
   const haloOuter = size + 28
-
-  const seed = (imageUrl || accentColor || 'homepilot').toString()
-  const hue = useMemo(
-    () => [...seed].reduce((a, c) => a + c.charCodeAt(0), 0) % 360,
-    [seed],
-  )
+  // seed + hue derivation now live inside the Aura primitive
+  // (hashHue + moodOffset). This component only owns the halo +
+  // ring decorations that depend on CallState.
 
   return (
     <div style={{
@@ -284,28 +282,27 @@ const CallAvatar: React.FC<{
         border: `2px solid ${stateColor}`,
         opacity: state === 'ended' || state === 'muted' ? 0.25 : 0.92,
       }} />
-      <div style={{
-        width: size, height: size, borderRadius: '50%',
-        overflow: 'hidden', position: 'relative',
-        background: imageUrl
-          ? 'transparent'
-          : `radial-gradient(circle at 35% 30%,
-             hsl(${hue} 70% 55%) 0%,
-             hsl(${(hue + 40) % 360} 50% 28%) 65%,
-             hsl(${(hue + 80) % 360} 40% 12%) 100%)`,
-        filter: state === 'ended' ? 'grayscale(0.6) brightness(0.7)' : 'none',
-        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(255,255,255,0.04)',
-      }}>
-        {imageUrl ? (
-          <img src={imageUrl} alt="" style={{
-            width: '100%', height: '100%', objectFit: 'cover', display: 'block',
-          }} />
-        ) : (
-          <div style={{
-            position: 'absolute', inset: 0,
-            background: 'radial-gradient(circle at 40% 25%, rgba(255,255,255,0.35) 0%, transparent 45%)',
-          }} />
-        )}
+      <div
+        style={{
+          // ``state === 'ended'`` filter stays on this wrapper so
+          // the Aura primitive stays state-agnostic while the
+          // overlay still gets a visible "call's over" cue.
+          filter: state === 'ended'
+            ? 'grayscale(0.6) brightness(0.7)'
+            : 'none',
+          borderRadius: '50%',
+        }}
+      >
+        <Aura
+          seed={imageUrl || accentColor || 'homepilot'}
+          size={size}
+          photoUrl={imageUrl}
+          // Hue-drift polish is the only thing the Aura primitive
+          // animates internally. We disable it here — the overlay
+          // already owns the halo breath + dialing rings, and the
+          // combined motion was too busy on the call surface.
+          animated={false}
+        />
       </div>
     </div>
   )
