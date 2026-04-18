@@ -51,6 +51,18 @@ logger = logging.getLogger("voice_call.ws")
 
 HEARTBEAT_INTERVAL_SEC = 10.0
 
+# Protocol sentinels — reserved strings the frontend may send as a
+# ``transcript.final`` payload to nudge backend state without asking
+# the LLM to react. We drop these on the floor before the turn runner
+# sees them; otherwise the model treats them as literal user speech
+# and produces a confused reply (the classic "I'm not sure what
+# [phone-call-open] means" double-greet). Add new sentinels here only
+# when both sides have landed.
+_PROTOCOL_SENTINELS = frozenset({
+    "[phone-call-open]",
+    "[phone-call-close]",
+})
+
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
@@ -248,6 +260,15 @@ async def run_session_ws(
             elif evt_type == "transcript.final":
                 text_in = (payload.get("text") or "").strip()
                 if not text_in:
+                    continue
+                # Protocol sentinels are NOT user utterances — they
+                # exist solely so the frontend can signal state
+                # transitions (phase machine nudges, etc.) without
+                # the LLM reacting to the literal string. Drop and
+                # continue; the phase machine already advances on the
+                # first real user utterance, so no special handling
+                # is required here beyond not running the turn.
+                if text_in in _PROTOCOL_SENTINELS:
                     continue
                 model = (
                     payload.get("model")
