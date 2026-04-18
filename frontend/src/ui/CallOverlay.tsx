@@ -1016,6 +1016,20 @@ function CallOverlayInner({
     })
   }, [voice.state, connected, muted])
 
+  // While the opener TTS is playing, the UI label must read
+  // 'speaking' — the persona is literally talking. Default state
+  // transitions would land on 'listening' (post-connect default)
+  // which is a lie: audio is going OUT of the speaker, not coming
+  // IN to the mic. The mic is still closed (see the openerPlaying
+  // gate on setHandsFree above), so voice.state stays OFF during
+  // this window and the mirror effect above doesn't override us.
+  useEffect(() => {
+    if (!openerPlaying) return
+    setState(prev =>
+      (prev === 'ended' || prev === 'muted') ? prev : 'speaking',
+    )
+  }, [openerPlaying])
+
   // ── Live waveform intensity (0..1) ─────────────────────────────
   // One rAF loop per state-group writes to a ref that CallWaveform
   // reads directly (no React re-renders). React only sees the state
