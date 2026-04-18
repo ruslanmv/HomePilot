@@ -5,12 +5,14 @@
  * individual files so the paths don't need touching when a
  * primitive gets renamed or relocated inside the folder.
  *
- * Current contents (grows as the remaining batches land —
- * Aura, AmbientAura, Waveform):
+ * Current contents:
  *
  *   useReducedMotion   OS motion-preference subscription
  *   useFocusTrap       keyboard-focus containment for dialogs
  *   ControlBtn         circular action button (mic, end, etc.)
+ *   Waveform           rAF-driven audio-level bars
+ *   Aura               seeded-hue persona identity chip
+ *   AmbientAura        page-scale coloured backdrop glow
  */
 
 export { useReducedMotion } from './useReducedMotion'
@@ -21,3 +23,9 @@ export type {
   ControlBtnSize,
   ControlBtnTone,
 } from './ControlBtn'
+export { default as Waveform } from './Waveform'
+export type { WaveformProps, WaveformMode } from './Waveform'
+export { default as Aura } from './Aura'
+export type { AuraProps, AuraMood } from './Aura'
+export { default as AmbientAura } from './AmbientAura'
+export type { AmbientAuraProps } from './AmbientAura'

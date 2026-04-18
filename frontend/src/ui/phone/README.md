@@ -21,7 +21,13 @@ phone/
     ├── useFocusTrap.ts              keyboard-focus containment for dialogs
     ├── useFocusTrap.test.tsx        6 tests
     ├── ControlBtn.tsx               circular action button
-    └── ControlBtn.test.tsx          8 tests
+    ├── ControlBtn.test.tsx          8 tests
+    ├── Waveform.tsx                 rAF-driven audio-level bars
+    ├── Waveform.test.tsx            9 tests
+    ├── Aura.tsx                     seeded-hue persona identity chip
+    ├── Aura.test.tsx                8 tests
+    ├── AmbientAura.tsx              page-scale coloured backdrop glow
+    └── AmbientAura.test.tsx         7 tests
 ```
 
 Consumed by:
@@ -44,12 +50,12 @@ call feature — it's already functional end-to-end with the
 
 | File | Status | Notes |
 |---|---|---|
-| `primitives/ControlBtn.tsx` | **Shipped** | 8 tests green; no consumers yet (CallOverlay still inlines its own). |
-| `primitives/useReducedMotion.ts` | **Shipped** | 4 tests green. Wire into every animated primitive as they land. |
-| `primitives/useFocusTrap.ts` | **Shipped** | 6 tests green. Used by CallScreen + LockScreenIncoming when they land. |
-| `primitives/Aura.tsx` | Pending | Animated gradient avatar — seeded hue, crescent silhouette. Currently inlined in `CallOverlay.tsx::CallAvatar`. |
-| `primitives/AmbientAura.tsx` | Pending | Page-wide blurred glow. Lives behind `CallOverlay`'s backdrop today. |
-| `primitives/Waveform.tsx` | Pending | Live-intensity bars. `CallOverlay` already has an `rAF`-driven variant that reads real mic + synthesised speech envelope. Port will extract it. |
+| `primitives/ControlBtn.tsx` | **Shipped** | 8 tests. CallOverlay still inlines its own; extraction queued behind CallScreen. |
+| `primitives/useReducedMotion.ts` | **Shipped** | 4 tests. Drives the motion gate on Waveform + Aura + AmbientAura. |
+| `primitives/useFocusTrap.ts` | **Shipped** | 6 tests. Consumed by CallScreen + LockScreenIncoming when they land. |
+| `primitives/Waveform.tsx` | **Shipped + extracted** | 9 tests. CallOverlay's inline CallWaveform is gone — `<Waveform mode={waveformModeFromCallState(state)} intensityRef={…} />` takes its place. |
+| `primitives/Aura.tsx` | **Shipped + extracted** | 8 tests. FNV-1a hashed seeded hue + optional photoUrl path. Inner disc of CallOverlay's CallAvatar now delegates to `<Aura />`; the halo + pulse rings stay outside (state-dependent). |
+| `primitives/AmbientAura.tsx` | **Shipped** | 7 tests. Additive — CallOverlay today uses a flat dim+blur backdrop; this primitive is slated for CallScreen's fullscreen composition. |
 | `CallScreen.tsx` | Pending | Fullscreen mobile composition. Desktop uses the existing `CallOverlay` modal. |
 | `CallOverlay.tsx` (refactor) | Pending | Route between fullscreen / modal / PiP based on viewport. Today's `CallOverlay.tsx` is desktop-modal-only. |
 | `TextInCall.tsx` | Pending | Mid-call composer sheet — minimize call to a thin bar, slide composer up, send text over the existing chat REST. |
