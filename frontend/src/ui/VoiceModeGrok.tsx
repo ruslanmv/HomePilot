@@ -38,6 +38,7 @@ import Starfield from './voice/Starfield';
 import VoiceSettingsPanel from './voice/VoiceSettingsPanel';
 import SettingsModal from './voice/SettingsModal';
 import { useVoiceController, VoiceState } from './voice/useVoiceController';
+import PhoneCallDivider from './phone/primitives/PhoneCallDivider';
 import {
   VOICES,
   VoiceDef,
@@ -1031,6 +1032,23 @@ export default function VoiceModeGrok({
             {messages.map((msg, idx) => {
               // Skip empty pending placeholders (App adds { text: '', pending: true })
               if (!msg.text && (msg as any).pending) return null;
+
+              // ADDITIVE: call-memory rows render as a thin centered
+              // timeline divider, NOT as an empty assistant bubble.
+              // Grok-style: a phone call is a neutral system event,
+              // not a message. Chat mode has its own richer
+              // PostCallCard; Voice keeps the history quiet.
+              if ((msg as any).callMemory) {
+                const cm = (msg as any).callMemory;
+                return (
+                  <PhoneCallDivider
+                    key={msg.id}
+                    durationSec={cm.durationSec ?? 0}
+                    endedAt={cm.endedAt}
+                  />
+                );
+              }
+
               return (
                 <div key={msg.id} className={msg.role === 'user' ? 'flex justify-end' : ''}>
                   {msg.role === 'user' ? (
