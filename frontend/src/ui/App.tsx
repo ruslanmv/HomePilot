@@ -120,9 +120,9 @@ export type Msg = {
   // bubble. Additive: untouched by every existing code path.
   callMemory?: {
     durationSec: number
-    /** Short warm sign-off line rendered under the header. Optional
-     *  so we don't force a pre-baked string on every culture. */
-    closingLine?: string
+    /** Epoch-ms timestamp of when the call ended. Rendered as an
+     *  auditable stamp (e.g. "7:36 PM") in the card header. */
+    endedAt?: number
   }
 }
 
@@ -1586,22 +1586,19 @@ function useCopyMessage(timeoutMs = 900) {
 }
 
 /**
- * CallMemoryCard — inline "we just talked" record rendered as a
- * chat message (left-aligned, assistant-side) instead of a floating
- * toast. Designed to feel like a memory of an interaction, not a
- * system notification:
- *   • subtle gradient surface, soft border glow in the brand accent
- *   • short warm sign-off line beneath the duration header
- *   • a single "Speak again" CTA that re-opens the call modal
- *   • no fixed positioning — scrolls with the chat history
+ * CallMemoryCard — enterprise-style inline record of a just-ended
+ * call. Rendered inside the chat stream as a neutral system event
+ * rather than a floating toast or an emotional "moment" card. The
+ * tone is auditable, not expressive: the card states what happened,
+ * when, and offers one standard system action to resume.
  */
 function CallMemoryCard({
   durationSec,
-  closingLine,
+  endedAt,
   onSpeakAgain,
 }: {
   durationSec: number
-  closingLine?: string
+  endedAt?: number
   onSpeakAgain?: () => void
 }) {
   const fmt = (s: number) => {
@@ -1610,50 +1607,55 @@ function CallMemoryCard({
     const r = s % 60
     return r === 0 ? `${m}m` : `${m}m ${r}s`
   }
+  const stamp = endedAt
+    ? new Date(endedAt).toLocaleTimeString(undefined, {
+        hour: 'numeric', minute: '2-digit',
+      })
+    : ''
   return (
     <div
       className="flex items-start gap-5 w-full hp-fade-in"
       role="note"
-      aria-label="Call memory"
+      aria-label="Call record"
     >
-      <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 text-white/60 flex items-center justify-center flex-shrink-0 mt-1">
-        <Phone size={14} />
+      <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 text-white/50 flex items-center justify-center flex-shrink-0 mt-1">
+        <Phone size={12} />
       </div>
       <div
-        className="max-w-[85%] rounded-[18px] p-4 border"
-        style={{
-          background:
-            'linear-gradient(180deg, rgba(34,211,238,0.06) 0%, rgba(255,255,255,0.02) 100%)',
-          borderColor: 'rgba(34,211,238,0.18)',
-          boxShadow:
-            'inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 24px rgba(0,0,0,0.25)',
-        }}
+        className="max-w-[85%] rounded-[12px] px-4 py-3 bg-white/[0.03] border border-white/10"
       >
-        <div className="flex items-center gap-2 text-[12px] uppercase tracking-[0.14em] text-white/55">
-          <span>Live call</span>
+        {/* Meta row — factual header, low emphasis */}
+        <div className="flex items-center gap-2 text-[11px] text-white/50">
+          <span>Call</span>
           <span className="text-white/25">·</span>
           <span
-            className="font-mono tabular-nums text-white/75"
+            className="font-mono tabular-nums text-white/70"
             style={{ fontFeatureSettings: '"tnum"' }}
           >
             {fmt(durationSec)}
           </span>
+          {stamp ? (
+            <>
+              <span className="text-white/25">·</span>
+              <span className="font-mono tabular-nums text-white/50">{stamp}</span>
+            </>
+          ) : null}
         </div>
-        {closingLine ? (
-          <div className="mt-2 text-[14px] leading-relaxed text-white/80">
-            {closingLine}
-          </div>
-        ) : null}
+        {/* Body — neutral factual line, no emotional copy */}
+        <div className="mt-1.5 text-[13.5px] leading-snug text-white/75">
+          Voice session completed
+        </div>
+        {/* CTA — system-style outline button, same weight as header icons */}
         <div className="mt-3">
           <button
             type="button"
             onClick={onSpeakAgain}
             disabled={!onSpeakAgain}
-            className="inline-flex items-center gap-2 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white/90 px-3.5 py-1.5 text-[12.5px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            aria-label="Speak again"
+            className="inline-flex items-center gap-1.5 rounded-md bg-transparent hover:bg-white/5 border border-white/15 hover:border-white/25 text-white/80 hover:text-white px-3 py-1 text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            aria-label="Resume call"
           >
-            <Phone size={13} />
-            Speak again
+            <Phone size={12} />
+            Resume call
           </button>
         </div>
       </div>
@@ -1818,7 +1820,7 @@ function ChatState({
             {m.callMemory ? (
               <CallMemoryCard
                 durationSec={m.callMemory.durationSec}
-                closingLine={m.callMemory.closingLine}
+                endedAt={m.callMemory.endedAt}
                 onSpeakAgain={onStartCall}
               />
             ) : (<>
@@ -2168,16 +2170,6 @@ export default function App() {
   // `skipDialing` is flipped on for the "Speak again" re-entry so the
   // user doesn't have to sit through "calling…" twice in a row.
   const [callSkipDialing, setCallSkipDialing] = useState(false)
-  // Call-ended "memory" lines — picked at random per call to give
-  // the inline card a warm sign-off without shipping the same text
-  // every time. Pure display; no persona plumbing.
-  const CALL_CLOSING_LINES = useMemo(() => ([
-    'It was nice talking to you.',
-    'Good to hear your voice.',
-    'Glad we got to catch up.',
-    'Thanks for calling.',
-    'That was fun.',
-  ]), [])
 
   // Persona Integration — "Save as Persona Avatar" from AvatarStudio (additive)
   const [saveAsPersonaData, setSaveAsPersonaData] = useState<{ item: GalleryItem; outfits: GalleryItem[]; batchSiblings?: GalleryItem[] } | null>(null)
@@ -5302,22 +5294,17 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         }}
         skipDialing={callSkipDialing}
         onEnded={(durationSec) => {
-          // Append an inline "call memory card" to the chat stream
-          // instead of showing a floating toast. The card scrolls
-          // with history, never overlaps the input, and reads as
-          // part of the conversation ("a moment we had") rather
-          // than a system notification.
-          const closingLine =
-            CALL_CLOSING_LINES[
-              Math.floor(Math.random() * CALL_CLOSING_LINES.length)
-            ]
+          // Append an inline, enterprise-style "call record" to the
+          // chat stream — a neutral system event with a timestamp.
+          // Scrolls with history; never overlaps the input.
+          const endedAt = Date.now()
           setChatMessages((prev) => [
             ...prev,
             {
-              id: `call-memory-${Date.now()}`,
+              id: `call-memory-${endedAt}`,
               role: 'assistant',
               text: '',
-              callMemory: { durationSec, closingLine },
+              callMemory: { durationSec, endedAt },
             },
           ])
         }}
