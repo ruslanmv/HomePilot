@@ -116,8 +116,81 @@ export interface CallSessionHandle {
 // for UNAVAILABLE_BACKOFF_MS. Without this, every CallOverlay mount posts a
 // fresh 404 against the same flag, spamming the console and delaying the
 // fallback path by a full network round-trip.
-const UNAVAILABLE_BACKOFF_MS = 30_000
+//
+// Industry practice: the backend feature-flag rarely flips mid-session, so
+// the backoff is long-lived (10 min) and persisted to sessionStorage so it
+// survives React 18 StrictMode's double-invoke of passive effects + in-tab
+// navigations that tear the CallOverlay down and re-mount it. Clearing
+// sessionStorage ( or calling clearVoiceCallUnavailable ) forces a re-probe.
+const UNAVAILABLE_BACKOFF_MS = 10 * 60 * 1000
+const BACKOFF_STORAGE_KEY = 'homepilot_voice_call_unavailable_until'
 const unavailableUntilByBackend = new Map<string, number>()
+
+// In-flight dedupe — StrictMode's double-invoke of the mount effect fires
+// two parallel POSTs before either resolves, so the backoff is useless in
+// that window. Share a single Promise per (backendUrl, authToken) so the
+// two invokes observe the same network result instead of racing two probes.
+const inflightByBackend = new Map<string, Promise<CreateCallSessionResponse>>()
+
+function _readPersistedBackoff(backendUrl: string): number {
+  if (typeof window === 'undefined') return 0
+  try {
+    const raw = window.sessionStorage.getItem(BACKOFF_STORAGE_KEY)
+    if (!raw) return 0
+    const map = JSON.parse(raw) as Record<string, number>
+    const until = Number(map[backendUrl] ?? 0)
+    return Number.isFinite(until) ? until : 0
+  } catch {
+    return 0
+  }
+}
+
+function _writePersistedBackoff(backendUrl: string, until: number): void {
+  if (typeof window === 'undefined') return
+  try {
+    const raw = window.sessionStorage.getItem(BACKOFF_STORAGE_KEY)
+    const map = (raw ? JSON.parse(raw) : {}) as Record<string, number>
+    map[backendUrl] = until
+    window.sessionStorage.setItem(BACKOFF_STORAGE_KEY, JSON.stringify(map))
+  } catch {
+    /* ignore quota / private-mode errors */
+  }
+}
+
+function _clearPersistedBackoff(backendUrl: string): void {
+  if (typeof window === 'undefined') return
+  try {
+    const raw = window.sessionStorage.getItem(BACKOFF_STORAGE_KEY)
+    if (!raw) return
+    const map = JSON.parse(raw) as Record<string, number>
+    delete map[backendUrl]
+    window.sessionStorage.setItem(BACKOFF_STORAGE_KEY, JSON.stringify(map))
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Resolve the active backoff deadline for a backend. Checks the in-memory
+ *  cache first, falls through to sessionStorage. Expired entries return 0. */
+function _backoffUntil(backendUrl: string): number {
+  const mem = unavailableUntilByBackend.get(backendUrl) ?? 0
+  const persisted = _readPersistedBackoff(backendUrl)
+  const until = Math.max(mem, persisted)
+  if (until && until <= Date.now()) {
+    unavailableUntilByBackend.delete(backendUrl)
+    _clearPersistedBackoff(backendUrl)
+    return 0
+  }
+  return until
+}
+
+/** Force a re-probe of the voice_call backend on the next CallOverlay mount.
+ *  Exposed for future "retry now" UI affordances. Non-destructive: no-op if
+ *  no backoff was set. */
+export function clearVoiceCallUnavailable(backendUrl: string): void {
+  unavailableUntilByBackend.delete(backendUrl)
+  _clearPersistedBackoff(backendUrl)
+}
 
 export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
   const { enabled, backendUrl, authToken, request } = args
@@ -174,11 +247,11 @@ export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
       setCallState(null)
 
       // Skip the POST entirely if this backend has been 404/501-ing
-      // recently. Saves a round-trip per call re-entry while the flag
-      // is off server-side; the backoff window expires automatically
-      // when we clear the map entry below on a success.
-      const skipUntil = unavailableUntilByBackend.get(backendUrl)
-      if (skipUntil && Date.now() < skipUntil) {
+      // recently. _backoffUntil() consults the in-memory map + the
+      // sessionStorage mirror so StrictMode double-invokes + page
+      // reloads share the verdict. Expired entries self-clear.
+      const skipUntil = _backoffUntil(backendUrl)
+      if (skipUntil) {
         // eslint-disable-next-line no-console
         console.info(
           '[useCallSession] skipping createCallSession — backend flagged unavailable',
@@ -188,20 +261,32 @@ export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
         return
       }
 
+      // Share the handshake Promise across concurrent callers so
+      // React 18 StrictMode's two parallel mount effects can't fire
+      // two POSTs (the backoff is written only after the response
+      // lands, so a second probe racing the first would otherwise
+      // get through before the first writes its verdict).
       let handshake: CreateCallSessionResponse
       try {
-        handshake = await createCallSession(backendUrl, requestRef.current, authToken)
+        let inflight = inflightByBackend.get(backendUrl)
+        if (!inflight) {
+          inflight = createCallSession(backendUrl, requestRef.current, authToken)
+            .finally(() => {
+              inflightByBackend.delete(backendUrl)
+            })
+          inflightByBackend.set(backendUrl, inflight)
+        }
+        handshake = await inflight
       } catch (err) {
         if (disposed) return
         if (err instanceof CallApiError && err.isUnavailable) {
-          unavailableUntilByBackend.set(
-            backendUrl,
-            Date.now() + UNAVAILABLE_BACKOFF_MS,
-          )
+          const until = Date.now() + UNAVAILABLE_BACKOFF_MS
+          unavailableUntilByBackend.set(backendUrl, until)
+          _writePersistedBackoff(backendUrl, until)
           // eslint-disable-next-line no-console
-          console.warn(
-            '[useCallSession] voice_call unavailable — falling back to chat REST for',
-            `${UNAVAILABLE_BACKOFF_MS}ms`,
+          console.info(
+            '[useCallSession] voice_call unavailable — falling back to chat REST until',
+            new Date(until).toISOString(),
           )
           setStatus('unavailable')
           return
@@ -217,6 +302,7 @@ export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
       // Handshake worked — clear any prior backoff so new flag flips
       // take effect immediately instead of waiting out the window.
       unavailableUntilByBackend.delete(backendUrl)
+      _clearPersistedBackoff(backendUrl)
 
       sessionRef.current = handshake
       const url = resolveWsUrl(
