@@ -4136,10 +4136,21 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
     [authHeaders, conversationId, messages, settings.backendUrl, settings.funMode, settingsDraft]
   )
 
-  // TTS for assistant responses (speak-once pattern) - ONLY IN VOICE MODE
+  // TTS for assistant responses (speak-once pattern). Fires when
+  // the user is in Voice mode OR the CallOverlay is open. The
+  // second branch matters in the chat-REST fallback path: when
+  // VOICE_CALL_ENABLED is false server-side, the call runs through
+  // the regular chat pipeline, assistant replies land in the
+  // current ``messages`` array, and without this nothing speaks
+  // them — the user hears silence during the call.
+  //
+  // SpeechService.speak + stripMarkdownForSpeech are the canonical
+  // app-level TTS primitives; reusing them here keeps call-mode
+  // TTS consistent with voice-mode TTS (same voice pick, same
+  // markdown sanitation, same single-utterance dedupe via
+  // lastSpokenMessageIdRef).
   useEffect(() => {
-    // Only enable TTS when in Voice mode
-    if (mode !== 'voice') return
+    if (mode !== 'voice' && !callOpen) return
 
     const ttsEnabled = settingsDraft.ttsEnabled ?? true
     if (!ttsEnabled || !window.SpeechService) return
@@ -4152,6 +4163,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       lastMessage.role === 'assistant' &&
       !lastMessage.pending &&
       lastMessage.text &&
+      !lastMessage.callMemory &&
       lastMessage.id !== lastSpokenMessageIdRef.current
     ) {
       // Mark this message as spoken
@@ -4162,7 +4174,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       const speechText = stripMarkdownForSpeech(lastMessage.text)
       if (speechText) window.SpeechService.speak(speechText)
     }
-  }, [messages, settingsDraft.ttsEnabled, mode])
+  }, [messages, settingsDraft.ttsEnabled, mode, callOpen])
 
   const uploadAndSend = useCallback(
     async (file: File) => {

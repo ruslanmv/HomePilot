@@ -925,31 +925,17 @@ function CallOverlayInner({
     speakText(g)
   }, [useBackend, connected, fallbackOpeners, speakText])
 
-  // (b) Watch for new assistant messages during the call and
-  // speak them. ``baselineMsgCount`` freezes the chat length at
-  // call-open so pre-call history isn't re-spoken; ``spokenIds``
-  // is a belt-and-suspenders guard against double-fire when
-  // messages rerender with stable ids.
-  const baselineMsgCountRef = useRef<number | null>(null)
-  const spokenIdsRef = useRef<Set<string>>(new Set())
-  useEffect(() => {
-    if (baselineMsgCountRef.current !== null) return
-    baselineMsgCountRef.current = messages?.length ?? 0
-  }, [messages])
-  useEffect(() => {
-    if (useBackend) return
-    if (!messages) return
-    const baseline = baselineMsgCountRef.current ?? 0
-    for (let i = baseline; i < messages.length; i++) {
-      const m = messages[i]
-      if (m.role !== 'assistant') continue
-      if (!m.text || !m.text.trim()) continue
-      if (m.callMemory) continue   // PostCallCard marker — skip
-      if (spokenIdsRef.current.has(m.id)) continue
-      spokenIdsRef.current.add(m.id)
-      speakText(m.text)
-    }
-  }, [messages, useBackend, speakText])
+  // (b) Ongoing assistant replies in fallback mode are now spoken
+  // by the App-level TTS effect (App.tsx — gated on callOpen). That
+  // pipeline already handles stripMarkdownForSpeech + per-message
+  // dedupe via lastSpokenMessageIdRef, so we don't duplicate it
+  // here. The fallback OPENER above stays — it's synthesized in
+  // the overlay and never enters chatMessages, so the App-level
+  // effect can't produce it.
+  //
+  // ``messages`` prop is still accepted for future use (mid-call
+  // transcript viewer, etc.) but intentionally unused here — no
+  // TTS side-effect reads it.
 
   // ── Phase 2: streaming TTS pipeline ───────────────────────────
   // Holds one streamTts instance per mounted overlay. Stopped on
