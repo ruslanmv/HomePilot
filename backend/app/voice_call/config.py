@@ -62,6 +62,17 @@ class VoiceCallConfig:
     store_transcripts: bool
     artifact_retention_days: int
 
+    # Phase 2 + 3 streaming (token-level LLM streaming + barge-in).
+    # Defaults off — when false, every byte on the wire and every
+    # code path taken is identical to today. Independent of
+    # ``enabled`` / ``websocket_enabled`` so the streaming path
+    # can be dark-shipped alongside unary turns for measurement.
+    streaming_enabled: bool
+    # Barge-in is an optional sub-feature of streaming; can be
+    # disabled independently if the VAD tap is misbehaving on a
+    # given deployment.
+    barge_in_enabled: bool
+
 
 def load() -> VoiceCallConfig:
     """Resolve config from env vars every call. Cheap; keep fresh for tests."""
@@ -76,4 +87,6 @@ def load() -> VoiceCallConfig:
         session_create_rate_per_min=_int_env("VOICE_CALL_CREATE_RATE", 10),
         store_transcripts=_bool_env("VOICE_CALL_STORE_TRANSCRIPTS", False),
         artifact_retention_days=_int_env("VOICE_CALL_ARTIFACT_TTL_DAYS", 30),
+        streaming_enabled=_bool_env("VOICE_CALL_STREAMING_ENABLED", False),
+        barge_in_enabled=_bool_env("VOICE_CALL_BARGE_IN_ENABLED", True),
     )

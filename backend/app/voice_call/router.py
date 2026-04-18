@@ -132,8 +132,13 @@ def build_router(cfg: VoiceCallConfig) -> APIRouter:
             max_duration_sec=cfg.max_duration_sec,
             capabilities=Capabilities(
                 interruptions=False,
-                barge_in=False,
-                transcript_live=False,
+                # barge_in reflects the combined streaming + barge-in
+                # flag pair — it only works when the session actually
+                # streams, since there's nothing to cancel in unary.
+                barge_in=cfg.streaming_enabled and cfg.barge_in_enabled,
+                # transcript_live = streaming assistant partials.
+                transcript_live=cfg.streaming_enabled,
+                streaming=cfg.streaming_enabled,
             ),
         )
 

@@ -37,11 +37,13 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, Dict, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect, status
 
-from . import service, store, turn
+from . import barge_in as _barge_in
+from . import service, store, turn, turn_stream
 from .config import VoiceCallConfig
 
 
@@ -309,35 +311,129 @@ async def run_session_ws(
                     except Exception:
                         pass
 
-                try:
-                    if _pc_cfg is not None and _pc_cfg.enabled and _pc_facets_obj is not None:
-                        async with _pc_latency.FillerScheduler(
-                            send=_pc_send,
-                            facets=_pc_facets_obj,
-                            cfg=_pc_cfg,
-                            session_id=sid,
+                # ── Streaming vs unary turn — additive branch ──────
+                # When VOICE_CALL_STREAMING_ENABLED=true the turn runs
+                # through turn_stream.run_turn_streaming and emits
+                # ``assistant.partial`` + ``assistant.turn_end`` envelopes
+                # so the client's streaming TTS can begin speaking long
+                # before the full reply has arrived. When the flag is
+                # off we take the original path byte-for-byte.
+                if cfg.streaming_enabled:
+                    turn_id = f"t_{uuid.uuid4().hex[:12]}"
+                    token = _barge_in.new_token(sid, turn_id)
+                    assistant_text_parts: list[str] = []
+                    end_reason = "complete"
+                    try:
+                        if (
+                            _pc_cfg is not None
+                            and _pc_cfg.enabled
+                            and _pc_facets_obj is not None
                         ):
+                            # Filler scheduler still wraps streaming —
+                            # if the FIRST delta takes > N ms the
+                            # client still gets a ``hmm…`` event.
+                            async with _pc_latency.FillerScheduler(
+                                send=_pc_send,
+                                facets=_pc_facets_obj,
+                                cfg=_pc_cfg,
+                                session_id=sid,
+                            ):
+                                index = 0
+                                async for delta in turn_stream.run_turn_streaming(
+                                    user_text=text_in,
+                                    model=model,
+                                    auth_bearer=query_bearer,
+                                    additional_system=pc_additional_system,
+                                    cancel_token=token,
+                                ):
+                                    if token.is_cancelled():
+                                        break
+                                    assistant_text_parts.append(delta)
+                                    await _send(
+                                        ws, "assistant.partial",
+                                        {
+                                            "turn_id": turn_id,
+                                            "delta": delta,
+                                            "index": index,
+                                        },
+                                        session_id=sid,
+                                    )
+                                    index += 1
+                        else:
+                            index = 0
+                            async for delta in turn_stream.run_turn_streaming(
+                                user_text=text_in,
+                                model=model,
+                                auth_bearer=query_bearer,
+                                additional_system=pc_additional_system,
+                                cancel_token=token,
+                            ):
+                                if token.is_cancelled():
+                                    break
+                                assistant_text_parts.append(delta)
+                                await _send(
+                                    ws, "assistant.partial",
+                                    {
+                                        "turn_id": turn_id,
+                                        "delta": delta,
+                                        "index": index,
+                                    },
+                                    session_id=sid,
+                                )
+                                index += 1
+                        if token.is_cancelled():
+                            end_reason = "cancelled"
+                    except Exception as exc:
+                        logger.warning("[voice_call] stream turn failed: %s", exc)
+                        end_reason = "error"
+                    finally:
+                        # Always emit turn_end so the client can close
+                        # the turn bookkeeping cleanly.
+                        _barge_in.clear_session(sid)
+                        assistant_text = "".join(assistant_text_parts)
+                        await _send(
+                            ws, "assistant.turn_end",
+                            {
+                                "turn_id": turn_id,
+                                "reason": end_reason,
+                                "full_text": assistant_text,
+                            },
+                            session_id=sid,
+                        )
+                else:
+                    try:
+                        if (
+                            _pc_cfg is not None
+                            and _pc_cfg.enabled
+                            and _pc_facets_obj is not None
+                        ):
+                            async with _pc_latency.FillerScheduler(
+                                send=_pc_send,
+                                facets=_pc_facets_obj,
+                                cfg=_pc_cfg,
+                                session_id=sid,
+                            ):
+                                assistant_text = await turn.run_turn(
+                                    user_text=text_in,
+                                    model=model,
+                                    auth_bearer=query_bearer,
+                                    additional_system=pc_additional_system,
+                                )
+                        else:
                             assistant_text = await turn.run_turn(
                                 user_text=text_in,
                                 model=model,
                                 auth_bearer=query_bearer,
                                 additional_system=pc_additional_system,
                             )
-                    else:
-                        assistant_text = await turn.run_turn(
-                            user_text=text_in,
-                            model=model,
-                            auth_bearer=query_bearer,
-                            additional_system=pc_additional_system,
-                        )
-                except Exception as exc:
-                    logger.warning("[voice_call] turn failed: %s", exc)
-                    await _send_error(ws, sid, "turn_failed", str(exc)[:400])
-                    continue
+                    except Exception as exc:
+                        logger.warning("[voice_call] turn failed: %s", exc)
+                        await _send_error(ws, sid, "turn_failed", str(exc)[:400])
+                        continue
 
-                await _send(ws, "transcript.final",
-                            {"role": "assistant", "text": assistant_text},
-                            session_id=sid)
+                    await _send(ws, "transcript.final",
+                                {"role": "assistant", "text": assistant_text},
+                                session_id=sid)
 
                 # Record the reply into the anti-repetition ledger so
                 # the NEXT turn can forbid the just-used opener/ack.
@@ -355,6 +451,48 @@ async def run_session_ws(
                             _pc_err,
                         )
 
+            elif evt_type == "user.barge_in":
+                # Phase 3 — cooperative cancel. Client's VAD detected
+                # user speech-start while the persona was mid-reply.
+                # § 4.4 of the streaming design doc.
+                if not (cfg.streaming_enabled and cfg.barge_in_enabled):
+                    continue
+                turn_id = (payload.get("turn_id") or "").strip()
+                if not turn_id:
+                    continue
+                cancelled = _barge_in.cancel_active(sid, turn_id)
+                if cancelled:
+                    # Emit the ack IMMEDIATELY — client stops TTS on
+                    # receipt, shaving ~50-100 ms off the perceived
+                    # barge-in latency vs waiting for the generator
+                    # to notice the event on its next poll.
+                    await _send(
+                        ws, "assistant.cancel",
+                        {"turn_id": turn_id, "cause": "user_barge_in"},
+                        session_id=sid,
+                    )
+                # Else: stale turn_id (turn already ended). Silent drop.
+
+            elif evt_type == "transcript.partial":
+                # Secondary barge-in signal — if the client's explicit
+                # user.barge_in didn't arrive but the STT started
+                # decoding words, that also means the user spoke.
+                # Only fires while a turn is active.
+                if not (cfg.streaming_enabled and cfg.barge_in_enabled):
+                    continue
+                active = _barge_in.get_active(sid)
+                if active is not None and not active.is_cancelled():
+                    cancelled = _barge_in.cancel_active(sid, active.turn_id)
+                    if cancelled:
+                        await _send(
+                            ws, "assistant.cancel",
+                            {
+                                "turn_id": active.turn_id,
+                                "cause": "user_partial",
+                            },
+                            session_id=sid,
+                        )
+
             else:
                 # Forward-compat: unknown event type is a no-op, not an
                 # error. Older servers + newer clients stay friendly.
@@ -362,6 +500,7 @@ async def run_session_ws(
     except WebSocketDisconnect:
         # Client dropped — park the session as 'interrupted' so a resume
         # request within the window can pick it back up.
+        _barge_in.clear_session(sid)
         service.mark_interrupted(sid)
     except Exception as exc:
         logger.exception("[voice_call] ws error for %s: %s", sid, exc)
@@ -369,8 +508,10 @@ async def run_session_ws(
             await _send_error(ws, sid, "internal", "Internal error")
         except Exception:
             pass
+        _barge_in.clear_session(sid)
         service.mark_interrupted(sid)
     finally:
+        _barge_in.clear_session(sid)
         hb_task.cancel()
         try:
             await hb_task

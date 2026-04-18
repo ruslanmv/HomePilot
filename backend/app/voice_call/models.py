@@ -45,6 +45,10 @@ class Capabilities(BaseModel):
     # This matches the current ``/v1/chat/completions`` behavior which
     # rejects streaming with a 501 (openai_compat_endpoint.py:477).
     transcript_live: bool = False
+    # Phase 2/3 opt-in — set True on the response when
+    # ``VOICE_CALL_STREAMING_ENABLED`` is on. Unaware clients ignore
+    # the field and stay on the unary path.
+    streaming: bool = False
 
 
 class CreateSessionResp(BaseModel):
