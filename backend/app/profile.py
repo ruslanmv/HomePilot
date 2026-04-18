@@ -126,6 +126,63 @@ class UserProfile(BaseModel):
     allowed_content_tags: list[str] = Field(default_factory=list)
     blocked_content_tags: list[str] = Field(default_factory=list)
 
+    # ──────────────────────────────────────────────────────────────────
+    # Communication (reachability) — ADDITIVE, non-destructive
+    # ──────────────────────────────────────────────────────────────────
+    # Where the AI can contact the user. This block is intentionally
+    # OPTIONAL with safe defaults so existing on-disk profiles continue
+    # to load unchanged and existing PUT payloads without this field
+    # are still accepted. The AI never auto-reads these; access is
+    # gated per-field by ``field_access_policy`` (see below), and the
+    # overall outbound kill-switch defaults to OFF.
+    #
+    # Design doc: "Communication — additive, non-destructive design"
+    # in this session's summary.
+    communication: "CommunicationInfo" = Field(default_factory=lambda: CommunicationInfo())
+
+    # Per-field access policy for AI prompt-injection + tool-call reads.
+    # Keys are dotted paths like ``profile.birthday`` or
+    # ``communication.phone_e164``. Values: "always" | "on_demand" |
+    # "sensitive". Missing keys are treated as "on_demand" (safe
+    # middle). Seeded with sensible defaults on first read — see
+    # ``_seed_field_access_policy`` below.
+    field_access_policy: dict[str, str] = Field(default_factory=dict)
+
+
+class CommunicationInfo(BaseModel):
+    """User reachability — phone, WhatsApp, Telegram, and preferences.
+
+    Not secrets (those live in the vault). These are the display-level
+    contact points the persona uses when it decides to reach out.
+    Every field has an empty-string / "none" default so the whole
+    block can be absent without breaking anything.
+    """
+    phone_e164: str = ""                      # "+14155551212"
+    whatsapp_e164: str = ""                   # usually same as phone
+    telegram_username: str = ""               # stored without leading "@"
+    preferred_contact_channel: str = "none"   # none | phone | whatsapp | telegram
+    preferred_call_channel: str = "none"      # none | phone | voip_app_did
+    allow_ai_outbound: bool = False           # master kill-switch
+
+    @classmethod
+    def _normalize_e164(cls, value: str) -> str:
+        """Strip whitespace, dashes, parens; keep leading + if present.
+        Doesn't attempt full E.164 validation — provider tools reject
+        bad numbers on first use, which is the right surface."""
+        v = (value or "").strip()
+        if not v:
+            return ""
+        plus = v.startswith("+")
+        digits = "".join(c for c in v if c.isdigit())
+        return ("+" if plus else "") + digits
+
+
+# Rebuild the forward reference so pydantic wires CommunicationInfo into
+# UserProfile. Cheap at import time; required because CommunicationInfo
+# is declared after UserProfile to keep the additive block visually
+# together without forcing a top-of-file reorg.
+UserProfile.model_rebuild()
+
 
 class SecretUpsert(BaseModel):
     key: str = Field(..., min_length=1, max_length=64)
@@ -142,6 +199,16 @@ def get_profile() -> Dict[str, Any]:
     root = _data_root()
     path = root / PROFILE_FILE
     data = _read_json(path, default=UserProfile().model_dump())
+    # Back-fill the additive ``communication`` block for profiles that
+    # predate it — pydantic default has handled new installs; this
+    # handles pre-existing JSON files so the frontend always sees the
+    # expected shape.
+    if "communication" not in data or not isinstance(data.get("communication"), dict):
+        data["communication"] = CommunicationInfo().model_dump()
+    # Seed the per-field access policy without clobbering user overrides.
+    data["field_access_policy"] = _seed_field_access_policy(
+        data.get("field_access_policy") or {}
+    )
     return {"ok": True, "profile": data}
 
 
@@ -175,10 +242,79 @@ def put_profile(profile: UserProfile) -> Dict[str, Any]:
         s = 0.30
     p["default_spicy_strength"] = max(0.0, min(1.0, s))
 
+    # Communication — normalise phone-shaped fields + clamp enum values.
+    # Defensive about the shape because old clients may send the field
+    # as null or missing entirely; in both cases the pydantic default
+    # already populated it, but a buggy client PUT could still get here
+    # with a dict that's missing keys.
+    comm = p.get("communication") or {}
+    if not isinstance(comm, dict):
+        comm = {}
+    comm["phone_e164"] = CommunicationInfo._normalize_e164(str(comm.get("phone_e164", "")))
+    comm["whatsapp_e164"] = CommunicationInfo._normalize_e164(str(comm.get("whatsapp_e164", "")))
+    tg = str(comm.get("telegram_username", "")).strip().lstrip("@")
+    comm["telegram_username"] = tg
+    if comm.get("preferred_contact_channel") not in ("none", "phone", "whatsapp", "telegram"):
+        comm["preferred_contact_channel"] = "none"
+    if comm.get("preferred_call_channel") not in ("none", "phone", "voip_app_did"):
+        comm["preferred_call_channel"] = "none"
+    comm["allow_ai_outbound"] = bool(comm.get("allow_ai_outbound", False))
+    p["communication"] = comm
+
+    # Field-access policy — clamp each value to the 3 allowed tiers.
+    # Unknown tiers collapse to "on_demand" (safe middle).
+    fap = p.get("field_access_policy") or {}
+    if not isinstance(fap, dict):
+        fap = {}
+    _allowed_tiers = {"always", "on_demand", "sensitive"}
+    p["field_access_policy"] = {
+        str(k): (v if v in _allowed_tiers else "on_demand")
+        for k, v in fap.items()
+    }
+
     root = _data_root()
     path = root / PROFILE_FILE
     _atomic_write_json(path, p)
     return {"ok": True}
+
+
+# Default access policy applied when a field has no explicit entry.
+# See design doc § "How personas consume it" — most identity fields
+# are "on_demand" (persona asks when it needs them); reachability
+# data starts "sensitive" so the persona has to prompt the user
+# before using a phone number / WhatsApp / Telegram handle.
+_DEFAULT_FIELD_ACCESS_POLICY: Dict[str, str] = {
+    # Profile — always safe to inject in every prompt
+    "profile.display_name": "always",
+    "profile.locale": "always",
+    "profile.timezone": "always",
+    # Profile — on demand
+    "profile.birthday": "on_demand",
+    "profile.company": "on_demand",
+    "profile.role": "on_demand",
+    "profile.bio": "on_demand",
+    "profile.website": "on_demand",
+    "profile.linkedin": "on_demand",
+    # Communication — sensitive by default
+    "communication.phone_e164": "sensitive",
+    "communication.whatsapp_e164": "sensitive",
+    "communication.telegram_username": "sensitive",
+    # Communication — routing preferences (on demand)
+    "communication.preferred_contact_channel": "on_demand",
+    "communication.preferred_call_channel": "on_demand",
+}
+
+
+def _seed_field_access_policy(stored: Dict[str, str]) -> Dict[str, str]:
+    """Fill in missing entries from the default policy. Stored user
+    overrides win — we never flip a user-set policy back to default.
+    Returns a fresh dict (stored values unchanged)."""
+    out: Dict[str, str] = dict(_DEFAULT_FIELD_ACCESS_POLICY)
+    if isinstance(stored, dict):
+        for k, v in stored.items():
+            if v in ("always", "on_demand", "sensitive"):
+                out[str(k)] = v
+    return out
 
 
 @router.get("/secrets", dependencies=[Depends(require_api_key)])

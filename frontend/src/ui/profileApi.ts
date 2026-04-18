@@ -39,6 +39,38 @@ export type UserProfile = {
   default_spicy_strength: number // 0..1
   allowed_content_tags: string[]
   blocked_content_tags: string[]
+
+  // Communication — additive; may be absent from old backends.
+  // Renderers MUST tolerate undefined and fall through to defaults.
+  communication?: CommunicationInfo
+  field_access_policy?: Record<string, FieldAccessTier>
+}
+
+export type FieldAccessTier = 'always' | 'on_demand' | 'sensitive'
+
+export type CommunicationChannel = 'none' | 'phone' | 'whatsapp' | 'telegram'
+export type CallChannel = 'none' | 'phone' | 'voip_app_did'
+
+export type CommunicationInfo = {
+  phone_e164: string
+  whatsapp_e164: string
+  telegram_username: string
+  preferred_contact_channel: CommunicationChannel
+  preferred_call_channel: CallChannel
+  allow_ai_outbound: boolean
+}
+
+/** Factory for an empty CommunicationInfo — used when the backend
+ *  response predates the feature and the UI needs a safe baseline. */
+export function emptyCommunicationInfo(): CommunicationInfo {
+  return {
+    phone_e164: '',
+    whatsapp_e164: '',
+    telegram_username: '',
+    preferred_contact_channel: 'none',
+    preferred_call_channel: 'none',
+    allow_ai_outbound: false,
+  }
 }
 
 export type SecretListItem = {
