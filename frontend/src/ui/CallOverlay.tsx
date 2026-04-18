@@ -1375,84 +1375,8 @@ function CallOverlayInner({
   )
 }
 
-
-// ── Call-ended toast — the "you just hung up, want to call back?" chip
-
-export interface CallEndedToastProps {
-  /** Duration of the live phase (seconds). Rendered as "42s" / "3m 12s". */
-  durationSec: number
-  onSpeakAgain: () => void
-  onDismiss: () => void
-}
-
-function formatEndedDuration(s: number): string {
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  const rest = s % 60
-  return rest === 0 ? `${m}m` : `${m}m ${rest}s`
-}
-
-export const CallEndedToast: React.FC<CallEndedToastProps> = ({
-  durationSec, onSpeakAgain, onDismiss,
-}) => {
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="fixed bottom-6 left-1/2 z-[95] -translate-x-1/2"
-      style={{
-        animation: 'hp-call-toast-in 220ms ease-out',
-        fontFamily: HP_CALL.font,
-      }}
-    >
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 12,
-        padding: '8px 10px 8px 14px',
-        borderRadius: 9999,
-        background: HP_CALL.surface,
-        border: `1px solid ${HP_CALL.border}`,
-        boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04)',
-        color: HP_CALL.text,
-      }}>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          fontSize: 13, fontWeight: 500, color: HP_CALL.text2,
-        }}>
-          <span style={{
-            width: 6, height: 6, borderRadius: '50%',
-            background: HP_CALL.text3,
-          }} />
-          Call ended · <span style={{
-            color: HP_CALL.text,
-            fontFamily: HP_CALL.fontTabular,
-            fontVariantNumeric: 'tabular-nums',
-          }}>{formatEndedDuration(durationSec)}</span>
-        </span>
-        <button
-          type="button"
-          onClick={onSpeakAgain}
-          style={{
-            height: 30, padding: '0 14px', borderRadius: 9999,
-            background: HP_CALL.accent,
-            color: '#052c33', border: 'none', cursor: 'pointer',
-            fontSize: 12, fontWeight: 600, letterSpacing: 0.2,
-          }}
-        >
-          Speak again
-        </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="Dismiss"
-          style={{
-            width: 28, height: 28, borderRadius: 9999,
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            color: HP_CALL.text3, fontSize: 18, lineHeight: 1, padding: 0,
-          }}
-        >
-          ×
-        </button>
-      </div>
-    </div>
-  )
-}
+// ── Call-ended toast removed ──────────────────────────────────────
+// The former CallEndedToast has been retired. The inline
+// CallEventRow (rendered directly in the chat stream) now carries
+// the post-call record + Resume affordance, so a floating toast
+// would be redundant. Kept this comment as a reviewer breadcrumb.

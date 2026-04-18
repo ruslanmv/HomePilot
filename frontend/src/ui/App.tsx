@@ -1675,83 +1675,9 @@ function useCopyMessage(timeoutMs = 900) {
   return { copied, copy }
 }
 
-/**
- * CallMemoryCard — enterprise-style inline record of a just-ended
- * call. Rendered inside the chat stream as a neutral system event
- * rather than a floating toast or an emotional "moment" card. The
- * tone is auditable, not expressive: the card states what happened,
- * when, and offers one standard system action to resume.
- */
-function CallMemoryCard({
-  durationSec,
-  endedAt,
-  onSpeakAgain,
-}: {
-  durationSec: number
-  endedAt?: number
-  onSpeakAgain?: () => void
-}) {
-  const fmt = (s: number) => {
-    if (s < 60) return `${s}s`
-    const m = Math.floor(s / 60)
-    const r = s % 60
-    return r === 0 ? `${m}m` : `${m}m ${r}s`
-  }
-  const stamp = endedAt
-    ? new Date(endedAt).toLocaleTimeString(undefined, {
-        hour: 'numeric', minute: '2-digit',
-      })
-    : ''
-  return (
-    <div
-      className="flex items-start gap-5 w-full hp-fade-in"
-      role="note"
-      aria-label="Call record"
-    >
-      <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 text-white/50 flex items-center justify-center flex-shrink-0 mt-1">
-        <Phone size={12} />
-      </div>
-      <div
-        className="max-w-[85%] rounded-[12px] px-4 py-3 bg-white/[0.03] border border-white/10"
-      >
-        {/* Meta row — factual header, low emphasis */}
-        <div className="flex items-center gap-2 text-[11px] text-white/50">
-          <span>Call</span>
-          <span className="text-white/25">·</span>
-          <span
-            className="font-mono tabular-nums text-white/70"
-            style={{ fontFeatureSettings: '"tnum"' }}
-          >
-            {fmt(durationSec)}
-          </span>
-          {stamp ? (
-            <>
-              <span className="text-white/25">·</span>
-              <span className="font-mono tabular-nums text-white/50">{stamp}</span>
-            </>
-          ) : null}
-        </div>
-        {/* Body — neutral factual line, no emotional copy */}
-        <div className="mt-1.5 text-[13.5px] leading-snug text-white/75">
-          Voice session completed
-        </div>
-        {/* CTA — system-style outline button, same weight as header icons */}
-        <div className="mt-3">
-          <button
-            type="button"
-            onClick={onSpeakAgain}
-            disabled={!onSpeakAgain}
-            className="inline-flex items-center gap-1.5 rounded-md bg-transparent hover:bg-white/5 border border-white/15 hover:border-white/25 text-white/80 hover:text-white px-3 py-1 text-[12px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            aria-label="Resume call"
-          >
-            <Phone size={12} />
-            Resume call
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
+// CallMemoryCard removed — superseded by CallEventRow
+// (frontend/src/ui/phone/CallEventRow.tsx). The legacy card was an
+// unused local component that predated the phone/ primitives split.
 
 
 function ChatState({
