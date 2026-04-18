@@ -135,6 +135,42 @@ export type Msg = {
   }
 }
 
+/**
+ * Hydrate a persisted message's ``media`` field into the pieces the
+ * Msg type carries. For call-memory rows (produced by the call-end
+ * POST in the CallOverlay handler below) the payload lives under
+ * ``media.call_memory`` — we lift it into the top-level ``callMemory``
+ * property so the existing PostCallCard render branch picks it up
+ * transparently.
+ *
+ * For every other media shape (images, video_url, …) this returns
+ * ``{ media: raw }`` unchanged, so regular messages are untouched.
+ */
+function hydratePersistedMessageMedia(raw: unknown): {
+  media: Msg['media']
+  callMemory?: Msg['callMemory']
+} {
+  if (!raw || typeof raw !== 'object') return { media: undefined }
+  const m = raw as Record<string, unknown>
+  if (m.type === 'call_memory' && m.call_memory && typeof m.call_memory === 'object') {
+    const cm = m.call_memory as Record<string, unknown>
+    return {
+      media: undefined,
+      callMemory: {
+        durationSec: Number(cm.durationSec ?? 0) || 0,
+        endedAt: typeof cm.endedAt === 'number' ? cm.endedAt : undefined,
+        personaName: typeof cm.personaName === 'string' ? cm.personaName : undefined,
+        transcript: Array.isArray(cm.transcript)
+          ? (cm.transcript as Array<{ who?: string; text?: string }>)
+              .filter((t) => (t.who === 'user' || t.who === 'assistant') && typeof t.text === 'string')
+              .map((t) => ({ who: t.who as 'user' | 'assistant', text: String(t.text) }))
+          : undefined,
+      },
+    }
+  }
+  return { media: raw as Msg['media'] }
+}
+
 // ---------------------------------------------------------------------------
 // ViewAngleChips — clickable angle selectors rendered under chat images
 // when the message has an interactive view_pack.
@@ -186,6 +222,25 @@ function ViewAngleChips({
       })}
     </div>
   )
+}
+
+/**
+ * Prevent duplicate transcript surfaces in chat. When a call-memory
+ * card includes an inline transcript, those same turns have already
+ * been rendered in the thread; collapse them so the transcript lives
+ * only inside the card.
+ */
+function collapseCallTurns<T extends Msg>(msgs: T[]): T[] {
+  const out: T[] = []
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i]
+    const n = m.callMemory?.transcript?.length ?? 0
+    if (n > 0 && out.length >= n) {
+      out.splice(out.length - n, n)
+    }
+    out.push(m)
+  }
+  return out
 }
 
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio' | 'avatar' | 'teams'
@@ -1715,6 +1770,7 @@ function ChatState({
   onRemoveAttachment?: () => void
 }) {
   const { copied, copy } = useCopyMessage()
+  const displayMessages = useMemo(() => collapseCallTurns(messages), [messages])
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
   const handleStartCall = useCallback(() => {
     onStartCall?.()
@@ -1817,7 +1873,7 @@ function ChatState({
       )}
 
       <div className={`flex-1 overflow-y-auto px-4 ${chatSettings.incognito ? 'pt-3' : 'pt-14'} pb-8 space-y-8`}>
-        {messages.map((m) => (
+        {displayMessages.map((m) => (
           <div
             key={m.id}
             className={`flex gap-5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -2440,13 +2496,17 @@ export default function App() {
             authHeaders
           )
           if (convData.ok && convData.messages && convData.messages.length > 0) {
-            const restored = convData.messages.map((m, idx) => ({
-              id: `restored-${idx}`,
-              role: m.role as 'user' | 'assistant',
-              text: m.content,
-              animate: false,
-              media: m.media || undefined,
-            }))
+            const restored = convData.messages.map((m, idx) => {
+              const h = hydratePersistedMessageMedia(m.media)
+              return {
+                id: `restored-${idx}`,
+                role: m.role as 'user' | 'assistant',
+                text: m.content,
+                animate: false,
+                media: h.media,
+                ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+              }
+            })
             setVoiceMessages(restored)
             // Mark last message as already spoken so TTS doesn't replay history
             lastSpokenMessageIdRef.current = restored[restored.length - 1].id
@@ -2961,13 +3021,17 @@ export default function App() {
 
         setConversationId(convId)
         setMessages(
-          data.messages.map((m, idx) => ({
-            id: `loaded-${idx}`,
-            role: m.role as 'user' | 'assistant',
-            text: m.content,
-            animate: false,
-            media: m.media || undefined,
-          }))
+          data.messages.map((m, idx) => {
+            const h = hydratePersistedMessageMedia(m.media)
+            return {
+              id: `loaded-${idx}`,
+              role: m.role as 'user' | 'assistant',
+              text: m.content,
+              animate: false,
+              media: h.media,
+              ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+            }
+          })
         )
       }
     } catch (err) {
@@ -3053,13 +3117,17 @@ export default function App() {
                 if (convData.ok && convData.messages && convData.messages.length > 0) {
                   setChatConversationId(lastConvId)
                   setChatMessages(
-                    convData.messages.map((m, idx) => ({
-                      id: `restored-${idx}`,
-                      role: m.role as 'user' | 'assistant',
-                      text: m.content,
-                      animate: false,
-                      media: m.media || undefined,
-                    }))
+                    convData.messages.map((m, idx) => {
+                      const h = hydratePersistedMessageMedia(m.media)
+                      return {
+                        id: `restored-${idx}`,
+                        role: m.role as 'user' | 'assistant',
+                        text: m.content,
+                        animate: false,
+                        media: h.media,
+                        ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+                      }
+                    })
                   )
                 }
               } catch {
@@ -4685,7 +4753,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         {/* Top-right Project Indicator - Only shown in chat mode when a project is active */}
         {mode === 'chat' && (
-        <header className="absolute top-0 left-0 right-0 pr-[9rem] pl-5 py-3 z-20 flex items-center justify-end gap-3 pointer-events-none">
+        <header className="absolute top-0 left-0 right-0 pl-5 pr-[9rem] py-3 z-20 flex items-center justify-start gap-3 pointer-events-none">
           {/* Project Indicator */}
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')
@@ -5003,13 +5071,17 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                       if (convData.ok && convData.messages && convData.messages.length > 0) {
                         setConversationId(lastConvId)
                         setMessages(
-                          convData.messages.map((m, idx) => ({
-                            id: `restored-${idx}`,
-                            role: m.role as 'user' | 'assistant',
-                            text: m.content,
-                            animate: false,
-                            media: m.media || undefined,
-                          }))
+                          convData.messages.map((m, idx) => {
+                            const h = hydratePersistedMessageMedia(m.media)
+                            return {
+                              id: `restored-${idx}`,
+                              role: m.role as 'user' | 'assistant',
+                              text: m.content,
+                              animate: false,
+                              media: h.media,
+                              ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+                            }
+                          })
                         )
                       } else {
                         // Conversation was empty/deleted — start fresh
@@ -5059,13 +5131,17 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                         )
                         if (convData.ok && convData.messages && convData.messages.length > 0) {
                           setMessages(
-                            convData.messages.map((m, idx) => ({
-                              id: `restored-${idx}`,
-                              role: m.role as 'user' | 'assistant',
-                              text: m.content,
-                              animate: false,
-                              media: m.media || undefined,
-                            }))
+                            convData.messages.map((m, idx) => {
+                              const h = hydratePersistedMessageMedia(m.media)
+                              return {
+                                id: `restored-${idx}`,
+                                role: m.role as 'user' | 'assistant',
+                                text: m.content,
+                                animate: false,
+                                media: h.media,
+                                ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+                              }
+                            })
                           )
                         }
                       } catch {
@@ -5397,6 +5473,39 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               },
             },
           ])
+          // ADDITIVE persistence — POST the card payload to the
+          // backend so a page reload still shows it. Silent on
+          // failure: if the backend is old (no POST endpoint) or
+          // we don't have a conversation id, the client-only card
+          // above is still rendered — exactly the behaviour before
+          // this effect existed.
+          const convId = chatConversationId
+          if (convId) {
+            try {
+              const tok = localStorage.getItem('homepilot_auth_token') || ''
+              void fetch(`${settings.backendUrl.replace(/\/+$/, '')}/conversations/${convId}/messages`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                  'content-type': 'application/json',
+                  ...(tok ? { authorization: `Bearer ${tok}` } : {}),
+                },
+                body: JSON.stringify({
+                  role: 'system',
+                  content: '',
+                  media: {
+                    type: 'call_memory',
+                    call_memory: {
+                      durationSec,
+                      endedAt,
+                      personaName,
+                      transcript,
+                    },
+                  },
+                }),
+              }).catch(() => { /* non-fatal — synthetic card is enough */ })
+            } catch { /* ignore */ }
+          }
         }}
         personaName={currentProject?.name || 'Assistant'}
         messages={chatMessages}

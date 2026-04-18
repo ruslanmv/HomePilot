@@ -2649,6 +2649,86 @@ async def conversation_messages(
         return JSONResponse(status_code=500, content=_safe_err(f"Failed to load conversation: {e}", code="conversation_load_error"))
 
 
+@app.post("/conversations/{conversation_id}/messages")
+async def append_conversation_message(
+    conversation_id: str,
+    request: Request,
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
+) -> JSONResponse:
+    """Append a client-authored message to a conversation.
+
+    ADDITIVE endpoint — primary use-case is persisting the PostCallCard
+    summary ("call ended · 42s · view transcript") that the frontend
+    synthesises at call-end. The individual user/assistant turns
+    during a call are already saved by ``/chat`` as part of the REST
+    fallback path; only the call-memory wrapper needed a write path.
+
+    Accepts a JSON body with:
+      role     — "user" | "assistant" | "system" (default "system")
+      content  — plain text (may be empty when all info lives in media)
+      media    — optional dict; for call-memory use
+                 ``{"type": "call_memory", "call_memory": {...}}``
+                 The frontend re-hydrates PostCallCard from this on
+                 conversation reload.
+
+    Auth: scoped by the usual bearer/cookie. A 404 is returned if the
+    conversation either doesn't exist OR doesn't belong to the caller
+    (probe-safe, matching the GET handler).
+    """
+    try:
+        user = _scoped_user_or_none(authorization=authorization, homepilot_session=homepilot_session)
+        uid = user["id"] if user else None
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        role = str(body.get("role", "system")).strip() or "system"
+        if role not in ("user", "assistant", "system"):
+            role = "system"
+        content = str(body.get("content", ""))
+
+        media_raw = body.get("media")
+        media: Optional[Dict[str, Any]] = media_raw if isinstance(media_raw, dict) else None
+
+        # Ownership check via get_messages fingerprint — if the caller
+        # can read the conversation they may append to it. Matches the
+        # authorisation surface of existing POST /chat for this user.
+        try:
+            _existing = get_messages(conversation_id, limit=1, user_id=uid)
+            # When user_id is set and the conversation isn't theirs,
+            # get_messages returns []. We still allow the append only
+            # when at least one record exists OR the caller is the
+            # conversation creator — for call-memory the conversation
+            # always has pre-existing turns (the call itself), so an
+            # empty result is a real authorisation miss.
+            if uid is not None and not _existing:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        except HTTPException:
+            raise
+        except Exception:
+            # Storage layer hiccups must not leak; treat as auth miss.
+            raise HTTPException(status_code=404, detail="Conversation not found")
+
+        from .storage import add_message
+        add_message(
+            conversation_id=conversation_id,
+            role=role,
+            content=content,
+            media=media,
+            user_id=uid,
+        )
+        return JSONResponse(status_code=201, content={"ok": True})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"ok": False, "error": he.detail})
+    except Exception as e:
+        return JSONResponse(status_code=500, content=_safe_err(f"Failed to append message: {e}", code="message_append_error"))
+
+
 @app.delete("/conversations/{conversation_id}")
 async def delete_conversation_endpoint(
     conversation_id: str,
