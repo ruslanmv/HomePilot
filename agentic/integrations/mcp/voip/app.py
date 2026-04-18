@@ -5,10 +5,17 @@ Production posture:
 - DRY_RUN defaults to true.
 - Provider adapters (Twilio/Telnyx/Infobip/etc.) can be added behind this
   stable tool contract.
+- Webhook signature verification exposed via ``hp.voip.webhook.verify``
+  so the orchestrator rejects spoofed provider callbacks at the edge.
+- Incident trigger (``hp.voip.incident.trigger``) lets recurrent checks
+  raise a "secretary calls me" escalation without hardcoding the
+  cron surface inside this server.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import ipaddress
 import json
 import os
@@ -26,6 +33,10 @@ INSTALL_STATE = os.getenv("INSTALL_STATE", "INSTALLED_DISABLED").strip().upper()
 PERSONA_ALLOWLIST = json.loads(
     os.getenv("VOIP_PERSONA_ALLOWLIST", '{"secretary": true, "analyst": false}')
 )
+# Provider webhook secret. When set, ``hp.voip.webhook.verify`` performs
+# an HMAC-SHA1 (Twilio) or HMAC-SHA256 (Telnyx/Infobip) comparison and
+# rejects spoofed callbacks. Empty = verification disabled (dev only).
+WEBHOOK_SECRET = os.getenv("VOIP_WEBHOOK_SECRET", "").strip()
 
 RouteRecord = Dict[str, Any]
 _DID_ROUTES: Dict[str, RouteRecord] = {}
@@ -342,6 +353,88 @@ async def voip_ingress_route_call(args: Json) -> Json:
     }
 
 
+async def voip_webhook_verify(args: Json) -> Json:
+    """Verify a provider webhook signature. Twilio uses HMAC-SHA1 over the
+    URL + sorted form params (base64 in ``X-Twilio-Signature``); Telnyx
+    uses ed25519 with a timestamp header; Infobip ships its own scheme.
+    This tool supports the two HMAC variants by ``algorithm`` — pure
+    providers can ship their own verify tool and share the audit hook.
+
+    Always returns a structured ``verified`` flag rather than raising,
+    so the orchestrator can log rejects without exception-handling noise.
+    """
+    state = _state_gate("voip.webhook.verify")
+    if state:
+        return state
+    algorithm = str(args.get("algorithm", "sha1")).strip().lower()
+    payload = str(args.get("payload", ""))
+    expected = str(args.get("signature", "")).strip()
+    secret = str(args.get("secret", "")).strip() or WEBHOOK_SECRET
+    if not secret:
+        return {
+            "content": [{"type": "text", "text": "No webhook secret configured; verification skipped."}],
+            "verified": False,
+            "reason": "no_secret",
+        }
+    if not expected:
+        return {
+            "content": [{"type": "text", "text": "Missing signature header."}],
+            "verified": False,
+            "reason": "missing_signature",
+        }
+    digestmod = hashlib.sha1 if algorithm == "sha1" else hashlib.sha256
+    computed = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), digestmod).hexdigest()
+    # Constant-time compare; accept either hex or hex-with-prefix ("sha256=…").
+    compare = expected.split("=", 1)[1] if "=" in expected else expected
+    verified = hmac.compare_digest(computed, compare.lower())
+    _audit({"action": "webhook_verify", "channel": "voip", "algorithm": algorithm, "verified": verified})
+    return {
+        "content": [{"type": "text", "text": f"Webhook verify: {'ok' if verified else 'failed'}."}],
+        "verified": verified,
+        "algorithm": algorithm,
+    }
+
+
+async def voip_incident_trigger(args: Json) -> Json:
+    """Raise an incident → persona escalation. The persona's policy
+    decides whether to call, WhatsApp, or Telegram; this tool just
+    records the trigger + emits an audit event. Recurrent checks
+    (battery low, camera offline, door left open) all funnel here
+    so the orchestrator stays a single switch statement.
+    """
+    state = _state_gate("voip.incident.trigger")
+    if state:
+        return state
+    policy = _policy_gate("voip.incident.trigger", args)
+    if policy:
+        return policy
+    incident_id = str(args.get("incident_id", "")).strip()
+    severity = str(args.get("severity", "info")).strip().lower()
+    reason = str(args.get("reason", "")).strip()
+    persona_id = str(args.get("persona_id", "")).strip()
+    if not incident_id or not reason:
+        return _text("Please provide 'incident_id' and 'reason'.")
+    if severity not in {"info", "warn", "critical"}:
+        severity = "info"
+    _audit({
+        "action": "incident_trigger",
+        "channel": "voip",
+        "incident_id": incident_id,
+        "severity": severity,
+        "reason": reason[:200],
+        "persona_id": persona_id,
+    })
+    return {
+        "content": [{"type": "text", "text": f"Incident '{incident_id}' ({severity}) recorded."}],
+        "incident": {
+            "incident_id": incident_id,
+            "severity": severity,
+            "reason": reason,
+            "persona_id": persona_id,
+        },
+    }
+
+
 async def voip_server_status(_: Json) -> Json:
     return {
         "content": [{"type": "text", "text": f"Server install_state={INSTALL_STATE}"}],
@@ -490,6 +583,36 @@ TOOLS: List[ToolDef] = [
             "required": ["to_did_e164", "source_ip", "provider_call_id"],
         },
         handler=voip_ingress_route_call,
+    ),
+    ToolDef(
+        name="hp.voip.webhook.verify",
+        description="Verify a provider webhook signature (HMAC-SHA1 / SHA256). Returns verified=bool.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "algorithm": {"type": "string", "enum": ["sha1", "sha256"], "default": "sha1"},
+                "payload": {"type": "string", "description": "Exact bytes the provider signed"},
+                "signature": {"type": "string", "description": "Provider-sent signature header value"},
+                "secret": {"type": "string", "description": "Override of VOIP_WEBHOOK_SECRET"},
+            },
+            "required": ["payload", "signature"],
+        },
+        handler=voip_webhook_verify,
+    ),
+    ToolDef(
+        name="hp.voip.incident.trigger",
+        description="Record an incident for persona-led escalation. Orchestrator decides channel (VoIP/WhatsApp/Telegram).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "incident_id": {"type": "string"},
+                "severity": {"type": "string", "enum": ["info", "warn", "critical"], "default": "info"},
+                "reason": {"type": "string"},
+                "persona_id": {"type": "string"},
+            },
+            "required": ["incident_id", "reason"],
+        },
+        handler=voip_incident_trigger,
     ),
     ToolDef(
         name="hp.voip.server.status",

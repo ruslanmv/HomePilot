@@ -190,3 +190,75 @@ async def test_did_route_respects_single_did_policy():
         voip_app.WRITE_ENABLED = original_write
         voip_app.APP_DID = original_did
     assert "single-did policy" in data["result"]["content"][0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_webhook_verify_accepts_valid_hmac():
+    import hashlib
+    import hmac
+    original_state = voip_app.INSTALL_STATE
+    voip_app.INSTALL_STATE = "ENABLED"
+    try:
+        payload = "call_id=abc&status=completed"
+        secret = "test-secret"
+        sig = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        data = await _post_rpc(
+            "tools/call",
+            {
+                "name": "hp.voip.webhook.verify",
+                "arguments": {
+                    "algorithm": "sha256",
+                    "payload": payload,
+                    "signature": sig,
+                    "secret": secret,
+                },
+            },
+        )
+    finally:
+        voip_app.INSTALL_STATE = original_state
+    assert data["result"]["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_webhook_verify_rejects_bad_hmac():
+    original_state = voip_app.INSTALL_STATE
+    voip_app.INSTALL_STATE = "ENABLED"
+    try:
+        data = await _post_rpc(
+            "tools/call",
+            {
+                "name": "hp.voip.webhook.verify",
+                "arguments": {
+                    "algorithm": "sha1",
+                    "payload": "anything",
+                    "signature": "0000000000000000000000000000000000000000",
+                    "secret": "test-secret",
+                },
+            },
+        )
+    finally:
+        voip_app.INSTALL_STATE = original_state
+    assert data["result"]["verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_incident_trigger_records_audit_event():
+    original_state = voip_app.INSTALL_STATE
+    voip_app.INSTALL_STATE = "ENABLED"
+    try:
+        data = await _post_rpc(
+            "tools/call",
+            {
+                "name": "hp.voip.incident.trigger",
+                "arguments": {
+                    "incident_id": "door_left_open_42",
+                    "severity": "warn",
+                    "reason": "front door open 10 min",
+                    "persona_id": "secretary",
+                },
+            },
+        )
+    finally:
+        voip_app.INSTALL_STATE = original_state
+    assert data["result"]["incident"]["severity"] == "warn"
+    assert data["result"]["incident"]["incident_id"] == "door_left_open_42"
