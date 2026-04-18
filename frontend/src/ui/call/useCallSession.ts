@@ -41,8 +41,11 @@ import {
 import {
   CallSocket,
   type AssistantBackchannelPayload,
+  type AssistantCancelPayload,
   type AssistantFillerPayload,
+  type AssistantPartialPayload,
   type AssistantTranscriptPayload,
+  type AssistantTurnEndPayload,
   type CallCloseReason,
   type CallLifecycleStatus,
 } from './callSocket'
@@ -87,12 +90,25 @@ export interface CallSessionHandle {
   end: () => void
   /** Bookkeeping. Server persists the *type* of the event only. */
   sendUiState: (p: { muted?: boolean; speaker_on?: boolean; backgrounded?: boolean }) => void
+  /** Phase 2 — interim user STT (secondary barge-in signal). */
+  sendTranscriptPartial: (p: { text: string; stable_prefix_len?: number }) => void
+  /** Phase 3 — explicit user interrupt carrying the active turn_id. */
+  sendBargeIn: (turn_id: string) => void
+  /** Whether this session negotiated streaming. Pulled from the
+   *  session-create capabilities response. False = unary mode. */
+  streamingNegotiated: boolean
+  /** Whether this session negotiated barge-in (implies streaming). */
+  bargeInNegotiated: boolean
   /** Subscribe helpers — each returns an unsubscribe fn. Stable
    *  identities via useRef-backed implementation so the caller can
    *  pass them to useEffect deps without re-subscription storms. */
   onAssistantTranscript: (fn: (p: AssistantTranscriptPayload) => void) => () => void
   onAssistantFiller: (fn: (p: AssistantFillerPayload) => void) => () => void
   onAssistantBackchannel: (fn: (p: AssistantBackchannelPayload) => void) => () => void
+  /** Phase 2 subscribes. */
+  onAssistantPartial: (fn: (p: AssistantPartialPayload) => void) => () => void
+  onAssistantTurnEnd: (fn: (p: AssistantTurnEndPayload) => void) => () => void
+  onAssistantCancel: (fn: (p: AssistantCancelPayload) => void) => () => void
 }
 
 export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
@@ -113,6 +129,16 @@ export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
   const txListeners = useRef(new Set<(p: AssistantTranscriptPayload) => void>())
   const fillerListeners = useRef(new Set<(p: AssistantFillerPayload) => void>())
   const bcListeners = useRef(new Set<(p: AssistantBackchannelPayload) => void>())
+  // Phase 2/3 listener sets. Kept separate so an old subscribe set
+  // doesn't churn when a new one mounts (stream wire-up rebinds often
+  // during CallOverlay renders).
+  const partialListeners = useRef(new Set<(p: AssistantPartialPayload) => void>())
+  const turnEndListeners = useRef(new Set<(p: AssistantTurnEndPayload) => void>())
+  const cancelListeners = useRef(new Set<(p: AssistantCancelPayload) => void>())
+  // Negotiated modes — re-derived on session create, stashed here so
+  // every render reads the same value without re-running the effect.
+  const [streamingNegotiated, setStreamingNegotiated] = useState(false)
+  const [bargeInNegotiated, setBargeInNegotiated] = useState(false)
 
   // Ref'd primitive so the session-create effect doesn't re-trigger
   // when the request object identity changes every render.
@@ -195,6 +221,22 @@ export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
       sock.on('assistantBackchannel', (p) => {
         for (const fn of bcListeners.current) fn(p)
       })
+      // Phase 2/3 event fan-outs.
+      sock.on('assistantPartial', (p) => {
+        for (const fn of partialListeners.current) fn(p)
+      })
+      sock.on('assistantTurnEnd', (p) => {
+        for (const fn of turnEndListeners.current) fn(p)
+      })
+      sock.on('assistantCancel', (p) => {
+        for (const fn of cancelListeners.current) fn(p)
+      })
+
+      // Reflect negotiated modes from the session-create response.
+      const caps = handshake.capabilities as
+        | { streaming?: boolean; barge_in?: boolean } | undefined
+      setStreamingNegotiated(!!caps?.streaming)
+      setBargeInNegotiated(!!caps?.streaming && !!caps?.barge_in)
 
       sock.connect()
     }
@@ -224,6 +266,17 @@ export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
     [],
   )
 
+  const sendTranscriptPartial = useCallback(
+    (p: { text: string; stable_prefix_len?: number }) => {
+      socketRef.current?.sendTranscriptPartial(p)
+    },
+    [],
+  )
+
+  const sendBargeIn = useCallback((turn_id: string) => {
+    socketRef.current?.sendBargeIn(turn_id)
+  }, [])
+
   const onAssistantTranscript = useCallback(
     (fn: (p: AssistantTranscriptPayload) => void) => {
       txListeners.current.add(fn)
@@ -242,6 +295,24 @@ export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
       return () => { bcListeners.current.delete(fn) }
     }, [],
   )
+  const onAssistantPartial = useCallback(
+    (fn: (p: AssistantPartialPayload) => void) => {
+      partialListeners.current.add(fn)
+      return () => { partialListeners.current.delete(fn) }
+    }, [],
+  )
+  const onAssistantTurnEnd = useCallback(
+    (fn: (p: AssistantTurnEndPayload) => void) => {
+      turnEndListeners.current.add(fn)
+      return () => { turnEndListeners.current.delete(fn) }
+    }, [],
+  )
+  const onAssistantCancel = useCallback(
+    (fn: (p: AssistantCancelPayload) => void) => {
+      cancelListeners.current.add(fn)
+      return () => { cancelListeners.current.delete(fn) }
+    }, [],
+  )
 
   return useMemo<CallSessionHandle>(() => ({
     status,
@@ -251,12 +322,22 @@ export function useCallSession(args: UseCallSessionArgs): CallSessionHandle {
     sendTranscript,
     end,
     sendUiState,
+    sendTranscriptPartial,
+    sendBargeIn,
+    streamingNegotiated,
+    bargeInNegotiated,
     onAssistantTranscript,
     onAssistantFiller,
     onAssistantBackchannel,
+    onAssistantPartial,
+    onAssistantTurnEnd,
+    onAssistantCancel,
   }), [
     status, callState, closeReason, lastError,
     sendTranscript, end, sendUiState,
+    sendTranscriptPartial, sendBargeIn,
+    streamingNegotiated, bargeInNegotiated,
     onAssistantTranscript, onAssistantFiller, onAssistantBackchannel,
+    onAssistantPartial, onAssistantTurnEnd, onAssistantCancel,
   ])
 }

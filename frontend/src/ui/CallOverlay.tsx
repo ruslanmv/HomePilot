@@ -24,6 +24,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVoiceController, type VoiceState } from './voice/useVoiceController'
 import { useCallSession } from './call/useCallSession'
+import { createStreamingTts, type StreamingTts } from './call/streamTts'
+import { useBargeInDetector } from './call/bargeIn'
 
 export type CallState =
   | 'dialing'
@@ -719,10 +721,16 @@ function CallOverlayInner({
     request: useMemo(() => ({
       conversation_id: backend?.conversationId ?? null,
       persona_id: backend?.personaId ?? null,
-      entry_mode: 'call',
+      entry_mode: 'call' as const,
+      // Declare Phase 2/3 client capability. Server replies with
+      // its own capability advertisement; effective mode is the
+      // intersection (useCallSession reads capabilities from the
+      // session-create response).
       device_info: {
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         platform: navigator.platform,
+        streaming: true,
+        barge_in: true,
       },
     }), [backend?.conversationId, backend?.personaId]),
   })
@@ -755,6 +763,12 @@ function CallOverlayInner({
   // Speak assistant replies that land over the WS. (In the chat-REST
   // fallback path, the existing assistant-message pipeline already
   // triggers TTS — so this effect is a no-op there.)
+  //
+  // In STREAMING mode this stays a no-op for the assistant turn
+  // (partials feed streamTts below). It still fires for any
+  // transcript.final the server emits OUTSIDE a streamed turn —
+  // e.g. the opening greeting, which the current ws.py path sends
+  // as transcript.final regardless of streaming mode.
   useEffect(() => {
     if (!useBackend) return
     const unsub = session.onAssistantTranscript((p) => {
@@ -770,6 +784,88 @@ function CallOverlayInner({
     })
     return unsub
   }, [useBackend, session])
+
+  // ── Phase 2: streaming TTS pipeline ───────────────────────────
+  // Holds one streamTts instance per mounted overlay. Stopped on
+  // unmount so a re-entry creates a fresh engine.
+  const ttsRef = useRef<StreamingTts | null>(null)
+  useEffect(() => {
+    if (!useBackend || !session.streamingNegotiated) {
+      ttsRef.current = null
+      return
+    }
+    const tts = createStreamingTts()
+    ttsRef.current = tts
+    return () => {
+      try { tts.stop() } catch { /* ignore */ }
+      ttsRef.current = null
+    }
+  }, [useBackend, session.streamingNegotiated])
+
+  // Track the currently-streaming turn_id so the barge-in path can
+  // address the right turn without racing a new one.
+  const currentTurnIdRef = useRef<string | null>(null)
+
+  // Partial deltas → streamTts.appendDelta. Each delta triggers
+  // sentence-boundary flushing inside the TTS engine; callers don't
+  // see the buffering.
+  useEffect(() => {
+    if (!useBackend || !session.streamingNegotiated) return
+    return session.onAssistantPartial((p) => {
+      currentTurnIdRef.current = p.turn_id
+      ttsRef.current?.appendDelta(p.delta)
+    })
+  }, [useBackend, session])
+
+  // Turn end → flush residual buffer + clear the active turn id.
+  useEffect(() => {
+    if (!useBackend || !session.streamingNegotiated) return
+    return session.onAssistantTurnEnd((p) => {
+      if (p.reason === 'cancelled' || p.reason === 'error') {
+        ttsRef.current?.stop()
+      } else {
+        ttsRef.current?.flush()
+      }
+      if (currentTurnIdRef.current === p.turn_id) {
+        currentTurnIdRef.current = null
+      }
+    })
+  }, [useBackend, session])
+
+  // Server-initiated cancel (barge-in ack) → stop TTS immediately.
+  // Must land inside ~50 ms of receipt (§ 5.3 contract).
+  useEffect(() => {
+    if (!useBackend || !session.streamingNegotiated) return
+    return session.onAssistantCancel((_p) => {
+      ttsRef.current?.stop()
+    })
+  }, [useBackend, session])
+
+  // ── Phase 3: barge-in VAD tap ─────────────────────────────────
+  // Audio level mirror — useVoiceController returns fresh values
+  // every render; we stash the latest into a ref so the rAF loop
+  // inside useBargeInDetector always sees the current value.
+  const voiceLevelRef = useRef(0)
+  useEffect(() => {
+    voiceLevelRef.current = voice.audioLevel
+  }, [voice.audioLevel])
+
+  // Re-evaluated each render; the detector's rAF loop reads its own
+  // refs so identity changes don't thrash.
+  const bargeInEnabled =
+    useBackend &&
+    session.bargeInNegotiated &&
+    (ttsRef.current?.isSpeaking ?? false)
+
+  useBargeInDetector({
+    audioLevelRef: voiceLevelRef,
+    enabled: bargeInEnabled,
+    onBargeIn: () => {
+      const tid = currentTurnIdRef.current
+      ttsRef.current?.stop()
+      if (tid) session.sendBargeIn(tid)
+    },
+  })
 
   // Call-center-style auto-greeting — the moment the backend session
   // goes live, prompt the persona to answer first (the way a real
