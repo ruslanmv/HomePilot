@@ -24,6 +24,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useVoiceController, type VoiceState } from './voice/useVoiceController'
 import { useCallSession } from './call/useCallSession'
+import Waveform, { type WaveformMode } from './phone/primitives/Waveform'
 import { createStreamingTts, type StreamingTts } from './call/streamTts'
 import { useBargeInDetector } from './call/bargeIn'
 
@@ -90,6 +91,18 @@ function mapVoiceState(s: VoiceState): CallState | null {
     case 'OFF':       return null
     default:          return null
   }
+}
+
+// Map the overlay's richer CallState onto the primitive Waveform's
+// four-valued mode enum. The primitive doesn't know about dialing /
+// connecting / thinking — those all fold to 'idle' (low ambient
+// amplitude, faint colour); only the three audible states drive
+// distinct waveform modes.
+function waveformModeFromCallState(state: CallState): WaveformMode {
+  if (state === 'listening' || state === 'thinking') return 'listening'
+  if (state === 'speaking') return 'speaking'
+  if (state === 'muted') return 'muted'
+  return 'idle'
 }
 
 function hpCallStateLabel(state: CallState, personaName: string): string {
@@ -298,94 +311,10 @@ const CallAvatar: React.FC<{
   )
 }
 
-// ── CallWaveform (ported from phone/waveform.jsx) ─────────────────
-// Each bar carries a stable per-bar seed (amplitude cap + phase
-// offset + oscillation frequency); a single rAF loop reads a shared
-// `intensityRef` (0..1, mutated by the parent based on mic level or
-// synthesised speech envelope) and writes bar scale-Y directly to
-// the DOM. React stays out of the per-frame path so the 60 fps loop
-// doesn't trigger re-renders.
-
-const CallWaveform: React.FC<{
-  bars?: number
-  height?: number
-  state: CallState
-  active?: boolean
-  seed?: string
-  /** Live 0..1 intensity. When omitted, bars breathe at a low
-   *  ambient amplitude (the "idle waveform"). */
-  intensityRef?: React.MutableRefObject<number>
-}> = ({
-  bars = 26, height = 24, state, active = true,
-  seed = 'homepilot', intensityRef,
-}) => {
-  const color = hpCallStateColor(state)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  // Per-bar seed — stable across renders. Gives each bar its own
-  // amplitude ceiling, phase offset, and natural oscillation rate so
-  // they never move in lockstep.
-  const barSeeds = useMemo(() => (
-    Array.from({ length: bars }, (_, i) => {
-      const amp =
-        0.45 +
-        Math.abs(
-          Math.sin(i * 0.7 + seed.length) * 0.3 +
-          Math.sin(i * 1.3 + seed.charCodeAt(0)) * 0.22,
-        )
-      const phase = ((i * 83) % 1000) / 1000 * Math.PI * 2
-      const freq = 0.7 + ((i * 37) % 100) / 100 // 0.7..1.7
-      return { amp, phase, freq }
-    })
-  ), [bars, seed])
-
-  useEffect(() => {
-    if (!containerRef.current) return
-    let raf = 0
-    const start = performance.now()
-    const tick = () => {
-      const t = (performance.now() - start) / 1000
-      const lvl = active ? (intensityRef?.current ?? 0.18) : 0.04
-      const children = containerRef.current?.children
-      if (children) {
-        for (let i = 0; i < children.length; i++) {
-          const s = barSeeds[i]
-          // Per-bar 0..1 oscillator layered over the global intensity.
-          const wave = 0.55 + 0.45 * Math.sin(t * s.freq * 4 + s.phase)
-          // Floor at 0.06 so idle bars are still a visible line,
-          // ceiling at 1 so loud bursts can't clip out of the card.
-          const scale = Math.max(
-            0.06,
-            Math.min(1, 0.08 + lvl * s.amp * wave * 1.4),
-          )
-          const el = children[i] as HTMLElement
-          el.style.transform = `scaleY(${scale})`
-          el.style.opacity = String(Math.min(1, 0.45 + lvl * 0.55))
-        }
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [barSeeds, active, intensityRef])
-
-  return (
-    <div ref={containerRef} style={{
-      display: 'flex', gap: 3, alignItems: 'center', justifyContent: 'center',
-      height,
-    }}>
-      {barSeeds.map((_, i) => (
-        <div key={i} style={{
-          width: 3, height: '100%',
-          background: color, borderRadius: 2,
-          transformOrigin: 'center',
-          willChange: 'transform, opacity',
-          opacity: 0.45,
-        }} />
-      ))}
-    </div>
-  )
-}
+// CallWaveform used to live here — extracted to
+// frontend/src/ui/phone/primitives/Waveform.tsx. Consumed via the
+// imported <Waveform /> component + waveformModeFromCallState
+// mapper above.
 
 // ── CallModal (ported from phone/call-modal.jsx) ──────────────────
 
@@ -503,11 +432,10 @@ const CallModal: React.FC<CallModalProps> = ({
             ))}
           </div>
         ) : (
-          <CallWaveform
+          <Waveform
             bars={26}
             height={24}
-            state={state}
-            active={state === 'listening' || state === 'speaking'}
+            mode={waveformModeFromCallState(state)}
             seed={personaName}
             intensityRef={intensityRef}
           />
