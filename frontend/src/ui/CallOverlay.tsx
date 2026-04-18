@@ -752,6 +752,27 @@ function CallOverlayInner({
     session.status !== 'unavailable' &&
     session.status !== 'error'
 
+  // ── "Listen first" gate — opener-TTS is playing ───────────────
+  // When the backend emits the curated opening greeting as a
+  // transcript.final right after call.state live, the client's
+  // microphone must stay CLOSED until the greeting has finished
+  // speaking. Otherwise the user's natural "hello?" mid-greeting
+  // triggers a barge-in and cuts the persona off — the opposite
+  // of the "AI answers first, user listens" product spec.
+  //
+  // openerDoneRef is a one-shot — once the first assistant
+  // utterance has finished, subsequent utterances (responses to
+  // user turns) do NOT relock the mic; the user can barge-in on
+  // those freely, which is the correct UX.
+  const [openerPlaying, setOpenerPlaying] = useState(false)
+  const openerDoneRef = useRef(false)
+  useEffect(() => {
+    if (session.status === 'creating') {
+      openerDoneRef.current = false
+      setOpenerPlaying(false)
+    }
+  }, [session.status])
+
   // ── Real voice pipeline ────────────────────────────────────────
   // STT capture → preferred transport. If the backend session is
   // live we route transcripts through the voice_call WS; otherwise
@@ -783,16 +804,59 @@ function CallOverlayInner({
   // as transcript.final regardless of streaming mode.
   useEffect(() => {
     if (!useBackend) return
+    // Length-based estimate for the SpeechService path (the shim
+    // doesn't expose onend). Chosen to match typical Web Speech
+    // cadence: ~12 chars/sec for English; floor 1.5 s so "Yes?"
+    // still gives the user a beat; ceiling 8 s so a runaway
+    // greeting can't lock the mic indefinitely.
+    const estimateSpeechMs = (text: string) =>
+      Math.max(1500, Math.min(8000, text.length * 80))
     const unsub = session.onAssistantTranscript((p) => {
+      // Mark the opener window only once — the FIRST assistant
+      // utterance on this session. Subsequent replies don't gate
+      // the mic; the user can barge in on them.
+      const isOpener = !openerDoneRef.current
+      if (isOpener) setOpenerPlaying(true)
+      const markDone = () => {
+        openerDoneRef.current = true
+        setOpenerPlaying(false)
+      }
       try {
         const w = window as unknown as {
           SpeechService?: { speak?: (t: string) => void }
         }
-        if (w.SpeechService?.speak) { w.SpeechService.speak(p.text); return }
-        if ('speechSynthesis' in window) {
-          window.speechSynthesis.speak(new SpeechSynthesisUtterance(p.text))
+        if (w.SpeechService?.speak) {
+          w.SpeechService.speak(p.text)
+          // Fallback timeout — the shim doesn't fire onend.
+          if (isOpener) {
+            window.setTimeout(markDone, estimateSpeechMs(p.text))
+          }
+          return
         }
-      } catch { /* TTS unavailable — silent fallback */ }
+        if ('speechSynthesis' in window) {
+          const utt = new SpeechSynthesisUtterance(p.text)
+          if (isOpener) {
+            // Primary signal — fires reliably on Chromium + Safari
+            // when TTS finishes. onerror catches the rarer cases
+            // (cancelled, interrupted by barge-in).
+            utt.onend = markDone
+            utt.onerror = markDone
+            // Belt-and-suspenders: if the browser drops the event
+            // silently (mobile Safari has a known quirk where
+            // onend can get lost after tab switch), the timeout
+            // still releases the gate.
+            window.setTimeout(markDone, estimateSpeechMs(p.text))
+          }
+          window.speechSynthesis.speak(utt)
+          return
+        }
+        // No TTS at all — release the gate immediately; we have
+        // nothing to wait for.
+        if (isOpener) markDone()
+      } catch {
+        // TTS threw — release the gate so the call isn't stuck.
+        if (isOpener) markDone()
+      }
     })
     return unsub
   }, [useBackend, session])
@@ -921,14 +985,18 @@ function CallOverlayInner({
     return () => { unsub1(); unsub2() }
   }, [useBackend, session])
 
-  // Enter hands-free as soon as the line is "connected" so the user
-  // can just start talking. Drop it when the modal unmounts.
+  // Enter hands-free once the line is "connected" AND the opener
+  // has finished speaking. The second gate is the "listen first"
+  // rule — the AI speaks its greeting and the user hears it out
+  // before the mic opens; otherwise a natural early "hello?" trips
+  // the barge-in detector and cuts the persona off mid-greeting.
   const connected = state !== 'dialing' && state !== 'connecting' && state !== 'ended'
   useEffect(() => {
     if (!connected) return
+    if (openerPlaying) return
     voice.setHandsFree(true)
     return () => { voice.setHandsFree(false) }
-  }, [connected, voice])
+  }, [connected, openerPlaying, voice])
 
   // Mirror the voice-controller's machine onto our UI state so the
   // halo + waveform + label actually reflect what's happening:
