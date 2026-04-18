@@ -34,8 +34,8 @@ function installMatchMedia(initial: boolean): {
     'matchMedia',
     vi.fn(() => mq),
   )
-  // @ts-expect-error — window.matchMedia stub in jsdom
-  window.matchMedia = globalThis.matchMedia
+  ;(window as unknown as { matchMedia: unknown }).matchMedia =
+    globalThis.matchMedia
   return {
     mq,
     fire: (matches: boolean) => {
