@@ -13,6 +13,8 @@
  * the socket lifecycle runs for every envelope.
  */
 
+import { resolveBackendUrl } from '../lib/backendUrl'
+
 export interface CreateCallSessionRequest {
   /** Existing chat conversation id to link this call to. Optional.
    *  The backend will create an ephemeral conversation if omitted. */
@@ -89,7 +91,17 @@ export async function createCallSession(
   req: CreateCallSessionRequest,
   authToken?: string | null,
 ): Promise<CreateCallSessionResponse> {
-  const base = backendUrl.replace(/\/+$/, '')
+  // Defensive resolution: when the caller passes an empty or
+  // whitespace-only backend URL (e.g. a stale settings load), a
+  // naive ``replace(/\/+$/, '')`` leaves us with ``''`` and fetch
+  // falls back to the current page origin. On the Vite dev server
+  // (:3000) that silently routes to the SPA, which returns
+  // index.html and the subsequent JSON parse fails; in prod it can
+  // hit the wrong origin entirely. ``resolveBackendUrl`` ignores
+  // empty overrides and falls through to the app-wide resolver
+  // (localStorage → VITE_API_URL → origin → ``http://localhost:8000``),
+  // so we never accidentally issue a relative request.
+  const base = resolveBackendUrl(backendUrl)
   const res = await fetch(`${base}/v1/voice-call/sessions`, {
     method: 'POST',
     headers: {
