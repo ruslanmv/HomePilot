@@ -4753,7 +4753,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         {/* Top-right Project Indicator - Only shown in chat mode when a project is active */}
         {mode === 'chat' && (
-        <header className="absolute top-0 left-0 right-0 pr-[9rem] pl-5 py-3 z-20 flex items-center justify-end gap-3 pointer-events-none">
+        <header className="absolute top-0 left-0 right-0 pl-5 pr-[9rem] py-3 z-20 flex items-center justify-start gap-3 pointer-events-none">
           {/* Project Indicator */}
           {(() => {
             const currentProjectId = localStorage.getItem('homepilot_current_project')
