@@ -77,7 +77,7 @@ def require_ollabridge_api_key(
     # logged-in user who happens to hit the compat endpoint from the
     # same browser still authenticates without the shared key.
     try:
-        from .users import ensure_users_tables, _validate_token, count_users
+        from .users import ensure_users_tables, _validate_token
         ensure_users_tables()
         token = ""
         if authorization and authorization.lower().startswith("bearer "):
@@ -86,12 +86,15 @@ def require_ollabridge_api_key(
             token = homepilot_session.strip()
         if token and _validate_token(token):
             return True
-        # Single-user install fallback — personal dev box, no multi-
-        # tenant enforcement expected. See also the account-isolation
-        # design note in inventory.py.
-        if count_users() <= 1:
-            return True
     except Exception:
         pass
+
+    # NOTE: no 'single-user install bypass' here. The OllaBridge
+    # endpoint is the one place where the configured ``API_KEY``
+    # is actually authoritative — external OpenAI-SDK clients rely
+    # on it being enforced. Mirroring the internal-shim's Path 4
+    # would hand out free access to /v1/chat/completions on any
+    # fresh install, breaking the external-client contract
+    # (see tests/test_openai_compat.py::TestOpenAIAuth).
 
     raise HTTPException(status_code=401, detail="Invalid API key")
