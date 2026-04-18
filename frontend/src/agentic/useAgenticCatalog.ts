@@ -26,8 +26,21 @@ export function useAgenticCatalog({ backendUrl, apiKey, enabled = true }: UseAge
     try {
       const headers: Record<string, string> = {}
       if (apiKey) headers['x-api-key'] = apiKey
+      // Additive: logged-in user session fallback. The backend's
+      // require_api_key now accepts a valid bearer JWT / session
+      // cookie as an alternative to the shared API key — see
+      // backend/app/auth.py. Send both so either path succeeds.
+      try {
+        if (typeof window !== 'undefined') {
+          const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+          if (tok) headers['authorization'] = `Bearer ${tok}`
+        }
+      } catch { /* ignore storage errors */ }
 
-      const res = await fetch(`${backendUrl}/v1/agentic/catalog`, { headers })
+      const res = await fetch(`${backendUrl}/v1/agentic/catalog`, {
+        headers,
+        credentials: 'include',
+      })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = (await res.json()) as AgenticCatalog
       setCatalog(data)
