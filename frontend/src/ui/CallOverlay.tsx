@@ -1073,16 +1073,36 @@ function CallOverlayInner({
   // before the mic opens; otherwise a natural early "hello?" trips
   // the barge-in detector and cuts the persona off mid-greeting.
   // ``connected`` is declared earlier (near state).
+  //
+  // This effect intentionally has NO cleanup that toggles handsFree —
+  // the original cleanup raced against `openerPlaying` transitions
+  // and re-render-driven re-runs (voice + setTurnLock change identity
+  // on every render), which flipped handsFree OFF mid-call and left
+  // state on OFF right when the user started speaking. The STT path
+  // then dropped the VAD speech_start because state !== IDLE. Tear-
+  // down lives in the dedicated unmount effect below.
+  const voiceHandleRef = useRef(voice)
+  useEffect(() => { voiceHandleRef.current = voice }, [voice])
+  const setTurnLockRef = useRef(setTurnLock)
+  useEffect(() => { setTurnLockRef.current = setTurnLock }, [setTurnLock])
+
   useEffect(() => {
     if (!connected) return
     if (openerPlaying) return
-    setTurnLock('idle', 'connected_open_mic')
-    voice.setHandsFree(true)
+    setTurnLockRef.current('idle', 'connected_open_mic')
+    voiceHandleRef.current.setHandsFree(true)
+  }, [connected, openerPlaying])
+
+  // Unmount-only cleanup. Guarantees the mic is released and the
+  // turn-lock is reset when the overlay actually tears down (call
+  // ended, user navigated away), without coupling that teardown to
+  // the normal-effect re-run cycle above.
+  useEffect(() => {
     return () => {
-      voice.setHandsFree(false)
-      setTurnLock('idle', 'cleanup')
+      try { voiceHandleRef.current.setHandsFree(false) } catch { /* ignore */ }
+      try { setTurnLockRef.current('idle', 'cleanup') } catch { /* ignore */ }
     }
-  }, [connected, openerPlaying, voice, setTurnLock])
+  }, [])
 
   // Mirror the voice-controller's machine onto our UI state so the
   // halo + waveform + label actually reflect what's happening:
