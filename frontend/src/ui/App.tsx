@@ -224,6 +224,25 @@ function ViewAngleChips({
   )
 }
 
+/**
+ * Prevent duplicate transcript surfaces in chat. When a call-memory
+ * card includes an inline transcript, those same turns have already
+ * been rendered in the thread; collapse them so the transcript lives
+ * only inside the card.
+ */
+function collapseCallTurns<T extends Msg>(msgs: T[]): T[] {
+  const out: T[] = []
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i]
+    const n = m.callMemory?.transcript?.length ?? 0
+    if (n > 0 && out.length >= n) {
+      out.splice(out.length - n, n)
+    }
+    out.push(m)
+  }
+  return out
+}
+
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio' | 'avatar' | 'teams'
 type Provider = 'backend' | 'ollama'
 
@@ -1751,6 +1770,7 @@ function ChatState({
   onRemoveAttachment?: () => void
 }) {
   const { copied, copy } = useCopyMessage()
+  const displayMessages = useMemo(() => collapseCallTurns(messages), [messages])
   const [chatSettingsOpen, setChatSettingsOpen] = useState(false)
   const handleStartCall = useCallback(() => {
     onStartCall?.()
@@ -1853,7 +1873,7 @@ function ChatState({
       )}
 
       <div className={`flex-1 overflow-y-auto px-4 ${chatSettings.incognito ? 'pt-3' : 'pt-14'} pb-8 space-y-8`}>
-        {messages.map((m) => (
+        {displayMessages.map((m) => (
           <div
             key={m.id}
             className={`flex gap-5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -5051,13 +5071,17 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                       if (convData.ok && convData.messages && convData.messages.length > 0) {
                         setConversationId(lastConvId)
                         setMessages(
-                          convData.messages.map((m, idx) => ({
-                            id: `restored-${idx}`,
-                            role: m.role as 'user' | 'assistant',
-                            text: m.content,
-                            animate: false,
-                            media: m.media || undefined,
-                          }))
+                          convData.messages.map((m, idx) => {
+                            const h = hydratePersistedMessageMedia(m.media)
+                            return {
+                              id: `restored-${idx}`,
+                              role: m.role as 'user' | 'assistant',
+                              text: m.content,
+                              animate: false,
+                              media: h.media,
+                              ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+                            }
+                          })
                         )
                       } else {
                         // Conversation was empty/deleted — start fresh
@@ -5107,13 +5131,17 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                         )
                         if (convData.ok && convData.messages && convData.messages.length > 0) {
                           setMessages(
-                            convData.messages.map((m, idx) => ({
-                              id: `restored-${idx}`,
-                              role: m.role as 'user' | 'assistant',
-                              text: m.content,
-                              animate: false,
-                              media: m.media || undefined,
-                            }))
+                            convData.messages.map((m, idx) => {
+                              const h = hydratePersistedMessageMedia(m.media)
+                              return {
+                                id: `restored-${idx}`,
+                                role: m.role as 'user' | 'assistant',
+                                text: m.content,
+                                animate: false,
+                                media: h.media,
+                                ...(h.callMemory ? { callMemory: h.callMemory } : {}),
+                              }
+                            })
                           )
                         }
                       } catch {
@@ -5457,6 +5485,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               const tok = localStorage.getItem('homepilot_auth_token') || ''
               void fetch(`${settings.backendUrl.replace(/\/+$/, '')}/conversations/${convId}/messages`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
                   'content-type': 'application/json',
                   ...(tok ? { authorization: `Bearer ${tok}` } : {}),
