@@ -13,6 +13,7 @@
  *   Waveform           rAF-driven audio-level bars
  *   Aura               seeded-hue persona identity chip
  *   AmbientAura        page-scale coloured backdrop glow
+ *   PhoneCallDivider   neutral timeline separator for a call event
  */
 
 export { useReducedMotion } from './useReducedMotion'
@@ -29,3 +30,5 @@ export { default as Aura } from './Aura'
 export type { AuraProps, AuraMood } from './Aura'
 export { default as AmbientAura } from './AmbientAura'
 export type { AmbientAuraProps } from './AmbientAura'
+export { default as PhoneCallDivider } from './PhoneCallDivider'
+export type { PhoneCallDividerProps } from './PhoneCallDivider'

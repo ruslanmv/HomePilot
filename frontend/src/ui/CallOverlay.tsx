@@ -640,6 +640,75 @@ function CallOverlayInner({
     }
   }, [state])
 
+  // End-call chime — plays once on ``dialing/connecting/listening/…
+  // → ended`` transition. Matches the WhatsApp / FaceTime / Slack
+  // Huddle convention: two-tone descending sine (perfect fifth down,
+  // 660 → 440 Hz), short (~400 ms), quiet (peak gain 0.15), soft
+  // attack + exponential-ish release so there's no click. The second
+  // tone overlaps the first by 50 ms for smoothness. Fires inside
+  // the END_FADE_MS window so the audio "goodbye" lands with the
+  // visual fade — matches every industry example.
+  //
+  // Same WebAudio pattern as the ringback above so behaviour across
+  // browsers is identical. Muted state suppresses the tone — the
+  // user already signalled "quiet please".
+  useEffect(() => {
+    if (state !== 'ended') return
+    if (muted) return
+    const AC =
+      (window as unknown as { AudioContext?: typeof AudioContext }).AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AC) return
+    let ctx: AudioContext | null = null
+    try { ctx = new AC() } catch { return }
+
+    const t0 = ctx.currentTime + 0.02
+    const peakGain = 0.15
+    const attack = 0.02          // 20 ms — no click
+    const release = 0.08         // 80 ms — gentle tail
+
+    // Tone 1 — 660 Hz for 180 ms
+    const t1Start = t0
+    const t1Dur = 0.18
+    // Tone 2 — 440 Hz, overlaps tone 1 by 50 ms, runs 220 ms
+    const t2Start = t0 + 0.13
+    const t2Dur = 0.22
+
+    const makeTone = (freq: number, startAt: number, durSec: number) => {
+      const osc = ctx!.createOscillator()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(freq, startAt)
+      const gain = ctx!.createGain()
+      gain.gain.setValueAtTime(0, startAt)
+      gain.gain.linearRampToValueAtTime(peakGain, startAt + attack)
+      gain.gain.setValueAtTime(peakGain, startAt + durSec - release)
+      gain.gain.linearRampToValueAtTime(0, startAt + durSec)
+      osc.connect(gain).connect(ctx!.destination)
+      osc.start(startAt)
+      osc.stop(startAt + durSec + 0.05)
+      return osc
+    }
+
+    const oscs = [
+      makeTone(660, t1Start, t1Dur),
+      makeTone(440, t2Start, t2Dur),
+    ]
+    const totalDuration = (t2Start - t0) + t2Dur + 0.05
+
+    // Close the context after the tones finish so we don't leave a
+    // live audio node dangling. The overlay unmounts ~END_FADE_MS
+    // after state='ended' anyway, but being explicit is cheap.
+    const closeTimer = window.setTimeout(() => {
+      try { ctx?.close() } catch { /* ignore */ }
+    }, Math.ceil(totalDuration * 1000) + 50)
+
+    return () => {
+      window.clearTimeout(closeTimer)
+      for (const o of oscs) { try { o.stop() } catch { /* ignore */ } }
+      try { ctx?.close() } catch { /* ignore */ }
+    }
+  }, [state, muted])
+
   const handleEnd = useCallback(() => {
     setState('ended')
     // If the backend session is live, send a graceful call.control
@@ -1306,84 +1375,8 @@ function CallOverlayInner({
   )
 }
 
-
-// ── Call-ended toast — the "you just hung up, want to call back?" chip
-
-export interface CallEndedToastProps {
-  /** Duration of the live phase (seconds). Rendered as "42s" / "3m 12s". */
-  durationSec: number
-  onSpeakAgain: () => void
-  onDismiss: () => void
-}
-
-function formatEndedDuration(s: number): string {
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  const rest = s % 60
-  return rest === 0 ? `${m}m` : `${m}m ${rest}s`
-}
-
-export const CallEndedToast: React.FC<CallEndedToastProps> = ({
-  durationSec, onSpeakAgain, onDismiss,
-}) => {
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="fixed bottom-6 left-1/2 z-[95] -translate-x-1/2"
-      style={{
-        animation: 'hp-call-toast-in 220ms ease-out',
-        fontFamily: HP_CALL.font,
-      }}
-    >
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 12,
-        padding: '8px 10px 8px 14px',
-        borderRadius: 9999,
-        background: HP_CALL.surface,
-        border: `1px solid ${HP_CALL.border}`,
-        boxShadow: '0 12px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04)',
-        color: HP_CALL.text,
-      }}>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          fontSize: 13, fontWeight: 500, color: HP_CALL.text2,
-        }}>
-          <span style={{
-            width: 6, height: 6, borderRadius: '50%',
-            background: HP_CALL.text3,
-          }} />
-          Call ended · <span style={{
-            color: HP_CALL.text,
-            fontFamily: HP_CALL.fontTabular,
-            fontVariantNumeric: 'tabular-nums',
-          }}>{formatEndedDuration(durationSec)}</span>
-        </span>
-        <button
-          type="button"
-          onClick={onSpeakAgain}
-          style={{
-            height: 30, padding: '0 14px', borderRadius: 9999,
-            background: HP_CALL.accent,
-            color: '#052c33', border: 'none', cursor: 'pointer',
-            fontSize: 12, fontWeight: 600, letterSpacing: 0.2,
-          }}
-        >
-          Speak again
-        </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="Dismiss"
-          style={{
-            width: 28, height: 28, borderRadius: 9999,
-            background: 'transparent', border: 'none', cursor: 'pointer',
-            color: HP_CALL.text3, fontSize: 18, lineHeight: 1, padding: 0,
-          }}
-        >
-          ×
-        </button>
-      </div>
-    </div>
-  )
-}
+// ── Call-ended toast removed ──────────────────────────────────────
+// The former CallEndedToast has been retired. The inline
+// CallEventRow (rendered directly in the chat stream) now carries
+// the post-call record + Resume affordance, so a floating toast
+// would be redundant. Kept this comment as a reviewer breadcrumb.

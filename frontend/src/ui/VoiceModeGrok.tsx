@@ -38,6 +38,7 @@ import Starfield from './voice/Starfield';
 import VoiceSettingsPanel from './voice/VoiceSettingsPanel';
 import SettingsModal from './voice/SettingsModal';
 import { useVoiceController, VoiceState } from './voice/useVoiceController';
+import PhoneCallDivider from './phone/primitives/PhoneCallDivider';
 import {
   VOICES,
   VoiceDef,
@@ -690,18 +691,25 @@ export default function VoiceModeGrok({
   // Use the existing voice controller
   const voice = useVoiceController(handleVoiceInput);
 
-  // Restore hands-free preference (Alexa-like behavior) - DEFAULT TO ON for best UX
+  // Always open Voice in hands-free mode — matches Grok's behaviour:
+  // the Manual toggle is a PER-SESSION choice, not a persisted
+  // preference. Every sidebar → Voice entry resets to hands-free ON;
+  // if the user clicks the Manual icon during the session it flips
+  // to manual for THIS session only, and clicking again returns to
+  // hands-free (the toggle at voice.setHandsFree(!voice.isHandsFree)
+  // already handles the round-trip).
+  //
+  // (We still persist to LS_HANDSFREE for legacy consumers that may
+  // read it, but we intentionally ignore the stored value on mount —
+  // the write below keeps the on-disk value aligned with the
+  // in-session state for anyone who WAS reading it.)
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const saved = localStorage.getItem(LS_HANDSFREE);
-    // Default to hands-free ON if no preference saved (best user experience)
-    if (saved === null || saved === 'true') {
-      voice.setHandsFree(true);
-    }
+    voice.setHandsFree(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist hands-free preference
+  // Persist hands-free state (write-through for any legacy reader).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     localStorage.setItem(LS_HANDSFREE, String(voice.isHandsFree));
@@ -1024,6 +1032,23 @@ export default function VoiceModeGrok({
             {messages.map((msg, idx) => {
               // Skip empty pending placeholders (App adds { text: '', pending: true })
               if (!msg.text && (msg as any).pending) return null;
+
+              // ADDITIVE: call-memory rows render as a thin centered
+              // timeline divider, NOT as an empty assistant bubble.
+              // Grok-style: a phone call is a neutral system event,
+              // not a message. Chat mode has its own richer
+              // PostCallCard; Voice keeps the history quiet.
+              if ((msg as any).callMemory) {
+                const cm = (msg as any).callMemory;
+                return (
+                  <PhoneCallDivider
+                    key={msg.id}
+                    durationSec={cm.durationSec ?? 0}
+                    endedAt={cm.endedAt}
+                  />
+                );
+              }
+
               return (
                 <div key={msg.id} className={msg.role === 'user' ? 'flex justify-end' : ''}>
                   {msg.role === 'user' ? (

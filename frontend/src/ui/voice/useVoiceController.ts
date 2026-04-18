@@ -396,8 +396,14 @@ export function useVoiceController(
       return;
     }
 
-    // Create VAD instance
-    vadRef.current = createVAD(
+    // Create VAD instance. Capture the local handle so async callbacks
+    // (.then / .catch below) reference THIS VAD even if a later
+    // effect-run has overwritten ``vadRef.current`` — under React 18
+    // StrictMode the mount effect runs twice, so a stale .then that
+    // reads vadRef.current would stop the VAD of the NEW effect run
+    // (root cause of the 'first click does nothing, second click
+    // works' bug when entering Voice mode).
+    const vad = createVAD(
       // onSpeechStart
       () => {
         // Stale event from a previous hands-free generation — ignore.
@@ -494,13 +500,14 @@ export function useVoiceController(
       },
       cfg.vadConfig
     );
+    vadRef.current = vad;
 
     // Start VAD
-    vadRef.current.start()
+    vad.start()
       .then(() => {
         // Reject results from stale effect-runs — see generation doc.
         if (!isHandsFree || generation !== handsFreeGenerationRef.current) {
-          vadRef.current?.stop();
+          vad.stop();
           return;
         }
         console.log('[VoiceController] VAD started, transitioning to IDLE');
