@@ -411,4 +411,208 @@ Primary barge-in trigger is the explicit `user.barge_in`;
   clients that never read `capabilities` stay on the unary path.
 - Database schema — no migration. `barge_in.py` is process-local.
 
-Section 4 ends here. Next commit: § 5 frontend design.
+## 5. Frontend design
+
+Three additive changes under `frontend/src/ui/call/` and one
+barge-in tap inside `CallOverlay.tsx`. No existing files are
+destructively rewritten.
+
+```
+frontend/src/ui/call/
+├── callApi.ts          (existing — one field added to the request)
+├── callSocket.ts       (existing — four new event types + 2 send methods)
+├── useCallSession.ts   (existing — new subscribe helpers)
+├── streamTts.ts        NEW — pluggable streaming TTS surface
+└── bargeIn.ts          NEW — VAD-driven speech-start detector tap
+```
+
+### 5.1 `callApi.ts` — advertise client capability
+
+One additive field on the `CreateCallSessionRequest.device_info`
+block:
+
+```ts
+device_info: {
+  tz: string
+  platform: string
+  streaming?: boolean   // NEW
+  barge_in?: boolean    // NEW
+}
+```
+
+Set both to `true` when the build includes `streamTts.ts` and the
+environment has `Web Audio + requestAnimationFrame` (both always
+true in supported browsers). Keeping them optional means older
+builds keep shipping unchanged requests.
+
+Response parsing adds one optional read:
+
+```ts
+handshake.capabilities?.streaming  // server-side opt-in mirror
+handshake.capabilities?.barge_in
+```
+
+The effective mode `useBackend && streaming` is stashed in a
+stable ref on the session handle.
+
+### 5.2 `callSocket.ts` — four new events + 2 new sends
+
+Typed event map extended — no removals:
+
+```ts
+interface CallSocketEventMap {
+  // existing
+  statusChange: CallLifecycleStatus
+  callState: CallStatePayload
+  assistantTranscript: AssistantTranscriptPayload   // still fires in unary mode
+  // NEW — only fire when the session negotiated streaming
+  assistantPartial: AssistantPartialPayload
+  assistantTurnEnd: AssistantTurnEndPayload
+  assistantCancel: AssistantCancelPayload
+  // unchanged
+  assistantFiller: AssistantFillerPayload
+  assistantBackchannel: AssistantBackchannelPayload
+  serverError: ServerErrorPayload
+  safetyNotice: Record<string, unknown>
+  pong: void
+  closed: { reason: CallCloseReason; code?: number; detail?: string }
+}
+```
+
+Two new public methods:
+
+```ts
+sendTranscriptPartial(p: { text: string; stable_prefix_len?: number }): void
+sendBargeIn(turn_id: string): void
+```
+
+Both use the existing `enqueueLine` so the outbound queue and
+reconnect semantics apply uniformly. Unknown server types still
+fall through to the "forward-compat: no-op" branch.
+
+### 5.3 `streamTts.ts` — pluggable streaming surface
+
+One interface, three implementations (the last two are future
+work):
+
+```ts
+interface StreamingTts {
+  /** Append a text chunk. Implementations decide their own
+   *  clause-boundary flushing; callers pass raw deltas. */
+  appendDelta(delta: string): void
+  /** Signal the turn is complete. Implementations may flush a
+   *  residual buffer and schedule the final audio. */
+  flush(): void
+  /** Stop immediately. Must silence any audio currently playing
+   *  or queued within ≤ 50 ms. This is the barge-in path. */
+  stop(): void
+  /** True while audio is either playing or scheduled-to-play.
+   *  Reading is cheap; used by the VAD tap to decide whether a
+   *  user-speech-start counts as a barge-in. */
+  readonly isSpeaking: boolean
+}
+```
+
+Implementations:
+
+- **`WebSpeechStreamTts`** (ships first). Buffers deltas until a
+  sentence-ender hits (`. ! ? ;` outside quotes). Flushes one
+  `SpeechSynthesisUtterance` per sentence. `stop()` calls
+  `speechSynthesis.cancel()` — silent within ~20 ms on Chromium.
+- **`PiperWasmStreamTts`** (later). Uses the existing
+  `SpeechService` shim's streaming mode (Piper WASM emits WAV
+  fragments as tokens arrive). Reuses an `<audio>` element for
+  seamless concatenation.
+- **`RemoteStreamTts`** (later, optional). Pipes deltas to a
+  vendor HTTP/2 streaming endpoint (Cartesia / ElevenLabs) and
+  plays the returned audio via `AudioContext.decodeAudioData`.
+
+The hook `useCallSession` exposes a `getTts()` factory that
+returns whichever implementation `SpeechService` is currently
+bound to, defaulting to `WebSpeechStreamTts`. Swap is a one-line
+change in that factory, not a `CallOverlay` rewrite.
+
+### 5.4 `bargeIn.ts` — VAD tap on speech-start
+
+The existing `useVoiceController` already exposes `audioLevel`
+(0..1, EMA-smoothed) and `state` (`IDLE` / `LISTENING` / …). The
+barge-in detector is a thin hook layered on top:
+
+```ts
+useBargeInDetector({
+  audioLevelRef,            // MutableRefObject<number>
+  threshold: 0.08,          // above noise floor; tunable
+  minSustainMs: 80,         // guard against a single spike
+  enabled: isTtsSpeaking && streamingNegotiated,
+  onBargeIn: () => {
+    tts.stop()
+    session.sendBargeIn(currentTurnId)
+  },
+})
+```
+
+Why detector-local threshold + sustain:
+
+- The VAD inside `useVoiceController` is tuned for end-of-user-
+  turn silence detection, which is a different problem than
+  start-of-user-turn speech detection during AI playback. Using
+  a slightly higher `threshold` here (0.08 vs the VAD's 0.035
+  baseline) prevents the persona's own TTS bleed from tripping
+  it (Chromium exposes the mic even during TTS, and a fraction
+  of the persona's audio returns as low-level input on most
+  laptops).
+- `minSustainMs` of 80 ms matches the minimum duration of a
+  voiced phoneme, so a keyboard clack or a single cough won't
+  cut the persona off.
+
+The detector fires only when `enabled` — i.e. the TTS is actually
+speaking AND streaming is negotiated. Outside that window it's a
+pure no-op.
+
+### 5.5 `CallOverlay.tsx` — three additive wires
+
+All inside `CallOverlayInner`, guarded on `session.streaming`:
+
+1. **Subscribe to partials** — pipe them into the streaming TTS:
+   ```ts
+   useEffect(() => {
+     if (!streaming) return
+     return session.onAssistantPartial(p => {
+       currentTurnIdRef.current = p.turn_id
+       ttsRef.current.appendDelta(p.delta)
+     })
+   }, [streaming, session])
+   ```
+2. **Subscribe to turn-end + cancel** — flush or stop the TTS:
+   ```ts
+   session.onAssistantTurnEnd(p => ttsRef.current.flush())
+   session.onAssistantCancel(_ => ttsRef.current.stop())
+   ```
+3. **Mount the VAD tap** — fires the barge-in:
+   ```ts
+   useBargeInDetector({
+     audioLevelRef: voiceAudioLevelRef,
+     enabled: ttsRef.current.isSpeaking && streaming,
+     onBargeIn: () => {
+       const tid = currentTurnIdRef.current
+       ttsRef.current.stop()
+       if (tid) session.sendBargeIn(tid)
+     },
+   })
+   ```
+
+The unary path (`streaming === false`) runs exactly today's code.
+The existing `onAssistantTranscript` listener stays in place and
+still fires — but only when the server didn't stream.
+
+### 5.6 Waveform during streaming
+
+`CallOverlay` already animates the waveform from an `intensityRef`
+(see `f90fa4d`). Streaming changes nothing here — the `speaking`
+state keeps using the synthesised envelope. A future enhancement
+could tap `WebSpeechStreamTts.onBoundary` to modulate the envelope
+with real word boundaries, but that's a polish pass, not a
+prerequisite.
+
+Section 5 ends here. Next commit: §§ 6-9 (failure modes, rollout,
+testing, out-of-scope).
