@@ -8,11 +8,13 @@ describing what the rule wants the router to do.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ..interaction.state import RuntimeState
 from .profile import PersonalizationProfile
 from .rules import Rule
+
+if TYPE_CHECKING:
+    from ..interaction.state import RuntimeState
 
 
 @dataclass(frozen=True)
@@ -29,7 +31,7 @@ _NO_HINT = RouterHint()
 
 
 def _condition_matches(
-    rule: Rule, profile: PersonalizationProfile, state: RuntimeState,
+    rule: Rule, profile: PersonalizationProfile, state: "RuntimeState",
 ) -> bool:
     c = rule.condition
     if c.get("role") and profile.role != c.get("role"):
@@ -79,7 +81,7 @@ def _condition_matches(
 
 
 def evaluate(
-    rules: List[Rule], profile: PersonalizationProfile, state: RuntimeState,
+    rules: List[Rule], profile: PersonalizationProfile, state: "RuntimeState",
 ) -> RouterHint:
     """Pick the best-matching rule. Lower priority wins ties.
 

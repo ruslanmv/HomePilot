@@ -1,11 +1,11 @@
 """
 FastAPI router for the interactive service.
 
-Batch 1/8 — scaffolding only. The router exists but contributes
-zero routes when ``InteractiveConfig.enabled`` is False. When
-enabled, it exposes a health ping so operators can verify the
-service mounted correctly. All authoring / runtime endpoints land
-in later batches.
+Batch 7/8 — the router composes the authoring + planner + play
+sub-routers from the ``routes`` subpackage. When
+``InteractiveConfig.enabled=False`` the router is deliberately
+empty so the mount line in ``app/main.py`` is safe regardless of
+the runtime flag.
 
 Contract with ``app/main.py``: a single call to
 ``build_router(load_config())`` returns an ``APIRouter`` ready to
@@ -17,14 +17,16 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from .config import InteractiveConfig
+from .errors import InteractiveError
+from .routes import build_all
 
 
 def build_router(cfg: InteractiveConfig) -> APIRouter:
     """Build the interactive service router.
 
     ``cfg.enabled=False`` → empty router (no paths, no OpenAPI
-    surface). ``cfg.enabled=True`` → scaffold + health ping in
-    this batch; real endpoints get layered in by batches 2-8.
+    surface). ``cfg.enabled=True`` → health ping + authoring +
+    planner + play endpoints.
     """
     router = APIRouter(prefix="/v1/interactive", tags=["interactive"])
 
@@ -54,4 +56,5 @@ def build_router(cfg: InteractiveConfig) -> APIRouter:
             "runtime_latency_target_ms": cfg.runtime_latency_target_ms,
         }
 
+    router.include_router(build_all(cfg))
     return router

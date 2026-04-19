@@ -29,6 +29,7 @@ from .models import (
     Node,
     NodeCreate,
     NodeUpdate,
+    PersonalizationRule,
     Publication,
     QAReport,
     Session,
@@ -453,3 +454,148 @@ def recent_turns(session_id: str, limit: int = 20) -> List[SessionTurn]:
     out = [SessionTurn(**store.row_to_dict(r, json_fields=())) for r in rows]
     out.reverse()  # chronological for prompt assembly
     return out
+
+
+def set_session_current_node(session_id: str, node_id: str) -> None:
+    """Advance a session's current node pointer."""
+    store.ensure_schema()
+    with store._conn() as con:
+        con.execute(
+            "UPDATE ix_sessions SET current_node_id = ?, last_event_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (node_id, session_id),
+        )
+        con.commit()
+
+
+# ─────────────────────────────────────────────────────────────────
+# Action catalog
+# ─────────────────────────────────────────────────────────────────
+
+def _row_to_action(row: Any) -> Action:
+    d = store.row_to_dict(
+        row, json_fields=("policy_scope", "mood_delta", "applicable_modes"),
+    )
+    return Action(**d)
+
+
+def create_action(eid: str, payload: ActionCreate) -> Action:
+    store.ensure_schema()
+    aid = store.new_id("ixa")
+    with store._conn() as con:
+        con.execute(
+            """
+            INSERT INTO ix_action_catalog (
+                id, experience_id, label, intent_code,
+                required_level, required_scheme, required_metric_key,
+                policy_scope, cooldown_sec, mood_delta, xp_award,
+                max_uses_per_session, repeat_penalty, requires_consent,
+                applicable_modes, ordinal
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                aid, eid, payload.label, payload.intent_code,
+                int(payload.required_level or 1),
+                payload.required_scheme, payload.required_metric_key,
+                store._dump_json(payload.policy_scope or []),
+                int(payload.cooldown_sec or 0),
+                store._dump_json(payload.mood_delta or {}),
+                int(payload.xp_award or 0),
+                int(payload.max_uses_per_session or 0),
+                float(payload.repeat_penalty or 0.0),
+                payload.requires_consent or "",
+                store._dump_json(payload.applicable_modes or []),
+                int(payload.ordinal or 0),
+            ),
+        )
+        con.commit()
+        row = con.execute("SELECT * FROM ix_action_catalog WHERE id = ?", (aid,)).fetchone()
+    return _row_to_action(row)
+
+
+def list_actions(eid: str) -> List[Action]:
+    store.ensure_schema()
+    with store._conn() as con:
+        rows = con.execute(
+            "SELECT * FROM ix_action_catalog WHERE experience_id = ? "
+            "ORDER BY ordinal ASC, created_at ASC",
+            (eid,),
+        ).fetchall()
+    return [_row_to_action(r) for r in rows]
+
+
+def get_action(aid: str) -> Optional[Action]:
+    store.ensure_schema()
+    with store._conn() as con:
+        row = con.execute("SELECT * FROM ix_action_catalog WHERE id = ?", (aid,)).fetchone()
+    return _row_to_action(row) if row else None
+
+
+def delete_action(aid: str) -> bool:
+    store.ensure_schema()
+    with store._conn() as con:
+        cur = con.cursor()
+        result = cur.execute("DELETE FROM ix_action_catalog WHERE id = ?", (aid,))
+        deleted = result.rowcount > 0
+        con.commit()
+    return deleted
+
+
+# ─────────────────────────────────────────────────────────────────
+# Personalization rules
+# ─────────────────────────────────────────────────────────────────
+
+def _row_to_rule(row: Any) -> PersonalizationRule:
+    d = store.row_to_dict(row, json_fields=("condition", "action"))
+    d["enabled"] = bool(d.get("enabled"))
+    return PersonalizationRule(**d)
+
+
+def create_rule(
+    eid: str, name: str, condition: Dict[str, Any], action: Dict[str, Any],
+    *, priority: int = 100, enabled: bool = True,
+) -> PersonalizationRule:
+    store.ensure_schema()
+    rid = store.new_id("ixr")
+    with store._conn() as con:
+        con.execute(
+            """
+            INSERT INTO ix_personalization_rules (
+                id, experience_id, name, condition, action, priority, enabled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rid, eid, name,
+                store._dump_json(condition or {}),
+                store._dump_json(action or {}),
+                int(priority),
+                1 if enabled else 0,
+            ),
+        )
+        con.commit()
+        row = con.execute(
+            "SELECT * FROM ix_personalization_rules WHERE id = ?", (rid,),
+        ).fetchone()
+    return _row_to_rule(row)
+
+
+def list_rules(eid: str, *, enabled_only: bool = False) -> List[PersonalizationRule]:
+    store.ensure_schema()
+    sql = "SELECT * FROM ix_personalization_rules WHERE experience_id = ?"
+    args: List[Any] = [eid]
+    if enabled_only:
+        sql += " AND enabled = 1"
+    sql += " ORDER BY priority ASC, created_at ASC"
+    with store._conn() as con:
+        rows = con.execute(sql, tuple(args)).fetchall()
+    return [_row_to_rule(r) for r in rows]
+
+
+def delete_rule(rid: str) -> bool:
+    store.ensure_schema()
+    with store._conn() as con:
+        cur = con.cursor()
+        result = cur.execute("DELETE FROM ix_personalization_rules WHERE id = ?", (rid,))
+        deleted = result.rowcount > 0
+        con.commit()
+    return deleted
