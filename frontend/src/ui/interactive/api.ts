@@ -23,6 +23,7 @@
 import {
   ActionItem,
   AnalyticsSummary,
+  AutoGenerateResult,
   CatalogItemView,
   ChatResult,
   EdgeItem,
@@ -32,6 +33,7 @@ import {
   InteractiveApiError,
   NodeItem,
   PendingResult,
+  PlanAutoResult,
   PlanIntent,
   PlanningPreset,
   ProgressSnapshot,
@@ -56,6 +58,8 @@ export interface InteractiveApi {
 
   // Planner
   plan(req: { prompt: string; mode: ExperienceMode; audience_hints?: Record<string, unknown> }): Promise<PlanIntent>;
+  planAuto(req: { idea: string }): Promise<PlanAutoResult>;
+  autoGenerate(id: string): Promise<AutoGenerateResult>;
   seedGraph(
     id: string,
     req: { prompt: string; mode: ExperienceMode; audience_hints?: Record<string, unknown> },
@@ -193,6 +197,18 @@ export function createInteractiveApi(
         method: "POST",
         body: JSON.stringify(req),
       }).then((r) => r.intent),
+
+    planAuto: (req) =>
+      call<PlanAutoResult & { ok: boolean }>("/plan-auto", {
+        method: "POST",
+        body: JSON.stringify(req),
+      }),
+
+    autoGenerate: (id) =>
+      call<AutoGenerateResult & { ok: boolean }>(
+        `/experiences/${encodeURIComponent(id)}/auto-generate`,
+        { method: "POST", body: JSON.stringify({}) },
+      ),
 
     seedGraph: (id, req) =>
       call<{ already_seeded: boolean; node_count: number; edge_count: number }>(

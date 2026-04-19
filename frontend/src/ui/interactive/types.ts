@@ -199,6 +199,46 @@ export interface AnalyticsSummary {
   block_rate: number;
 }
 
+// ── AUTO-* auto-planner / generator types ──────────────────────
+
+/** Pre-filled wizard form returned from POST /plan-auto. */
+export interface PlanAutoForm {
+  title: string;
+  prompt: string;
+  experience_mode: ExperienceMode;
+  policy_profile_id: string;
+  audience_role: string;
+  audience_level: "beginner" | "intermediate" | "advanced";
+  audience_language: string;
+  audience_locale_hint: string;
+  branch_count: number;
+  depth: number;
+  scenes_per_branch: number;
+}
+
+/** Full /plan-auto response. source='llm' means the LLM composer
+ *  produced it; 'heuristic' means the deterministic fallback fired
+ *  (LLM off, unreachable, or rejected). */
+export interface PlanAutoResult {
+  source: "llm" | "heuristic";
+  form: PlanAutoForm;
+  objective: string;
+  topic: string;
+  scheme: ProgressionScheme;
+  success_metric: string;
+  seed_intents: string[];
+}
+
+/** Response from POST /experiences/{id}/auto-generate. */
+export interface AutoGenerateResult {
+  source: "llm" | "heuristic" | "existing";
+  already_generated: boolean;
+  node_count: number;
+  edge_count: number;
+  action_count: number;
+  warnings?: string[];
+}
+
 // ── Live-play types ─────────────────────────────────────────────
 
 export type SceneJobStatus = "pending" | "rendering" | "ready" | "failed";
