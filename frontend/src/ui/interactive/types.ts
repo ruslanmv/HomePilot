@@ -210,6 +210,9 @@ export interface SceneJobView {
   status: SceneJobStatus;
   job_id: string;
   asset_id: string;
+  /** Resolved durable URL for the scene (empty when the asset is a stub
+   *  or the backend couldn't resolve a public URL yet). */
+  asset_url: string;
   prompt: string;
   duration_sec: number;
   error: string;
@@ -237,6 +240,9 @@ export interface ChatResult {
   video_job_id: string;
   video_job_status?: SceneJobStatus;
   video_asset_id?: string;
+  /** Resolved durable URL for the scene — empty string when the backend
+   *  only has a stub asset or hasn't resolved a public URL yet. */
+  video_asset_url?: string;
 }
 
 export interface PendingResult {

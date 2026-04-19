@@ -245,6 +245,7 @@ function InteractivePlayerBody({
           status: "ready",
           job_id: "",
           asset_id: result.video_asset_id,
+          asset_url: result.video_asset_url || "",
           prompt: result.scene_prompt || "",
           duration_sec: result.duration_sec || 5,
           error: "",
@@ -350,7 +351,7 @@ function InteractivePlayerBody({
 
   return (
     <div className="relative min-h-screen bg-black text-[#f1f1f1] overflow-hidden select-none">
-      <VideoStage scene={currentScene} mood={mood} />
+      <VideoStage scene={currentScene} mood={mood} muted={muted} />
 
       <TopBar
         title={experience.title || "Interactive"}
@@ -432,17 +433,66 @@ function LiveActionFab({ onClick }: { onClick: () => void }) {
 // Subcomponents
 // ────────────────────────────────────────────────────────────────
 
-function VideoStage({ scene, mood }: { scene: SceneJobView | null; mood: string }) {
-  // Phase-1: scene.asset_id is a stub (ixa_stub_*); no real file
-  // to play. Render a mood-tinted backdrop + a translucent label
-  // so authors can verify the scene landed. Phase-2 swaps this
-  // for a looping <video src={resolveAssetUrl(asset_id)} /> once
-  // the Animate pipeline writes real files.
+function VideoStage({
+  scene, mood, muted,
+}: {
+  scene: SceneJobView | null;
+  mood: string;
+  muted: boolean;
+}) {
+  // Two render paths:
+  //   1. When we have a real video URL, mount a <video> element
+  //      that loops the clip behind the chat.
+  //   2. Otherwise (phase-1 stub, idle, or job mid-render), show a
+  //      mood-tinted radial gradient with a subtle breathing
+  //      filter so the stage never looks frozen.
   //
-  // The idle state picks up a subtle breathing tint so the scene
-  // never looks frozen. A fresh scene key remounts the layer so
-  // the scene-fade animation fires once per new clip.
+  // The key={} trick on the outer element remounts the layer
+  // when the scene changes, triggering the CSS scene-fade
+  // animation so transitions feel smooth instead of abrupt.
   const tint = moodTint(mood);
+  const url = scene?.status === "ready" ? (scene.asset_url || "") : "";
+  const isVideo = url && /\.(mp4|webm|mov|mkv|m4v)(\?|$)/i.test(url);
+  const isImage = url && !isVideo;
+
+  if (isVideo) {
+    return (
+      <div
+        key={scene!.id}
+        className="absolute inset-0 -z-10 bg-black animate-scene-fade"
+        aria-hidden
+      >
+        <video
+          src={url}
+          autoPlay
+          loop
+          muted={muted}
+          playsInline
+          preload="auto"
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+        <SceneStamp scene={scene!} />
+      </div>
+    );
+  }
+
+  if (isImage) {
+    return (
+      <div
+        key={scene!.id}
+        className="absolute inset-0 -z-10 bg-black animate-scene-fade"
+        aria-hidden
+      >
+        <img
+          src={url}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+        <SceneStamp scene={scene!} />
+      </div>
+    );
+  }
+
   return (
     <div
       key={scene?.id || `idle-${mood}`}
@@ -452,11 +502,15 @@ function VideoStage({ scene, mood }: { scene: SceneJobView | null; mood: string 
       }}
       aria-hidden
     >
-      {scene && scene.status === "ready" && (
-        <div className="absolute bottom-28 left-1/2 -translate-x-1/2 text-[10px] uppercase tracking-widest text-white/40 backdrop-blur-sm bg-black/30 rounded px-2 py-1">
-          scene · {scene.id.slice(-6)} · {scene.duration_sec}s
-        </div>
-      )}
+      {scene && scene.status === "ready" && <SceneStamp scene={scene} />}
+    </div>
+  );
+}
+
+function SceneStamp({ scene }: { scene: SceneJobView }) {
+  return (
+    <div className="absolute bottom-28 left-1/2 -translate-x-1/2 text-[10px] uppercase tracking-widest text-white/40 backdrop-blur-sm bg-black/30 rounded px-2 py-1 pointer-events-none">
+      scene · {scene.id.slice(-6)} · {scene.duration_sec}s
     </div>
   );
 }
