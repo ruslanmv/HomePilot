@@ -45,6 +45,7 @@ import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
 import AnimateView from './Animate'
 import InteractiveView from './Interactive'
+import { InteractiveHost } from './InteractiveHost'
 import ModelsView from './Models'
 import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
@@ -5263,17 +5264,32 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             teamsMcpAvailable={teamsMcpAvailable}
           />
         ) : mode === 'interactive' ? (
-          // Interactive: branching AI-video experiences (separate from Animate's
-          // single-clip generator — uses /v1/interactive/* on the backend).
-          // Host/editor mount lands in UI-2/3; for now the landing grid itself
-          // is fully functional and the "New project" CTA shows a placeholder
-          // wizard prompt.
-          <InteractiveView
-            backendUrl={settingsDraft.backendUrl}
-            apiKey={settingsDraft.apiKey}
-            onOpenProject={(id) => setInteractiveProjectId(id)}
-            onCreateNew={() => setInteractiveCreating(true)}
-          />
+          // Interactive: branching AI-video experiences. The landing grid
+          // doubles as the home surface; opening a project or hitting the
+          // "New project" CTA mounts the InteractiveHost on top without
+          // tearing down the tab.
+          interactiveProjectId || interactiveCreating ? (
+            <InteractiveHost
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              projectId={interactiveProjectId}
+              onExit={() => {
+                setInteractiveProjectId(null)
+                setInteractiveCreating(false)
+              }}
+              onCreated={(newId) => {
+                setInteractiveCreating(false)
+                setInteractiveProjectId(newId)
+              }}
+            />
+          ) : (
+            <InteractiveView
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              onOpenProject={(id) => setInteractiveProjectId(id)}
+              onCreateNew={() => setInteractiveCreating(true)}
+            />
+          )
         ) : mode === 'animate' ? (
           // Animate mode: Grok-style video generation gallery
           <AnimateView
