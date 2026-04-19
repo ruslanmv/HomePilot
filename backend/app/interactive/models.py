@@ -53,7 +53,14 @@ ProgressionScheme = Literal[
     "xp_level", "mastery", "cefr", "affinity_tier", "certification",
 ]
 
-PublishChannel = Literal["web_embed", "lms", "kiosk", "api"]
+# PublishChannel spans every channel any interactive publisher can
+# emit today. Kept as a broad union (rather than an enum) so new
+# delivery targets land as additive string additions — the publisher
+# + frontend picker enforce which subset is actively wired at runtime.
+PublishChannel = Literal[
+    "web_embed", "studio_preview", "export",
+    "lms", "kiosk", "api",
+]
 
 
 # ─────────────────────────────────────────────────────────────────
