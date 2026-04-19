@@ -21,13 +21,50 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Cookie, Depends, Header, Query
 from fastapi.responses import JSONResponse
 
 from .auth import require_api_key
 from .config import UPLOAD_DIR, PUBLIC_BASE_URL, SQLITE_PATH
 
 router = APIRouter(prefix="/v1/inventory", tags=["inventory"])
+
+
+def _resolve_inventory_user_id(
+    authorization: str = "",
+    homepilot_session: Optional[str] = None,
+) -> str:
+    """Resolve the viewer's user_id from bearer JWT / session cookie.
+
+    Used by the inventory routes to scope DB queries so one user's
+    uploaded photos + documents never appear in another user's
+    inventory response. Returns '' (legacy single-user fallback)
+    when the users subsystem can't resolve a user — matches the
+    pre-account-isolation default and keeps dev installs without
+    login working.
+    """
+    try:
+        from .users import ensure_users_tables, _validate_token, get_or_create_default_user, count_users
+        ensure_users_tables()
+        token = ""
+        if authorization and authorization.lower().startswith("bearer "):
+            token = authorization.split(" ", 1)[1].strip()
+        if not token and homepilot_session:
+            token = homepilot_session.strip()
+        user = _validate_token(token) if token else None
+        if user and user.get("id"):
+            return str(user["id"])
+        # Single-user fallback — if there's only one registered user,
+        # use their id. Matches ``_scoped_user_or_none`` semantics so
+        # a legacy dev install without bearer headers still sees its
+        # own uploads.
+        if count_users() <= 1:
+            default_user = get_or_create_default_user()
+            return str(default_user.get("id") or "")
+    except Exception:
+        # Users subsystem unavailable — fall back to no scoping.
+        return ""
+    return ""
 
 # ---------------------------------------------------------------------------
 # Helpers (mirrors MCP inventory/app.py — single source of truth is
@@ -360,7 +397,18 @@ def _collect_image_assets(project_id: str, appearance: Dict[str, Any]) -> List[D
     return list(assets.values())
 
 
-def _collect_document_assets(project_id: str) -> List[Dict[str, Any]]:
+def _collect_document_assets(project_id: str, *, user_id: str = "") -> List[Dict[str, Any]]:
+    """Collect documents for the inventory view.
+
+    ``user_id`` (empty = legacy / no user scoping) is threaded to
+    ``_db_list_project_files`` (source 2) so file_assets rows owned
+    by other users never leak. Source 1 (project_items) is an
+    in-memory list filtered by project_id only today; extending it
+    with user_id filtering is a follow-up (the schema has the
+    column since the users work, see project_files.py:39). For now
+    the file_assets path carries the critical isolation guarantee
+    for uploaded photos + documents.
+    """
     seen_ids: set = set()
     # Track asset_ids (file_assets.id) from project_items so Source 2
     # doesn't re-add the same physical file under a different ID.
@@ -419,7 +467,7 @@ def _collect_document_assets(project_id: str) -> List[Dict[str, Any]]:
     # Skip any file_assets row whose id already appeared as an asset_id in
     # a project_items row — this prevents the same physical file from being
     # counted twice (once as item, once as raw asset).
-    rows = _db_list_project_files(project_id)
+    rows = _db_list_project_files(project_id, user_id=user_id)
     for r in rows:
         mime = (r.get("mime") or "").lower()
         if mime.startswith("image/"):
@@ -452,12 +500,23 @@ def _collect_document_assets(project_id: str) -> List[Dict[str, Any]]:
     return out
 
 
-def _build_inventory(project_id: str) -> Dict[str, Any]:
+def _build_inventory(project_id: str, *, user_id: str = "") -> Dict[str, Any]:
+    """Assemble the inventory view for a project.
+
+    ``user_id`` is threaded through to DB-backed sub-queries so one
+    user's uploaded photos / documents never surface in another
+    user's inventory response. Empty string is legacy behaviour:
+    returns whatever the underlying queries return without user
+    filtering (used by internal callers that have already scoped
+    their data some other way — e.g. single-user installs). The
+    HTTP routes below always pass a resolved user_id, so external
+    traffic is scoped.
+    """
     meta = _load_projects_metadata()
     appearance = _get_appearance(meta, project_id)
     outfits = _collect_outfit_items(appearance)
     images = _collect_image_assets(project_id, appearance)
-    files = _collect_document_assets(project_id)
+    files = _collect_document_assets(project_id, user_id=user_id)
 
     items_by_id: Dict[str, Dict[str, Any]] = {i["id"]: i for i in outfits}
     assets_by_id: Dict[str, Dict[str, Any]] = {a["id"]: a for a in images}
@@ -504,6 +563,8 @@ async def inventory_categories(
     include_counts: bool = Query(True),
     include_tags: bool = Query(False),
     sensitivity_max: str = Query("safe"),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
 ) -> JSONResponse:
     """List inventory categories with counts and optional tag breakdowns."""
     if not _UUID_RE.match(project_id):
@@ -512,7 +573,8 @@ async def inventory_categories(
     if sensitivity_max not in SENS_ORDER:
         sensitivity_max = "safe"
 
-    inv = _build_inventory(project_id)
+    viewer_id = _resolve_inventory_user_id(authorization, homepilot_session)
+    inv = _build_inventory(project_id, user_id=viewer_id)
 
     outfit_items = [o for o in inv["outfits"]
                     if _allowed_by_sensitivity(o.get("sensitivity", "safe"), sensitivity_max)]
@@ -551,6 +613,8 @@ async def inventory_search(
     limit: int = Query(30, ge=1, le=100),
     sensitivity_max: str = Query("safe"),
     count_only: bool = Query(False),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
 ) -> JSONResponse:
     """Search inventory items by query text, type, and sensitivity."""
     if not _UUID_RE.match(project_id):
@@ -561,7 +625,8 @@ async def inventory_search(
     q = query.strip().lower()
     type_list = [t.strip().lower() for t in types.split(",") if t.strip()] or ["outfit", "image", "file"]
 
-    inv = _build_inventory(project_id)
+    viewer_id = _resolve_inventory_user_id(authorization, homepilot_session)
+    inv = _build_inventory(project_id, user_id=viewer_id)
     results: List[Dict[str, Any]] = []
 
     def _match(it: Dict[str, Any]) -> bool:
@@ -669,6 +734,8 @@ async def inventory_get_item(
     project_id: str,
     item_id: str,
     sensitivity_max: str = Query("safe"),
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
 ) -> JSONResponse:
     """Get full metadata for a single inventory item or asset."""
     if not _UUID_RE.match(project_id):
@@ -676,7 +743,8 @@ async def inventory_get_item(
     if sensitivity_max not in SENS_ORDER:
         sensitivity_max = "safe"
 
-    inv = _build_inventory(project_id)
+    viewer_id = _resolve_inventory_user_id(authorization, homepilot_session)
+    inv = _build_inventory(project_id, user_id=viewer_id)
 
     if item_id in inv["items_by_id"]:
         o = inv["items_by_id"][item_id]
@@ -697,6 +765,8 @@ async def inventory_get_item(
 @router.post("/resolve", dependencies=[Depends(require_api_key)])
 async def inventory_resolve(
     body: dict,
+    authorization: str = Header(default=""),
+    homepilot_session: Optional[str] = Cookie(default=None),
 ) -> JSONResponse:
     """Resolve an asset_id to a safe /files/... URL."""
     project_id = str(body.get("project_id") or "").strip()
@@ -711,7 +781,8 @@ async def inventory_resolve(
     if sensitivity_max not in SENS_ORDER:
         sensitivity_max = "safe"
 
-    inv = _build_inventory(project_id)
+    viewer_id = _resolve_inventory_user_id(authorization, homepilot_session)
+    inv = _build_inventory(project_id, user_id=viewer_id)
     a = inv["assets_by_id"].get(asset_id)
     if not a:
         return JSONResponse(status_code=404, content={"ok": False, "message": "ITEM_NOT_FOUND"})

@@ -29,6 +29,13 @@ type ChatResponse = {
 function authHeaders(apiKey?: string): Record<string, string> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey && apiKey.trim().length > 0) h['x-api-key'] = apiKey
+  // Additive: logged-in user session — Bearer JWT from localStorage.
+  try {
+    if (typeof window !== 'undefined') {
+      const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+      if (tok) h['authorization'] = `Bearer ${tok}`
+    }
+  } catch { /* ignore */ }
   return h
 }
 
@@ -74,6 +81,7 @@ export async function generatePersonaImages(params: {
   const res = await fetch(`${params.backendUrl}/chat`, {
     method: 'POST',
     headers: authHeaders(params.apiKey),
+    credentials: 'include',
     body: JSON.stringify(body),
   })
 
@@ -113,6 +121,7 @@ export async function createPersonaProject(params: {
   const res = await fetch(`${params.backendUrl}/projects`, {
     method: 'POST',
     headers: authHeaders(params.apiKey),
+    credentials: 'include',
     body: JSON.stringify(payload),
   })
 
@@ -159,7 +168,7 @@ export async function commitGeneratedImages(params: {
 
   const res = await fetch(
     `${params.backendUrl}/projects/${params.projectId}/persona/appearance/commit_generated`,
-    { method: 'POST', headers: authHeaders(params.apiKey), body: JSON.stringify(body) },
+    { method: 'POST', headers: authHeaders(params.apiKey), credentials: 'include', body: JSON.stringify(body) },
   )
   if (!res.ok) throw new Error(`commit_generated failed: ${res.status}`)
   return res.json()
