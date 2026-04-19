@@ -24,7 +24,7 @@
  */
 
 import React, { useMemo, useState, useCallback } from "react";
-import { Plus, Workflow, Search, Filter, RefreshCw } from "lucide-react";
+import { Play, Plus, Workflow, Search, Filter, RefreshCw } from "lucide-react";
 import { createInteractiveApi } from "./interactive/api";
 import type { Experience, ExperienceStatus } from "./interactive/types";
 import { InteractiveApiError } from "./interactive/types";
@@ -44,10 +44,12 @@ type FilterStatus = "all" | ExperienceStatus;
 interface Props {
   backendUrl: string;
   apiKey?: string;
-  /** Called when the user opens an existing project card. */
+  /** Called when the user opens an existing project card (editor). */
   onOpenProject: (id: string) => void;
   /** Called when the user hits the "New project" primary button. */
   onCreateNew: () => void;
+  /** Called when the user hits the "Play" action on a card. */
+  onPlayProject: (id: string) => void;
 }
 
 export default function InteractiveView(props: Props) {
@@ -58,7 +60,9 @@ export default function InteractiveView(props: Props) {
   );
 }
 
-function InteractiveViewBody({ backendUrl, apiKey, onOpenProject, onCreateNew }: Props) {
+function InteractiveViewBody({
+  backendUrl, apiKey, onOpenProject, onCreateNew, onPlayProject,
+}: Props) {
   const api = useMemo(() => createInteractiveApi(backendUrl, apiKey), [backendUrl, apiKey]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
@@ -116,7 +120,11 @@ function InteractiveViewBody({ backendUrl, apiKey, onOpenProject, onCreateNew }:
           ) : filtered.length === 0 ? (
             <FilteredEmptyState onClear={() => { setQuery(""); setStatusFilter("all"); }} />
           ) : (
-            <Grid items={filtered} onOpen={onOpenProject} />
+            <Grid
+              items={filtered}
+              onOpen={onOpenProject}
+              onPlay={onPlayProject}
+            />
           )}
         </div>
       </div>
@@ -246,37 +254,52 @@ function Toolbar({
 // ────────────────────────────────────────────────────────────────
 
 function Grid({
-  items, onOpen,
+  items, onOpen, onPlay,
 }: {
   items: Experience[];
   onOpen: (id: string) => void;
+  onPlay: (id: string) => void;
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {items.map((exp) => (
-        <ProjectCard key={exp.id} experience={exp} onClick={() => onOpen(exp.id)} />
+        <ProjectCard
+          key={exp.id}
+          experience={exp}
+          onOpen={() => onOpen(exp.id)}
+          onPlay={() => onPlay(exp.id)}
+        />
       ))}
     </div>
   );
 }
 
 function ProjectCard({
-  experience, onClick,
+  experience, onOpen, onPlay,
 }: {
   experience: Experience;
-  onClick: () => void;
+  onOpen: () => void;
+  onPlay: () => void;
 }) {
   const modeLabel = humanizeMode(experience.experience_mode);
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onOpen();
+    }
+  };
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={`Open ${experience.title || "untitled project"}`}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={onKeyDown}
+      aria-label={`Open ${experience.title || "untitled project"} in editor`}
       className={[
-        "text-left bg-[#1f1f1f] border border-[#3f3f3f] rounded-lg p-5",
+        "relative text-left bg-[#1f1f1f] border border-[#3f3f3f] rounded-lg p-5 cursor-pointer",
         "hover:bg-[#282828] hover:border-[#555] transition-colors",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f0f]",
-        "flex flex-col gap-3",
+        "flex flex-col gap-3 group",
       ].join(" ")}
     >
       <div className="flex items-start justify-between gap-3">
@@ -309,7 +332,27 @@ function ProjectCard({
           </>
         )}
       </div>
-    </button>
+
+      {/* Play action — floating bottom-right, appears on hover/focus
+          so the card's primary intent stays "open editor". Stops
+          propagation so clicking Play doesn't also open the editor. */}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onPlay(); }}
+        aria-label={`Play ${experience.title || "project"} live`}
+        className={[
+          "absolute bottom-3 right-3 inline-flex items-center gap-1.5",
+          "px-2.5 py-1 rounded-full text-xs font-medium",
+          "bg-[#3ea6ff] text-black",
+          "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+          "transition-opacity",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#1f1f1f]",
+        ].join(" ")}
+      >
+        <Play className="w-3 h-3" aria-hidden />
+        Play
+      </button>
+    </div>
   );
 }
 

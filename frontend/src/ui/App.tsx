@@ -46,6 +46,7 @@ import ImagineView from './Imagine'
 import AnimateView from './Animate'
 import InteractiveView from './Interactive'
 import { InteractiveHost } from './InteractiveHost'
+import InteractivePlayer from './InteractivePlayer'
 import ModelsView from './Models'
 import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
@@ -2307,6 +2308,11 @@ export default function App() {
   const [interactiveProjectId, setInteractiveProjectId] = useState<string | null>(null)
   // Interactive tab: "new project" intent — when true the host renders the wizard
   const [interactiveCreating, setInteractiveCreating] = useState<boolean>(false)
+  // Interactive tab: live-play project id — when set, InteractivePlayer
+  // takes over the tab until onExit. Independent of the editor state so
+  // a single tab can cleanly swap between the two modes without tearing
+  // down either surface.
+  const [interactivePlayId, setInteractivePlayId] = useState<string | null>(null)
 
   // Unified settings model
   const [settings, setSettings] = useState<SettingsModel>(() => {
@@ -5264,11 +5270,18 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             teamsMcpAvailable={teamsMcpAvailable}
           />
         ) : mode === 'interactive' ? (
-          // Interactive: branching AI-video experiences. The landing grid
-          // doubles as the home surface; opening a project or hitting the
-          // "New project" CTA mounts the InteractiveHost on top without
-          // tearing down the tab.
-          interactiveProjectId || interactiveCreating ? (
+          // Interactive: three mutually-exclusive sub-surfaces drive this
+          // tab — live play, authoring host (wizard / editor), or the
+          // landing grid. Live play wins when set so the "Play" CTA on a
+          // card takes the viewer straight into the InteractivePlayer.
+          interactivePlayId ? (
+            <InteractivePlayer
+              backendUrl={settingsDraft.backendUrl}
+              apiKey={settingsDraft.apiKey}
+              projectId={interactivePlayId}
+              onExit={() => setInteractivePlayId(null)}
+            />
+          ) : interactiveProjectId || interactiveCreating ? (
             <InteractiveHost
               backendUrl={settingsDraft.backendUrl}
               apiKey={settingsDraft.apiKey}
@@ -5288,6 +5301,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               apiKey={settingsDraft.apiKey}
               onOpenProject={(id) => setInteractiveProjectId(id)}
               onCreateNew={() => setInteractiveCreating(true)}
+              onPlayProject={(id) => setInteractivePlayId(id)}
             />
           )
         ) : mode === 'animate' ? (
