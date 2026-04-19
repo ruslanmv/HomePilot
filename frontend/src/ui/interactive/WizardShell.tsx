@@ -38,14 +38,25 @@ export function WizardShell({
   onBack, onNext, children,
 }: WizardShellProps) {
   return (
-    <div className="pt-8 flex flex-col gap-6 max-w-3xl mx-auto">
+    // pb-28 reserves space at the bottom of the scrolling container
+    // so the sticky footer never covers the last field in a step.
+    <div className="pt-8 flex flex-col gap-6 max-w-3xl mx-auto pb-28">
       <Stepper steps={steps} activeIndex={activeIndex} />
       <header>
         <h1 className="text-2xl font-medium">{title}</h1>
         {subtitle && <p className="text-sm text-[#aaa] mt-1">{subtitle}</p>}
       </header>
       <div>{children}</div>
-      <footer className="flex items-center justify-between border-t border-[#3f3f3f] pt-4">
+      {/* Sticky footer: Back/Next stay pinned to the viewport bottom
+          so users on short screens (laptops, small-tab windows) can
+          always see the Next button without scrolling hunt. */}
+      <footer
+        className={[
+          "sticky bottom-4 z-10 flex items-center justify-between gap-3",
+          "rounded-xl border border-[#3f3f3f] bg-[#121212]/95 backdrop-blur",
+          "px-4 py-3 shadow-[0_8px_30px_rgba(0,0,0,0.4)]",
+        ].join(" ")}
+      >
         <SecondaryButton
           onClick={onBack}
           disabled={!canGoBack || submitting}
