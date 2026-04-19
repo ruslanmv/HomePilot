@@ -59,29 +59,40 @@ export function InteractiveEditor({ backendUrl, apiKey, projectId }: Interactive
     [api, projectId],
   );
 
+  // Same shell pattern as the wizard: project header + tab strip
+  // are pinned; only the active panel scrolls. Keeps the tab row
+  // visible at all times even when a panel (analytics cards,
+  // catalog table) is tall.
   return (
-    <div className="pt-6 flex flex-col gap-6">
-      {exp.error ? (
-        <ErrorBanner
-          title="Couldn't load this project"
-          message={exp.error}
-          onRetry={exp.reload}
-        />
-      ) : exp.loading || !exp.data ? (
-        <ProjectHeaderSkeleton />
-      ) : (
-        <ProjectHeader experience={exp.data} />
-      )}
+    <div className="flex flex-col h-full w-full">
+      <header className="shrink-0 border-b border-[#2a2a2a]">
+        <div className="max-w-6xl mx-auto px-6 pt-6 pb-3">
+          {exp.error ? (
+            <ErrorBanner
+              title="Couldn't load this project"
+              message={exp.error}
+              onRetry={exp.reload}
+            />
+          ) : exp.loading || !exp.data ? (
+            <ProjectHeaderSkeleton />
+          ) : (
+            <ProjectHeader experience={exp.data} />
+          )}
+          <div className="mt-4">
+            <TabStrip active={activeTab} onChange={setActiveTab} />
+          </div>
+        </div>
+      </header>
 
-      <TabStrip active={activeTab} onChange={setActiveTab} />
-
-      <div>
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="max-w-6xl mx-auto px-6 py-6">
         {activeTab === "graph" && <GraphPanel api={api} projectId={projectId} />}
         {activeTab === "catalog" && <CatalogPanel api={api} projectId={projectId} />}
         {activeTab === "rules" && <RulesPanel api={api} projectId={projectId} />}
         {activeTab === "qa" && <QAPanel api={api} projectId={projectId} />}
         {activeTab === "publish" && <PublishPanel api={api} projectId={projectId} />}
         {activeTab === "analytics" && <AnalyticsPanel api={api} projectId={projectId} />}
+        </div>
       </div>
     </div>
   );

@@ -35,11 +35,17 @@ export interface InteractiveHostProps {
 export function InteractiveHost({
   backendUrl, apiKey, projectId, onExit, onCreated,
 }: InteractiveHostProps) {
+  // Enterprise shell: full viewport height, three stacked rows.
+  //   [0] TopBar — fixed 'Cancel / Back to projects' button.
+  //   [1] Body   — wizard or editor, filling the remaining space.
+  //                Each mode manages its own internal scroll.
+  //   Nothing scrolls at the page level; layout is owned by the
+  //   sub-views so Back / Next never drift offscreen.
   return (
     <ToastProvider>
-      <div className="min-h-full bg-[#0f0f0f] text-[#f1f1f1]">
+      <div className="flex flex-col h-screen bg-[#0f0f0f] text-[#f1f1f1]">
         <TopBar onExit={onExit} label={projectId ? "Back to projects" : "Cancel"} />
-        <div className="max-w-6xl mx-auto px-6 pb-10">
+        <div className="flex-1 min-h-0 flex flex-col">
           {projectId ? (
             <InteractiveEditor
               backendUrl={backendUrl}
@@ -62,7 +68,7 @@ export function InteractiveHost({
 
 function TopBar({ onExit, label }: { onExit: () => void; label: string }) {
   return (
-    <div className="sticky top-0 z-10 bg-[#0f0f0f]/90 backdrop-blur border-b border-[#3f3f3f]">
+    <div className="shrink-0 bg-[#0f0f0f] border-b border-[#3f3f3f]">
       <div className="max-w-6xl mx-auto px-6 py-3">
         <SecondaryButton
           onClick={onExit}

@@ -37,57 +37,60 @@ export function WizardShell({
   canGoBack, canGoNext, nextLabel, submitting,
   onBack, onNext, children,
 }: WizardShellProps) {
+  // Three-row enterprise layout: stepper + title stay pinned at
+  // the top, footer stays pinned at the bottom, and only the
+  // middle content area scrolls. Follows the Linear / Stripe /
+  // Notion wizard pattern so users never lose the Next button
+  // regardless of viewport height or field length.
   return (
-    // pb-20 reserves space for the sticky footer so the last form
-    // field never sits flush under it.
-    <div className="pt-8 flex flex-col gap-6 max-w-3xl mx-auto pb-20">
-      <Stepper steps={steps} activeIndex={activeIndex} />
-      <header>
-        <h1 className="text-2xl font-medium">{title}</h1>
-        {subtitle && <p className="text-sm text-[#aaa] mt-1">{subtitle}</p>}
+    <div className="flex flex-col h-full w-full">
+      {/* ───── Row 1 — Fixed header (stepper + step title) ───── */}
+      <header className="shrink-0 border-b border-[#2a2a2a]">
+        <div className="max-w-3xl mx-auto px-6 pt-6 pb-4">
+          <Stepper steps={steps} activeIndex={activeIndex} />
+          <div className="mt-5">
+            <h1 className="text-2xl font-medium">{title}</h1>
+            {subtitle && <p className="text-sm text-[#aaa] mt-1">{subtitle}</p>}
+          </div>
+        </div>
       </header>
-      <div>{children}</div>
 
-      {/* Action bar — feels like page chrome, not a floating widget:
-          no rounded corners, no drop-shadow, no fill border. Just a
-          thin top rule + page-colored blurred background. Back is a
-          ghost text button (secondary), Next is the prominent
-          primary with a right-facing chevron so the forward motion
-          reads at a glance. */}
-      <footer
-        className={[
-          "sticky bottom-0 z-20",
-          "flex items-center justify-between gap-3",
-          "border-t border-[#2a2a2a]",
-          "bg-[#0f0f0f]/95 backdrop-blur",
-          "py-3",
-        ].join(" ")}
-      >
-        <button
-          type="button"
-          onClick={onBack}
-          disabled={!canGoBack || submitting}
-          className={[
-            "inline-flex items-center gap-1.5",
-            "px-2.5 py-2 text-sm font-medium rounded",
-            "text-[#aaa] hover:text-[#f1f1f1]",
-            "disabled:text-[#555] disabled:cursor-not-allowed",
-            "transition-colors focus:outline-none",
-            "focus-visible:ring-2 focus-visible:ring-[#3ea6ff]",
-          ].join(" ")}
-        >
-          <ChevronLeft className="w-4 h-4" aria-hidden />
-          Back
-        </button>
-        <PrimaryButton
-          onClick={onNext}
-          disabled={!canGoNext}
-          loading={submitting}
-          size="lg"
-        >
-          <span>{nextLabel || "Next"}</span>
-          {!submitting && <ChevronRight className="w-4 h-4" aria-hidden />}
-        </PrimaryButton>
+      {/* ───── Row 2 — Scrollable content (flex-1 + overflow) ─── */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-6 py-6">{children}</div>
+      </div>
+
+      {/* ───── Row 3 — Fixed action bar (Back / Next) ───────── */}
+      <footer className="shrink-0 border-t border-[#2a2a2a] bg-[#0f0f0f]">
+        <div className="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between gap-3">
+          {/* Back — ghost/text button so visual weight sits on Next */}
+          <button
+            type="button"
+            onClick={onBack}
+            disabled={!canGoBack || submitting}
+            className={[
+              "inline-flex items-center gap-1.5",
+              "px-2.5 py-2 text-sm font-medium rounded",
+              "text-[#aaa] hover:text-[#f1f1f1]",
+              "disabled:text-[#555] disabled:cursor-not-allowed",
+              "transition-colors focus:outline-none",
+              "focus-visible:ring-2 focus-visible:ring-[#3ea6ff]",
+            ].join(" ")}
+          >
+            <ChevronLeft className="w-4 h-4" aria-hidden />
+            Back
+          </button>
+          {/* Next — prominent primary with forward chevron after the label */}
+          <PrimaryButton
+            onClick={onNext}
+            disabled={!canGoNext}
+            loading={submitting}
+            size="lg"
+          >
+            <span>{nextLabel || "Next"}</span>
+            {!submitting && <ChevronRight className="w-4 h-4" aria-hidden />}
+          </PrimaryButton>
+        </div>
       </footer>
     </div>
   );
