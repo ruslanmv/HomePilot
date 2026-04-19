@@ -246,8 +246,10 @@ def test_query_ranks_matches_over_non_matches():
 
 
 def test_seed_defaults_is_idempotent():
-    ids_a = seed_library_defaults("persona_seed")
-    ids_b = seed_library_defaults("persona_seed")
+    import uuid
+    persona = f"persona_seed_{uuid.uuid4().hex[:8]}"
+    ids_a = seed_library_defaults(persona)
+    ids_b = seed_library_defaults(persona)
     assert len(ids_a) == 2
     assert len(ids_b) == 0  # already seeded
 
