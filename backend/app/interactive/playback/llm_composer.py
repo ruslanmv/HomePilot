@@ -73,28 +73,34 @@ async def compose_with_llm(
             timeout=cfg.llm_timeout_s,
         )
     except asyncio.TimeoutError:
-        log.info(
-            "playback_llm_timeout",
-            extra={"session_id": memory.session_id, "timeout_s": cfg.llm_timeout_s},
+        log.warning(
+            "playback_llm_timeout after %.1fs",
+            cfg.llm_timeout_s,
+            extra={"session_id": memory.session_id},
         )
         return None
     except Exception as exc:  # noqa: BLE001 — any upstream failure → fallback
         log.warning(
-            "playback_llm_error",
-            extra={"session_id": memory.session_id, "error": str(exc)},
+            "playback_llm_error: %s",
+            str(exc)[:400],
+            extra={"session_id": memory.session_id},
         )
         return None
 
     content = _extract_content(response)
     if not content:
-        log.info("playback_llm_empty_content", extra={"session_id": memory.session_id})
+        log.warning(
+            "playback_llm_empty_content (response had no message.content)",
+            extra={"session_id": memory.session_id},
+        )
         return None
 
     payload = _parse_json(content)
     if payload is None:
-        log.info(
-            "playback_llm_malformed_json",
-            extra={"session_id": memory.session_id, "content_preview": content[:200]},
+        log.warning(
+            "playback_llm_malformed_json — first 200 chars: %r",
+            content[:200],
+            extra={"session_id": memory.session_id},
         )
         return None
 
@@ -257,9 +263,10 @@ def _to_scene_plan(
     reply_text = _trimmed_string(payload.get("reply_text"), max_len=600)
     scene_prompt = _trimmed_string(payload.get("scene_prompt"), max_len=400)
     if not reply_text or not scene_prompt:
-        log.info(
-            "playback_llm_missing_fields",
-            extra={"session_id": memory.session_id, "keys": list(payload.keys())},
+        log.warning(
+            "playback_llm_missing_fields — got keys %s (need reply_text + scene_prompt)",
+            sorted(payload.keys()),
+            extra={"session_id": memory.session_id},
         )
         return None
 

@@ -59,22 +59,26 @@ async def render_scene_async(
         )
     except asyncio.TimeoutError:
         log.warning(
-            "playback_render_timeout",
-            extra={"session_id": session_id, "timeout_s": cfg.render_timeout_s},
+            "playback_render_timeout after %.1fs (workflow=%s)",
+            cfg.render_timeout_s, cfg.render_workflow,
+            extra={"session_id": session_id},
         )
         return None
     except Exception as exc:  # noqa: BLE001 — any pipeline failure → fallback
         log.warning(
-            "playback_render_error",
-            extra={"session_id": session_id, "error": str(exc)[:200]},
+            "playback_render_error (workflow=%s): %s",
+            cfg.render_workflow, str(exc)[:400],
+            extra={"session_id": session_id},
         )
         return None
 
     media_url, media_kind = _select_best_media(result)
     if not media_url:
-        log.info(
-            "playback_render_no_output",
-            extra={"session_id": session_id, "keys": list(result.keys()) if isinstance(result, dict) else []},
+        keys = list(result.keys()) if isinstance(result, dict) else []
+        log.warning(
+            "playback_render_no_output — run_workflow returned keys %s but no videos/images",
+            keys,
+            extra={"session_id": session_id},
         )
         return None
 
@@ -85,8 +89,8 @@ async def render_scene_async(
         )
     except Exception as exc:  # noqa: BLE001
         log.warning(
-            "playback_asset_register_failed",
-            extra={"session_id": session_id, "error": str(exc)[:200]},
+            "playback_asset_register_failed: %s", str(exc)[:200],
+            extra={"session_id": session_id},
         )
         return None
     return asset_id

@@ -26,11 +26,12 @@ terminal tells you at a glance where the pipeline is broken.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # Run against a fresh SQLite DB so the smoke test never steps on
 # a dev database. Set BEFORE importing anything that reads it.
@@ -43,6 +44,40 @@ os.environ.setdefault("INTERACTIVE_ENABLED", "true")
 # phase-1 stubs when their backends are unreachable.
 os.environ.setdefault("INTERACTIVE_PLAYBACK_LLM", "true")
 os.environ.setdefault("INTERACTIVE_PLAYBACK_RENDER", "true")
+
+
+# ── Capture fallback reasons from the playback subsystem ────────
+#
+# Every fallback path (LLM can't parse, ComfyUI rejects workflow,
+# asset registry fails) emits a WARNING on the 'app.interactive.
+# playback.*' loggers. We install a capture handler so the smoke
+# summary can tell the operator which path fired and why, instead
+# of just reporting "fell back" and leaving them to guess.
+
+_CAPTURED_FALLBACKS: List[str] = []
+
+
+class _FallbackCapture(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.name.startswith("app.interactive.playback."):
+            try:
+                _CAPTURED_FALLBACKS.append(self.format(record))
+            except Exception:  # noqa: BLE001
+                _CAPTURED_FALLBACKS.append(record.getMessage())
+
+
+def _install_log_capture() -> None:
+    root = logging.getLogger("app.interactive.playback")
+    root.setLevel(logging.INFO)
+    handler = _FallbackCapture()
+    handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+    root.addHandler(handler)
+
+
+def _consume_fallbacks() -> List[str]:
+    msgs = list(_CAPTURED_FALLBACKS)
+    _CAPTURED_FALLBACKS.clear()
+    return msgs
 
 
 # ── Pretty output ───────────────────────────────────────────────
@@ -73,6 +108,42 @@ def step(n: int, title: str) -> None:
 
 def sub(msg: str) -> None:
     print(f"  {DIM}{msg}{RESET}")
+
+
+# ── Detecting heuristic vs LLM replies ──────────────────────────
+#
+# The heuristic composer in scene_planner.py pulls from a tight
+# template catalog keyed on (intent_bucket × affinity_tier). If
+# chat's reply_text matches one of those strings exactly, the
+# heuristic path fired. Otherwise the LLM produced something
+# original.
+
+_HEURISTIC_TEMPLATES = {
+    "Hi there — good to finally see you.",
+    "Hey you, welcome back.",
+    "There you are — I was hoping you'd show up.",
+    "Hey trouble, come sit with me.",
+    "That's kind of you, thank you.",
+    "Oh — you're being sweet.",
+    "You always know what to say, don't you?",
+    "Keep talking like that, I might not let you leave.",
+    "Hmm, let me think about that for a second.",
+    "Good question — here's how I'd put it.",
+    "Ask me anything. Really.",
+    "You and your questions. Come closer.",
+    "Oh? We're going there already?",
+    "Careful — I flirt back.",
+    "Is that how it's going to be tonight?",
+    "You're in a mood. I like it.",
+    "Mhm — go on, I'm listening.",
+    "Tell me more.",
+    "I like where this is going.",
+    "Keep going. I'm right here.",
+}
+
+
+def _looks_heuristic(reply_text: str) -> bool:
+    return reply_text.strip() in _HEURISTIC_TEMPLATES
 
 
 # ── Backend reachability probes ─────────────────────────────────
@@ -106,6 +177,8 @@ def probe_comfy() -> bool:
 # ── Run the hello-world scenario ────────────────────────────────
 
 def run_scenario() -> int:
+    _install_log_capture()
+
     # Late import so env vars are set before FastAPI/TestClient load.
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -214,6 +287,24 @@ def run_scenario() -> int:
     sub(f"intent_code: {chat['intent_code']}  mood: {chat['mood']}"
         f"  affinity: {chat['affinity_score']:.2f}")
 
+    # Diagnose LLM vs heuristic path. Heuristic replies match one
+    # of a small template catalog exactly; anything else came from
+    # the LLM. If the LLM fell back, surface the captured warning.
+    fallbacks = _consume_fallbacks()
+    llm_fallbacks = [m for m in fallbacks if "playback_llm_" in m]
+    if _looks_heuristic(chat["reply_text"]):
+        if ollama_tag:
+            warn("LLM was reachable but the reply is from the heuristic fallback")
+            if llm_fallbacks:
+                for msg in llm_fallbacks:
+                    sub(msg)
+            else:
+                sub("no warning captured — LLM flag may be off. Check INTERACTIVE_PLAYBACK_LLM.")
+        else:
+            sub("LLM composer skipped (Ollama unreachable) — heuristic used.")
+    else:
+        ok("reply came from the LLM composer ✓")
+
     # ── 5. Scene job + asset ────────────────────────────────────
     step(5, "Verify scene job + asset resolution")
     if chat.get("video_job_status") != "ready":
@@ -221,10 +312,20 @@ def run_scenario() -> int:
         return 1
     asset_id = chat.get("video_asset_id", "")
     asset_url = chat.get("video_asset_url", "")
+    render_fallbacks = [m for m in fallbacks if "playback_render_" in m or "playback_asset_register_" in m]
     if asset_id.startswith("ixa_playback_"):
         ok(f"real asset id: {asset_id}")
     elif asset_id.startswith("ixa_stub_"):
-        warn(f"fell back to stub asset: {asset_id} (expected when ComfyUI is down)")
+        if comfy_up:
+            warn(f"ComfyUI was reachable but the renderer fell back to a stub ({asset_id})")
+            if render_fallbacks:
+                for msg in render_fallbacks:
+                    sub(msg)
+                sub("hint: set INTERACTIVE_PLAYBACK_RENDER_WORKFLOW to a valid workflow name")
+            else:
+                sub("no warning captured — INTERACTIVE_PLAYBACK_RENDER flag may be off.")
+        else:
+            sub("renderer skipped (ComfyUI unreachable) — stub asset used.")
     else:
         fail(f"unexpected asset id shape: {asset_id!r}")
         return 1
