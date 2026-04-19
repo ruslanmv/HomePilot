@@ -15,10 +15,13 @@
  * every panel can surface success/error toasts uniformly.
  */
 
-import React from "react";
+import React, { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { InteractiveEditor } from "./InteractiveEditor";
 import { InteractiveWizard } from "./interactive/Wizard";
+import { WizardAuto } from "./interactive/WizardAuto";
+import { WizardAutoPreview } from "./interactive/WizardAutoPreview";
+import type { PlanAutoResult } from "./interactive/types";
 import { SecondaryButton, ToastProvider } from "./interactive/ui";
 
 export interface InteractiveHostProps {
@@ -32,9 +35,24 @@ export interface InteractiveHostProps {
   onCreated: (experienceId: string) => void;
 }
 
+/**
+ * Wizard stages the host walks through when no project is open.
+ *
+ *   auto     One-box WizardAuto (default). AI drafts the project
+ *            from a single sentence.
+ *   preview  Editable AI draft. User tweaks fields and creates.
+ *   advanced Classic 5-step InteractiveWizard (power-user escape
+ *            hatch; all original behaviour preserved).
+ */
+type WizardStage = "auto" | "preview" | "advanced";
+
 export function InteractiveHost({
   backendUrl, apiKey, projectId, onExit, onCreated,
 }: InteractiveHostProps) {
+  const [stage, setStage] = useState<WizardStage>("auto");
+  const [planResult, setPlanResult] = useState<PlanAutoResult | null>(null);
+  const [originalIdea, setOriginalIdea] = useState<string>("");
+
   // Enterprise shell: full viewport height, three stacked rows.
   //   [0] TopBar — fixed 'Cancel / Back to projects' button.
   //   [1] Body   — wizard or editor, filling the remaining space.
@@ -52,11 +70,37 @@ export function InteractiveHost({
               apiKey={apiKey}
               projectId={projectId}
             />
-          ) : (
+          ) : stage === "advanced" ? (
+            // Classic 5-step wizard stays intact for power users.
+            // Nothing inside it was touched by the AUTO-* batches.
             <InteractiveWizard
               backendUrl={backendUrl}
               apiKey={apiKey}
               onCreated={onCreated}
+              onCancel={onExit}
+            />
+          ) : stage === "preview" && planResult ? (
+            <WizardAutoPreview
+              backendUrl={backendUrl}
+              apiKey={apiKey}
+              initial={planResult}
+              originalIdea={originalIdea}
+              onCreated={onCreated}
+              onStartOver={() => {
+                setPlanResult(null);
+                setStage("auto");
+              }}
+            />
+          ) : (
+            <WizardAuto
+              backendUrl={backendUrl}
+              apiKey={apiKey}
+              onPlanned={(result, idea) => {
+                setPlanResult(result);
+                setOriginalIdea(idea);
+                setStage("preview");
+              }}
+              onSwitchToAdvanced={() => setStage("advanced")}
               onCancel={onExit}
             />
           )}
