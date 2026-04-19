@@ -22,6 +22,7 @@ import {
   BarChart3, CheckSquare, GitBranch, ListChecks, Send, Sparkles,
 } from "lucide-react";
 import { createInteractiveApi } from "./interactive/api";
+import { AnalyticsPanel } from "./interactive/AnalyticsPanel";
 import { CatalogPanel } from "./interactive/CatalogPanel";
 import { GraphPanel } from "./interactive/GraphPanel";
 import { PublishPanel } from "./interactive/PublishPanel";
@@ -29,7 +30,7 @@ import { QAPanel } from "./interactive/QAPanel";
 import { RulesPanel } from "./interactive/RulesPanel";
 import type { Experience } from "./interactive/types";
 import {
-  ErrorBanner, Panel, StatusBadge, useAsyncResource,
+  ErrorBanner, StatusBadge, useAsyncResource,
 } from "./interactive/ui";
 
 export interface InteractiveEditorProps {
@@ -75,27 +76,12 @@ export function InteractiveEditor({ backendUrl, apiKey, projectId }: Interactive
       <TabStrip active={activeTab} onChange={setActiveTab} />
 
       <div>
-        {activeTab === "graph" ? (
-          <GraphPanel api={api} projectId={projectId} />
-        ) : activeTab === "catalog" ? (
-          <CatalogPanel api={api} projectId={projectId} />
-        ) : activeTab === "rules" ? (
-          <RulesPanel api={api} projectId={projectId} />
-        ) : activeTab === "qa" ? (
-          <QAPanel api={api} projectId={projectId} />
-        ) : activeTab === "publish" ? (
-          <PublishPanel api={api} projectId={projectId} />
-        ) : (
-          // Placeholder for tabs that haven't shipped yet. Each
-          // panel gets its own batch (UI-3b Catalog, UI-4 Rules /
-          // QA / Publish, UI-5 Analytics).
-          <Panel
-            title={TABS.find((t) => t.key === activeTab)?.label}
-            subtitle={TABS.find((t) => t.key === activeTab)?.description}
-          >
-            <ComingSoonPanel tab={activeTab} projectId={projectId} />
-          </Panel>
-        )}
+        {activeTab === "graph" && <GraphPanel api={api} projectId={projectId} />}
+        {activeTab === "catalog" && <CatalogPanel api={api} projectId={projectId} />}
+        {activeTab === "rules" && <RulesPanel api={api} projectId={projectId} />}
+        {activeTab === "qa" && <QAPanel api={api} projectId={projectId} />}
+        {activeTab === "publish" && <PublishPanel api={api} projectId={projectId} />}
+        {activeTab === "analytics" && <AnalyticsPanel api={api} projectId={projectId} />}
       </div>
     </div>
   );
@@ -187,28 +173,3 @@ function TabStrip({
   );
 }
 
-// ────────────────────────────────────────────────────────────────
-// Placeholder panel — every tab renders this until its batch lands
-// ────────────────────────────────────────────────────────────────
-
-function ComingSoonPanel({ tab, projectId }: { tab: TabKey; projectId: string }) {
-  const upcoming: Record<TabKey, string> = {
-    graph: "UI-3 — DAG visualizer with zoomable canvas.",
-    catalog: "UI-3 — action-catalog CRUD with level / cooldown / XP fields.",
-    rules: "UI-4 — personalization rule DSL builder with live validation.",
-    qa: "UI-4 — run checks, render severity-sorted issues, retry individual checks.",
-    publish: "UI-4 — channel picker + publish flow with manifest diff preview.",
-    analytics: "UI-5 — experience + session rollups, completion rate, action popularity.",
-  };
-  return (
-    <div className="text-sm text-[#aaa]">
-      <p>This tab lands in an upcoming batch.</p>
-      <p className="mt-2 text-xs text-[#777]">
-        Next up: {upcoming[tab]}
-      </p>
-      <p className="mt-3 text-xs text-[#777]">
-        Project id (debug): <code className="text-[#cfd8dc]">{projectId}</code>
-      </p>
-    </div>
-  );
-}
