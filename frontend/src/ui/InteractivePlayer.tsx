@@ -36,12 +36,13 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft, Eye, EyeOff, MoreHorizontal, Send,
+  ArrowLeft, Eye, EyeOff, Gamepad2, MoreHorizontal, Send,
   Volume2, VolumeX, Workflow, X,
 } from "lucide-react";
 import { createInteractiveApi, type InteractiveApi } from "./interactive/api";
+import { LiveActionSheet } from "./interactive/LiveActionSheet";
 import type {
-  ChatResult, Experience, SceneJobView,
+  CatalogItemView, ChatResult, Experience, ResolveResult, SceneJobView,
 } from "./interactive/types";
 import { InteractiveApiError } from "./interactive/types";
 import {
@@ -132,6 +133,7 @@ function InteractivePlayerBody({
   const [currentScene, setCurrentScene] = useState<SceneJobView | null>(null);
   const [pendingScene, setPendingScene] = useState<SceneJobView | null>(null);
   const [cursor, setCursor] = useState<string>("");
+  const [liveActionOpen, setLiveActionOpen] = useState(false);
 
   // Refs for state read by the polling effect without re-binding.
   const cursorRef = useRef<string>("");
@@ -252,6 +254,34 @@ function InteractivePlayerBody({
     }
   }, [api, input, sending, sessionId, toast]);
 
+  // ── Action catalog resolution (Live Action sheet) ───────────
+  const onActionResolved = useCallback(
+    (resolved: ResolveResult, action: CatalogItemView) => {
+      // Treat a resolved action like a synthetic chat exchange so
+      // the overlay stays coherent with typed turns: surface the
+      // action label as a user bubble + the implied reply as an
+      // assistant bubble keyed by the transition.
+      const ts = Date.now();
+      setBubbles((prev) => [
+        ...prev,
+        { id: `a_user_${ts}`, role: "user", text: `▶ ${action.label}`, ts },
+        {
+          id: `a_ast_${ts}`,
+          role: "assistant",
+          text: resolved.level_description?.display
+            ? `${action.label} · ${resolved.level_description.display}`
+            : action.label,
+          ts,
+          intent: resolved.intent_code,
+        },
+      ]);
+      if (typeof resolved.mood === "string" && resolved.mood) setMood(resolved.mood);
+      if (typeof resolved.affinity_score === "number") setAffinity(resolved.affinity_score);
+      setLiveActionOpen(false);
+    },
+    [],
+  );
+
   // ── Keyboard: Enter submits, Shift+Enter newline ────────────
   const onInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -332,15 +362,47 @@ function InteractivePlayerBody({
       )}
 
       {!hideChat && (
-        <ChatInput
-          value={input}
-          onChange={setInput}
-          onKeyDown={onInputKeyDown}
-          onSend={onSend}
-          sending={sending}
-        />
+        <>
+          <LiveActionFab onClick={() => setLiveActionOpen(true)} />
+          <ChatInput
+            value={input}
+            onChange={setInput}
+            onKeyDown={onInputKeyDown}
+            onSend={onSend}
+            sending={sending}
+          />
+        </>
       )}
+
+      <LiveActionSheet
+        open={liveActionOpen}
+        onClose={() => setLiveActionOpen(false)}
+        api={api}
+        sessionId={sessionId}
+        currentLevel={level}
+        onResolved={onActionResolved}
+      />
     </div>
+  );
+}
+
+function LiveActionFab({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Open Live Action catalog"
+      className={[
+        "absolute bottom-[92px] right-4 z-20",
+        "w-12 h-12 rounded-full",
+        "bg-gradient-to-br from-[#6366f1] to-[#3ea6ff]",
+        "shadow-lg flex items-center justify-center",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff] focus-visible:ring-offset-2 focus-visible:ring-offset-black",
+        "hover:scale-105 active:scale-95 transition-transform",
+      ].join(" ")}
+    >
+      <Gamepad2 className="w-5 h-5 text-white" aria-hidden />
+    </button>
   );
 }
 
