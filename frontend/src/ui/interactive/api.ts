@@ -92,6 +92,12 @@ export interface InteractiveApi {
   experienceAnalytics(id: string, signal?: AbortSignal): Promise<AnalyticsSummary>;
 
   // Live-play (PLAY-*)
+  startSession(req: {
+    experience_id: string;
+    viewer_ref?: string;
+    language?: string;
+    personalization?: Record<string, unknown>;
+  }): Promise<{ id: string; experience_id: string; current_node_id: string }>;
   chat(sessionId: string, req: { text: string; viewer_region?: string }): Promise<ChatResult>;
   pending(
     sessionId: string,
@@ -281,6 +287,12 @@ export function createInteractiveApi(
       call<AnalyticsSummary & { ok: boolean }>(
         `/experiences/${encodeURIComponent(id)}/analytics`, { method: "GET" }, signal,
       ),
+
+    startSession: (req) =>
+      call<{ session: { id: string; experience_id: string; current_node_id: string } }>(
+        "/play/sessions",
+        { method: "POST", body: JSON.stringify(req) },
+      ).then((r) => r.session),
 
     chat: (sessionId, req) =>
       call<ChatResult & { ok: boolean }>(

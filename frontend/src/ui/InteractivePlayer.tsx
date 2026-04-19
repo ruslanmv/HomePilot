@@ -94,31 +94,21 @@ function InteractivePlayerBody({
   );
   const session = useAsyncResource<{ id: string }>(
     async () => {
-      const body = await api.createExperience as unknown; // just to satisfy TS unused
-      void body;
       // Start a new anonymous session dedicated to this player mount.
       // Sessions are cheap; the editor + live-play are intentionally
       // decoupled so the player can run without stepping on editor
       // state like current_node_id for an authoring preview.
-      const resp = await fetch(
-        `${backendUrl.replace(/\/+$/, "")}/v1/interactive/play/sessions`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(apiKey ? { "x-api-key": apiKey } : {}),
-          },
-          body: JSON.stringify({
-            experience_id: projectId,
-            viewer_ref: `player_${Date.now()}`,
-          }),
-        },
-      );
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const body2 = await resp.json();
-      return { id: String(body2?.session?.id || "") };
+      //
+      // Routed through the shared api client so credentials:'include'
+      // forwards the homepilot_session cookie — skipping that was the
+      // real cause of the 401 on /play/sessions.
+      const sess = await api.startSession({
+        experience_id: projectId,
+        viewer_ref: `player_${Date.now()}`,
+      });
+      return { id: sess.id };
     },
-    [api, backendUrl, apiKey, projectId],
+    [api, projectId],
   );
 
   const sessionId = session.data?.id || "";
