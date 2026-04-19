@@ -244,6 +244,51 @@ export interface PendingResult {
   cursor: string;
 }
 
+export interface CatalogItemView {
+  id: string;
+  label: string;
+  intent_code: string;
+  required_level: number;
+  required_scheme: string;
+  cooldown_sec: number;
+  xp_award: number;
+  ordinal: number;
+  unlocked: boolean;
+  lock_reason: string;
+}
+
+export interface LevelDescriptionView {
+  level: number;
+  label: string;
+  display: string;
+  current_value: number;
+  next_threshold: number;
+}
+
+export interface ProgressSnapshot {
+  progress: Record<string, Record<string, number>>;
+  descriptions: Record<string, LevelDescriptionView>;
+  mood: string;
+  affinity_score: number;
+}
+
+export interface ResolveResult {
+  session_id: string;
+  decision: { decision: string; reason_code: string; message: string };
+  transition: {
+    to_node_id: string;
+    kind: string;
+    label: string;
+    payload: Record<string, unknown>;
+  };
+  intent_code: string;
+  reward_deltas: Record<string, number>;
+  level_description: { display: string; level: number };
+  mood: string;
+  affinity_score: number;
+  matched_rule_id?: string | null;
+}
+
 /** Typed error returned by the API client on non-2xx responses. */
 export class InteractiveApiError extends Error {
   readonly status: number;

@@ -23,6 +23,7 @@
 import {
   ActionItem,
   AnalyticsSummary,
+  CatalogItemView,
   ChatResult,
   EdgeItem,
   Experience,
@@ -33,9 +34,11 @@ import {
   PendingResult,
   PlanIntent,
   PlanningPreset,
+  ProgressSnapshot,
   PublishResult,
   Publication,
   QAResult,
+  ResolveResult,
   RuleItem,
 } from "./types";
 
@@ -91,6 +94,12 @@ export interface InteractiveApi {
     opts?: { since_id?: string; limit?: number },
     signal?: AbortSignal,
   ): Promise<PendingResult>;
+  getCatalog(sessionId: string, signal?: AbortSignal): Promise<CatalogItemView[]>;
+  getProgress(sessionId: string, signal?: AbortSignal): Promise<ProgressSnapshot>;
+  resolveTurn(
+    sessionId: string,
+    req: { action_id?: string; free_text?: string; viewer_region?: string },
+  ): Promise<ResolveResult>;
 }
 
 export function createInteractiveApi(
@@ -266,5 +275,23 @@ export function createInteractiveApi(
         { method: "GET" }, signal,
       );
     },
+
+    getCatalog: (sessionId, signal) =>
+      call<{ items: CatalogItemView[] }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/catalog`,
+        { method: "GET" }, signal,
+      ).then((r) => r.items),
+
+    getProgress: (sessionId, signal) =>
+      call<ProgressSnapshot & { ok: boolean }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/progress`,
+        { method: "GET" }, signal,
+      ),
+
+    resolveTurn: (sessionId, req) =>
+      call<{ resolved: ResolveResult }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/resolve`,
+        { method: "POST", body: JSON.stringify(req) },
+      ).then((r) => r.resolved),
   };
 }
