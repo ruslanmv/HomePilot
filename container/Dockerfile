@@ -112,7 +112,19 @@ ENV DEBIAN_FRONTEND=noninteractive \
     COMFY_BASE_URL=http://127.0.0.1:8188 \
     # Point ComfyUI at the CPU-only venv we built in stage 2.
     COMFYUI_VENV=/opt/comfy-venv \
-    COMFYUI_HOME=/opt/ComfyUI
+    COMFYUI_HOME=/opt/ComfyUI \
+    # Interactive tab: on by default in packaged builds so users
+    # get a complete feature surface out of the box. Operators who
+    # need to disable it can pass -e INTERACTIVE_ENABLED=false at
+    # docker run time.
+    INTERACTIVE_ENABLED=true \
+    # Playback phase-2 swaps: LLM composer + live renderer. Both
+    # default off inside the container because the LLM and Comfy
+    # endpoints might not be ready at first boot; the player
+    # gracefully falls back to the phase-1 heuristic / stub paths.
+    # Flip either to true once the backend is warmed up.
+    INTERACTIVE_PLAYBACK_LLM=false \
+    INTERACTIVE_PLAYBACK_RENDER=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \

@@ -411,7 +411,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		trap cleanup INT TERM EXIT; \
 		\
 		echo "Starting backend..."; \
-		cd "$$ROOT/backend" && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 & \
+		cd "$$ROOT/backend" && INTERACTIVE_ENABLED=$${INTERACTIVE_ENABLED:-true} .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 & \
 		pids="$$pids $$!"; \
 		\
 		echo "Starting edit-session service..."; \
@@ -507,7 +507,7 @@ start-backend: ## Start backend locally with uv
 		echo "Virtual environment not found. Run: make install"; \
 		exit 1; \
 	fi
-	@cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	@cd backend && INTERACTIVE_ENABLED=$${INTERACTIVE_ENABLED:-true} .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 start-edit-session: ## Start edit-session sidecar locally (port 8010)
 	@echo "Starting edit-session service..."
