@@ -24,19 +24,22 @@
  */
 
 import React, { useMemo, useState, useCallback } from "react";
-import { LogIn, Play, Plus, Workflow, Search, Filter, RefreshCw, Sparkles } from "lucide-react";
+import { LogIn, Play, Plus, Trash2, Workflow, Search, Filter, RefreshCw, Sparkles } from "lucide-react";
 import { createInteractiveApi } from "./interactive/api";
 import type { Experience, ExperienceStatus } from "./interactive/types";
 import { InteractiveApiError } from "./interactive/types";
 import {
+  DangerButton,
   EmptyState,
   ErrorBanner,
+  Modal,
   PrimaryButton,
   SecondaryButton,
   SkeletonCard,
   StatusBadge,
   ToastProvider,
   useAsyncResource,
+  useToast,
 } from "./interactive/ui";
 
 type FilterStatus = "all" | ExperienceStatus;
@@ -64,8 +67,11 @@ function InteractiveViewBody({
   backendUrl, apiKey, onOpenProject, onCreateNew, onPlayProject,
 }: Props) {
   const api = useMemo(() => createInteractiveApi(backendUrl, apiKey), [backendUrl, apiKey]);
+  const toast = useToast();
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
+  const [confirmingDelete, setConfirmingDelete] = useState<Experience | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const resource = useAsyncResource<Experience[]>(
     (signal) => api.listExperiences(signal),
@@ -99,6 +105,34 @@ function InteractiveViewBody({
     || isInteractiveAuthRequired(resource.error || "");
   const items = resource.data || [];
   const hasProjects = items.length > 0;
+
+  const onConfirmDelete = useCallback(async () => {
+    const target = confirmingDelete;
+    if (!target || deleting) return;
+    setDeleting(true);
+    // Optimistic: drop the row immediately; on failure put it back.
+    const snapshot = resource.data || [];
+    resource.setData((prev) => (prev || []).filter((e) => e.id !== target.id));
+    try {
+      await api.deleteExperience(target.id);
+      toast.toast({
+        variant: "success",
+        title: "Project deleted",
+        message: `"${target.title || "untitled"}" removed.`,
+      });
+    } catch (err) {
+      resource.setData(snapshot);
+      const e = err as InteractiveApiError;
+      toast.toast({
+        variant: "error",
+        title: "Couldn't delete the project",
+        message: e.message || "The project has been restored.",
+      });
+    } finally {
+      setDeleting(false);
+      setConfirmingDelete(null);
+    }
+  }, [api, confirmingDelete, deleting, resource, toast]);
 
   return (
     <div className="min-h-full bg-[#0f0f0f] text-[#f1f1f1]">
@@ -149,10 +183,50 @@ function InteractiveViewBody({
               items={filtered}
               onOpen={onOpenProject}
               onPlay={onPlayProject}
+              onDelete={(exp) => setConfirmingDelete(exp)}
             />
           )}
         </div>
       </div>
+
+      {/* Confirm destructive delete. Uses the shared Modal primitive
+          with DangerButton so the red confirmation color is the
+          single signal that this action can't be undone. */}
+      <Modal
+        open={!!confirmingDelete}
+        onClose={() => !deleting && setConfirmingDelete(null)}
+        title="Delete project?"
+        footer={
+          <>
+            <SecondaryButton
+              onClick={() => setConfirmingDelete(null)}
+              disabled={deleting}
+            >
+              Cancel
+            </SecondaryButton>
+            <DangerButton
+              onClick={onConfirmDelete}
+              loading={deleting}
+              icon={<Trash2 className="w-4 h-4" aria-hidden />}
+            >
+              Delete project
+            </DangerButton>
+          </>
+        }
+      >
+        <p className="text-sm text-[#cfd8dc]">
+          This permanently removes{" "}
+          <span className="font-medium text-[#f1f1f1]">
+            {confirmingDelete?.title || "(untitled)"}
+          </span>{" "}
+          and every scene, action, rule, publication, and analytics
+          row it owns. Sessions already in flight keep running until
+          they end, but no new sessions can start.
+        </p>
+        <p className="text-xs text-[#777] mt-3">
+          This action can't be undone.
+        </p>
+      </Modal>
     </div>
   );
 }
@@ -290,11 +364,12 @@ function Toolbar({
 // ────────────────────────────────────────────────────────────────
 
 function Grid({
-  items, onOpen, onPlay,
+  items, onOpen, onPlay, onDelete,
 }: {
   items: Experience[];
   onOpen: (id: string) => void;
   onPlay: (id: string) => void;
+  onDelete: (exp: Experience) => void;
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -304,6 +379,7 @@ function Grid({
           experience={exp}
           onOpen={() => onOpen(exp.id)}
           onPlay={() => onPlay(exp.id)}
+          onDelete={() => onDelete(exp)}
         />
       ))}
     </div>
@@ -311,11 +387,12 @@ function Grid({
 }
 
 function ProjectCard({
-  experience, onOpen, onPlay,
+  experience, onOpen, onPlay, onDelete,
 }: {
   experience: Experience;
   onOpen: () => void;
   onPlay: () => void;
+  onDelete: () => void;
 }) {
   const modeLabel = humanizeMode(experience.experience_mode);
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -369,25 +446,51 @@ function ProjectCard({
         )}
       </div>
 
-      {/* Play action — floating bottom-right, appears on hover/focus
-          so the card's primary intent stays "open editor". Stops
-          propagation so clicking Play doesn't also open the editor. */}
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); onPlay(); }}
-        aria-label={`Play ${experience.title || "project"} live`}
+      {/* Floating action row (bottom-right), appears on hover/focus
+          so the card's primary intent stays "open editor". Every
+          button stops propagation so clicking them doesn't also
+          open the editor. */}
+      <div
         className={[
-          "absolute bottom-3 right-3 inline-flex items-center gap-1.5",
-          "px-2.5 py-1 rounded-full text-xs font-medium",
-          "bg-[#3ea6ff] text-black",
-          "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+          "absolute bottom-3 right-3 inline-flex items-center gap-2",
+          "opacity-0 group-hover:opacity-100 focus-within:opacity-100",
           "transition-opacity",
-          "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#1f1f1f]",
         ].join(" ")}
       >
-        <Play className="w-3 h-3" aria-hidden />
-        Play
-      </button>
+        {/* Delete — ghost icon button. Triggers the parent's
+            confirm modal instead of deleting outright. */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          aria-label={`Delete ${experience.title || "project"}`}
+          title="Delete project"
+          className={[
+            "w-7 h-7 rounded-full inline-flex items-center justify-center",
+            "bg-white/5 border border-white/10 text-[#aaa]",
+            "hover:bg-red-500/15 hover:border-red-500/40 hover:text-red-300",
+            "transition-colors",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1f1f1f]",
+          ].join(" ")}
+        >
+          <Trash2 className="w-3.5 h-3.5" aria-hidden />
+        </button>
+
+        {/* Play — primary pill. */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onPlay(); }}
+          aria-label={`Play ${experience.title || "project"} live`}
+          className={[
+            "inline-flex items-center gap-1.5",
+            "px-2.5 py-1 rounded-full text-xs font-medium",
+            "bg-[#3ea6ff] text-black",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#1f1f1f]",
+          ].join(" ")}
+        >
+          <Play className="w-3 h-3" aria-hidden />
+          Play
+        </button>
+      </div>
     </div>
   );
 }
