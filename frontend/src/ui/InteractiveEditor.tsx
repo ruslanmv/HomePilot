@@ -24,6 +24,7 @@ import {
 import { createInteractiveApi } from "./interactive/api";
 import { CatalogPanel } from "./interactive/CatalogPanel";
 import { GraphPanel } from "./interactive/GraphPanel";
+import { RulesPanel } from "./interactive/RulesPanel";
 import type { Experience } from "./interactive/types";
 import {
   ErrorBanner, Panel, StatusBadge, useAsyncResource,
@@ -76,6 +77,8 @@ export function InteractiveEditor({ backendUrl, apiKey, projectId }: Interactive
           <GraphPanel api={api} projectId={projectId} />
         ) : activeTab === "catalog" ? (
           <CatalogPanel api={api} projectId={projectId} />
+        ) : activeTab === "rules" ? (
+          <RulesPanel api={api} projectId={projectId} />
         ) : (
           // Placeholder for tabs that haven't shipped yet. Each
           // panel gets its own batch (UI-3b Catalog, UI-4 Rules /
