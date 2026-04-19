@@ -24,6 +24,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle, X } from "lucide-react";
 import type { ExperienceStatus } from "./types";
+import { InteractiveApiError } from "./types";
 
 // ────────────────────────────────────────────────────────────────
 // Buttons
@@ -405,6 +406,13 @@ export interface AsyncResource<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
+  /** HTTP status (or null) so callers can branch on 401 / 404 /
+   *  5xx without parsing free-form error messages. */
+  errorStatus: number | null;
+  /** Machine-readable code from the backend's uniform error shape
+   *  (e.g. 'not_authenticated', 'not_found'). Empty string on
+   *  non-API errors. */
+  errorCode: string;
   reload: () => void;
   setData: React.Dispatch<React.SetStateAction<T | null>>;
 }
@@ -416,6 +424,8 @@ export function useAsyncResource<T>(
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorStatus, setErrorStatus] = useState<number | null>(null);
+  const [errorCode, setErrorCode] = useState<string>("");
   const [token, setToken] = useState(0);
 
   useEffect(() => {
@@ -423,6 +433,8 @@ export function useAsyncResource<T>(
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setErrorStatus(null);
+    setErrorCode("");
     load(ctrl.signal)
       .then((result) => {
         if (!cancelled) setData(result);
@@ -430,6 +442,10 @@ export function useAsyncResource<T>(
       .catch((err: Error) => {
         if (!cancelled && err.name !== "AbortError") {
           setError(err.message || "Unexpected error");
+          if (err instanceof InteractiveApiError) {
+            setErrorStatus(err.status);
+            setErrorCode(err.code);
+          }
         }
       })
       .finally(() => {
@@ -443,7 +459,7 @@ export function useAsyncResource<T>(
   }, [...deps, token]);
 
   const reload = useCallback(() => setToken((t) => t + 1), []);
-  return { data, loading, error, reload, setData };
+  return { data, loading, error, errorStatus, errorCode, reload, setData };
 }
 
 // ────────────────────────────────────────────────────────────────

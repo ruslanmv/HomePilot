@@ -88,11 +88,17 @@ function InteractiveViewBody({
   const totalCount = resource.data?.length ?? 0;
   const visibleCount = filtered.length;
   // Two non-alarming states we handle with a friendly panel
-  // instead of the red error banner:
-  //   404 / not_found  → backend router isn't mounted
-  //   401 / not_authenticated → viewer isn't signed in yet
-  const serviceOff = isInteractiveServiceOff(resource.error || "");
-  const authRequired = isInteractiveAuthRequired(resource.error || "");
+  // instead of the red error banner. We inspect the HTTP status
+  // (always reliable) rather than regex over free-form messages,
+  // so any server-side phrasing — 'no user', 'not authenticated',
+  // 'session expired' — routes to the same empty state.
+  const serviceOff = resource.errorStatus === 404
+    || isInteractiveServiceOff(resource.error || "");
+  const authRequired = resource.errorStatus === 401
+    || resource.errorCode === "not_authenticated"
+    || isInteractiveAuthRequired(resource.error || "");
+  const items = resource.data || [];
+  const hasProjects = items.length > 0;
 
   return (
     <div className="min-h-full bg-[#0f0f0f] text-[#f1f1f1]">
@@ -101,16 +107,25 @@ function InteractiveViewBody({
           onCreate={onCreateNew}
           onReload={resource.reload}
           reloading={resource.loading && !!resource.data}
+          showReload={hasProjects}
+          showCreate={hasProjects}
         />
 
-        <Toolbar
-          query={query}
-          setQuery={setQuery}
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
-          totalCount={totalCount}
-          visibleCount={visibleCount}
-        />
+        {/* Progressive disclosure: search + filter chips + "Showing
+            N projects" only belong once the user actually has
+            projects to search through. Empty / error / first-run
+            states hide the toolbar so the hero empty panel is the
+            singular focal point of the page. */}
+        {hasProjects && (
+          <Toolbar
+            query={query}
+            setQuery={setQuery}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            totalCount={totalCount}
+            visibleCount={visibleCount}
+          />
+        )}
 
         <div className="mt-6">
           {resource.error && !serviceOff && !authRequired ? (
@@ -147,11 +162,16 @@ function InteractiveViewBody({
 // ────────────────────────────────────────────────────────────────
 
 function Header({
-  onCreate, onReload, reloading,
+  onCreate, onReload, reloading, showReload, showCreate,
 }: {
   onCreate: () => void;
   onReload: () => void;
   reloading: boolean;
+  /** Refresh button only makes sense when we have projects to refresh. */
+  showReload: boolean;
+  /** New-project button hides in empty state — the hero panel's CTA
+   *  handles the action so there's only one focal point. */
+  showCreate: boolean;
 }) {
   return (
     <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -166,23 +186,29 @@ function Header({
           language practice, and social storytelling.
         </p>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <SecondaryButton
-          onClick={onReload}
-          loading={reloading}
-          icon={<RefreshCw className="w-4 h-4" aria-hidden />}
-          aria-label="Refresh project list"
-        >
-          Refresh
-        </SecondaryButton>
-        <PrimaryButton
-          onClick={onCreate}
-          icon={<Plus className="w-4 h-4" aria-hidden />}
-          aria-label="Create new interactive project"
-        >
-          New project
-        </PrimaryButton>
-      </div>
+      {(showReload || showCreate) && (
+        <div className="flex items-center gap-2 shrink-0">
+          {showReload && (
+            <SecondaryButton
+              onClick={onReload}
+              loading={reloading}
+              icon={<RefreshCw className="w-4 h-4" aria-hidden />}
+              aria-label="Refresh project list"
+            >
+              Refresh
+            </SecondaryButton>
+          )}
+          {showCreate && (
+            <PrimaryButton
+              onClick={onCreate}
+              icon={<Plus className="w-4 h-4" aria-hidden />}
+              aria-label="Create new interactive project"
+            >
+              New project
+            </PrimaryButton>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -372,18 +398,16 @@ function ProjectCard({
 
 function FirstRunEmptyState({ onCreate }: { onCreate: () => void }) {
   return (
-    // Shape + copy tone matches the Animate tab's
-    // "Your video gallery is empty" panel so the two features
-    // feel like siblings under the HomePilot brand. Same dark
-    // rounded card, centered icon tinted violet, single primary
-    // CTA aligned center.
+    // Onboarding focus: one icon, one headline, one secondary
+    // line, one action. Matches Animate's empty-state rhythm so
+    // both tabs feel like siblings under the HomePilot brand.
     <HeroEmptyPanel
       icon={<Workflow className="w-10 h-10" aria-hidden />}
-      title="Your interactive gallery is empty"
-      description="Start from a short prompt — we'll plan the branches, seed the scene graph, and let you edit actions, rules, and policy before publishing."
+      title="No projects yet"
+      description="Create your first interactive experience — branching stories, training flows, or lessons."
       cta={
         <PrimaryButton onClick={onCreate} icon={<Plus className="w-4 h-4" aria-hidden />} size="lg">
-          New interactive project
+          Create project
         </PrimaryButton>
       }
     />
