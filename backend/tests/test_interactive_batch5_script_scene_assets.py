@@ -229,18 +229,21 @@ def test_register_and_query_library():
 
 
 def test_query_ranks_matches_over_non_matches():
-    # Seed one matching + one non-matching row for the same persona.
+    # Unique persona id per run so the test isn't polluted by
+    # accumulated rows on the persistent SQLite DB across runs.
+    import uuid
+    persona = f"persona_rank_{uuid.uuid4().hex[:8]}"
     register_library_asset(
-        persona_id="persona_rank", asset_id="match",
+        persona_id=persona, asset_id="match",
         kind="reaction", mood_tags=["flirty"], action_tags=["a_tease"],
         intensity=0.5,
     )
     register_library_asset(
-        persona_id="persona_rank", asset_id="no-match",
+        persona_id=persona, asset_id="no-match",
         kind="reaction", mood_tags=["shy"], action_tags=["a_greet"],
         intensity=0.9,
     )
-    results = query_library("persona_rank", mood="flirty", action="a_tease")
+    results = query_library(persona, mood="flirty", action="a_tease")
     # Match beats higher intensity because it scored more on tags.
     assert results[0].asset_id == "match"
 

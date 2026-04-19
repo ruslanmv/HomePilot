@@ -29,8 +29,8 @@ from ..interaction.state import upsert_character_state
 from ..playback import (
     build_scene_memory,
     list_jobs,
-    plan_next_scene,
-    render_now,
+    plan_next_scene_async,
+    render_now_async,
     set_synopsis,
     should_refresh_synopsis,
     submit_scene_job,
@@ -52,7 +52,7 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
     router = APIRouter(tags=["interactive-playback"])
 
     @router.post("/play/sessions/{session_id}/chat")
-    def chat(
+    async def chat(
         session_id: str, req: ChatRequest, _user: str = Depends(current_user),
     ) -> Dict[str, Any]:
         sess = repo.get_session(session_id)
@@ -104,7 +104,7 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
             raise http_error_from(NotFoundError("session state missing"))
 
         persona_hint = _persona_hint_from_experience(exp, sess)
-        plan = plan_next_scene(
+        plan = await plan_next_scene_async(
             memory, text,
             persona_hint=persona_hint,
             duration_sec=_target_duration_from_cfg(cfg),
@@ -135,9 +135,13 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
                 at_turn_count=memory.total_turns + 2,
             )
 
-        # ── Submit + (phase-1) synchronously render ──────────────
+        # ── Submit + render ──────────────────────────────────────
+        # render_now_async picks the real Animate pipeline when
+        # INTERACTIVE_PLAYBACK_RENDER is on and gracefully falls
+        # back to the phase-1 stub otherwise, so this handler
+        # never has to branch on flags itself.
         job = submit_scene_job(session_id, character_turn_id, plan)
-        completed = render_now(job.id)
+        completed = await render_now_async(job.id, persona_hint=persona_hint)
         job_status = completed.status if completed else job.status
         asset_id = completed.asset_id if completed else ""
 
