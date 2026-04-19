@@ -74,6 +74,46 @@ def plan_next_scene(
     )
 
 
+async def plan_next_scene_async(
+    memory: SceneMemory,
+    viewer_text: str,
+    *,
+    persona_hint: str = "",
+    duration_sec: int = 5,
+) -> ScenePlan:
+    """Async variant that tries the LLM composer before falling
+    back to the deterministic heuristic.
+
+    The two composers share the exact same input + output contract
+    so routes can swap between sync and async without any
+    downstream awareness. The LLM call is feature-flagged by
+    ``INTERACTIVE_PLAYBACK_LLM`` — when unset this function does
+    exactly what ``plan_next_scene`` does.
+
+    Failure of the LLM never surfaces to the caller: any timeout
+    / network error / malformed JSON returns a heuristic plan so
+    the player keeps a pulse.
+    """
+    # Local import so the heuristic path never pays the LLM
+    # composer import cost when the flag is off.
+    from .llm_composer import compose_with_llm
+
+    text = (viewer_text or "").strip()
+    classification = classify_intent(text) if text else IntentMatch(
+        intent_code="smalltalk", confidence=0.0, matched_pattern="",
+    )
+    llm_plan = await compose_with_llm(
+        memory, text, classification,
+        persona_hint=persona_hint, duration_sec=duration_sec,
+    )
+    if llm_plan is not None:
+        return llm_plan
+    return _compose(
+        memory=memory, text=text, classification=classification,
+        persona_hint=persona_hint, duration_sec=duration_sec,
+    )
+
+
 def synthesize_synopsis(memory: SceneMemory) -> str:
     """Compact, deterministic synopsis of the conversation so far.
 

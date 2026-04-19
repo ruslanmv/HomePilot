@@ -24,6 +24,7 @@ from .scene_memory import (
 from .scene_planner import (
     ScenePlan,
     plan_next_scene,
+    plan_next_scene_async,
     synthesize_synopsis,
 )
 from .schema import ensure_playback_schema
@@ -47,6 +48,7 @@ __all__ = [
     "should_refresh_synopsis",
     "ScenePlan",
     "plan_next_scene",
+    "plan_next_scene_async",
     "synthesize_synopsis",
     "ensure_playback_schema",
     "SceneJob",
