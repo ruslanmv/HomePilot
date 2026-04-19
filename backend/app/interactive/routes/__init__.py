@@ -19,6 +19,7 @@ from fastapi import APIRouter
 
 from ..config import InteractiveConfig
 from .authoring import build_authoring_router
+from .generator_auto import build_generator_auto_router
 from .lifecycle import build_lifecycle_router
 from .planner import build_planner_router
 from .planner_auto import build_planner_auto_router
@@ -37,6 +38,7 @@ def build_all(cfg: InteractiveConfig) -> APIRouter:
     router.include_router(build_authoring_router(cfg))
     router.include_router(build_planner_router(cfg))
     router.include_router(build_planner_auto_router(cfg))
+    router.include_router(build_generator_auto_router(cfg))
     router.include_router(build_play_router(cfg))
     router.include_router(build_lifecycle_router(cfg))
     router.include_router(build_playback_router(cfg))
