@@ -1,18 +1,17 @@
 """
-Live-play subsystem (PLAY-*/8).
+Live-play subsystem.
 
 Houses the real-time scene-generation loop that powers the
 candy.ai-style interactive player: chat arrives, the planner
 picks the next scene, a video job runs against the existing
 Animate pipeline, and the clip streams back over SSE.
 
-Modules land per-batch and are imported lazily so this subpackage
+Modules land per batch and are imported lazily so this subpackage
 can be extended without touching the top-level router while
 intermediate batches are in flight.
 
-  PLAY-1 (this commit) scene_memory.py — rolling context for the
-                                          scene planner. Pure,
-                                          synchronous, no LLM calls.
+  PLAY-1  scene_memory.py   rolling context (pure, in-memory synopsis).
+  PLAY-2  scene_planner.py  chat turn → ScenePlan (heuristic phase-1).
 """
 from .scene_memory import (
     SceneMemory,
@@ -22,6 +21,11 @@ from .scene_memory import (
     set_synopsis,
     should_refresh_synopsis,
 )
+from .scene_planner import (
+    ScenePlan,
+    plan_next_scene,
+    synthesize_synopsis,
+)
 
 __all__ = [
     "SceneMemory",
@@ -30,4 +34,7 @@ __all__ = [
     "reset_session",
     "set_synopsis",
     "should_refresh_synopsis",
+    "ScenePlan",
+    "plan_next_scene",
+    "synthesize_synopsis",
 ]
