@@ -11,6 +11,11 @@
 import type { ExperienceMode } from "./types";
 
 export interface WizardForm {
+  // Interaction type (Step 0 header)
+  interaction_type: "standard_project" | "persona_live_play";
+  persona_project_id: string;
+  persona_label: string;
+
   // Step 0
   title: string;
   prompt: string;
@@ -32,6 +37,9 @@ export interface WizardForm {
 }
 
 export const DEFAULT_WIZARD_FORM: WizardForm = {
+  interaction_type: "standard_project",
+  persona_project_id: "",
+  persona_label: "",
   title: "",
   prompt: "",
   experience_mode: "sfw_general",
@@ -56,6 +64,9 @@ export function toCreatePayload(f: WizardForm) {
       level: f.audience_level,
       language: f.audience_language,
       locale_hint: f.audience_locale_hint,
+      interaction_type: f.interaction_type,
+      persona_project_id: f.persona_project_id || undefined,
+      persona_label: f.persona_label || undefined,
     },
   };
 }
@@ -69,6 +80,9 @@ export function toPlanPayload(f: WizardForm) {
       level: f.audience_level,
       language: f.audience_language,
       locale_hint: f.audience_locale_hint,
+      interaction_type: f.interaction_type,
+      persona_project_id: f.persona_project_id || undefined,
+      persona_label: f.persona_label || undefined,
     },
   };
 }

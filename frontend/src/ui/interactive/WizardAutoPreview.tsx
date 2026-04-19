@@ -63,11 +63,20 @@ const GENERATE_STEPS = [
   { label: "Opening the editor" },
 ];
 
+/** Interaction mode + optional persona link threaded through from
+ *  WizardAuto so createExperience can stamp both on audience_profile. */
+export interface InteractionSelection {
+  interaction_type: "standard_project" | "persona_live_play";
+  persona_project_id?: string;
+  persona_label?: string;
+}
+
 export interface WizardAutoPreviewProps {
   backendUrl: string;
   apiKey?: string;
   initial: PlanAutoResult;
   originalIdea: string;
+  interaction: InteractionSelection;
   /** Called with the freshly-created experience id so the host can
    *  swap this component for the editor. */
   onCreated: (experienceId: string) => void;
@@ -76,7 +85,7 @@ export interface WizardAutoPreviewProps {
 }
 
 export function WizardAutoPreview({
-  backendUrl, apiKey, initial, originalIdea, onCreated, onStartOver,
+  backendUrl, apiKey, initial, originalIdea, interaction, onCreated, onStartOver,
 }: WizardAutoPreviewProps) {
   const api = useMemo(
     () => createInteractiveApi(backendUrl, apiKey),
@@ -102,7 +111,10 @@ export function WizardAutoPreview({
     setGenStep(0);
 
     try {
-      // Step 1: create the experience.
+      // Step 1: create the experience. Interaction type + any
+      // linked persona ride along on audience_profile so the
+      // backend + future routes can branch on them (live-play
+      // preview in particular needs the persona id).
       const created = await api.createExperience({
         title: form.title,
         description: form.prompt,
@@ -113,6 +125,9 @@ export function WizardAutoPreview({
           level: form.audience_level,
           language: form.audience_language,
           locale_hint: form.audience_locale_hint,
+          interaction_type: interaction.interaction_type,
+          persona_project_id: interaction.persona_project_id,
+          persona_label: interaction.persona_label,
         },
       });
       setGenStep(1);

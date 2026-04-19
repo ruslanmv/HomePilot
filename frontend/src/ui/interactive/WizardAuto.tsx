@@ -30,12 +30,13 @@
  */
 
 import React, { useCallback, useMemo, useState } from "react";
-import { Sparkles, Wand2 } from "lucide-react";
+import { Sparkles, Users, Wand2 } from "lucide-react";
 import { createInteractiveApi } from "./api";
 import type { PlanAutoResult } from "./types";
 import { InteractiveApiError } from "./types";
 import { ErrorBanner, PrimaryButton } from "./ui";
 import { GeneratingPanel } from "./GeneratingPanel";
+import { LS_PERSONA_CACHE } from "../voice/personalityGating";
 
 
 const IDEA_PLACEHOLDER = "train new sales reps on pricing tiers";
@@ -48,12 +49,24 @@ const AI_STEPS = [
 ];
 
 
+/** Interaction mode + optional persona link, carried alongside the
+ *  PlanAutoResult when the user moves from WizardAuto to Preview. */
+export interface AutoInteractionSelection {
+  interaction_type: "standard_project" | "persona_live_play";
+  persona_project_id?: string;
+  persona_label?: string;
+}
+
 export interface WizardAutoProps {
   backendUrl: string;
   apiKey?: string;
   /** Called when the LLM / heuristic returns a pre-filled form.
    *  The parent transitions to the editable preview step. */
-  onPlanned: (result: PlanAutoResult, idea: string) => void;
+  onPlanned: (
+    result: PlanAutoResult,
+    idea: string,
+    interaction: AutoInteractionSelection,
+  ) => void;
   /** Called when the user asks for the classic 5-step wizard. */
   onSwitchToAdvanced: () => void;
   /** Called when the user cancels / leaves the wizard. */
@@ -73,7 +86,31 @@ export function WizardAuto({
   const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = idea.trim().length > 0 && !generating;
+  // Interaction type — defaults to the standard path. 'persona_live_play'
+  // unlocks the persona selector and gates generation on picking one.
+  const [interactionType, setInteractionType] =
+    useState<"standard_project" | "persona_live_play">("standard_project");
+  const [personaId, setPersonaId] = useState("");
+  const [personaLabel, setPersonaLabel] = useState("");
+
+  const personaOptions = useMemo(() => {
+    try {
+      const raw = localStorage.getItem(LS_PERSONA_CACHE);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as Array<{ id?: unknown; label?: unknown }>;
+      return parsed
+        .map((item) => ({
+          id: typeof item.id === "string" ? item.id : "",
+          label: typeof item.label === "string" ? item.label : "",
+        }))
+        .filter((item) => item.id && item.label);
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const needsPersona = interactionType === "persona_live_play" && !personaId;
+  const canSubmit = idea.trim().length > 0 && !generating && !needsPersona;
 
   const runPlan = useCallback(async () => {
     if (!canSubmit) return;
@@ -96,7 +133,11 @@ export function WizardAuto({
       setStep(AI_STEPS.length - 1);
       // Tiny beat so the final "Ready to review" tick is visible.
       await new Promise((r) => window.setTimeout(r, 180));
-      onPlanned(result, text);
+      onPlanned(result, text, {
+        interaction_type: interactionType,
+        persona_project_id: personaId || undefined,
+        persona_label: personaLabel || undefined,
+      });
     } catch (err) {
       window.clearInterval(tick);
       const apiErr = err as InteractiveApiError;
@@ -133,6 +174,89 @@ export function WizardAuto({
               you can tweak before creating.
             </p>
           </header>
+
+          {/* Interaction type — compact two-card picker so the user
+              can switch between the standard branching project and
+              the persona live-play flow before generating. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-5">
+            <button
+              type="button"
+              onClick={() => {
+                setInteractionType("standard_project");
+                setPersonaId("");
+                setPersonaLabel("");
+              }}
+              aria-pressed={interactionType === "standard_project"}
+              disabled={generating}
+              className={[
+                "text-left bg-[#121212] border rounded-lg p-3 transition-colors",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff]",
+                "disabled:opacity-60 disabled:cursor-not-allowed",
+                interactionType === "standard_project"
+                  ? "border-[#3ea6ff] bg-[rgba(62,166,255,0.08)] ring-1 ring-[#3ea6ff]"
+                  : "border-[#3f3f3f] hover:border-[#555] hover:bg-[#1a1a1a]",
+              ].join(" ")}
+            >
+              <div className="text-sm font-medium text-[#f1f1f1]">
+                Standard interactive project
+              </div>
+              <div className="text-[11px] text-[#aaa] mt-0.5">
+                Branching AI video with scenes, choices, and endings.
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => setInteractionType("persona_live_play")}
+              aria-pressed={interactionType === "persona_live_play"}
+              disabled={generating}
+              className={[
+                "text-left bg-[#121212] border rounded-lg p-3 transition-colors",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8b5cf6]",
+                "disabled:opacity-60 disabled:cursor-not-allowed",
+                interactionType === "persona_live_play"
+                  ? "border-[#8b5cf6] bg-[rgba(139,92,246,0.08)] ring-1 ring-[#8b5cf6]"
+                  : "border-[#3f3f3f] hover:border-[#555] hover:bg-[#1a1a1a]",
+              ].join(" ")}
+            >
+              <div className="text-sm font-medium text-[#f1f1f1] inline-flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-[#c4b5fd]" aria-hidden />
+                Persona live play
+              </div>
+              <div className="text-[11px] text-[#aaa] mt-0.5">
+                Pick one of your personas — chat + video revolve around them.
+              </div>
+            </button>
+          </div>
+
+          {interactionType === "persona_live_play" && (
+            <div className="mb-5">
+              <label htmlFor="ix_auto_persona" className="text-xs font-medium text-[#cfd8dc]">
+                Persona <span className="text-[#8b5cf6] ml-0.5" aria-label="required">*</span>
+              </label>
+              <select
+                id="ix_auto_persona"
+                value={personaId}
+                onChange={(e) => {
+                  const selected = personaOptions.find((p) => p.id === e.target.value);
+                  setPersonaId(e.target.value);
+                  setPersonaLabel(selected?.label || "");
+                }}
+                disabled={generating}
+                className="mt-1.5 w-full bg-[#121212] border border-[#3f3f3f] rounded-md px-3 py-2.5 text-sm outline-none focus:border-[#8b5cf6] focus:ring-1 focus:ring-[#8b5cf6]/50 disabled:opacity-60"
+              >
+                <option value="">Select persona…</option>
+                {personaOptions.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </select>
+              {personaOptions.length === 0 && (
+                <p className="text-[11px] text-amber-300 mt-1.5">
+                  No personas yet. Create one in the Avatar tab, then come back — this mode needs a
+                  persona to anchor the chat + animation.
+                </p>
+              )}
+            </div>
+          )}
 
           <label htmlFor="ix_auto_idea" className="sr-only">
             Your interactive video idea

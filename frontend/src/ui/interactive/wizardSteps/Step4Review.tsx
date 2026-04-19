@@ -55,6 +55,14 @@ export function Step4Review({ form, api }: Step4Props) {
 function SummaryCard({ form }: { form: WizardForm }) {
   return (
     <section className="rounded-md border border-[#3f3f3f] bg-[#121212] divide-y divide-[#2a2a2a]">
+      <Row
+        label="Interaction"
+        value={
+          form.interaction_type === "persona_live_play"
+            ? `Persona live play${form.persona_label ? ` · ${form.persona_label}` : ""}`
+            : "Standard interactive project"
+        }
+      />
       <Row label="Title" value={form.title} />
       <Row label="Mode" value={form.experience_mode} />
       <Row label="Policy profile" value={form.policy_profile_id} />

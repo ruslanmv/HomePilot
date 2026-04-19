@@ -27,7 +27,7 @@ export function Step2Branches({ form, setForm, limits }: Step2Props) {
   return (
     <div className="flex flex-col gap-5">
       <NumberField
-        label="Branch count"
+        label="Choices"
         hint="How many decision paths the experience offers."
         value={form.branch_count}
         min={1}
@@ -35,16 +35,16 @@ export function Step2Branches({ form, setForm, limits }: Step2Props) {
         onChange={(v) => setForm({ branch_count: v })}
       />
       <NumberField
-        label="Depth"
-        hint="How many decisions deep before the longest branch ends."
+        label="Steps"
+        hint="How many decision rounds before the longest path ends."
         value={form.depth}
         min={1}
         max={limits.max_depth}
         onChange={(v) => setForm({ depth: v })}
       />
       <NumberField
-        label="Scenes per branch"
-        hint="How many video scenes per branch leg, before merge."
+        label="Video length"
+        hint="How many scenes per path before branches merge."
         value={form.scenes_per_branch}
         min={1}
         max={20}
@@ -64,11 +64,11 @@ export function Step2Branches({ form, setForm, limits }: Step2Props) {
         <div>
           <div>
             Upper-bound estimate: <span className="font-semibold text-[#f1f1f1]">≈{estimatedNodes} nodes</span>
-            {" "}(branches × depth × scenes; the merge collapser usually trims this).
+            {" "}(choices × steps × scenes; the merge collapser usually trims this).
           </div>
           {overCap && (
             <div className="mt-1 text-xs">
-              Exceeds the configured cap of {limits.max_nodes_per_experience}. Reduce branches, depth, or scenes per branch — or the planner will cap it for you.
+              Exceeds the configured cap of {limits.max_nodes_per_experience}. Reduce choices, steps, or video length — or the planner will cap it for you.
             </div>
           )}
         </div>

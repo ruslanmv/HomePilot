@@ -47,7 +47,7 @@ export interface InteractiveWizardProps {
 const STEPS: StepDef[] = [
   { key: "prompt",   label: "Prompt" },
   { key: "audience", label: "Audience" },
-  { key: "branches", label: "Branches" },
+  { key: "branches", label: "Choices" },
   { key: "policy",   label: "Policy" },
   { key: "review",   label: "Review" },
 ];

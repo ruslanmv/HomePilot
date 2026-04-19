@@ -19,7 +19,7 @@ import React, { useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { InteractiveEditor } from "./InteractiveEditor";
 import { InteractiveWizard } from "./interactive/Wizard";
-import { WizardAuto } from "./interactive/WizardAuto";
+import { WizardAuto, type AutoInteractionSelection } from "./interactive/WizardAuto";
 import { WizardAutoPreview } from "./interactive/WizardAutoPreview";
 import type { PlanAutoResult } from "./interactive/types";
 import { SecondaryButton, ToastProvider } from "./interactive/ui";
@@ -52,6 +52,9 @@ export function InteractiveHost({
   const [stage, setStage] = useState<WizardStage>("auto");
   const [planResult, setPlanResult] = useState<PlanAutoResult | null>(null);
   const [originalIdea, setOriginalIdea] = useState<string>("");
+  const [interaction, setInteraction] = useState<AutoInteractionSelection>({
+    interaction_type: "standard_project",
+  });
 
   // Enterprise shell: full viewport height, three stacked rows.
   //   [0] TopBar — fixed 'Cancel / Back to projects' button.
@@ -85,6 +88,7 @@ export function InteractiveHost({
               apiKey={apiKey}
               initial={planResult}
               originalIdea={originalIdea}
+              interaction={interaction}
               onCreated={onCreated}
               onStartOver={() => {
                 setPlanResult(null);
@@ -95,9 +99,10 @@ export function InteractiveHost({
             <WizardAuto
               backendUrl={backendUrl}
               apiKey={apiKey}
-              onPlanned={(result, idea) => {
+              onPlanned={(result, idea, selection) => {
                 setPlanResult(result);
                 setOriginalIdea(idea);
+                setInteraction(selection);
                 setStage("preview");
               }}
               onSwitchToAdvanced={() => setStage("advanced")}
