@@ -122,7 +122,14 @@ export function createInteractiveApi(
     };
     let res: Response;
     try {
-      res = await fetch(`${base}${path}`, { ...init, headers, signal });
+      // credentials: 'include' forwards the homepilot_session cookie
+      // on cross-origin dev + same-origin packaged builds, so the
+      // backend's viewer resolver can authenticate the request. Without
+      // this, every /v1/interactive/* call 401s in dev and produces a
+      // confusing error on the landing page.
+      res = await fetch(`${base}${path}`, {
+        ...init, headers, signal, credentials: "include",
+      });
     } catch (err) {
       if ((err as Error).name === "AbortError") throw err;
       throw new InteractiveApiError(

@@ -24,7 +24,7 @@
  */
 
 import React, { useMemo, useState, useCallback } from "react";
-import { Play, Plus, Workflow, Search, Filter, RefreshCw, Sparkles } from "lucide-react";
+import { LogIn, Play, Plus, Workflow, Search, Filter, RefreshCw, Sparkles } from "lucide-react";
 import { createInteractiveApi } from "./interactive/api";
 import type { Experience, ExperienceStatus } from "./interactive/types";
 import { InteractiveApiError } from "./interactive/types";
@@ -87,11 +87,12 @@ function InteractiveViewBody({
 
   const totalCount = resource.data?.length ?? 0;
   const visibleCount = filtered.length;
-  // 404 specifically indicates the backend service isn't mounted
-  // (INTERACTIVE_ENABLED is off), which isn't an error worth
-  // alarming the user about — it's a config state, so we render a
-  // friendly empty state instead of the red error banner.
+  // Two non-alarming states we handle with a friendly panel
+  // instead of the red error banner:
+  //   404 / not_found  → backend router isn't mounted
+  //   401 / not_authenticated → viewer isn't signed in yet
   const serviceOff = isInteractiveServiceOff(resource.error || "");
+  const authRequired = isInteractiveAuthRequired(resource.error || "");
 
   return (
     <div className="min-h-full bg-[#0f0f0f] text-[#f1f1f1]">
@@ -112,12 +113,14 @@ function InteractiveViewBody({
         />
 
         <div className="mt-6">
-          {resource.error && !serviceOff ? (
+          {resource.error && !serviceOff && !authRequired ? (
             <ErrorBanner
               title="Couldn't load your interactive projects"
               message={friendlyError(resource.error)}
               onRetry={resource.reload}
             />
+          ) : authRequired ? (
+            <AuthRequiredEmptyState onRetry={resource.reload} />
           ) : serviceOff ? (
             <ServiceOffEmptyState onCreate={onCreateNew} />
           ) : resource.loading && !resource.data ? (
@@ -412,6 +415,21 @@ function ServiceOffEmptyState({ onCreate }: { onCreate: () => void }) {
   );
 }
 
+function AuthRequiredEmptyState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <HeroEmptyPanel
+      icon={<LogIn className="w-10 h-10" aria-hidden />}
+      title="Sign in to see your interactive projects"
+      description="Projects are owner-scoped, so we need a signed-in user to show them. If you just signed in, retry below — the session cookie sometimes lands a moment late."
+      cta={
+        <SecondaryButton onClick={onRetry} icon={<RefreshCw className="w-4 h-4" aria-hidden />}>
+          Try again
+        </SecondaryButton>
+      }
+    />
+  );
+}
+
 function HeroEmptyPanel({
   icon, title, description, cta,
 }: {
@@ -494,6 +512,14 @@ function friendlyError(message: string): string {
  *  friendly empty state instead of a red alarm. */
 function isInteractiveServiceOff(message: string): boolean {
   return /\b404\b|not[_ ]found/i.test(message);
+}
+
+/** A 401 / not_authenticated means the viewer resolver rejected
+ *  the request — cookie missing, expired, or users table has a
+ *  profile we can't auto-match. Renders a "sign in" empty state
+ *  instead of a raw error. */
+function isInteractiveAuthRequired(message: string): boolean {
+  return /\b401\b|not[_ ]authenticated|unauthorized/i.test(message);
 }
 
 function relativeTime(iso: string): string {
