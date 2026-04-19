@@ -148,3 +148,54 @@ def test_multiple_chat_turns_produce_distinct_jobs(client):
     r1 = client.post(f"/v1/interactive/play/sessions/{sid}/chat", json={"text": "hi"})
     r2 = client.post(f"/v1/interactive/play/sessions/{sid}/chat", json={"text": "how are you"})
     assert r1.json()["video_job_id"] != r2.json()["video_job_id"]
+
+
+# ── /pending polling endpoint ───────────────────────────────────
+
+def test_pending_returns_all_jobs_when_no_cursor(client):
+    _, sid = _seed_experience_and_session(client)
+    client.post(f"/v1/interactive/play/sessions/{sid}/chat", json={"text": "hi"})
+    client.post(f"/v1/interactive/play/sessions/{sid}/chat", json={"text": "tell me more"})
+    r = client.get(f"/v1/interactive/play/sessions/{sid}/pending")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["items"]) == 2
+    for item in body["items"]:
+        assert item["status"] == "ready"
+        assert item["asset_id"].startswith("ixa_stub_")
+    # cursor points at the last job so the player can resume.
+    assert body["cursor"] == body["items"][-1]["id"]
+
+
+def test_pending_since_id_returns_only_newer_rows(client):
+    _, sid = _seed_experience_and_session(client)
+    r1 = client.post(f"/v1/interactive/play/sessions/{sid}/chat", json={"text": "hi"})
+    first_job_id = r1.json()["video_job_id"]
+    client.post(f"/v1/interactive/play/sessions/{sid}/chat", json={"text": "again"})
+    client.post(f"/v1/interactive/play/sessions/{sid}/chat", json={"text": "once more"})
+    r = client.get(
+        f"/v1/interactive/play/sessions/{sid}/pending",
+        params={"since_id": first_job_id},
+    )
+    body = r.json()
+    assert len(body["items"]) == 2  # skipped the first job
+    assert first_job_id not in [j["id"] for j in body["items"]]
+
+
+def test_pending_with_no_new_jobs_returns_empty_list(client):
+    _, sid = _seed_experience_and_session(client)
+    r1 = client.post(f"/v1/interactive/play/sessions/{sid}/chat", json={"text": "hi"})
+    last = r1.json()["video_job_id"]
+    r = client.get(
+        f"/v1/interactive/play/sessions/{sid}/pending",
+        params={"since_id": last},
+    )
+    body = r.json()
+    assert body["items"] == []
+    # cursor echoes the last seen id so the player doesn't reset.
+    assert body["cursor"] == last
+
+
+def test_pending_missing_session_404s(client):
+    r = client.get("/v1/interactive/play/sessions/ixs_does_not_exist/pending")
+    assert r.status_code == 404

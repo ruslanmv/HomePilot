@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from .. import repo
@@ -28,6 +28,7 @@ from ..errors import InvalidInputError, NotFoundError
 from ..interaction.state import upsert_character_state
 from ..playback import (
     build_scene_memory,
+    list_jobs,
     plan_next_scene,
     render_now,
     set_synopsis,
@@ -35,6 +36,7 @@ from ..playback import (
     submit_scene_job,
     synthesize_synopsis,
 )
+from ..playback.video_job import SceneJob
 from ..policy import check_free_input
 from ._common import current_user, http_error_from
 
@@ -171,10 +173,55 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
             "video_asset_id": asset_id,
         }
 
+    @router.get("/play/sessions/{session_id}/pending")
+    def pending(
+        session_id: str,
+        since_id: str = Query(default="", description="Return jobs created after this id"),
+        limit: int = Query(default=50, ge=1, le=500),
+        _user: str = Depends(current_user),
+    ) -> Dict[str, Any]:
+        """Return scene jobs newer than ``since_id``.
+
+        The player polls this at a low cadence (e.g. every 1–2 s)
+        while a job is rendering. Each job carries its current
+        status, which lets the UI transition idle-loop →
+        crossfade → next-clip as soon as ``status == 'ready'``.
+
+        Upgrading to SSE later is a drop-in: the handler signature
+        stays the same, a streaming variant registers under
+        ``/stream`` and emits the same event payloads. For
+        phase-1 the polling path is simpler and works everywhere
+        without the reconnect edge cases of long-lived streams.
+        """
+        sess = repo.get_session(session_id)
+        if not sess:
+            raise http_error_from(NotFoundError("session not found"))
+        jobs = list_jobs(session_id, since_id=since_id or None, limit=limit)
+        return {
+            "ok": True,
+            "items": [_job_to_dict(j) for j in jobs],
+            "cursor": jobs[-1].id if jobs else since_id,
+        }
+
     return router
 
 
 # ── Helpers ─────────────────────────────────────────────────────
+
+def _job_to_dict(job: SceneJob) -> Dict[str, Any]:
+    return {
+        "id": job.id,
+        "session_id": job.session_id,
+        "turn_id": job.turn_id,
+        "status": job.status,
+        "job_id": job.job_id,
+        "asset_id": job.asset_id,
+        "prompt": job.prompt,
+        "duration_sec": job.duration_sec,
+        "error": job.error,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+    }
 
 def _persona_hint_from_experience(exp: Any, sess: Any) -> str:
     """Best-effort persona hint for the image prompt.
