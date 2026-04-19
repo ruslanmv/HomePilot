@@ -24,7 +24,7 @@
  */
 
 import React, { useMemo, useState, useCallback } from "react";
-import { Play, Plus, Workflow, Search, Filter, RefreshCw } from "lucide-react";
+import { Play, Plus, Workflow, Search, Filter, RefreshCw, Sparkles } from "lucide-react";
 import { createInteractiveApi } from "./interactive/api";
 import type { Experience, ExperienceStatus } from "./interactive/types";
 import { InteractiveApiError } from "./interactive/types";
@@ -87,6 +87,11 @@ function InteractiveViewBody({
 
   const totalCount = resource.data?.length ?? 0;
   const visibleCount = filtered.length;
+  // 404 specifically indicates the backend service isn't mounted
+  // (INTERACTIVE_ENABLED is off), which isn't an error worth
+  // alarming the user about — it's a config state, so we render a
+  // friendly empty state instead of the red error banner.
+  const serviceOff = isInteractiveServiceOff(resource.error || "");
 
   return (
     <div className="min-h-full bg-[#0f0f0f] text-[#f1f1f1]">
@@ -107,12 +112,14 @@ function InteractiveViewBody({
         />
 
         <div className="mt-6">
-          {resource.error ? (
+          {resource.error && !serviceOff ? (
             <ErrorBanner
               title="Couldn't load your interactive projects"
               message={friendlyError(resource.error)}
               onRetry={resource.reload}
             />
+          ) : serviceOff ? (
+            <ServiceOffEmptyState onCreate={onCreateNew} />
           ) : resource.loading && !resource.data ? (
             <LoadingGrid />
           ) : (resource.data || []).length === 0 ? (
@@ -362,16 +369,69 @@ function ProjectCard({
 
 function FirstRunEmptyState({ onCreate }: { onCreate: () => void }) {
   return (
-    <EmptyState
-      icon={<Workflow className="w-12 h-12" />}
-      title="No interactive projects yet"
-      description="Start from a prompt — we'll plan the branches, seed the scene graph, and let you edit actions, rules, and policy before publishing."
-      action={
+    // Shape + copy tone matches the Animate tab's
+    // "Your video gallery is empty" panel so the two features
+    // feel like siblings under the HomePilot brand. Same dark
+    // rounded card, centered icon tinted violet, single primary
+    // CTA aligned center.
+    <HeroEmptyPanel
+      icon={<Workflow className="w-10 h-10" aria-hidden />}
+      title="Your interactive gallery is empty"
+      description="Start from a short prompt — we'll plan the branches, seed the scene graph, and let you edit actions, rules, and policy before publishing."
+      cta={
         <PrimaryButton onClick={onCreate} icon={<Plus className="w-4 h-4" aria-hidden />} size="lg">
-          Create your first project
+          New interactive project
         </PrimaryButton>
       }
     />
+  );
+}
+
+function ServiceOffEmptyState({ onCreate }: { onCreate: () => void }) {
+  return (
+    <HeroEmptyPanel
+      icon={<Sparkles className="w-10 h-10" aria-hidden />}
+      title="Your interactive gallery is empty"
+      description={
+        <>
+          The interactive backend isn't enabled on this server yet.
+          Ask an operator to set{" "}
+          <code className="px-1 py-0.5 rounded bg-[#1a1a1a] border border-[#3f3f3f] text-[#cfd8dc]">
+            INTERACTIVE_ENABLED=true
+          </code>{" "}
+          and restart the API. Meanwhile, you can still walk through the
+          new-project flow to preview what it looks like.
+        </>
+      }
+      cta={
+        <PrimaryButton onClick={onCreate} icon={<Plus className="w-4 h-4" aria-hidden />} size="lg">
+          Preview new project flow
+        </PrimaryButton>
+      }
+    />
+  );
+}
+
+function HeroEmptyPanel({
+  icon, title, description, cta,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: React.ReactNode;
+  cta: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-[#3f3f3f] bg-[#121212] px-6 py-12 text-center max-w-4xl mx-auto">
+      {/* Icon tile picks up a subtle violet tint — matches the
+          purple filmstrip that Animate uses for its empty state,
+          so the two features visibly share a design language. */}
+      <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-[#8b5cf6]/15 border border-[#8b5cf6]/30 flex items-center justify-center text-[#c4b5fd]">
+        {icon}
+      </div>
+      <h2 className="text-2xl font-semibold text-[#f1f1f1]">{title}</h2>
+      <p className="text-sm text-[#aaa] mt-3 max-w-xl mx-auto leading-relaxed">{description}</p>
+      <div className="mt-6 flex justify-center">{cta}</div>
+    </section>
   );
 }
 
@@ -426,6 +486,14 @@ function friendlyError(message: string): string {
     return "The interactive service is currently disabled on this backend.";
   }
   return message;
+}
+
+/** A 404 / not_found on /experiences means the interactive router
+ *  isn't mounted — INTERACTIVE_ENABLED is off or the backend is an
+ *  older build. Distinct from real errors so we can render a
+ *  friendly empty state instead of a red alarm. */
+function isInteractiveServiceOff(message: string): boolean {
+  return /\b404\b|not[_ ]found/i.test(message);
 }
 
 function relativeTime(iso: string): string {
