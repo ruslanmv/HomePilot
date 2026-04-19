@@ -25,7 +25,6 @@ import {
   Phone,
   Users,
   EyeOff,
-  BookOpen,
   PanelLeftClose,
   PanelLeft,
 } from 'lucide-react'
@@ -890,6 +889,45 @@ function HistoryPanel({
   )
 }
 
+/**
+ * Turn the conversation's ``last_content`` into a single-line
+ * sidebar title similar to ChatGPT's. Tool-response payloads are
+ * often JSON blobs (``{"type":"final","text":"…"}``) so we peek
+ * into the common shape keys and pull the readable field when we
+ * can. Everything is whitespace-collapsed and the CSS handles
+ * the ellipsis at overflow.
+ */
+function cleanConversationTitle(raw: string): string {
+  const input = (raw || '').trim()
+  if (!input) return 'New conversation'
+  let text = input
+  const first = text[0]
+  if (first === '{' || first === '[') {
+    try {
+      const parsed = JSON.parse(text)
+      const pick = (v: unknown): string => {
+        if (typeof v === 'string') return v
+        if (v && typeof v === 'object') {
+          const o = v as Record<string, unknown>
+          return (
+            (typeof o.text === 'string' && o.text) ||
+            (typeof o.content === 'string' && o.content) ||
+            (typeof o.message === 'string' && o.message) ||
+            (typeof o.reply_text === 'string' && o.reply_text) ||
+            ''
+          )
+        }
+        return ''
+      }
+      const candidate = Array.isArray(parsed) ? pick(parsed[0]) : pick(parsed)
+      if (candidate) text = candidate
+    } catch {
+      // Not valid JSON — use the raw string.
+    }
+  }
+  return text.replace(/\s+/g, ' ').trim() || 'Conversation'
+}
+
 function SidebarRecents({
   conversations,
   activeConversationId,
@@ -931,22 +969,25 @@ function SidebarRecents({
 
   const renderRow = (c: Conversation) => {
     const isActive = c.conversation_id === activeConversationId
-    const label = (c.last_content || 'Conversation…').trim()
-    const short = label.slice(0, 36)
+    // Clean the raw last_content for display: tool payloads often
+    // arrive as JSON blobs and we don't want those spilling into
+    // the sidebar. The title attribute keeps the full text for
+    // hover tooltips.
+    const label = cleanConversationTitle(c.last_content)
     return (
       <button
         key={c.conversation_id}
         type="button"
         className={[
-          'w-full text-left px-3 py-2 text-[13px] rounded-xl truncate transition-colors',
+          'block w-full text-left px-3 py-1.5 text-[13px] rounded-lg transition-colors whitespace-nowrap overflow-hidden text-ellipsis',
           isActive
             ? 'bg-white/10 text-white'
-            : 'text-white/60 hover:bg-white/5 hover:text-white',
+            : 'text-white/70 hover:bg-white/5 hover:text-white',
         ].join(' ')}
         onClick={() => onLoadConversation(c.conversation_id)}
         title={label}
       >
-        {short}{label.length > 36 ? '…' : ''}
+        {label}
       </button>
     )
   }
@@ -1204,44 +1245,29 @@ function Sidebar({
         </div>
       )}
 
-      {/* Nav groups */}
+      {/* Nav — single flat list, one divider before History */}
       <div className={collapsed ? 'flex flex-col gap-3' : 'flex flex-col gap-3 px-1.5'}>
-        {/* Main modes */}
+        {/* Main modes (flat, no sub-groups) */}
         <div className="flex flex-col gap-px">
           <NavItem icon={MessageSquare} label="Chat" active={mode === 'chat'} shortcut="Ctrl+J" onClick={() => setMode('chat')} collapsed={collapsed} />
           <NavItem icon={Mic} label="Voice" active={mode === 'voice'} shortcut="Ctrl+V" onClick={() => setMode('voice')} collapsed={collapsed} />
-          <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} collapsed={collapsed} />
           <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} collapsed={collapsed} />
-          <NavItem icon={PenLine} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} collapsed={collapsed} />
+          <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} collapsed={collapsed} />
+          <NavItem icon={Workflow} label="Interactive" active={mode === 'interactive'} onClick={() => setMode('interactive')} collapsed={collapsed} />
           <NavItem icon={Users} label="Avatar" active={mode === 'avatar'} onClick={() => setMode('avatar')} collapsed={collapsed} />
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} collapsed={collapsed} />
-          <NavItem icon={Workflow} label="Interactive" active={mode === 'interactive'} onClick={() => setMode('interactive')} collapsed={collapsed} />
+          <NavItem icon={PenLine} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} collapsed={collapsed} />
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} collapsed={collapsed} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} collapsed={collapsed} />
-        </div>
-
-        {/* Divider */}
-        <div className="border-t border-white/5" />
-
-        {/* Teams */}
-        <div className="flex flex-col gap-px">
           <NavItem icon={Users} label="Teams" active={mode === 'teams'} onClick={() => setMode('teams')} collapsed={collapsed} />
         </div>
 
-        {/* Divider */}
+        {/* Single divider — separates modes from History */}
         <div className="border-t border-white/5" />
 
         {/* History */}
         <div className="flex flex-col gap-px">
           <NavItem icon={Clock} label="History" active={showHistory} onClick={() => setShowHistory(true)} collapsed={collapsed} />
-        </div>
-
-        {/* Divider */}
-        <div className="border-t border-white/5" />
-
-        {/* Documentation (external) */}
-        <div className="flex flex-col gap-px">
-          <NavItem icon={BookOpen} label="Docs" active={false} onClick={() => window.open('https://ruslanmv.com/HomePilot/', '_blank')} collapsed={collapsed} />
         </div>
       </div>
 
