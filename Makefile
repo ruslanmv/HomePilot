@@ -550,6 +550,36 @@ test: test-local test-edit-session test-frontend test-mcp-servers  ## Run all te
 	@echo "  ✅ All tests passed!"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 
+interactive-smoke: ## Hello-world smoke test for the Interactive subsystem (real deps, with graceful fallbacks)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Interactive subsystem smoke test (real Ollama + ComfyUI when reachable)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
+		exit 1; \
+	fi
+	@# Best-effort: pull the lightest Ollama chat model if Ollama is
+	@# running and the model isn't already there. The smoke script
+	@# is fine without it (heuristic fallback), so we never fail the
+	@# target if the pull itself fails.
+	@OLLAMA_MODEL=$${OLLAMA_MODEL:-llama3.2:1b}; \
+	 if command -v ollama >/dev/null 2>&1; then \
+		if ollama list 2>/dev/null | awk 'NR>1 {print $$1}' | grep -qx "$$OLLAMA_MODEL"; then \
+			echo "✓ Ollama has model '$$OLLAMA_MODEL' locally."; \
+		else \
+			echo "↻ Pulling lightweight model '$$OLLAMA_MODEL' via Ollama (first-time cost only)…"; \
+			ollama pull "$$OLLAMA_MODEL" || echo "⚠ ollama pull failed — smoke will use heuristic fallback"; \
+		fi; \
+	 else \
+		echo "⚠ 'ollama' CLI not on PATH — smoke will use heuristic fallback"; \
+	 fi
+	@echo ""
+	@cd backend && INTERACTIVE_ENABLED=true \
+	               INTERACTIVE_PLAYBACK_LLM=true \
+	               INTERACTIVE_PLAYBACK_RENDER=true \
+	               .venv/bin/python scripts/interactive_smoke.py
+
 test-local: ## Run backend API tests locally with pytest
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  Running HomePilot Backend Tests"
