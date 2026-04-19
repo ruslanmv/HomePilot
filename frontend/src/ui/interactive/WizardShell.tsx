@@ -11,7 +11,7 @@
 
 import React from "react";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
-import { PrimaryButton, SecondaryButton } from "./ui";
+import { PrimaryButton } from "./ui";
 
 export interface StepDef {
   key: string;
@@ -38,39 +38,55 @@ export function WizardShell({
   onBack, onNext, children,
 }: WizardShellProps) {
   return (
-    // pb-28 reserves space at the bottom of the scrolling container
-    // so the sticky footer never covers the last field in a step.
-    <div className="pt-8 flex flex-col gap-6 max-w-3xl mx-auto pb-28">
+    // pb-20 reserves space for the sticky footer so the last form
+    // field never sits flush under it.
+    <div className="pt-8 flex flex-col gap-6 max-w-3xl mx-auto pb-20">
       <Stepper steps={steps} activeIndex={activeIndex} />
       <header>
         <h1 className="text-2xl font-medium">{title}</h1>
         {subtitle && <p className="text-sm text-[#aaa] mt-1">{subtitle}</p>}
       </header>
       <div>{children}</div>
-      {/* Sticky footer: Back/Next stay pinned to the viewport bottom
-          so users on short screens (laptops, small-tab windows) can
-          always see the Next button without scrolling hunt. */}
+
+      {/* Action bar — feels like page chrome, not a floating widget:
+          no rounded corners, no drop-shadow, no fill border. Just a
+          thin top rule + page-colored blurred background. Back is a
+          ghost text button (secondary), Next is the prominent
+          primary with a right-facing chevron so the forward motion
+          reads at a glance. */}
       <footer
         className={[
-          "sticky bottom-4 z-10 flex items-center justify-between gap-3",
-          "rounded-xl border border-[#3f3f3f] bg-[#121212]/95 backdrop-blur",
-          "px-4 py-3 shadow-[0_8px_30px_rgba(0,0,0,0.4)]",
+          "sticky bottom-0 z-20",
+          "flex items-center justify-between gap-3",
+          "border-t border-[#2a2a2a]",
+          "bg-[#0f0f0f]/95 backdrop-blur",
+          "py-3",
         ].join(" ")}
       >
-        <SecondaryButton
+        <button
+          type="button"
           onClick={onBack}
           disabled={!canGoBack || submitting}
-          icon={<ChevronLeft className="w-4 h-4" aria-hidden />}
+          className={[
+            "inline-flex items-center gap-1.5",
+            "px-2.5 py-2 text-sm font-medium rounded",
+            "text-[#aaa] hover:text-[#f1f1f1]",
+            "disabled:text-[#555] disabled:cursor-not-allowed",
+            "transition-colors focus:outline-none",
+            "focus-visible:ring-2 focus-visible:ring-[#3ea6ff]",
+          ].join(" ")}
         >
+          <ChevronLeft className="w-4 h-4" aria-hidden />
           Back
-        </SecondaryButton>
+        </button>
         <PrimaryButton
           onClick={onNext}
           disabled={!canGoNext}
           loading={submitting}
-          icon={!submitting ? <ChevronRight className="w-4 h-4" aria-hidden /> : undefined}
+          size="lg"
         >
-          {nextLabel || "Next"}
+          <span>{nextLabel || "Next"}</span>
+          {!submitting && <ChevronRight className="w-4 h-4" aria-hidden />}
         </PrimaryButton>
       </footer>
     </div>
