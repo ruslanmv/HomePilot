@@ -17,6 +17,7 @@ import {
   PlugZap,
   Trash2,
   Tv2,
+  Workflow,
   Plus,
   Copy,
   RotateCw,
@@ -43,6 +44,7 @@ import CallEventRow from './phone/CallEventRow'
 import ProjectsView from './ProjectsView'
 import ImagineView from './Imagine'
 import AnimateView from './Animate'
+import InteractiveView from './Interactive'
 import ModelsView from './Models'
 import StudioView from './Studio'
 import { CreatorStudioHost } from './CreatorStudioHost'
@@ -269,7 +271,7 @@ function useEnterpriseCallRow(): boolean {
   return String(envVal ?? 'true') !== 'false'
 }
 
-type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'models' | 'studio' | 'avatar' | 'teams'
+type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams'
 type Provider = 'backend' | 'ollama'
 
 type HardwarePreset = '4060' | '4080' | 'a100' | 'custom'
@@ -1211,6 +1213,7 @@ function Sidebar({
           <NavItem icon={PenLine} label="Edit" active={mode === 'edit'} onClick={() => setMode('edit')} collapsed={collapsed} />
           <NavItem icon={Users} label="Avatar" active={mode === 'avatar'} onClick={() => setMode('avatar')} collapsed={collapsed} />
           <NavItem icon={Film} label="Animate" active={mode === 'animate'} onClick={() => setMode('animate')} collapsed={collapsed} />
+          <NavItem icon={Workflow} label="Interactive" active={mode === 'interactive'} onClick={() => setMode('interactive')} collapsed={collapsed} />
           <NavItem icon={Tv2} label="Studio" active={mode === 'studio'} onClick={() => setMode('studio')} collapsed={collapsed} />
           <NavItem icon={Server} label="Models" active={mode === 'models'} onClick={() => setMode('models')} collapsed={collapsed} />
         </div>
@@ -2299,6 +2302,10 @@ export default function App() {
   const [studioVariant, setStudioVariant] = useState<"play" | "creator">("play")
   // Creator Studio project ID (for opening existing projects in editor)
   const [creatorProjectId, setCreatorProjectId] = useState<string | undefined>(undefined)
+  // Interactive tab: opened project id (null = landing grid, string = host/editor)
+  const [interactiveProjectId, setInteractiveProjectId] = useState<string | null>(null)
+  // Interactive tab: "new project" intent — when true the host renders the wizard
+  const [interactiveCreating, setInteractiveCreating] = useState<boolean>(false)
 
   // Unified settings model
   const [settings, setSettings] = useState<SettingsModel>(() => {
@@ -5254,6 +5261,18 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             backendUrl={settingsDraft.backendUrl}
             apiKey={settingsDraft.apiKey}
             teamsMcpAvailable={teamsMcpAvailable}
+          />
+        ) : mode === 'interactive' ? (
+          // Interactive: branching AI-video experiences (separate from Animate's
+          // single-clip generator — uses /v1/interactive/* on the backend).
+          // Host/editor mount lands in UI-2/3; for now the landing grid itself
+          // is fully functional and the "New project" CTA shows a placeholder
+          // wizard prompt.
+          <InteractiveView
+            backendUrl={settingsDraft.backendUrl}
+            apiKey={settingsDraft.apiKey}
+            onOpenProject={(id) => setInteractiveProjectId(id)}
+            onCreateNew={() => setInteractiveCreating(true)}
           />
         ) : mode === 'animate' ? (
           // Animate mode: Grok-style video generation gallery
