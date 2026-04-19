@@ -22,6 +22,7 @@ import {
   BarChart3, CheckSquare, GitBranch, ListChecks, Send, Sparkles,
 } from "lucide-react";
 import { createInteractiveApi } from "./interactive/api";
+import { GraphPanel } from "./interactive/GraphPanel";
 import type { Experience } from "./interactive/types";
 import {
   ErrorBanner, Panel, StatusBadge, useAsyncResource,
@@ -70,12 +71,19 @@ export function InteractiveEditor({ backendUrl, apiKey, projectId }: Interactive
       <TabStrip active={activeTab} onChange={setActiveTab} />
 
       <div>
-        {/* Panel bodies intentionally placeholder-only in UI-2a so the
-            shell is reviewable in isolation. Each panel gets its own
-            commit in UI-3 / UI-4 / UI-5. */}
-        <Panel title={TABS.find((t) => t.key === activeTab)?.label} subtitle={TABS.find((t) => t.key === activeTab)?.description}>
-          <ComingSoonPanel tab={activeTab} projectId={projectId} />
-        </Panel>
+        {activeTab === "graph" ? (
+          <GraphPanel api={api} projectId={projectId} />
+        ) : (
+          // Placeholder for tabs that haven't shipped yet. Each
+          // panel gets its own batch (UI-3b Catalog, UI-4 Rules /
+          // QA / Publish, UI-5 Analytics).
+          <Panel
+            title={TABS.find((t) => t.key === activeTab)?.label}
+            subtitle={TABS.find((t) => t.key === activeTab)?.description}
+          >
+            <ComingSoonPanel tab={activeTab} projectId={projectId} />
+          </Panel>
+        )}
       </div>
     </div>
   );
