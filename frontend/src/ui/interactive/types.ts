@@ -199,6 +199,51 @@ export interface AnalyticsSummary {
   block_rate: number;
 }
 
+// ── Live-play types ─────────────────────────────────────────────
+
+export type SceneJobStatus = "pending" | "rendering" | "ready" | "failed";
+
+export interface SceneJobView {
+  id: string;
+  session_id: string;
+  turn_id: string;
+  status: SceneJobStatus;
+  job_id: string;
+  asset_id: string;
+  prompt: string;
+  duration_sec: number;
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatResult {
+  status: "ok" | "blocked";
+  decision: {
+    decision: string;
+    reason_code: string;
+    message: string;
+    intent_code: string;
+  };
+  reply_text: string;
+  scene_prompt?: string;
+  duration_sec?: number;
+  topic_continuity?: string;
+  intent_code?: string;
+  mood?: string;
+  affinity_score?: number;
+  viewer_turn_id?: string;
+  character_turn_id?: string;
+  video_job_id: string;
+  video_job_status?: SceneJobStatus;
+  video_asset_id?: string;
+}
+
+export interface PendingResult {
+  items: SceneJobView[];
+  cursor: string;
+}
+
 /** Typed error returned by the API client on non-2xx responses. */
 export class InteractiveApiError extends Error {
   readonly status: number;

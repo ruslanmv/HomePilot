@@ -23,12 +23,14 @@
 import {
   ActionItem,
   AnalyticsSummary,
+  ChatResult,
   EdgeItem,
   Experience,
   ExperienceMode,
   HealthInfo,
   InteractiveApiError,
   NodeItem,
+  PendingResult,
   PlanIntent,
   PlanningPreset,
   PublishResult,
@@ -81,6 +83,14 @@ export interface InteractiveApi {
 
   // Analytics
   experienceAnalytics(id: string, signal?: AbortSignal): Promise<AnalyticsSummary>;
+
+  // Live-play (PLAY-*)
+  chat(sessionId: string, req: { text: string; viewer_region?: string }): Promise<ChatResult>;
+  pending(
+    sessionId: string,
+    opts?: { since_id?: string; limit?: number },
+    signal?: AbortSignal,
+  ): Promise<PendingResult>;
 }
 
 export function createInteractiveApi(
@@ -239,5 +249,22 @@ export function createInteractiveApi(
       call<AnalyticsSummary & { ok: boolean }>(
         `/experiences/${encodeURIComponent(id)}/analytics`, { method: "GET" }, signal,
       ),
+
+    chat: (sessionId, req) =>
+      call<ChatResult & { ok: boolean }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/chat`,
+        { method: "POST", body: JSON.stringify(req) },
+      ),
+
+    pending: (sessionId, opts, signal) => {
+      const params = new URLSearchParams();
+      if (opts?.since_id) params.set("since_id", opts.since_id);
+      if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      return call<PendingResult & { ok: boolean }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/pending${suffix}`,
+        { method: "GET" }, signal,
+      );
+    },
   };
 }
