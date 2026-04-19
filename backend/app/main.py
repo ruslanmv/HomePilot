@@ -177,6 +177,21 @@ except Exception as _vc_err:  # noqa: BLE001
     # Deliberate broad catch: this entire feature is optional. Log and move on.
     print(f"[voice_call] DISABLED due to import error: {_vc_err}")
 
+# --- Interactive (/v1/interactive/*) — ADDITIVE, FEATURE-FLAGGED -------------
+# AI interactive video engine. Off by default; enable with
+# ``INTERACTIVE_ENABLED=true``. See backend/app/interactive/__init__.py for
+# the service design. Same safety pattern as voice_call: import errors are
+# logged and swallowed so a broken interactive subsystem can't sink the app.
+try:
+    from .interactive import load_config as _interactive_load_config
+    from .interactive import build_router as _interactive_build_router
+    _interactive_cfg = _interactive_load_config()
+    app.include_router(_interactive_build_router(_interactive_cfg))
+    if _interactive_cfg.enabled:
+        print("[interactive] enabled — routes mounted under /v1/interactive")
+except Exception as _ix_err:  # noqa: BLE001
+    print(f"[interactive] DISABLED due to import error: {_ix_err}")
+
 # --- Persona call (/v1/persona-call/*) — ADDITIVE, FEATURE-FLAGGED -----------
 # Phone-call conversational dynamics + per-turn system suffix composer.
 # Off by default. Enable with ``PERSONA_CALL_ENABLED=true``. The module
