@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { createInteractiveApi, type InteractiveApi } from "./interactive/api";
 import { LiveActionSheet } from "./interactive/LiveActionSheet";
+import { XPRewardsSheet } from "./interactive/XPRewardsSheet";
 import type {
   CatalogItemView, ChatResult, Experience, ResolveResult, SceneJobView,
 } from "./interactive/types";
@@ -134,6 +135,7 @@ function InteractivePlayerBody({
   const [pendingScene, setPendingScene] = useState<SceneJobView | null>(null);
   const [cursor, setCursor] = useState<string>("");
   const [liveActionOpen, setLiveActionOpen] = useState(false);
+  const [xpRewardsOpen, setXpRewardsOpen] = useState(false);
 
   // Refs for state read by the polling effect without re-binding.
   const cursorRef = useRef<string>("");
@@ -346,6 +348,7 @@ function InteractivePlayerBody({
         title={experience.title || "Interactive"}
         subtitle={moodDescriptor(mood, affinity)}
         level={level}
+        onOpenXp={() => setXpRewardsOpen(true)}
         muted={muted}
         onToggleMute={() => setMuted((m) => !m)}
         hideChat={hideChat}
@@ -381,6 +384,13 @@ function InteractivePlayerBody({
         sessionId={sessionId}
         currentLevel={level}
         onResolved={onActionResolved}
+      />
+
+      <XPRewardsSheet
+        open={xpRewardsOpen}
+        onClose={() => setXpRewardsOpen(false)}
+        api={api}
+        sessionId={sessionId}
       />
     </div>
   );
@@ -435,12 +445,13 @@ function VideoStage({ scene, mood }: { scene: SceneJobView | null; mood: string 
 }
 
 function TopBar({
-  title, subtitle, level, muted, onToggleMute,
+  title, subtitle, level, onOpenXp, muted, onToggleMute,
   hideChat, onToggleHideChat, onExit,
 }: {
   title: string;
   subtitle: string;
   level: number;
+  onOpenXp: () => void;
   muted: boolean;
   onToggleMute: () => void;
   hideChat: boolean;
@@ -461,7 +472,14 @@ function TopBar({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold truncate max-w-[200px]">{title}</span>
-            <LevelPill level={level} />
+            <button
+              type="button"
+              onClick={onOpenXp}
+              aria-label={`View XP rewards — level ${level}`}
+              className="focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff] rounded-full"
+            >
+              <LevelPill level={level} />
+            </button>
           </div>
           <div className="text-[11px] text-white/60 truncate">{subtitle}</div>
         </div>
