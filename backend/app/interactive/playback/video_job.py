@@ -135,10 +135,9 @@ def mark_failed(job_id: str, error: str) -> Optional[SceneJob]:
 def render_now(job_id: str, *, delay_ms: int = 0) -> Optional[SceneJob]:
     """Complete a job synchronously with a deterministic stub asset.
 
-    This is the seam the async worker will replace in phase-2. Tests
-    and the HTTP route can call this right after ``submit_scene_job``
-    to drive the full state machine end-to-end without real video
-    generation.
+    Phase-1 path: still here for tests and sync callers. The live
+    route prefers ``render_now_async`` so the real Animate pipeline
+    runs when ``INTERACTIVE_PLAYBACK_RENDER`` is on.
 
     The placeholder asset id is derived from the job id so replay
     debugging can tie a playback stream back to a specific job.
@@ -151,6 +150,55 @@ def render_now(job_id: str, *, delay_ms: int = 0) -> Optional[SceneJob]:
         time.sleep(delay_ms / 1000.0)
     placeholder = f"ixa_stub_{job_id[-12:]}"
     return mark_ready(job_id, asset_id=placeholder)
+
+
+async def render_now_async(
+    job_id: str, *, persona_hint: str = "",
+) -> Optional[SceneJob]:
+    """Drive a job to completion, preferring the real renderer.
+
+    When ``INTERACTIVE_PLAYBACK_RENDER`` is on and the Animate
+    pipeline responds with a usable asset, the job lands as
+    ``ready`` with a durable ``ixa_playback_…`` asset id. Any
+    failure path (flag off, pipeline error, timeout, registry
+    failure) falls back to the phase-1 stub placeholder so the
+    player's polling loop always resolves to a terminal state.
+
+    Safe for concurrent use: the underlying UPDATE statements on
+    ``ix_scene_queue`` are atomic, and this function never calls
+    ``render_now`` on the same job twice within one invocation.
+    """
+    job = get_job(job_id)
+    if not job:
+        return None
+
+    # Late import so the pure scene_memory / scene_planner modules
+    # don't pull in the config / httpx / comfy chain unnecessarily.
+    from .playback_config import load_playback_config
+    from .render_adapter import render_scene_async
+
+    cfg = load_playback_config()
+    mark_rendering(job_id, backend_job_id=f"live-{job_id[-8:]}" if cfg.render_enabled else f"stub-{job_id[-8:]}")
+
+    asset_id: Optional[str] = None
+    if cfg.render_enabled:
+        asset_id = await render_scene_async(
+            scene_prompt=job.prompt,
+            duration_sec=job.duration_sec,
+            session_id=job.session_id,
+            persona_hint=persona_hint,
+            config=cfg,
+        )
+
+    if not asset_id:
+        asset_id = f"ixa_stub_{job_id[-12:]}"
+    else:
+        # Namespace real assets so they're visibly distinct from
+        # stub ids in logs / analytics dashboards.
+        if not asset_id.startswith("ixa_"):
+            asset_id = f"ixa_playback_{asset_id}"
+
+    return mark_ready(job_id, asset_id=asset_id)
 
 
 # ── Internals ───────────────────────────────────────────────────

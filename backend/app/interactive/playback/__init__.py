@@ -36,6 +36,7 @@ from .video_job import (
     mark_ready,
     mark_rendering,
     render_now,
+    render_now_async,
     submit_scene_job,
 )
 
@@ -58,5 +59,6 @@ __all__ = [
     "mark_ready",
     "mark_rendering",
     "render_now",
+    "render_now_async",
     "submit_scene_job",
 ]
