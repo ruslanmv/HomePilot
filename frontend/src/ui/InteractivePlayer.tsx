@@ -136,6 +136,10 @@ function InteractivePlayerBody({
   const [cursor, setCursor] = useState<string>("");
   const [liveActionOpen, setLiveActionOpen] = useState(false);
   const [xpRewardsOpen, setXpRewardsOpen] = useState(false);
+  // Connection health: number of consecutive polling failures.
+  // 0 = healthy; ≥ 3 surfaces a reconnect chip so the user knows
+  // the stream isn't silently dying.
+  const [pollFailures, setPollFailures] = useState(0);
 
   // Refs for state read by the polling effect without re-binding.
   const cursorRef = useRef<string>("");
@@ -165,8 +169,12 @@ function InteractivePlayerBody({
           setPendingScene(stillPending || null);
           setCursor(res.cursor || cursorRef.current);
         }
+        setPollFailures(0);
       } catch {
-        // Swallow transient polling errors; next tick retries.
+        // Transient polling errors are retried on the next tick;
+        // we count consecutive failures so the UI can surface a
+        // reconnect chip once the stream has genuinely dropped.
+        setPollFailures((n) => Math.min(n + 1, 99));
       } finally {
         if (!cancelled) timer = window.setTimeout(tick, POLL_INTERVAL_MS);
       }
@@ -360,6 +368,10 @@ function InteractivePlayerBody({
         <GeneratingHint prompt={pendingScene.prompt} />
       )}
 
+      {pollFailures >= 3 && (
+        <ReconnectChip />
+      )}
+
       {!hideChat && (
         <ChatOverlay bubbles={visibleBubbles} />
       )}
@@ -426,10 +438,15 @@ function VideoStage({ scene, mood }: { scene: SceneJobView | null; mood: string 
   // so authors can verify the scene landed. Phase-2 swaps this
   // for a looping <video src={resolveAssetUrl(asset_id)} /> once
   // the Animate pipeline writes real files.
+  //
+  // The idle state picks up a subtle breathing tint so the scene
+  // never looks frozen. A fresh scene key remounts the layer so
+  // the scene-fade animation fires once per new clip.
   const tint = moodTint(mood);
   return (
     <div
-      className="absolute inset-0 -z-10"
+      key={scene?.id || `idle-${mood}`}
+      className="absolute inset-0 -z-10 animate-scene-fade animate-mood-breathe"
       style={{
         background: `radial-gradient(1200px 800px at 50% 40%, ${tint.mid} 0%, #0a0a0a 70%, #000 100%)`,
       }}
@@ -440,6 +457,18 @@ function VideoStage({ scene, mood }: { scene: SceneJobView | null; mood: string 
           scene · {scene.id.slice(-6)} · {scene.duration_sec}s
         </div>
       )}
+    </div>
+  );
+}
+
+function ReconnectChip() {
+  return (
+    <div
+      role="status"
+      className="absolute top-20 right-4 z-10 bg-amber-500/90 text-black rounded-full px-3 py-1.5 text-[11px] font-medium flex items-center gap-2 shadow-lg"
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-black animate-live-dot" aria-hidden />
+      Reconnecting…
     </div>
   );
 }
