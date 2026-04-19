@@ -106,8 +106,17 @@ function PromptCounter({ value }: { value: string }) {
   const len = value.trim().length;
   const ok = len >= 10;
   return (
-    <div className={["text-[11px] mt-0.5", ok ? "text-[#777]" : "text-amber-400"].join(" ")}>
-      {len} / 10 minimum {ok ? "✓" : "characters"}
+    <div className="mt-0.5" aria-live="polite">
+      <div className={["text-[11px]", ok ? "text-[#777]" : "text-amber-400"].join(" ")}>
+        {len} / 10 minimum {ok ? "✓" : "characters"}
+      </div>
+      {!ok && (
+        // Spelled-out hint surfaces the exact unblock condition so
+        // users never wonder why Next is dimmed on step 1.
+        <div className="text-[11px] text-[#777] mt-1">
+          Add at least 10 prompt characters to enable the Next button.
+        </div>
+      )}
     </div>
   );
 }
