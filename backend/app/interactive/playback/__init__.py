@@ -26,6 +26,17 @@ from .scene_planner import (
     plan_next_scene,
     synthesize_synopsis,
 )
+from .schema import ensure_playback_schema
+from .video_job import (
+    SceneJob,
+    get_job,
+    list_jobs,
+    mark_failed,
+    mark_ready,
+    mark_rendering,
+    render_now,
+    submit_scene_job,
+)
 
 __all__ = [
     "SceneMemory",
@@ -37,4 +48,13 @@ __all__ = [
     "ScenePlan",
     "plan_next_scene",
     "synthesize_synopsis",
+    "ensure_playback_schema",
+    "SceneJob",
+    "get_job",
+    "list_jobs",
+    "mark_failed",
+    "mark_ready",
+    "mark_rendering",
+    "render_now",
+    "submit_scene_job",
 ]
