@@ -151,30 +151,51 @@ def _heuristic_graph(experience: Experience, cfg: InteractiveConfig) -> GraphPla
         log.warning("autogen_heuristic_parse_error: %s", str(exc)[:200])
         intent = None
 
+    topic = _topic_label(intent, experience)
+
     if intent is None:
-        # Last-resort graph: a single scene + single ending.
+        # Last-resort graph: a single scene + single ending, still
+        # topic-aware so authors see meaningful titles up front.
         return GraphPlan(
             nodes=[
-                NodeSpec(local_id="intro", kind="scene", title="Welcome",
-                         narration="Welcome in.", is_entry=True),
-                NodeSpec(local_id="end_a", kind="ending", title="Thanks for watching",
-                         narration="See you soon."),
+                NodeSpec(
+                    local_id="intro", kind="scene",
+                    title=f"Welcome — {topic}" if topic else "Welcome",
+                    narration=(
+                        f"Let's walk through {topic}." if topic
+                        else "Welcome in."
+                    ),
+                    is_entry=True,
+                ),
+                NodeSpec(
+                    local_id="end_a", kind="ending",
+                    title=f"Wrap up — {topic}" if topic else "Thanks for watching",
+                    narration="Nice work. Here's a quick recap before you go.",
+                ),
             ],
-            edges=[
-                EdgeSpec(from_local_id="intro", to_local_id="end_a"),
-            ],
+            edges=[EdgeSpec(from_local_id="intro", to_local_id="end_a")],
             actions=[],
             source="heuristic",
         )
 
     branch_graph = build_heuristic_graph(intent)
-    nodes = [
-        NodeSpec(
-            local_id=n.id, kind=n.kind, title=n.title,
-            narration=n.narration, image_prompt="", is_entry=n.is_entry,
+    branch_count = max(1, intent.branch_count)
+
+    nodes: List[NodeSpec] = []
+    for n in branch_graph.nodes:
+        title, narration = _rewrite_heuristic_title(
+            raw_title=n.title,
+            raw_narration=n.narration,
+            topic=topic,
+            kind=n.kind,
+            is_entry=n.is_entry,
+            metadata=getattr(n, "metadata", {}) or {},
+            branch_count=branch_count,
         )
-        for n in branch_graph.nodes
-    ]
+        nodes.append(NodeSpec(
+            local_id=n.id, kind=n.kind, title=title,
+            narration=narration, image_prompt="", is_entry=n.is_entry,
+        ))
     edges = [
         EdgeSpec(
             from_local_id=e.from_id, to_local_id=e.to_id,
@@ -183,6 +204,98 @@ def _heuristic_graph(experience: Experience, cfg: InteractiveConfig) -> GraphPla
         for e in branch_graph.edges
     ]
     return GraphPlan(nodes=nodes, edges=edges, actions=[], source="heuristic")
+
+
+# Title post-processor — makes 'Branch 0 step 1' human-facing.
+#
+# The shared branching.build_graph intentionally emits generic
+# titles so the schema-level tests stay deterministic. Authoring-
+# facing output wants real words the viewer could read on screen,
+# so we rewrite the obvious generic patterns using the topic and
+# a small bank of branch labels. LLM path overrides all of this
+# when enabled.
+
+_BRANCH_LABELS = (
+    "Option A", "Option B", "Option C",
+    "Option D", "Option E", "Option F",
+)
+
+
+def _topic_label(intent, experience) -> str:  # noqa: ANN001 — typed via caller
+    raw = ""
+    if intent is not None and getattr(intent, "topic", ""):
+        raw = str(intent.topic)
+    if not raw:
+        raw = (experience.title or experience.description or "").strip()
+    raw = re.sub(r"\s+", " ", raw).strip().strip(".")
+    if len(raw) > 60:
+        raw = raw[:57].rstrip() + "…"
+    return raw
+
+
+def _rewrite_heuristic_title(
+    *, raw_title: str, raw_narration: str, topic: str, kind: str,
+    is_entry: bool, metadata: Dict[str, Any], branch_count: int,
+) -> tuple[str, str]:
+    """Turn a generic builder title into a topic-aware one.
+
+    Returns (title, narration). Narration is only synthesized when
+    the builder didn't already set one.
+    """
+    title = (raw_title or "").strip()
+    narration = (raw_narration or "").strip()
+
+    if is_entry or title.lower() == "introduction":
+        new_title = f"Welcome — {topic}" if topic else "Welcome"
+        new_narration = narration or (
+            f"Let's walk through {topic}." if topic
+            else "Welcome to this interactive experience."
+        )
+        return new_title, new_narration
+
+    if kind == "decision" or title.lower() == "choose a path":
+        new_title = "Pick your path"
+        new_narration = narration or (
+            f"Which approach to {topic} would you like to explore?"
+            if topic else "Which path would you like to explore?"
+        )
+        return new_title, new_narration
+
+    if title.lower() == "epilogue" or metadata.get("purpose") == "shared_ending":
+        new_title = f"Wrap up — {topic}" if topic else "Wrap up"
+        new_narration = narration or (
+            "Here's what you picked up along the way."
+        )
+        return new_title, new_narration
+
+    # "Branch N step M" → topic-aware path/step label.
+    m = re.match(r"Branch\s+(\d+)\s+step\s+(\d+)", title, re.I)
+    if m:
+        branch = int(m.group(1))
+        step = int(m.group(2))
+        label = _BRANCH_LABELS[branch] if branch < len(_BRANCH_LABELS) else f"Path {branch + 1}"
+        if step == 1:
+            new_title = f"{label} · explore"
+            default_narration = (
+                f"This path dives into {topic}." if topic
+                else "This path explores one of the options."
+            )
+        else:
+            new_title = f"{label} · step {step}"
+            default_narration = (
+                f"Going a little deeper on {topic}." if topic
+                else "Going a little deeper."
+            )
+        return new_title, narration or default_narration
+
+    # Per-branch ending fallback.
+    m2 = re.match(r"Branch\s+(\d+)\s+ending", title, re.I)
+    if m2:
+        branch = int(m2.group(1))
+        label = _BRANCH_LABELS[branch] if branch < len(_BRANCH_LABELS) else f"Path {branch + 1}"
+        return f"{label} · outcome", narration or "That's where this path lands."
+
+    return title or "Scene", narration
 
 
 # ── LLM path ───────────────────────────────────────────────────
@@ -282,8 +395,15 @@ def _build_messages(
         "- At least one scene has type='ending'.\n"
         "- Keep it small: 4–10 scenes total.\n"
         "- No cycles. The graph is a DAG.\n"
-        "- Script lines are natural spoken language, 5–20 seconds each.\n"
-        "- visual_direction should guide a video renderer (no story text).\n"
+        "- Titles must be human-facing (something a viewer could\n"
+        "  read on screen): e.g. 'Greeting: Hola, ¿cómo estás?' —\n"
+        "  NEVER shapes like 'Branch 0 step 1' or 'Scene 3'.\n"
+        "- Scripts are natural spoken language, 5–20 seconds each,\n"
+        "  specific to the topic (not generic filler).\n"
+        "- At least one decision scene must include interaction.options\n"
+        "  with concrete labels a viewer could tap — NOT 'Option A'.\n"
+        "- visual_direction guides a video renderer (camera, mood,\n"
+        "  lighting, pose) — no story text, no dialogue.\n"
         "- Never describe minors, violence, or non-consensual content.\n"
         "- No prose, no markdown fences. Strict JSON."
     )
