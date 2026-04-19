@@ -35,6 +35,7 @@ from ..models import ActionCreate, EdgeCreate, Experience, NodeCreate
 from ..planner.autogen_llm import (
     ActionSpec, EdgeSpec, GraphPlan, NodeSpec, generate_graph,
 )
+from ..qa import run_qa
 from ._common import http_error_from, scoped_experience
 
 
@@ -73,7 +74,34 @@ def build_generator_auto_router(cfg: InteractiveConfig) -> APIRouter:
         # then edges + actions that reference it.
         id_map = _persist_nodes(exp.id, plan.nodes)
         _persist_edges(exp.id, plan.edges, id_map)
-        _persist_actions(exp.id, plan.actions)
+
+        # Guarantee a baseline action so every generated project is
+        # actually interactive. If the LLM / heuristic already
+        # produced ≥1 action (likely via decision options), we keep
+        # them and add a 'Continue' as a safe default.
+        actions = list(plan.actions)
+        if not actions:
+            actions = list(_default_actions())
+        _persist_actions(exp.id, actions)
+
+        # Seed one gentle personalization rule so the editor's
+        # Rules tab isn't stranded empty. Priority 100 + enabled so
+        # it fires at runtime; condition is permissive enough that
+        # viewers with no measured affinity still match.
+        rule_count = _persist_default_rule(exp.id)
+
+        # Auto-run QA so authors see a verdict banner on landing
+        # in the editor, instead of an empty 'Run QA' page.
+        qa_verdict = ""
+        qa_issues: List[Dict[str, Any]] = []
+        qa_counts: Dict[str, int] = {}
+        try:
+            summary = run_qa(exp)
+            qa_verdict = summary.verdict
+            qa_issues = list(summary.issues)
+            qa_counts = dict(summary.counts)
+        except Exception:  # noqa: BLE001 — QA is best-effort
+            qa_verdict = "skipped"
 
         return {
             "ok": True,
@@ -81,11 +109,46 @@ def build_generator_auto_router(cfg: InteractiveConfig) -> APIRouter:
             "already_generated": False,
             "node_count": len(plan.nodes),
             "edge_count": len(plan.edges),
-            "action_count": len(plan.actions),
+            "action_count": len(actions),
+            "rule_count": rule_count,
+            "qa": {
+                "verdict": qa_verdict,
+                "counts": qa_counts,
+                "issues": qa_issues,
+            },
             "warnings": list(plan.warnings),
         }
 
     return router
+
+
+def _default_actions() -> List[ActionSpec]:
+    """Minimal action set so every generated project can be played."""
+    return [
+        ActionSpec(label="Continue", intent_code="continue", xp_award=5),
+        ActionSpec(label="Ask for a hint", intent_code="request_hint", xp_award=3),
+    ]
+
+
+def _persist_default_rule(experience_id: str) -> int:
+    """Seed one personalization rule so the feature is visibly
+    wired on first open. Warm-up rule: when affinity is low (a
+    fresh viewer), prefer a warm tone so the first scene lands
+    friendly. Returns the rule count actually created (always 1,
+    but pattern-compatible with future multi-rule seeding).
+    """
+    try:
+        repo.create_rule(
+            experience_id,
+            name="Warm up new viewers",
+            condition={"max_affinity": 0.3},
+            action={"prefer_tone": "warm", "bump_affinity": 0.01},
+            priority=100,
+            enabled=True,
+        )
+        return 1
+    except Exception:  # noqa: BLE001 — rule seeding is best-effort
+        return 0
 
 
 # ── Persistence helpers ───────────────────────────────────────

@@ -111,6 +111,36 @@ def test_heuristic_generates_and_persists_a_graph(client):
     assert len(listed["items"]) == body["node_count"]
 
 
+def test_heuristic_generation_seeds_baseline_actions_rule_and_qa(client):
+    """FIX-5: every generated project must land playable — at
+    least one action, one personalization rule, and a QA verdict."""
+    eid = _make_experience(client)
+    r = client.post(f"/v1/interactive/experiences/{eid}/auto-generate")
+    assert r.status_code == 200
+    body = r.json()
+
+    # Baseline action catalog
+    assert body["action_count"] >= 1
+    actions = client.get(
+        f"/v1/interactive/experiences/{eid}/actions",
+    ).json()["items"]
+    labels = [a["label"] for a in actions]
+    assert "Continue" in labels  # default safety net
+
+    # One seeded personalization rule
+    assert body["rule_count"] == 1
+    rules = client.get(
+        f"/v1/interactive/experiences/{eid}/rules",
+    ).json()["items"]
+    assert len(rules) == 1
+    assert rules[0]["enabled"] is True
+
+    # QA ran and returned a verdict + counts
+    assert "qa" in body
+    assert body["qa"]["verdict"] in ("pass", "warn", "fail", "skipped")
+    assert "counts" in body["qa"]
+
+
 # ── LLM path ──────────────────────────────────────────────────
 
 def test_llm_path_persists_scenes_edges_and_actions(monkeypatch, client):
