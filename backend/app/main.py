@@ -6,14 +6,14 @@ import os
 import subprocess
 import uuid as uuidlib
 import traceback
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Dict, List, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
 from fastapi import Body, Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -282,7 +282,22 @@ app.include_router(persona_graph_router)
 # ----------------------------
 @app.get("/comfy/view/{filename:path}")
 async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "output"):
-    """Proxy ComfyUI /view requests so the frontend can load generated images."""
+    """Proxy ComfyUI /view requests so the frontend can load generated images.
+
+    Behaviour:
+      1. Try ComfyUI's /view endpoint (the happy path for freshly
+         generated images that haven't been evicted yet).
+      2. On ANY failure — ComfyUI down, 404, connection refused —
+         fall back to the local asset_registry + upload directory.
+         Past sessions write files to disk under UPLOAD_DIR and
+         register them with asset_registry; those persist across
+         ComfyUI restarts where the in-memory /view cache does not.
+      3. Only return 502 if BOTH paths fail.
+
+    This is what historically caused 'avatar_*.png 502 Bad Gateway'
+    after a ComfyUI restart — the frontend still had stable URLs,
+    but the proxy gave up before checking durable storage.
+    """
     params = {"filename": filename, "type": type}
     if subfolder:
         params["subfolder"] = subfolder
@@ -293,7 +308,101 @@ async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "outp
             content_type = r.headers.get("content-type", "image/png")
             return Response(content=r.content, media_type=content_type)
     except Exception as exc:
+        served = _serve_comfy_view_from_disk(filename, subfolder)
+        if served is not None:
+            return served
         return JSONResponse(status_code=502, content={"detail": f"ComfyUI view failed: {exc}"})
+
+
+def _serve_comfy_view_from_disk(filename: str, subfolder: str) -> Optional[Response]:
+    """Resolve a ComfyUI filename to a local file + serve it.
+
+    Checks, in order:
+      1. The asset_registry by storage_key suffix match (works
+         for anything registered via make restore-avatars or the
+         normal image-generation pipeline).
+      2. The UPLOAD_DIR root for an exact basename match.
+      3. ComfyUI's own output directory (``<repo>/ComfyUI/output``)
+         for images that were generated but never migrated — this
+         is the path restore-avatars itself walks.
+
+    Path traversal is blocked: anything with ``..`` or an absolute
+    prefix in the request param is rejected without a disk touch.
+    """
+    import mimetypes
+    import sqlite3
+
+    safe = PurePath(filename)
+    if ".." in safe.parts or safe.is_absolute():
+        return None
+    basename = safe.name
+    if not basename:
+        return None
+
+    def _file_response(path: Path) -> Optional[Response]:
+        try:
+            if not path.is_file():
+                return None
+            mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+            return FileResponse(
+                path=str(path), media_type=mime, filename=basename,
+                headers={"Cache-Control": "public, max-age=3600"},
+            )
+        except Exception:
+            return None
+
+    # 1) asset_registry lookup by storage_key suffix. Every
+    #    avatar restored by `make restore-avatars` lands with
+    #    the full relative path in storage_key, so matching on
+    #    the trailing filename resolves the row cheaply.
+    try:
+        con = sqlite3.connect(config.SQLITE_PATH)
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+        cur.execute(
+            "SELECT storage_key FROM assets "
+            "WHERE storage_backend = 'local' AND storage_key LIKE ? "
+            "LIMIT 1",
+            (f"%{basename}",),
+        )
+        row = cur.fetchone()
+        con.close()
+        if row and row["storage_key"]:
+            key = Path(str(row["storage_key"]))
+            root = _files_upload_root()
+            candidate = key if key.is_absolute() else (root / key)
+            resp = _file_response(candidate)
+            if resp is not None:
+                return resp
+    except Exception:
+        # Asset-registry read is best-effort; fall through to
+        # direct filesystem probes below.
+        pass
+
+    # 2) UPLOAD_DIR direct lookup (flat or given subfolder).
+    root = _files_upload_root()
+    candidates: List[Path] = []
+    if subfolder:
+        sub = PurePath(subfolder)
+        if ".." not in sub.parts and not sub.is_absolute():
+            candidates.append(root / sub / basename)
+    candidates.append(root / basename)
+    candidates.append(root / "avatars" / basename)
+    candidates.append(root / "comfy" / basename)
+
+    # 3) ComfyUI output dir — the canonical location restore-avatars
+    #    scans. Located relative to the project root so it keeps
+    #    working in dev + container builds.
+    comfy_output = Path(__file__).resolve().parents[2] / "ComfyUI" / "output"
+    candidates.append(comfy_output / basename)
+    if subfolder:
+        candidates.append(comfy_output / subfolder / basename)
+
+    for path in candidates:
+        resp = _file_response(path)
+        if resp is not None:
+            return resp
+    return None
 
 
 # ----------------------------
