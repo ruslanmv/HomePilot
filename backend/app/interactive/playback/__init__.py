@@ -27,6 +27,7 @@ from .scene_planner import (
     plan_next_scene_async,
     synthesize_synopsis,
 )
+from .asset_urls import resolve_asset_url
 from .schema import ensure_playback_schema
 from .video_job import (
     SceneJob,
@@ -52,6 +53,7 @@ __all__ = [
     "plan_next_scene_async",
     "synthesize_synopsis",
     "ensure_playback_schema",
+    "resolve_asset_url",
     "SceneJob",
     "get_job",
     "list_jobs",

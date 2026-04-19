@@ -31,6 +31,7 @@ from ..playback import (
     list_jobs,
     plan_next_scene_async,
     render_now_async,
+    resolve_asset_url,
     set_synopsis,
     should_refresh_synopsis,
     submit_scene_job,
@@ -144,6 +145,7 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
         completed = await render_now_async(job.id, persona_hint=persona_hint)
         job_status = completed.status if completed else job.status
         asset_id = completed.asset_id if completed else ""
+        asset_url = resolve_asset_url(asset_id) if asset_id else None
 
         repo.append_event(
             session_id, "chat_resolved",
@@ -175,6 +177,7 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
             "video_job_id": job.id,
             "video_job_status": job_status,
             "video_asset_id": asset_id,
+            "video_asset_url": asset_url or "",
         }
 
     @router.get("/play/sessions/{session_id}/pending")
@@ -213,6 +216,10 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
 # ── Helpers ─────────────────────────────────────────────────────
 
 def _job_to_dict(job: SceneJob) -> Dict[str, Any]:
+    # Resolve the URL per row. Stub ids return None and we emit
+    # an empty string so the frontend shape stays stable without
+    # branching on presence.
+    asset_url = resolve_asset_url(job.asset_id) if job.asset_id else None
     return {
         "id": job.id,
         "session_id": job.session_id,
@@ -220,6 +227,7 @@ def _job_to_dict(job: SceneJob) -> Dict[str, Any]:
         "status": job.status,
         "job_id": job.job_id,
         "asset_id": job.asset_id,
+        "asset_url": asset_url or "",
         "prompt": job.prompt,
         "duration_sec": job.duration_sec,
         "error": job.error,
