@@ -39,6 +39,18 @@ def _cfg() -> InteractiveConfig:
     )
 
 
+@pytest.fixture(autouse=True)
+def _force_legacy_autoplan(monkeypatch):
+    """REV-7 flipped the workflow default to on. This route-level
+    file still tests the legacy path + heuristic; the dedicated
+    test_interactive_plan_auto_stream.py file covers the new
+    workflow. Pin legacy here to keep these tests fast and
+    deterministic."""
+    monkeypatch.setenv("INTERACTIVE_AUTOPLAN_LEGACY", "true")
+    monkeypatch.delenv("INTERACTIVE_AUTOPLAN_WORKFLOW", raising=False)
+    yield
+
+
 @pytest.fixture
 def client(tmp_db_path):
     """TestClient with LLM flag OFF by default — heuristic path.

@@ -160,18 +160,25 @@ def test_validate_seed_intents_snake_case_3_to_6():
 
 # ── Feature flag ─────────────────────────────────────────────
 
-def test_workflow_disabled_by_default(monkeypatch):
+def test_workflow_enabled_by_default(monkeypatch):
+    """REV-7: the new workflow runs out of the box."""
     monkeypatch.delenv("INTERACTIVE_AUTOPLAN_WORKFLOW", raising=False)
     monkeypatch.delenv("INTERACTIVE_AUTOPLAN_LEGACY", raising=False)
-    assert workflow_enabled() is False
-
-
-def test_workflow_flag_on(monkeypatch):
-    monkeypatch.setenv("INTERACTIVE_AUTOPLAN_WORKFLOW", "true")
     assert workflow_enabled() is True
 
 
-def test_workflow_flag_beats_legacy_flag(monkeypatch):
+def test_workflow_flag_false_opts_out(monkeypatch):
+    monkeypatch.setenv("INTERACTIVE_AUTOPLAN_WORKFLOW", "false")
+    assert workflow_enabled() is False
+
+
+def test_legacy_flag_opts_out_when_workflow_unset(monkeypatch):
+    monkeypatch.delenv("INTERACTIVE_AUTOPLAN_WORKFLOW", raising=False)
+    monkeypatch.setenv("INTERACTIVE_AUTOPLAN_LEGACY", "1")
+    assert workflow_enabled() is False
+
+
+def test_explicit_workflow_beats_legacy_flag(monkeypatch):
     monkeypatch.setenv("INTERACTIVE_AUTOPLAN_WORKFLOW", "1")
     monkeypatch.setenv("INTERACTIVE_AUTOPLAN_LEGACY", "1")
     assert workflow_enabled() is True

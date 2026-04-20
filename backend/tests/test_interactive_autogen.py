@@ -16,6 +16,16 @@ from app.interactive.planner.autogen_llm import (
 from app.interactive.playback.playback_config import PlaybackConfig
 
 
+@pytest.fixture(autouse=True)
+def _force_legacy_autogen(monkeypatch):
+    """Pin legacy for this file — REV-7 flipped the default to
+    workflow-on. ``test_interactive_autogen_workflow.py`` covers
+    the new path."""
+    monkeypatch.setenv("INTERACTIVE_AUTOGEN_LEGACY", "true")
+    monkeypatch.delenv("INTERACTIVE_AUTOGEN_WORKFLOW", raising=False)
+    yield
+
+
 def _cfg() -> InteractiveConfig:
     return InteractiveConfig(
         enabled=True, max_branches=6, max_depth=4,

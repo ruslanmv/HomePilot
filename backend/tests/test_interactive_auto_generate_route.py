@@ -35,6 +35,17 @@ def _cfg() -> InteractiveConfig:
     )
 
 
+@pytest.fixture(autouse=True)
+def _force_legacy_autogen(monkeypatch):
+    """REV-7 flipped the autogen workflow default to on. This
+    route-level file tests the legacy + heuristic branches only;
+    the workflow path has dedicated coverage elsewhere. Pinning
+    legacy keeps these tests fast and deterministic."""
+    monkeypatch.setenv("INTERACTIVE_AUTOGEN_LEGACY", "true")
+    monkeypatch.delenv("INTERACTIVE_AUTOGEN_WORKFLOW", raising=False)
+    yield
+
+
 @pytest.fixture
 def client(tmp_db_path):
     app = FastAPI()

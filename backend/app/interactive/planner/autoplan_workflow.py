@@ -67,18 +67,21 @@ _ALLOWED_ROLES = ("viewer", "learner", "trainee", "customer", "lead")
 def workflow_enabled() -> bool:
     """Return True when the new multi-prompt workflow should run.
 
-    Explicit env switches (``INTERACTIVE_AUTOPLAN_WORKFLOW`` /
-    ``INTERACTIVE_AUTOPLAN_LEGACY``) take precedence. REV-7 flips
-    the default so an unconfigured install runs the new workflow.
+    REV-7: default is now True. Unconfigured installs run the new
+    multi-prompt workflow; operators who want the legacy
+    monolithic LLM call set ``INTERACTIVE_AUTOPLAN_LEGACY=true``.
+    Explicit ``INTERACTIVE_AUTOPLAN_WORKFLOW=false`` still opts
+    out for one release so rollback is a one-env-var flip.
     """
-    workflow = _bool_env("INTERACTIVE_AUTOPLAN_WORKFLOW")
-    if workflow:
-        return True
-    legacy = _bool_env("INTERACTIVE_AUTOPLAN_LEGACY")
-    if legacy:
+    raw = os.getenv("INTERACTIVE_AUTOPLAN_WORKFLOW", "").strip().lower()
+    if raw in {"0", "false", "no", "off", "n"}:
         return False
-    # Default today: legacy path. REV-7 flips this to True.
-    return False
+    if raw in {"1", "true", "yes", "on", "y"}:
+        return True
+    # Flag unset → look at the explicit legacy override.
+    if _bool_env("INTERACTIVE_AUTOPLAN_LEGACY"):
+        return False
+    return True
 
 
 def strict_ai_enabled() -> bool:

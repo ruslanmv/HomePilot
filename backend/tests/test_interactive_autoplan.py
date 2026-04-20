@@ -30,6 +30,18 @@ from app.interactive.planner.autoplan_llm import (
 from app.interactive.playback.playback_config import PlaybackConfig
 
 
+@pytest.fixture(autouse=True)
+def _force_legacy_autoplan(monkeypatch):
+    """These tests target the legacy monolithic LLM path + the
+    heuristic fallback. REV-7 flipped the workflow default to
+    on, so we pin the legacy flag for this file only. The
+    dedicated test_interactive_autoplan_workflow.py file covers
+    the new path."""
+    monkeypatch.setenv("INTERACTIVE_AUTOPLAN_LEGACY", "true")
+    monkeypatch.delenv("INTERACTIVE_AUTOPLAN_WORKFLOW", raising=False)
+    yield
+
+
 def _cfg() -> InteractiveConfig:
     return InteractiveConfig(
         enabled=True, max_branches=6, max_depth=4,

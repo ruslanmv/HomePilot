@@ -58,12 +58,21 @@ _MAX_SCENES = 40
 
 def workflow_enabled() -> bool:
     """True when the stage-2 workflow should run instead of the
-    legacy monolithic LLM call."""
-    if _bool_env("INTERACTIVE_AUTOGEN_WORKFLOW"):
+    legacy monolithic LLM call.
+
+    REV-7: default is now True, matching autoplan. Explicit
+    ``INTERACTIVE_AUTOGEN_WORKFLOW=false`` or
+    ``INTERACTIVE_AUTOGEN_LEGACY=true`` flips back to legacy for
+    one release.
+    """
+    raw = os.getenv("INTERACTIVE_AUTOGEN_WORKFLOW", "").strip().lower()
+    if raw in {"0", "false", "no", "off", "n"}:
+        return False
+    if raw in {"1", "true", "yes", "on", "y"}:
         return True
     if _bool_env("INTERACTIVE_AUTOGEN_LEGACY"):
         return False
-    return False  # REV-7 flips this
+    return True
 
 
 def strict_ai_enabled() -> bool:

@@ -158,15 +158,21 @@ def test_validate_script_rejects_too_short_narration():
 
 # ── Feature flag ───────────────────────────────────────────────
 
-def test_autogen_workflow_disabled_by_default(monkeypatch):
+def test_autogen_workflow_enabled_by_default(monkeypatch):
     monkeypatch.delenv("INTERACTIVE_AUTOGEN_WORKFLOW", raising=False)
     monkeypatch.delenv("INTERACTIVE_AUTOGEN_LEGACY", raising=False)
+    assert workflow_enabled() is True
+
+
+def test_autogen_workflow_flag_false_opts_out(monkeypatch):
+    monkeypatch.setenv("INTERACTIVE_AUTOGEN_WORKFLOW", "false")
     assert workflow_enabled() is False
 
 
-def test_autogen_workflow_flag_on(monkeypatch):
-    monkeypatch.setenv("INTERACTIVE_AUTOGEN_WORKFLOW", "1")
-    assert workflow_enabled() is True
+def test_legacy_flag_opts_out_when_workflow_unset(monkeypatch):
+    monkeypatch.delenv("INTERACTIVE_AUTOGEN_WORKFLOW", raising=False)
+    monkeypatch.setenv("INTERACTIVE_AUTOGEN_LEGACY", "1")
+    assert workflow_enabled() is False
 
 
 def test_workflow_flag_beats_legacy(monkeypatch):
