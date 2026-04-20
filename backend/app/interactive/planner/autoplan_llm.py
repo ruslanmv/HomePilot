@@ -94,10 +94,22 @@ async def autoplan(
 ) -> PlanAutoResult:
     """Produce a full wizard pre-fill. Never raises.
 
-    LLM disabled, unreachable, malformed JSON → heuristic path
-    engaged, ``source='heuristic'``. Successful LLM call →
-    ``source='llm'``.
+    Three paths, tried in order:
+
+      1. Multi-step workflow (REV-3) — opt-in via
+         ``INTERACTIVE_AUTOPLAN_WORKFLOW=true``. Runs the seven
+         small prompts from the YAML library through the
+         workflow runner. ``source='llm'`` on success.
+      2. Legacy monolithic LLM call — when playback LLM is
+         enabled and the workflow flag is off (or the workflow
+         aborted). ``source='llm'`` on success.
+      3. Heuristic fallback — always available, no network hop.
+         ``source='heuristic'``.
     """
+    from .autoplan_workflow import (
+        run_autoplan_workflow, workflow_enabled, workflow_to_plan_result,
+    )
+
     text = (idea or "").strip()
     if not text:
         # The route rejects empty input, but we still return a
@@ -106,6 +118,22 @@ async def autoplan(
         return _heuristic_result(text, cfg)
 
     pcfg = playback_cfg or load_playback_config()
+
+    if workflow_enabled():
+        try:
+            result = await run_autoplan_workflow(text, cfg=cfg)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("autoplan_workflow_error: %s", str(exc)[:400])
+            result = None
+        if result is not None:
+            mapped = workflow_to_plan_result(result, cfg=cfg)
+            if mapped is not None:
+                return mapped
+            log.warning(
+                "autoplan_workflow_aborted — falling back; error=%s",
+                (result.error or "")[:200],
+            )
+
     if pcfg.llm_enabled:
         llm_result = await _autoplan_via_llm(text, cfg=cfg, pcfg=pcfg)
         if llm_result is not None:

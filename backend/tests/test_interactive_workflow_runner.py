@@ -21,19 +21,21 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from app.interactive.prompts import PromptLibrary
-from app.interactive.workflows import (
-    Step,
-    StepFailure,
-    WorkflowEvent,
-    WorkflowRunner,
-    extract_content,
-)
+
+# NOTE: interactive modules are imported lazily inside fixtures +
+# tests instead of at the top of this file. The conftest ``app``
+# session fixture purges + re-imports ``app.*`` modules to apply
+# env overrides, which leaves any top-level imports pointing at
+# a detached, pre-purge module copy. Patching a name on the
+# post-purge module (the only one reachable by dotted path) then
+# misses the class we hold onto, and the runner silently calls
+# the real LLM. Lazy imports sidestep the whole mess.
 
 
 # ── Test library: a few disposable prompts on disk ───────────
 
-def _mk_library(tmp_path: Path) -> PromptLibrary:
+def _mk_library(tmp_path: Path):
+    from app.interactive.prompts import PromptLibrary
     index = tmp_path / "library.yaml"
     index.write_text(textwrap.dedent("""
         prompts:
@@ -105,6 +107,35 @@ def _mk_library(tmp_path: Path) -> PromptLibrary:
     return PromptLibrary(root=tmp_path)
 
 
+def _import_runner():
+    """Late-bound import so we always see the post-purge module."""
+    from app.interactive.workflows import runner as runner_mod
+    return runner_mod
+
+
+@pytest.fixture(autouse=True)
+def _refresh_runner_symbols():
+    """Re-bind module-level ``Step`` / ``WorkflowRunner`` /
+    ``WorkflowEvent`` / ``extract_content`` against the current
+    post-purge module.
+
+    Collection-time imports would otherwise point at a pre-purge
+    module whose ``call_prompt`` can't be patched via
+    ``sys.modules``. Rebinding into ``globals()`` keeps the
+    existing test bodies readable (no sprinkled ``_import_runner()``
+    calls) while guaranteeing the runtime references match what
+    monkeypatch targets.
+    """
+    runner_mod = _import_runner()
+    g = globals()
+    g["Step"] = runner_mod.Step
+    g["StepFailure"] = runner_mod.StepFailure
+    g["WorkflowEvent"] = runner_mod.WorkflowEvent
+    g["WorkflowRunner"] = runner_mod.WorkflowRunner
+    g["extract_content"] = runner_mod.extract_content
+    yield
+
+
 # ── LLM stub: scripted responses per prompt_id ───────────────
 
 class _ScriptedLLM:
@@ -134,10 +165,9 @@ class _ScriptedLLM:
 
 @pytest.fixture
 def patch_call_prompt(monkeypatch):
+    runner_mod = _import_runner()
     llm = _ScriptedLLM()
-    monkeypatch.setattr(
-        "app.interactive.workflows.runner.call_prompt", llm,
-    )
+    monkeypatch.setattr(runner_mod, "call_prompt", llm)
     return llm
 
 
