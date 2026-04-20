@@ -28,10 +28,12 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, Sparkles } from "lucide-react";
 import { createInteractiveApi } from "./api";
-import type { ExperienceMode, PlanAutoForm, PlanAutoResult } from "./types";
+import type {
+  ExperienceMode, HealthInfo, PlanAutoForm, PlanAutoResult,
+} from "./types";
 import { InteractiveApiError } from "./types";
 import {
-  ErrorBanner, PrimaryButton, useToast,
+  ErrorBanner, PrimaryButton, useAsyncResource, useToast,
 } from "./ui";
 import { GeneratingPanel } from "./GeneratingPanel";
 
@@ -113,7 +115,20 @@ export function WizardAutoPreview({
   // stream so the modal can show "6 / 12 scenes" as they finish.
   const [renderTotal, setRenderTotal] = useState(0);
   const [renderDone, setRenderDone] = useState(0);
+  const [renderSkipped, setRenderSkipped] = useState(0);
   const [currentSceneTitle, setCurrentSceneTitle] = useState<string>("");
+
+  // EDIT-5: fetch the backend's playback-flag readout so the
+  // modal can tell the user up-front whether scene rendering is
+  // actually enabled. When it's off, we replace the "Rendering
+  // scenes" step copy with a call-to-action pointing at the
+  // Editor's regenerate controls, instead of showing a fake
+  // full progress bar while every scene silently skips.
+  const health = useAsyncResource<HealthInfo>(
+    (signal) => api.health(signal),
+    [api],
+  );
+  const renderEnabled = health.data?.playback?.render_enabled !== false;
 
   const patch = useCallback(<K extends keyof PlanAutoForm>(
     key: K, value: PlanAutoForm[K],
@@ -172,12 +187,15 @@ export function WizardAutoPreview({
               const title = String((ev.payload as any)?.title || "");
               if (title) setCurrentSceneTitle(title);
             }
+            if (ev.type === "scene_rendered") {
+              setRenderDone((prev) => prev + 1);
+            }
             if (
-              ev.type === "scene_rendered"
-              || ev.type === "scene_skipped"
+              ev.type === "scene_skipped"
               || ev.type === "scene_render_failed"
             ) {
               setRenderDone((prev) => prev + 1);
+              setRenderSkipped((prev) => prev + 1);
             }
           },
         });
@@ -216,6 +234,7 @@ export function WizardAutoPreview({
       setGenStep(0);
       setRenderTotal(0);
       setRenderDone(0);
+      setRenderSkipped(0);
     }
   }, [api, form, interaction, onCreated, toast]);
 
@@ -397,20 +416,30 @@ export function WizardAutoPreview({
           plan → graph → render → ready lifecycle so the user
           never watches a stale blank screen while heavy asset
           generation runs. Progress bar + per-scene label kick in
-          once the backend reaches the rendering phase. */}
+          once the backend reaches the rendering phase.
+          EDIT-5: when backend reports render_enabled=false, swap
+          the progress bar for an amber "rendering off" hint so
+          we don't fake success the user has to discover later. */}
       {submitting && (
         <GeneratingPanel
-          title={_panelTitle(genStep, renderTotal, renderDone)}
-          description={_panelDescription(genStep, currentSceneTitle)}
+          title={_panelTitle(genStep, renderTotal, renderDone, renderEnabled)}
+          description={_panelDescription(
+            genStep, currentSceneTitle, renderEnabled,
+          )}
           steps={GENERATE_STEPS}
           activeStep={genStep}
           accentClassName="text-[#c4b5fd]"
           spinnerSize="large"
-          progress={renderTotal > 0
+          progress={renderEnabled && renderTotal > 0
             ? Math.round((renderDone / renderTotal) * 100)
             : undefined}
-          progressLabel={renderTotal > 0
-            ? `${renderDone} / ${renderTotal} scenes`
+          progressLabel={renderEnabled && renderTotal > 0
+            ? `${renderDone} / ${renderTotal} scenes${
+                renderSkipped > 0 ? ` · ${renderSkipped} skipped` : ""
+              }`
+            : undefined}
+          footerHint={!renderEnabled && genStep >= 3
+            ? "Scene rendering is off. You can turn it on in Settings → Providers and regenerate from the Editor."
             : undefined}
         />
       )}
@@ -572,6 +601,7 @@ function AdvancedBlock({
  */
 function _panelTitle(
   step: number, renderTotal: number, renderDone: number,
+  renderEnabled: boolean,
 ): string {
   // Copy the user sees in the big heading. Evolves with the
   // active step so the modal feels like it's doing something
@@ -579,6 +609,7 @@ function _panelTitle(
   if (step <= 1) return "Drafting your scene graph";
   if (step === 2) return "Writing dialogue + choices";
   if (step === 3) {
+    if (!renderEnabled) return "Scene graph ready";
     if (renderTotal > 0) {
       return `Rendering scenes · ${renderDone} of ${renderTotal}`;
     }
@@ -588,10 +619,15 @@ function _panelTitle(
 }
 
 
-function _panelDescription(step: number, currentScene: string): string {
+function _panelDescription(
+  step: number, currentScene: string, renderEnabled: boolean,
+): string {
   if (step <= 1) return "Turning your idea into a branching scene graph.";
   if (step === 2) return "Populating scenes with narration, choices, and actions.";
   if (step === 3) {
+    if (!renderEnabled) {
+      return "Skipping asset generation — your scenes are ready to edit.";
+    }
     if (currentScene) return `Now rendering: ${currentScene}`;
     return "Producing scene assets — this is the slowest phase.";
   }

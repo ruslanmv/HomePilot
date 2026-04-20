@@ -37,7 +37,14 @@ def build_router(cfg: InteractiveConfig) -> APIRouter:
 
     @router.get("/health")
     def health() -> dict:
-        """Liveness + configuration readout for the interactive service."""
+        """Liveness + configuration readout for the interactive service.
+
+        Includes the playback feature flags so the wizard can honestly
+        surface "render is disabled" warnings instead of showing a
+        fake full progress bar while every scene silently skips.
+        """
+        from .playback.playback_config import load_playback_config
+        pcfg = load_playback_config()
         return {
             "ok": True,
             "service": "interactive",
@@ -54,6 +61,16 @@ def build_router(cfg: InteractiveConfig) -> APIRouter:
                 "blocked_regions": len(cfg.region_block),
             },
             "runtime_latency_target_ms": cfg.runtime_latency_target_ms,
+            # Playback flags — surfaced so the wizard + editor can
+            # show accurate "rendering is off" hints instead of
+            # faking progress when the scene-render pipeline is
+            # disabled by env config.
+            "playback": {
+                "llm_enabled": pcfg.llm_enabled,
+                "render_enabled": pcfg.render_enabled,
+                "render_workflow": pcfg.render_workflow,
+                "image_workflow": pcfg.image_workflow,
+            },
         }
 
     router.include_router(build_all(cfg))

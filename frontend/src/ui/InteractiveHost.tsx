@@ -33,6 +33,13 @@ export interface InteractiveHostProps {
   onExit: () => void;
   /** Called when the wizard creates a new project. */
   onCreated: (experienceId: string) => void;
+  /**
+   * Optional: called when the user clicks "Play" inside the editor.
+   * App.tsx hands this up to the same ``setInteractivePlayId`` path
+   * the landing grid's Play CTA uses, so authoring + viewing share
+   * one code path.
+   */
+  onPlay?: (experienceId: string) => void;
 }
 
 /**
@@ -47,7 +54,7 @@ export interface InteractiveHostProps {
 type WizardStage = "auto" | "preview" | "advanced";
 
 export function InteractiveHost({
-  backendUrl, apiKey, projectId, onExit, onCreated,
+  backendUrl, apiKey, projectId, onExit, onCreated, onPlay,
 }: InteractiveHostProps) {
   const [stage, setStage] = useState<WizardStage>("auto");
   const [planResult, setPlanResult] = useState<PlanAutoResult | null>(null);
@@ -72,6 +79,7 @@ export function InteractiveHost({
               backendUrl={backendUrl}
               apiKey={apiKey}
               projectId={projectId}
+              onPlay={onPlay ? () => onPlay(projectId) : undefined}
             />
           ) : stage === "advanced" ? (
             // Classic 5-step wizard stays intact for power users.

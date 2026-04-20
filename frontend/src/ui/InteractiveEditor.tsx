@@ -19,7 +19,7 @@
 
 import React, { useMemo, useState } from "react";
 import {
-  BarChart3, CheckSquare, GitBranch, ListChecks, Send, Sparkles,
+  BarChart3, CheckSquare, GitBranch, ListChecks, Play, Send, Sparkles,
 } from "lucide-react";
 import { createInteractiveApi } from "./interactive/api";
 import { AnalyticsPanel } from "./interactive/AnalyticsPanel";
@@ -37,6 +37,13 @@ export interface InteractiveEditorProps {
   backendUrl: string;
   apiKey?: string;
   projectId: string;
+  /**
+   * Optional callback to launch the player for this experience.
+   * Shown as a prominent "Play" button in the editor header when
+   * provided. Host decides routing (App.tsx wires it to the same
+   * ``interactivePlayId`` state the landing grid Play CTA uses).
+   */
+  onPlay?: () => void;
 }
 
 type TabKey = "graph" | "catalog" | "rules" | "qa" | "publish" | "analytics";
@@ -50,7 +57,9 @@ const TABS: Array<{ key: TabKey; label: string; icon: React.ReactNode; descripti
   { key: "analytics", label: "Analytics", icon: <BarChart3 className="w-4 h-4" aria-hidden />,    description: "Viewer engagement" },
 ];
 
-export function InteractiveEditor({ backendUrl, apiKey, projectId }: InteractiveEditorProps) {
+export function InteractiveEditor({
+  backendUrl, apiKey, projectId, onPlay,
+}: InteractiveEditorProps) {
   const api = useMemo(() => createInteractiveApi(backendUrl, apiKey), [backendUrl, apiKey]);
   const [activeTab, setActiveTab] = useState<TabKey>("graph");
 
@@ -76,7 +85,7 @@ export function InteractiveEditor({ backendUrl, apiKey, projectId }: Interactive
           ) : exp.loading || !exp.data ? (
             <ProjectHeaderSkeleton />
           ) : (
-            <ProjectHeader experience={exp.data} />
+            <ProjectHeader experience={exp.data} onPlay={onPlay} />
           )}
           <div className="mt-4">
             <TabStrip active={activeTab} onChange={setActiveTab} />
@@ -102,7 +111,12 @@ export function InteractiveEditor({ backendUrl, apiKey, projectId }: Interactive
 // Project header (title, status, description)
 // ────────────────────────────────────────────────────────────────
 
-function ProjectHeader({ experience }: { experience: Experience }) {
+function ProjectHeader({
+  experience, onPlay,
+}: {
+  experience: Experience;
+  onPlay?: () => void;
+}) {
   return (
     <header className="flex items-start justify-between gap-4 flex-wrap">
       <div className="min-w-0">
@@ -128,6 +142,24 @@ function ProjectHeader({ experience }: { experience: Experience }) {
           )}
         </div>
       </div>
+      {onPlay && (
+        <button
+          type="button"
+          onClick={onPlay}
+          aria-label="Play this experience"
+          className={[
+            "inline-flex items-center gap-2 shrink-0",
+            "rounded-full px-4 py-2 text-sm font-semibold",
+            "bg-gradient-to-r from-[#ec4899] to-[#8b5cf6] text-white",
+            "hover:brightness-110 active:scale-[0.98] transition-all",
+            "shadow-lg shadow-[#8b5cf6]/20",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#8b5cf6] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f0f]",
+          ].join(" ")}
+        >
+          <Play className="w-4 h-4 fill-current" aria-hidden />
+          Play
+        </button>
+      )}
     </header>
   );
 }

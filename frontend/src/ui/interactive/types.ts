@@ -228,6 +228,18 @@ export interface HealthInfo {
     blocked_regions: number;
   };
   runtime_latency_target_ms: number;
+  /**
+   * Playback feature-flag readout (EDIT-5). Absent on older
+   * backends — treat as "unknown" and default to permissive
+   * behaviour so the wizard doesn't spuriously show warnings on
+   * backends that predate this field.
+   */
+  playback?: {
+    llm_enabled: boolean;
+    render_enabled: boolean;
+    render_workflow: string;
+    image_workflow: string;
+  };
 }
 
 export interface AnalyticsSummary {

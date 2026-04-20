@@ -5320,6 +5320,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 setInteractiveCreating(false)
                 setInteractiveProjectId(newId)
               }}
+              onPlay={(id) => setInteractivePlayId(id)}
             />
           ) : (
             <InteractiveView
