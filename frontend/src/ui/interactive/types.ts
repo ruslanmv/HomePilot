@@ -281,6 +281,20 @@ export interface AutoGenerateResult {
   warnings?: string[];
 }
 
+/**
+ * One frame in the ``/auto-generate/stream`` SSE feed (PIPE-2).
+ * Kinds the backend emits today:
+ *   started · already_generated · generating_graph · graph_generated
+ *   · persisting_nodes · persisting_edges · persisting_actions
+ *   · seeding_rule · running_qa · qa_done · result · error · done
+ * Treat unknown ``type`` values as noise — the stream is
+ * forward-compatible by contract.
+ */
+export interface AutoGenerateStreamEvent {
+  type: string;
+  payload?: Record<string, unknown>;
+}
+
 // ── Live-play types ─────────────────────────────────────────────
 
 export type SceneJobStatus = "pending" | "rendering" | "ready" | "failed";

@@ -24,6 +24,7 @@ import {
   ActionItem,
   AnalyticsSummary,
   AutoGenerateResult,
+  AutoGenerateStreamEvent,
   CatalogItemView,
   ChatResult,
   EdgeItem,
@@ -60,6 +61,21 @@ export interface InteractiveApi {
   plan(req: { prompt: string; mode: ExperienceMode; audience_hints?: Record<string, unknown> }): Promise<PlanIntent>;
   planAuto(req: { idea: string }): Promise<PlanAutoResult>;
   autoGenerate(id: string): Promise<AutoGenerateResult>;
+  /**
+   * SSE variant of ``autoGenerate`` (PIPE-2). ``onEvent`` fires
+   * once per phase event the backend emits (started,
+   * generating_graph, persisting_nodes, ..., running_qa) so the
+   * wizard spinner can surface real progress. Resolves with the
+   * final ``result`` payload, matching the POST /auto-generate
+   * body. Aborts via ``signal``.
+   */
+  autoGenerateStream(
+    id: string,
+    opts: {
+      onEvent?: (ev: AutoGenerateStreamEvent) => void;
+      signal?: AbortSignal;
+    },
+  ): Promise<AutoGenerateResult>;
   seedGraph(
     id: string,
     req: { prompt: string; mode: ExperienceMode; audience_hints?: Record<string, unknown> },
@@ -215,6 +231,78 @@ export function createInteractiveApi(
         `/experiences/${encodeURIComponent(id)}/auto-generate`,
         { method: "POST", body: JSON.stringify({}) },
       ),
+
+    autoGenerateStream: async (id, opts) => {
+      // Custom SSE reader via fetch + ReadableStream so we can
+      // honour the shared credentials:'include' policy (native
+      // EventSource can't send cookies cross-origin). Parses the
+      // ``data: {...}\n\n`` frames, routes events to ``onEvent``,
+      // and resolves with the ``result`` frame's payload.
+      const url = `${base}/experiences/${encodeURIComponent(id)}/auto-generate/stream`;
+      const resp = await fetch(url, {
+        method: "GET",
+        credentials: "include",
+        headers: { Accept: "text/event-stream", ...authHeaders },
+        signal: opts.signal,
+      });
+      if (!resp.ok || !resp.body) {
+        const detail = await resp.text().catch(() => "");
+        throw new InteractiveApiError(
+          detail || `auto-generate stream failed (${resp.status})`,
+          resp.status,
+        );
+      }
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let finalResult: AutoGenerateResult | null = null;
+      let errorMessage: string | null = null;
+
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // SSE frames are separated by blank lines.
+        let idx: number;
+        while ((idx = buffer.indexOf("\n\n")) >= 0) {
+          const raw = buffer.slice(0, idx).trim();
+          buffer = buffer.slice(idx + 2);
+          if (!raw.startsWith("data:")) continue;
+          const body = raw.slice("data:".length).trim();
+          if (!body) continue;
+          let frame: AutoGenerateStreamEvent;
+          try {
+            frame = JSON.parse(body) as AutoGenerateStreamEvent;
+          } catch {
+            continue;
+          }
+          if (opts.onEvent) {
+            try { opts.onEvent(frame); } catch { /* hook must not kill stream */ }
+          }
+          if (frame.type === "result") {
+            finalResult = (frame.payload as unknown as AutoGenerateResult) || null;
+          }
+          if (frame.type === "error") {
+            const payload = (frame.payload || {}) as Record<string, unknown>;
+            errorMessage = typeof payload.reason === "string"
+              ? payload.reason
+              : "auto-generate failed";
+          }
+          if (frame.type === "done") {
+            break;
+          }
+        }
+      }
+
+      if (errorMessage) {
+        throw new InteractiveApiError(errorMessage, 0);
+      }
+      if (!finalResult) {
+        throw new InteractiveApiError("stream ended without a result frame", 0);
+      }
+      return finalResult;
+    },
 
     seedGraph: (id, req) =>
       call<{ already_seeded: boolean; node_count: number; edge_count: number }>(

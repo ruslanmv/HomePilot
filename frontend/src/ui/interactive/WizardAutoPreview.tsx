@@ -142,8 +142,21 @@ export function WizardAutoPreview({
       // Step 2: auto-generate the scene graph. Best-effort —
       // the project exists either way, so a generator failure
       // just warns and opens the empty editor.
+      //
+      // PIPE-2: subscribe to the SSE stream so the spinner's
+      // active step tracks real backend phases instead of a
+      // 900ms timer. Phase → GENERATE_STEPS index mapping keeps
+      // the UI contract stable even as the backend grows more
+      // phase names.
       try {
-        const gen = await api.autoGenerate(created.id);
+        const gen = await api.autoGenerateStream(created.id, {
+          onEvent: (ev) => {
+            const idx = _stepIndexForPhase(ev.type);
+            if (idx !== null) {
+              setGenStep((prev) => Math.max(prev, idx));
+            }
+          },
+        });
         setGenStep(3);
         toast.toast({
           variant: gen.source === "llm" ? "success" : "info",
@@ -501,6 +514,43 @@ function AdvancedBlock({
       )}
     </section>
   );
+}
+
+
+/**
+ * Map an auto-generate stream phase (PIPE-2) to a GENERATE_STEPS
+ * index so the spinner advances on real backend events.
+ *
+ *   GENERATE_STEPS:
+ *     0 — "Saving your project"           (already done when we subscribe)
+ *     1 — "Drafting the scene graph"       (generating_graph .. graph_generated)
+ *     2 — "Writing dialogue + choices"     (persisting_* + seeding_rule)
+ *     3 — "Opening the editor"             (qa_done / result / done)
+ *
+ * Unknown phase names return null so the spinner holds its
+ * current step — forward-compatible with future backend events.
+ */
+function _stepIndexForPhase(phase: string): number | null {
+  switch (phase) {
+    case "started":
+    case "already_generated":
+      return 1;
+    case "generating_graph":
+    case "graph_generated":
+      return 1;
+    case "persisting_nodes":
+    case "persisting_edges":
+    case "persisting_actions":
+    case "seeding_rule":
+      return 2;
+    case "running_qa":
+    case "qa_done":
+    case "result":
+    case "done":
+      return 3;
+    default:
+      return null;
+  }
 }
 
 
