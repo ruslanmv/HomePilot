@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420">
+  <defs>
+    <style>
+      @keyframes fadeSlideIn {
+        from { opacity: 0; transform: translateY(18px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes arrowDraw {
+        from { stroke-dashoffset: 60; opacity: 0; }
+        to   { stroke-dashoffset: 0; opacity: 1; }
+      }
+      @keyframes pulseGlow {
+        0%, 100% { filter: drop-shadow(0 0 0px rgba(139,92,246,0)); }
+        50%      { filter: drop-shadow(0 0 14px rgba(139,92,246,.5)); }
+      }
+      .step  { animation: fadeSlideIn .5s ease-out both; }
+      .arrow { animation: arrowDraw .4s ease-out both; stroke-dasharray: 60; stroke-dashoffset: 60; }
+      .final { animation: fadeSlideIn .6s ease-out both; }
+      .glow  { animation: pulseGlow 2.8s ease-in-out 3.4s infinite; }
+
+      .s1 { animation-delay: 0.0s; }
+      .s2 { animation-delay: 0.4s; }
+      .s3 { animation-delay: 0.8s; }
+      .s4 { animation-delay: 1.2s; }
+      .s5 { animation-delay: 1.6s; }
+      .s6 { animation-delay: 2.0s; }
+      .a1 { animation-delay: 0.3s; }
+      .a2 { animation-delay: 0.7s; }
+      .a3 { animation-delay: 1.1s; }
+      .a4 { animation-delay: 1.5s; }
+      .a5 { animation-delay: 1.9s; }
+
+      .title { font: 700 22px "Inter", system-ui, sans-serif; fill: #f1f1f1; }
+      .subtitle { font: 500 13px "Inter", system-ui, sans-serif; fill: #b8b8d4; }
+      .stepTitle { font: 700 14px "Inter", system-ui, sans-serif; fill: #ffffff; }
+      .stepSub { font: 400 11px "Inter", system-ui, sans-serif; fill: #cfd8dc; }
+      .tag { font: 600 10px "Inter", system-ui, sans-serif; fill: #ffffff; letter-spacing: 0.04em; }
+    </style>
+
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0f0f23"/>
+      <stop offset="100%" stop-color="#1a1a3e"/>
+    </linearGradient>
+
+    <linearGradient id="blueGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3ea6ff"/>
+      <stop offset="100%" stop-color="#1e67cf"/>
+    </linearGradient>
+
+    <linearGradient id="purpleGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+
+    <linearGradient id="pinkGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ec4899"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+
+    <linearGradient id="greenGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L7,3 z" fill="#b8b8d4"/>
+    </marker>
+  </defs>
+
+  <rect width="960" height="420" fill="url(#bg)"/>
+
+  <!-- Title row -->
+  <text x="480" y="38" text-anchor="middle" class="title">Interactive — from one idea to a playable branching video</text>
+  <text x="480" y="60" text-anchor="middle" class="subtitle">Wizard → AI planner → scene graph → asset rendering → play + edit</text>
+
+  <!-- Step 1: Idea -->
+  <g class="step s1" transform="translate(30, 110)">
+    <rect width="150" height="110" rx="14" fill="url(#blueGrad)" opacity="0.95"/>
+    <rect x="10" y="10" width="36" height="22" rx="11" fill="rgba(0,0,0,0.35)"/>
+    <text x="28" y="26" text-anchor="middle" class="tag">1</text>
+    <text x="75" y="60" text-anchor="middle" class="stepTitle">Describe</text>
+    <text x="75" y="80" text-anchor="middle" class="stepSub">“Train new reps on</text>
+    <text x="75" y="95" text-anchor="middle" class="stepSub">pricing tiers”</text>
+  </g>
+
+  <!-- Step 2: Plan -->
+  <g class="step s2" transform="translate(215, 110)">
+    <rect width="150" height="110" rx="14" fill="url(#purpleGrad)" opacity="0.95"/>
+    <rect x="10" y="10" width="36" height="22" rx="11" fill="rgba(0,0,0,0.35)"/>
+    <text x="28" y="26" text-anchor="middle" class="tag">2</text>
+    <text x="75" y="60" text-anchor="middle" class="stepTitle">AI plans</text>
+    <text x="75" y="80" text-anchor="middle" class="stepSub">7 small prompts:</text>
+    <text x="75" y="95" text-anchor="middle" class="stepSub">mode · audience · shape</text>
+  </g>
+
+  <!-- Step 3: Graph -->
+  <g class="step s3" transform="translate(400, 110)">
+    <rect width="150" height="110" rx="14" fill="url(#purpleGrad)" opacity="0.95"/>
+    <rect x="10" y="10" width="36" height="22" rx="11" fill="rgba(0,0,0,0.35)"/>
+    <text x="28" y="26" text-anchor="middle" class="tag">3</text>
+    <text x="75" y="60" text-anchor="middle" class="stepTitle">Graph</text>
+    <text x="75" y="80" text-anchor="middle" class="stepSub">scenes · decisions</text>
+    <text x="75" y="95" text-anchor="middle" class="stepSub">choices · endings</text>
+  </g>
+
+  <!-- Step 4: Render -->
+  <g class="step s4" transform="translate(585, 110)">
+    <rect width="150" height="110" rx="14" fill="url(#pinkGrad)" opacity="0.95"/>
+    <rect x="10" y="10" width="36" height="22" rx="11" fill="rgba(0,0,0,0.35)"/>
+    <text x="28" y="26" text-anchor="middle" class="tag">4</text>
+    <text x="75" y="60" text-anchor="middle" class="stepTitle">Render</text>
+    <text x="75" y="80" text-anchor="middle" class="stepSub">image or video</text>
+    <text x="75" y="95" text-anchor="middle" class="stepSub">per scene</text>
+  </g>
+
+  <!-- Step 5: Play -->
+  <g class="step s5 glow" transform="translate(770, 110)">
+    <rect width="150" height="110" rx="14" fill="url(#greenGrad)" opacity="0.95"/>
+    <rect x="10" y="10" width="36" height="22" rx="11" fill="rgba(0,0,0,0.35)"/>
+    <text x="28" y="26" text-anchor="middle" class="tag">5</text>
+    <text x="75" y="60" text-anchor="middle" class="stepTitle">Play</text>
+    <text x="75" y="80" text-anchor="middle" class="stepSub">standard · or</text>
+    <text x="75" y="95" text-anchor="middle" class="stepSub">persona chat</text>
+  </g>
+
+  <!-- Arrows between steps -->
+  <path class="arrow a1" d="M 180,165 L 213,165" stroke="#b8b8d4" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <path class="arrow a2" d="M 365,165 L 398,165" stroke="#b8b8d4" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <path class="arrow a3" d="M 550,165 L 583,165" stroke="#b8b8d4" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+  <path class="arrow a4" d="M 735,165 L 768,165" stroke="#b8b8d4" stroke-width="2" fill="none" marker-end="url(#arrowhead)"/>
+
+  <!-- Editor band -->
+  <g class="final s6" transform="translate(60, 260)">
+    <rect width="840" height="120" rx="14" fill="rgba(139,92,246,0.08)" stroke="rgba(139,92,246,0.35)" stroke-width="1.5"/>
+    <text x="30" y="32" class="stepTitle" fill="#c4b5fd">Editor — audit, edit, regenerate at any time</text>
+    <text x="30" y="52" class="stepSub">Four per-scene actions, no keyboard shortcuts required:</text>
+
+    <!-- Edit -->
+    <g transform="translate(30, 70)">
+      <circle cx="16" cy="16" r="16" fill="rgba(62,166,255,0.18)" stroke="#3ea6ff" stroke-width="1.5"/>
+      <path d="M10,18 L14,22 L22,14" fill="none" stroke="#3ea6ff" stroke-width="2"/>
+      <text x="42" y="15" class="stepTitle" fill="#f1f1f1">Edit</text>
+      <text x="42" y="30" class="stepSub">fix title · narration · prompt</text>
+    </g>
+    <!-- Preview -->
+    <g transform="translate(240, 70)">
+      <circle cx="16" cy="16" r="16" fill="rgba(236,72,153,0.18)" stroke="#ec4899" stroke-width="1.5"/>
+      <path d="M13,10 L23,16 L13,22 z" fill="#ec4899"/>
+      <text x="42" y="15" class="stepTitle" fill="#f1f1f1">Preview</text>
+      <text x="42" y="30" class="stepSub">see image or video inline</text>
+    </g>
+    <!-- Regenerate -->
+    <g transform="translate(450, 70)">
+      <circle cx="16" cy="16" r="16" fill="rgba(139,92,246,0.18)" stroke="#8b5cf6" stroke-width="1.5"/>
+      <path d="M10,16 a6,6 0 1 0 6,-6" fill="none" stroke="#8b5cf6" stroke-width="2"/>
+      <path d="M16,10 L21,10 L21,5" fill="none" stroke="#8b5cf6" stroke-width="2"/>
+      <text x="42" y="15" class="stepTitle" fill="#f1f1f1">Regenerate</text>
+      <text x="42" y="30" class="stepSub">one scene or all at once</text>
+    </g>
+    <!-- Play -->
+    <g transform="translate(660, 70)">
+      <circle cx="16" cy="16" r="16" fill="rgba(16,185,129,0.18)" stroke="#10b981" stroke-width="1.5"/>
+      <path d="M13,10 L23,16 L13,22 z" fill="#10b981"/>
+      <text x="42" y="15" class="stepTitle" fill="#f1f1f1">Play</text>
+      <text x="42" y="30" class="stepSub">one click from the editor</text>
+    </g>
+  </g>
+
+  <!-- Link arrow from step 5 down into editor band -->
+  <path class="arrow a5" d="M 830,225 C 830,245 600,255 480,270" stroke="#b8b8d4" stroke-width="2" fill="none" stroke-dasharray="4 4" opacity="0.6" marker-end="url(#arrowhead)"/>
+</svg>

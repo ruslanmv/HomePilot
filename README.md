@@ -35,6 +35,9 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
+### 🎬 Interactive — Branching AI Videos From One Sentence
+Type one sentence ("Train new sales reps on pricing tiers"), pick **Image** or **Video** scenes, and HomePilot's planner splits your idea into seven tiny LLM calls, builds a branching scene graph, and renders every beat via ComfyUI — all behind a single progress modal. The Editor then lets you **Edit**, **Preview**, and **Regenerate** any scene in place, with a one-click **Play** button to run the whole thing as either a YouTube-style branching video or a candy.ai-style persona chat. See [docs/INTERACTIVE.md](docs/INTERACTIVE.md).
+
 ### 📞 Phone — Live Voice Calls with Your Persona
 Tap the emerald 📞 in the chat header and the persona picks up the phone — a full-duplex voice conversation with persona-aware openings, turn-taking modelled on fifty years of conversation-analysis research, post-TTS echo margins, and sub-50 ms server-side barge-in. No audio effects, no voice swap — your persona stays itself, it just obeys the rhythm of a real call. See [docs/PHONE.md](docs/PHONE.md) for the full architecture.
 
