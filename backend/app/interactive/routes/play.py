@@ -32,9 +32,10 @@ from ..errors import InvalidInputError, NotFoundError
 from ..interaction.router import ActionPayload, resolve_next
 from ..interaction.state import build_runtime_state
 from ..interaction.types import TransitionKind
+from ..playback.persona_assets import resolve_persona_assets
 from ..progression import describe_level, is_action_unlocked
 from ._common import current_user, http_error_from
-from ._persona_opening import maybe_generate_opening_turn
+from ._persona_opening import _persona_fields, maybe_generate_opening_turn
 
 
 class SessionStartRequest(BaseModel):
@@ -97,6 +98,23 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
         payload: Dict[str, Any] = {"ok": True, "session": sess.model_dump()}
         if opening:
             payload["opening_turn"] = opening
+        # Stage hint — the persona's canonical portrait + the wizard-
+        # stamped render_media_type. The frontend uses these so the
+        # VideoStage shows the persona's actual photo (not a black
+        # backdrop) the moment Play opens, regardless of whether the
+        # opening-turn LLM render succeeded. In image mode the stage
+        # stays a still photo between turns; in video mode each turn
+        # produces an img2vid clip derived from the same portrait.
+        persona_pid, _ = _persona_fields(exp)
+        if persona_pid:
+            assets = resolve_persona_assets(persona_pid)
+            if assets:
+                payload["persona_portrait_url"] = assets.portrait_url
+        ap = getattr(exp, "audience_profile", None) or {}
+        if isinstance(ap, dict):
+            media_type = str(ap.get("render_media_type") or "").strip().lower()
+            if media_type in ("image", "video"):
+                payload["render_media_type"] = media_type
         return payload
 
     @router.get("/play/sessions/{session_id}")

@@ -164,6 +164,15 @@ export interface InteractiveApi {
      *  the in-character greeting — callers render it as the first
      *  assistant bubble before the viewer types. */
     opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
+    /** Persona Live Play: the persona's canonical portrait URL.
+     *  The player uses it as the idle VideoStage background (so
+     *  the stage never shows a black backdrop) and as the avatar
+     *  fallback when the wizard didn't stamp ``persona_avatar_url``. */
+    persona_portrait_url?: string;
+    /** "image" → the stage stays a still photo between turns.
+     *  "video" → the stage loops an img2vid clip derived from the
+     *  portrait. Defaults to whatever the wizard stamped. */
+    render_media_type?: "image" | "video";
   }>;
   chat(sessionId: string, req: { text: string; viewer_region?: string }): Promise<ChatResult>;
   pending(
@@ -465,10 +474,17 @@ export function createInteractiveApi(
       call<{
         session: { id: string; experience_id: string; current_node_id: string };
         opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
+        persona_portrait_url?: string;
+        render_media_type?: "image" | "video";
       }>(
         "/play/sessions",
         { method: "POST", body: JSON.stringify(req) },
-      ).then((r) => ({ ...r.session, opening_turn: r.opening_turn })),
+      ).then((r) => ({
+        ...r.session,
+        opening_turn: r.opening_turn,
+        persona_portrait_url: r.persona_portrait_url,
+        render_media_type: r.render_media_type,
+      })),
 
     chat: (sessionId, req) =>
       call<ChatResult & { ok: boolean }>(

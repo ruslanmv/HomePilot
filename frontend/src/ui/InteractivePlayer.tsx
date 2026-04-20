@@ -97,6 +97,8 @@ function InteractivePlayerBody({
   const session = useAsyncResource<{
     id: string;
     opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
+    persona_portrait_url?: string;
+    render_media_type?: "image" | "video";
   }>(
     async () => {
       // Start a new anonymous session dedicated to this player mount.
@@ -111,13 +113,19 @@ function InteractivePlayerBody({
         experience_id: projectId,
         viewer_ref: `player_${Date.now()}`,
       });
-      return { id: sess.id, opening_turn: sess.opening_turn };
+      return {
+        id: sess.id,
+        opening_turn: sess.opening_turn,
+        persona_portrait_url: sess.persona_portrait_url,
+        render_media_type: sess.render_media_type,
+      };
     },
     [api, projectId],
   );
 
   const sessionId = session.data?.id || "";
   const openingTurn = session.data?.opening_turn;
+  const personaPortraitUrl = session.data?.persona_portrait_url || "";
 
   // ── Player state ────────────────────────────────────────────
   const [bubbles, setBubbles] = useState<ChatBubble[]>([]);
@@ -393,14 +401,24 @@ function InteractivePlayerBody({
     );
   }
 
+  // Persona Live Play stage default: the persona's canonical photo.
+  // Without this the stage shows a black / mood-gradient backdrop
+  // until the first scene job lands, which looked broken. Falls back
+  // gracefully to the mood gradient when no portrait is set.
+  const effectiveAvatarUrl = avatarUrl || personaPortraitUrl;
   return (
     <div className="relative min-h-screen bg-black text-[#f1f1f1] overflow-hidden select-none">
-      <VideoStage scene={currentScene} mood={mood} muted={muted} />
+      <VideoStage
+        scene={currentScene}
+        mood={mood}
+        muted={muted}
+        portraitUrl={personaPortraitUrl}
+      />
 
       <TopBar
         title={displayName}
         subtitle={moodDescriptor(mood, affinity)}
-        avatarUrl={avatarUrl}
+        avatarUrl={effectiveAvatarUrl}
         level={level}
         onOpenXp={() => setXpRewardsOpen(true)}
         muted={muted}
@@ -479,18 +497,22 @@ function LiveActionFab({ onClick }: { onClick: () => void }) {
 // ────────────────────────────────────────────────────────────────
 
 function VideoStage({
-  scene, mood, muted,
+  scene, mood, muted, portraitUrl,
 }: {
   scene: SceneJobView | null;
   mood: string;
   muted: boolean;
+  /** Persona Live Play canonical portrait. Used as the idle
+   *  background so the stage shows the persona's photo instead
+   *  of a black / gradient screen before the first scene job
+   *  lands. Empty string → fall back to the mood gradient. */
+  portraitUrl?: string;
 }) {
-  // Two render paths:
-  //   1. When we have a real video URL, mount a <video> element
-  //      that loops the clip behind the chat.
-  //   2. Otherwise (phase-1 stub, idle, or job mid-render), show a
-  //      mood-tinted radial gradient with a subtle breathing
-  //      filter so the stage never looks frozen.
+  // Render priority:
+  //   1. A ready scene with a URL → video or image element.
+  //   2. The persona's portrait (Persona Live Play idle state).
+  //   3. The mood-tinted radial gradient (Standard projects with
+  //      no scene yet, or personas without a committed portrait).
   //
   // The key={} trick on the outer element remounts the layer
   // when the scene changes, triggering the CSS scene-fade
@@ -534,6 +556,34 @@ function VideoStage({
           className="absolute inset-0 w-full h-full object-cover"
         />
         <SceneStamp scene={scene!} />
+      </div>
+    );
+  }
+
+  if (portraitUrl) {
+    // Persona Live Play idle: show the committed portrait behind a
+    // subtle mood tint. The tint layer keeps the look cohesive
+    // with the scene gradient so the transition into a generated
+    // scene reads as "same photo, different moment" rather than
+    // a cut to a completely different frame.
+    return (
+      <div
+        key={`portrait-${portraitUrl}`}
+        className="absolute inset-0 -z-10 bg-black animate-scene-fade"
+        aria-hidden
+      >
+        <img
+          src={portraitUrl}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover"
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+        />
+        <div
+          className="absolute inset-0 pointer-events-none animate-mood-breathe"
+          style={{
+            background: `radial-gradient(1200px 800px at 50% 40%, ${tint.mid}33 0%, transparent 55%, #0008 100%)`,
+          }}
+        />
       </div>
     );
   }
