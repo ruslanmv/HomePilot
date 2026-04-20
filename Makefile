@@ -429,7 +429,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 				ln -s "$$ROOT/models/comfy" "$$ROOT/ComfyUI/models"; \
 			fi; \
 			echo "Starting ComfyUI..."; \
-			cd "$$ROOT/ComfyUI" && .venv/bin/python main.py --listen 0.0.0.0 --port 8188 & \
+			bash "$$ROOT/scripts/start-comfyui.sh" & \
 			pids="$$pids $$!"; \
 		fi; \
 		\
@@ -525,22 +525,8 @@ start-frontend: ## Start frontend locally
 	fi
 	@cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
 
-start-comfyui: ## Start ComfyUI locally (required for image/video generation)
-	@echo "Starting ComfyUI..."
-	@if [ ! -f "ComfyUI/main.py" ]; then \
-		echo "❌ ComfyUI not found. Run: make install"; \
-		exit 1; \
-	fi
-	@if [ ! -f "ComfyUI/.venv/bin/python" ]; then \
-		echo "❌ ComfyUI venv not found. Run: make install"; \
-		exit 1; \
-	fi
-	@if [ -d "models/comfy" ] && [ ! -L "ComfyUI/models" ]; then \
-		echo "ℹ️  Auto-linking models..."; \
-		rm -rf ComfyUI/models; \
-		ln -s $$(pwd)/models/comfy ComfyUI/models; \
-	fi
-	@cd ComfyUI && .venv/bin/python main.py --listen 0.0.0.0 --port 8188
+start-comfyui: ## Start ComfyUI locally (auto-detects GPU vs CPU)
+	@bash scripts/start-comfyui.sh
 
 # --- Testing & Development ----------------------------------------------------
 
