@@ -36,7 +36,7 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 ## ✨ What's New
 
 ### 🎬 Interactive — Branching AI Videos From One Sentence
-Type one sentence ("Train new sales reps on pricing tiers"), pick **Image** or **Video** scenes, and HomePilot's planner splits your idea into seven tiny LLM calls, builds a branching scene graph, and renders every beat via ComfyUI — all behind a single progress modal. The Editor then lets you **Edit**, **Preview**, and **Regenerate** any scene in place, with a one-click **Play** button to run the whole thing as either a YouTube-style branching video or a candy.ai-style persona chat. See [docs/INTERACTIVE.md](docs/INTERACTIVE.md).
+Type one sentence — like *"Train new sales reps on pricing tiers"* — and HomePilot turns it into a real branching video your viewers can watch and choose their own path through. No coding, no prompts to write: the wizard plans the story, generates the scenes (image or video, your pick), and you can edit, preview, or regenerate any scene with one click before hitting **Play**. See [docs/INTERACTIVE.md](docs/INTERACTIVE.md).
 
 ### 📞 Phone — Live Voice Calls with Your Persona
 Tap the emerald 📞 in the chat header and the persona picks up the phone — a full-duplex voice conversation with persona-aware openings, turn-taking modelled on fifty years of conversation-analysis research, post-TTS echo margins, and sub-50 ms server-side barge-in. No audio effects, no voice swap — your persona stays itself, it just obeys the rhythm of a real call. See [docs/PHONE.md](docs/PHONE.md) for the full architecture.
@@ -46,6 +46,10 @@ Give your persona a real phone number, WhatsApp, or Telegram handle and it can c
 
 ### 🎭 Personas — Persistent AI Identities
 A **Persona** in HomePilot is not a chatbot, not a voice skin, and not a prompt template. It is a **persistent AI identity** — a named, visual, voice-enabled entity with its own personality, appearance, long-term memory, and session history that evolves with you over time. Where traditional assistants forget you between conversations, a Persona remembers. Where traditional UIs give you a text box, a Persona gives you a face, a voice, and a relationship. One identity, many sessions, continuous context — this is the foundation for AI that actually knows who it's talking to. See [docs/PERSONA.md](docs/PERSONA.md) for the full specification.
+
+<p align="center">
+  <img src="assets/interactive-flow.svg" alt="Interactive — from one idea to a playable branching video" width="860" />
+</p>
 
 ### 📦 Persona Portability — Share & Install Anywhere
 Create a persona in Tokyo, share it with someone in Brazil, and they get the exact same identity — personality, tools, and all. HomePilot now packages personas into a portable **`.hpersona`** file that carries everything needed to reproduce the experience on any machine:
