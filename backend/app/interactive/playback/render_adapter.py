@@ -59,7 +59,10 @@ async def render_scene_async(
         return None
 
     workflow = cfg.workflow_for(media_type)
-    variables = _build_variables(scene_prompt, duration_sec, persona_hint)
+    variables = _build_variables(
+        scene_prompt, duration_sec, persona_hint,
+        media_type=media_type,
+    )
     try:
         result = await asyncio.wait_for(
             _run_workflow_off_thread(workflow, variables),
@@ -108,14 +111,32 @@ async def render_scene_async(
 
 def _build_variables(
     scene_prompt: str, duration_sec: int, persona_hint: str,
+    *, media_type: str = "video",
 ) -> Dict[str, Any]:
     """Bundle a generic variable set accepted by typical Animate /
     ComfyUI video templates. Unknown keys are harmless — workflow
     engines ignore variables they don't reference.
+
+    PIPE-1: includes the live-resolved image + video model names
+    under several aliases (``image_model``, ``video_model``,
+    ``model``, ``checkpoint``, ``ckpt_name``) so a workflow author
+    can reference whichever placeholder style matches their JSON.
+    ``model`` in particular is set to the ACTIVE model for the
+    requested media_type, which matches the most common template
+    convention in public ComfyUI workflow snippets.
     """
+    from ..media_router import resolve_current_providers  # late import
+
     positive = ", ".join(p for p in (persona_hint.strip(), scene_prompt.strip()) if p)
     safe_duration = max(2, min(int(duration_sec or 5), 15))
     fps = 8
+
+    providers = resolve_current_providers()
+    active_model = (
+        providers.image_model if (media_type or "").lower() == "image"
+        else providers.video_model
+    )
+
     return {
         "prompt": positive,
         "positive_prompt": positive,
@@ -124,6 +145,13 @@ def _build_variables(
         "duration_sec": safe_duration,
         "frames": safe_duration * fps,
         "fps": fps,
+        # --- PIPE-1: model + endpoint bindings ---
+        "image_model": providers.image_model,
+        "video_model": providers.video_model,
+        "model": active_model,
+        "checkpoint": active_model,
+        "ckpt_name": active_model,
+        "comfy_base_url": providers.comfy_base_url,
     }
 
 
