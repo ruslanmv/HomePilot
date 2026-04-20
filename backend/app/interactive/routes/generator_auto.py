@@ -43,7 +43,7 @@ from fastapi.responses import StreamingResponse
 
 from .. import repo
 from ..config import InteractiveConfig
-from ..errors import CapacityError
+from ..errors import CapacityError, NotFoundError
 from ..models import ActionCreate, EdgeCreate, Experience, NodeCreate, NodeUpdate
 from ..planner.autogen_llm import (
     ActionSpec, EdgeSpec, GraphPlan, NodeSpec, generate_graph,
@@ -134,6 +134,87 @@ def build_generator_auto_router(cfg: InteractiveConfig) -> APIRouter:
                 "Connection": "keep-alive",
             },
         )
+
+    @router.post("/experiences/{experience_id}/nodes/{node_id}/render")
+    async def render_single_node(
+        experience_id: str,  # noqa: ARG001 — scoped_experience consumes it
+        node_id: str,
+        exp: Experience = Depends(scoped_experience),
+    ) -> Dict[str, Any]:
+        """Re-render one scene node (EDIT-3).
+
+        Author-facing recovery + polish path: the Editor's
+        "Regenerate scene" button calls this after the user
+        tweaks a scene's narration or notices a bad asset.
+        Bypasses the idempotent ``asset_ids`` skip that the bulk
+        stream applies so a second call on a rendered node still
+        produces a fresh asset.
+
+        Response shape mirrors the per-scene events the bulk
+        stream emits, so the same UI code can display both paths:
+            { ok, scene_id, title, status, asset_id?, reason? }
+        """
+        node = repo.get_node(node_id)
+        if not node or node.experience_id != exp.id:
+            raise http_error_from(NotFoundError("node not found"))
+
+        media_type = _media_type_from_audience(exp)
+        pseudo_session = f"ixs_eager_{exp.id}"
+        status = "rendered"
+        asset_id: Optional[str] = None
+        reason: Optional[str] = None
+
+        try:
+            asset_id = await _render_adapter.render_scene_async(
+                scene_prompt=(node.narration or node.title or "Scene").strip(),
+                duration_sec=int(node.duration_sec or 5),
+                session_id=pseudo_session,
+                persona_hint=(exp.description or "").strip(),
+                media_type=media_type,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "single_scene_render_failed exp=%s scene=%s: %s",
+                exp.id, node_id, str(exc)[:200],
+            )
+            return {
+                "ok": False,
+                "scene_id": node_id,
+                "title": node.title,
+                "status": "failed",
+                "reason": f"{exc.__class__.__name__}: {str(exc)[:180]}",
+            }
+
+        if not asset_id:
+            return {
+                "ok": True,
+                "scene_id": node_id,
+                "title": node.title,
+                "status": "skipped",
+                "reason": "render_disabled_or_empty",
+            }
+
+        # Replace (not append) — this endpoint is the explicit
+        # "re-render this scene" intent; keeping stale ids from a
+        # prior run would confuse the player's latest-asset logic.
+        try:
+            repo.update_node(node_id, NodeUpdate(asset_ids=[asset_id]))
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "single_scene_node_patch_failed exp=%s scene=%s: %s",
+                exp.id, node_id, str(exc)[:200],
+            )
+            # Asset is still registered; just report the patch miss.
+            status = "rendered_but_not_attached"
+
+        return {
+            "ok": True,
+            "scene_id": node_id,
+            "title": node.title,
+            "status": status,
+            "asset_id": asset_id,
+            "media_type": media_type,
+        }
 
     return router
 

@@ -93,6 +93,32 @@ export interface InteractiveApi {
       signal?: AbortSignal;
     },
   ): Promise<AutoGenerateResult>;
+  /**
+   * Re-render a single scene node (EDIT-3). Used by the Editor's
+   * "Regenerate scene" button. Replaces the node's asset_ids
+   * with the freshly-produced asset so the player always picks
+   * the latest render.
+   */
+  renderSingleScene(
+    experienceId: string, nodeId: string,
+  ): Promise<{
+    ok: boolean;
+    scene_id: string;
+    title: string;
+    status: "rendered" | "skipped" | "failed" | "rendered_but_not_attached";
+    asset_id?: string;
+    reason?: string;
+    media_type?: "image" | "video";
+  }>;
+  /** PATCH a node's editable fields (EDIT-2). */
+  patchNode(
+    nodeId: string,
+    patch: { title?: string; narration?: string; image_prompt?: string },
+  ): Promise<NodeItem>;
+  /** Resolve an asset_id to its player URL, or null if unknown. */
+  resolveAssetUrl(
+    assetId: string, signal?: AbortSignal,
+  ): Promise<string | null>;
   seedGraph(
     id: string,
     req: { prompt: string; mode: ExperienceMode; audience_hints?: Record<string, unknown> },
@@ -336,6 +362,24 @@ export function createInteractiveApi(
         `${base}/experiences/${encodeURIComponent(id)}/generate-all/stream`,
         authHeaders, opts,
       ),
+
+    renderSingleScene: (experienceId, nodeId) =>
+      call(
+        `/experiences/${encodeURIComponent(experienceId)}/nodes/${encodeURIComponent(nodeId)}/render`,
+        { method: "POST", body: JSON.stringify({}) },
+      ),
+
+    patchNode: (nodeId, patch) =>
+      call<{ ok: boolean; node: NodeItem }>(
+        `/nodes/${encodeURIComponent(nodeId)}`,
+        { method: "PATCH", body: JSON.stringify(patch) },
+      ).then((r) => r.node),
+
+    resolveAssetUrl: (assetId, signal) =>
+      call<{ ok: boolean; url: string | null }>(
+        `/assets/${encodeURIComponent(assetId)}/url`,
+        { method: "GET" }, signal,
+      ).then((r) => r.url),
 
     seedGraph: (id, req) =>
       call<{ already_seeded: boolean; node_count: number; edge_count: number }>(

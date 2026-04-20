@@ -50,6 +50,22 @@ class RuleCreateBody(BaseModel):
 def build_authoring_router(cfg: InteractiveConfig) -> APIRouter:
     router = APIRouter(tags=["interactive-authoring"])
 
+    # ── Assets (EDIT-4 preview support) ───────────────────────────
+
+    @router.get("/assets/{asset_id}/url")
+    def resolve_asset(
+        asset_id: str,
+        user_id: str = Depends(current_user),  # noqa: ARG001 — gate only
+    ) -> Dict[str, Any]:
+        """Return the player-usable URL for an asset_id, or null
+        if the id is a stub / unknown. Used by the Editor preview
+        modal (EDIT-4) to show a scene's rendered image/video
+        without forcing the client to bake in storage-key logic.
+        """
+        from ..playback import resolve_asset_url  # late import
+        url = resolve_asset_url(asset_id)
+        return {"ok": True, "asset_id": asset_id, "url": url}
+
     # ── Experiences ───────────────────────────────────────────────
 
     @router.post("/experiences")
