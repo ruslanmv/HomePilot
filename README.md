@@ -35,8 +35,8 @@ This repository contains the **"Home Edition"**: a production-oriented stack des
 
 ## ✨ What's New
 
-### 🎬 Interactive — Branching AI Videos From One Sentence
-Type one sentence — like *"Train new sales reps on pricing tiers"* — and HomePilot turns it into a real branching video your viewers can watch and choose their own path through. No coding, no prompts to write: the wizard plans the story, generates the scenes (image or video, your pick), and you can edit, preview, or regenerate any scene with one click before hitting **Play**. See [docs/INTERACTIVE.md](docs/INTERACTIVE.md).
+### 🎬 Turn One Sentence Into an Interactive Video
+Just type an idea — like *"Train new sales reps on pricing tiers"* — and HomePilot creates a video where viewers can choose what happens next. It plans the story, generates the scenes (image or video), and lets you tweak everything before you hit **Play**. See [docs/INTERACTIVE.md](docs/INTERACTIVE.md).
 
 ### 📞 Phone — Live Voice Calls with Your Persona
 Tap the emerald 📞 in the chat header and the persona picks up the phone — a full-duplex voice conversation with persona-aware openings, turn-taking modelled on fifty years of conversation-analysis research, post-TTS echo margins, and sub-50 ms server-side barge-in. No audio effects, no voice swap — your persona stays itself, it just obeys the rhythm of a real call. See [docs/PHONE.md](docs/PHONE.md) for the full architecture.
