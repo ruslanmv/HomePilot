@@ -44,10 +44,16 @@ from fastapi.responses import StreamingResponse
 from .. import repo
 from ..config import InteractiveConfig
 from ..errors import CapacityError
-from ..models import ActionCreate, EdgeCreate, Experience, NodeCreate
+from ..models import ActionCreate, EdgeCreate, Experience, NodeCreate, NodeUpdate
 from ..planner.autogen_llm import (
     ActionSpec, EdgeSpec, GraphPlan, NodeSpec, generate_graph,
 )
+# Import the render_adapter MODULE (not the function) so tests
+# can patch ``render_adapter.render_scene_async`` on the source
+# module and have the patch visible to us without depending on a
+# stable top-level import binding that may drift across module
+# purge/reimport cycles.
+from ..playback import render_adapter as _render_adapter
 from ..qa import run_qa
 from ._common import http_error_from, scoped_experience
 
@@ -84,6 +90,43 @@ def build_generator_auto_router(cfg: InteractiveConfig) -> APIRouter:
         """
         return StreamingResponse(
             _auto_generate_event_stream(exp, cfg),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    @router.get("/experiences/{experience_id}/generate-all/stream")
+    async def generate_all_stream(
+        experience_id: str,  # noqa: ARG001 — scoped_experience consumes it
+        exp: Experience = Depends(scoped_experience),
+    ) -> StreamingResponse:
+        """Full-project generation stream.
+
+        Chains Stage-2 graph generation (``/auto-generate``) +
+        eager per-scene asset rendering behind a single SSE feed,
+        so the wizard modal can stay up through the entire
+        plan → graph → render → ready lifecycle.
+
+        Events emitted (in order):
+          started / generating_graph / graph_generated /
+          persisting_nodes / persisting_edges / persisting_actions
+          / seeding_rule / running_qa / qa_done
+          rendering_started { total } / rendering_scene {index,
+            total, scene_id, title} / scene_rendered | scene_skipped
+            | scene_render_failed (per scene)
+          rendering_done / result / done
+
+        Scene rendering respects ``audience_profile.render_media_type``
+        (image vs video) and is idempotent: a second call on an
+        already-rendered experience short-circuits to ``result``
+        without re-running the render loop (the render flag being
+        off also skips rendering cleanly).
+        """
+        return StreamingResponse(
+            _generate_all_event_stream(exp, cfg),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -328,3 +371,196 @@ def _persist_actions(
             cooldown_sec=0,
             ordinal=i,
         ))
+
+
+# ── Full-project generation: graph + per-scene asset rendering ─
+
+async def _run_generate_all(
+    exp: Experience, cfg: InteractiveConfig,
+    *, on_event: EventHook,
+) -> Dict[str, Any]:
+    """Chain ``/auto-generate`` + eager per-scene asset rendering.
+
+    Keeps every step idempotent + restart-safe:
+      * graph generation skips when nodes already exist.
+      * per-scene render skips nodes that already carry an
+        ``asset_ids`` entry (previous run resumed).
+      * render failures are non-fatal — we emit ``scene_render_failed``
+        and continue so the editor still opens with a usable graph.
+    """
+    # Phase 1 — plan + graph + baseline wiring.
+    plan_result = await _run_auto_generate(exp, cfg, on_event=on_event)
+
+    # Phase 2 — per-scene asset rendering.
+    render_stats = await _render_all_scenes(exp, on_event=on_event)
+
+    return {
+        **plan_result,
+        "rendering": render_stats,
+    }
+
+
+async def _render_all_scenes(
+    exp: Experience, *, on_event: EventHook,
+) -> Dict[str, Any]:
+    """Iterate scenes + decision nodes; render each.
+
+    Emits events per scene so the frontend modal can show a live
+    'rendering 5 of 12' progress bar. Always resolves with a
+    stats dict (total / rendered / skipped / failed) so the caller
+    can summarise the run even when the render flag is off.
+    """
+    nodes = repo.list_nodes(exp.id)
+    # Only scenes + decision beats need visual assets — endings
+    # typically lean on the scene's trailing frame + a callout.
+    targets = [
+        n for n in nodes
+        if n.kind in ("scene", "decision", "assessment", "remediation")
+    ]
+    total = len(targets)
+    media_type = _media_type_from_audience(exp)
+    on_event("rendering_started", {
+        "total": total, "media_type": media_type,
+    })
+
+    rendered = 0
+    skipped = 0
+    failed = 0
+    pseudo_session = f"ixs_eager_{exp.id}"
+
+    for index, node in enumerate(targets, start=1):
+        # Idempotency: a node that already carries an asset stays
+        # as-is; rerunning generate-all shouldn't double-render.
+        if node.asset_ids:
+            skipped += 1
+            on_event("scene_skipped", {
+                "index": index, "total": total,
+                "scene_id": node.id, "title": node.title,
+                "reason": "already_rendered",
+            })
+            continue
+
+        on_event("rendering_scene", {
+            "index": index, "total": total,
+            "scene_id": node.id, "title": node.title,
+            "kind": node.kind,
+        })
+
+        try:
+            asset_id = await _render_adapter.render_scene_async(
+                scene_prompt=(node.narration or node.title or "Scene").strip(),
+                duration_sec=int(node.duration_sec or 5),
+                session_id=pseudo_session,
+                persona_hint=(exp.description or "").strip(),
+                media_type=media_type,
+            )
+        except Exception as exc:  # noqa: BLE001 — non-fatal per scene
+            failed += 1
+            log.warning(
+                "generate_all_render_failed exp=%s scene=%s: %s",
+                exp.id, node.id, str(exc)[:200],
+            )
+            on_event("scene_render_failed", {
+                "index": index, "total": total,
+                "scene_id": node.id, "title": node.title,
+                "reason": f"{exc.__class__.__name__}: {str(exc)[:120]}",
+            })
+            continue
+
+        if not asset_id:
+            # Render flag off or adapter returned None cleanly.
+            skipped += 1
+            on_event("scene_skipped", {
+                "index": index, "total": total,
+                "scene_id": node.id, "title": node.title,
+                "reason": "render_disabled_or_empty",
+            })
+            continue
+
+        # Attach the asset id to the node so the player can load
+        # the pre-rendered preview on open. Patch failures here
+        # are swallowed — the asset still exists in the registry,
+        # and the player has session-time render fallback anyway.
+        try:
+            repo.update_node(
+                node.id, NodeUpdate(asset_ids=[asset_id]),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "generate_all_node_patch_failed exp=%s scene=%s: %s",
+                exp.id, node.id, str(exc)[:200],
+            )
+
+        rendered += 1
+        on_event("scene_rendered", {
+            "index": index, "total": total,
+            "scene_id": node.id, "title": node.title,
+            "asset_id": asset_id,
+        })
+
+    stats = {
+        "total": total,
+        "rendered": rendered,
+        "skipped": skipped,
+        "failed": failed,
+    }
+    on_event("rendering_done", stats)
+    return stats
+
+
+def _media_type_from_audience(exp: Experience) -> str:
+    """Read ``audience_profile.render_media_type`` off the
+    experience. Mirrors the helper in routes/playback.py but stays
+    local so this module has zero extra coupling."""
+    ap = getattr(exp, "audience_profile", None) or {}
+    if not isinstance(ap, dict):
+        return "video"
+    raw = str(ap.get("render_media_type") or "").strip().lower()
+    return "image" if raw == "image" else "video"
+
+
+async def _generate_all_event_stream(
+    exp: Experience, cfg: InteractiveConfig,
+) -> AsyncGenerator[bytes, None]:
+    """SSE plumbing for /generate-all/stream. Same asyncio.Queue
+    bridge pattern as /auto-generate/stream — the sync on_event
+    hook pushes events; the async generator yields them as SSE
+    frames without blocking the orchestrator."""
+    queue: "asyncio.Queue[Optional[Dict[str, Any]]]" = asyncio.Queue()
+
+    def _hook(kind: str, payload: Dict[str, Any]) -> None:
+        try:
+            queue.put_nowait({"type": kind, "payload": dict(payload or {})})
+        except Exception:  # noqa: BLE001
+            log.exception("generate-all sse enqueue failed")
+
+    async def _task() -> Optional[Dict[str, Any]]:
+        try:
+            return await _run_generate_all(exp, cfg, on_event=_hook)
+        finally:
+            await queue.put(None)
+
+    runner = asyncio.create_task(_task())
+
+    while True:
+        item = await queue.get()
+        if item is None:
+            break
+        yield _sse_frame(item).encode("utf-8")
+
+    try:
+        final = await runner
+    except Exception as exc:  # noqa: BLE001
+        log.exception("generate-all stream crashed")
+        yield _sse_frame({
+            "type": "error",
+            "payload": {
+                "reason": f"{exc.__class__.__name__}: {str(exc)[:200]}",
+            },
+        }).encode("utf-8")
+        yield _sse_frame({"type": "done"}).encode("utf-8")
+        return
+
+    if final is not None:
+        yield _sse_frame({"type": "result", "payload": final}).encode("utf-8")
+    yield _sse_frame({"type": "done"}).encode("utf-8")
