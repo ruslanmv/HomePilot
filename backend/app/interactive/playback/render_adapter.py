@@ -58,10 +58,20 @@ async def render_scene_async(
     if not scene_prompt.strip():
         return None
 
-    workflow = cfg.workflow_for(media_type)
+    # Pick the workflow by model ARCHITECTURE (sd15/sdxl/flux/svd/
+    # ltx/wan/...) — same dispatch Imagine + Animate already use,
+    # so we inherit their battle-tested workflow JSON filenames
+    # instead of the hard-coded ``animate`` / ``avatar_txt2img``
+    # that never matched files on disk. See _resolve_workflow().
+    workflow = _resolve_workflow(cfg, media_type)
     variables = _build_variables(
         scene_prompt, duration_sec, persona_hint,
         media_type=media_type,
+    )
+    log.info(
+        "playback_render_submit workflow=%s media_type=%s",
+        workflow, media_type,
+        extra={"session_id": session_id},
     )
     try:
         result = await asyncio.wait_for(
@@ -109,6 +119,71 @@ async def render_scene_async(
 
 # ── Internals ───────────────────────────────────────────────────
 
+# Architecture → image txt2img workflow.  Mirrors the mapping
+# ``app.orchestrator`` (Imagine) already uses, so we submit the
+# same JSON files that Imagine is known to render correctly.
+_IMAGE_WORKFLOW_BY_ARCH: Dict[str, str] = {
+    "sd15":            "txt2img-sd15-uncensored",
+    "sdxl":            "txt2img",
+    "flux_schnell":    "txt2img-flux-schnell",
+    "flux_dev":        "txt2img-flux-dev",
+    "noobai_xl":       "txt2img",
+    "noobai_xl_vpred": "txt2img",
+    "pony_xl":         "txt2img-pony-xl",
+}
+
+# Substring in the video model filename → img2vid workflow.
+# Same dispatch Animate uses (orchestrator lines ~995-1015).
+_VIDEO_WORKFLOW_BY_MODEL: List[tuple[str, str]] = [
+    ("ltx",      "img2vid-ltx"),
+    ("wan",      "img2vid-wan"),
+    ("mochi",    "img2vid-mochi"),
+    ("hunyuan",  "img2vid-hunyuan"),
+    ("cogvideo", "img2vid-cogvideo"),
+    ("svd",      "img2vid"),
+]
+
+
+def _resolve_workflow(cfg: PlaybackConfig, media_type: str) -> str:
+    """Pick the ComfyUI workflow filename from the live-resolved
+    model name the same way Imagine + Animate do.
+
+    Image mode:  model filename → architecture (via
+    ``model_config.get_architecture``) → workflow from the
+    table above.
+
+    Video mode:  substring match on the video model name (``svd``
+    → ``img2vid``, ``ltx`` → ``img2vid-ltx``, …).
+
+    When no match is found we fall back to the ``PlaybackConfig``
+    value so operators can still override via env — but the log
+    line above tells us exactly what ran either way.
+    """
+    from ..media_router import resolve_current_providers  # late import
+    from ...model_config import detect_architecture_from_filename
+
+    providers = resolve_current_providers()
+    kind = (media_type or "").strip().lower()
+
+    if kind == "image":
+        arch = detect_architecture_from_filename(providers.image_model)
+        wf = _IMAGE_WORKFLOW_BY_ARCH.get(arch)
+        if wf:
+            # Pony override matches Imagine's special-case (an SDXL
+            # finetune with its own workflow).
+            if "pony" in (providers.image_model or "").lower():
+                return "txt2img-pony-xl"
+            return wf
+        return cfg.image_workflow  # env override / "avatar_txt2img" default
+
+    # Video path (default).
+    model_lc = (providers.video_model or "").lower()
+    for needle, workflow in _VIDEO_WORKFLOW_BY_MODEL:
+        if needle in model_lc:
+            return workflow
+    return cfg.render_workflow  # env override / "animate" default
+
+
 def _build_variables(
     scene_prompt: str, duration_sec: int, persona_hint: str,
     *, media_type: str = "video",
@@ -125,17 +200,37 @@ def _build_variables(
     requested media_type, which matches the most common template
     convention in public ComfyUI workflow snippets.
     """
+    import random as _random
     from ..media_router import resolve_current_providers  # late import
+    from ...model_config import detect_architecture_from_filename, get_model_settings
 
     positive = ", ".join(p for p in (persona_hint.strip(), scene_prompt.strip()) if p)
     safe_duration = max(2, min(int(duration_sec or 5), 15))
     fps = 8
 
     providers = resolve_current_providers()
+    kind = (media_type or "").lower()
     active_model = (
-        providers.image_model if (media_type or "").lower() == "image"
-        else providers.video_model
+        providers.image_model if kind == "image" else providers.video_model
     )
+
+    # Resolve safe width/height/steps/cfg the same way Imagine
+    # does, so the workflow template substitution never produces
+    # the "two heads" resolution mismatch SD 1.5 is famous for.
+    # Defaults match Imagine's "med" preset at 1:1 when the model
+    # is unknown.
+    width, height, steps, cfg_scale = 512, 512, 25, 7.0
+    if kind == "image":
+        try:
+            settings = get_model_settings(
+                providers.image_model, "1:1", "med",
+            )
+            width = int(settings["width"])
+            height = int(settings["height"])
+            steps = int(settings["steps"])
+            cfg_scale = float(settings["cfg"])
+        except Exception:  # noqa: BLE001 — unknown model → defaults
+            pass
 
     return {
         "prompt": positive,
@@ -145,6 +240,14 @@ def _build_variables(
         "duration_sec": safe_duration,
         "frames": safe_duration * fps,
         "fps": fps,
+        # --- Render tuning (required by Imagine-style workflows) ---
+        "width": width,
+        "height": height,
+        "steps": steps,
+        "cfg": cfg_scale,
+        "seed": _random.randint(1, 2_147_483_646),
+        "aspect_ratio": "1:1",
+        "style": "photorealistic",
         # --- PIPE-1: model + endpoint bindings ---
         "image_model": providers.image_model,
         "video_model": providers.video_model,

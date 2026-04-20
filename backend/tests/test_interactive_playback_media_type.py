@@ -91,8 +91,11 @@ def test_select_best_media_video_preferred_unchanged():
 # ── render_scene_async end-to-end ──────────────────────────────
 
 def test_render_scene_async_uses_image_workflow_for_image_media(monkeypatch):
-    """media_type='image' submits to cfg.image_workflow; default
-    stays on cfg.render_workflow."""
+    """media_type='image' picks the workflow by model architecture
+    (same dispatch Imagine uses). Default model id ``sdxl`` →
+    ``txt2img``. A ``dreamshaper_8.safetensors`` env override
+    reaches sd15 → ``txt2img-sd15-uncensored``; covered by a
+    dedicated test below."""
     from app.interactive.playback import render_adapter
     captured: Dict[str, Any] = {}
 
@@ -120,7 +123,41 @@ def test_render_scene_async_uses_image_workflow_for_image_media(monkeypatch):
         config=cfg,
     ))
     assert asset_id == "ixa_test_asset"
-    assert captured["workflow"] == "avatar_txt2img"
+    # Default IMAGE_MODEL is the short "sdxl" token → txt2img.
+    assert captured["workflow"] == "txt2img"
+
+
+def test_render_scene_async_picks_sd15_workflow_for_dreamshaper(monkeypatch):
+    """Architecture dispatch: dreamshaper_8.safetensors is SD 1.5
+    → should submit via txt2img-sd15-uncensored."""
+    monkeypatch.setenv("IMAGE_MODEL", "dreamshaper_8.safetensors")
+    from app.interactive.playback import render_adapter
+    captured: Dict[str, Any] = {}
+
+    async def fake_run(workflow: str, variables: Dict[str, Any]):
+        captured["workflow"] = workflow
+        captured["variables"] = variables
+        return {"images": ["/files/still.png"]}
+
+    monkeypatch.setattr(render_adapter, "_run_workflow_off_thread", fake_run)
+    monkeypatch.setattr("app.asset_registry.register_asset", lambda **kw: "ixa_x")
+
+    asyncio.run(render_adapter.render_scene_async(
+        scene_prompt="a cat",
+        duration_sec=5,
+        session_id="s_1",
+        media_type="image",
+        config=_cfg(),
+    ))
+    assert captured["workflow"] == "txt2img-sd15-uncensored"
+    # model_config fills safe SD1.5 dimensions + steps + cfg.
+    assert captured["variables"]["width"] == 512
+    assert captured["variables"]["height"] == 512
+    assert captured["variables"]["steps"] == 25
+    assert captured["variables"]["cfg"] == 7.0
+    # ckpt_name carries the full filename so the workflow template
+    # can substitute {{ckpt_name}} the same way Imagine does.
+    assert captured["variables"]["checkpoint"] == "dreamshaper_8.safetensors"
 
 
 def test_render_scene_async_defaults_to_video_workflow(monkeypatch):
@@ -148,7 +185,32 @@ def test_render_scene_async_defaults_to_video_workflow(monkeypatch):
         config=_cfg(),
     ))
     assert asset_id == "ixa_video_asset"
-    assert captured["workflow"] == "animate"
+    # Default VIDEO_MODEL is "svd" → maps to img2vid (same file
+    # Animate uses for SVD). Matches the production workflow map.
+    assert captured["workflow"] == "img2vid"
+
+
+def test_render_scene_async_picks_ltx_workflow_for_ltx_model(monkeypatch):
+    """Video architecture dispatch mirrors Animate: any model name
+    containing "ltx" routes to img2vid-ltx."""
+    monkeypatch.setenv("VIDEO_MODEL", "ltx-video-2b-v0.9.1.safetensors")
+    from app.interactive.playback import render_adapter
+    captured: Dict[str, Any] = {}
+
+    async def fake_run(workflow: str, variables: Dict[str, Any]):
+        captured["workflow"] = workflow
+        return {"videos": ["/files/clip.mp4"]}
+
+    monkeypatch.setattr(render_adapter, "_run_workflow_off_thread", fake_run)
+    monkeypatch.setattr("app.asset_registry.register_asset", lambda **kw: "ixa_ltx")
+
+    asyncio.run(render_adapter.render_scene_async(
+        scene_prompt="a cat",
+        duration_sec=5,
+        session_id="s_1",
+        config=_cfg(),
+    ))
+    assert captured["workflow"] == "img2vid-ltx"
 
 
 # ── Route helper: _media_type_from_experience ──────────────────
