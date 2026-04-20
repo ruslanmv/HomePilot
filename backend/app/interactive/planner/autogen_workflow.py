@@ -66,6 +66,16 @@ def workflow_enabled() -> bool:
     return False  # REV-7 flips this
 
 
+def strict_ai_enabled() -> bool:
+    """True when per-scene templated fallbacks must NOT run.
+
+    Shares the ``INTERACTIVE_STRICT_AI`` switch with the stage-1
+    workflow so ops flip a single flag to enforce "LLM output or
+    a visible error" across both stages.
+    """
+    return _bool_env("INTERACTIVE_STRICT_AI")
+
+
 def _bool_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on", "y"}
 
@@ -188,11 +198,24 @@ def _script_fallback_factory(
 
     Captures scene + role at construction time so the Step's
     fallback signature (``(ctx, token) -> value``) stays clean.
+
+    Strict mode (``INTERACTIVE_STRICT_AI=true``) raises
+    ``StepFailure`` instead of returning a template so the whole
+    generation aborts and the user sees a real error rather than
+    hardcoded "Welcome — <topic>" prose.
     """
     sid = str(scene.get("id") or "scene")
     kind = str(scene.get("kind") or "scene")
 
     def _fallback(ctx: Mapping[str, Any], _token: Optional[str]) -> Dict[str, str]:
+        if strict_ai_enabled():
+            from ..workflows import StepFailure  # late
+            raise StepFailure(
+                step_id=f"script_{sid}",
+                prompt_id="autogen.scene_script",
+                reason="strict_ai: refused to use templated scene script",
+                attempts=0,
+            )
         topic = _topic_label(ctx)
         if role == "opening" or kind == "scene" and role.startswith("opening"):
             title = f"Welcome — {topic}" if topic else "Welcome"

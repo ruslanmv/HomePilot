@@ -81,6 +81,30 @@ def workflow_enabled() -> bool:
     return False
 
 
+def strict_ai_enabled() -> bool:
+    """Return True when *all* content must come from the LLM.
+
+    Two kinds of fallback live in this workflow:
+
+      * Structural  — safe defaults for STRUCTURE fields (shape
+                      triple, audience role/level/language). These
+                      never carry user-facing prose; flipping
+                      strict mode still lets them run.
+      * Content     — templated prose like "Welcome — <topic>"
+                      or preset seed_intents. These show up on
+                      screen, so a hardcoded default is what the
+                      REV design explicitly calls out as "AI
+                      pretending". Strict mode disables them so
+                      the route returns a plain error instead.
+
+    Flip ``INTERACTIVE_STRICT_AI=true`` after telemetry confirms
+    the LLM reliably answers every prompt. Installs without an
+    LLM backend must keep strict mode OFF so heuristic fallbacks
+    remain available.
+    """
+    return _bool_env("INTERACTIVE_STRICT_AI")
+
+
 def _bool_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on", "y"}
 
@@ -269,7 +293,22 @@ def _topic_fallback(ctx: Mapping[str, Any], token: Optional[str]) -> str:
 def _seed_intents_fallback(
     ctx: Mapping[str, Any], token: Optional[str],
 ) -> List[str]:
-    """Fall back to the preset seed intents for the picked mode."""
+    """Fall back to the preset seed intents for the picked mode.
+
+    Strict mode treats the preset list as content (it's
+    operator-curated prose), so we surface the failure instead
+    of silently substituting templated intents. Non-strict mode
+    (the default today) lets it through — intents are short
+    enough that the UI labels them as "Smart defaults" anyway.
+    """
+    if strict_ai_enabled():
+        from ..workflows import StepFailure  # late
+        raise StepFailure(
+            step_id="seed_intents",
+            prompt_id="autoplan.seed_intents",
+            reason="strict_ai: refused to use preset fallback",
+            attempts=0,
+        )
     mode = str(ctx.get("mode") or "sfw_general")
     preset = get_preset(mode) or get_preset("sfw_general")
     intents = list(preset.seed_intents) if preset and preset.seed_intents else []
