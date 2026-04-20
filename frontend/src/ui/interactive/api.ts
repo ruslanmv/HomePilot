@@ -76,6 +76,23 @@ export interface InteractiveApi {
       signal?: AbortSignal;
     },
   ): Promise<AutoGenerateResult>;
+
+  /**
+   * Full-project generation stream (BATCH B). Chains plan +
+   * graph + per-scene asset rendering behind a single SSE feed
+   * so the wizard modal can stay up through the entire
+   * plan → render → ready lifecycle. Event kinds include
+   * everything ``autoGenerateStream`` emits plus:
+   *   rendering_started / rendering_scene / scene_rendered
+   *   | scene_skipped | scene_render_failed / rendering_done.
+   */
+  generateAllStream(
+    id: string,
+    opts: {
+      onEvent?: (ev: AutoGenerateStreamEvent) => void;
+      signal?: AbortSignal;
+    },
+  ): Promise<AutoGenerateResult>;
   seedGraph(
     id: string,
     req: { prompt: string; mode: ExperienceMode; audience_hints?: Record<string, unknown> },
@@ -127,6 +144,82 @@ export interface InteractiveApi {
     req: { action_id?: string; free_text?: string; viewer_region?: string },
   ): Promise<ResolveResult>;
 }
+
+/**
+ * Shared SSE reader for /auto-generate/stream and
+ * /generate-all/stream. Parses ``data: {...}\n\n`` frames,
+ * forwards each to ``onEvent``, and resolves with the ``result``
+ * frame payload. Rejects with InteractiveApiError on HTTP
+ * failures or an explicit ``error`` frame. Native EventSource
+ * can't honour credentials:'include' across origins — hence the
+ * hand-rolled fetch+ReadableStream reader.
+ */
+async function _consumeGenerationStream(
+  url: string,
+  authHeaders: Record<string, string>,
+  opts: {
+    onEvent?: (ev: AutoGenerateStreamEvent) => void;
+    signal?: AbortSignal;
+  },
+): Promise<AutoGenerateResult> {
+  const resp = await fetch(url, {
+    method: "GET",
+    credentials: "include",
+    headers: { Accept: "text/event-stream", ...authHeaders },
+    signal: opts.signal,
+  });
+  if (!resp.ok || !resp.body) {
+    const detail = await resp.text().catch(() => "");
+    throw new InteractiveApiError(
+      detail || `generation stream failed (${resp.status})`,
+      resp.status,
+    );
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let finalResult: AutoGenerateResult | null = null;
+  let errorMessage: string | null = null;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) >= 0) {
+      const raw = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 2);
+      if (!raw.startsWith("data:")) continue;
+      const body = raw.slice("data:".length).trim();
+      if (!body) continue;
+      let frame: AutoGenerateStreamEvent;
+      try {
+        frame = JSON.parse(body) as AutoGenerateStreamEvent;
+      } catch {
+        continue;
+      }
+      if (opts.onEvent) {
+        try { opts.onEvent(frame); } catch { /* hook must not kill stream */ }
+      }
+      if (frame.type === "result") {
+        finalResult = (frame.payload as unknown as AutoGenerateResult) || null;
+      }
+      if (frame.type === "error") {
+        const payload = (frame.payload || {}) as Record<string, unknown>;
+        errorMessage = typeof payload.reason === "string"
+          ? payload.reason
+          : "generation failed";
+      }
+      if (frame.type === "done") break;
+    }
+  }
+
+  if (errorMessage) throw new InteractiveApiError(errorMessage, 0);
+  if (!finalResult) throw new InteractiveApiError("stream ended without a result frame", 0);
+  return finalResult;
+}
+
 
 export function createInteractiveApi(
   backendUrl: string, apiKey?: string,
@@ -232,77 +325,17 @@ export function createInteractiveApi(
         { method: "POST", body: JSON.stringify({}) },
       ),
 
-    autoGenerateStream: async (id, opts) => {
-      // Custom SSE reader via fetch + ReadableStream so we can
-      // honour the shared credentials:'include' policy (native
-      // EventSource can't send cookies cross-origin). Parses the
-      // ``data: {...}\n\n`` frames, routes events to ``onEvent``,
-      // and resolves with the ``result`` frame's payload.
-      const url = `${base}/experiences/${encodeURIComponent(id)}/auto-generate/stream`;
-      const resp = await fetch(url, {
-        method: "GET",
-        credentials: "include",
-        headers: { Accept: "text/event-stream", ...authHeaders },
-        signal: opts.signal,
-      });
-      if (!resp.ok || !resp.body) {
-        const detail = await resp.text().catch(() => "");
-        throw new InteractiveApiError(
-          detail || `auto-generate stream failed (${resp.status})`,
-          resp.status,
-        );
-      }
-      const reader = resp.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let buffer = "";
-      let finalResult: AutoGenerateResult | null = null;
-      let errorMessage: string | null = null;
+    autoGenerateStream: (id, opts) =>
+      _consumeGenerationStream(
+        `${base}/experiences/${encodeURIComponent(id)}/auto-generate/stream`,
+        authHeaders, opts,
+      ),
 
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        // SSE frames are separated by blank lines.
-        let idx: number;
-        while ((idx = buffer.indexOf("\n\n")) >= 0) {
-          const raw = buffer.slice(0, idx).trim();
-          buffer = buffer.slice(idx + 2);
-          if (!raw.startsWith("data:")) continue;
-          const body = raw.slice("data:".length).trim();
-          if (!body) continue;
-          let frame: AutoGenerateStreamEvent;
-          try {
-            frame = JSON.parse(body) as AutoGenerateStreamEvent;
-          } catch {
-            continue;
-          }
-          if (opts.onEvent) {
-            try { opts.onEvent(frame); } catch { /* hook must not kill stream */ }
-          }
-          if (frame.type === "result") {
-            finalResult = (frame.payload as unknown as AutoGenerateResult) || null;
-          }
-          if (frame.type === "error") {
-            const payload = (frame.payload || {}) as Record<string, unknown>;
-            errorMessage = typeof payload.reason === "string"
-              ? payload.reason
-              : "auto-generate failed";
-          }
-          if (frame.type === "done") {
-            break;
-          }
-        }
-      }
-
-      if (errorMessage) {
-        throw new InteractiveApiError(errorMessage, 0);
-      }
-      if (!finalResult) {
-        throw new InteractiveApiError("stream ended without a result frame", 0);
-      }
-      return finalResult;
-    },
+    generateAllStream: (id, opts) =>
+      _consumeGenerationStream(
+        `${base}/experiences/${encodeURIComponent(id)}/generate-all/stream`,
+        authHeaders, opts,
+      ),
 
     seedGraph: (id, req) =>
       call<{ already_seeded: boolean; node_count: number; edge_count: number }>(

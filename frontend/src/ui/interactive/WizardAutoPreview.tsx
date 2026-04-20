@@ -56,10 +56,15 @@ const LANG_LABELS: Record<string, string> = {
   it: "Italian", pt: "Portuguese", ja: "Japanese", zh: "Chinese",
 };
 
+// Five-phase checklist matching the events the backend emits on
+// /generate-all/stream. Last step ("Opening the editor") is
+// marked done after the ``result`` frame arrives so the modal
+// visibly ticks the final checkmark before unmounting.
 const GENERATE_STEPS = [
   { label: "Saving your project" },
   { label: "Drafting the scene graph" },
   { label: "Writing dialogue + choices" },
+  { label: "Rendering scenes" },
   { label: "Opening the editor" },
 ];
 
@@ -104,6 +109,11 @@ export function WizardAutoPreview({
   const [submitting, setSubmitting] = useState(false);
   const [genStep, setGenStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // BATCH B/C: live scene-render progress pulled off the SSE
+  // stream so the modal can show "6 / 12 scenes" as they finish.
+  const [renderTotal, setRenderTotal] = useState(0);
+  const [renderDone, setRenderDone] = useState(0);
+  const [currentSceneTitle, setCurrentSceneTitle] = useState<string>("");
 
   const patch = useCallback(<K extends keyof PlanAutoForm>(
     key: K, value: PlanAutoForm[K],
@@ -139,25 +149,41 @@ export function WizardAutoPreview({
       });
       setGenStep(1);
 
-      // Step 2: auto-generate the scene graph. Best-effort —
-      // the project exists either way, so a generator failure
-      // just warns and opens the empty editor.
-      //
-      // PIPE-2: subscribe to the SSE stream so the spinner's
-      // active step tracks real backend phases instead of a
-      // 900ms timer. Phase → GENERATE_STEPS index mapping keeps
-      // the UI contract stable even as the backend grows more
-      // phase names.
+      // Step 2: full-project generation via the new SSE stream.
+      // Orchestrates plan + graph + per-scene render in one
+      // subscription so the modal stays up through the entire
+      // lifecycle and progress mirrors real backend work.
       try {
-        const gen = await api.autoGenerateStream(created.id, {
+        const gen = await api.generateAllStream(created.id, {
           onEvent: (ev) => {
             const idx = _stepIndexForPhase(ev.type);
             if (idx !== null) {
               setGenStep((prev) => Math.max(prev, idx));
             }
+            // Scene-render progress: capture total + current index
+            // so the modal's progress bar + "Rendering scene X of Y"
+            // label can track reality.
+            if (ev.type === "rendering_started") {
+              const total = Number((ev.payload as any)?.total || 0);
+              setRenderTotal(total);
+              setRenderDone(0);
+            }
+            if (ev.type === "rendering_scene") {
+              const title = String((ev.payload as any)?.title || "");
+              if (title) setCurrentSceneTitle(title);
+            }
+            if (
+              ev.type === "scene_rendered"
+              || ev.type === "scene_skipped"
+              || ev.type === "scene_render_failed"
+            ) {
+              setRenderDone((prev) => prev + 1);
+            }
           },
         });
-        setGenStep(3);
+        // Step 4 = "Opening the editor". Bumping to 4 marks every
+        // earlier row as done in the GeneratingPanel checklist.
+        setGenStep(GENERATE_STEPS.length - 1);
         toast.toast({
           variant: gen.source === "llm" ? "success" : "info",
           title: gen.source === "existing"
@@ -171,7 +197,7 @@ export function WizardAutoPreview({
         });
       } catch (genErr) {
         const e = genErr as InteractiveApiError;
-        setGenStep(3);
+        setGenStep(GENERATE_STEPS.length - 1);
         toast.toast({
           variant: "warning",
           title: "Project created, but scene graph not generated",
@@ -188,8 +214,10 @@ export function WizardAutoPreview({
       setError(e.message || "Couldn't create the project.");
       setSubmitting(false);
       setGenStep(0);
+      setRenderTotal(0);
+      setRenderDone(0);
     }
-  }, [api, form, onCreated, toast]);
+  }, [api, form, interaction, onCreated, toast]);
 
   return (
     <div className="relative flex flex-col h-full w-full">
@@ -365,14 +393,25 @@ export function WizardAutoPreview({
         </div>
       </footer>
 
-      {/* Enterprise waiting overlay during create + generate */}
+      {/* Enterprise waiting overlay — stays up through the full
+          plan → graph → render → ready lifecycle so the user
+          never watches a stale blank screen while heavy asset
+          generation runs. Progress bar + per-scene label kick in
+          once the backend reaches the rendering phase. */}
       {submitting && (
         <GeneratingPanel
-          title="Creating your project"
-          description="Setting everything up and drafting the scene graph."
+          title={_panelTitle(genStep, renderTotal, renderDone)}
+          description={_panelDescription(genStep, currentSceneTitle)}
           steps={GENERATE_STEPS}
           activeStep={genStep}
           accentClassName="text-[#c4b5fd]"
+          spinnerSize="large"
+          progress={renderTotal > 0
+            ? Math.round((renderDone / renderTotal) * 100)
+            : undefined}
+          progressLabel={renderTotal > 0
+            ? `${renderDone} / ${renderTotal} scenes`
+            : undefined}
         />
       )}
     </div>
@@ -518,18 +557,48 @@ function AdvancedBlock({
 
 
 /**
- * Map an auto-generate stream phase (PIPE-2) to a GENERATE_STEPS
+ * Map a generate-all stream phase (BATCH B) to a GENERATE_STEPS
  * index so the spinner advances on real backend events.
  *
  *   GENERATE_STEPS:
- *     0 — "Saving your project"           (already done when we subscribe)
- *     1 — "Drafting the scene graph"       (generating_graph .. graph_generated)
- *     2 — "Writing dialogue + choices"     (persisting_* + seeding_rule)
- *     3 — "Opening the editor"             (qa_done / result / done)
+ *     0 — "Saving your project"      (already done when we subscribe)
+ *     1 — "Drafting the scene graph" (generating_graph .. graph_generated)
+ *     2 — "Writing dialogue + choices" (persisting_* + seeding_rule + qa)
+ *     3 — "Rendering scenes"         (rendering_started .. rendering_done)
+ *     4 — "Opening the editor"       (result / done)
  *
  * Unknown phase names return null so the spinner holds its
  * current step — forward-compatible with future backend events.
  */
+function _panelTitle(
+  step: number, renderTotal: number, renderDone: number,
+): string {
+  // Copy the user sees in the big heading. Evolves with the
+  // active step so the modal feels like it's doing something
+  // concrete rather than a generic "loading…".
+  if (step <= 1) return "Drafting your scene graph";
+  if (step === 2) return "Writing dialogue + choices";
+  if (step === 3) {
+    if (renderTotal > 0) {
+      return `Rendering scenes · ${renderDone} of ${renderTotal}`;
+    }
+    return "Rendering scenes";
+  }
+  return "Opening your project";
+}
+
+
+function _panelDescription(step: number, currentScene: string): string {
+  if (step <= 1) return "Turning your idea into a branching scene graph.";
+  if (step === 2) return "Populating scenes with narration, choices, and actions.";
+  if (step === 3) {
+    if (currentScene) return `Now rendering: ${currentScene}`;
+    return "Producing scene assets — this is the slowest phase.";
+  }
+  return "Everything's ready. Opening the editor.";
+}
+
+
 function _stepIndexForPhase(phase: string): number | null {
   switch (phase) {
     case "started":
@@ -542,12 +611,19 @@ function _stepIndexForPhase(phase: string): number | null {
     case "persisting_edges":
     case "persisting_actions":
     case "seeding_rule":
-      return 2;
     case "running_qa":
     case "qa_done":
+      return 2;
+    case "rendering_started":
+    case "rendering_scene":
+    case "scene_rendered":
+    case "scene_skipped":
+    case "scene_render_failed":
+    case "rendering_done":
+      return 3;
     case "result":
     case "done":
-      return 3;
+      return 4;
     default:
       return null;
   }
