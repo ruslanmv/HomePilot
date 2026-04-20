@@ -101,6 +101,25 @@ def _parse_spine(content: str) -> Dict[str, Any]:
     start = data.get("start")
     if not isinstance(start, str) or not start:
         raise ValueError("spine.start must be a non-empty string")
+
+    # Forgiving normalisation — small LLMs frequently drop the
+    # array wrapper when a field "should" hold a single string
+    # (``"next": "end_a"`` instead of ``"next": ["end_a"]``). We
+    # fix that up here rather than at the validator so authors
+    # don't lose a whole workflow to a punctuation slip.
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
+        # next: str → [str]; missing → []
+        nxt = scene.get("next")
+        if isinstance(nxt, str):
+            scene["next"] = [nxt] if nxt else []
+        elif nxt is None and (scene.get("kind") or "").lower() != "ending":
+            scene["next"] = []
+        # choice_labels: str → [str]
+        labels = scene.get("choice_labels")
+        if isinstance(labels, str):
+            scene["choice_labels"] = [labels] if labels else []
     return data
 
 

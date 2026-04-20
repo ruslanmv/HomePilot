@@ -64,7 +64,9 @@ def _run(coro):
 # ── Flag off → stub path ────────────────────────────────────────
 
 def test_flag_off_uses_stub_asset(monkeypatch):
-    monkeypatch.delenv("INTERACTIVE_PLAYBACK_RENDER", raising=False)
+    # Render default flipped ON — explicit opt-out keeps the
+    # stub path working as a deliberate test-mode.
+    monkeypatch.setenv("INTERACTIVE_PLAYBACK_RENDER", "false")
     _, sess = _fresh_session("off")
     plan = plan_next_scene(_memory(sess.id, sess.experience_id), "hi")
     job = submit_scene_job(sess.id, "t1", plan)

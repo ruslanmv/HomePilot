@@ -51,7 +51,7 @@ user_template: |
 
 policy:
   retries: 2
-  timeout_s: 15.0
+  timeout_s: 30.0
   response_format: null
 
 validation:

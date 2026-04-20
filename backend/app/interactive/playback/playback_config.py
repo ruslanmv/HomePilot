@@ -39,10 +39,25 @@ from dataclasses import dataclass
 
 
 _TRUTHY = {"1", "true", "yes", "on", "y"}
+_FALSY = {"0", "false", "no", "off", "n"}
 
 
-def _bool_env(name: str) -> bool:
-    return os.getenv(name, "").strip().lower() in _TRUTHY
+def _bool_env(name: str, *, default: bool = False) -> bool:
+    """Read an env bool with an explicit default.
+
+    Returns the default when the env is unset / blank / neither
+    truthy nor falsy. Empty string is treated as unset so an
+    operator who clears a Settings UI field falls back to the
+    built-in default instead of silently flipping the value.
+    """
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in _TRUTHY:
+        return True
+    if raw in _FALSY:
+        return False
+    return default
 
 
 def _float_env(name: str, default: float) -> float:
@@ -94,13 +109,29 @@ class PlaybackConfig:
 
 
 def load_playback_config() -> PlaybackConfig:
-    """Read env vars fresh. Cheap; safe to call per request."""
+    """Read env vars fresh. Cheap; safe to call per request.
+
+    Defaults tuned for "batteries-included" behaviour on a fresh
+    install: if you have Ollama + ComfyUI running locally,
+    ``make start`` gives you a working Interactive surface
+    without touching any env vars. Explicit opt-outs still
+    honoured — set ``INTERACTIVE_PLAYBACK_LLM=false`` or
+    ``INTERACTIVE_PLAYBACK_RENDER=false`` to force the heuristic
+    / skip-render paths (useful in CI + headless setups).
+    """
     return PlaybackConfig(
-        llm_enabled=_bool_env("INTERACTIVE_PLAYBACK_LLM"),
+        # LLM default-on: the planner is the whole point — users
+        # who really want the text-only heuristic path opt out.
+        llm_enabled=_bool_env("INTERACTIVE_PLAYBACK_LLM", default=True),
         llm_timeout_s=_float_env("INTERACTIVE_PLAYBACK_LLM_TIMEOUT_S", 12.0),
         llm_max_tokens=_int_env("INTERACTIVE_PLAYBACK_LLM_MAX_TOKENS", 350),
         llm_temperature=_float_env("INTERACTIVE_PLAYBACK_LLM_TEMPERATURE", 0.65),
-        render_enabled=_bool_env("INTERACTIVE_PLAYBACK_RENDER"),
+        # Render default-on: per-scene failure is non-fatal (the
+        # stream emits scene_render_failed and keeps going), so
+        # flipping the default removes the biggest "why nothing
+        # rendered?" support paper-cut. Users without a ComfyUI
+        # install get clean failure events instead of silent skips.
+        render_enabled=_bool_env("INTERACTIVE_PLAYBACK_RENDER", default=True),
         render_workflow=os.getenv("INTERACTIVE_PLAYBACK_RENDER_WORKFLOW", "animate").strip() or "animate",
         image_workflow=os.getenv("INTERACTIVE_PLAYBACK_IMAGE_WORKFLOW", "avatar_txt2img").strip() or "avatar_txt2img",
         render_timeout_s=_float_env("INTERACTIVE_PLAYBACK_RENDER_TIMEOUT_S", 180.0),

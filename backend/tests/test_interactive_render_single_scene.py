@@ -103,7 +103,9 @@ def test_missing_experience_returns_404(client):
 # ── Flag off → skipped ─────────────────────────────────────────
 
 def test_render_flag_off_returns_skipped(client, monkeypatch):
-    monkeypatch.delenv("INTERACTIVE_PLAYBACK_RENDER", raising=False)
+    # Render default flipped ON — explicit opt-out exercises the
+    # skip path.
+    monkeypatch.setenv("INTERACTIVE_PLAYBACK_RENDER", "false")
     eid, nid = _seed_experience(client)
     r = client.post(
         f"/v1/interactive/experiences/{eid}/nodes/{nid}/render",

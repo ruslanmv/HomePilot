@@ -6,7 +6,11 @@ from __future__ import annotations
 from app.interactive.playback.playback_config import load_playback_config
 
 
-def test_defaults_are_all_off(monkeypatch):
+def test_defaults_are_on(monkeypatch):
+    """Batteries-included: both LLM + render default to True
+    when env unset, so a fresh install with Ollama + ComfyUI
+    running locally works out of the box. Explicit opt-out still
+    works (tested below)."""
     for key in [
         "INTERACTIVE_PLAYBACK_LLM",
         "INTERACTIVE_PLAYBACK_RENDER",
@@ -18,8 +22,8 @@ def test_defaults_are_all_off(monkeypatch):
     ]:
         monkeypatch.delenv(key, raising=False)
     cfg = load_playback_config()
-    assert cfg.llm_enabled is False
-    assert cfg.render_enabled is False
+    assert cfg.llm_enabled is True
+    assert cfg.render_enabled is True
     assert cfg.llm_timeout_s == 12.0
     assert cfg.llm_max_tokens == 350
     assert abs(cfg.llm_temperature - 0.65) < 1e-9
@@ -36,13 +40,38 @@ def test_truthy_strings_enable_flags(monkeypatch):
         assert cfg.render_enabled is True, value
 
 
-def test_falsy_or_unknown_values_disable_flags(monkeypatch):
-    for value in ["", "0", "false", "off", "nope", "2"]:
+def test_falsy_strings_explicitly_disable_flags(monkeypatch):
+    """Users who don't want scene rendering can opt out via the
+    canonical falsy tokens. Unknown tokens (e.g. "2", "nope")
+    fall back to the default (True) rather than silently
+    disabling, so a typo doesn't surprise-flip behaviour."""
+    for value in ["0", "false", "off", "n", "no"]:
         monkeypatch.setenv("INTERACTIVE_PLAYBACK_LLM", value)
         monkeypatch.setenv("INTERACTIVE_PLAYBACK_RENDER", value)
         cfg = load_playback_config()
         assert cfg.llm_enabled is False, value
         assert cfg.render_enabled is False, value
+
+
+def test_unknown_values_fall_back_to_default(monkeypatch):
+    """Unknown tokens (neither truthy nor falsy) fall through to
+    the built-in default — True, since these are the defaults."""
+    for value in ["nope", "2", "dunno"]:
+        monkeypatch.setenv("INTERACTIVE_PLAYBACK_LLM", value)
+        monkeypatch.setenv("INTERACTIVE_PLAYBACK_RENDER", value)
+        cfg = load_playback_config()
+        assert cfg.llm_enabled is True, value
+        assert cfg.render_enabled is True, value
+
+
+def test_blank_env_treated_as_unset(monkeypatch):
+    """A cleared Settings field (empty string) means "use the
+    built-in default" — True today — not "force off"."""
+    monkeypatch.setenv("INTERACTIVE_PLAYBACK_LLM", "")
+    monkeypatch.setenv("INTERACTIVE_PLAYBACK_RENDER", "")
+    cfg = load_playback_config()
+    assert cfg.llm_enabled is True
+    assert cfg.render_enabled is True
 
 
 def test_numeric_overrides(monkeypatch):

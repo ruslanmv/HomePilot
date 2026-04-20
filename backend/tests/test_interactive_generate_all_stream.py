@@ -111,7 +111,10 @@ def _parse_sse(body: bytes) -> List[Dict[str, Any]]:
 # ── Render flag off: emits scene_skipped per node ───────────────
 
 def test_stream_skips_scenes_when_render_disabled(client, monkeypatch):
-    monkeypatch.delenv("INTERACTIVE_PLAYBACK_RENDER", raising=False)
+    # Render default flipped to ON in the "batteries-included"
+    # refresh, so this test explicitly opts OUT to exercise the
+    # skip path. Empty env would now pick up the True default.
+    monkeypatch.setenv("INTERACTIVE_PLAYBACK_RENDER", "false")
     eid = _make_experience(client)
     with client.stream(
         "GET", f"/v1/interactive/experiences/{eid}/generate-all/stream",

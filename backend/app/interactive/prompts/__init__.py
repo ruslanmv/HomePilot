@@ -235,6 +235,12 @@ class PromptLibrary:
 
         Unknown fields are ignored so we can grow the schema
         without breaking already-loaded caches.
+
+        ``INTERACTIVE_LLM_TIMEOUT_MULTIPLIER`` is applied at read
+        time so ops on slow hardware can triple every timeout
+        without editing YAML (e.g. set ``=3.0`` while a large
+        chat model warms up). Read live on each call so changes
+        take effect without a restart.
         """
         data = self._load_prompt(prompt_id)
         raw_policy = data.get("policy") or {}
@@ -265,9 +271,12 @@ class PromptLibrary:
             raise PromptLibraryError(
                 f"{prompt_id}: 'fallback' must be a string",
             )
+
+        base_timeout = float(raw_policy.get("timeout_s", 20.0))
+        multiplier = _timeout_multiplier_env()
         return PromptPolicy(
             retries=int(raw_policy.get("retries", 1)),
-            timeout_s=float(raw_policy.get("timeout_s", 20.0)),
+            timeout_s=max(1.0, base_timeout * multiplier),
             response_format=_nstr(raw_policy.get("response_format")),
             output_schema=_nstr(validation.get("schema")),
             allowed_values=list(allowed or []),
@@ -292,6 +301,28 @@ def _nstr(value: Any) -> Optional[str]:
     if isinstance(value, str):
         return value.strip() or None
     return str(value)
+
+
+def _timeout_multiplier_env() -> float:
+    """Read ``INTERACTIVE_LLM_TIMEOUT_MULTIPLIER`` live on each
+    call. Lets operators on slow hardware triple every prompt's
+    deadline without editing the YAML library. Defaults to 1.0;
+    clamped to [0.1, 10.0] to prevent runaway values.
+
+    Zero / negative / non-numeric values are ignored (fall back
+    to 1.0) so a malformed env entry never disables timeouts
+    entirely.
+    """
+    raw = os.getenv("INTERACTIVE_LLM_TIMEOUT_MULTIPLIER", "").strip()
+    if not raw:
+        return 1.0
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 1.0
+    if value <= 0:
+        return 1.0
+    return max(0.1, min(10.0, value))
 
 
 # ── Module-level convenience ───────────────────────────────────

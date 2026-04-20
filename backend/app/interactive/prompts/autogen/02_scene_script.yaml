@@ -74,7 +74,7 @@ user_template: |
 
 policy:
   retries: 2
-  timeout_s: 20.0
+  timeout_s: 30.0
   response_format: json
 
 validation:
