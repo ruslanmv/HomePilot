@@ -39,8 +39,15 @@ system: |
       "scene_prompt": str,     # comma-separated visual cues for the video behind the reply
       "duration_sec": int,     # 3..8
       "mood_shift": str,       # one of: neutral shy flirty playful warm cold
-      "affinity_delta": float  # 0.00..0.05 — small positive bump for the greeting
+      "affinity_delta": float, # 0.00..0.05 — small positive bump for the greeting
+      "edit_hint": str         # always "identity_reproject" for the opener
     }}
+
+  Edit hint rule: the opener sets the scene, so always emit
+  ``"edit_hint": "identity_reproject"`` — the renderer uses the
+  persona's canonical portrait as the source and repositions her
+  into the setting implied by the backstory, which keeps the face
+  identical to the committed portrait.
 
   Opener rules:
     - First person, present tense. No "Hello viewer" / "Welcome".

@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from ..policy.classifier import IntentMatch, classify_intent
+from .edit_recipes import EditRecipe
 from .scene_memory import SceneMemory
 
 
@@ -45,6 +46,14 @@ class ScenePlan:
     topic_continuity: str = ""
     intent_code: str = "smalltalk"
     confidence: float = 0.5
+    # Persona Live Play: when the LLM classified the turn into a
+    # specific edit kind (pose / outfit / expression / …) we carry
+    # the resolved recipe here so the render adapter can switch
+    # from txt2img to the matching img2img / inpaint workflow on
+    # the persona's canonical portrait. ``None`` means "no recipe
+    # applies — run the default txt2img path", which is how every
+    # standard branching project stays unchanged.
+    edit_recipe: Optional[EditRecipe] = None
 
 
 def plan_next_scene(
@@ -82,6 +91,7 @@ async def plan_next_scene_async(
     duration_sec: int = 5,
     persona_project_id: str = "",
     persona_label: str = "",
+    allow_explicit: bool = False,
 ) -> ScenePlan:
     """Async variant that tries the LLM composer before falling
     back to the deterministic heuristic.
@@ -110,6 +120,7 @@ async def plan_next_scene_async(
         persona_project_id=persona_project_id,
         persona_label=persona_label,
         synopsis=memory.synopsis,
+        allow_explicit=allow_explicit,
     )
     if llm_plan is not None:
         return llm_plan

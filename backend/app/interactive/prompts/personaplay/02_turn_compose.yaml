@@ -52,8 +52,30 @@ system: |
       "scene_prompt": str,       # comma-separated visual cues, 6-10 items
       "duration_sec": int,       # 2..15, aim near {duration_sec}
       "mood_shift": str,         # one of: neutral shy flirty playful warm cold
-      "affinity_delta": float    # -0.20..+0.20 (small steps; greeting ≈ 0.02)
+      "affinity_delta": float,   # -0.20..+0.20 (small steps; greeting ≈ 0.02)
+      "edit_hint": str           # see EDIT KIND below
     }}
+
+  EDIT KIND — pick ONE from this closed list:
+    expression          only the persona's facial expression changes
+                        (smile, blush, look away). Pose, outfit and
+                        setting are the same as the last turn.
+    pose                the persona's body/pose changes. Face,
+                        outfit and setting are the same.
+    outfit              the persona's clothing changes. Face,
+                        pose and setting are the same.
+    bg                  the setting/background changes. Persona
+                        unchanged.
+    composition         multiple things change together (e.g. a
+                        new character enters the scene). Use
+                        sparingly — denoise is higher.
+    identity_reproject  moves the persona into a new location
+                        while keeping the same identity. Use for
+                        scene-setting ("she walks to the window").
+    outpaint            widens the frame (zoom out, show more of
+                        the setting). Persona identity unchanged.
+    default             a small img2img nudge when none of the
+                        above clearly applies. Keep denoise low.
 
   Reply rules:
     - First person, present tense.

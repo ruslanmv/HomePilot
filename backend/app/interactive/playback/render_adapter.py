@@ -18,6 +18,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from .edit_recipes import EditRecipe, recipe_to_variables
+from .persona_assets import PersonaAssets, resolve_persona_assets
 from .playback_config import PlaybackConfig, load_playback_config
 
 
@@ -41,6 +43,8 @@ async def render_scene_async(
     persona_hint: str = "",
     media_type: str = "video",
     config: Optional[PlaybackConfig] = None,
+    edit_recipe: Optional[EditRecipe] = None,
+    persona_project_id: str = "",
 ) -> Optional[str]:
     """Submit a workflow, extract the first usable media URL, and
     register it as a durable asset. Returns the asset id or
@@ -58,16 +62,39 @@ async def render_scene_async(
     if not scene_prompt.strip():
         return None
 
-    # Pick the workflow by model ARCHITECTURE (sd15/sdxl/flux/svd/
-    # ltx/wan/...) — same dispatch Imagine + Animate already use,
-    # so we inherit their battle-tested workflow JSON filenames
-    # instead of the hard-coded ``animate`` / ``avatar_txt2img``
-    # that never matched files on disk. See _resolve_workflow().
-    workflow = _resolve_workflow(cfg, media_type)
-    variables = _build_variables(
-        scene_prompt, duration_sec, persona_hint,
-        media_type=media_type,
-    )
+    # Persona Live Play edit path — when the composer returned an
+    # edit recipe AND we can resolve the persona's canonical
+    # portrait on disk, route through the matching edit workflow
+    # (avatar_body_pose / avatar_inpaint_outfit / …) with the
+    # portrait as the source image. This swaps txt2img for img2img
+    # on a fixed anchor, which keeps identity locked across turns.
+    # Any failure (no persona, no portrait committed, unknown
+    # workflow file) falls back to the existing txt2img pipeline
+    # so standard projects and degraded personas still render.
+    persona_assets: Optional[PersonaAssets] = None
+    if edit_recipe and persona_project_id:
+        persona_assets = resolve_persona_assets(persona_project_id)
+
+    if edit_recipe and persona_assets:
+        workflow = edit_recipe.workflow_id
+        variables = _build_edit_variables(
+            scene_prompt=scene_prompt,
+            duration_sec=duration_sec,
+            persona_hint=persona_hint,
+            persona_assets=persona_assets,
+            recipe=edit_recipe,
+        )
+    else:
+        # Pick the workflow by model ARCHITECTURE (sd15/sdxl/flux/svd/
+        # ltx/wan/...) — same dispatch Imagine + Animate already use,
+        # so we inherit their battle-tested workflow JSON filenames
+        # instead of the hard-coded ``animate`` / ``avatar_txt2img``
+        # that never matched files on disk. See _resolve_workflow().
+        workflow = _resolve_workflow(cfg, media_type)
+        variables = _build_variables(
+            scene_prompt, duration_sec, persona_hint,
+            media_type=media_type,
+        )
     log.info(
         "playback_render_submit workflow=%s media_type=%s",
         workflow, media_type,
@@ -256,6 +283,67 @@ def _build_variables(
         "ckpt_name": active_model,
         "comfy_base_url": providers.comfy_base_url,
     }
+
+
+def _build_edit_variables(
+    *, scene_prompt: str, duration_sec: int, persona_hint: str,
+    persona_assets: PersonaAssets, recipe: EditRecipe,
+) -> Dict[str, Any]:
+    """Variables for a Persona Live Play edit run.
+
+    Reuses the same "aliased model/checkpoint" shape the txt2img
+    path emits (so a workflow author can reference whichever name
+    fits their JSON) but overlays the edit-specific fields:
+    source image paths, per-recipe denoise/cfg/steps, the LoRA
+    stack (safety-filtered upstream), and the mask / ControlNet
+    hints. Every key the workflow doesn't reference is ignored,
+    so we can send a union of inputs without per-workflow code.
+    """
+    import random as _random
+    from ..media_router import resolve_current_providers  # late import
+
+    positive_bits: List[str] = []
+    for bit in (persona_hint.strip(), persona_assets.character_prompt,
+                persona_assets.outfit_prompt, scene_prompt.strip()):
+        if bit and bit not in positive_bits:
+            positive_bits.append(bit)
+    positive = ", ".join(positive_bits)
+
+    providers = resolve_current_providers()
+    safe_duration = max(2, min(int(duration_sec or 5), 15))
+
+    base: Dict[str, Any] = {
+        "prompt": positive,
+        "positive_prompt": positive,
+        "negative_prompt": os.getenv("DEFAULT_NEGATIVE_PROMPT", _DEFAULT_NEGATIVE),
+        "seconds": safe_duration,
+        "duration_sec": safe_duration,
+        "width": 1024,
+        "height": 1024,
+        "steps": recipe.steps,
+        "cfg": recipe.cfg,
+        "denoise": recipe.denoise,
+        "seed": _random.randint(1, 2_147_483_646),
+        "aspect_ratio": "1:1",
+        "style": "photorealistic",
+        # Source image for img2img / inpaint — multiple aliases so
+        # a workflow LoadImage node can pick whichever placeholder
+        # its JSON uses.
+        "source_image": persona_assets.portrait_path,
+        "input_image": persona_assets.portrait_path,
+        "image": persona_assets.portrait_path,
+        "reference_image": persona_assets.portrait_path,
+        "persona_portrait_url": persona_assets.portrait_url,
+        # Model bindings (same shape txt2img path uses).
+        "image_model": providers.image_model,
+        "video_model": providers.video_model,
+        "model": providers.image_model,
+        "checkpoint": providers.image_model,
+        "ckpt_name": providers.image_model,
+        "comfy_base_url": providers.comfy_base_url,
+    }
+    base.update(recipe_to_variables(recipe))
+    return base
 
 
 async def _run_workflow_off_thread(

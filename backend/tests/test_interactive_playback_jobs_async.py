@@ -48,7 +48,7 @@ def _install_adapter(
 
     async def _fake(
         *, scene_prompt, duration_sec, session_id,
-        persona_hint="", media_type="video", config=None,
+        persona_hint="", media_type="video", config=None, **_kwargs,
     ) -> Optional[str]:
         if isinstance(result, Exception):
             raise result

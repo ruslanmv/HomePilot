@@ -28,6 +28,8 @@ from .scene_planner import (
     synthesize_synopsis,
 )
 from .asset_urls import resolve_asset_url
+from .edit_recipes import EditRecipe, LoRAEntry, pick_recipe
+from .persona_assets import PersonaAssets, resolve_persona_assets
 from .persona_profile import load_persona_prompt_vars
 from .schema import ensure_playback_schema
 from .video_job import (
@@ -53,9 +55,14 @@ __all__ = [
     "plan_next_scene",
     "plan_next_scene_async",
     "synthesize_synopsis",
+    "EditRecipe",
+    "LoRAEntry",
+    "PersonaAssets",
     "ensure_playback_schema",
     "load_persona_prompt_vars",
+    "pick_recipe",
     "resolve_asset_url",
+    "resolve_persona_assets",
     "SceneJob",
     "get_job",
     "list_jobs",

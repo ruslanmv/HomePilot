@@ -154,6 +154,7 @@ def render_now(job_id: str, *, delay_ms: int = 0) -> Optional[SceneJob]:
 
 async def render_now_async(
     job_id: str, *, persona_hint: str = "", media_type: str = "video",
+    edit_recipe: Any = None, persona_project_id: str = "",
 ) -> Optional[SceneJob]:
     """Drive a job to completion, preferring the real renderer.
 
@@ -195,6 +196,8 @@ async def render_now_async(
             persona_hint=persona_hint,
             media_type=media_type,
             config=cfg,
+            edit_recipe=edit_recipe,
+            persona_project_id=persona_project_id,
         )
 
     if not asset_id:

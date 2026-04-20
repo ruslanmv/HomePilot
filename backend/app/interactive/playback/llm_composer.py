@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 from ...llm import chat_ollama
 from ..policy.classifier import IntentMatch
 from ..prompts import PromptLibraryError, default_library
+from .edit_recipes import EDIT_HINTS, pick_recipe
 from .persona_profile import load_persona_prompt_vars
 from .playback_config import PlaybackConfig, load_playback_config
 from .scene_memory import SceneMemory, TurnSnapshot
@@ -57,6 +58,7 @@ async def compose_with_llm(
     persona_project_id: str = "",
     persona_label: str = "",
     synopsis: str = "",
+    allow_explicit: bool = False,
 ) -> Optional[ScenePlan]:
     """Ask the LLM for the next scene. Returns None on failure.
 
@@ -125,6 +127,7 @@ async def compose_with_llm(
     plan = _to_scene_plan(
         payload=payload, memory=memory, text=text,
         classification=classification, duration_sec=duration_sec,
+        allow_explicit=allow_explicit,
     )
     return plan
 
@@ -340,6 +343,7 @@ def _parse_json(content: str) -> Optional[Dict[str, Any]]:
 def _to_scene_plan(
     *, payload: Dict[str, Any], memory: SceneMemory, text: str,
     classification: IntentMatch, duration_sec: int,
+    allow_explicit: bool = False,
 ) -> Optional[ScenePlan]:
     reply_text = _trimmed_string(payload.get("reply_text"), max_len=600)
     scene_prompt = _trimmed_string(payload.get("scene_prompt"), max_len=400)
@@ -375,6 +379,17 @@ def _to_scene_plan(
 
     continuity = _trimmed_string(text, max_len=120)
 
+    # Persona Live Play extension: when the LLM tagged the turn
+    # with a valid edit_hint, resolve it through the recipe router
+    # so the render adapter can swap to the matching img2img /
+    # inpaint workflow on the persona's canonical portrait. An
+    # unknown / missing hint leaves ``edit_recipe=None`` and the
+    # standard txt2img path runs as before.
+    raw_hint = str(payload.get("edit_hint") or "").strip().lower()
+    edit_recipe = None
+    if raw_hint in EDIT_HINTS:
+        edit_recipe = pick_recipe(raw_hint, allow_explicit=allow_explicit)
+
     return ScenePlan(
         reply_text=reply_text,
         narration=narration,
@@ -384,6 +399,7 @@ def _to_scene_plan(
         topic_continuity=continuity,
         intent_code=classification.intent_code or "smalltalk",
         confidence=float(classification.confidence or 0.0),
+        edit_recipe=edit_recipe,
     )
 
 

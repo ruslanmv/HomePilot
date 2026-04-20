@@ -106,12 +106,14 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
 
         persona_hint = _persona_hint_from_experience(exp, sess)
         persona_project_id, persona_label = _persona_project_from_experience(exp)
+        allow_explicit = _persona_allow_explicit(persona_project_id)
         plan = await plan_next_scene_async(
             memory, text,
             persona_hint=persona_hint,
             duration_sec=_target_duration_from_cfg(cfg),
             persona_project_id=persona_project_id,
             persona_label=persona_label,
+            allow_explicit=allow_explicit,
         )
 
         # ── Apply character state delta ──────────────────────────
@@ -154,6 +156,8 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
         media_type = _media_type_from_experience(exp)
         completed = await render_now_async(
             job.id, persona_hint=persona_hint, media_type=media_type,
+            edit_recipe=plan.edit_recipe,
+            persona_project_id=persona_project_id,
         )
         job_status = completed.status if completed else job.status
         asset_id = completed.asset_id if completed else ""
@@ -266,6 +270,29 @@ def _persona_hint_from_experience(exp: Any, sess: Any) -> str:
     if desc:
         return desc
     return str(getattr(exp, "title", "") or "").strip()
+
+
+def _persona_allow_explicit(persona_project_id: str) -> bool:
+    """Read ``persona_agent.safety.allow_explicit`` off the persona
+    project. Safety-first default: when the project can't be
+    loaded or the field is missing, returns ``False`` — the recipe
+    router then strips NSFW LoRAs and downgrades body-mask
+    denoise. Standard projects without a persona also land here
+    (empty id) and get the same safe default.
+    """
+    pid = (persona_project_id or "").strip()
+    if not pid:
+        return False
+    try:
+        from ... import projects  # late import to keep tests cheap
+        data = projects.get_project_by_id(pid)
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    agent = data.get("persona_agent") or {}
+    safety = agent.get("safety") or {}
+    return bool(safety.get("allow_explicit", False))
 
 
 def _persona_project_from_experience(exp: Any) -> tuple[str, str]:
