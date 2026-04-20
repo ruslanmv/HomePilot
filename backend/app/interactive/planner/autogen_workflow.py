@@ -54,6 +54,50 @@ _ALLOWED_KINDS = {"scene", "decision", "ending"}
 _MAX_SCENES = 40
 
 
+# ── Helpers ────────────────────────────────────────────────────
+
+def _to_scene_id(raw: Any) -> str:
+    """Canonicalize scene ids to backend-safe snake_case ≤ 24 chars.
+
+    Small LLMs routinely emit prose-style ids like ``"Show Interest
+    In Her Life"`` that trip the validator's ``^[a-z][a-z0-9_]{0,23}$``
+    regex. We coerce those into the required shape rather than
+    losing an otherwise-valid payload:
+
+      * lowercase everything
+      * non-alphanumeric runs → single underscore
+      * strip leading/trailing underscores
+      * ensure the first char is a letter (prefix ``s_`` if not)
+      * truncate to 24 chars (re-trim trailing underscore)
+      * empty results fall back to the literal ``"scene"``
+    """
+    base = str(raw or "").strip().lower()
+    base = re.sub(r"[^a-z0-9]+", "_", base)
+    base = re.sub(r"_+", "_", base).strip("_")
+    if not base:
+        base = "scene"
+    if not re.match(r"^[a-z]", base):
+        base = f"s_{base}"
+    return base[:24].rstrip("_") or "scene"
+
+
+def _dedupe_scene_id(base: str, used: set) -> str:
+    """Pick a unique snake_case id given a set of already-used ones.
+
+    Reserves up to 3 trailing chars for a ``_NN`` suffix so the
+    result stays within the 24-char cap even after disambiguation.
+    """
+    if base not in used:
+        return base
+    stem = base[:21].rstrip("_") or "scene"
+    i = 2
+    while True:
+        cand = f"{stem}_{i}"
+        if cand not in used:
+            return cand
+        i += 1
+
+
 # ── Feature flag ───────────────────────────────────────────────
 
 def workflow_enabled() -> bool:
@@ -104,9 +148,31 @@ def _parse_spine(content: str) -> Dict[str, Any]:
 
     # Forgiving normalisation — small LLMs frequently drop the
     # array wrapper when a field "should" hold a single string
-    # (``"next": "end_a"`` instead of ``"next": ["end_a"]``). We
-    # fix that up here rather than at the validator so authors
-    # don't lose a whole workflow to a punctuation slip.
+    # (``"next": "end_a"`` instead of ``"next": ["end_a"]``) AND
+    # emit prose-style ids like "Show Interest In Her Life" that
+    # trip the validator's snake_case regex. Both get fixed here
+    # rather than at the validator so authors don't lose a whole
+    # workflow to a punctuation slip.
+
+    # 1) Canonicalise scene ids and record the old → new rewrite
+    #    map so we can patch ``next`` pointers + the ``start`` ref
+    #    to match. Deduped so collapsed ids ("Path A" / "path a")
+    #    don't collide.
+    id_map: Dict[str, str] = {}
+    used_ids: set = set()
+    for idx, scene in enumerate(scenes):
+        if not isinstance(scene, dict):
+            continue
+        old_id = str(scene.get("id") or f"scene_{idx + 1}")
+        new_id = _dedupe_scene_id(_to_scene_id(old_id), used_ids)
+        used_ids.add(new_id)
+        id_map[old_id] = new_id
+        scene["id"] = new_id
+        # Best-effort alias: if another scene refers to this one
+        # via its pre-normalised form, that lookup should still hit.
+        id_map.setdefault(_to_scene_id(old_id), new_id)
+
+    # 2) Normalise edge-shape fields and rewrite id references.
     for scene in scenes:
         if not isinstance(scene, dict):
             continue
@@ -116,10 +182,25 @@ def _parse_spine(content: str) -> Dict[str, Any]:
             scene["next"] = [nxt] if nxt else []
         elif nxt is None and (scene.get("kind") or "").lower() != "ending":
             scene["next"] = []
+        if isinstance(scene.get("next"), list):
+            scene["next"] = [
+                id_map.get(
+                    str(target),
+                    id_map.get(_to_scene_id(target), str(target)),
+                )
+                for target in scene["next"]
+                if str(target).strip()
+            ]
         # choice_labels: str → [str]
         labels = scene.get("choice_labels")
         if isinstance(labels, str):
             scene["choice_labels"] = [labels] if labels else []
+
+    # 3) ``start`` may reference the pre-normalised id; rewrite it.
+    start_raw = str(start)
+    data["start"] = id_map.get(
+        start_raw, id_map.get(_to_scene_id(start_raw), start_raw),
+    )
     return data
 
 

@@ -105,6 +105,29 @@ def test_parse_spine_accepts_valid_payload():
     }
 
 
+def test_parse_spine_normalizes_long_and_non_snake_ids():
+    """LLMs often emit prose ids like "Show Interest In Her Life".
+    The parser must canonicalise them + rewrite every ``next`` +
+    ``start`` reference so the validator passes on content that
+    would otherwise be rejected for an id-format technicality."""
+    spine = _parse_spine(
+        '{"start":"Opening Scene","scenes":['
+        '{"id":"Opening Scene","kind":"scene","next":["Next Choice"]},'
+        '{"id":"Next Choice","kind":"decision",'
+        ' "next":["Show Interest In Her Life"],'
+        ' "choice_labels":["Keep Talking"]},'
+        '{"id":"Show Interest In Her Life","kind":"ending"}'
+        ']}'
+    )
+    assert spine["start"] == "opening_scene"
+    ids = {s["id"] for s in spine["scenes"]}
+    assert "opening_scene" in ids
+    assert "next_choice" in ids
+    # Long prose ids are truncated to the 24-char cap.
+    assert "show_interest_in_her_lif" in ids
+    assert _validate_spine(spine) is None
+
+
 def test_parse_spine_raises_on_garbage():
     with pytest.raises(ValueError):
         _parse_spine("not even close to json")

@@ -29,6 +29,7 @@ from app.interactive.planner.autoplan_workflow import (
     _parse_shape_obj,
     _parse_string_array,
     _parse_text,
+    _parse_title_candidates,
     _validate_audience_obj,
     _validate_brief,
     _validate_mode,
@@ -98,6 +99,19 @@ def test_parse_string_array():
     assert _parse_string_array('["a", "b", "c"]') == ["a", "b", "c"]
     with pytest.raises(ValueError):
         _parse_string_array('{"not": "a list"}')
+
+
+def test_parse_title_candidates_tolerates_non_json_text():
+    """Smaller local models often answer in chatty plain text.
+    The fallback extracts candidates from numbered lists instead
+    of aborting the workflow for a cosmetic-format miss."""
+    out = _parse_title_candidates(
+        "Titles:\n"
+        "1) Pricing Basics\n"
+        "2) Confident Tier Pitches\n"
+        "3) Objection Ready"
+    )
+    assert out == ["Pricing Basics", "Confident Tier Pitches", "Objection Ready"]
 
 
 def test_parse_audience_obj():

@@ -168,6 +168,46 @@ def _parse_string_array(content: str) -> List[str]:
     return out
 
 
+def _parse_title_candidates(content: str) -> List[str]:
+    """Parse title candidates with a tolerant plain-text fallback.
+
+    The YAML asks the LLM for strict JSON, and strong models
+    comply. Smaller local models (including the default
+    ``llama3:8b`` and anything in the 1–4B range) often return
+    chatty replies like::
+
+        Titles:
+        1) Pricing Basics
+        2) Confident Tier Pitches
+        3) Objection Ready
+
+    Rejecting those with ``no JSON object/array in response``
+    costs us the whole autoplan workflow for a cosmetic-format
+    miss. The fallback below salvages candidate titles from
+    numbered lists, bullet points, commas, and semicolons so
+    the title step can proceed.
+    """
+    try:
+        return _parse_string_array(content)
+    except ValueError:
+        s = (content or "").strip()
+        if not s:
+            raise
+        # Drop common framing words the model likes to prepend.
+        s = re.sub(r"^titles?\s*:\s*", "", s, flags=re.IGNORECASE).strip()
+        raw_parts = re.split(r"\n+|[;,]", s)
+        out: List[str] = []
+        for part in raw_parts:
+            cleaned = re.sub(
+                r"^\s*(?:[-*•]|\d+[.)])\s*", "", part,
+            ).strip().strip("\"'")
+            if cleaned:
+                out.append(cleaned)
+        if out:
+            return out
+        raise
+
+
 def _parse_audience_obj(content: str) -> Dict[str, str]:
     data = _parse_json_text(content)
     if not isinstance(data, dict):
@@ -392,7 +432,7 @@ def build_autoplan_steps() -> List[Step]:
             prompt_id="autoplan.title",
             output_key="title_candidates",
             build_vars=_vars_title,
-            parse=_parse_string_array,
+            parse=_parse_title_candidates,
             validate=_validate_title_array,
             temperature=0.5,
             max_tokens=120,
