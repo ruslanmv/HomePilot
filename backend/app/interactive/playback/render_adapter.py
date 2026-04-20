@@ -39,11 +39,18 @@ async def render_scene_async(
     duration_sec: int,
     session_id: str,
     persona_hint: str = "",
+    media_type: str = "video",
     config: Optional[PlaybackConfig] = None,
 ) -> Optional[str]:
     """Submit a workflow, extract the first usable media URL, and
     register it as a durable asset. Returns the asset id or
     ``None`` on any failure / when the render flag is off.
+
+    ``media_type='image'`` swaps to the still-image workflow
+    (``PlaybackConfig.image_workflow``) — a fast GPU-friendly path
+    for operators without the VRAM budget for full video clips. The
+    player already picks ``<img>`` vs ``<video>`` by file extension,
+    so the change is transparent to the frontend.
     """
     cfg = config or load_playback_config()
     if not cfg.render_enabled:
@@ -51,28 +58,29 @@ async def render_scene_async(
     if not scene_prompt.strip():
         return None
 
+    workflow = cfg.workflow_for(media_type)
     variables = _build_variables(scene_prompt, duration_sec, persona_hint)
     try:
         result = await asyncio.wait_for(
-            _run_workflow_off_thread(cfg.render_workflow, variables),
+            _run_workflow_off_thread(workflow, variables),
             timeout=cfg.render_timeout_s,
         )
     except asyncio.TimeoutError:
         log.warning(
             "playback_render_timeout after %.1fs (workflow=%s)",
-            cfg.render_timeout_s, cfg.render_workflow,
+            cfg.render_timeout_s, workflow,
             extra={"session_id": session_id},
         )
         return None
     except Exception as exc:  # noqa: BLE001 — any pipeline failure → fallback
         log.warning(
             "playback_render_error (workflow=%s): %s",
-            cfg.render_workflow, str(exc)[:400],
+            workflow, str(exc)[:400],
             extra={"session_id": session_id},
         )
         return None
 
-    media_url, media_kind = _select_best_media(result)
+    media_url, media_kind = _select_best_media(result, prefer=media_type)
     if not media_url:
         keys = list(result.keys()) if isinstance(result, dict) else []
         log.warning(
@@ -136,16 +144,29 @@ async def _run_workflow_off_thread(
     return result if isinstance(result, dict) else {}
 
 
-def _select_best_media(result: Dict[str, Any]) -> tuple[str, str]:
-    """Pick a video first (the player wants clips), then fall back
-    to the first image if the workflow is image-only. Returns
-    ``(url, kind)`` where kind is 'video' or 'image'; both empty
-    when nothing usable is present.
+def _select_best_media(
+    result: Dict[str, Any], *, prefer: str = "video",
+) -> tuple[str, str]:
+    """Pick the best output URL from a ComfyUI result.
+
+    ``prefer='video'`` (default) grabs a clip first and falls back to
+    an image — the legacy order for full video workflows that only
+    occasionally produce stills. ``prefer='image'`` flips the
+    priority so operators using the image-only workflow (for
+    GPU-constrained feasibility tests) don't accidentally get an
+    unexpected clip if the workflow also emits one. Returns
+    ``(url, kind)``; both empty when nothing usable is present.
     """
     videos = _first_urls(result.get("videos"))
+    images = _first_urls(result.get("images"))
+    if (prefer or "").strip().lower() == "image":
+        if images:
+            return images[0], "image"
+        if videos:
+            return videos[0], "video"
+        return "", ""
     if videos:
         return videos[0], "video"
-    images = _first_urls(result.get("images"))
     if images:
         return images[0], "image"
     return "", ""

@@ -141,8 +141,17 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
         # INTERACTIVE_PLAYBACK_RENDER is on and gracefully falls
         # back to the phase-1 stub otherwise, so this handler
         # never has to branch on flags itself.
+        #
+        # media_type reads the wizard-stamped audience_profile flag;
+        # 'image' swaps to the fast still-image workflow for GPU-
+        # constrained operators, 'video' keeps the current clip
+        # pipeline. Default stays 'video' so legacy experiences keep
+        # their existing look.
         job = submit_scene_job(session_id, character_turn_id, plan)
-        completed = await render_now_async(job.id, persona_hint=persona_hint)
+        media_type = _media_type_from_experience(exp)
+        completed = await render_now_async(
+            job.id, persona_hint=persona_hint, media_type=media_type,
+        )
         job_status = completed.status if completed else job.status
         asset_id = completed.asset_id if completed else ""
         asset_url = resolve_asset_url(asset_id) if asset_id else None
@@ -254,6 +263,21 @@ def _persona_hint_from_experience(exp: Any, sess: Any) -> str:
     if desc:
         return desc
     return str(getattr(exp, "title", "") or "").strip()
+
+
+def _media_type_from_experience(exp: Any) -> str:
+    """Read ``audience_profile.render_media_type`` off the experience.
+
+    The wizard stamps either ``"video"`` (full ComfyUI clip) or
+    ``"image"`` (fast still-image feasibility path). Unknown or
+    missing values fall back to ``"video"`` so pre-flag experiences
+    keep their existing pipeline.
+    """
+    ap = getattr(exp, "audience_profile", None) or {}
+    if not isinstance(ap, dict):
+        return "video"
+    raw = str(ap.get("render_media_type") or "").strip().lower()
+    return "image" if raw == "image" else "video"
 
 
 def _target_duration_from_cfg(cfg: InteractiveConfig) -> int:

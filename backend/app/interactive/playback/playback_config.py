@@ -24,6 +24,7 @@ INTERACTIVE_PLAYBACK_LLM_TIMEOUT_S       (float, default 12)
 INTERACTIVE_PLAYBACK_LLM_MAX_TOKENS      (int,   default 350)
 INTERACTIVE_PLAYBACK_LLM_TEMPERATURE     (float, default 0.65)
 INTERACTIVE_PLAYBACK_RENDER_WORKFLOW     (str,   default 'animate')
+INTERACTIVE_PLAYBACK_IMAGE_WORKFLOW      (str,   default 'avatar_txt2img')
 INTERACTIVE_PLAYBACK_RENDER_TIMEOUT_S    (float, default 180)
 
 All flags default OFF so upgrading from phase-1 is a no-op unless
@@ -73,8 +74,23 @@ class PlaybackConfig:
     llm_max_tokens: int
     llm_temperature: float
     render_enabled: bool
-    render_workflow: str
+    render_workflow: str        # video workflow (Animate / SVD / Wan)
+    image_workflow: str         # still-image workflow (txt2img)
     render_timeout_s: float
+
+    def workflow_for(self, media_type: str) -> str:
+        """Pick the workflow name for the requested media kind.
+
+        ``media_type`` is the string stamped onto the experience's
+        ``audience_profile.render_media_type`` at wizard time.
+        Unknown / empty values fall back to the video workflow so
+        experiences created before this knob existed keep rendering
+        the same clips they always did.
+        """
+        kind = (media_type or "").strip().lower()
+        if kind == "image":
+            return self.image_workflow
+        return self.render_workflow
 
 
 def load_playback_config() -> PlaybackConfig:
@@ -86,5 +102,6 @@ def load_playback_config() -> PlaybackConfig:
         llm_temperature=_float_env("INTERACTIVE_PLAYBACK_LLM_TEMPERATURE", 0.65),
         render_enabled=_bool_env("INTERACTIVE_PLAYBACK_RENDER"),
         render_workflow=os.getenv("INTERACTIVE_PLAYBACK_RENDER_WORKFLOW", "animate").strip() or "animate",
+        image_workflow=os.getenv("INTERACTIVE_PLAYBACK_IMAGE_WORKFLOW", "avatar_txt2img").strip() or "avatar_txt2img",
         render_timeout_s=_float_env("INTERACTIVE_PLAYBACK_RENDER_TIMEOUT_S", 180.0),
     )

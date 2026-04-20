@@ -57,7 +57,7 @@ def _pcfg() -> PlaybackConfig:
     return PlaybackConfig(
         llm_enabled=False, llm_timeout_s=5.0,
         llm_max_tokens=500, llm_temperature=0.5,
-        render_enabled=False, render_workflow="animate",
+        render_enabled=False, render_workflow="animate", image_workflow="avatar_txt2img",
         render_timeout_s=60.0,
     )
 

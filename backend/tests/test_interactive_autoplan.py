@@ -56,7 +56,7 @@ def _pcfg(*, llm_enabled: bool = True) -> PlaybackConfig:
     return PlaybackConfig(
         llm_enabled=llm_enabled, llm_timeout_s=5.0,
         llm_max_tokens=500, llm_temperature=0.5,
-        render_enabled=False, render_workflow="animate",
+        render_enabled=False, render_workflow="animate", image_workflow="avatar_txt2img",
         render_timeout_s=60.0,
     )
 
@@ -280,7 +280,7 @@ def test_llm_timeout_falls_back_to_heuristic(monkeypatch):
     pcfg = PlaybackConfig(
         llm_enabled=True, llm_timeout_s=0.05,
         llm_max_tokens=500, llm_temperature=0.5,
-        render_enabled=False, render_workflow="animate",
+        render_enabled=False, render_workflow="animate", image_workflow="avatar_txt2img",
         render_timeout_s=60.0,
     )
     result = _run(autoplan("hi", cfg=_cfg(), playback_cfg=pcfg))

@@ -25,7 +25,7 @@ def _config(
     return PlaybackConfig(
         llm_enabled=llm_enabled, llm_timeout_s=timeout,
         llm_max_tokens=256, llm_temperature=0.5,
-        render_enabled=False, render_workflow="animate",
+        render_enabled=False, render_workflow="animate", image_workflow="avatar_txt2img",
         render_timeout_s=60.0,
     )
 

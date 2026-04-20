@@ -153,7 +153,7 @@ def render_now(job_id: str, *, delay_ms: int = 0) -> Optional[SceneJob]:
 
 
 async def render_now_async(
-    job_id: str, *, persona_hint: str = "",
+    job_id: str, *, persona_hint: str = "", media_type: str = "video",
 ) -> Optional[SceneJob]:
     """Drive a job to completion, preferring the real renderer.
 
@@ -163,6 +163,12 @@ async def render_now_async(
     failure path (flag off, pipeline error, timeout, registry
     failure) falls back to the phase-1 stub placeholder so the
     player's polling loop always resolves to a terminal state.
+
+    ``media_type`` is the value the wizard stamped onto the
+    experience's ``audience_profile.render_media_type`` — it picks
+    between the full-video workflow and the still-image workflow.
+    Default stays ``video`` so pre-FIX-8 experiences keep their
+    existing render behaviour.
 
     Safe for concurrent use: the underlying UPDATE statements on
     ``ix_scene_queue`` are atomic, and this function never calls
@@ -187,6 +193,7 @@ async def render_now_async(
             duration_sec=job.duration_sec,
             session_id=job.session_id,
             persona_hint=persona_hint,
+            media_type=media_type,
             config=cfg,
         )
 

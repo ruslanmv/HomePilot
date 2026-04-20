@@ -25,6 +25,7 @@ def _config(*, render_enabled: bool = True, timeout: float = 5.0) -> PlaybackCon
         llm_temperature=0.65,
         render_enabled=render_enabled,
         render_workflow="animate",
+        image_workflow="avatar_txt2img",
         render_timeout_s=timeout,
     )
 
