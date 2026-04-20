@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>INTERACTIVE</b><br>
-  <em>Turn one sentence into a branching AI video you can play, edit, and share.</em>
+  <em>Turn one sentence into an interactive video you can play, edit, and share.</em>
 </p>
 
 <p align="center">
@@ -18,15 +18,15 @@
 
 ## What is Interactive?
 
-**Interactive** lets anyone build a branching video — the kind where the viewer makes choices and the story adapts — just by writing one sentence.
+**Interactive** lets anyone create a choose-your-path video. You type one sentence. HomePilot builds the story, makes the scenes, and lets your viewers click through what happens next.
 
-Under the hood, HomePilot splits that sentence into seven tiny questions for an AI assistant ("What kind of story is this?", "Who is it for?", "How many choices?"), then stitches the answers into a scene graph: a set of short video or image scenes connected by choices. The viewer plays it in a YouTube-style player with "What to do next?" decision cards, or — if you picked a persona — in a chat-plus-video layout inspired by candy.ai.
+Think of it like a short video with decision points — like a "choose your own adventure" book, but on screen. The AI does the heavy lifting: it writes the story, picks the scenes, and even generates the pictures or clips. You just review, tweak, and hit **Play**.
 
-You don't need to know anything about AI models, ComfyUI, or graph theory. The wizard takes your idea, the Editor lets you tweak anything you don't like, and the Play button runs the whole thing.
+No coding. No prompts to write. No prior AI knowledge needed.
 
 ---
 
-## Two kinds of Interactive
+## Two styles of Interactive
 
 <table>
 <tr>
@@ -34,23 +34,28 @@ You don't need to know anything about AI models, ComfyUI, or graph theory. The w
 
 ### Standard project
 
-A YouTube-style branching video. Each scene plays for a few seconds, then a decision card asks the viewer to pick what happens next.
+A short video with choices. Each scene plays for a few seconds, then the viewer picks what happens next — a "What to do next?" card with image buttons.
 
-- Great for training, education, product tours, quizzes, "choose your adventure" content.
-- Viewers see large controls: **Play / Pause**, skip back/forward 10s, a seek bar, fullscreen, and next-scene arrow.
-- Decisions appear as image-card choices in a dimmed modal — the viewer taps one and the player jumps to the next scene.
+**Great for:**
+- Training and onboarding
+- Lessons and tutorials
+- Product tours and demos
+- Quizzes and "choose your adventure" stories
+
+Viewers get simple video controls — play/pause, skip 10s, volume, fullscreen — and pick from image cards at decision points.
 
 </td>
 <td width="50%" valign="top">
 
 ### Persona live play
 
-A candy.ai-style experience built around a persona you already created in the Avatar tab. Chat + video move together.
+A chat-plus-video experience built around one of your personas (the AI characters you create in the **Avatar** tab).
 
-- The video stage loops your persona's avatar; the viewer chats via an "Ask Anything" box.
-- A floating joystick button opens a **Live Action** sheet with unlockable actions ("I tease you slowly", "Pull an ahegao face", etc.).
-- XP + Levels gate deeper actions, with an optional "Skip to Level N" coin shortcut.
-- Needs a persona picked in Step 0 of the wizard.
+- Your persona's avatar plays in the video window.
+- The viewer chats with them through an **Ask Anything** box.
+- A joystick button opens quick actions the viewer can trigger as they level up.
+
+**Great for:** companion apps, interactive roleplay, conversational demos. You'll need to create a persona first in the Avatar tab.
 
 </td>
 </tr>
@@ -58,121 +63,141 @@ A candy.ai-style experience built around a persona you already created in the Av
 
 ---
 
-## Image or Video — pick your GPU budget
+## Pictures or Videos — your choice
 
-Every project can render either **still images** or **full video clips** per scene. You choose on Step 0 of the wizard:
+Every project can use either **still images** or **short video clips** for its scenes. You pick on Step 0 of the wizard:
 
-- **Video (full)** — uses your configured video model (SVD / Wan / Seedream in Settings → Providers). Higher GPU cost, higher fidelity.
-- **Image (feasibility)** — uses your image model (SDXL / DreamShaper / Pony XL). Fast, lightweight, great when you want to verify the whole workflow on a laptop GPU before committing to video.
+- **Video** — full motion clips. Looks great. Needs a bigger GPU.
+- **Image** — still pictures. Much faster, works on modest hardware. Perfect for trying the whole workflow before committing to full video.
 
-The player renders `<img>` or `<video>` automatically based on what the scene actually produced — no two code paths to maintain.
+You can switch later by regenerating scenes. Pick whichever fits your computer and your use case.
 
 ---
 
-## Getting Started (no IT background required)
+## Getting Started
 
-### 1. Turn it on (once per install)
+> No IT background needed. If you've used a smartphone, you can do this.
 
-In **Settings → Providers**:
+### 1. First-time setup (one minute)
 
-- Make sure **Chat Model** is set (e.g. `llama3:8b` via Ollama, or any model your Chat Provider lists).
-- Set **Image Model** (e.g. `dreamshaper_8.safetensors`) and **Video Model** (e.g. `svd_xt_1_1.safetensors`).
-- To actually produce pixels, set the environment variable `INTERACTIVE_PLAYBACK_RENDER=true` before starting HomePilot. Without it, the wizard still creates the story graph but scenes stay as text-only placeholders (which is fine if you just want to author first and render later).
+Open **Settings → Providers** and make sure three things are set:
 
-> 💡 The wizard is honest about this. If render is off, the creation modal says "Skipping asset generation — your scenes are ready to edit" instead of faking a full progress bar. You can flip the flag later and use the Editor's **Regenerate** buttons to fill in the visuals.
+- **Chat Model** — the AI that writes your story. Default is `llama3:8b` via Ollama.
+- **Image Model** — for still scenes (e.g. `dreamshaper_8.safetensors`).
+- **Video Model** — for motion clips (e.g. `svd_xt_1_1.safetensors`).
+
+If you want HomePilot to actually generate the visuals, flip on `INTERACTIVE_PLAYBACK_RENDER=true` in your environment before you start the app. If you skip this, you can still plan and write your story — you just won't see pictures until you flip it on later.
+
+> 💡 **We're honest about this.** If scene generation is off, the wizard clearly tells you instead of showing a fake progress bar. You can always turn it on later and click **Regenerate** in the Editor.
 
 ### 2. Open the Interactive tab
 
-Click **Interactive** in the sidebar. On the first visit you'll see a landing grid — it's empty until you create your first project.
+Click **Interactive** in the sidebar. You'll see an empty grid — that's where your projects will live.
 
 ### 3. Click "+ New interactive"
 
-A single box appears that asks "What do you want to build?". Type one sentence. Examples that work well:
+A single box asks **"What do you want to build?"**. Type one sentence. Examples:
 
-- *"Train new sales reps on our three pricing tiers with quizzes at the end of each path."*
-- *"Teach a beginner the basics of photosynthesis with a branching explainer."*
+- *"Train new sales reps on our three pricing tiers with a quiz."*
+- *"Teach a beginner how photosynthesis works."*
 - *"Walk a new hire through our onboarding checklist."*
-- *"Help a viewer practice simple Spanish greetings in conversation."*
+- *"Help someone practice simple Spanish greetings."*
 
-Before you click **Generate**, pick two quick options:
+Before you click **Generate**, pick two options:
 
-| Option | What it does |
+| Option | What it means |
 |---|---|
-| **Interaction type** | `Standard project` for branching video · `Persona live play` for chat + video with an existing avatar |
-| **Render media** | `Video (full)` or `Image (feasibility)` — you can change your mind later |
+| **Interaction type** | *Standard project* for a branching video · *Persona live play* for a chat-with-video experience |
+| **Render media** | *Video* for full clips · *Image* for fast still scenes |
 
-Hit **Generate**.
+Then hit **Generate**.
 
-### 4. Edit the draft
+### 4. Review the draft
 
-In a few seconds, the AI gives you a full draft — title, brief, audience, branch shape, choice labels, seed intents. Anything you don't like, just edit in place before confirming. When it looks right, click **Create**.
+In a few seconds, HomePilot shows you a full draft — a title, short summary, the audience it's aimed at, how many scenes and choices, etc. Change anything you don't like. When it looks good, click **Create**.
 
-### 5. Watch the modal
+### 5. Watch it build
 
-A progress modal opens with a checklist:
+A progress window shows five steps:
 
 1. Saving your project
-2. Drafting the scene graph
+2. Drafting the story
 3. Writing dialogue + choices
-4. Rendering scenes *(the big one)*
+4. Making the scenes *(the slowest step)*
 5. Opening the editor
 
-For the rendering step, you'll see *"Now rendering: Pick your path"* and a live progress bar — `6 / 12 scenes`. If rendering is off, you'll see an amber hint pointing you at Settings.
+During step 4, you'll see **"Now making: <scene name>"** and a progress bar like `6 / 12 scenes`.
 
-### 6. Edit + Preview + Regenerate in the Editor
+### 6. Polish in the Editor
 
-When the editor opens, each scene row has three small icons:
+Each scene has three small buttons:
 
-- ✏️ **Edit** — inline form to change title, narration, or image prompt.
-- ▶️ **Preview** — pops up the rendered image or video.
-- 🔄 **Regenerate** — re-renders just that scene. Great when one scene is weird but the rest is fine.
+- ✏️ **Edit** — change the title, story text, or image description.
+- ▶️ **Preview** — watch or view that one scene.
+- 🔄 **Regenerate** — remake just that scene (great when one beat feels off).
 
-The header has a bigger **Regenerate all (N missing)** button that shows up whenever any scene still has no asset (e.g. you just turned on the render flag after creation).
+At the top of the Graph tab, a **Regenerate all (N missing)** button appears whenever some scenes still need visuals.
 
 ### 7. Play
 
-Top-right **Play** button launches the full experience. Share the URL or embed it elsewhere once it passes QA.
+Click the **Play** button in the top-right. Your interactive video runs full-screen. Share it, embed it, publish it — up to you.
 
 ---
 
 ## The Editor tabs
 
-| Tab | Purpose |
+| Tab | What it's for |
 |---|---|
-| **Graph** | The scenes, transitions, and per-scene edit/preview/regenerate actions (most-used tab). |
-| **Catalog** | Action catalog — what viewers can trigger during play (choices, unlocks, XP awards). |
-| **Rules** | Personalization rules that adjust scenes based on viewer mood / affinity / XP. |
-| **QA** | Automated readiness checks — broken edges, missing assets, policy conflicts. |
-| **Publish** | Push to web embed / studio preview / export / LMS / kiosk / API. |
-| **Analytics** | Session counts, completion rate, per-decision fork rates. |
+| **Graph** | See every scene, edit its text, preview it, regenerate it. You'll spend most of your time here. |
+| **Catalog** | Manage the actions your viewers can take during play. |
+| **Rules** | Set up personalization — how scenes adapt to each viewer. |
+| **QA** | Automatic quality checks — missing pieces, broken links, policy issues. |
+| **Publish** | Share your video on the web, as a file, or through an API. |
+| **Analytics** | See who watched, how they chose, where they dropped off. |
 
 ---
 
-## FAQ
+## Common Questions
 
-**Does it work without an internet connection?**
-Yes, if your Chat Model (e.g. Ollama) and ComfyUI are local. HomePilot never requires a cloud round-trip for the core flow.
+**Does it work without the internet?**
+Yes. If your chat AI (like Ollama) and scene maker (ComfyUI) run locally, everything stays on your machine.
 
-**What if my GPU is small?**
-Pick **Image** render media. A scene generates in ~2–5 seconds on a modest card. You get the full branching story; the visuals are stills instead of clips.
+**My GPU is small. Can I still use it?**
+Yes — pick **Image** mode. Each scene generates in a few seconds even on modest hardware. You still get the full branching story.
 
-**I created a project with rendering off. Did I waste it?**
-No. Your scene graph, dialogue, and choices are all saved. Turn `INTERACTIVE_PLAYBACK_RENDER=true` on, open the Editor, and click **Regenerate all (N missing)** at the top of the Graph tab. Every empty scene will render in one sweep.
+**I made a project with generation off. Do I need to start over?**
+No. All your story and choices are saved. Just flip the render flag on, open the Editor, and click **Regenerate all**. Every empty scene fills in.
 
-**Can I edit a single scene's narration without regenerating?**
-Yes. ✏️ **Edit** only updates text; the asset stays the same. Use 🔄 **Regenerate** when you want new pixels.
+**Can I edit a scene's text without regenerating the visuals?**
+Yes. The ✏️ **Edit** button only changes words. Use 🔄 **Regenerate** when you want new pictures.
 
-**How does the AI know what to write?**
-It doesn't make it up from scratch. The planner asks seven tiny questions (classify mode, extract topic, title, brief, audience, shape, seed intents), each answerable by a small local LLM like `llama3:8b` or even `qwen3:1.5b`. Prompts live in plain YAML under `backend/app/interactive/prompts/` — you can read them, audit them, or swap them out without touching Python.
+**Can I mix images and videos in the same project?**
+Not yet. Today the choice is per project. If you need both, create two projects for now — per-scene choice is on the roadmap.
 
-**Can I use both Image and Video in the same project?**
-Today the choice is project-wide. If you want some scenes to be video and others to be stills, create two projects; a future release will let you pick per scene.
+**Where do the AI's writing instructions live?**
+In plain, readable files under `backend/app/interactive/prompts/`. You can open them, change the wording, and see the effect on your next project — no code edits needed.
 
 ---
 
-## Where the code lives
+## Troubleshooting
 
-| Concern | Where |
+| What you see | What to do |
+|---|---|
+| *"Skipping asset generation"* in the wizard | Set `INTERACTIVE_PLAYBACK_RENDER=true` and restart. Then click **Regenerate all** in the Editor. |
+| A scene's story feels generic | Click ✏️ **Edit**, rewrite it, **Save**. No re-render needed for text tweaks. |
+| A scene's image doesn't match | ✏️ **Edit** → update the **Image prompt** → **Save** → 🔄 **Regenerate**. |
+| A scene shows a blank gradient in the player | No visual yet. Click 🔄 **Regenerate** on that row. |
+| **Live Action** panel is empty | Open the **Catalog** tab and add at least one action. |
+| *"No personas yet"* when creating a Persona project | Create one in the **Avatar** tab first, then come back. |
+
+---
+
+## For developers — where the code lives
+
+<details>
+<summary>Expand the code map</summary>
+
+| What | Where |
 |---|---|
 | Wizard one-box entry | `frontend/src/ui/interactive/WizardAuto.tsx` |
 | Draft review screen | `frontend/src/ui/interactive/WizardAutoPreview.tsx` |
@@ -180,24 +205,13 @@ Today the choice is project-wide. If you want some scenes to be video and others
 | Graph panel (edit/preview/regenerate) | `frontend/src/ui/interactive/GraphPanel.tsx` |
 | Standard player | `frontend/src/ui/interactive/StandardPlayer.tsx` |
 | Persona player | `frontend/src/ui/InteractivePlayer.tsx` |
-| Stage-1 planner | `backend/app/interactive/planner/autoplan_workflow.py` |
-| Stage-2 graph generator | `backend/app/interactive/planner/autogen_workflow.py` |
+| Stage-1 planner (plans the story) | `backend/app/interactive/planner/autoplan_workflow.py` |
+| Stage-2 graph builder (lays out scenes) | `backend/app/interactive/planner/autogen_workflow.py` |
 | Scene render pipeline | `backend/app/interactive/playback/render_adapter.py` |
-| Prompt library (YAML) | `backend/app/interactive/prompts/` |
+| Prompt library (YAML, human-readable) | `backend/app/interactive/prompts/` |
 | HTTP routes | `backend/app/interactive/routes/` |
 
----
-
-## Troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| Modal says "Skipping asset generation" | Set `INTERACTIVE_PLAYBACK_RENDER=true` in your env and restart; then click **Regenerate all** in the Editor. |
-| Scene narration looks generic | Click ✏️ **Edit** on the row and tighten it. Click **Save** — no regeneration needed for text changes. |
-| Rendered image is wrong | Click ✏️ **Edit** → adjust **Image prompt**, Save, then 🔄 **Regenerate** just that scene. |
-| Player shows a gradient instead of video | That scene has no asset. Click 🔄 **Regenerate** on the row (or **Preview** to confirm). |
-| Live Action sheet is empty | The project has no actions yet. Open the **Catalog** tab and add at least one. |
-| "No personas yet" in wizard | Create a persona in the **Avatar** tab first, then return to the Interactive wizard. |
+</details>
 
 ---
 
