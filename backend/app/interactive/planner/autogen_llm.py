@@ -130,8 +130,42 @@ async def generate_graph(
     cfg: InteractiveConfig,
     playback_cfg: Optional[PlaybackConfig] = None,
 ) -> GraphPlan:
-    """Produce a full GraphPlan for this experience. Never raises."""
+    """Produce a full GraphPlan for this experience. Never raises.
+
+    Three paths, tried in order:
+
+      1. Two-prompt workflow (REV-4) — opt-in via
+         ``INTERACTIVE_AUTOGEN_WORKFLOW=true``. Spine call +
+         per-scene script fan-out through the runner.
+      2. Legacy monolithic LLM call — when playback LLM is enabled
+         and the workflow path is disabled or aborted.
+      3. Heuristic fallback — deterministic seeder that always
+         produces a usable graph.
+    """
+    from .autogen_workflow import (
+        run_autogen_workflow, workflow_enabled,
+    )
+
     pcfg = playback_cfg or load_playback_config()
+
+    if workflow_enabled():
+        try:
+            plan = await run_autogen_workflow(experience)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("autogen_workflow_error: %s", str(exc)[:400])
+            plan = None
+        if plan is not None:
+            # Same safety net as the legacy LLM path.
+            try:
+                _run_validation(plan, cfg=cfg)
+                return plan
+            except GraphValidationError as exc:
+                issues = getattr(exc, "issues", [])
+                log.warning(
+                    "autogen_workflow_graph_invalid: %d issues — %s",
+                    len(issues), str(issues[:3])[:300],
+                )
+
     if pcfg.llm_enabled:
         llm_plan = await _generate_via_llm(experience, cfg=cfg, pcfg=pcfg)
         if llm_plan is not None:

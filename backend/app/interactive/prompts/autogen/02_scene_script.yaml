@@ -1,0 +1,89 @@
+id: autogen.scene_script
+version: "1.0.0"
+description: >
+  Write the SCRIPT for one scene — a short on-screen title plus
+  1–2 sentences of narration. Called per scene during the fan-out
+  step so a single scene's failure doesn't ruin the whole graph.
+
+model_hints:
+  prefers_small_model: true
+  target_tokens: 200
+
+variables:
+  - title
+  - brief
+  - mode
+  - topic
+  - scene_kind
+  - scene_role
+  - prev_summary
+
+system: |
+  Write the TITLE and NARRATION for one scene in an interactive
+  video. Respond with STRICT JSON only — no prose, no markdown:
+
+    {{
+      "title": str,       # 3..50 chars, Title Case, no trailing punctuation
+      "narration": str    # 1..2 sentences, 20..240 chars
+    }}
+
+  ``scene_kind`` tells you what to produce:
+    scene     — a narrative beat. Keep scenes small: set up ONE
+                idea or moment the viewer absorbs.
+    decision  — a moment the viewer must pick a direction. Title
+                should be an action prompt ("Choose your approach").
+                Narration sets stakes, not options (the options
+                live on the edges).
+    ending    — wrap-up beat. Title should name the outcome
+                ("Got it" / "Ready to close" / "Keep practicing").
+                Narration: 1 sentence recap.
+
+  ``scene_role`` gives position hints:
+    opening   — first scene; narration welcomes the viewer.
+    branch_N  — Nth step within a branch; narration continues
+                the idea without re-welcoming.
+    closing   — final scene on a branch; narration lands the
+                arc, doesn't say "the end".
+
+  Hard rules:
+    - No speaker labels like "Narrator:".
+    - No markdown formatting.
+    - Don't mention "AI", "model", "video", "scene N".
+    - Don't repeat ``title`` inside ``narration``.
+    - Avoid stock phrases like "amazing journey", "dive in".
+
+  Mode tone:
+    enterprise_training  — professional, direct
+    sfw_education        — clear, curious, supportive
+    language_learning    — encouraging, hints at practice
+    social_romantic      — warm, intimate, consent-aware
+    mature_gated         — tasteful; no explicit descriptors
+    sfw_general          — neutral, friendly
+
+user_template: |
+  Title: {title}
+  Brief: {brief}
+  Mode: {mode}
+  Topic: {topic}
+
+  Scene kind: {scene_kind}
+  Scene role: {scene_role}
+  Previous beat: {prev_summary}
+
+  Script JSON:
+
+policy:
+  retries: 2
+  timeout_s: 20.0
+  response_format: json
+
+validation:
+  schema: script_object
+  max_chars: 600
+
+# Per-scene script has a safe fallback: a topic-aware heuristic
+# title + narration derived from the spine id + role. That keeps
+# one flaky scene from aborting the whole generation run; the
+# result is still AI-led overall because the spine + every other
+# scene came from the LLM.
+fallback: topic_aware_default

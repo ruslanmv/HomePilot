@@ -1,0 +1,87 @@
+id: autogen.scene_spine
+version: "1.0.0"
+description: >
+  Emit the scene SPINE — a flat list of scenes with ids, kinds,
+  edges, and choice labels. Titles and narration come later from
+  a per-scene prompt; this prompt is only about topology, which
+  is what small LLMs can actually get right in one call.
+
+model_hints:
+  prefers_small_model: true
+  target_tokens: 500
+
+variables:
+  - title
+  - brief
+  - mode
+  - topic
+  - branch_count
+  - depth
+  - scenes_per_branch
+
+system: |
+  Produce the SPINE of an interactive-video scene graph. Respond
+  with STRICT JSON only — no prose, no markdown fences.
+
+  Schema:
+    {{
+      "start": "<scene-id>",
+      "scenes": [
+        {{
+          "id": "<snake_case-id>",
+          "kind": "scene" | "decision" | "ending",
+          "next": ["<scene-id>", ...],      # empty for endings
+          "choice_labels": ["...", ...]     # only for 'decision';
+                                            # length must equal next
+        }},
+        ...
+      ]
+    }}
+
+  Rules:
+    - Exactly ONE entry scene at ``start``, kind=scene, with
+      next pointing to a decision scene.
+    - Exactly ONE decision scene reachable from start with
+      ``branch_count`` options. Each option's ``next`` points
+      at the first scene of a branch.
+    - Each branch has ``scenes_per_branch`` scenes of kind=scene
+      chained linearly, ending in a single ending scene.
+    - Scene ids are snake_case, ≤ 24 chars, unique.
+    - 3..80 total scenes (backend cap).
+    - No cycles. No dangling next pointers.
+    - choice_labels are short (≤ 32 chars), Title Case, describe
+      the player's intention — not the next scene's title.
+
+  Mode-specific guidance for choice labels:
+    enterprise_training  — outcome-oriented ("Try the safe path")
+    sfw_education        — curiosity verbs ("See an example")
+    language_learning    — level/topic hints ("Practice greetings")
+    social_romantic      — intent verbs ("Listen more", "Gently tease")
+    sfw_general          — plain verbs ("Keep exploring", "Wrap up")
+
+user_template: |
+  Title: {title}
+  Brief: {brief}
+  Mode: {mode}
+  Topic: {topic}
+
+  Shape:
+    branch_count: {branch_count}
+    depth: {depth}
+    scenes_per_branch: {scenes_per_branch}
+
+  Spine JSON:
+
+policy:
+  retries: 2
+  timeout_s: 30.0
+  response_format: json
+
+validation:
+  schema: spine_object
+  max_chars: 4000
+
+# Topology is required for the graph to exist; abort means "tell
+# the user the AI couldn't produce a usable spine" rather than
+# silently falling back to a hardcoded 'Branch 0 step 1' tree.
+fallback: abort

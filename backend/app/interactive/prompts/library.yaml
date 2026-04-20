@@ -21,3 +21,10 @@ prompts:
   autoplan.audience:       autoplan/05_audience.yaml
   autoplan.shape:          autoplan/06_shape.yaml
   autoplan.seed_intents:   autoplan/07_seed_intents.yaml
+
+  # Stage-2 autogen — turn a persisted plan into a scene graph.
+  # Spine emits topology (ids + kinds + edges + choice labels);
+  # per-scene script writes the title + narration in a tight fan-
+  # out loop so one flaky scene doesn't torpedo the whole graph.
+  autogen.scene_spine:     autogen/01_scene_spine.yaml
+  autogen.scene_script:    autogen/02_scene_script.yaml
