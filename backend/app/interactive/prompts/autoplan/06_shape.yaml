@@ -1,0 +1,58 @@
+id: autoplan.shape
+version: "1.0.0"
+description: >
+  Pick the branching SHAPE: how many choices the viewer makes
+  per scene, how deep the tree goes, and how many scenes sit
+  on each branch path. Three bounded integers. The runner
+  clamps to backend caps after LLM response.
+
+model_hints:
+  prefers_small_model: true
+  target_tokens: 40
+
+variables:
+  - idea
+  - mode
+  - topic
+
+system: |
+  Pick the branching SHAPE for this interactive video.
+  Respond with STRICT JSON, nothing else:
+
+    {{
+      "branch_count":      integer 2..4,
+      "depth":             integer 2..3,
+      "scenes_per_branch": integer 2..4
+    }}
+
+  How to size:
+    - Training / certification → branch_count 3, depth 3, scenes 3
+      (enough decisions to test learning without exploding).
+    - Short teaching / explainer → branch_count 2, depth 2, scenes 2-3.
+    - Language practice → branch_count 3, depth 2, scenes 2.
+    - Social / companion → branch_count 2, depth 2, scenes 2
+      (conversation stays intimate when the graph stays small).
+    - Anything else → branch_count 2, depth 2, scenes 2.
+
+  Hard rules:
+    - Never exceed the declared bounds. Integers only.
+    - No trailing comments, no markdown fences.
+
+user_template: |
+  Idea: {idea}
+  Mode: {mode}
+  Topic: {topic}
+
+  Shape JSON:
+
+policy:
+  retries: 2
+  timeout_s: 10.0
+  response_format: json
+
+validation:
+  schema: shape_object
+  max_chars: 120
+
+# Defaulted triple is benign and matches the most-common shape.
+fallback: default_shape

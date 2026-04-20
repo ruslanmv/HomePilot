@@ -1,0 +1,48 @@
+id: autoplan.extract_topic
+version: "1.0.0"
+description: >
+  Extract a short noun phrase naming the topic the video is
+  about. Used to seed scene titles and narration later, so
+  keep it clean and concrete. 2–5 words, no verbs, no
+  marketing fluff.
+
+model_hints:
+  prefers_small_model: true
+  target_tokens: 16
+
+variables:
+  - idea
+
+system: |
+  Extract the TOPIC of the user's idea as a short, concrete
+  noun phrase. 2 to 5 words. Respond with only the phrase.
+  No quotes, no punctuation, no explanation.
+
+  Examples:
+    Idea: "train new sales reps on pricing"      Topic: Sales rep pricing training
+    Idea: "teach basic Spanish greetings"         Topic: Basic Spanish greetings
+    Idea: "onboard field techs to the portal"     Topic: Field tech portal onboarding
+
+  Rules:
+    - Nouns and adjectives only. No verbs ("learn", "master", "find").
+    - No imperative voice. No "how to ...".
+    - Title case the first letter; leave the rest natural.
+
+user_template: |
+  Idea: {idea}
+
+  Topic:
+
+policy:
+  retries: 2
+  timeout_s: 10.0
+  response_format: null
+
+validation:
+  schema: text
+  max_chars: 80
+
+# Topic is decorative — a blank string is tolerable; the
+# runner re-uses the user's original idea text as the
+# bookkeeping topic in that case.
+fallback: ""

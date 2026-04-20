@@ -1,0 +1,62 @@
+id: autoplan.seed_intents
+version: "1.0.0"
+description: >
+  Produce 3–6 viewer-intent codes the runtime uses to slot
+  the first batch of scenes. Snake_case, lowercase, no spaces.
+  Topic-specific when the mode allows it (training/education);
+  conversational otherwise.
+
+model_hints:
+  prefers_small_model: true
+  target_tokens: 80
+
+variables:
+  - idea
+  - mode
+  - topic
+
+system: |
+  List 3 to 6 SEED INTENT codes for the opening moves of this
+  interactive video. Respond with STRICT JSON — an array of
+  lowercase snake_case strings, nothing else.
+
+  Good examples by mode:
+    enterprise_training: ["welcome", "role_intro", "scenario_kickoff",
+                          "first_decision", "show_feedback"]
+    sfw_education:       ["hook", "define_terms", "walk_example",
+                          "check_understanding"]
+    language_learning:   ["greeting", "pick_level", "practice_phrase",
+                          "gentle_correction"]
+    social_romantic:     ["greeting", "consent_check", "share_vibe",
+                          "choose_path"]
+    sfw_general:         ["greeting", "choose_path", "show_outcome"]
+
+  Rules:
+    - 3 to 6 items. No duplicates.
+    - Each item: lowercase, snake_case, 2 to 4 words joined by _.
+    - No punctuation, no examples, no prose outside the JSON.
+    - Make them topic-aware when sensible (e.g. for "train reps
+      on pricing": "welcome", "pricing_basics", "handle_objection",
+      "call_recap"). Generic fallbacks are allowed when the
+      topic doesn't suggest anything specific.
+
+user_template: |
+  Idea: {idea}
+  Mode: {mode}
+  Topic: {topic}
+
+  Seed intents JSON:
+
+policy:
+  retries: 2
+  timeout_s: 12.0
+  response_format: json
+
+validation:
+  schema: string_array_3_6
+  max_chars: 400
+
+# The runner keeps a mode-keyed built-in default list in the
+# presets module; it falls back to that (not a fresh LLM call)
+# when the LLM can't produce a valid array after retries.
+fallback: mode_defaults

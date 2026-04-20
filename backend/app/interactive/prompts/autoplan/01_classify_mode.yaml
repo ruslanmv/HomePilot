@@ -1,0 +1,61 @@
+id: autoplan.classify_mode
+version: "1.0.0"
+description: >
+  Classify the user's idea into one of six experience modes.
+  This is the cheapest, safest first decision — pick the wrong
+  mode and every downstream prompt is subtly off.
+
+# One tiny enum response. No JSON, no prose, no quotes.
+# Reliable on 1.5B models because the output space is six tokens.
+model_hints:
+  prefers_small_model: true
+  target_tokens: 8
+
+variables:
+  - idea
+
+system: |
+  You classify short product ideas into one of exactly six
+  interactive-video experience MODES. Respond with the mode
+  name, lowercase, nothing else. No punctuation, no quotes,
+  no explanation.
+
+  Allowed modes and when to pick them:
+    enterprise_training   — onboarding, compliance, training, certification
+    sfw_education         — teaching, lessons, tutorials, explainers, courses
+    language_learning     — any human language, CEFR levels, conversation practice
+    social_romantic       — dating, flirting, companion, romantic roleplay (SFW)
+    mature_gated          — explicit adult content — only if the idea says so
+    sfw_general           — anything else (default)
+
+  Rules:
+    - Never pick mature_gated unless the idea explicitly asks for
+      adult, NSFW, 18+, or sexual content.
+    - Prefer the more specific mode when two could match
+      (a Spanish lesson is language_learning, not sfw_education).
+
+user_template: |
+  Idea: {idea}
+
+  Mode:
+
+policy:
+  retries: 2
+  timeout_s: 10.0
+  response_format: null
+
+validation:
+  schema: enum
+  allowed_values:
+    - enterprise_training
+    - sfw_education
+    - language_learning
+    - social_romantic
+    - mature_gated
+    - sfw_general
+  max_chars: 32
+
+# On final failure the runner uses this literal value. Keep it
+# the safest choice — mis-classifying as sfw_general never causes
+# policy violations, only a slightly generic tone.
+fallback: sfw_general

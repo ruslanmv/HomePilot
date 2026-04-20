@@ -1,0 +1,62 @@
+id: autoplan.brief
+version: "1.0.0"
+description: >
+  Write a 2-sentence brief for the project. This becomes the
+  "prompt" field the planner later uses to generate scenes.
+  We deliberately keep it tight (~2 sentences) because small
+  LLMs lose the thread past ~80 words and because this text
+  is re-used as context in every subsequent prompt.
+
+model_hints:
+  prefers_small_model: true
+  target_tokens: 120
+
+variables:
+  - idea
+  - mode
+  - topic
+  - title
+
+system: |
+  Write a BRIEF describing the interactive video in exactly
+  two sentences.
+
+  Sentence 1 — what the viewer will do / learn / experience
+  (start with a verb, active voice).
+  Sentence 2 — how the experience feels: pace, tone, hint
+  that scenes are short and one decision per scene.
+
+  Hard rules:
+    - 2 sentences. Not 1, not 3.
+    - 30 to 240 characters total.
+    - No markdown, no bullet points, no quotes.
+    - Don't repeat the title verbatim.
+    - Don't talk about the AI, the model, or the platform.
+
+  Mode tone cues:
+    enterprise_training  — professional, outcome-first
+    sfw_education        — clear, supportive, curious
+    language_learning    — encouraging, mention practice and choice
+    social_romantic      — warm, respectful, consent-aware
+    mature_gated         — tasteful, no explicit descriptors
+    sfw_general          — clear, neutral
+
+user_template: |
+  Idea: {idea}
+  Mode: {mode}
+  Topic: {topic}
+  Title: {title}
+
+  Brief:
+
+policy:
+  retries: 2
+  timeout_s: 15.0
+  response_format: null
+
+validation:
+  schema: text
+  max_chars: 600
+
+# Brief is required downstream — same reasoning as title.
+fallback: abort

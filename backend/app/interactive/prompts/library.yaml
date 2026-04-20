@@ -1,0 +1,23 @@
+# Prompt library index — maps stable prompt ids to the YAML files
+# that define them. Keep one id per line, grouped by workflow.
+#
+# Rename rules:
+#   * Never rename an id without bumping the `version:` field in the
+#     target YAML and updating every call site.
+#   * Deleted prompts should stay here with a 'deprecated: true' flag
+#     until the next release so tests can catch orphan references.
+#
+# The loader (PromptLibrary) fails loudly on:
+#   * missing id,  missing file,  duplicate id,  non-str value.
+
+prompts:
+  # Stage-1 autoplan — one idea → full wizard form. Seven small
+  # prompts instead of one monolithic JSON call. Each one is
+  # answerable by a 1.5B-7B Qwen/Llama in < 200 tokens.
+  autoplan.classify_mode:  autoplan/01_classify_mode.yaml
+  autoplan.extract_topic:  autoplan/02_extract_topic.yaml
+  autoplan.title:          autoplan/03_title.yaml
+  autoplan.brief:          autoplan/04_brief.yaml
+  autoplan.audience:       autoplan/05_audience.yaml
+  autoplan.shape:          autoplan/06_shape.yaml
+  autoplan.seed_intents:   autoplan/07_seed_intents.yaml

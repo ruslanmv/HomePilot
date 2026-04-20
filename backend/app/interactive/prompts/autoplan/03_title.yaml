@@ -1,0 +1,61 @@
+id: autoplan.title
+version: "1.0.0"
+description: >
+  Generate THREE candidate project titles for the given idea
+  and mode. The runner picks the first one that passes
+  validation (length, no duplicates of the idea verbatim).
+  Three candidates is cheap and dramatically improves quality
+  on small models vs asking for one "best" title.
+
+model_hints:
+  prefers_small_model: true
+  target_tokens: 80
+
+variables:
+  - idea
+  - mode
+  - topic
+
+system: |
+  You write titles for interactive videos. Given an IDEA, a
+  MODE, and a TOPIC, return THREE short title candidates as a
+  JSON array of strings. Nothing else.
+
+  Title rules:
+    - 3 to 60 characters.
+    - Title Case.
+    - No trailing punctuation.
+    - No marketing words ("amazing", "ultimate", "revolutionary").
+    - Describe the content, not the format (don't say "Video" or
+      "Interactive"; the user already knows).
+    - Each candidate must differ in wording, not just punctuation.
+
+  Mode-specific tone:
+    enterprise_training  — plain, outcome-oriented
+    sfw_education        — descriptive, explanatory
+    language_learning    — name the language and level
+    social_romantic      — warm, first-person OK
+    mature_gated         — tasteful, not explicit
+    sfw_general          — clear and concrete
+
+  Output: strict JSON array of 3 strings, no prose, no markdown.
+
+user_template: |
+  Idea: {idea}
+  Mode: {mode}
+  Topic: {topic}
+
+  Titles:
+
+policy:
+  retries: 2
+  timeout_s: 12.0
+  response_format: json
+
+validation:
+  schema: string_array_3
+  max_chars: 400
+
+# Title is required downstream; abort means "surface the error
+# to the user, don't silently use the idea text as a title".
+fallback: abort

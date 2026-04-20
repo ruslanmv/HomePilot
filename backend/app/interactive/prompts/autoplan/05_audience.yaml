@@ -1,0 +1,67 @@
+id: autoplan.audience
+version: "1.0.0"
+description: >
+  Infer the audience triple (role / level / BCP-47 language).
+  Three tiny enums instead of free text so small LLMs can't
+  invent a role like "intermediate-level Spanish learner with
+  two years of experience". Keeps downstream prompts stable.
+
+model_hints:
+  prefers_small_model: true
+  target_tokens: 40
+
+variables:
+  - idea
+  - mode
+  - topic
+
+system: |
+  Given the idea, mode, and topic, fill the AUDIENCE triple.
+  Respond with STRICT JSON, nothing else.
+
+  Schema:
+    {{
+      "role": one of "viewer" | "learner" | "trainee" | "customer" | "lead",
+      "level": one of "beginner" | "intermediate" | "advanced",
+      "language": BCP-47 code, default "en"
+    }}
+
+  How to pick role:
+    - training / onboarding / compliance → "trainee"
+    - teaching / lesson / tutorial       → "learner"
+    - product demo / sales pitch         → "customer"
+    - lead gen / qualification           → "lead"
+    - anything else                      → "viewer"
+
+  How to pick level:
+    - "new", "basic", "intro", "starter", "first time" → "beginner"
+    - "advanced", "expert", "deep dive", "mastery"     → "advanced"
+    - anything else                                    → "intermediate"
+
+  How to pick language:
+    - Idea mentions a language explicitly → that language's BCP-47
+      code ("es", "fr", "de", "ja", "zh", "pt", "it"…).
+    - Otherwise default to "en".
+
+  No extra keys, no prose, no markdown fences.
+
+user_template: |
+  Idea: {idea}
+  Mode: {mode}
+  Topic: {topic}
+
+  Audience JSON:
+
+policy:
+  retries: 2
+  timeout_s: 12.0
+  response_format: json
+
+validation:
+  schema: audience_object
+  max_chars: 200
+
+# Three defaulted fields means we can safely fall back without
+# losing project correctness — the runner drops in viewer /
+# intermediate / en and emits a warning telemetry event.
+fallback: default_audience
