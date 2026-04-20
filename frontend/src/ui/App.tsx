@@ -2884,6 +2884,11 @@ export default function App() {
     // updated above so the UI stays consistent.
     try {
       const comfyMode = settingsDraft.comfyVramMode || 'high'
+      const comfyBaseUrl = (
+        settingsDraft.baseUrlImages ||
+        settingsDraft.baseUrlVideo ||
+        ''
+      ).trim()
       fetch(`${settingsDraft.backendUrl.replace(/\/+$/, '')}/v1/system/runtime-config`, {
         method: 'POST',
         headers: {
@@ -2892,7 +2897,12 @@ export default function App() {
         },
         credentials: 'include',
         body: JSON.stringify({
-          values: { COMFY_VRAM_MODE: comfyMode },
+          values: {
+            COMFY_VRAM_MODE: comfyMode,
+            IMAGE_MODEL: settingsDraft.modelImages || '',
+            VIDEO_MODEL: settingsDraft.modelVideo || '',
+            COMFY_BASE_URL: comfyBaseUrl,
+          },
         }),
       }).catch(() => { /* best-effort */ })
     } catch { /* no-op */ }

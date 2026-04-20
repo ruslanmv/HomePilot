@@ -29,6 +29,12 @@ from typing import Dict
 # env into ComfyUI's process.
 ALLOWED_KEYS = frozenset({
     "COMFY_VRAM_MODE",
+    # Global media settings persisted from Settings UI so backend
+    # startup paths (e.g. warmup) can resolve the same models the
+    # user selected previously.
+    "IMAGE_MODEL",
+    "VIDEO_MODEL",
+    "COMFY_BASE_URL",
 })
 
 

@@ -11,9 +11,9 @@ completes successfully.
 Best-practice mitigation (used by AWS Bedrock async jobs,
 Replicate, OpenAI's image APIs) is to warm the model at server
 startup so the first real user request hits an already-loaded
-model. We submit a tiny 1-step 64×64 workflow to ComfyUI at boot
-— just enough to force the weight-loader path without burning
-noticeable GPU time.
+model. We submit a lightweight txt2img workflow at boot using
+the same model settings (size/steps/cfg) as normal runtime
+requests so warmup validates the real configured path.
 
 ``make start`` launches the backend and ComfyUI in parallel, so
 the backend reaches its startup event well before ComfyUI's
@@ -54,6 +54,59 @@ _DEFAULT_WARMUP_TIMEOUT_S = 90.0
 # doesn't pin an asyncio task until shutdown.
 _COMFY_READY_MAX_WAIT_S = 600.0
 _COMFY_READY_POLL_INTERVAL_S = 3.0
+
+
+def _resolve_warmup_checkpoint(model: str) -> str:
+    """Resolve the warmup checkpoint to a concrete installed filename.
+
+    Settings may provide either:
+      - a real checkpoint filename (``*.safetensors`` / ``*.ckpt``), or
+      - a shorthand token (e.g. ``sdxl``) from legacy defaults.
+
+    ComfyUI's ``CheckpointLoaderSimple`` requires a concrete filename
+    present on disk. This resolver keeps warmup aligned with current
+    settings while avoiding invalid shorthand checkpoint values.
+    """
+    raw = (model or "").strip()
+    if not raw:
+        return raw
+
+    # Already a concrete file-like model id → use as-is.
+    lower = raw.lower()
+    if lower.endswith(".safetensors") or lower.endswith(".ckpt"):
+        return raw
+
+    try:
+        from .providers import scan_installed_models
+        from .model_config import detect_architecture_from_filename
+
+        installed = scan_installed_models("image") or []
+        if not installed:
+            return raw
+
+        # If token already matches an installed id, keep it.
+        if raw in installed:
+            return raw
+
+        # Otherwise match by architecture (sd15/sdxl/flux/pony/noobai).
+        wanted_arch = detect_architecture_from_filename(raw)
+        for candidate in installed:
+            if detect_architecture_from_filename(candidate) == wanted_arch:
+                log.info(
+                    "warmup: mapped image model '%s' -> '%s' (arch=%s)",
+                    raw, candidate, wanted_arch,
+                )
+                return candidate
+
+        # Final fallback: first installed model, still concrete + valid.
+        fallback = installed[0]
+        log.info(
+            "warmup: using fallback installed model '%s' for unresolved setting '%s'",
+            fallback, raw,
+        )
+        return fallback
+    except Exception:
+        return raw
 
 
 def warmup_enabled() -> bool:
@@ -165,6 +218,8 @@ async def warm_image_model_on_startup() -> None:
         log.info("warmup: IMAGE_MODEL not set — skipping")
         return
 
+    model = _resolve_warmup_checkpoint(model)
+
     # Step 1: wait for ComfyUI to actually be listening before
     # we try to submit. Addresses the "Connection refused" noise
     # on parallel startup (make start fires backend + ComfyUI at
@@ -191,16 +246,30 @@ async def warm_image_model_on_startup() -> None:
         "noobai_xl_vpred": "txt2img",
     }.get(arch, "txt2img-sd15-uncensored")
 
+    # Use the same dimension/steps/CFG defaults as the real image
+    # pipeline so warmup matches runtime settings (model-specific
+    # safe sizes) instead of forcing 64x64/1-step.
+    width, height, steps, cfg_scale = 512, 512, 25, 7.0
+    try:
+        from .model_config import get_model_settings
+        settings = get_model_settings(model, "1:1", "med")
+        width = int(settings.get("width", width))
+        height = int(settings.get("height", height))
+        steps = int(settings.get("steps", steps))
+        cfg_scale = float(settings.get("cfg", cfg_scale))
+    except Exception:
+        pass
+
     variables: Dict[str, Any] = {
         "prompt": "warmup",
         "positive_prompt": "warmup",
         "negative_prompt": "",
         "aspect_ratio": "1:1",
         "style": "photorealistic",
-        "width": 64,
-        "height": 64,
-        "steps": 1,
-        "cfg": 1.0,
+        "width": width,
+        "height": height,
+        "steps": steps,
+        "cfg": cfg_scale,
         "ckpt_name": model,
         "seed": 1,
     }

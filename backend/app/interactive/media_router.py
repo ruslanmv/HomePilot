@@ -37,6 +37,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+from ..runtime_config import read_runtime_config
 
 log = logging.getLogger(__name__)
 
@@ -88,9 +89,11 @@ def resolve_current_image_model(
     Never raises. An empty env var is treated as "unset" so a
     blank value in the Settings UI falls back to the next tier.
     """
+    runtime = read_runtime_config()
     return (
         override
         or _nonempty(os.getenv("INTERACTIVE_IMAGE_MODEL"))
+        or _nonempty(runtime.get("IMAGE_MODEL"))
         or _nonempty(os.getenv("IMAGE_MODEL"))
         or _DEFAULT_IMAGE_MODEL
     )
@@ -105,9 +108,11 @@ def resolve_current_video_model(
     env vars (``INTERACTIVE_VIDEO_MODEL`` → ``VIDEO_MODEL`` →
     default ``svd``).
     """
+    runtime = read_runtime_config()
     return (
         override
         or _nonempty(os.getenv("INTERACTIVE_VIDEO_MODEL"))
+        or _nonempty(runtime.get("VIDEO_MODEL"))
         or _nonempty(os.getenv("VIDEO_MODEL"))
         or _DEFAULT_VIDEO_MODEL
     )
@@ -124,9 +129,11 @@ def resolve_current_comfy_base_url(
     DNS, otherwise localhost. Matches ``app.config.COMFY_BASE_URL``'s
     startup logic but reads live so the Settings UI wins.
     """
+    runtime = read_runtime_config()
     return (
         override
         or _nonempty(os.getenv("INTERACTIVE_COMFY_BASE_URL"))
+        or _nonempty(runtime.get("COMFY_BASE_URL"))
         or _nonempty(os.getenv("COMFY_BASE_URL"))
         or _default_comfy_base_url()
     )

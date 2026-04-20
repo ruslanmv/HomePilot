@@ -732,10 +732,7 @@ export default function SettingsPanel({
                   Keep model in GPU memory
                 </div>
                 <div className="text-[10px] text-white/35 mt-1">
-                  Recommended for ≥ 8&nbsp;GB VRAM. Keeps the image/video
-                  model resident between calls so the second render stays
-                  fast. Low-VRAM laptops should pick <em>Normal</em> or
-                  <em> Low</em>. Takes effect on next ComfyUI restart.
+                  Recommended
                 </div>
               </div>
               <select

@@ -1527,15 +1527,11 @@ async def orchestrate(
             # When preset is "custom", use frontend values if provided
             is_custom_preset = preset_to_use == "custom"
 
-            # Resolution override: when imgResolutionOverride is set, the user
-            # explicitly picked a resolution tier from the UI — honour it even
-            # in non-custom presets (additive: only dims change, steps/cfg stay).
-            if img_resolution_override and img_width is not None and img_height is not None:
-                refined["width"] = img_width
-                refined["height"] = img_height
-                print(f"[IMAGE] Resolution override (additive): {img_width}x{img_height} "
-                      f"(preset={preset_to_use}, steps/cfg unchanged)")
-            elif is_custom_preset:
+            # IMPORTANT: Preset mode is authoritative for width/height.
+            # For low/med/high/ultra we always use model_settings so each
+            # model gets its validated dimensions from the preset system.
+            # Only "custom" may override dimensions directly.
+            if is_custom_preset:
                 if img_width is None:
                     refined["width"] = model_settings["width"]
                 else:
@@ -1548,11 +1544,14 @@ async def orchestrate(
                     refined["height"] = img_height
                     print(f"[IMAGE] User override height: {img_height}")
             else:
-                # IMPORTANT: ignore stale frontend width/height in non-custom presets
+                # Non-custom preset: always use preset-driven dimensions
                 refined["width"] = model_settings["width"]
                 refined["height"] = model_settings["height"]
-                if img_width is not None or img_height is not None:
-                    print(f"[IMAGE] Ignoring frontend width/height because preset={preset_to_use} (non-custom). Using safe dims {model_settings['width']}x{model_settings['height']}.")
+                if img_width is not None or img_height is not None or img_resolution_override:
+                    print(
+                        f"[IMAGE] Preset-controlled dimensions active "
+                        f"(preset={preset_to_use}): {model_settings['width']}x{model_settings['height']}"
+                    )
 
             # Steps and CFG: use preset values unless in custom mode
             if is_custom_preset and img_steps is not None:
