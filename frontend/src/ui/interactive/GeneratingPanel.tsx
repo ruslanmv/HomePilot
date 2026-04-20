@@ -1,5 +1,6 @@
 /**
- * GeneratingPanel — reusable enterprise-grade waiting overlay.
+ * GeneratingPanel — reusable enterprise-grade waiting overlay
+ * used across Interactive surfaces.
  *
  * Mirrors the pattern Animate uses on its video-card processing
  * overlay (see Animate.tsx — bg-black/50 backdrop-blur-sm,
@@ -14,11 +15,21 @@
  *   - `variant="panel"` renders a self-contained block for places
  *     that don't have a host to overlay.
  *
- * Optional ``steps`` turns the label into a vertical checklist
- * where each stage promotes to "pending → running → done" as
- * the caller advances the activeStep index. That gives multi-phase
- * AI ops (plan → generate) a clear sense of progress instead of
- * a flat spin for tens of seconds.
+ * Two progress styles (mixable):
+ *   - `steps[]`        — vertical checklist; promotes each stage
+ *                        "pending → running → done" as activeStep
+ *                        advances. Best for a small fixed set of
+ *                        phases (plan → graph → ready).
+ *   - `progress` + `progressLabel` — linear gradient progress bar
+ *                        with text below. Best for long-running
+ *                        batch ops (render scene 5 / 12).
+ *
+ * ``spinnerSize="large"`` switches the 32px Loader2 for a 64px
+ * dual-ring spinner (outer static ring + rotating inner arc),
+ * matching the visual weight of a full-screen creation modal.
+ * ``iconOverride`` swaps the central Sparkles for per-phase icons
+ * (e.g. ImageIcon while rendering stills, Film while rendering
+ * clips) so the user sees what phase we're in at a glance.
  */
 
 import React from "react";
@@ -40,10 +51,26 @@ export interface GeneratingPanelProps {
   /** Which step is currently running. Earlier ones render as done;
    *  later ones render as pending. Default 0. */
   activeStep?: number;
+  /** 0–100 linear progress. Renders the gradient bar + label
+   *  under the title. Omit for spinner-only indeterminate mode. */
+  progress?: number;
+  /** Small text under the progress bar (e.g. "5 / 12 scenes"). */
+  progressLabel?: React.ReactNode;
   /** Tint color for the spinner + running-step indicator. Accepts
    *  a Tailwind arbitrary-value color class (e.g. "text-[#3ea6ff]"
    *  or "text-purple-400"). Default matches Animate (purple). */
   accentClassName?: string;
+  /** "small" = 32px Loader2 (default, legacy look).
+   *  "large" = 64px dual-ring spinner (Studio-style modal). */
+  spinnerSize?: "small" | "large";
+  /** Replace the decorative Sparkles with a phase-specific icon
+   *  (ImageIcon, Film, Gamepad2…). Sits centered inside the
+   *  dual-ring when spinnerSize='large', or next to the 32px
+   *  loader when 'small'. */
+  iconOverride?: React.ReactNode;
+  /** Footer pill copy. Default: "AI is working — this usually
+   *  takes a few seconds." Pass null to hide the pill entirely. */
+  footerHint?: React.ReactNode | null;
 }
 
 export function GeneratingPanel({
@@ -52,14 +79,25 @@ export function GeneratingPanel({
   variant = "overlay",
   steps,
   activeStep = 0,
+  progress,
+  progressLabel,
   accentClassName = "text-purple-400",
+  spinnerSize = "small",
+  iconOverride,
+  footerHint,
 }: GeneratingPanelProps) {
+  const clamped = typeof progress === "number"
+    ? Math.max(0, Math.min(100, progress))
+    : undefined;
+  const hasProgress = clamped !== undefined;
+
+  const spinner = spinnerSize === "large"
+    ? <LargeSpinner accentClassName={accentClassName} icon={iconOverride} />
+    : <SmallSpinner accentClassName={accentClassName} icon={iconOverride} />;
+
   const body = (
     <div className="flex flex-col items-center justify-center max-w-md text-center px-6">
-      <div className="flex items-center justify-center gap-2 mb-4">
-        <Loader2 size={32} className={`${accentClassName} animate-spin`} aria-hidden />
-        <Sparkles size={18} className={`${accentClassName} opacity-80`} aria-hidden />
-      </div>
+      {spinner}
 
       <div className="text-white/95 text-sm font-semibold">{title}</div>
       {description && (
@@ -68,8 +106,37 @@ export function GeneratingPanel({
         </div>
       )}
 
+      {hasProgress && (
+        <div className="mt-4 w-full max-w-xs">
+          <div
+            className="h-2 bg-white/10 rounded-full overflow-hidden"
+            role="progressbar"
+            aria-valuenow={clamped}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={typeof progressLabel === "string" ? progressLabel : "Progress"}
+          >
+            <div
+              className="h-full bg-gradient-to-r from-[#3ea6ff] to-[#6366f1] transition-[width] duration-500 ease-out"
+              style={{ width: `${clamped}%` }}
+            />
+          </div>
+          {progressLabel && (
+            <div className="text-[11px] text-white/50 mt-2 tabular-nums">
+              {progressLabel}
+            </div>
+          )}
+        </div>
+      )}
+
       {steps && steps.length > 0 && (
-        <ol className="mt-5 w-full max-w-xs text-left flex flex-col gap-2" aria-label="Progress">
+        <ol
+          className={[
+            "w-full max-w-xs text-left flex flex-col gap-2",
+            hasProgress ? "mt-4" : "mt-5",
+          ].join(" ")}
+          aria-label="Progress"
+        >
           {steps.map((s, i) => {
             const done = i < activeStep;
             const running = i === activeStep;
@@ -94,9 +161,11 @@ export function GeneratingPanel({
         </ol>
       )}
 
-      <div className="mt-5 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-white/70 text-[11px]">
-        AI is working — this usually takes a few seconds.
-      </div>
+      {footerHint !== null && (
+        <div className="mt-5 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-white/70 text-[11px]">
+          {footerHint ?? "AI is working — this usually takes a few seconds."}
+        </div>
+      )}
     </div>
   );
 
@@ -105,7 +174,7 @@ export function GeneratingPanel({
       <div
         role="status"
         aria-live="polite"
-        className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm"
       >
         {body}
       </div>
@@ -121,6 +190,74 @@ export function GeneratingPanel({
     </div>
   );
 }
+
+
+// ── Spinner variants ────────────────────────────────────────────
+
+function SmallSpinner({
+  accentClassName, icon,
+}: { accentClassName: string; icon?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-center gap-2 mb-4">
+      <Loader2 size={32} className={`${accentClassName} animate-spin`} aria-hidden />
+      <span className={`${accentClassName} opacity-80`} aria-hidden>
+        {icon ?? <Sparkles size={18} />}
+      </span>
+    </div>
+  );
+}
+
+
+function LargeSpinner({
+  accentClassName, icon,
+}: { accentClassName: string; icon?: React.ReactNode }) {
+  // Studio-inspired dual-ring: a faint static outer ring plus a
+  // bright rotating arc on top, with the phase icon planted dead
+  // center. Keeps the visual weight enterprise-y for long waits
+  // without depending on any Studio code.
+  return (
+    <div className="relative w-20 h-20 mb-5" aria-hidden>
+      {/* Static base ring — signals "work in progress" even when
+          the animated layer is occluded. */}
+      <div className={`absolute inset-0 rounded-full border-4 ${accentToBorder(accentClassName, "/20")}`} />
+      {/* Rotating arc. Using the built-in animate-spin on a partial
+          border rather than a keyframe gradient so the look stays
+          crisp at any screen DPR. */}
+      <div
+        className={`absolute inset-0 rounded-full border-4 border-transparent ${accentToBorder(accentClassName, "")} animate-spin`}
+        style={{
+          // Show only the top-right quarter of the ring so it
+          // reads as a clear moving arc instead of a fuzzy halo.
+          borderRightColor: "transparent",
+          borderBottomColor: "transparent",
+          borderLeftColor: "transparent",
+        }}
+      />
+      {/* Center phase icon. */}
+      <div className={`absolute inset-0 flex items-center justify-center ${accentClassName}`}>
+        {icon ?? <Sparkles size={26} />}
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * Derive a Tailwind border-color class from an accent text-color
+ * class so the dual-ring picks up whatever brand tint the caller
+ * passed. Falls back to white/20 + white for unknown prefixes so
+ * the component still renders sensibly with custom colors.
+ */
+function accentToBorder(textClass: string, opacitySuffix: string): string {
+  // "text-purple-400" → "border-purple-400", "text-[#3ea6ff]" →
+  // "border-[#3ea6ff]". We keep opacity as a raw suffix so callers
+  // can pass an empty string for the solid ring + "/20" for the
+  // faint base. Tailwind JIT will emit both forms safely.
+  const colorPart = textClass.replace(/^text-/, "");
+  if (!colorPart) return `border-white${opacitySuffix || ""}`;
+  return `border-${colorPart}${opacitySuffix}`;
+}
+
 
 function StepIndicator({
   state, accentClassName,
