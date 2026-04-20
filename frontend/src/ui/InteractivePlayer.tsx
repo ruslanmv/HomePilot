@@ -43,9 +43,10 @@ import { createInteractiveApi, type InteractiveApi } from "./interactive/api";
 import { LiveActionSheet } from "./interactive/LiveActionSheet";
 import { XPRewardsSheet } from "./interactive/XPRewardsSheet";
 import type {
-  CatalogItemView, ChatResult, Experience, ResolveResult, SceneJobView,
+  AudienceProfile, CatalogItemView, ChatResult, Experience,
+  InteractionType, ResolveResult, SceneJobView,
 } from "./interactive/types";
-import { InteractiveApiError } from "./interactive/types";
+import { InteractiveApiError, resolveInteractionType } from "./interactive/types";
 import {
   ErrorBanner, PrimaryButton, SecondaryButton, StatusBadge,
   ToastProvider, useAsyncResource, useToast,
@@ -338,14 +339,25 @@ function InteractivePlayerBody({
 
   const experience = exp.data;
   const level = Math.max(1, Math.round(affinity * 5) + 1);
+  const audience = (experience.audience_profile || {}) as AudienceProfile;
+  // Persona mode ("Darkangel666" candy.ai-style) gets the display
+  // name + avatar shown in the top bar; standard projects reuse the
+  // experience title so power-users still see "Q3 Onboarding" etc.
+  const interactionType: InteractionType = resolveInteractionType(experience);
+  const displayName =
+    (interactionType === "persona_live_play" && audience.persona_label) ||
+    experience.title ||
+    "Interactive";
+  const avatarUrl = audience.persona_avatar_url || "";
 
   return (
     <div className="relative min-h-screen bg-black text-[#f1f1f1] overflow-hidden select-none">
       <VideoStage scene={currentScene} mood={mood} muted={muted} />
 
       <TopBar
-        title={experience.title || "Interactive"}
+        title={displayName}
         subtitle={moodDescriptor(mood, affinity)}
+        avatarUrl={avatarUrl}
         level={level}
         onOpenXp={() => setXpRewardsOpen(true)}
         muted={muted}
@@ -518,11 +530,12 @@ function ReconnectChip() {
 }
 
 function TopBar({
-  title, subtitle, level, onOpenXp, muted, onToggleMute,
+  title, subtitle, avatarUrl, level, onOpenXp, muted, onToggleMute,
   hideChat, onToggleHideChat, onExit,
 }: {
   title: string;
   subtitle: string;
+  avatarUrl?: string;
   level: number;
   onOpenXp: () => void;
   muted: boolean;
@@ -542,6 +555,7 @@ function TopBar({
         >
           <ArrowLeft className="w-4 h-4" aria-hidden />
         </button>
+        <Avatar url={avatarUrl} label={title} />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold truncate max-w-[200px]">{title}</span>
@@ -595,6 +609,34 @@ function LevelPill({ level }: { level: number }) {
     <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-black/60 border border-white/20 text-[11px] font-semibold">
       {level}
     </span>
+  );
+}
+
+function Avatar({ url, label }: { url?: string; label: string }) {
+  // Persona mode ships with an avatar URL; standard projects don't,
+  // so we fall back to a tinted monogram circle. Keeps the top-bar
+  // layout stable across both modes with a single render path.
+  const initial = (label || "?").trim().charAt(0).toUpperCase();
+  return (
+    <div
+      className="w-8 h-8 rounded-full overflow-hidden border border-white/20 bg-gradient-to-br from-[#6366f1]/70 to-[#3ea6ff]/70 shrink-0 flex items-center justify-center text-[11px] font-semibold text-white"
+      aria-hidden
+    >
+      {url ? (
+        <img
+          src={url}
+          alt=""
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            // Hide the broken image so the gradient + initial shows
+            // through. No noisy console errors, no stale layout gap.
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      ) : (
+        <span>{initial}</span>
+      )}
+    </div>
   );
 }
 

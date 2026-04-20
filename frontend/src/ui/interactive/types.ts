@@ -31,6 +31,37 @@ export type ProgressionScheme =
   | "affinity_tier"
   | "certification";
 
+/**
+ * Interaction type is stamped onto `audience_profile` at create time
+ * by the wizard (FIX-6). "standard_project" → YouTube-style branching
+ * video player with a decision modal between scenes. "persona_live_play"
+ * → candy.ai-style persona chat + Live Action sheet. We read it off
+ * the audience_profile dict so the wire format stays
+ * backward-compatible with pre-FIX-6 experiences.
+ */
+export type InteractionType = "standard_project" | "persona_live_play";
+
+/**
+ * Shape of the ``audience_profile`` blob the wizard stamps onto an
+ * Experience. All fields are optional for forward-compat — the
+ * backend allows arbitrary keys (``extra='allow'``).
+ */
+export interface AudienceProfile {
+  role?: string;
+  level?: string;
+  language?: string;
+  locale_hint?: string;
+  /** "standard_project" | "persona_live_play"; undefined → default to standard. */
+  interaction_type?: InteractionType;
+  /** Human-readable persona display name (e.g. "Darkangel666"). */
+  persona_label?: string;
+  /** Persona project id (in the voice/persona subsystem). */
+  persona_project_id?: string;
+  /** Optional absolute or /files/ relative avatar URL. */
+  persona_avatar_url?: string;
+  [key: string]: unknown;
+}
+
 export interface Experience {
   id: string;
   user_id?: string;
@@ -40,13 +71,24 @@ export interface Experience {
   objective?: string;
   experience_mode: ExperienceMode;
   policy_profile_id: string;
-  audience_profile?: Record<string, unknown>;
+  audience_profile?: AudienceProfile;
   branch_count?: number;
   max_depth?: number;
   status: ExperienceStatus;
   tags?: string[];
   created_at?: string;
   updated_at?: string;
+}
+
+/**
+ * Read the interaction type off an Experience. Defaults to
+ * "standard_project" when the field is absent (old experiences
+ * created before FIX-6 didn't stamp it). Keeps the player's
+ * branch logic trivial: ``if (type === 'persona_live_play') …``.
+ */
+export function resolveInteractionType(exp: Experience | null | undefined): InteractionType {
+  const raw = exp?.audience_profile?.interaction_type;
+  return raw === "persona_live_play" ? "persona_live_play" : "standard_project";
 }
 
 export interface NodeItem {

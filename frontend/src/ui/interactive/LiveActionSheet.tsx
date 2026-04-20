@@ -13,7 +13,7 @@
  */
 
 import React, { useCallback, useMemo, useState } from "react";
-import { Lock, Play, Sparkles } from "lucide-react";
+import { Gamepad2, Lock, Play, Sparkles, Star } from "lucide-react";
 import type { InteractiveApi } from "./api";
 import type { CatalogItemView, ResolveResult } from "./types";
 import { InteractiveApiError } from "./types";
@@ -34,10 +34,20 @@ export interface LiveActionSheetProps {
   currentLevel: number;
   /** Called with the resolved turn after a successful action. */
   onResolved: (resolved: ResolveResult, action: CatalogItemView) => void;
+  /**
+   * Optional: cost in XP / coins to skip ahead to the next level.
+   * When present, the sheet renders a "Skip to Level N · ⭐cost"
+   * pill in the header row, mirroring the candy.ai screenshot.
+   * onSkipLevel is invoked on click; the host decides what the
+   * currency actually costs.
+   */
+  skipLevelCost?: number;
+  onSkipLevel?: () => void;
 }
 
 export function LiveActionSheet({
   open, onClose, api, sessionId, currentLevel, onResolved,
+  skipLevelCost, onSkipLevel,
 }: LiveActionSheetProps) {
   const toast = useToast();
   const [firing, setFiring] = useState<string | null>(null);
@@ -91,15 +101,22 @@ export function LiveActionSheet({
       onClose={onClose}
       title={
         <span className="inline-flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-[#3ea6ff]" aria-hidden />
+          <Gamepad2 className="w-4 h-4 text-[#3ea6ff]" aria-hidden />
           Live Action
           <span className="text-[10px] uppercase tracking-wide text-[#aaa] bg-white/10 rounded-full px-2 py-0.5">
-            Beta
+            Beta v2
           </span>
         </span>
       }
       subtitle={`Level ${currentLevel} · unlock more by chatting and earning XP.`}
     >
+      {typeof skipLevelCost === "number" && skipLevelCost > 0 && onSkipLevel && (
+        <SkipLevelCard
+          currentLevel={currentLevel}
+          cost={skipLevelCost}
+          onSkip={onSkipLevel}
+        />
+      )}
       {catalog.error ? (
         <ErrorBanner
           title="Couldn't load the action catalog"
@@ -180,11 +197,55 @@ function ActionRow({
           <Play className="w-4 h-4 fill-current" />
         </span>
       ) : (
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#3730a3]/80 text-white text-[11px] px-3 py-1 shrink-0">
+        // Locked pill — bright indigo to match the candy.ai
+        // reference screenshot; prior `/80` opacity looked washed
+        // out against the dark row background.
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-[#4f46e5] text-white text-[11px] px-3 py-1 shrink-0 font-medium">
           <Lock className="w-3 h-3" aria-hidden />
           Level {action.required_level || 2}
         </span>
       )}
     </button>
+  );
+}
+
+function SkipLevelCard({
+  currentLevel, cost, onSkip,
+}: {
+  currentLevel: number;
+  cost: number;
+  onSkip: () => void;
+}) {
+  // Summary card pinned above the action list. Mirrors the
+  // candy.ai screenshot: large level badge on the left, blue
+  // outlined pill on the right showing the skip cost. Tapping
+  // the pill asks the host to consume the cost.
+  const nextLevel = currentLevel + 1;
+  return (
+    <div className="mb-3 rounded-xl bg-[#121212] border border-[#3f3f3f] px-4 py-3 flex items-center justify-between gap-3">
+      <div className="flex items-center gap-3 min-w-0">
+        <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-black border border-[#4f46e5]/70 text-sm font-semibold text-[#f1f1f1] shrink-0">
+          {currentLevel}
+        </span>
+        <div className="text-sm font-medium text-[#f1f1f1]">
+          Level {currentLevel}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onSkip}
+        aria-label={`Skip to level ${nextLevel} for ${cost} coins`}
+        className={[
+          "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium",
+          "border border-[#6366f1] text-white bg-transparent hover:bg-[#6366f1]/10",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6366f1] focus-visible:ring-offset-2 focus-visible:ring-offset-black",
+          "transition-colors",
+        ].join(" ")}
+      >
+        Skip to Level {nextLevel}
+        <Star className="w-3.5 h-3.5 fill-yellow-400 text-yellow-400" aria-hidden />
+        <span className="tabular-nums">{cost}</span>
+      </button>
+    </div>
   );
 }
