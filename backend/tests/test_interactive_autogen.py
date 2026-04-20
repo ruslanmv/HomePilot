@@ -11,7 +11,7 @@ import pytest
 from app.interactive.config import InteractiveConfig
 from app.interactive.models import Experience
 from app.interactive.planner.autogen_llm import (
-    ActionSpec, EdgeSpec, GraphPlan, NodeSpec, generate_graph,
+    ActionSpec, EdgeSpec, GraphPlan, NodeSpec,
 )
 from app.interactive.playback.playback_config import PlaybackConfig
 
@@ -23,6 +23,25 @@ def _force_legacy_autogen(monkeypatch):
     the new path."""
     monkeypatch.setenv("INTERACTIVE_AUTOGEN_LEGACY", "true")
     monkeypatch.delenv("INTERACTIVE_AUTOGEN_WORKFLOW", raising=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _refresh_autogen_symbols():
+    """Rebind ``generate_graph`` from the currently-loaded module.
+
+    The conftest ``app`` session fixture purges + re-imports
+    ``app.*`` modules, orphaning any top-level imports — a
+    ``generate_graph`` captured at test-collection time would
+    reference a pre-purge module whose globals tests can't
+    monkeypatch. Re-resolving on each test keeps ``mod`` (the
+    target of ``parse_prompt`` patches) and ``generate_graph``
+    (the entry point under test) pointing at the same live
+    module in ``sys.modules``.
+    """
+    import app.interactive.planner.autogen_llm as _autogen_mod
+    g = globals()
+    g["generate_graph"] = _autogen_mod.generate_graph
     yield
 
 

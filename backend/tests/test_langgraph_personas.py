@@ -15,8 +15,15 @@ import pytest
 
 
 def _run(coro):
-    """Run an async coroutine synchronously (CI-compatible)."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Run an async coroutine synchronously (CI-compatible).
+
+    Uses ``asyncio.run`` (Python 3.7+) rather than the legacy
+    ``get_event_loop().run_until_complete`` pattern — the latter
+    raises ``RuntimeError: There is no current event loop`` on
+    Python 3.10+ when no loop has been set on the main thread,
+    which is the default under pytest's test collection.
+    """
+    return asyncio.run(coro)
 
 # Ensure project root is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
