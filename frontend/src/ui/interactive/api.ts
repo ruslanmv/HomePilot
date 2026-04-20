@@ -156,7 +156,15 @@ export interface InteractiveApi {
     viewer_ref?: string;
     language?: string;
     personalization?: Record<string, unknown>;
-  }): Promise<{ id: string; experience_id: string; current_node_id: string }>;
+  }): Promise<{
+    id: string;
+    experience_id: string;
+    current_node_id: string;
+    /** Set only for Persona Live Play when the backend generated
+     *  the in-character greeting — callers render it as the first
+     *  assistant bubble before the viewer types. */
+    opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
+  }>;
   chat(sessionId: string, req: { text: string; viewer_region?: string }): Promise<ChatResult>;
   pending(
     sessionId: string,
@@ -454,10 +462,13 @@ export function createInteractiveApi(
       ),
 
     startSession: (req) =>
-      call<{ session: { id: string; experience_id: string; current_node_id: string } }>(
+      call<{
+        session: { id: string; experience_id: string; current_node_id: string };
+        opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
+      }>(
         "/play/sessions",
         { method: "POST", body: JSON.stringify(req) },
-      ).then((r) => r.session),
+      ).then((r) => ({ ...r.session, opening_turn: r.opening_turn })),
 
     chat: (sessionId, req) =>
       call<ChatResult & { ok: boolean }>(

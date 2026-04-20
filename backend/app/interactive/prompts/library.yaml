@@ -28,3 +28,11 @@ prompts:
   # out loop so one flaky scene doesn't torpedo the whole graph.
   autogen.scene_spine:     autogen/01_scene_spine.yaml
   autogen.scene_script:    autogen/02_scene_script.yaml
+
+  # Persona Live Play — real-time companion mode. NOT a story graph.
+  # opening_turn fires once at session start (the greeting that
+  # pops up before the viewer types anything); turn_compose runs
+  # every chat turn after that. Both emit the same JSON contract so
+  # the player's overlay + llm_composer parser stay unchanged.
+  personaplay.opening_turn: personaplay/01_opening_turn.yaml
+  personaplay.turn_compose: personaplay/02_turn_compose.yaml

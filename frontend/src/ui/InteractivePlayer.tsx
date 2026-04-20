@@ -94,7 +94,10 @@ function InteractivePlayerBody({
     (signal) => api.getExperience(projectId, signal),
     [api, projectId],
   );
-  const session = useAsyncResource<{ id: string }>(
+  const session = useAsyncResource<{
+    id: string;
+    opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
+  }>(
     async () => {
       // Start a new anonymous session dedicated to this player mount.
       // Sessions are cheap; the editor + live-play are intentionally
@@ -108,12 +111,13 @@ function InteractivePlayerBody({
         experience_id: projectId,
         viewer_ref: `player_${Date.now()}`,
       });
-      return { id: sess.id };
+      return { id: sess.id, opening_turn: sess.opening_turn };
     },
     [api, projectId],
   );
 
   const sessionId = session.data?.id || "";
+  const openingTurn = session.data?.opening_turn;
 
   // ── Player state ────────────────────────────────────────────
   const [bubbles, setBubbles] = useState<ChatBubble[]>([]);
@@ -136,6 +140,26 @@ function InteractivePlayerBody({
   // Refs for state read by the polling effect without re-binding.
   const cursorRef = useRef<string>("");
   useEffect(() => { cursorRef.current = cursor; }, [cursor]);
+
+  // Persona Live Play: seed the overlay with the backend-generated
+  // greeting so the viewer sees an in-character opener immediately
+  // (mirrors the candy.ai pattern in the reference screenshots).
+  // Guarded by sessionId so it only fires once per session mount.
+  const seededOpeningForRef = useRef<string>("");
+  useEffect(() => {
+    if (!sessionId || !openingTurn?.reply_text) return;
+    if (seededOpeningForRef.current === sessionId) return;
+    seededOpeningForRef.current = sessionId;
+    setBubbles((prev) => [
+      ...prev,
+      {
+        id: `a_open_${sessionId}`,
+        role: "assistant",
+        text: openingTurn.reply_text,
+        ts: Date.now(),
+      },
+    ]);
+  }, [sessionId, openingTurn]);
 
   // ── Polling loop ────────────────────────────────────────────
   useEffect(() => {

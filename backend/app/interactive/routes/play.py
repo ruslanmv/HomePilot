@@ -34,6 +34,7 @@ from ..interaction.state import build_runtime_state
 from ..interaction.types import TransitionKind
 from ..progression import describe_level, is_action_unlocked
 from ._common import current_user, http_error_from
+from ._persona_opening import maybe_generate_opening_turn
 
 
 class SessionStartRequest(BaseModel):
@@ -88,7 +89,15 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
             repo.set_session_current_node(sess.id, entry.id)
             sess = repo.get_session(sess.id)
         repo.append_event(sess.id, "session_started")
-        return {"ok": True, "session": sess.model_dump()}
+        # Persona Live Play: generate the in-character opening bubble
+        # so the overlay has something to show before the viewer types.
+        # Non-blocking by contract — any failure logs and returns cleanly
+        # because losing the greeting must never block the Play button.
+        opening = maybe_generate_opening_turn(exp, sess)
+        payload: Dict[str, Any] = {"ok": True, "session": sess.model_dump()}
+        if opening:
+            payload["opening_turn"] = opening
+        return payload
 
     @router.get("/play/sessions/{session_id}")
     def get_session_(

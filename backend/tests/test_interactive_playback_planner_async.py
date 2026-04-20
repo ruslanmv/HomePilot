@@ -34,7 +34,10 @@ def _memory() -> SceneMemory:
 
 
 def _install_llm(monkeypatch: pytest.MonkeyPatch, result: ScenePlan | None) -> None:
-    async def _fake(memory, text, classification, *, persona_hint="", duration_sec=5, config=None):
+    async def _fake(
+        memory, text, classification, *,
+        persona_hint="", duration_sec=5, config=None, **_kwargs,
+    ):
         return result
     import app.interactive.playback.llm_composer as mod
     monkeypatch.setattr(mod, "compose_with_llm", _fake)

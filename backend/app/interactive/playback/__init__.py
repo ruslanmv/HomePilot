@@ -28,6 +28,7 @@ from .scene_planner import (
     synthesize_synopsis,
 )
 from .asset_urls import resolve_asset_url
+from .persona_profile import load_persona_prompt_vars
 from .schema import ensure_playback_schema
 from .video_job import (
     SceneJob,
@@ -53,6 +54,7 @@ __all__ = [
     "plan_next_scene_async",
     "synthesize_synopsis",
     "ensure_playback_schema",
+    "load_persona_prompt_vars",
     "resolve_asset_url",
     "SceneJob",
     "get_job",

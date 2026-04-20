@@ -28,6 +28,8 @@ from typing import Any, Dict, List, Optional
 
 from ...llm import chat_ollama
 from ..policy.classifier import IntentMatch
+from ..prompts import PromptLibraryError, default_library
+from .persona_profile import load_persona_prompt_vars
 from .playback_config import PlaybackConfig, load_playback_config
 from .scene_memory import SceneMemory, TurnSnapshot
 from .scene_planner import ScenePlan
@@ -52,8 +54,21 @@ async def compose_with_llm(
     persona_hint: str = "",
     duration_sec: int = 5,
     config: Optional[PlaybackConfig] = None,
+    persona_project_id: str = "",
+    persona_label: str = "",
+    synopsis: str = "",
 ) -> Optional[ScenePlan]:
-    """Ask the LLM for the next scene. Returns None on failure."""
+    """Ask the LLM for the next scene. Returns None on failure.
+
+    When ``persona_project_id`` is provided, the prompt is rendered
+    from the ``personaplay.turn_compose`` YAML in the prompt library
+    — it injects the persona's role, objective, traits, style
+    weights, backstory, outfit and the current affinity tier, so
+    the reply stays in-character across turns. Without a persona id
+    (e.g. standard branching projects), we fall back to the generic
+    inline prompt that ships reply + scene cues without persona
+    grounding.
+    """
     cfg = config or load_playback_config()
     if not cfg.llm_enabled:
         return None
@@ -61,6 +76,9 @@ async def compose_with_llm(
     messages = _build_messages(
         memory=memory, text=text, classification=classification,
         persona_hint=persona_hint, duration_sec=duration_sec,
+        persona_project_id=persona_project_id,
+        persona_label=persona_label,
+        synopsis=synopsis,
     )
     try:
         response = await asyncio.wait_for(
@@ -116,9 +134,29 @@ async def compose_with_llm(
 def _build_messages(
     *, memory: SceneMemory, text: str, classification: IntentMatch,
     persona_hint: str, duration_sec: int,
+    persona_project_id: str = "", persona_label: str = "",
+    synopsis: str = "",
 ) -> List[Dict[str, Any]]:
-    """Assemble an Ollama-style messages array."""
-    system = _system_prompt(memory=memory, persona_hint=persona_hint, duration_sec=duration_sec)
+    """Assemble an Ollama-style messages array.
+
+    If a persona project is linked, try to render the
+    ``personaplay.turn_compose`` prompt — that prompt is purpose-
+    built for live-play mode and emits the exact same JSON shape.
+    Any failure (missing prompt, missing persona project, render
+    error) falls back to the generic inline system prompt so this
+    path can't break standard playback.
+    """
+    system = _persona_system_prompt(
+        memory=memory,
+        persona_project_id=persona_project_id,
+        persona_label=persona_label,
+        viewer_text=text,
+        intent_code=classification.intent_code or "",
+        synopsis=synopsis,
+        duration_sec=duration_sec,
+    ) or _system_prompt(
+        memory=memory, persona_hint=persona_hint, duration_sec=duration_sec,
+    )
     context: List[Dict[str, Any]] = [{"role": "system", "content": system}]
 
     if memory.synopsis:
@@ -152,6 +190,49 @@ def _build_messages(
         ),
     })
     return context
+
+
+def _persona_system_prompt(
+    *, memory: SceneMemory, persona_project_id: str, persona_label: str,
+    viewer_text: str, intent_code: str, synopsis: str, duration_sec: int,
+) -> str:
+    """Render ``personaplay.turn_compose`` for the current turn.
+
+    Returns an empty string on any failure so the caller falls back
+    to the generic system prompt. This means a missing/corrupt
+    persona never blocks a live-play session — the viewer still
+    gets a reply, just without the persona-specific grounding.
+    """
+    if not persona_project_id and not persona_label:
+        return ""
+    try:
+        vars_ = load_persona_prompt_vars(
+            persona_project_id,
+            persona_label=persona_label,
+            persona_emotion=memory.mood or "neutral",
+            affinity_score=memory.affinity_score,
+            synopsis=synopsis or memory.synopsis or "",
+            viewer_message=viewer_text or "",
+            intent_hint=intent_code or "",
+            duration_sec=duration_sec,
+        )
+        if not vars_:
+            return ""
+        rendered = default_library().render(
+            "personaplay.turn_compose", **vars_,
+        )
+    except (PromptLibraryError, Exception) as exc:  # noqa: BLE001
+        log.warning(
+            "persona_live_play prompt render failed: %s", str(exc)[:200],
+            extra={"session_id": memory.session_id},
+        )
+        return ""
+    # Combine system + user into a single system block — the LLM
+    # client below will still append the conversation turns as
+    # separate messages. Keeping both halves together preserves the
+    # prompt authors' intent without restructuring the messages
+    # array contract.
+    return rendered.system + "\n\n" + rendered.user
 
 
 def _system_prompt(*, memory: SceneMemory, persona_hint: str, duration_sec: int) -> str:

@@ -80,6 +80,8 @@ async def plan_next_scene_async(
     *,
     persona_hint: str = "",
     duration_sec: int = 5,
+    persona_project_id: str = "",
+    persona_label: str = "",
 ) -> ScenePlan:
     """Async variant that tries the LLM composer before falling
     back to the deterministic heuristic.
@@ -105,6 +107,9 @@ async def plan_next_scene_async(
     llm_plan = await compose_with_llm(
         memory, text, classification,
         persona_hint=persona_hint, duration_sec=duration_sec,
+        persona_project_id=persona_project_id,
+        persona_label=persona_label,
+        synopsis=memory.synopsis,
     )
     if llm_plan is not None:
         return llm_plan

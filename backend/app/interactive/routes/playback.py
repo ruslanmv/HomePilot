@@ -105,10 +105,13 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
             raise http_error_from(NotFoundError("session state missing"))
 
         persona_hint = _persona_hint_from_experience(exp, sess)
+        persona_project_id, persona_label = _persona_project_from_experience(exp)
         plan = await plan_next_scene_async(
             memory, text,
             persona_hint=persona_hint,
             duration_sec=_target_duration_from_cfg(cfg),
+            persona_project_id=persona_project_id,
+            persona_label=persona_label,
         )
 
         # ── Apply character state delta ──────────────────────────
@@ -263,6 +266,23 @@ def _persona_hint_from_experience(exp: Any, sess: Any) -> str:
     if desc:
         return desc
     return str(getattr(exp, "title", "") or "").strip()
+
+
+def _persona_project_from_experience(exp: Any) -> tuple[str, str]:
+    """Pull the ``audience_profile.persona_project_id`` + ``persona_label``
+    stamped by the wizard when the user picks Persona Live Play.
+
+    Returns ``("", "")`` for standard-project experiences so the
+    composer takes the generic path.
+    """
+    ap = getattr(exp, "audience_profile", None) or {}
+    if not isinstance(ap, dict):
+        return "", ""
+    if str(ap.get("interaction_type") or "").strip() != "persona_live_play":
+        return "", ""
+    pid = str(ap.get("persona_project_id") or "").strip()
+    label = str(ap.get("persona_label") or "").strip()
+    return pid, label
 
 
 def _media_type_from_experience(exp: Any) -> str:
