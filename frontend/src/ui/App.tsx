@@ -2592,6 +2592,12 @@ export default function App() {
     // Prompt refinement: default to true (enabled by default for better results)
     const promptRefinement = localStorage.getItem('homepilot_prompt_refinement') !== 'false'
 
+    // ComfyUI VRAM mode — default "high" (keep model resident).
+    // Low-VRAM users can flip to "normal" or "low" in Settings.
+    const comfyVramMode = (
+      localStorage.getItem('homepilot_comfy_vram_mode') || 'high'
+    ) as 'high' | 'normal' | 'low' | 'gpu-only'
+
     // Multimodal (Vision) settings
     const providerMultimodal = (localStorage.getItem('homepilot_provider_multimodal') || 'ollama') as string
     const baseUrlMultimodal = localStorage.getItem('homepilot_base_url_multimodal') || ''
@@ -2619,6 +2625,7 @@ export default function App() {
       ttsEnabled,
       selectedVoice,
       promptRefinement,
+      comfyVramMode,
       providerMultimodal,
       baseUrlMultimodal,
       modelMultimodal,
@@ -2867,6 +2874,28 @@ export default function App() {
     localStorage.setItem('homepilot_experimental_civitai', String(!!settingsDraft.experimentalCivitai))
     localStorage.setItem('homepilot_civitai_api_key', settingsDraft.civitaiApiKey || '')
     localStorage.setItem('homepilot_prompt_refinement', String(settingsDraft.promptRefinement ?? true))
+    localStorage.setItem('homepilot_comfy_vram_mode', settingsDraft.comfyVramMode || 'high')
+
+    // Persist launcher-only flags to the backend so
+    // scripts/start-comfyui.sh sources them on next boot. Without
+    // this, toggling VRAM mode in Settings resets to the env
+    // default the next time the user runs ``make start``.
+    // Fire-and-forget: if the backend is down, localStorage still
+    // updated above so the UI stays consistent.
+    try {
+      const comfyMode = settingsDraft.comfyVramMode || 'high'
+      fetch(`${settingsDraft.backendUrl.replace(/\/+$/, '')}/v1/system/runtime-config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(settingsDraft.apiKey ? { 'x-api-key': settingsDraft.apiKey } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          values: { COMFY_VRAM_MODE: comfyMode },
+        }),
+      }).catch(() => { /* best-effort */ })
+    } catch { /* no-op */ }
 
     // Teams settings
     localStorage.setItem('homepilot_teams_concurrent_calls', String(settingsDraft.teamsConcurrentCalls ?? 1))
@@ -2968,6 +2997,8 @@ export default function App() {
         experimentalCivitai: localStorage.getItem('homepilot_experimental_civitai') === 'true',
         civitaiApiKey: localStorage.getItem('homepilot_civitai_api_key') || '',
         promptRefinement: localStorage.getItem('homepilot_prompt_refinement') !== 'false',
+        comfyVramMode: (localStorage.getItem('homepilot_comfy_vram_mode') || 'high') as
+          'high' | 'normal' | 'low' | 'gpu-only',
         textTemperature: parseFloat(localStorage.getItem('homepilot_text_temp') || '0.7'),
         textMaxTokens: parseInt(localStorage.getItem('homepilot_text_maxtokens') || '2048'),
         imgWidth: parseInt(localStorage.getItem('homepilot_img_width') || '1024'),

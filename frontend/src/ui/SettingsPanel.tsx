@@ -70,6 +70,14 @@ export type SettingsModelV2 = {
   // Prompt refinement (AI enhancement of image prompts)
   promptRefinement?: boolean;
 
+  // ComfyUI VRAM mode — controls how aggressively ComfyUI offloads
+  // model weights between calls. "high" keeps them resident (best
+  // for 8+ GB GPUs); "normal" is ComfyUI's default smart-offload;
+  // "low" minimises VRAM at the cost of speed. Undefined = keep
+  // current shell env (COMFY_VRAM_MODE) value. Takes effect on
+  // the next ComfyUI restart.
+  comfyVramMode?: 'high' | 'normal' | 'low' | 'gpu-only';
+
   // Multimodal (Vision) settings — additive, optional
   providerMultimodal?: ProviderKey;
   baseUrlMultimodal?: string;
@@ -711,6 +719,43 @@ export default function SettingsPanel({
 
         {baseUrlRow("Video Base URL", value.providerVideo, value.baseUrlVideo, (v) => onChangeDraft({ ...value, baseUrlVideo: v }))}
         {modelSelectRow("Video Model (if supported)", value.providerVideo, value.modelVideo, (m) => onChangeDraft({ ...value, modelVideo: m }), value.baseUrlVideo, value.providerVideo === 'comfyui' ? 'video' : undefined)}
+
+        {/* ComfyUI VRAM mode — production-best-practice default is
+            "high" (keep models resident between calls). Low-VRAM
+            users flip to "normal" or "low". Applies on next
+            ComfyUI restart. Shown only for ComfyUI providers. */}
+        {(value.providerImages === 'comfyui' || value.providerVideo === 'comfyui') && (
+          <div className="border-t border-white/5 pt-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] uppercase tracking-wider text-white/40 font-semibold">
+                  Keep model in GPU memory
+                </div>
+                <div className="text-[10px] text-white/35 mt-1">
+                  Recommended for ≥ 8&nbsp;GB VRAM. Keeps the image/video
+                  model resident between calls so the second render stays
+                  fast. Low-VRAM laptops should pick <em>Normal</em> or
+                  <em> Low</em>. Takes effect on next ComfyUI restart.
+                </div>
+              </div>
+              <select
+                aria-label="ComfyUI VRAM mode"
+                value={value.comfyVramMode ?? 'high'}
+                onChange={(e) => onChangeDraft({
+                  ...value,
+                  comfyVramMode: (e.target.value || 'high') as
+                    'high' | 'normal' | 'low' | 'gpu-only',
+                })}
+                className="shrink-0 bg-[#0f0f0f] border border-[#3f3f3f] rounded-md px-2 py-1.5 text-xs text-white/90 outline-none focus:border-[#8b5cf6] focus:ring-1 focus:ring-[#8b5cf6]/50"
+              >
+                <option value="high">High (recommended)</option>
+                <option value="normal">Normal (ComfyUI default)</option>
+                <option value="gpu-only">GPU-only (maximum)</option>
+                <option value="low">Low (save VRAM)</option>
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* NSFW/Spice Mode Toggle */}
         <div className="border-t border-white/5 pt-3">

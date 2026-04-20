@@ -25,6 +25,18 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMFY_DIR="$ROOT/ComfyUI"
 PYTHON="$COMFY_DIR/.venv/bin/python"
 
+# Source the backend-written runtime.env, if present. The Settings
+# UI writes VRAM-mode and other launcher-only flags there via
+# POST /v1/system/runtime-config so they survive a restart. The
+# DATA_DIR override lives outside so operators can relocate the
+# data root via env without editing this script.
+RUNTIME_ENV_FILE="${DATA_DIR:-$ROOT/backend/data}/runtime.env"
+if [[ -f "$RUNTIME_ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  set -a; . "$RUNTIME_ENV_FILE"; set +a
+  echo "ℹ️  ComfyUI: sourced runtime config from $RUNTIME_ENV_FILE"
+fi
+
 if [[ ! -f "$COMFY_DIR/main.py" ]]; then
   echo "❌ ComfyUI not found at $COMFY_DIR. Run: make install" >&2
   exit 1

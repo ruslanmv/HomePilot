@@ -271,6 +271,59 @@ app.include_router(system_dashboard_router)
 from .system_resources import router as system_resources_router
 app.include_router(system_resources_router)
 
+
+# ── Runtime config (shell-sourceable env for the launcher) ─────
+#
+# Small persistence layer so the frontend Settings panel's
+# ComfyUI VRAM toggle (and future launcher flags) survives a
+# backend + ComfyUI restart. The launcher script
+# ``scripts/start-comfyui.sh`` sources the resulting file at
+# boot, so the user's Save Settings click is reflected on next
+# ``make start``.
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+from .runtime_config import (
+    ALLOWED_KEYS as _RUNTIME_ALLOWED_KEYS,
+    read_runtime_config,
+    write_runtime_config,
+)
+
+
+class _RuntimeConfigBody(BaseModel):
+    """Pydantic wraps the ``values`` dict so FastAPI rejects
+    non-JSON payloads with a proper 422 before our handler runs."""
+    values: dict = {}
+
+
+_runtime_config_router = APIRouter(tags=["system"])
+
+
+@_runtime_config_router.get("/v1/system/runtime-config")
+def _get_runtime_config() -> dict:
+    """Return the currently-persisted shell-sourceable runtime env.
+    Keys outside the allow-list are never returned — same shape as
+    the POST body so round-trip is trivial for the frontend."""
+    return {
+        "ok": True,
+        "allowed_keys": sorted(_RUNTIME_ALLOWED_KEYS),
+        "values": read_runtime_config(),
+    }
+
+
+@_runtime_config_router.post("/v1/system/runtime-config")
+def _post_runtime_config(body: _RuntimeConfigBody) -> dict:
+    """Persist the provided subset of allow-listed keys. Unknown
+    or malformed entries are silently dropped so the endpoint is
+    safe to call repeatedly from the Save Settings flow. The
+    change takes effect on next ComfyUI restart (``make start``
+    or ``make start-comfyui``)."""
+    written = write_runtime_config(body.values or {})
+    return {"ok": True, "written": written, "applied_on": "next ComfyUI restart"}
+
+
+app.include_router(_runtime_config_router)
+
 # Include LangGraph Persona Agent routes (/v1/persona-graph/*, /v1/world-state/*, /world-state/*)
 # Additive — enables graph-based reasoning for v3 personas with embodiment awareness
 from .langgraph_personas.persona_graph_routes import router as persona_graph_router
