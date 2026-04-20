@@ -92,6 +92,31 @@ if [[ "${COMFY_FORCE_CPU:-0}" == "1" ]]; then
   echo "ℹ️  ComfyUI: CPU mode forced by COMFY_FORCE_CPU=1"
 fi
 
+# VRAM mode — by default ComfyUI runs in NORMAL_VRAM with async
+# weight offloading, which pushes checkpoints to CPU between
+# calls. On machines with ≥ 8 GB free VRAM that just costs time
+# without saving anything useful (the model has to be re-pulled
+# onto the GPU before every render). Setting --highvram keeps
+# everything resident between runs so the second Imagine call
+# stays in the 1-2 s range instead of re-paying the weight
+# transfer. Opt out with COMFY_VRAM_MODE=normal (or any other
+# value; default is "high" in GPU mode only).
+if [[ "$CUDA_AVAILABLE" == "1" && "${COMFY_FORCE_CPU:-0}" != "1" ]]; then
+  VRAM_MODE="${COMFY_VRAM_MODE:-high}"
+  case "$VRAM_MODE" in
+    high)     EXTRA_ARGS+=("--highvram") ;;
+    gpu|gpuonly|gpu-only)  EXTRA_ARGS+=("--gpu-only") ;;
+    normal)   : ;;  # ComfyUI default; don't add any flag.
+    low)      EXTRA_ARGS+=("--lowvram") ;;
+    *)
+      echo "⚠️  Unknown COMFY_VRAM_MODE='$VRAM_MODE' — ignoring (using ComfyUI default)" >&2
+      ;;
+  esac
+  if [[ "$VRAM_MODE" == "high" ]]; then
+    echo "💾 ComfyUI: --highvram (keeps models resident between calls)"
+  fi
+fi
+
 cd "$COMFY_DIR"
 exec "$PYTHON" main.py \
   --listen 0.0.0.0 \

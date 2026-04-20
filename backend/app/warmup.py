@@ -15,12 +15,21 @@ model. We submit a tiny 1-step 64×64 workflow to ComfyUI at boot
 — just enough to force the weight-loader path without burning
 noticeable GPU time.
 
+``make start`` launches the backend and ComfyUI in parallel, so
+the backend reaches its startup event well before ComfyUI's
+slow custom-node imports finish (especially on WSL2 /mnt/c).
+To avoid a spurious "connection refused" warning, the warmup
+waits on a small GET /system_stats probe loop before submitting
+— only running the weights-load once ComfyUI is actually
+answering HTTP. Generous budget (default 600 s) so a laptop
+with InstantID + LTX-Video custom nodes still gets warmed.
+
 This is best-effort and never blocks startup:
 
-* ComfyUI not reachable       → warn, keep going
-* Model file missing          → warn, keep going
+* ComfyUI never comes up     → warn after the wait budget
+* Model file missing         → warn, keep going
 * Render takes longer than 90s → warn, keep going
-* Warmup raises anything else → catch + log
+* Any other exception         → caught + logged
 
 If any of those happen, user requests still work exactly as
 before — they just eat the cold-load cost the normal way.
@@ -30,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any, Dict, Optional
 
 
@@ -37,6 +47,13 @@ log = logging.getLogger(__name__)
 
 
 _DEFAULT_WARMUP_TIMEOUT_S = 90.0
+
+# Generous readiness budget because WSL2 /mnt/c + heavy custom
+# nodes (InstantID, LTX-Video, Impact-Pack) routinely need 60-120s
+# just to import. Still bounded so a forever-broken ComfyUI
+# doesn't pin an asyncio task until shutdown.
+_COMFY_READY_MAX_WAIT_S = 600.0
+_COMFY_READY_POLL_INTERVAL_S = 3.0
 
 
 def warmup_enabled() -> bool:
@@ -49,11 +66,80 @@ def warmup_enabled() -> bool:
     return True
 
 
+async def _wait_for_comfy_ready(
+    base_url: str,
+    *,
+    max_wait_s: Optional[float] = None,
+    interval_s: Optional[float] = None,
+) -> bool:
+    """Poll ComfyUI's ``/system_stats`` endpoint until it answers
+    200 OK or ``max_wait_s`` elapses.
+
+    ``max_wait_s`` / ``interval_s`` default to the module-level
+    ``_COMFY_READY_MAX_WAIT_S`` / ``_COMFY_READY_POLL_INTERVAL_S``
+    read at CALL time (not import time) so tests that shrink
+    those constants via ``monkeypatch.setattr`` take effect.
+
+    Uses httpx (already a backend dep) with a short per-request
+    timeout so a hung ComfyUI doesn't consume the entire wait
+    budget on one probe. Returns True when reachable, False on
+    overall timeout or unexpected error.
+    """
+    if max_wait_s is None:
+        max_wait_s = _COMFY_READY_MAX_WAIT_S
+    if interval_s is None:
+        interval_s = _COMFY_READY_POLL_INTERVAL_S
+
+    try:
+        import httpx
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        log.warning("warmup: httpx unavailable — skipping readiness wait (%s)", exc)
+        return False
+
+    url = f"{base_url.rstrip('/')}/system_stats"
+    deadline = time.monotonic() + max_wait_s
+    attempts = 0
+
+    while time.monotonic() < deadline:
+        attempts += 1
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    elapsed = max_wait_s - (deadline - time.monotonic())
+                    log.info(
+                        "warmup: ComfyUI reachable after %.1fs (%d probe%s) — starting warmup",
+                        elapsed, attempts, "s" if attempts != 1 else "",
+                    )
+                    return True
+        except Exception:  # noqa: BLE001 — expected during boot
+            pass
+        # Low-noise log every 10 attempts (~30s default) so operators
+        # watching the console can tell what we're waiting on.
+        if attempts % 10 == 0:
+            log.info(
+                "warmup: still waiting for ComfyUI at %s (%d probes)",
+                base_url, attempts,
+            )
+        await asyncio.sleep(interval_s)
+
+    log.warning(
+        "warmup: ComfyUI didn't become reachable within %.0fs — skipping warmup",
+        max_wait_s,
+    )
+    return False
+
+
 async def warm_image_model_on_startup() -> None:
     """Submit a tiny txt2img prompt to ComfyUI so the checkpoint
     is resident before the first user request.
 
     Runs in the background; never blocks server startup.
+    Waits for ComfyUI to be reachable first — ``make start``
+    brings the backend up seconds before ComfyUI finishes its
+    custom-node imports, and submitting before that lands on a
+    "connection refused" stacktrace in the logs.
+
     Failures are logged at WARNING and swallowed — the user's
     first real request will still succeed, it just won't have
     the warm advantage.
@@ -65,17 +151,29 @@ async def warm_image_model_on_startup() -> None:
     # runtime path does, so whatever is in Settings → Providers
     # (or IMAGE_MODEL env) is the one we warm.
     try:
-        from .interactive.media_router import resolve_current_image_model
+        from .interactive.media_router import (
+            resolve_current_comfy_base_url,
+            resolve_current_image_model,
+        )
         model = resolve_current_image_model()
+        comfy_base_url = resolve_current_comfy_base_url()
     except Exception as exc:  # noqa: BLE001
-        log.warning("warmup: couldn't resolve IMAGE_MODEL — skipping (%s)", exc)
+        log.warning("warmup: couldn't resolve IMAGE_MODEL / Comfy URL — skipping (%s)", exc)
         return
 
     if not model:
         log.info("warmup: IMAGE_MODEL not set — skipping")
         return
 
-    # Architecture dispatch matches Imagine + the new Interactive
+    # Step 1: wait for ComfyUI to actually be listening before
+    # we try to submit. Addresses the "Connection refused" noise
+    # on parallel startup (make start fires backend + ComfyUI at
+    # the same time; ComfyUI takes longer to boot).
+    ready = await _wait_for_comfy_ready(comfy_base_url)
+    if not ready:
+        return
+
+    # Step 2: architecture dispatch matches Imagine + Interactive's
     # render_adapter, so we're always testing the same workflow
     # file the first real request will use.
     try:
@@ -135,4 +233,8 @@ async def warm_image_model_on_startup() -> None:
         log.warning("warmup: unexpected error — skipping (%s)", exc)
 
 
-__all__ = ["warm_image_model_on_startup", "warmup_enabled"]
+__all__ = [
+    "warm_image_model_on_startup",
+    "warmup_enabled",
+    "_wait_for_comfy_ready",
+]

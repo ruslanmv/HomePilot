@@ -1755,21 +1755,24 @@ async def orchestrate(
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
         except Exception as e:
-            # Cold-start timeouts are the #1 false-negative: the
-            # first call loads the model weights (30-60s) and can
-            # outrun the poll deadline. The retry is usually warm
-            # and succeeds in seconds — tell the user that instead
-            # of leaving them staring at an opaque "timed out".
-            err_str = str(e)
-            lowered = err_str.lower()
-            if "timed out" in lowered or "timeout" in lowered:
+            # Only substitute the friendly "cold-start" copy when we
+            # actually hit the poll-deadline TimeoutError raised by
+            # comfy.run_workflow. A generic exception whose __str__
+            # happens to contain "timeout" (httpx read-timeouts on
+            # a healthy job, connection hiccups, etc.) must NOT
+            # masquerade as a model warmup hint — that's the
+            # false-negative loop the user saw where a 10-s success
+            # silently reported "took longer than expected".
+            import asyncio as _asyncio
+            is_timeout = isinstance(e, (TimeoutError, _asyncio.TimeoutError))
+            if is_timeout:
                 text = (
                     "Image generation took longer than expected — the model was "
                     "likely loading for the first time. Click Generate again; "
                     "the retry runs on the warm model and is much faster."
                 )
             else:
-                text = f"Image generation error: {err_str}"
+                text = f"Image generation error: {str(e)}"
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
 
