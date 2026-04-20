@@ -69,6 +69,12 @@ export interface InteractionSelection {
   interaction_type: "standard_project" | "persona_live_play";
   persona_project_id?: string;
   persona_label?: string;
+  /**
+   * Scene-render pipeline. "video" (default) uses Animate/SVD;
+   * "image" swaps to the txt2img workflow for feasibility tests
+   * on low-VRAM setups.
+   */
+  render_media_type?: "video" | "image";
 }
 
 export interface WizardAutoPreviewProps {
@@ -128,6 +134,7 @@ export function WizardAutoPreview({
           interaction_type: interaction.interaction_type,
           persona_project_id: interaction.persona_project_id,
           persona_label: interaction.persona_label,
+          render_media_type: interaction.render_media_type || "video",
         },
       });
       setGenStep(1);

@@ -55,6 +55,12 @@ export interface AutoInteractionSelection {
   interaction_type: "standard_project" | "persona_live_play";
   persona_project_id?: string;
   persona_label?: string;
+  /**
+   * Which scene-render pipeline the player uses:
+   *   "video" — full Animate/SVD clips (default)
+   *   "image" — still frames (fast feasibility path)
+   */
+  render_media_type?: "video" | "image";
 }
 
 export interface WizardAutoProps {
@@ -92,6 +98,11 @@ export function WizardAuto({
     useState<"standard_project" | "persona_live_play">("standard_project");
   const [personaId, setPersonaId] = useState("");
   const [personaLabel, setPersonaLabel] = useState("");
+  // Image vs video scene render. Orthogonal to interactionType —
+  // both persona and standard projects can run either pipeline;
+  // image mode is the feasibility path for low-VRAM setups.
+  const [renderMediaType, setRenderMediaType] =
+    useState<"video" | "image">("video");
 
   const personaOptions = useMemo(() => {
     try {
@@ -137,6 +148,7 @@ export function WizardAuto({
         interaction_type: interactionType,
         persona_project_id: personaId || undefined,
         persona_label: personaLabel || undefined,
+        render_media_type: renderMediaType,
       });
     } catch (err) {
       window.clearInterval(tick);
@@ -144,7 +156,7 @@ export function WizardAuto({
       setError(apiErr.message || "Couldn't generate a plan — try again.");
       setGenerating(false);
     }
-  }, [api, canSubmit, idea, onPlanned]);
+  }, [api, canSubmit, idea, interactionType, personaId, personaLabel, renderMediaType, onPlanned]);
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -226,6 +238,30 @@ export function WizardAuto({
                 Pick one of your personas — chat + video revolve around them.
               </div>
             </button>
+          </div>
+
+          {/* Render-media toggle — small dropdown that lets operators
+              flip between the full video pipeline and the still-image
+              feasibility path without leaving the one-box flow. */}
+          <div className="mb-5 flex items-center justify-between gap-3 bg-[#121212] border border-[#3f3f3f] rounded-md px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-[#cfd8dc]">Render media</div>
+              <div className="text-[11px] text-[#777] truncate">
+                Image = fast still frames (low GPU). Video = full Animate/SVD clips.
+              </div>
+            </div>
+            <select
+              aria-label="Render media type"
+              value={renderMediaType}
+              onChange={(e) => setRenderMediaType(
+                (e.target.value === "image" ? "image" : "video") as "video" | "image",
+              )}
+              disabled={generating}
+              className="shrink-0 bg-[#0f0f0f] border border-[#3f3f3f] rounded-md px-2 py-1.5 text-xs outline-none focus:border-[#8b5cf6] focus:ring-1 focus:ring-[#8b5cf6]/50 disabled:opacity-60"
+            >
+              <option value="video">Video (full)</option>
+              <option value="image">Image (feasibility)</option>
+            </select>
           </div>
 
           {interactionType === "persona_live_play" && (

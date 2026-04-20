@@ -8,9 +8,9 @@
  */
 
 import React, { useMemo } from "react";
-import { Users } from "lucide-react";
+import { Image as ImageIcon, Users, Video } from "lucide-react";
 import type { ExperienceMode } from "../types";
-import type { WizardForm } from "../wizardState";
+import type { RenderMediaType, WizardForm } from "../wizardState";
 import { LS_PERSONA_CACHE } from "../../voice/personalityGating";
 
 export interface Step0Props {
@@ -151,6 +151,16 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
         <PromptCounter value={form.prompt} />
       </FieldLabel>
 
+      <FieldLabel
+        label="Render media"
+        hint="Image = fast still-frame scenes (low GPU, good for feasibility tests). Video = full Animate/SVD clips."
+      >
+        <RenderMediaSelect
+          value={form.render_media_type}
+          onChange={(v) => setForm({ render_media_type: v })}
+        />
+      </FieldLabel>
+
       <FieldLabel label="Experience mode" hint="Selects the policy profile + scene templates downstream.">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {MODE_OPTIONS.map((m) => {
@@ -217,6 +227,67 @@ function PromptCounter({ value }: { value: string }) {
     </div>
   );
 }
+
+function RenderMediaSelect({
+  value, onChange,
+}: {
+  value: RenderMediaType;
+  onChange: (v: RenderMediaType) => void;
+}) {
+  // Compact two-option picker styled like the existing interaction-
+  // type cards so the wizard stays visually consistent. Keeping the
+  // control small matches the user's request ("add a new small
+  // dropdown") — a full-width two-card picker would steal focus from
+  // the more important interaction-type + mode decisions above.
+  const options: Array<{
+    value: RenderMediaType;
+    label: string;
+    sub: string;
+    icon: React.ReactNode;
+  }> = [
+    {
+      value: "video",
+      label: "Video (full pipeline)",
+      sub: "Uses the Animate / SVD workflow. Needs a capable GPU.",
+      icon: <Video className="w-4 h-4" aria-hidden />,
+    },
+    {
+      value: "image",
+      label: "Image (feasibility mode)",
+      sub: "Still frames via txt2img. Fast, low-VRAM; same UX everywhere else.",
+      icon: <ImageIcon className="w-4 h-4" aria-hidden />,
+    },
+  ];
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {options.map((opt) => {
+        const selected = value === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            aria-pressed={selected}
+            className={[
+              "text-left bg-[#121212] border rounded-md p-3 transition-colors",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff]",
+              selected
+                ? "border-[#3ea6ff] bg-[rgba(62,166,255,0.08)] ring-1 ring-[#3ea6ff]"
+                : "border-[#3f3f3f] hover:border-[#555] hover:bg-[#1a1a1a]",
+            ].join(" ")}
+          >
+            <div className="flex items-center gap-2 text-sm font-medium text-[#f1f1f1]">
+              <span className="text-[#3ea6ff]">{opt.icon}</span>
+              {opt.label}
+            </div>
+            <div className="text-xs text-[#aaa] mt-0.5">{opt.sub}</div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 
 /** Validation hook used by the parent Wizard to enable Next. */
 export function step0Valid(f: WizardForm): boolean {

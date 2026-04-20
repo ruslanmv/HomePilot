@@ -10,11 +10,23 @@
 
 import type { ExperienceMode } from "./types";
 
+/**
+ * Which ComfyUI workflow bucket the player calls per scene.
+ *   "video"  — full Animate/SVD clip. Default. Higher VRAM.
+ *   "image"  — still-image txt2img. Cheap on GPU; lets operators
+ *              validate the whole interactive flow without owning
+ *              a beefy video model.
+ */
+export type RenderMediaType = "video" | "image";
+
 export interface WizardForm {
   // Interaction type (Step 0 header)
   interaction_type: "standard_project" | "persona_live_play";
   persona_project_id: string;
   persona_label: string;
+
+  /** Scene render bucket — image or video. See RenderMediaType. */
+  render_media_type: RenderMediaType;
 
   // Step 0
   title: string;
@@ -40,6 +52,7 @@ export const DEFAULT_WIZARD_FORM: WizardForm = {
   interaction_type: "standard_project",
   persona_project_id: "",
   persona_label: "",
+  render_media_type: "video",
   title: "",
   prompt: "",
   experience_mode: "sfw_general",
@@ -67,6 +80,7 @@ export function toCreatePayload(f: WizardForm) {
       interaction_type: f.interaction_type,
       persona_project_id: f.persona_project_id || undefined,
       persona_label: f.persona_label || undefined,
+      render_media_type: f.render_media_type,
     },
   };
 }
@@ -83,6 +97,7 @@ export function toPlanPayload(f: WizardForm) {
       interaction_type: f.interaction_type,
       persona_project_id: f.persona_project_id || undefined,
       persona_label: f.persona_label || undefined,
+      render_media_type: f.render_media_type,
     },
   };
 }
