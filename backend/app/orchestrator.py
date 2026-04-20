@@ -1755,7 +1755,21 @@ async def orchestrate(
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
         except Exception as e:
-            text = f"Image generation error: {str(e)}"
+            # Cold-start timeouts are the #1 false-negative: the
+            # first call loads the model weights (30-60s) and can
+            # outrun the poll deadline. The retry is usually warm
+            # and succeeds in seconds — tell the user that instead
+            # of leaving them staring at an opaque "timed out".
+            err_str = str(e)
+            lowered = err_str.lower()
+            if "timed out" in lowered or "timeout" in lowered:
+                text = (
+                    "Image generation took longer than expected — the model was "
+                    "likely loading for the first time. Click Generate again; "
+                    "the retry runs on the warm model and is much faster."
+                )
+            else:
+                text = f"Image generation error: {err_str}"
             add_message(cid, "assistant", text)
             return {"conversation_id": cid, "text": text, "media": None}
 

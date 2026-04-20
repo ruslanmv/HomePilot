@@ -947,6 +947,20 @@ def _startup() -> None:
     if os.getenv("AGENTIC_ENABLED", "true").lower() in ("1", "true", "yes"):
         asyncio.get_event_loop().create_task(_start_agentic_servers())
 
+    # Image-model warmup — preload the configured IMAGE_MODEL into
+    # VRAM so the first user image-gen request doesn't pay the
+    # cold-load tax that triggers the "Image generation error:
+    # timed out" UX. Best-effort; failures are logged + ignored so
+    # a missing ComfyUI never blocks the backend from serving other
+    # features. Set INTERACTIVE_WARMUP_IMAGE=false to skip.
+    try:
+        from .warmup import warm_image_model_on_startup  # late import
+        asyncio.get_event_loop().create_task(warm_image_model_on_startup())
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("homepilot.startup").warning(
+            "Image warmup task couldn't start: %s", exc,
+        )
+
 
 async def _start_agentic_servers() -> None:
     """Background task: ensure core + installed + external MCP servers are running."""
