@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { createInteractiveApi, type InteractiveApi } from "./interactive/api";
 import { LiveActionSheet } from "./interactive/LiveActionSheet";
+import { StandardPlayer } from "./interactive/StandardPlayer";
 import { XPRewardsSheet } from "./interactive/XPRewardsSheet";
 import type {
   AudienceProfile, CatalogItemView, ChatResult, Experience,
@@ -349,6 +350,24 @@ function InteractivePlayerBody({
     experience.title ||
     "Interactive";
   const avatarUrl = audience.persona_avatar_url || "";
+
+  // Standard projects get a YouTube-style branching-video surface;
+  // persona projects keep the candy.ai chat + Live Action sheet.
+  // Both share the same session + scene polling, so we only swap
+  // the *view* layer — the underlying session state is unchanged.
+  if (interactionType === "standard_project") {
+    return (
+      <div className="relative min-h-screen bg-black text-[#f1f1f1] overflow-hidden select-none">
+        <StandardPlayer
+          api={api}
+          sessionId={sessionId}
+          scene={currentScene}
+          onExit={onExit}
+          onResolved={onActionResolved}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen bg-black text-[#f1f1f1] overflow-hidden select-none">
