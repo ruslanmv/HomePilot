@@ -43,7 +43,7 @@ async def render_scene_async(
     persona_hint: str = "",
     media_type: str = "video",
     config: Optional[PlaybackConfig] = None,
-    edit_recipe: Optional[EditRecipe] = None,
+    edit_recipe: Optional[Any] = None,
     persona_project_id: str = "",
 ) -> Optional[str]:
     """Submit a workflow, extract the first usable media URL, and
@@ -74,9 +74,17 @@ async def render_scene_async(
     persona_assets: Optional[PersonaAssets] = None
     if edit_recipe and persona_project_id:
         persona_assets = resolve_persona_assets(persona_project_id)
+    if edit_recipe and not persona_assets:
+        recipe_source = _recipe_source_image(edit_recipe)
+        if recipe_source:
+            persona_assets = PersonaAssets(
+                persona_project_id=persona_project_id or "runtime",
+                portrait_url=recipe_source,
+                portrait_path=recipe_source,
+            )
 
     if edit_recipe and persona_assets:
-        workflow = edit_recipe.workflow_id
+        workflow = _recipe_workflow_id(edit_recipe)
         variables = _build_edit_variables(
             scene_prompt=scene_prompt,
             duration_sec=duration_sec,
@@ -287,7 +295,7 @@ def _build_variables(
 
 def _build_edit_variables(
     *, scene_prompt: str, duration_sec: int, persona_hint: str,
-    persona_assets: PersonaAssets, recipe: EditRecipe,
+    persona_assets: PersonaAssets, recipe: Any,
 ) -> Dict[str, Any]:
     """Variables for a Persona Live Play edit run.
 
@@ -320,9 +328,9 @@ def _build_edit_variables(
         "duration_sec": safe_duration,
         "width": 1024,
         "height": 1024,
-        "steps": recipe.steps,
-        "cfg": recipe.cfg,
-        "denoise": recipe.denoise,
+        "steps": _recipe_param_int(recipe, "steps", 30),
+        "cfg": _recipe_param_float(recipe, "cfg", 5.5),
+        "denoise": _recipe_param_float(recipe, "denoise", 0.45),
         "seed": _random.randint(1, 2_147_483_646),
         "aspect_ratio": "1:1",
         "style": "photorealistic",
@@ -342,8 +350,92 @@ def _build_edit_variables(
         "ckpt_name": providers.image_model,
         "comfy_base_url": providers.comfy_base_url,
     }
-    base.update(recipe_to_variables(recipe))
+    base.update(_recipe_to_variables_any(recipe))
     return base
+
+
+def _recipe_workflow_id(recipe: Any) -> str:
+    if isinstance(recipe, dict):
+        return str(recipe.get("workflow_id") or "edit").replace(".json", "")
+    return str(getattr(recipe, "workflow_id", "") or "edit").replace(".json", "")
+
+
+def _recipe_source_image(recipe: Any) -> str:
+    if not isinstance(recipe, dict):
+        return ""
+    inputs = recipe.get("inputs") if isinstance(recipe.get("inputs"), dict) else {}
+    candidates = [
+        str(inputs.get("source_image") or ""),
+        str(inputs.get("image_ref") or ""),
+        str(inputs.get("input_image") or ""),
+        str(inputs.get("image") or ""),
+    ]
+    for raw in candidates:
+        path = raw.strip()
+        if not path:
+            continue
+        if path.startswith("/files/"):
+            upload_dir = (os.getenv("UPLOAD_DIR") or "").strip()
+            if not upload_dir:
+                data_dir = (os.getenv("DATA_DIR") or "").strip()
+                if data_dir:
+                    upload_dir = os.path.join(data_dir, "uploads")
+            if upload_dir:
+                local_path = os.path.join(upload_dir, path[len("/files/"):])
+                if os.path.isfile(local_path):
+                    return local_path
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def _recipe_param_int(recipe: Any, key: str, default: int) -> int:
+    if isinstance(recipe, dict):
+        params = recipe.get("params") if isinstance(recipe.get("params"), dict) else {}
+        try:
+            return int(params.get(key, default))
+        except (TypeError, ValueError):
+            return default
+    try:
+        return int(getattr(recipe, key))
+    except Exception:
+        return default
+
+
+def _recipe_param_float(recipe: Any, key: str, default: float) -> float:
+    if isinstance(recipe, dict):
+        params = recipe.get("params") if isinstance(recipe.get("params"), dict) else {}
+        try:
+            return float(params.get(key, default))
+        except (TypeError, ValueError):
+            return default
+    try:
+        return float(getattr(recipe, key))
+    except Exception:
+        return default
+
+
+def _recipe_to_variables_any(recipe: Any) -> Dict[str, Any]:
+    if not isinstance(recipe, dict):
+        return recipe_to_variables(recipe)
+    params = recipe.get("params") if isinstance(recipe.get("params"), dict) else {}
+    locks = recipe.get("locks") if isinstance(recipe.get("locks"), list) else []
+    mask_kind = ""
+    if "face" in locks:
+        mask_kind = "face"
+    elif "background" in locks:
+        mask_kind = "outfit"
+    elif "subject" in locks:
+        mask_kind = "bg"
+    return {
+        "edit_mode": str(params.get("mode") or "img2img"),
+        "edit_steps": _recipe_param_int(recipe, "steps", 30),
+        "edit_cfg": _recipe_param_float(recipe, "cfg", 5.5),
+        "edit_denoise": _recipe_param_float(recipe, "denoise", 0.45),
+        "edit_controlnet": str(recipe.get("controlnet") or ""),
+        "edit_mask_kind": mask_kind,
+        "edit_lora_stack": list(recipe.get("loras") or []),
+    }
 
 
 async def _run_workflow_off_thread(

@@ -32,11 +32,15 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
     try {
       const raw = localStorage.getItem(LS_PERSONA_CACHE);
       if (!raw) return [];
-      const parsed = JSON.parse(raw) as Array<{ id?: unknown; label?: unknown }>;
+      const parsed = JSON.parse(raw) as Array<{
+        id?: unknown; label?: unknown; avatar_url?: unknown; archetype?: unknown;
+      }>;
       return parsed
         .map((item) => ({
           id: typeof item.id === "string" ? item.id : "",
           label: typeof item.label === "string" ? item.label : "",
+          avatar_url: typeof item.avatar_url === "string" ? item.avatar_url : "",
+          archetype: typeof item.archetype === "string" ? item.archetype : "",
         }))
         .filter((item) => item.id && item.label);
     } catch {
@@ -124,6 +128,23 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
               No personas yet. Create one under the Persona workspace, then come back.
             </p>
           )}
+          {form.persona_project_id && (() => {
+            const selected = personaOptions.find((p) => p.id === form.persona_project_id);
+            if (!selected) return null;
+            return (
+              <div className="mt-2.5 flex items-center gap-2.5 rounded-md border border-[#3a2a58] bg-[#130f1f] p-2.5">
+                {selected.avatar_url ? (
+                  <img src={selected.avatar_url} alt={selected.label} className="w-12 h-12 rounded-md object-cover border border-[#51347f]" />
+                ) : (
+                  <div className="w-12 h-12 rounded-md bg-[#24173a] border border-[#51347f]" />
+                )}
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-[#f1f1f1] truncate">{selected.label}</div>
+                  <div className="text-[11px] text-[#b59ed9] truncate">{selected.archetype || "Persona companion"}</div>
+                </div>
+              </div>
+            );
+          })()}
         </FieldLabel>
       )}
 
@@ -139,13 +160,22 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
         />
       </FieldLabel>
 
-      <FieldLabel htmlFor="ix_prompt" label="Prompt" required hint="Describe the experience in plain language. The planner uses this to design branches and pick scene topics.">
+      <FieldLabel
+        htmlFor="ix_prompt"
+        label={form.interaction_type === "persona_live_play" ? "Session vibe" : "Prompt"}
+        required
+        hint={form.interaction_type === "persona_live_play"
+          ? "Describe the live-play vibe in plain language (e.g., playful tease, romantic late-night, dominant banter)."
+          : "Describe the experience in plain language. The planner uses this to design branches and pick scene topics."}
+      >
         <textarea
           id="ix_prompt"
           rows={5}
           value={form.prompt}
           onChange={(e) => setForm({ prompt: e.target.value })}
-          placeholder="e.g. Walk a new hire through our 3 pricing tiers in 4 branches; each branch ends with a quiz question."
+          placeholder={form.interaction_type === "persona_live_play"
+            ? "e.g. teasing and flirt with progressive unlocks, playful dominant tone"
+            : "e.g. Walk a new hire through our 3 pricing tiers in 4 branches; each branch ends with a quiz question."}
           className="w-full bg-[#121212] border border-[#3f3f3f] rounded-md px-3 py-2.5 text-sm outline-none focus:border-[#3ea6ff] focus:ring-1 focus:ring-[#3ea6ff]/50 resize-y"
         />
         <PromptCounter value={form.prompt} />

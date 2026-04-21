@@ -26,7 +26,7 @@ Safety:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # Canonical edit-hint vocabulary. The LLM's ``turn_compose`` prompt
@@ -128,6 +128,78 @@ _BASELINE: Dict[str, EditRecipe] = {
     ),
 }
 
+# Deterministic action-id/category recipe map used by persona_live
+# action endpoints. This is intentionally explicit so rendering is
+# always Action -> Recipe and never inferred from free-form text.
+ACTION_RECIPES: Dict[str, Dict[str, Any]] = {
+    "tease": {
+        "workflow_id": "avatar_expression_change",
+        "category": "expression",
+        "params": {"mode": "img2img", "steps": 24, "cfg": 5.0, "denoise": 0.35},
+        "locks": ["face"],
+    },
+    "smirk": {
+        "workflow_id": "avatar_expression_change",
+        "category": "expression",
+        "params": {"mode": "img2img", "steps": 24, "cfg": 5.0, "denoise": 0.30},
+        "locks": ["face"],
+    },
+    "blush": {
+        "workflow_id": "avatar_expression_change",
+        "category": "expression",
+        "params": {"mode": "img2img", "steps": 24, "cfg": 5.0, "denoise": 0.30},
+        "locks": ["face"],
+    },
+    "ahegao": {
+        "workflow_id": "avatar_expression_change",
+        "category": "expression",
+        "params": {"mode": "img2img", "steps": 30, "cfg": 5.5, "denoise": 0.45},
+        "locks": ["face"],
+    },
+    "dance": {
+        "workflow_id": "avatar_body_pose",
+        "category": "pose",
+        "params": {"mode": "img2img", "steps": 30, "cfg": 5.5, "denoise": 0.55},
+        "controlnet": "openpose",
+    },
+    "closer_pose": {
+        "workflow_id": "avatar_body_pose",
+        "category": "pose",
+        "params": {"mode": "img2img", "steps": 28, "cfg": 5.2, "denoise": 0.50},
+        "controlnet": "openpose",
+    },
+    "turn_around": {
+        "workflow_id": "avatar_body_pose",
+        "category": "pose",
+        "params": {"mode": "img2img", "steps": 30, "cfg": 5.5, "denoise": 0.58},
+        "controlnet": "openpose",
+    },
+    "outfit_change": {
+        "workflow_id": "avatar_inpaint_outfit",
+        "category": "outfit",
+        "params": {"mode": "inpaint", "steps": 30, "cfg": 5.5, "denoise": 0.55},
+        "locks": ["face", "background"],
+    },
+    "move_to_beach": {
+        "workflow_id": "change_background_premask",
+        "category": "scene",
+        "params": {"mode": "change_bg", "steps": 24, "cfg": 5.0, "denoise": 0.45},
+        "locks": ["subject"],
+    },
+    "make_it_rain": {
+        "workflow_id": "change_background",
+        "category": "scene",
+        "params": {"mode": "change_bg", "steps": 24, "cfg": 5.0, "denoise": 0.45},
+        "locks": ["subject"],
+    },
+    "zoom_out": {
+        "workflow_id": "outpaint",
+        "category": "scene",
+        "params": {"mode": "outpaint", "steps": 24, "cfg": 4.5, "denoise": 0.8},
+        "locks": ["existing_pixels"],
+    },
+}
+
 
 def pick_recipe(
     edit_hint: str,
@@ -194,6 +266,66 @@ def _coerce_upscale(value: object) -> int:
     return 0
 
 
+def default_recipe() -> Dict[str, Any]:
+    return {
+        "workflow_id": "edit",
+        "params": {"mode": "img2img", "steps": 24, "cfg": 5.0, "denoise": 0.40},
+    }
+
+
+def recipe_for_action(
+    action: Any,
+    edit_hint: Optional[str] = None,
+    *,
+    mode: str = "image",
+) -> Dict[str, Any]:
+    """Deterministic recipe router for persona_live actions.
+
+    Priority:
+      1) per-action edit_recipe override
+      2) hardcoded ACTION_RECIPES by action intent/category
+      3) safe default recipe
+    """
+    override = getattr(action, "edit_recipe", None) or {}
+    if isinstance(override, dict) and override:
+        out = dict(override)
+        out.setdefault("params", {})
+        out["params"].setdefault("mode", "img2img")
+        return out
+
+    intent_key = str(getattr(action, "intent_code", "") or "").strip().lower()
+    category_key = str(getattr(action, "category", "") or "").strip().lower()
+    base = ACTION_RECIPES.get(intent_key) or ACTION_RECIPES.get(category_key)
+    if not base:
+        return default_recipe()
+
+    recipe = {
+        "workflow_id": str(base.get("workflow_id") or "edit"),
+        "category": str(base.get("category") or category_key or "expression"),
+        "params": dict(base.get("params") or {}),
+        "locks": list(base.get("locks") or []),
+    }
+    if base.get("controlnet"):
+        recipe["controlnet"] = base["controlnet"]
+
+    # Video-mode workflow overrides keep the same deterministic
+    # action map while swapping only the workflow target.
+    if mode == "video" and intent_key == "dance":
+        recipe["workflow_id"] = "avatar_body_pose_video"
+
+    if edit_hint == "expression":
+        recipe.setdefault("params", {})
+        recipe["params"]["denoise"] = 0.35
+    recipe.setdefault("params", {})
+    recipe["params"].setdefault("mode", "img2img")
+    recipe.setdefault("quick_fixes", {
+        "enhance": True,
+        "fix_faces": True,
+        "upscale": 0,
+    })
+    return recipe
+
+
 def recipe_to_variables(recipe: EditRecipe) -> Dict[str, object]:
     """Flatten a recipe to the extra ComfyUI variables the render
     adapter should overlay on top of the base txt2img variables.
@@ -219,9 +351,12 @@ def recipe_to_variables(recipe: EditRecipe) -> Dict[str, object]:
 
 
 __all__ = [
+    "ACTION_RECIPES",
     "EDIT_HINTS",
     "EditRecipe",
     "LoRAEntry",
+    "default_recipe",
     "pick_recipe",
+    "recipe_for_action",
     "recipe_to_variables",
 ]

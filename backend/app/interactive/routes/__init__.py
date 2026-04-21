@@ -25,6 +25,7 @@ from .planner import build_planner_router
 from .planner_auto import build_planner_auto_router
 from .play import build_play_router
 from .playback import build_playback_router
+from .persona_live import build_persona_live_router
 
 
 def build_all(cfg: InteractiveConfig) -> APIRouter:
@@ -42,6 +43,7 @@ def build_all(cfg: InteractiveConfig) -> APIRouter:
     router.include_router(build_play_router(cfg))
     router.include_router(build_lifecycle_router(cfg))
     router.include_router(build_playback_router(cfg))
+    router.include_router(build_persona_live_router(cfg))
     return router
 
 

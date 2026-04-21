@@ -194,6 +194,7 @@ def build_playback_router(cfg: InteractiveConfig) -> APIRouter:
             "video_job_status": job_status,
             "video_asset_id": asset_id,
             "video_asset_url": asset_url or "",
+            "video_media_kind": _media_kind_from_url(asset_url or ""),
         }
 
     @router.get("/play/sessions/{session_id}/pending")
@@ -235,7 +236,7 @@ def _job_to_dict(job: SceneJob) -> Dict[str, Any]:
     # Resolve the URL per row. Stub ids return None and we emit
     # an empty string so the frontend shape stays stable without
     # branching on presence.
-    asset_url = resolve_asset_url(job.asset_id) if job.asset_id else None
+    asset_url = _resolve_scene_asset_url(job.asset_id) if job.asset_id else ""
     return {
         "id": job.id,
         "session_id": job.session_id,
@@ -244,12 +245,32 @@ def _job_to_dict(job: SceneJob) -> Dict[str, Any]:
         "job_id": job.job_id,
         "asset_id": job.asset_id,
         "asset_url": asset_url or "",
+        "media_kind": _media_kind_from_url(asset_url or ""),
         "prompt": job.prompt,
         "duration_sec": job.duration_sec,
         "error": job.error,
         "created_at": job.created_at,
         "updated_at": job.updated_at,
     }
+
+
+def _resolve_scene_asset_url(asset_id: str) -> str:
+    resolved = str(resolve_asset_url(asset_id) or "").strip()
+    if resolved:
+        return resolved
+    raw = str(asset_id or "").strip()
+    if raw.startswith("/files/") or raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    return ""
+
+
+def _media_kind_from_url(url: str) -> str:
+    u = (url or "").lower()
+    if any(u.endswith(ext) or f"{ext}?" in u for ext in (".mp4", ".webm", ".mov", ".mkv", ".m4v")):
+        return "video"
+    if any(u.endswith(ext) or f"{ext}?" in u for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif")):
+        return "image"
+    return "unknown"
 
 def _persona_hint_from_experience(exp: Any, sess: Any) -> str:
     """Best-effort persona hint for the image prompt.

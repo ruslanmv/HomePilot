@@ -32,6 +32,7 @@ from ..errors import InvalidInputError, NotFoundError
 from ..interaction.router import ActionPayload, resolve_next
 from ..interaction.state import build_runtime_state
 from ..interaction.types import TransitionKind
+from ..playback import resolve_asset_url
 from ..playback.persona_assets import resolve_persona_assets
 from ..progression import describe_level, is_action_unlocked
 from ._common import current_user, http_error_from
@@ -86,9 +87,11 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
         # Default current node = entry scene (first node of kind='scene').
         nodes = repo.list_nodes(exp.id)
         entry = next((n for n in nodes if n.kind == "scene"), None)
+        initial_scene: Optional[Dict[str, Any]] = None
         if entry:
             repo.set_session_current_node(sess.id, entry.id)
             sess = repo.get_session(sess.id)
+            initial_scene = _build_initial_scene(entry)
         repo.append_event(sess.id, "session_started")
         # Persona Live Play: generate the in-character opening bubble
         # so the overlay has something to show before the viewer types.
@@ -115,6 +118,7 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
             media_type = str(ap.get("render_media_type") or "").strip().lower()
             if media_type in ("image", "video"):
                 payload["render_media_type"] = media_type
+        payload["initial_scene"] = initial_scene
         return payload
 
     @router.get("/play/sessions/{session_id}")
@@ -283,3 +287,51 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
         return {"ok": True, "session_id": session_id}
 
     return router
+
+
+def _build_initial_scene(entry_node: Any) -> Optional[Dict[str, Any]]:
+    asset_ids = list(getattr(entry_node, "asset_ids", []) or [])
+    if not asset_ids:
+        return None
+    asset_id = str(asset_ids[0] or "").strip()
+    if not asset_id:
+        return None
+    asset_url = _resolve_scene_asset_url(asset_id)
+    media_kind = _media_kind_from_url(asset_url)
+    duration = int(getattr(entry_node, "duration_sec", 0) or 0)
+    if duration <= 0:
+        duration = 5
+    return {
+        "node_id": str(getattr(entry_node, "id", "") or ""),
+        "asset_id": asset_id,
+        "asset_url": asset_url,
+        "media_kind": media_kind,
+        "duration_sec": duration,
+        "title": str(getattr(entry_node, "title", "") or ""),
+    }
+
+
+def _media_kind_from_url(url: str) -> str:
+    u = (url or "").lower()
+    if any(u.endswith(ext) or f"{ext}?" in u for ext in (".mp4", ".webm", ".mov", ".mkv", ".m4v")):
+        return "video"
+    if any(u.endswith(ext) or f"{ext}?" in u for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif")):
+        return "image"
+    return "unknown"
+
+
+def _resolve_scene_asset_url(asset_id: str) -> str:
+    """Resolve both registry ids and direct file/URL references.
+
+    Older authored standard projects may store scene media directly in
+    ``asset_ids`` as a `/files/...` path or absolute URL instead of a
+    row-backed asset-registry id. Prefer registry resolution but fall
+    back to direct references so the player never renders a black stage.
+    """
+    resolved = str(resolve_asset_url(asset_id) or "").strip()
+    if resolved:
+        return resolved
+    raw = str(asset_id or "").strip()
+    if raw.startswith("/files/") or raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    return ""

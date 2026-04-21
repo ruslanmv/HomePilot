@@ -55,8 +55,8 @@ def create_experience(user_id: str, payload: ExperienceCreate) -> Experience:
             """
             INSERT INTO ix_experiences (
                 id, user_id, studio_video_id, title, description, objective,
-                experience_mode, policy_profile_id, audience_profile, status, tags
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+                experience_mode, policy_profile_id, audience_profile, project_type, status, tags
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
             """,
             (
                 eid,
@@ -68,6 +68,7 @@ def create_experience(user_id: str, payload: ExperienceCreate) -> Experience:
                 payload.experience_mode,
                 payload.policy_profile_id,
                 store._dump_json(payload.audience_profile),
+                payload.project_type or "standard",
                 store._dump_json(payload.tags),
             ),
         )
@@ -125,6 +126,9 @@ def update_experience(eid: str, user_id: str, patch: ExperienceUpdate) -> Experi
     if patch.audience_profile is not None:
         sets.append("audience_profile = ?")
         params.append(store._dump_json(patch.audience_profile))
+    if patch.project_type is not None:
+        sets.append("project_type = ?")
+        params.append(patch.project_type)
     if patch.status is not None:
         sets.append("status = ?")
         params.append(patch.status)
@@ -474,7 +478,7 @@ def set_session_current_node(session_id: str, node_id: str) -> None:
 
 def _row_to_action(row: Any) -> Action:
     d = store.row_to_dict(
-        row, json_fields=("policy_scope", "mood_delta", "applicable_modes"),
+        row, json_fields=("policy_scope", "mood_delta", "applicable_modes", "edit_recipe"),
     )
     return Action(**d)
 
@@ -490,8 +494,8 @@ def create_action(eid: str, payload: ActionCreate) -> Action:
                 required_level, required_scheme, required_metric_key,
                 policy_scope, cooldown_sec, mood_delta, xp_award,
                 max_uses_per_session, repeat_penalty, requires_consent,
-                applicable_modes, ordinal
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                applicable_modes, category, edit_recipe, ordinal
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 aid, eid, payload.label, payload.intent_code,
@@ -505,6 +509,8 @@ def create_action(eid: str, payload: ActionCreate) -> Action:
                 float(payload.repeat_penalty or 0.0),
                 payload.requires_consent or "",
                 store._dump_json(payload.applicable_modes or []),
+                payload.category or "expression",
+                store._dump_json(payload.edit_recipe or {}),
                 int(payload.ordinal or 0),
             ),
         )
@@ -539,6 +545,198 @@ def delete_action(aid: str) -> bool:
         deleted = result.rowcount > 0
         con.commit()
     return deleted
+
+
+# ─────────────────────────────────────────────────────────────────
+# Persona live-play sessions + versions
+# ─────────────────────────────────────────────────────────────────
+
+def create_persona_session(persona_id: str, *, mode: str = "image") -> Dict[str, Any]:
+    store.ensure_schema()
+    psid = store.new_id("ixps")
+    default_scene = {
+        "id": "apartment",
+        "label": "Her apartment",
+        "icon": "🏠",
+        "prompt": "cozy apartment interior, warm practical light, clean depth",
+        "category": "private",
+    }
+    default_memory = {
+        "current_scene": "apartment",
+        "previous_scenes": [],
+        "last_actions": [],
+        "emotional_state": {"mood": "guarded", "intensity": 25},
+    }
+    default_emotion = {
+        "trust": 35,
+        "intensity": 25,
+        "mood": "guarded",
+    }
+    with store._conn() as con:
+        con.execute(
+            """
+            INSERT INTO ix_persona_sessions (
+                id, persona_id, mode, current_level, xp, last_dialogue,
+                scene_context, scene_memory, emotional_state, current_version_id
+            ) VALUES (?, ?, ?, 1, 0, '', ?, ?, ?, '')
+            """,
+            (
+                psid, persona_id, "video" if mode == "video" else "image",
+                store._dump_json(default_scene),
+                store._dump_json(default_memory),
+                store._dump_json(default_emotion),
+            ),
+        )
+        con.commit()
+        row = con.execute(
+            "SELECT * FROM ix_persona_sessions WHERE id = ?", (psid,),
+        ).fetchone()
+    return store.row_to_dict(
+        row, json_fields=("scene_context", "scene_memory", "emotional_state"),
+    )
+
+
+def get_persona_session(session_id: str) -> Optional[Dict[str, Any]]:
+    store.ensure_schema()
+    with store._conn() as con:
+        row = con.execute(
+            "SELECT * FROM ix_persona_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    return store.row_to_dict(
+        row, json_fields=("scene_context", "scene_memory", "emotional_state"),
+    ) if row else None
+
+
+def update_persona_session_progress(
+    session_id: str, *, xp_delta: int = 0,
+) -> Optional[Dict[str, Any]]:
+    store.ensure_schema()
+    current = get_persona_session(session_id)
+    if not current:
+        return None
+    xp = int(current.get("xp") or 0) + int(xp_delta or 0)
+    xp = max(0, xp)
+    level = max(1, (xp // 35) + 1)
+    with store._conn() as con:
+        con.execute(
+            "UPDATE ix_persona_sessions SET xp = ?, current_level = ? WHERE id = ?",
+            (xp, level, session_id),
+        )
+        con.commit()
+    return get_persona_session(session_id)
+
+
+def set_persona_session_dialogue(session_id: str, dialogue: str) -> Optional[Dict[str, Any]]:
+    store.ensure_schema()
+    with store._conn() as con:
+        con.execute(
+            "UPDATE ix_persona_sessions SET last_dialogue = ? WHERE id = ?",
+            (dialogue or "", session_id),
+        )
+        con.commit()
+    return get_persona_session(session_id)
+
+
+def update_persona_session_runtime_state(
+    session_id: str,
+    *,
+    scene_context: Optional[Dict[str, Any]] = None,
+    scene_memory: Optional[Dict[str, Any]] = None,
+    emotional_state: Optional[Dict[str, Any]] = None,
+    dialogue: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    store.ensure_schema()
+    sets: List[str] = []
+    params: List[Any] = []
+    if scene_context is not None:
+        sets.append("scene_context = ?")
+        params.append(store._dump_json(scene_context))
+    if scene_memory is not None:
+        sets.append("scene_memory = ?")
+        params.append(store._dump_json(scene_memory))
+    if emotional_state is not None:
+        sets.append("emotional_state = ?")
+        params.append(store._dump_json(emotional_state))
+    if dialogue is not None:
+        sets.append("last_dialogue = ?")
+        params.append(dialogue or "")
+    if not sets:
+        return get_persona_session(session_id)
+    params.append(session_id)
+    with store._conn() as con:
+        con.execute(f"UPDATE ix_persona_sessions SET {', '.join(sets)} WHERE id = ?", tuple(params))
+        con.commit()
+    return get_persona_session(session_id)
+
+
+def save_persona_version(
+    *, persona_id: str, session_id: str, image_url: str,
+    thumb_url: str = "", recipe: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    store.ensure_schema()
+    vid = store.new_id("ixpv")
+    with store._conn() as con:
+        con.execute(
+            """
+            INSERT INTO ix_persona_versions (
+                id, persona_id, session_id, image_url, thumb_url, recipe
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                vid,
+                persona_id,
+                session_id,
+                image_url or "",
+                thumb_url or image_url or "",
+                store._dump_json(recipe or {}),
+            ),
+        )
+        con.execute(
+            "UPDATE ix_persona_sessions SET current_version_id = ? WHERE id = ?",
+            (vid, session_id),
+        )
+        con.commit()
+        row = con.execute(
+            "SELECT * FROM ix_persona_versions WHERE id = ?",
+            (vid,),
+        ).fetchone()
+    return store.row_to_dict(row, json_fields=("recipe",))
+
+
+def list_persona_versions(session_id: str, limit: int = 8) -> List[Dict[str, Any]]:
+    store.ensure_schema()
+    with store._conn() as con:
+        rows = con.execute(
+            "SELECT * FROM ix_persona_versions WHERE session_id = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (session_id, max(1, min(limit, 100))),
+        ).fetchall()
+    return [store.row_to_dict(r, json_fields=("recipe",)) for r in rows]
+
+
+def get_persona_version(version_id: str) -> Optional[Dict[str, Any]]:
+    store.ensure_schema()
+    with store._conn() as con:
+        row = con.execute(
+            "SELECT * FROM ix_persona_versions WHERE id = ?",
+            (version_id,),
+        ).fetchone()
+    return store.row_to_dict(row, json_fields=("recipe",)) if row else None
+
+
+def restore_persona_version(session_id: str, version_id: str) -> Optional[Dict[str, Any]]:
+    store.ensure_schema()
+    version = get_persona_version(version_id)
+    if not version:
+        return None
+    with store._conn() as con:
+        con.execute(
+            "UPDATE ix_persona_sessions SET current_version_id = ? WHERE id = ?",
+            (version_id, session_id),
+        )
+        con.commit()
+    return get_persona_session(session_id)
 
 
 # ─────────────────────────────────────────────────────────────────

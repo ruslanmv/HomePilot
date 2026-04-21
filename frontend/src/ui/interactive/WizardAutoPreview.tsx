@@ -117,6 +117,7 @@ export function WizardAutoPreview({
   const [renderDone, setRenderDone] = useState(0);
   const [renderSkipped, setRenderSkipped] = useState(0);
   const [currentSceneTitle, setCurrentSceneTitle] = useState<string>("");
+  const personaLive = interaction.interaction_type === "persona_live_play";
 
   // EDIT-5: fetch the backend's playback-flag readout so the
   // modal can tell the user up-front whether scene rendering is
@@ -151,6 +152,7 @@ export function WizardAutoPreview({
         description: form.prompt,
         experience_mode: form.experience_mode,
         policy_profile_id: form.policy_profile_id,
+        project_type: interaction.interaction_type === "persona_live_play" ? "persona_live" : "standard",
         audience_profile: {
           role: form.audience_role,
           level: form.audience_level,
@@ -257,12 +259,14 @@ export function WizardAutoPreview({
           </header>
 
           <h1 className="text-xl font-semibold text-[#f1f1f1]">
-            Review your project
+            {personaLive ? "Review your live play session" : "Review your project"}
           </h1>
           <p className="text-sm text-[#aaa] mt-1.5 leading-relaxed">
             The AI turned{" "}
             <span className="text-[#cfd8dc]">"{originalIdea.slice(0, 80)}{originalIdea.length > 80 ? "…" : ""}"</span>
-            {" "}into the draft below. Edit anything you'd like before creating.
+            {personaLive
+              ? " into a persona-centered setup. Edit anything before launch."
+              : " into the draft below. Edit anything you'd like before creating."}
           </p>
 
           {error && (
@@ -276,27 +280,44 @@ export function WizardAutoPreview({
           )}
 
           <div className="mt-6 flex flex-col gap-5">
-            <Field label="Title">
-              <input
-                type="text"
-                value={form.title}
-                onChange={(e) => patch("title", e.target.value)}
-                maxLength={80}
-                disabled={submitting}
-                className={INPUT_CLS}
-              />
-            </Field>
+            {!personaLive && (
+              <>
+                <Field label="Title">
+                  <input
+                    type="text"
+                    value={form.title}
+                    onChange={(e) => patch("title", e.target.value)}
+                    maxLength={80}
+                    disabled={submitting}
+                    className={INPUT_CLS}
+                  />
+                </Field>
 
-            <Field label="What it covers"
-                   hint="Short brief the planner uses as the story seed.">
-              <textarea
-                rows={3}
-                value={form.prompt}
-                onChange={(e) => patch("prompt", e.target.value)}
-                disabled={submitting}
-                className={`${INPUT_CLS} resize-y leading-relaxed`}
-              />
-            </Field>
+                <Field label="What it covers"
+                       hint="Short brief the planner uses as the story seed.">
+                  <textarea
+                    rows={3}
+                    value={form.prompt}
+                    onChange={(e) => patch("prompt", e.target.value)}
+                    disabled={submitting}
+                    className={`${INPUT_CLS} resize-y leading-relaxed`}
+                  />
+                </Field>
+              </>
+            )}
+
+            {personaLive && (
+              <Field label="Persona card">
+                <div className="rounded-lg border border-[#3a2a58] bg-[#130f1f] p-3">
+                  <div className="text-sm font-medium text-[#f1f1f1]">
+                    {interaction.persona_label || "Selected persona"}
+                  </div>
+                  <div className="text-xs text-[#b59ed9] mt-1">
+                    Session vibe: {form.prompt}
+                  </div>
+                </div>
+              </Field>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <Field label="Mode">
@@ -316,6 +337,7 @@ export function WizardAutoPreview({
                 </select>
               </Field>
 
+              {!personaLive && (
               <Field label="Audience level">
                 <select
                   value={form.audience_level}
@@ -328,9 +350,11 @@ export function WizardAutoPreview({
                   ))}
                 </select>
               </Field>
+              )}
             </div>
 
             {/* Shape — renamed per the UX spec */}
+            {!personaLive && (
             <Field label="Shape">
               <div className="grid grid-cols-3 gap-2">
                 <NumberPill
@@ -359,6 +383,7 @@ export function WizardAutoPreview({
                 About <span className="text-[#cfd8dc]">{form.branch_count * form.depth * form.scenes_per_branch}</span> scenes total (before the graph merges overlaps).
               </p>
             </Field>
+            )}
 
             <AdvancedBlock
               open={advancedOpen}

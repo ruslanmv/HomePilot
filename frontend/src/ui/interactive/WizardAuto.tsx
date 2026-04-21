@@ -108,11 +108,15 @@ export function WizardAuto({
     try {
       const raw = localStorage.getItem(LS_PERSONA_CACHE);
       if (!raw) return [];
-      const parsed = JSON.parse(raw) as Array<{ id?: unknown; label?: unknown }>;
+      const parsed = JSON.parse(raw) as Array<{
+        id?: unknown; label?: unknown; avatar_url?: unknown; archetype?: unknown;
+      }>;
       return parsed
         .map((item) => ({
           id: typeof item.id === "string" ? item.id : "",
           label: typeof item.label === "string" ? item.label : "",
+          avatar_url: typeof item.avatar_url === "string" ? item.avatar_url : "",
+          archetype: typeof item.archetype === "string" ? item.archetype : "",
         }))
         .filter((item) => item.id && item.label);
     } catch {
@@ -178,12 +182,14 @@ export function WizardAuto({
               <Wand2 className="w-7 h-7 text-[#c4b5fd]" aria-hidden />
             </div>
             <h1 className="text-2xl font-semibold text-[#f1f1f1]">
-              Describe your interactive video
+              {interactionType === "persona_live_play"
+                ? "Describe the vibe of this live play session"
+                : "Describe your interactive video"}
             </h1>
             <p className="text-sm text-[#aaa] mt-2 max-w-md mx-auto leading-relaxed">
-              A single sentence is enough. The planner will expand it into a
-              full project — title, audience, branching shape, policy — that
-              you can tweak before creating.
+              {interactionType === "persona_live_play"
+                ? "Use a short vibe prompt (teasing, playful, romantic, etc). We'll build a persona-centered progression session."
+                : "A single sentence is enough. The planner will expand it into a full project — title, audience, branching shape, policy — that you can tweak before creating."}
             </p>
           </header>
 
@@ -291,6 +297,23 @@ export function WizardAuto({
                   persona to anchor the chat + animation.
                 </p>
               )}
+              {personaId && (() => {
+                const selected = personaOptions.find((p) => p.id === personaId);
+                if (!selected) return null;
+                return (
+                  <div className="mt-2.5 flex items-center gap-2.5 rounded-md border border-[#3a2a58] bg-[#130f1f] p-2.5">
+                    {selected.avatar_url ? (
+                      <img src={selected.avatar_url} alt={selected.label} className="w-12 h-12 rounded-md object-cover border border-[#51347f]" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-md bg-[#24173a] border border-[#51347f]" />
+                    )}
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-[#f1f1f1] truncate">{selected.label}</div>
+                      <div className="text-[11px] text-[#b59ed9] truncate">{selected.archetype || "Persona companion"}</div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
 

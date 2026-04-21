@@ -5,10 +5,8 @@ description: >
   system prompt in llm_composer._system_prompt with a persona-
   aware prompt that reads the full PersonalityAgent profile plus
   session state (mood, affinity tier, recent turns synopsis) and
-  returns the same JSON shape llm_composer already parses:
-  ``{reply_text, narration, scene_prompt, duration_sec, mood_shift,
-  affinity_delta}``. Output contract is intentionally identical to
-  the previous inline prompt so no parser changes downstream.
+  returns a compact assistant payload focused on deterministic edit
+  support: ``{scene_prompt, dialogue, edit_hint}``.
 
 model_hints:
   prefers_small_model: true
@@ -47,12 +45,8 @@ system: |
   Return STRICT JSON only — no prose, no markdown fences:
 
     {{
-      "reply_text": str,         # 1-3 short sentences, in-character
-      "narration": str,          # the same text, or a tighter paraphrase
+      "dialogue": str,           # 1-3 short sentences, in-character
       "scene_prompt": str,       # comma-separated visual cues, 6-10 items
-      "duration_sec": int,       # 2..15, aim near {duration_sec}
-      "mood_shift": str,         # one of: neutral shy flirty playful warm cold
-      "affinity_delta": float,   # -0.20..+0.20 (small steps; greeting ≈ 0.02)
       "edit_hint": str           # see EDIT KIND below
     }}
 
@@ -122,7 +116,7 @@ user_template: |
   Session state:
     Current emotion: {persona_emotion}
     Affinity tier: {affinity_tier} ({affinity_pct}%)
-    Story so far: {synopsis}
+    Recent context: {synopsis}
 
   Viewer just said: {viewer_message}
   Intent hint (optional): {intent_hint}

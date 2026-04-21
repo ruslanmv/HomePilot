@@ -61,9 +61,13 @@ export function StandardPlayer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [decisionOpen, setDecisionOpen] = useState(false);
   const [firing, setFiring] = useState<string | null>(null);
+  const [imageError, setImageError] = useState(false);
 
   const url = scene?.status === "ready" ? (scene.asset_url || "") : "";
+  const mediaHint = String(scene?.media_kind || "").toLowerCase();
+  const isImage = (mediaHint === "image") || (url && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url));
   const isVideo = url && /\.(mp4|webm|mov|mkv|m4v)(\?|$)/i.test(url);
+  const defaultDuration = Math.max(1, Number(scene?.duration_sec || 5));
 
   // Load catalog as the pool of decision cards. For standard
   // projects it's the author's branch choices (mapped onto the
@@ -80,8 +84,17 @@ export function StandardPlayer({
     .filter((c) => c.unlocked)
     .sort((a, b) => (a.ordinal || 0) - (b.ordinal || 0));
 
+  useEffect(() => {
+    setDecisionOpen(false);
+    setImageError(false);
+    setCurrentTime(0);
+    setDuration(defaultDuration);
+    setPlaying(true);
+  }, [scene?.id, defaultDuration]);
+
   // ── Video element wiring ─────────────────────────────────────
   useEffect(() => {
+    if (!isVideo) return undefined;
     const v = videoRef.current;
     if (!v) return;
     const onTime = () => setCurrentTime(v.currentTime || 0);
@@ -107,7 +120,27 @@ export function StandardPlayer({
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
     };
-  }, [choices.length]);
+  }, [choices.length, isVideo]);
+
+  // Timed still-image playback: treat images like fixed-duration
+  // scenes. When the timer completes, open the decision modal.
+  useEffect(() => {
+    if (!isImage || !url || imageError) return undefined;
+    const maxSec = Math.max(1, Number(scene?.duration_sec || 5));
+    setDuration(maxSec);
+    if (!playing || decisionOpen) return undefined;
+    const t = window.setInterval(() => {
+      setCurrentTime((prev) => {
+        const next = Math.min(maxSec, prev + 0.1);
+        if (next >= maxSec) {
+          setPlaying(false);
+          if (choices.length > 0) setDecisionOpen(true);
+        }
+        return next;
+      });
+    }, 100);
+    return () => window.clearInterval(t);
+  }, [choices.length, decisionOpen, imageError, isImage, playing, scene?.duration_sec, url]);
 
   // Keep the <video> element's mute state in sync with the control.
   useEffect(() => {
@@ -123,13 +156,25 @@ export function StandardPlayer({
 
   // ── Controls ────────────────────────────────────────────────
   const togglePlay = useCallback(() => {
+    if (isImage) {
+      setPlaying((p) => !p);
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) v.play().catch(() => { /* autoplay policy */ });
     else v.pause();
-  }, []);
+  }, [isImage]);
 
   const skipBy = useCallback((delta: number) => {
+    if (isImage) {
+      setCurrentTime((prev) => {
+        const target = Math.max(0, Math.min(duration, prev + delta));
+        if (target >= duration && choices.length > 0) setDecisionOpen(true);
+        return target;
+      });
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     const target = Math.max(
@@ -137,15 +182,21 @@ export function StandardPlayer({
       Math.min((v.duration || 0) - 0.1, (v.currentTime || 0) + delta),
     );
     v.currentTime = target;
-  }, []);
+  }, [choices.length, duration, isImage]);
 
   const restart = useCallback(() => {
+    if (isImage) {
+      setCurrentTime(0);
+      setPlaying(true);
+      setDecisionOpen(false);
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     v.currentTime = 0;
     v.play().catch(() => { /* autoplay policy */ });
     setDecisionOpen(false);
-  }, []);
+  }, [isImage]);
 
   const toggleFullscreen = useCallback(() => {
     const el = containerRef.current;
@@ -158,11 +209,16 @@ export function StandardPlayer({
   }, []);
 
   const onSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isImage) {
+      const pctVal = Number(e.target.value);
+      setCurrentTime(duration * (pctVal / 100));
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     const pct = Number(e.target.value);
     v.currentTime = (v.duration || 0) * (pct / 100);
-  }, []);
+  }, [duration, isImage]);
 
   const fireChoice = useCallback(async (action: CatalogItemView) => {
     if (!action.unlocked || firing) return;
@@ -208,6 +264,29 @@ export function StandardPlayer({
           className="w-full h-full object-contain"
           onClick={togglePlay}
         />
+      ) : isImage ? (
+        imageError ? (
+          <div className="w-full h-full flex flex-col items-center justify-center text-white/75 text-sm gap-3">
+            <div>Couldn't load this image scene.</div>
+            <button
+              type="button"
+              onClick={() => {
+                setImageError(false);
+                setCurrentTime(0);
+              }}
+              className="px-3 py-1.5 rounded-md border border-white/30 bg-black/30 hover:bg-black/50"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <img
+            src={url}
+            className="w-full h-full object-contain animate-[pulse_12s_ease-in-out_infinite]"
+            alt={scene?.prompt || "Scene"}
+            onError={() => setImageError(true)}
+          />
+        )
       ) : (
         <div className="w-full h-full flex items-center justify-center text-white/60 text-sm">
           {scene?.status === "rendering" || scene?.status === "pending"

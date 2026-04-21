@@ -29,6 +29,31 @@ export function Step4Review({ form, api }: Step4Props) {
   const payload = useMemo(() => toPlanPayload(form), [form]);
 
   useEffect(() => {
+    if (form.interaction_type === "persona_live_play") {
+      setLoading(false);
+      setError(null);
+      setPreview({
+        prompt: form.prompt,
+        mode: form.experience_mode,
+        objective: "",
+        topic: "",
+        branch_count: 0,
+        depth: 0,
+        scenes_per_branch: 0,
+        success_metric: "",
+        seed_intents: ["tease", "dance", "outfit_change"],
+        scheme: "affinity_tier",
+        audience: {
+          role: form.audience_role,
+          level: form.audience_level,
+          language: form.audience_language,
+          locale_hint: form.audience_locale_hint,
+          interests: [],
+        },
+        raw_hints: {},
+      });
+      return;
+    }
     const ctrl = new AbortController();
     let cancelled = false;
     setLoading(true);
@@ -47,46 +72,56 @@ export function Step4Review({ form, api }: Step4Props) {
   return (
     <div className="flex flex-col gap-5">
       <SummaryCard form={form} />
-      <PreviewCard loading={loading} error={error} intent={preview} />
+      <PreviewCard
+        loading={loading}
+        error={error}
+        intent={preview}
+        personaLive={form.interaction_type === "persona_live_play"}
+      />
     </div>
   );
 }
 
 function SummaryCard({ form }: { form: WizardForm }) {
+  const personaLive = form.interaction_type === "persona_live_play";
   return (
     <section className="rounded-md border border-[#3f3f3f] bg-[#121212] divide-y divide-[#2a2a2a]">
       <Row
-        label="Interaction"
+        label={personaLive ? "Session type" : "Interaction"}
         value={
-          form.interaction_type === "persona_live_play"
+          personaLive
             ? `Persona live play${form.persona_label ? ` · ${form.persona_label}` : ""}`
             : "Standard interactive project"
         }
       />
-      <Row label="Title" value={form.title} />
       <Row label="Mode" value={form.experience_mode} />
       <Row label="Policy profile" value={form.policy_profile_id} />
-      <Row label="Audience" value={`${form.audience_role} · ${form.audience_level} · ${form.audience_language}${form.audience_locale_hint ? ` · ${form.audience_locale_hint}` : ""}`} />
-      <Row label="Branches" value={`${form.branch_count} branches × depth ${form.depth} × ${form.scenes_per_branch} scenes`} />
-      <Row label="Prompt" value={form.prompt} multiline />
+      {!personaLive && <Row label="Title" value={form.title} />}
+      {!personaLive && <Row label="Audience" value={`${form.audience_role} · ${form.audience_level} · ${form.audience_language}${form.audience_locale_hint ? ` · ${form.audience_locale_hint}` : ""}`} />}
+      {!personaLive && <Row label="Branches" value={`${form.branch_count} branches × depth ${form.depth} × ${form.scenes_per_branch} scenes`} />}
+      <Row label={personaLive ? "Session vibe" : "Prompt"} value={form.prompt} multiline />
     </section>
   );
 }
 
 function PreviewCard({
-  loading, error, intent,
+  loading, error, intent, personaLive,
 }: {
   loading: boolean;
   error: string | null;
   intent: PlanIntent | null;
+  personaLive?: boolean;
 }) {
+  const persona = !!personaLive;
   return (
     <section className="rounded-md border border-[#3f3f3f] bg-[#121212] p-4">
-      <header className="text-xs font-medium text-[#cfd8dc] mb-3">Planner preview</header>
+      <header className="text-xs font-medium text-[#cfd8dc] mb-3">
+        {persona ? "Live session preview" : "Planner preview"}
+      </header>
       {loading && (
         <div className="flex items-center gap-2 text-sm text-[#aaa]">
           <Loader2 className="w-4 h-4 animate-spin text-[#3ea6ff]" aria-hidden />
-          Asking the planner to resolve your prompt…
+          {persona ? "Preparing persona progression preview…" : "Asking the planner to resolve your prompt…"}
         </div>
       )}
       {error && (
@@ -96,14 +131,14 @@ function PreviewCard({
       )}
       {!loading && !error && intent && (
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs">
-          <DLRow term="Objective" value={intent.objective} />
-          <DLRow term="Topic" value={intent.topic || "(auto)"} />
-          <DLRow term="Scheme" value={intent.scheme} />
-          <DLRow term="Success metric" value={intent.success_metric || "(none)"} />
-          <DLRow term="Branches" value={`${intent.branch_count} × depth ${intent.depth}`} />
-          <DLRow term="Scenes / branch" value={String(intent.scenes_per_branch)} />
+          {!persona && <DLRow term="Objective" value={intent.objective} />}
+          {!persona && <DLRow term="Topic" value={intent.topic || "(auto)"} />}
+          <DLRow term={persona ? "Progression scheme" : "Scheme"} value={intent.scheme} />
+          {!persona && <DLRow term="Success metric" value={intent.success_metric || "(none)"} />}
+          {!persona && <DLRow term="Branches" value={`${intent.branch_count} × depth ${intent.depth}`} />}
+          {!persona && <DLRow term="Scenes / branch" value={String(intent.scenes_per_branch)} />}
           <DLRow term="Seed intents" value={intent.seed_intents.join(", ") || "(none)"} />
-          <DLRow term="Audience" value={`${intent.audience.role} · ${intent.audience.level} · ${intent.audience.language}`} />
+          {!persona && <DLRow term="Audience" value={`${intent.audience.role} · ${intent.audience.level} · ${intent.audience.language}`} />}
         </dl>
       )}
     </section>

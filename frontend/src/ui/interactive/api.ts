@@ -37,6 +37,7 @@ import {
   PlanAutoResult,
   PlanIntent,
   PlanningPreset,
+  PersonaLiveGenerateResult,
   ProgressSnapshot,
   PublishResult,
   Publication,
@@ -160,6 +161,14 @@ export interface InteractiveApi {
     id: string;
     experience_id: string;
     current_node_id: string;
+    initial_scene?: {
+      node_id: string;
+      asset_id: string;
+      asset_url: string;
+      media_kind: "image" | "video" | "unknown" | string;
+      duration_sec: number;
+      title: string;
+    } | null;
     /** Set only for Persona Live Play when the backend generated
      *  the in-character greeting — callers render it as the first
      *  assistant bubble before the viewer types. */
@@ -186,6 +195,37 @@ export interface InteractiveApi {
     sessionId: string,
     req: { action_id?: string; free_text?: string; viewer_region?: string },
   ): Promise<ResolveResult>;
+
+  // Persona Live
+  personaLiveGenerate(req: {
+    persona_id: string;
+    vibe: string;
+    mode: "image" | "video";
+  }): Promise<PersonaLiveGenerateResult>;
+  personaLiveStart(req: { persona_id: string; mode?: "image" | "video" }): Promise<{ id: string; persona_id: string; current_level: number; xp: number }>;
+  personaLiveSession(sessionId: string): Promise<Record<string, unknown>>;
+  personaLiveAction(sessionId: string, req: { action_id: string; message?: string }): Promise<{
+    job_id: string;
+    status?: string;
+    dialogue: { text: string } | string;
+    scene_context?: Record<string, unknown>;
+    scene_memory?: Record<string, unknown>;
+    emotional_state?: Record<string, unknown>;
+    image_url?: string;
+    xp?: number;
+    level?: number;
+    versions?: Array<Record<string, unknown>>;
+    render_skipped?: boolean;
+  }>;
+  personaLiveJob(jobId: string): Promise<Record<string, unknown>>;
+  personaLiveRestore(sessionId: string, versionId: string): Promise<{ ok: boolean; session: Record<string, unknown>; version: Record<string, unknown> }>;
+  personaLiveChat(sessionId: string, message: string): Promise<{
+    dialogue: { text: string };
+    scene_context?: Record<string, unknown>;
+    scene_memory?: Record<string, unknown>;
+    emotional_state?: Record<string, unknown>;
+    optional_action_suggestion?: { id: string; label: string } | null;
+  }>;
 }
 
 /**
@@ -473,6 +513,14 @@ export function createInteractiveApi(
     startSession: (req) =>
       call<{
         session: { id: string; experience_id: string; current_node_id: string };
+        initial_scene?: {
+          node_id: string;
+          asset_id: string;
+          asset_url: string;
+          media_kind: "image" | "video" | "unknown" | string;
+          duration_sec: number;
+          title: string;
+        } | null;
         opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
         persona_portrait_url?: string;
         render_media_type?: "image" | "video";
@@ -481,6 +529,7 @@ export function createInteractiveApi(
         { method: "POST", body: JSON.stringify(req) },
       ).then((r) => ({
         ...r.session,
+        initial_scene: r.initial_scene || null,
         opening_turn: r.opening_turn,
         persona_portrait_url: r.persona_portrait_url,
         render_media_type: r.render_media_type,
@@ -520,5 +569,73 @@ export function createInteractiveApi(
         `/play/sessions/${encodeURIComponent(sessionId)}/resolve`,
         { method: "POST", body: JSON.stringify(req) },
       ).then((r) => r.resolved),
+
+    personaLiveGenerate: (req) =>
+      call<PersonaLiveGenerateResult>(
+        "/persona-live/generate",
+        { method: "POST", body: JSON.stringify(req) },
+      ),
+
+    personaLiveStart: (req) =>
+      call<{ ok: boolean; session: { id: string; persona_id: string; current_level: number; xp: number } }>(
+        "/persona-live/start",
+        { method: "POST", body: JSON.stringify(req) },
+      ).then((r) => r.session),
+
+    personaLiveSession: (sessionId) =>
+      call<Record<string, unknown>>(
+        `/persona-live/session/${encodeURIComponent(sessionId)}`,
+        { method: "GET" },
+      ),
+
+    personaLiveAction: (sessionId, req) =>
+      call<{
+        ok: boolean;
+        job_id: string;
+        status?: string;
+        dialogue: { text: string } | string;
+        scene_context?: Record<string, unknown>;
+        scene_memory?: Record<string, unknown>;
+        emotional_state?: Record<string, unknown>;
+        image_url?: string;
+        xp?: number;
+        level?: number;
+        versions?: Array<Record<string, unknown>>;
+        render_skipped?: boolean;
+      }>(
+        `/persona-live/session/${encodeURIComponent(sessionId)}/action`,
+        { method: "POST", body: JSON.stringify(req) },
+      ),
+
+    personaLiveJob: (jobId) =>
+      call<Record<string, unknown>>(
+        `/persona-live/jobs/${encodeURIComponent(jobId)}`,
+        { method: "GET" },
+      ),
+
+    personaLiveRestore: (sessionId, versionId) =>
+      call<{ ok: boolean; session: Record<string, unknown>; version: Record<string, unknown> }>(
+        `/persona-live/session/${encodeURIComponent(sessionId)}/restore`,
+        { method: "POST", body: JSON.stringify({ version_id: versionId }) },
+      ),
+
+    personaLiveChat: (sessionId, message) =>
+      call<{
+        ok: boolean;
+        dialogue: { text: string };
+        scene_context?: Record<string, unknown>;
+        scene_memory?: Record<string, unknown>;
+        emotional_state?: Record<string, unknown>;
+        optional_action_suggestion?: { id: string; label: string } | null;
+      }>(
+        `/persona-live/session/${encodeURIComponent(sessionId)}/chat`,
+        { method: "POST", body: JSON.stringify({ message }) },
+      ).then((r) => ({
+        dialogue: r.dialogue,
+        scene_context: r.scene_context,
+        scene_memory: r.scene_memory,
+        emotional_state: r.emotional_state,
+        optional_action_suggestion: r.optional_action_suggestion,
+      })),
   };
 }

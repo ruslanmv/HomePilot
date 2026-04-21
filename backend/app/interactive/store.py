@@ -44,6 +44,7 @@ _DDL: List[str] = [
         experience_mode     TEXT NOT NULL DEFAULT 'sfw_general',
         policy_profile_id   TEXT NOT NULL DEFAULT 'sfw_general',
         audience_profile    TEXT DEFAULT '{}',
+        project_type        TEXT NOT NULL DEFAULT 'standard',
         branch_count        INTEGER DEFAULT 0,
         max_depth           INTEGER DEFAULT 0,
         status              TEXT NOT NULL DEFAULT 'draft',
@@ -203,6 +204,8 @@ _DDL: List[str] = [
         repeat_penalty      REAL DEFAULT 0,
         requires_consent    TEXT DEFAULT '',
         applicable_modes    TEXT DEFAULT '[]',
+        category            TEXT NOT NULL DEFAULT 'expression',
+        edit_recipe         TEXT DEFAULT '{}',
         ordinal             INTEGER DEFAULT 0,
         created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -277,6 +280,38 @@ _DDL: List[str] = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_ix_qa_reports_experience ON ix_qa_reports(experience_id)",
+
+    # 16. ix_persona_sessions — persona-live progression state
+    """
+    CREATE TABLE IF NOT EXISTS ix_persona_sessions (
+        id                  TEXT PRIMARY KEY,
+        persona_id          TEXT NOT NULL,
+        mode                TEXT NOT NULL DEFAULT 'image',
+        current_level       INTEGER DEFAULT 1,
+        xp                  INTEGER DEFAULT 0,
+        last_dialogue       TEXT DEFAULT '',
+        scene_context       TEXT DEFAULT '{}',
+        scene_memory        TEXT DEFAULT '{}',
+        emotional_state     TEXT DEFAULT '{}',
+        current_version_id  TEXT DEFAULT '',
+        created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ix_persona_sessions_persona ON ix_persona_sessions(persona_id)",
+
+    # 17. ix_persona_versions — immutable render/version tape
+    """
+    CREATE TABLE IF NOT EXISTS ix_persona_versions (
+        id                  TEXT PRIMARY KEY,
+        persona_id          TEXT NOT NULL,
+        session_id          TEXT NOT NULL,
+        image_url           TEXT DEFAULT '',
+        thumb_url           TEXT DEFAULT '',
+        recipe              TEXT DEFAULT '{}',
+        created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ix_persona_versions_session ON ix_persona_versions(session_id)",
 ]
 
 
@@ -307,7 +342,57 @@ def ensure_schema() -> None:
         cur = con.cursor()
         for stmt in _DDL:
             cur.execute(stmt)
+        _ensure_column(
+            cur, "ix_experiences", "project_type",
+            "TEXT NOT NULL DEFAULT 'standard'",
+        )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_ix_experiences_project_type "
+            "ON ix_experiences(project_type)",
+        )
+        _ensure_column(
+            cur, "ix_action_catalog", "category",
+            "TEXT NOT NULL DEFAULT 'expression'",
+        )
+        _ensure_column(
+            cur, "ix_action_catalog", "edit_recipe",
+            "TEXT DEFAULT '{}'",
+        )
+        _ensure_column(
+            cur, "ix_persona_sessions", "mode",
+            "TEXT NOT NULL DEFAULT 'image'",
+        )
+        _ensure_column(
+            cur, "ix_persona_sessions", "last_dialogue",
+            "TEXT DEFAULT ''",
+        )
+        _ensure_column(
+            cur, "ix_persona_sessions", "scene_context",
+            "TEXT DEFAULT '{}'",
+        )
+        _ensure_column(
+            cur, "ix_persona_sessions", "scene_memory",
+            "TEXT DEFAULT '{}'",
+        )
+        _ensure_column(
+            cur, "ix_persona_sessions", "emotional_state",
+            "TEXT DEFAULT '{}'",
+        )
         con.commit()
+
+
+def _ensure_column(cur: sqlite3.Cursor, table: str, column: str, ddl: str) -> None:
+    """Idempotent additive migration helper.
+
+    SQLite only recently gained ``ADD COLUMN IF NOT EXISTS`` support.
+    We stay portable by inspecting ``PRAGMA table_info`` and applying
+    ``ALTER TABLE`` only when needed.
+    """
+    rows = cur.execute(f"PRAGMA table_info({table})").fetchall()
+    existing = {str(r[1]) for r in rows}
+    if column in existing:
+        return
+    cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 # ── Id generation ─────────────────────────────────────────────────

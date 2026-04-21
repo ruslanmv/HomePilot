@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import { createInteractiveApi, type InteractiveApi } from "./interactive/api";
 import { LiveActionSheet } from "./interactive/LiveActionSheet";
+import { PersonaLiveRuntimeShell } from "./interactive/personaLiveRuntime";
 import { StandardPlayer } from "./interactive/StandardPlayer";
 import { XPRewardsSheet } from "./interactive/XPRewardsSheet";
 import type {
@@ -96,6 +97,14 @@ function InteractivePlayerBody({
   );
   const session = useAsyncResource<{
     id: string;
+    initial_scene?: {
+      node_id: string;
+      asset_id: string;
+      asset_url: string;
+      media_kind: "image" | "video" | "unknown" | string;
+      duration_sec: number;
+      title: string;
+    } | null;
     opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
     persona_portrait_url?: string;
     render_media_type?: "image" | "video";
@@ -115,6 +124,7 @@ function InteractivePlayerBody({
       });
       return {
         id: sess.id,
+        initial_scene: sess.initial_scene || null,
         opening_turn: sess.opening_turn,
         persona_portrait_url: sess.persona_portrait_url,
         render_media_type: sess.render_media_type,
@@ -144,6 +154,26 @@ function InteractivePlayerBody({
   // 0 = healthy; ≥ 3 surfaces a reconnect chip so the user knows
   // the stream isn't silently dying.
   const [pollFailures, setPollFailures] = useState(0);
+
+  useEffect(() => {
+    const initial = session.data?.initial_scene;
+    if (!initial) return;
+    setCurrentScene({
+      id: `initial_${initial.node_id || "scene"}`,
+      session_id: sessionId,
+      turn_id: "",
+      status: "ready",
+      job_id: "",
+      asset_id: initial.asset_id || "",
+      media_kind: initial.media_kind || "unknown",
+      asset_url: initial.asset_url || "",
+      prompt: initial.title || "",
+      duration_sec: Number(initial.duration_sec || 5),
+      error: "",
+      created_at: "",
+      updated_at: "",
+    });
+  }, [session.data?.initial_scene, sessionId]);
 
   // Refs for state read by the polling effect without re-binding.
   const cursorRef = useRef<string>("");
@@ -262,6 +292,7 @@ function InteractivePlayerBody({
       // status is 'ready' immediately we update the current scene
       // without waiting for the next poll tick.
       if (result.video_asset_id && result.video_job_status === "ready") {
+        const resolvedUrl = result.video_asset_url || "";
         setCurrentScene({
           id: result.video_job_id,
           session_id: sessionId,
@@ -269,7 +300,8 @@ function InteractivePlayerBody({
           status: "ready",
           job_id: "",
           asset_id: result.video_asset_id,
-          asset_url: result.video_asset_url || "",
+          media_kind: String(result.video_media_kind || inferMediaKind(resolvedUrl)),
+          asset_url: resolvedUrl,
           prompt: result.scene_prompt || "",
           duration_sec: result.duration_sec || 5,
           error: "",
@@ -401,6 +433,14 @@ function InteractivePlayerBody({
     );
   }
 
+  if ((experience.project_type || "") === "persona_live") {
+    return (
+      <div className="relative min-h-screen bg-black text-[#f1f1f1] overflow-hidden select-none">
+        <PersonaLiveRuntimeShell api={api} experience={experience} onExit={onExit} />
+      </div>
+    );
+  }
+
   // Persona Live Play stage default: the persona's canonical photo.
   // Without this the stage shows a black / mood-gradient backdrop
   // until the first scene job lands, which looked broken. Falls back
@@ -470,6 +510,17 @@ function InteractivePlayerBody({
       />
     </div>
   );
+}
+
+function inferMediaKind(url: string): "image" | "video" | "unknown" {
+  const u = (url || "").toLowerCase();
+  if ([".mp4", ".webm", ".mov", ".mkv", ".m4v"].some((ext) => u.endsWith(ext) || u.includes(`${ext}?`))) {
+    return "video";
+  }
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif"].some((ext) => u.endsWith(ext) || u.includes(`${ext}?`))) {
+    return "image";
+  }
+  return "unknown";
 }
 
 function LiveActionFab({ onClick }: { onClick: () => void }) {

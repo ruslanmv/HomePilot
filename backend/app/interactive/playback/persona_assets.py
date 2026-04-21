@@ -183,4 +183,24 @@ def _resolve_local_path(rel_url: str) -> str:
     return ""
 
 
-__all__ = ["PersonaAssets", "resolve_persona_assets"]
+__all__ = ["PersonaAssets", "resolve_persona_assets", "load_assets"]
+
+
+def load_assets(persona_id: str) -> Dict[str, str]:
+    """Legacy/simple path contract for persona_live action routes.
+
+    Returns stable keys even if some files are missing, so callers
+    can deterministically construct recipe inputs.
+    """
+    resolved = resolve_persona_assets(persona_id)
+    base = f"persona_assets/{persona_id}"
+    portrait = resolved.portrait_path if resolved else f"{base}/portrait.png"
+    return {
+        "portrait": portrait,
+        "embedding": f"{base}/instantid.pt",
+        "face_mask": f"{base}/face_mask.png",
+        "outfit_mask": f"{base}/outfit_mask.png",
+        "bg_mask": f"{base}/bg_mask.png",
+        "pose_skeleton": f"{base}/pose.json",
+        "negative_prompt": "low quality, artifacts, deformed",
+    }

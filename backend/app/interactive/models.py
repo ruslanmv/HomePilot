@@ -75,6 +75,7 @@ class ExperienceCreate(BaseModel):
     experience_mode: ExperienceMode = "sfw_general"
     policy_profile_id: str = "sfw_general"
     audience_profile: Dict[str, Any] = Field(default_factory=dict)
+    project_type: str = "standard"
     studio_video_id: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
 
@@ -87,6 +88,7 @@ class ExperienceUpdate(BaseModel):
     experience_mode: Optional[ExperienceMode] = None
     policy_profile_id: Optional[str] = None
     audience_profile: Optional[Dict[str, Any]] = None
+    project_type: Optional[str] = None
     status: Optional[ExperienceStatus] = None
     tags: Optional[List[str]] = None
 
@@ -102,6 +104,7 @@ class Experience(BaseModel):
     experience_mode: ExperienceMode = "sfw_general"
     policy_profile_id: str = "sfw_general"
     audience_profile: Dict[str, Any] = Field(default_factory=dict)
+    project_type: str = "standard"
     branch_count: int = 0
     max_depth: int = 0
     status: ExperienceStatus = "draft"
@@ -281,6 +284,8 @@ class ActionCreate(BaseModel):
     repeat_penalty: float = 0.0
     requires_consent: str = ""
     applicable_modes: List[str] = Field(default_factory=list)
+    category: str = "expression"
+    edit_recipe: Dict[str, Any] = Field(default_factory=dict)
     ordinal: int = 0
 
 
@@ -301,6 +306,8 @@ class Action(BaseModel):
     repeat_penalty: float = 0.0
     requires_consent: str = ""
     applicable_modes: List[str] = Field(default_factory=list)
+    category: str = "expression"
+    edit_recipe: Dict[str, Any] = Field(default_factory=dict)
     ordinal: int = 0
     created_at: Optional[str] = None
 

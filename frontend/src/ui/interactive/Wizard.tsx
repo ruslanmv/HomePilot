@@ -101,20 +101,24 @@ export function InteractiveWizard({
     setSubmitting(true);
     try {
       const created = await api.createExperience(toCreatePayload(form));
-      try {
-        await api.seedGraph(created.id, toPlanPayload(form));
-      } catch (seedErr) {
-        const e = seedErr as InteractiveApiError;
-        toast.toast({
-          variant: "warning",
-          title: "Project created, but seeding the graph failed",
-          message: e.message || "You can re-run seeding from the editor.",
-        });
+      if (form.interaction_type !== "persona_live_play") {
+        try {
+          await api.seedGraph(created.id, toPlanPayload(form));
+        } catch (seedErr) {
+          const e = seedErr as InteractiveApiError;
+          toast.toast({
+            variant: "warning",
+            title: "Project created, but seeding the graph failed",
+            message: e.message || "You can re-run seeding from the editor.",
+          });
+        }
       }
       toast.toast({
         variant: "success",
         title: "Project created",
-        message: "Opening the editor…",
+        message: form.interaction_type === "persona_live_play"
+          ? "Opening persona live setup…"
+          : "Opening the editor…",
       });
       onCreated(created.id);
     } catch (err) {
@@ -136,14 +140,27 @@ export function InteractiveWizard({
     setStep((s) => Math.max(0, s - 1));
   }, [step, onCancel]);
 
-  const titles = [
+  const personaLive = form.interaction_type === "persona_live_play";
+  const titles = personaLive ? [
+    "Describe the vibe of this live play session",
+    "Who's this session for?",
+    "Set progression depth",
+    "Pick the policy guardrails",
+    "Review and launch",
+  ] : [
     "Describe your interactive experience",
     "Who's going to watch?",
     "Shape the branching graph",
     "Pick the policy guardrails",
     "Review and create",
   ];
-  const subtitles = [
+  const subtitles = personaLive ? [
+    "Define the session vibe, persona, and mode.",
+    "Optional refinements that bias persona replies and unlock pacing.",
+    "Numbers are capped to backend limits, but persona mode stays action-driven.",
+    "Decides which guardrails the runtime enforces for every turn.",
+    "Verify persona session settings, then we'll create and prepare the live session.",
+  ] : [
     "A short brief and a target mode is enough to get started.",
     "Optional refinements that bias the planner toward your viewers.",
     "Numbers are capped to whatever your backend allows.",
@@ -183,8 +200,9 @@ export function InteractiveWizard({
       {step === 0 && (
         <p className="mt-6 text-xs text-[#777] flex items-center gap-2">
           <Wand2 className="w-3.5 h-3.5 text-[#3ea6ff]" aria-hidden />
-          The planner will turn this prompt into a branching scene graph
-          you can then edit scene-by-scene.
+          {personaLive
+            ? "Persona live mode uses deterministic action recipes and progression unlocks."
+            : "The planner will turn this prompt into a branching scene graph you can then edit scene-by-scene."}
         </p>
       )}
     </WizardShell>

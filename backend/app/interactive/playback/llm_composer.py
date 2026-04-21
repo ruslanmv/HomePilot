@@ -187,8 +187,7 @@ def _build_messages(
         "role": "system",
         "content": (
             'Respond with ONLY a JSON object on the fields: '
-            '{"reply_text": str, "narration": str, "scene_prompt": str, '
-            '"duration_sec": int, "mood_shift": str, "affinity_delta": float}. '
+            '{"scene_prompt": str, "dialogue": str, "edit_hint": str}. '
             "No prose. No markdown fences. Strict JSON."
         ),
     })
@@ -345,7 +344,10 @@ def _to_scene_plan(
     classification: IntentMatch, duration_sec: int,
     allow_explicit: bool = False,
 ) -> Optional[ScenePlan]:
-    reply_text = _trimmed_string(payload.get("reply_text"), max_len=600)
+    reply_text = _trimmed_string(
+        payload.get("dialogue") or payload.get("reply_text"),
+        max_len=600,
+    )
     scene_prompt = _trimmed_string(payload.get("scene_prompt"), max_len=400)
     if not reply_text or not scene_prompt:
         log.warning(

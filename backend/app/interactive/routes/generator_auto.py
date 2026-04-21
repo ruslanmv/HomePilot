@@ -159,6 +159,7 @@ def build_generator_auto_router(cfg: InteractiveConfig) -> APIRouter:
             raise http_error_from(NotFoundError("node not found"))
 
         media_type = _media_type_from_audience(exp)
+        persona_ctx = _persona_render_context(exp)
         pseudo_session = f"ixs_eager_{exp.id}"
         status = "rendered"
         asset_id: Optional[str] = None
@@ -169,8 +170,10 @@ def build_generator_auto_router(cfg: InteractiveConfig) -> APIRouter:
                 scene_prompt=(node.narration or node.title or "Scene").strip(),
                 duration_sec=int(node.duration_sec or 5),
                 session_id=pseudo_session,
-                persona_hint=(exp.description or "").strip(),
+                persona_hint=persona_ctx["hint"] or (exp.description or "").strip(),
                 media_type=media_type,
+                edit_recipe=persona_ctx["edit_recipe"],
+                persona_project_id=persona_ctx["persona_project_id"],
             )
         except Exception as exc:  # noqa: BLE001
             log.warning(
@@ -500,6 +503,7 @@ async def _render_all_scenes(
     ]
     total = len(targets)
     media_type = _media_type_from_audience(exp)
+    persona_ctx = _persona_render_context(exp)
     on_event("rendering_started", {
         "total": total, "media_type": media_type,
     })
@@ -532,8 +536,10 @@ async def _render_all_scenes(
                 scene_prompt=(node.narration or node.title or "Scene").strip(),
                 duration_sec=int(node.duration_sec or 5),
                 session_id=pseudo_session,
-                persona_hint=(exp.description or "").strip(),
+                persona_hint=persona_ctx["hint"] or (exp.description or "").strip(),
                 media_type=media_type,
+                edit_recipe=persona_ctx["edit_recipe"],
+                persona_project_id=persona_ctx["persona_project_id"],
             )
         except Exception as exc:  # noqa: BLE001 — non-fatal per scene
             failed += 1
@@ -598,6 +604,47 @@ def _media_type_from_audience(exp: Experience) -> str:
         return "video"
     raw = str(ap.get("render_media_type") or "").strip().lower()
     return "image" if raw == "image" else "video"
+
+
+def _persona_render_context(exp: Experience) -> Dict[str, Any]:
+    """If this is a persona_live project with a linked persona id,
+    force wizard-generated scenes through identity-preserving edit
+    flow (img2img against the canonical portrait) instead of free
+    txt2img.
+    """
+    ap = getattr(exp, "audience_profile", None) or {}
+    if not isinstance(ap, dict):
+        return {"persona_project_id": "", "hint": "", "edit_recipe": None}
+    persona_project_id = str(ap.get("persona_project_id") or "").strip()
+    if not persona_project_id:
+        return {"persona_project_id": "", "hint": "", "edit_recipe": None}
+    if str(getattr(exp, "project_type", "") or "").strip().lower() != "persona_live":
+        return {"persona_project_id": "", "hint": "", "edit_recipe": None}
+
+    hint = ""
+    try:
+        from ... import projects
+        pdata = projects.get_project_by_id(persona_project_id) or {}
+        if isinstance(pdata, dict):
+            agent = pdata.get("persona_agent") if isinstance(pdata.get("persona_agent"), dict) else {}
+            hint = ", ".join([
+                str((pdata or {}).get("name") or "").strip(),
+                str((agent or {}).get("persona_class") or "").strip(),
+                str(((agent or {}).get("response_style") or {}).get("tone") if isinstance((agent or {}).get("response_style"), dict) else "").strip(),
+            ]).strip(", ").strip()
+    except Exception:
+        hint = ""
+
+    edit_recipe = {
+        "workflow_id": "avatar_identity_reproject",
+        "params": {"mode": "img2img", "steps": 28, "cfg": 5.2, "denoise": 0.42},
+        "locks": ["face"],
+    }
+    return {
+        "persona_project_id": persona_project_id,
+        "hint": hint,
+        "edit_recipe": edit_recipe,
+    }
 
 
 async def _generate_all_event_stream(

@@ -72,6 +72,7 @@ export function toCreatePayload(f: WizardForm) {
     description: f.prompt.trim(),
     experience_mode: f.experience_mode,
     policy_profile_id: f.policy_profile_id,
+    project_type: f.interaction_type === "persona_live_play" ? "persona_live" : "standard",
     audience_profile: {
       role: f.audience_role,
       level: f.audience_level,

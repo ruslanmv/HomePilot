@@ -71,6 +71,7 @@ export interface Experience {
   objective?: string;
   experience_mode: ExperienceMode;
   policy_profile_id: string;
+  project_type?: "standard" | "persona_live" | string;
   audience_profile?: AudienceProfile;
   branch_count?: number;
   max_depth?: number;
@@ -134,7 +135,21 @@ export interface ActionItem {
   repeat_penalty?: number;
   requires_consent?: string;
   applicable_modes?: string[];
+  category?: string;
+  edit_recipe?: Record<string, unknown>;
   ordinal?: number;
+}
+
+export interface PersonaLiveGenerateResult {
+  persona: {
+    id: string;
+    name: string;
+    avatar_url?: string;
+    archetype?: string;
+  };
+  vibe: string;
+  levels: Array<{ level: number; actions: string[] }>;
+  rules: Record<string, unknown>;
 }
 
 export interface RuleItem {
@@ -318,6 +333,7 @@ export interface SceneJobView {
   status: SceneJobStatus;
   job_id: string;
   asset_id: string;
+  media_kind?: "image" | "video" | "unknown" | string;
   /** Resolved durable URL for the scene (empty when the asset is a stub
    *  or the backend couldn't resolve a public URL yet). */
   asset_url: string;
@@ -351,6 +367,7 @@ export interface ChatResult {
   /** Resolved durable URL for the scene — empty string when the backend
    *  only has a stub asset or hasn't resolved a public URL yet. */
   video_asset_url?: string;
+  video_media_kind?: "image" | "video" | "unknown" | string;
 }
 
 export interface PendingResult {
