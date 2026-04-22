@@ -151,3 +151,19 @@ See `expert/SPACE_AUTONOMY_EVOLUTION_ROADMAP.md` for the long-term autonomous sp
 See `expert/PRODUCTION_READINESS_SUMMARY.md` for the current production-parity status and required next steps.
 
 See `expert/MCP_SERVERS_PRODUCTION_LIST.md` for the prioritized MCP servers/tools required for production.
+
+---
+
+## MCP Server Runtime Notes
+
+HomePilot's MCP server packages under `agentic/integrations/mcp/*` are expected to run with:
+
+- **Python 3.11**
+- **uv** for install/run/test workflows
+- JSON-RPC MCP-compatible tool endpoints (Context Forge compatible)
+
+Typical workflow inside a server package:
+
+- `make install`
+- `make run`
+- `make test`

@@ -46,6 +46,8 @@ from .schemas import (
     ReadinessCheckItem,
 )
 from .readiness import build_readiness_report
+from .mcp_catalog import ESSENTIAL_MCP_SERVERS, TOOL_MAPPING, mcp_key_to_env, mcp_key_to_forge_tool_env
+from .mcp_gateway import MCPGateway
 
 logger = logging.getLogger("expert.routes")
 
@@ -408,3 +410,40 @@ async def expert_readiness() -> ProductionReadinessResponse:
         stage=report.stage,  # type: ignore[arg-type]
         checks=[ReadinessCheckItem(name=c.name, passed=c.passed, detail=c.detail) for c in report.checks],
     )
+
+
+@router.get("/mcp/plan", summary="Expert MCP rollout plan and configuration status")
+async def expert_mcp_plan() -> dict:
+    gateway = MCPGateway()
+    status_by_key = {item.key: item for item in gateway.status()}
+    servers = []
+
+    for spec in ESSENTIAL_MCP_SERVERS:
+        status = status_by_key.get(spec.key)
+        servers.append(
+            {
+                "key": spec.key,
+                "priority": spec.priority,
+                "purpose": spec.purpose,
+                "required_apis": spec.required_apis,
+                "configured": status.configured if status else False,
+                "endpoint": status.endpoint if status else "",
+                "forge_tool_id": status.forge_tool_id if status else "",
+                "env_key": mcp_key_to_env(spec.key),
+                "forge_tool_env_key": mcp_key_to_forge_tool_env(spec.key),
+            }
+        )
+
+    return {
+        "orchestrator": gateway.orchestrator,
+        "context_forge_url": gateway.forge_base_url,
+        "tool_mapping": TOOL_MAPPING,
+        "servers": servers,
+        "minimal_production_set": [
+            "mcp-web-search",
+            "mcp-doc-retrieval",
+            "mcp-memory-store",
+            "mcp-safety-policy",
+            "mcp-observability",
+        ],
+    }

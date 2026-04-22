@@ -69,3 +69,15 @@ def test_persona_draft_endpoint_generates_payload(monkeypatch):
     assert "Research Persona" in body["name"]
     assert body["provider_used"] == "local"
     assert "retrieval" in body["suggested_tools"]
+
+
+def test_mcp_plan_endpoint_returns_catalog(monkeypatch):
+    client, _ = _client()
+    monkeypatch.setenv("CONTEXT_FORGE_URL", "http://forge:4444")
+    r = client.get("/v1/expert/mcp/plan")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["orchestrator"] == "context_forge"
+    assert "tool_mapping" in body
+    assert body["tool_mapping"]["web_search"] == "mcp-web-search"
+    assert any(server["key"] == "mcp-web-search" and server["forge_tool_id"] == "mcp_web_search" for server in body["servers"])

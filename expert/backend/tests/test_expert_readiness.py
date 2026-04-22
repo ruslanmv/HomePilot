@@ -46,3 +46,40 @@ def test_readiness_route_returns_expected_shape(monkeypatch):
     assert body["stage"] == "production"
     assert isinstance(body["checks"], list)
     assert len(body["checks"]) >= 5
+
+
+def test_readiness_preprod_mode_requires_p0_mcp_servers():
+    report = build_readiness_report(
+        {
+            "EXPERT_TOOLS_ENABLED": "true",
+            "EXPERT_MEMORY_ENABLED": "true",
+            "EXPERT_EVALS_ENABLED": "true",
+            "EXPERT_V2_ROUTER_ENABLED": "true",
+            "EXPERT_MEMORY_BACKEND": "sqlite:///expert.db",
+            "EXPERT_TELEMETRY_ENDPOINT": "http://otel:4318",
+            "EXPERT_SAFETY_POLICY": "strict-research",
+            "EXPERT_PREPROD_MODE": "true",
+        }
+    )
+    mcp_checks = [c for c in report.checks if c.name.startswith("mcp:")]
+    assert not mcp_checks
+    assert any(c.name == "context_forge_url" and c.passed is False for c in report.checks)
+
+
+def test_readiness_preprod_direct_mode_requires_p0_mcp_servers():
+    report = build_readiness_report(
+        {
+            "EXPERT_TOOLS_ENABLED": "true",
+            "EXPERT_MEMORY_ENABLED": "true",
+            "EXPERT_EVALS_ENABLED": "true",
+            "EXPERT_V2_ROUTER_ENABLED": "true",
+            "EXPERT_MEMORY_BACKEND": "sqlite:///expert.db",
+            "EXPERT_TELEMETRY_ENDPOINT": "http://otel:4318",
+            "EXPERT_SAFETY_POLICY": "strict-research",
+            "EXPERT_PREPROD_MODE": "true",
+            "EXPERT_MCP_ORCHESTRATOR": "direct",
+        }
+    )
+    mcp_checks = [c for c in report.checks if c.name.startswith("mcp:")]
+    assert mcp_checks
+    assert all(c.passed is False for c in mcp_checks)

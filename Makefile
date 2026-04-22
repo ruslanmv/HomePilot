@@ -1821,3 +1821,36 @@ restore-avatars: ## Reassign orphan image files in UPLOAD_DIR to the admin user 
 	@cd backend && .venv/bin/python -m app.scripts.restore_avatars \
 		$(if $(DRY_RUN),--dry-run,) \
 		$(if $(USER),--user "$(USER)",)
+
+# ─────────────────────────────────────────────────────────────────────
+# Expert Upgrade (standalone API scaffolding)
+# ─────────────────────────────────────────────────────────────────────
+expert-upgrade-install: ## Install standalone Expert Upgrade deps from root requirements.txt
+	pip install -r requirements.txt
+
+expert-upgrade-run: ## Run standalone Expert Upgrade API (expert.main:app)
+	uvicorn expert.main:app --reload
+
+
+# Expert assistant upgraded targets
+
+PYTHON ?= python3
+PIP ?= pip3
+
+expert-assistant-install:
+	$(PIP) install -r requirements.txt
+
+expert-assistant-run:
+	uvicorn expert.main:app --host 0.0.0.0 --port 8000 --reload
+
+expert-assistant-test:
+	pytest -q
+
+expert-assistant-lint:
+	python -m py_compile expert/main.py expert/**/*.py
+
+expert-frontend-install:
+	cd frontend && npm install
+
+expert-frontend-run:
+	cd frontend && npm run dev

@@ -35,16 +35,24 @@ export interface LocalProviderConfig {
   headers?: Record<string, string>;
 }
 
-const DEFAULT_LOCAL_BASE_URL =
-  (typeof import.meta !== "undefined" &&
-    (import.meta as Record<string, unknown>)?.env &&
-    ((import.meta as { env?: Record<string, string> }).env?.VITE_LOCAL_LLM_URL as string)) ||
-  "http://localhost:11434/v1";
+type LocalEnv = {
+  VITE_LOCAL_LLM_URL?: string;
+  VITE_LOCAL_LLM_MODEL?: string;
+};
 
-const DEFAULT_LOCAL_MODEL =
-  (typeof import.meta !== "undefined" &&
-    (import.meta as { env?: Record<string, string> }).env?.VITE_LOCAL_LLM_MODEL) ||
-  "llama3.1:8b";
+function readLocalEnv(): LocalEnv {
+  if (typeof import.meta === "undefined") {
+    return {};
+  }
+  const maybeEnv = (import.meta as ImportMeta & { env?: LocalEnv }).env;
+  return maybeEnv ?? {};
+}
+
+const localEnv = readLocalEnv();
+
+const DEFAULT_LOCAL_BASE_URL = localEnv.VITE_LOCAL_LLM_URL ?? "http://localhost:11434/v1";
+
+const DEFAULT_LOCAL_MODEL = localEnv.VITE_LOCAL_LLM_MODEL ?? "llama3.1:8b";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
