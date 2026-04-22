@@ -32,12 +32,26 @@
  * editor DB state or the authoring routes. Every write goes
  * through POST /play/.../chat which the backend already proved
  * in PLAY-4 keeps the policy gate in front of the render job.
+ *
+ * Production fixes in this version:
+ *  - Persona idle portrait is centered and never face-cropped.
+ *  - Portrait-oriented scene stills are auto-detected and rendered
+ *    with a contain/center foreground plus blurred cinematic fill.
+ *  - Avatar chip uses object-top so faces crop more naturally.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft, Eye, EyeOff, Gamepad2, MoreHorizontal, Send,
-  Volume2, VolumeX, Workflow, X,
+  ArrowLeft,
+  Eye,
+  EyeOff,
+  Gamepad2,
+  MoreHorizontal,
+  Send,
+  Volume2,
+  VolumeX,
+  Workflow,
+  X,
 } from "lucide-react";
 import { createInteractiveApi, type InteractiveApi } from "./interactive/api";
 import { LiveActionSheet } from "./interactive/LiveActionSheet";
@@ -45,13 +59,23 @@ import { PersonaLiveRuntimeShell } from "./interactive/personaLiveRuntime";
 import { StandardPlayer } from "./interactive/StandardPlayer";
 import { XPRewardsSheet } from "./interactive/XPRewardsSheet";
 import type {
-  AudienceProfile, CatalogItemView, ChatResult, Experience,
-  InteractionType, ResolveResult, SceneJobView,
+  AudienceProfile,
+  CatalogItemView,
+  ChatResult,
+  Experience,
+  InteractionType,
+  ResolveResult,
+  SceneJobView,
 } from "./interactive/types";
 import { InteractiveApiError, resolveInteractionType } from "./interactive/types";
 import {
-  ErrorBanner, PrimaryButton, SecondaryButton, StatusBadge,
-  ToastProvider, useAsyncResource, useToast,
+  ErrorBanner,
+  PrimaryButton,
+  SecondaryButton,
+  StatusBadge,
+  ToastProvider,
+  useAsyncResource,
+  useToast,
 } from "./interactive/ui";
 
 const POLL_INTERVAL_MS = 1500;
@@ -85,7 +109,10 @@ export default function InteractivePlayer(props: InteractivePlayerProps) {
 }
 
 function InteractivePlayerBody({
-  backendUrl, apiKey, projectId, onExit,
+  backendUrl,
+  apiKey,
+  projectId,
+  onExit,
 }: InteractivePlayerProps) {
   const api = useMemo(() => createInteractiveApi(backendUrl, apiKey), [backendUrl, apiKey]);
   const toast = useToast();
@@ -110,14 +137,6 @@ function InteractivePlayerBody({
     render_media_type?: "image" | "video";
   }>(
     async () => {
-      // Start a new anonymous session dedicated to this player mount.
-      // Sessions are cheap; the editor + live-play are intentionally
-      // decoupled so the player can run without stepping on editor
-      // state like current_node_id for an authoring preview.
-      //
-      // Routed through the shared api client so credentials:'include'
-      // forwards the homepilot_session cookie — skipping that was the
-      // real cause of the 401 on /play/sessions.
       const sess = await api.startSession({
         experience_id: projectId,
         viewer_ref: `player_${Date.now()}`,
@@ -150,9 +169,6 @@ function InteractivePlayerBody({
   const [cursor, setCursor] = useState<string>("");
   const [liveActionOpen, setLiveActionOpen] = useState(false);
   const [xpRewardsOpen, setXpRewardsOpen] = useState(false);
-  // Connection health: number of consecutive polling failures.
-  // 0 = healthy; ≥ 3 surfaces a reconnect chip so the user knows
-  // the stream isn't silently dying.
   const [pollFailures, setPollFailures] = useState(0);
 
   useEffect(() => {
@@ -175,14 +191,11 @@ function InteractivePlayerBody({
     });
   }, [session.data?.initial_scene, sessionId]);
 
-  // Refs for state read by the polling effect without re-binding.
   const cursorRef = useRef<string>("");
-  useEffect(() => { cursorRef.current = cursor; }, [cursor]);
+  useEffect(() => {
+    cursorRef.current = cursor;
+  }, [cursor]);
 
-  // Persona Live Play: seed the overlay with the backend-generated
-  // greeting so the viewer sees an in-character opener immediately
-  // (mirrors the candy.ai pattern in the reference screenshots).
-  // Guarded by sessionId so it only fires once per session mount.
   const seededOpeningForRef = useRef<string>("");
   useEffect(() => {
     if (!sessionId || !openingTurn?.reply_text) return;
@@ -211,12 +224,9 @@ function InteractivePlayerBody({
         const res = await api.pending(sessionId, { since_id: cursorRef.current || undefined });
         if (cancelled) return;
         if (res.items.length > 0) {
-          // Find the newest ready job; promote it to current scene.
           const latestReady = [...res.items].reverse().find((j) => j.status === "ready");
           if (latestReady) setCurrentScene(latestReady);
-          // Any still-rendering job lives in pendingScene so the UI
-          // can show a subtle "generating…" indicator without
-          // blocking input.
+
           const stillPending = res.items.find(
             (j) => j.status === "pending" || j.status === "rendering",
           );
@@ -225,14 +235,12 @@ function InteractivePlayerBody({
         }
         setPollFailures(0);
       } catch {
-        // Transient polling errors are retried on the next tick;
-        // we count consecutive failures so the UI can surface a
-        // reconnect chip once the stream has genuinely dropped.
         setPollFailures((n) => Math.min(n + 1, 99));
       } finally {
         if (!cancelled) timer = window.setTimeout(tick, POLL_INTERVAL_MS);
       }
     }
+
     timer = window.setTimeout(tick, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
@@ -244,6 +252,7 @@ function InteractivePlayerBody({
   const onSend = useCallback(async () => {
     const text = input.trim();
     if (!text || !sessionId || sending) return;
+
     setSending(true);
     const optimisticId = `u_${Date.now()}`;
     setBubbles((prev) => [
@@ -254,6 +263,7 @@ function InteractivePlayerBody({
 
     try {
       const result: ChatResult = await api.chat(sessionId, { text });
+
       if (result.status === "blocked") {
         setBubbles((prev) => [
           ...prev,
@@ -273,6 +283,7 @@ function InteractivePlayerBody({
         });
         return;
       }
+
       if (result.reply_text) {
         setBubbles((prev) => [
           ...prev,
@@ -285,12 +296,10 @@ function InteractivePlayerBody({
           },
         ]);
       }
+
       if (typeof result.mood === "string" && result.mood) setMood(result.mood);
       if (typeof result.affinity_score === "number") setAffinity(result.affinity_score);
-      // Phase-1 render_now lands the job as already-ready, but we
-      // keep the pending marker for the gap in phase-2. When
-      // status is 'ready' immediately we update the current scene
-      // without waiting for the next poll tick.
+
       if (result.video_asset_id && result.video_job_status === "ready") {
         const resolvedUrl = result.video_asset_url || "";
         setCurrentScene({
@@ -324,10 +333,6 @@ function InteractivePlayerBody({
   // ── Action catalog resolution (Live Action sheet) ───────────
   const onActionResolved = useCallback(
     (resolved: ResolveResult, action: CatalogItemView) => {
-      // Treat a resolved action like a synthetic chat exchange so
-      // the overlay stays coherent with typed turns: surface the
-      // action label as a user bubble + the implied reply as an
-      // assistant bubble keyed by the transition.
       const ts = Date.now();
       setBubbles((prev) => [
         ...prev,
@@ -361,10 +366,7 @@ function InteractivePlayerBody({
   );
 
   // ── Derived ──────────────────────────────────────────────────
-  const visibleBubbles = useMemo(
-    () => bubbles.slice(-MAX_VISIBLE_TURNS),
-    [bubbles],
-  );
+  const visibleBubbles = useMemo(() => bubbles.slice(-MAX_VISIBLE_TURNS), [bubbles]);
 
   // ── Render ───────────────────────────────────────────────────
   if (exp.error || session.error) {
@@ -405,9 +407,6 @@ function InteractivePlayerBody({
   const experience = exp.data;
   const level = Math.max(1, Math.round(affinity * 5) + 1);
   const audience = (experience.audience_profile || {}) as AudienceProfile;
-  // Persona mode ("Darkangel666" candy.ai-style) gets the display
-  // name + avatar shown in the top bar; standard projects reuse the
-  // experience title so power-users still see "Q3 Onboarding" etc.
   const interactionType: InteractionType = resolveInteractionType(experience);
   const displayName =
     (interactionType === "persona_live_play" && audience.persona_label) ||
@@ -415,10 +414,6 @@ function InteractivePlayerBody({
     "Interactive";
   const avatarUrl = audience.persona_avatar_url || "";
 
-  // Standard projects get a YouTube-style branching-video surface;
-  // persona projects keep the candy.ai chat + Live Action sheet.
-  // Both share the same session + scene polling, so we only swap
-  // the *view* layer — the underlying session state is unchanged.
   if (interactionType === "standard_project") {
     return (
       <div className="relative min-h-screen bg-black text-[#f1f1f1] overflow-hidden select-none">
@@ -441,11 +436,8 @@ function InteractivePlayerBody({
     );
   }
 
-  // Persona Live Play stage default: the persona's canonical photo.
-  // Without this the stage shows a black / mood-gradient backdrop
-  // until the first scene job lands, which looked broken. Falls back
-  // gracefully to the mood gradient when no portrait is set.
   const effectiveAvatarUrl = avatarUrl || personaPortraitUrl;
+
   return (
     <div className="relative min-h-screen bg-black text-[#f1f1f1] overflow-hidden select-none">
       <VideoStage
@@ -468,17 +460,11 @@ function InteractivePlayerBody({
         onExit={onExit}
       />
 
-      {pendingScene && (
-        <GeneratingHint prompt={pendingScene.prompt} />
-      )}
+      {pendingScene && <GeneratingHint prompt={pendingScene.prompt} />}
 
-      {pollFailures >= 3 && (
-        <ReconnectChip />
-      )}
+      {pollFailures >= 3 && <ReconnectChip />}
 
-      {!hideChat && (
-        <ChatOverlay bubbles={visibleBubbles} />
-      )}
+      {!hideChat && <ChatOverlay bubbles={visibleBubbles} />}
 
       {!hideChat && (
         <>
@@ -548,26 +534,16 @@ function LiveActionFab({ onClick }: { onClick: () => void }) {
 // ────────────────────────────────────────────────────────────────
 
 function VideoStage({
-  scene, mood, muted, portraitUrl,
+  scene,
+  mood,
+  muted,
+  portraitUrl,
 }: {
   scene: SceneJobView | null;
   mood: string;
   muted: boolean;
-  /** Persona Live Play canonical portrait. Used as the idle
-   *  background so the stage shows the persona's photo instead
-   *  of a black / gradient screen before the first scene job
-   *  lands. Empty string → fall back to the mood gradient. */
   portraitUrl?: string;
 }) {
-  // Render priority:
-  //   1. A ready scene with a URL → video or image element.
-  //   2. The persona's portrait (Persona Live Play idle state).
-  //   3. The mood-tinted radial gradient (Standard projects with
-  //      no scene yet, or personas without a committed portrait).
-  //
-  // The key={} trick on the outer element remounts the layer
-  // when the scene changes, triggering the CSS scene-fade
-  // animation so transitions feel smooth instead of abrupt.
   const tint = moodTint(mood);
   const url = scene?.status === "ready" ? (scene.asset_url || "") : "";
   const isVideo = url && /\.(mp4|webm|mov|mkv|m4v)(\?|$)/i.test(url);
@@ -601,10 +577,19 @@ function VideoStage({
         className="absolute inset-0 -z-10 bg-black animate-scene-fade"
         aria-hidden
       >
-        <img
+        <ResponsiveStageImage
           src={url}
           alt=""
-          className="absolute inset-0 w-full h-full object-cover"
+          forcePortraitContain={false}
+          overlay={
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                background:
+                  "linear-gradient(to bottom, rgba(0,0,0,0.10), rgba(0,0,0,0.22))",
+              }}
+            />
+          }
         />
         <SceneStamp scene={scene!} />
       </div>
@@ -612,28 +597,33 @@ function VideoStage({
   }
 
   if (portraitUrl) {
-    // Persona Live Play idle: show the committed portrait behind a
-    // subtle mood tint. The tint layer keeps the look cohesive
-    // with the scene gradient so the transition into a generated
-    // scene reads as "same photo, different moment" rather than
-    // a cut to a completely different frame.
     return (
       <div
         key={`portrait-${portraitUrl}`}
         className="absolute inset-0 -z-10 bg-black animate-scene-fade"
         aria-hidden
       >
-        <img
+        <ResponsiveStageImage
           src={portraitUrl}
           alt=""
-          className="absolute inset-0 w-full h-full object-cover"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-        />
-        <div
-          className="absolute inset-0 pointer-events-none animate-mood-breathe"
-          style={{
-            background: `radial-gradient(1200px 800px at 50% 40%, ${tint.mid}33 0%, transparent 55%, #0008 100%)`,
-          }}
+          forcePortraitContain
+          overlay={
+            <>
+              <div
+                className="absolute inset-0 pointer-events-none animate-mood-breathe"
+                style={{
+                  background: `radial-gradient(1200px 800px at 50% 40%, ${tint.mid}22 0%, transparent 55%, #0006 100%)`,
+                }}
+              />
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  background:
+                    "linear-gradient(to bottom, rgba(0,0,0,0.14), rgba(0,0,0,0.26))",
+                }}
+              />
+            </>
+          }
         />
       </div>
     );
@@ -649,6 +639,72 @@ function VideoStage({
       aria-hidden
     >
       {scene && scene.status === "ready" && <SceneStamp scene={scene} />}
+    </div>
+  );
+}
+
+/**
+ * ResponsiveStageImage
+ *
+ * Production behavior:
+ * - Landscape images stay full-bleed with object-cover.
+ * - Portrait images switch to a blurred background fill plus a
+ *   centered object-contain foreground, so faces are not cropped.
+ * - `forcePortraitContain` is used for Persona Live idle portraits
+ *   where we always want a safe, centered composition.
+ */
+function ResponsiveStageImage({
+  src,
+  alt,
+  forcePortraitContain = false,
+  overlay,
+}: {
+  src: string;
+  alt: string;
+  forcePortraitContain?: boolean;
+  overlay?: React.ReactNode;
+}) {
+  const [broken, setBroken] = useState(false);
+  const [isPortrait, setIsPortrait] = useState(forcePortraitContain);
+
+  if (!src || broken) return null;
+
+  const useContain = forcePortraitContain || isPortrait;
+
+  return (
+    <div className="absolute inset-0 overflow-hidden bg-black">
+      {/* cinematic fill */}
+      <img
+        src={src}
+        alt=""
+        className="absolute inset-0 w-full h-full object-cover scale-105 blur-xl opacity-35"
+        onError={() => setBroken(true)}
+        onLoad={(e) => {
+          const img = e.currentTarget;
+          if (!forcePortraitContain && img.naturalHeight > img.naturalWidth * 1.05) {
+            setIsPortrait(true);
+          }
+        }}
+      />
+
+      {/* main visible asset */}
+      <img
+        src={src}
+        alt={alt}
+        className={[
+          "absolute inset-0 w-full h-full transition-[transform,opacity] duration-300 ease-out",
+          useContain ? "object-contain object-center" : "object-cover object-center",
+        ].join(" ")}
+        onError={() => setBroken(true)}
+        onLoad={(e) => {
+          const img = e.currentTarget;
+          if (!forcePortraitContain && img.naturalHeight > img.naturalWidth * 1.05) {
+            setIsPortrait(true);
+          }
+        }}
+      />
+
+      {overlay}
     </div>
   );
 }
@@ -674,8 +730,16 @@ function ReconnectChip() {
 }
 
 function TopBar({
-  title, subtitle, avatarUrl, level, onOpenXp, muted, onToggleMute,
-  hideChat, onToggleHideChat, onExit,
+  title,
+  subtitle,
+  avatarUrl,
+  level,
+  onOpenXp,
+  muted,
+  onToggleMute,
+  hideChat,
+  onToggleHideChat,
+  onExit,
 }: {
   title: string;
   subtitle: string;
@@ -717,10 +781,18 @@ function TopBar({
       </div>
       <div className="flex items-center gap-2">
         <RoundIconBtn onClick={onToggleMute} label={muted ? "Unmute" : "Mute"}>
-          {muted ? <VolumeX className="w-4 h-4" aria-hidden /> : <Volume2 className="w-4 h-4" aria-hidden />}
+          {muted ? (
+            <VolumeX className="w-4 h-4" aria-hidden />
+          ) : (
+            <Volume2 className="w-4 h-4" aria-hidden />
+          )}
         </RoundIconBtn>
         <RoundIconBtn onClick={onToggleHideChat} label={hideChat ? "Show chat" : "Hide chat"}>
-          {hideChat ? <EyeOff className="w-4 h-4" aria-hidden /> : <Eye className="w-4 h-4" aria-hidden />}
+          {hideChat ? (
+            <EyeOff className="w-4 h-4" aria-hidden />
+          ) : (
+            <Eye className="w-4 h-4" aria-hidden />
+          )}
         </RoundIconBtn>
         <RoundIconBtn onClick={() => {}} label="More options">
           <MoreHorizontal className="w-4 h-4" aria-hidden />
@@ -734,8 +806,14 @@ function TopBar({
 }
 
 function RoundIconBtn({
-  children, onClick, label,
-}: { children: React.ReactNode; onClick: () => void; label: string }) {
+  children,
+  onClick,
+  label,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  label: string;
+}) {
   return (
     <button
       type="button"
@@ -757,10 +835,8 @@ function LevelPill({ level }: { level: number }) {
 }
 
 function Avatar({ url, label }: { url?: string; label: string }) {
-  // Persona mode ships with an avatar URL; standard projects don't,
-  // so we fall back to a tinted monogram circle. Keeps the top-bar
-  // layout stable across both modes with a single render path.
   const initial = (label || "?").trim().charAt(0).toUpperCase();
+
   return (
     <div
       className="w-8 h-8 rounded-full overflow-hidden border border-white/20 bg-gradient-to-br from-[#6366f1]/70 to-[#3ea6ff]/70 shrink-0 flex items-center justify-center text-[11px] font-semibold text-white"
@@ -770,10 +846,8 @@ function Avatar({ url, label }: { url?: string; label: string }) {
         <img
           src={url}
           alt=""
-          className="w-full h-full object-cover"
+          className="w-full h-full object-cover object-top"
           onError={(e) => {
-            // Hide the broken image so the gradient + initial shows
-            // through. No noisy console errors, no stale layout gap.
             (e.currentTarget as HTMLImageElement).style.display = "none";
           }}
         />
@@ -807,6 +881,7 @@ function ChatBubbleView({ bubble }: { bubble: ChatBubble }) {
       </div>
     );
   }
+
   if (bubble.role === "system") {
     return (
       <div className="inline-block rounded-2xl px-3 py-2 bg-amber-500/15 border border-amber-400/40 text-amber-200 text-xs">
@@ -814,6 +889,7 @@ function ChatBubbleView({ bubble }: { bubble: ChatBubble }) {
       </div>
     );
   }
+
   return (
     <div className="rounded-2xl px-4 py-3 bg-black/55 backdrop-blur-sm text-white text-sm leading-snug shadow-xl border border-white/10 max-w-[540px]">
       {bubble.text}
@@ -834,7 +910,11 @@ function GeneratingHint({ prompt }: { prompt: string }) {
 }
 
 function ChatInput({
-  value, onChange, onKeyDown, onSend, sending,
+  value,
+  onChange,
+  onKeyDown,
+  onSend,
+  sending,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -876,21 +956,24 @@ function ChatInput({
 
 function moodDescriptor(mood: string, affinity: number): string {
   const tier =
-    affinity >= 0.75 ? "close"
-    : affinity >= 0.5 ? "warm"
-    : affinity >= 0.2 ? "friendly"
-    : "stranger";
+    affinity >= 0.75
+      ? "close"
+      : affinity >= 0.5
+        ? "warm"
+        : affinity >= 0.2
+          ? "friendly"
+          : "stranger";
   return `${tier} · mood ${mood}`;
 }
 
 function moodTint(mood: string): { mid: string } {
   const map: Record<string, string> = {
     neutral: "#162030",
-    shy:     "#2a1c30",
-    flirty:  "#3a1626",
+    shy: "#2a1c30",
+    flirty: "#3a1626",
     playful: "#1e2a3a",
-    warm:    "#3a2a1a",
-    cold:    "#12202f",
+    warm: "#3a2a1a",
+    cold: "#12202f",
   };
   return { mid: map[mood] || map.neutral };
 }
@@ -908,5 +991,4 @@ function policyMessage(code: string, fallback: string): string {
   return fallback || "Message blocked by policy.";
 }
 
-// Re-export the badge so callers can use a consistent status chip.
 export { StatusBadge };

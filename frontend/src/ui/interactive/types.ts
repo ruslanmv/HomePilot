@@ -33,32 +33,35 @@ export type ProgressionScheme =
 
 /**
  * Interaction type is stamped onto `audience_profile` at create time
- * by the wizard (FIX-6). "standard_project" → YouTube-style branching
- * video player with a decision modal between scenes. "persona_live_play"
- * → candy.ai-style persona chat + Live Action sheet. We read it off
- * the audience_profile dict so the wire format stays
- * backward-compatible with pre-FIX-6 experiences.
+ * by the wizard (FIX-6).
  */
 export type InteractionType = "standard_project" | "persona_live_play";
 
 /**
- * Shape of the ``audience_profile`` blob the wizard stamps onto an
- * Experience. All fields are optional for forward-compat — the
- * backend allows arbitrary keys (``extra='allow'``).
+ * Shape of the ``audience_profile`` blob.
+ * ✅ UPDATED (production-safe additions only)
  */
 export interface AudienceProfile {
   role?: string;
   level?: string;
   language?: string;
   locale_hint?: string;
-  /** "standard_project" | "persona_live_play"; undefined → default to standard. */
+
   interaction_type?: InteractionType;
-  /** Human-readable persona display name (e.g. "Darkangel666"). */
+
   persona_label?: string;
-  /** Persona project id (in the voice/persona subsystem). */
   persona_project_id?: string;
-  /** Optional absolute or /files/ relative avatar URL. */
+
+  /** Existing */
   persona_avatar_url?: string;
+
+  /** ✅ NEW — persisted/frozen portrait */
+  persona_portrait_url?: string;
+
+  /** ✅ NEW — rendering controls */
+  persona_image_fit?: "cover" | "contain";
+  persona_image_position?: string;
+
   [key: string]: unknown;
 }
 
@@ -82,14 +85,15 @@ export interface Experience {
 }
 
 /**
- * Read the interaction type off an Experience. Defaults to
- * "standard_project" when the field is absent (old experiences
- * created before FIX-6 didn't stamp it). Keeps the player's
- * branch logic trivial: ``if (type === 'persona_live_play') …``.
+ * Resolve interaction type safely.
  */
-export function resolveInteractionType(exp: Experience | null | undefined): InteractionType {
+export function resolveInteractionType(
+  exp: Experience | null | undefined,
+): InteractionType {
   const raw = exp?.audience_profile?.interaction_type;
-  return raw === "persona_live_play" ? "persona_live_play" : "standard_project";
+  return raw === "persona_live_play"
+    ? "persona_live_play"
+    : "standard_project";
 }
 
 export interface NodeItem {
@@ -243,12 +247,6 @@ export interface HealthInfo {
     blocked_regions: number;
   };
   runtime_latency_target_ms: number;
-  /**
-   * Playback feature-flag readout (EDIT-5). Absent on older
-   * backends — treat as "unknown" and default to permissive
-   * behaviour so the wizard doesn't spuriously show warnings on
-   * backends that predate this field.
-   */
   playback?: {
     llm_enabled: boolean;
     render_enabled: boolean;
@@ -268,9 +266,8 @@ export interface AnalyticsSummary {
   block_rate: number;
 }
 
-// ── AUTO-* auto-planner / generator types ──────────────────────
+/* ── AUTO planner types ───────────────────────── */
 
-/** Pre-filled wizard form returned from POST /plan-auto. */
 export interface PlanAutoForm {
   title: string;
   prompt: string;
@@ -285,9 +282,6 @@ export interface PlanAutoForm {
   scenes_per_branch: number;
 }
 
-/** Full /plan-auto response. source='llm' means the LLM composer
- *  produced it; 'heuristic' means the deterministic fallback fired
- *  (LLM off, unreachable, or rejected). */
 export interface PlanAutoResult {
   source: "llm" | "heuristic";
   form: PlanAutoForm;
@@ -298,7 +292,6 @@ export interface PlanAutoResult {
   seed_intents: string[];
 }
 
-/** Response from POST /experiences/{id}/auto-generate. */
 export interface AutoGenerateResult {
   source: "llm" | "heuristic" | "existing";
   already_generated: boolean;
@@ -308,21 +301,12 @@ export interface AutoGenerateResult {
   warnings?: string[];
 }
 
-/**
- * One frame in the ``/auto-generate/stream`` SSE feed (PIPE-2).
- * Kinds the backend emits today:
- *   started · already_generated · generating_graph · graph_generated
- *   · persisting_nodes · persisting_edges · persisting_actions
- *   · seeding_rule · running_qa · qa_done · result · error · done
- * Treat unknown ``type`` values as noise — the stream is
- * forward-compatible by contract.
- */
 export interface AutoGenerateStreamEvent {
   type: string;
   payload?: Record<string, unknown>;
 }
 
-// ── Live-play types ─────────────────────────────────────────────
+/* ── Live-play ───────────────────────── */
 
 export type SceneJobStatus = "pending" | "rendering" | "ready" | "failed";
 
@@ -334,8 +318,6 @@ export interface SceneJobView {
   job_id: string;
   asset_id: string;
   media_kind?: "image" | "video" | "unknown" | string;
-  /** Resolved durable URL for the scene (empty when the asset is a stub
-   *  or the backend couldn't resolve a public URL yet). */
   asset_url: string;
   prompt: string;
   duration_sec: number;
@@ -364,8 +346,6 @@ export interface ChatResult {
   video_job_id: string;
   video_job_status?: SceneJobStatus;
   video_asset_id?: string;
-  /** Resolved durable URL for the scene — empty string when the backend
-   *  only has a stub asset or hasn't resolved a public URL yet. */
   video_asset_url?: string;
   video_media_kind?: "image" | "video" | "unknown" | string;
 }
@@ -420,13 +400,16 @@ export interface ResolveResult {
   matched_rule_id?: string | null;
 }
 
-/** Typed error returned by the API client on non-2xx responses. */
 export class InteractiveApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly data: Record<string, unknown>;
+
   constructor(
-    message: string, status: number, code = "unknown", data: Record<string, unknown> = {},
+    message: string,
+    status: number,
+    code = "unknown",
+    data: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "InteractiveApiError";
