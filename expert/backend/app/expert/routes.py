@@ -39,7 +39,13 @@ from .schemas import (
     ExpertChatResponse,
     ExpertInfoResponse,
     ExpertStreamRequest,
+    OllabridgeChatRequest,
+    PersonaDraftRequest,
+    PersonaDraftResponse,
+    ProductionReadinessResponse,
+    ReadinessCheckItem,
 )
+from .readiness import build_readiness_report
 
 logger = logging.getLogger("expert.routes")
 
@@ -295,3 +301,110 @@ async def expert_route(query: str, preferred: str = "auto") -> dict:
             "cloud": f"complexity > {EXPERT_GROQ_THRESHOLD}",
         },
     }
+
+
+@router.post("/ollabridge/chat/completions", summary="OllaBridge-compatible Expert chat")
+async def ollabridge_chat(req: OllabridgeChatRequest) -> dict:
+    """
+    OpenAI-compatible adapter endpoint so HomePilot can expose Expert through
+    OllaBridge cloud persona workflows.
+    """
+    if req.stream:
+        raise HTTPException(status_code=400, detail="stream=true is not supported on this adapter endpoint yet.")
+
+    if not req.messages:
+        raise HTTPException(status_code=422, detail="messages cannot be empty.")
+
+    user_query = ""
+    history = []
+    for msg in req.messages:
+        d = msg.model_dump()
+        if d["role"] == "user":
+            user_query = d["content"]
+        else:
+            history.append(d)
+
+    if not user_query:
+        raise HTTPException(status_code=422, detail="At least one user message is required.")
+
+    expert_req = ExpertChatRequest(
+        query=user_query,
+        provider=req.provider,
+        thinking_mode=req.thinking_mode,
+        history=history,
+        model=req.model,
+        temperature=req.temperature,
+        max_tokens=req.max_tokens,
+    )
+    expert_resp = await expert_chat(expert_req)
+
+    return {
+        "id": "expert-ollabridge-chat",
+        "object": "chat.completion",
+        "provider": expert_resp.provider_used,
+        "model": expert_resp.model_used or req.model or "expert-auto",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": expert_resp.content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+    }
+
+
+@router.post("/persona/draft", response_model=PersonaDraftResponse, summary="Create persona draft from Expert")
+async def expert_persona_draft(req: PersonaDraftRequest) -> PersonaDraftResponse:
+    """
+    Generate a persona draft that can be used by HomePilot persona creation
+    flows (including OllaBridge cloud personas).
+    """
+    constraints = "\\n".join(f"- {c}" for c in req.constraints) if req.constraints else "- Keep safety-first behavior."
+    prompt = (
+        "Create a high-quality HomePilot persona draft as JSON fields:\\n"
+        "name, description, system_prompt, first_message, suggested_tools (array), "
+        "memory_policy (object with keys recall, retention_days, pii_redaction).\\n\\n"
+        f"Mission: {req.mission}\\n"
+        f"Domain: {req.domain}\\n"
+        f"Tone: {req.tone}\\n"
+        f"Constraints:\\n{constraints}\\n"
+    )
+
+    expert_req = ExpertChatRequest(
+        query=prompt,
+        provider=req.provider,
+        thinking_mode=req.thinking_mode,
+        model=req.model,
+        temperature=req.temperature,
+        max_tokens=req.max_tokens,
+    )
+    resp = await expert_chat(expert_req)
+
+    content = resp.content.strip()
+    default_name = f"{req.domain.title()} Research Persona"
+    default_desc = f"Persona for {req.mission[:120]}"
+    return PersonaDraftResponse(
+        name=default_name,
+        description=default_desc,
+        system_prompt=content,
+        first_message=f"Hello, I am your {default_name}. I can help with: {req.mission}.",
+        suggested_tools=["retrieval", "web_search", "model_compare"],
+        memory_policy={"recall": True, "retention_days": 30, "pii_redaction": True},
+        provider_used=resp.provider_used,
+        thinking_mode_used=resp.thinking_mode_used,
+    )
+
+
+@router.get("/readiness", response_model=ProductionReadinessResponse, summary="Expert production readiness report")
+async def expert_readiness() -> ProductionReadinessResponse:
+    """
+    Returns a lightweight production-readiness report based on Expert feature
+    flags and required runtime configuration.
+    """
+    report = build_readiness_report()
+    return ProductionReadinessResponse(
+        ready=report.ready,
+        stage=report.stage,  # type: ignore[arg-type]
+        checks=[ReadinessCheckItem(name=c.name, passed=c.passed, detail=c.detail) for c in report.checks],
+    )

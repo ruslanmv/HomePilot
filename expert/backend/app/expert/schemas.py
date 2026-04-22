@@ -89,3 +89,50 @@ class ExpertInfoResponse(BaseModel):
     groq_model: str
     grok_model: str
     gemini_model: str
+
+
+class OllabridgeChatRequest(BaseModel):
+    """OpenAI-compatible request body for OllaBridge Expert adapter endpoint."""
+    model: Optional[str] = None
+    messages: List[ExpertMessage] = Field(default_factory=list)
+    stream: bool = False
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=8192)
+    provider: Literal["auto", "local", "groq", "grok", "gemini", "claude", "openai"] = "auto"
+    thinking_mode: Literal["auto", "fast", "think", "heavy"] = "auto"
+
+
+class PersonaDraftRequest(BaseModel):
+    """Generate a persona draft from Expert for HomePilot persona creation."""
+    mission: str = Field(..., min_length=3, description="Primary role and objective of the persona.")
+    domain: str = Field(default="general")
+    tone: str = Field(default="helpful")
+    constraints: List[str] = Field(default_factory=list)
+    provider: Literal["auto", "local", "groq", "grok", "gemini", "claude", "openai"] = "auto"
+    thinking_mode: Literal["auto", "fast", "think", "heavy"] = "think"
+    model: Optional[str] = None
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=8192)
+
+
+class PersonaDraftResponse(BaseModel):
+    name: str
+    description: str
+    system_prompt: str
+    first_message: str
+    suggested_tools: List[str] = Field(default_factory=list)
+    memory_policy: Dict[str, Any] = Field(default_factory=dict)
+    provider_used: str
+    thinking_mode_used: str
+
+
+class ReadinessCheckItem(BaseModel):
+    name: str
+    passed: bool
+    detail: str
+
+
+class ProductionReadinessResponse(BaseModel):
+    ready: bool
+    stage: Literal["dev", "preprod", "production"]
+    checks: List[ReadinessCheckItem]
