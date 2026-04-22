@@ -1,0 +1,2 @@
+/** Teams module types */
+export {};

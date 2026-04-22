@@ -1,0 +1,280 @@
+/**
+ * AvatarLandingPage — Gallery-first landing page for the Avatar tab.
+ *
+ * Clean, enterprise-grade design matching the "Command Center" aesthetic:
+ *   - Minimal header with title + "New Avatar" CTA
+ *   - Responsive grid gallery of all generated avatars
+ *   - Empty state with friendly onboarding
+ *   - Floating FAB for quick access to avatar creation
+ */
+import React, { useState, useCallback, useMemo } from 'react';
+import { Sparkles, Trash2, Clock, Plus, Maximize2, PenLine, Shirt, UserPlus, Image as ImageIcon, Eye, EyeOff, } from 'lucide-react';
+import { resolveFileUrl } from '../resolveFileUrl';
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function formatTimeAgo(timestamp) {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60)
+        return 'just now';
+    if (seconds < 3600)
+        return `${Math.floor(seconds / 60)}m ago`;
+    if (seconds < 86400)
+        return `${Math.floor(seconds / 3600)}h ago`;
+    return `${Math.floor(seconds / 86400)}d ago`;
+}
+function resolveUrl(url, backendUrl) {
+    return resolveFileUrl(url, backendUrl);
+}
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+export function AvatarLandingPage({ items, backendUrl, onNewAvatar, onOpenCreator, onOpenItem, onDeleteItem, onOpenLightbox, onSendToEdit, onSaveAsPersonaAvatar, onGenerateOutfits, }) {
+    const [deleteCandidate, setDeleteCandidate] = useState(null);
+    // Auto-show NSFW content when Spice Mode is enabled globally
+    const [showNsfw, setShowNsfw] = useState(() => {
+        try {
+            return localStorage.getItem('homepilot_nsfw_mode') === 'true';
+        }
+        catch {
+            return false;
+        }
+    });
+    // Root characters: items without parentId (anchors). Portraits are now children
+    // of anchors (linked via parentId) and only visible in the Character Sheet.
+    const rootCharacters = useMemo(() => items.filter((i) => !i.parentId && i.role !== 'portrait'), [items]);
+    // Count outfits + portraits per root character
+    const outfitCounts = useMemo(() => {
+        const counts = {};
+        for (const item of items) {
+            if (item.parentId && item.role !== 'portrait') {
+                counts[item.parentId] = (counts[item.parentId] || 0) + 1;
+            }
+        }
+        return counts;
+    }, [items]);
+    // Count portraits per root character (shown as badge on card)
+    const portraitCounts = useMemo(() => {
+        const counts = {};
+        for (const item of items) {
+            if (item.parentId && item.role === 'portrait') {
+                counts[item.parentId] = (counts[item.parentId] || 0) + 1;
+            }
+        }
+        return counts;
+    }, [items]);
+    const hasNsfwItems = rootCharacters.some((i) => i.nsfw);
+    const handleDeleteClick = useCallback((item, e) => {
+        e.stopPropagation();
+        setDeleteCandidate(item);
+    }, []);
+    const confirmDelete = useCallback(() => {
+        if (deleteCandidate) {
+            onDeleteItem(deleteCandidate.id);
+            setDeleteCandidate(null);
+        }
+    }, [deleteCandidate, onDeleteItem]);
+    return (<div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col relative">
+
+      {/* ═══════════════ HEADER ═══════════════ */}
+      <div className="absolute top-0 left-0 right-0 z-20 flex justify-between items-center px-6 py-4 bg-gradient-to-b from-black/90 via-black/60 to-transparent pointer-events-none">
+        <div className="pointer-events-auto flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            <Sparkles size={18} className="text-purple-400"/>
+            <div>
+              <div className="text-sm font-semibold text-white leading-tight">Avatar Studio</div>
+              <div className="text-[10px] text-white/35 leading-tight">
+                {rootCharacters.length > 0 ? `${rootCharacters.length} character${rootCharacters.length !== 1 ? 's' : ''}` : 'Gallery'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="pointer-events-auto flex items-center gap-2">
+          {hasNsfwItems && (<button onClick={() => setShowNsfw(!showNsfw)} className={[
+                'flex items-center gap-1.5 px-2.5 py-2 rounded-xl text-[10px] font-medium transition-all border',
+                showNsfw
+                    ? 'border-rose-500/20 bg-rose-500/10 text-rose-300'
+                    : 'border-white/[0.08] bg-white/[0.05] text-white/30 hover:text-white/50',
+            ].join(' ')} title={showNsfw ? 'Hide NSFW content' : 'Show NSFW content'}>
+              {showNsfw ? <Eye size={12}/> : <EyeOff size={12}/>}
+              {showNsfw ? 'NSFW Visible' : 'Show NSFW'}
+            </button>)}
+          <button className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:brightness-110 border border-purple-500/20 px-4 py-2 rounded-xl text-sm font-semibold shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20 transition-all" type="button" onClick={onNewAvatar} aria-label="Create a new avatar">
+            <Plus size={14}/>
+            <span>Create Avatar</span>
+          </button>
+          {onOpenCreator && (<button className="flex items-center gap-2 border border-cyan-500/25 bg-cyan-500/10 hover:bg-cyan-500/20 px-4 py-2 rounded-xl text-sm font-medium text-cyan-300 transition-all" type="button" onClick={onOpenCreator} aria-label="Open advanced avatar creator">
+              <Sparkles size={14}/>
+              <span>Advanced Creator</span>
+            </button>)}
+        </div>
+      </div>
+
+      {/* ═══════════════ GALLERY GRID ═══════════════ */}
+      <div className="flex-1 overflow-y-auto px-4 pb-8 pt-20 scrollbar-hide">
+        <div className="max-w-[1400px] mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 content-start">
+          <div className="col-span-full h-1"/>
+
+          {/* Empty state */}
+          {rootCharacters.length === 0 && (<div className="col-span-full">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-12 text-center">
+                <div className="mx-auto size-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                  <Sparkles size={24} className="text-purple-400/60"/>
+                </div>
+
+                <h2 className="mt-5 text-lg font-bold text-white/90">
+                  Create your first avatar
+                </h2>
+
+                <p className="mt-2 text-sm text-white/40 max-w-sm mx-auto leading-relaxed">
+                  Generate portrait characters from reference photos,
+                  random faces, or face+style combinations.
+                </p>
+
+                <div className="mt-6 flex items-center justify-center gap-3">
+                  <button type="button" onClick={onNewAvatar} className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:brightness-110 border border-purple-500/20 text-sm font-semibold text-white shadow-lg shadow-purple-500/10 hover:shadow-purple-500/20 transition-all">
+                    <Plus size={16}/>
+                    <span>Create Avatar</span>
+                  </button>
+                  {onOpenCreator && (<button type="button" onClick={onOpenCreator} className="inline-flex items-center gap-2 px-6 py-3 rounded-xl border border-cyan-500/25 bg-cyan-500/10 hover:bg-cyan-500/20 text-sm font-medium text-cyan-300 transition-all">
+                      <Sparkles size={16}/>
+                      <span>Advanced Creator</span>
+                    </button>)}
+                </div>
+
+                <p className="mt-5 text-xs text-white/20">
+                  Generated avatars are saved here automatically
+                </p>
+              </div>
+            </div>)}
+
+          {/* Gallery cards — one card per character (outfits live in Character Sheet) */}
+          {rootCharacters.map((item) => {
+            const imgUrl = resolveUrl(item.url, backendUrl);
+            const oCount = outfitCounts[item.id] || 0;
+            const pCount = portraitCounts[item.id] || 0;
+            return (<div key={item.id} onClick={() => onOpenItem(item)} className="relative group rounded-2xl overflow-hidden bg-white/[0.03] border border-white/[0.06] hover:border-white/15 transition-all cursor-pointer aspect-square">
+                <img src={imgUrl} alt={item.prompt || 'Avatar'} className={`absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105${item.nsfw && !showNsfw ? ' blur-xl scale-110' : ''}`} loading="lazy"/>
+
+                {/* NSFW overlay */}
+                {item.nsfw && !showNsfw && (<div className="absolute inset-0 z-[5] flex items-center justify-center bg-black/30">
+                    <div className="text-[10px] text-white/40 font-medium px-2 py-1 rounded-md bg-black/40 backdrop-blur-sm">
+                      <EyeOff size={12} className="inline mr-1 -mt-0.5"/>
+                      NSFW
+                    </div>
+                  </div>)}
+
+                {/* Character name badge */}
+                {item.name && (<div className="absolute top-2.5 left-2.5 z-10">
+                    <div className="px-2 py-0.5 rounded-md bg-black/50 backdrop-blur-sm border border-white/[0.08] text-[10px] text-white/80 font-medium truncate max-w-[140px]">
+                      {item.name}
+                    </div>
+                  </div>)}
+
+                {/* Outfit + portrait count badges (top right) */}
+                {(oCount > 0 || pCount > 0) && (<div className="absolute top-2.5 right-2.5 z-10 flex gap-1">
+                    {oCount > 0 && (<div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-purple-500/30 backdrop-blur-sm border border-purple-500/20 text-[9px] text-purple-200 font-medium">
+                        <Shirt size={9}/>
+                        {oCount}
+                      </div>)}
+                    {pCount > 0 && (<div className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-pink-500/30 backdrop-blur-sm border border-pink-500/20 text-[9px] text-pink-200 font-medium">
+                        <ImageIcon size={9}/>
+                        {pCount}
+                      </div>)}
+                  </div>)}
+
+                {/* Persona badge (when no outfits or portraits) */}
+                {item.personaProjectId && oCount === 0 && pCount === 0 && (<div className="absolute top-2.5 right-2.5 z-10">
+                    <div className="px-1.5 py-0.5 rounded-md bg-purple-500/30 backdrop-blur-sm text-purple-200 text-[9px] font-medium">
+                      Persona
+                    </div>
+                  </div>)}
+
+                {/* Hover overlay */}
+                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex flex-col justify-between p-3">
+                  {/* Top actions — left-aligned to avoid overflow */}
+                  <div className="flex justify-start gap-1.5">
+                    {onOpenLightbox && (<button className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-lg text-white transition-colors" type="button" title="View full size" onClick={(e) => { e.stopPropagation(); onOpenLightbox(imgUrl); }}>
+                        <Maximize2 size={14}/>
+                      </button>)}
+                    {onSendToEdit && (<button className="bg-purple-500/20 backdrop-blur-md hover:bg-purple-500/40 p-2 rounded-lg text-purple-300 transition-colors" type="button" title="Open in Edit Studio" onClick={(e) => { e.stopPropagation(); onSendToEdit(imgUrl); }}>
+                        <PenLine size={14}/>
+                      </button>)}
+                    {onGenerateOutfits && (<button className="bg-purple-500/20 backdrop-blur-md hover:bg-purple-500/40 p-2 rounded-lg text-purple-300 transition-colors" type="button" title="Open Character Sheet" onClick={(e) => { e.stopPropagation(); onGenerateOutfits(item); }}>
+                        <Shirt size={14}/>
+                      </button>)}
+                    {onSaveAsPersonaAvatar && !item.personaProjectId && (<button className="bg-emerald-500/20 backdrop-blur-md hover:bg-emerald-500/40 p-2 rounded-lg text-emerald-300 transition-colors" type="button" title="Export to Persona" onClick={(e) => { e.stopPropagation(); onSaveAsPersonaAvatar(item); }}>
+                        <UserPlus size={14}/>
+                      </button>)}
+                  </div>
+
+                  {/* Bottom row: delete (left) + meta info (right) */}
+                  <div className="flex items-end justify-between">
+                    <button className="backdrop-blur-md p-2 rounded-lg transition-colors bg-red-500/20 text-red-400 hover:bg-red-500/40 hover:text-red-300" type="button" title="Delete" onClick={(e) => handleDeleteClick(item, e)}>
+                      <Trash2 size={14}/>
+                    </button>
+                    <div className="text-[10px] text-white/45 flex items-center gap-2">
+                      <span className="flex items-center gap-1">
+                        <Clock size={9}/>
+                        {formatTimeAgo(item.createdAt)}
+                      </span>
+                      {oCount > 0 && (<span className="flex items-center gap-1">
+                          <Shirt size={9}/>
+                          {oCount} outfit{oCount !== 1 ? 's' : ''}
+                        </span>)}
+                    </div>
+                  </div>
+                </div>
+              </div>);
+        })}
+        </div>
+
+        {/* Portraits are now stored as children of anchors and accessible
+            via the Character Sheet's "Alternatives" strip — no separate section needed. */}
+      </div>
+
+      {/* Floating New Avatar FAB */}
+      {rootCharacters.length > 0 && (<div className="absolute bottom-6 right-6 z-30">
+          <button onClick={onNewAvatar} className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-600 to-pink-600 text-white hover:brightness-110 transition-all shadow-2xl shadow-purple-500/20 flex items-center justify-center" type="button" title="Create Avatar" aria-label="Create Avatar">
+            <Plus size={24}/>
+          </button>
+        </div>)}
+
+      {/* ═══════════════ DELETE CONFIRMATION MODAL ═══════════════ */}
+      {deleteCandidate && (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={() => setDeleteCandidate(null)}>
+          <div className="w-full max-w-sm mx-4 rounded-2xl border border-white/10 bg-[#0a0a0a] shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl overflow-hidden border border-white/10 flex-shrink-0 bg-white/5">
+                  <img src={resolveUrl(deleteCandidate.url, backendUrl)} alt="Delete preview" className="w-full h-full object-cover"/>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Delete this image?</h3>
+                  <p className="text-xs text-white/40 mt-0.5">This will remove it from your gallery and database.</p>
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-white/5 flex items-center justify-end gap-2">
+              <button onClick={() => setDeleteCandidate(null)} className="px-4 py-2 rounded-xl text-sm text-white/60 hover:text-white/80 bg-white/5 hover:bg-white/10 border border-white/[0.08] transition-all">
+                Cancel
+              </button>
+              <button onClick={confirmDelete} className="px-4 py-2 rounded-xl text-sm font-semibold text-red-200 bg-red-500/20 hover:bg-red-500/40 border border-red-500/20 transition-all">
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>)}
+
+      <style>{`
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .line-clamp-2 {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+      `}</style>
+    </div>);
+}
