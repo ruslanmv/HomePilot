@@ -29,6 +29,11 @@ import {
   Check,
   PanelLeftClose,
   PanelLeft,
+  Rocket,
+  Zap,
+  Lightbulb,
+  LayoutGrid,
+  Moon,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
@@ -277,12 +282,19 @@ function useEnterpriseCallRow(): boolean {
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams'
 type ChatReasoningMode = 'persona' | 'fast' | 'expert' | 'heavy' | 'beta'
 
-const CHAT_REASONING_OPTIONS: Array<{ id: ChatReasoningMode; label: string; description: string; premium?: boolean; badge?: string }> = [
-  { id: 'persona', label: 'Persona', description: 'Your personas and legacy chat' },
-  { id: 'fast', label: 'Fast', description: 'Quick responses' },
-  { id: 'expert', label: 'Expert', description: 'Thinks harder' },
-  { id: 'heavy', label: 'Heavy', description: 'Deep multi-step reasoning', premium: true },
-  { id: 'beta', label: 'Beta', description: 'Experimental model', badge: 'beta' },
+const CHAT_REASONING_OPTIONS: Array<{
+  id: ChatReasoningMode
+  label: string
+  description: string
+  icon: any
+  premium?: boolean
+  badge?: string
+}> = [
+  { id: 'persona', label: 'Persona', description: 'Your personas and legacy chat', icon: Rocket },
+  { id: 'fast', label: 'Fast', description: 'Quick responses', icon: Zap },
+  { id: 'expert', label: 'Expert', description: 'Thinks harder', icon: Lightbulb },
+  { id: 'heavy', label: 'Heavy', description: 'Team of experts', icon: LayoutGrid, premium: true },
+  { id: 'beta', label: 'Beta', description: 'Early access', icon: Moon, badge: 'beta' },
 ]
 
 function toThinkingMode(mode: ChatReasoningMode): 'auto' | 'fast' | 'think' | 'heavy' {
@@ -1633,9 +1645,13 @@ function QueryBar({
                 <ChevronDown size={14} className={`transition-transform ${modeMenuOpen ? 'rotate-180' : ''}`} />
               </button>
               {modeMenuOpen ? (
-                <div role="menu" className="absolute right-0 bottom-12 w-[300px] rounded-2xl border border-white/10 bg-[#2a2a2a]/88 backdrop-blur-2xl shadow-2xl p-2">
+                <div
+                  role="menu"
+                  className="absolute right-0 bottom-12 z-50 w-[300px] rounded-2xl border border-white/10 bg-neutral-900/95 backdrop-blur-2xl shadow-2xl p-2"
+                >
                   {CHAT_REASONING_OPTIONS.map((opt) => {
                     const selected = chatReasoningMode === opt.id
+                    const Icon = opt.icon
                     return (
                       <button
                         key={opt.id}
@@ -1646,21 +1662,42 @@ function QueryBar({
                           onChatReasoningModeChange(opt.id)
                           setModeMenuOpen(false)
                         }}
-                        className={`w-full text-left rounded-xl px-3 py-2.5 transition-colors ${selected ? 'bg-white/10' : 'hover:bg-white/6'}`}
+                        className={[
+                          'w-full text-left rounded-xl px-3 py-2.5 transition-colors flex items-start gap-3',
+                          selected ? 'bg-white/10' : 'hover:bg-white/10',
+                        ].join(' ')}
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-white">{opt.label}</span>
-                          {opt.badge ? <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/70">{opt.badge}</span> : null}
-                          {opt.premium ? <Sparkles size={12} className="text-white/70" /> : null}
-                          {selected ? <Check size={14} className="text-white/80 ms-auto" /> : null}
-                        </div>
-                        <div className="text-xs text-white/60 mt-0.5">{opt.description}</div>
+                        <span className="mt-0.5 text-white/70 shrink-0">
+                          <Icon size={18} />
+                        </span>
+                        <span className="flex-1 min-w-0">
+                          <span className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-white">{opt.label}</span>
+                            {opt.badge ? (
+                              <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/80">
+                                {opt.badge}
+                              </span>
+                            ) : null}
+                            {opt.premium ? <Sparkles size={12} className="text-white/60" /> : null}
+                          </span>
+                          <span className="block text-xs text-white/60 mt-0.5">{opt.description}</span>
+                        </span>
+                        {selected ? <Check size={16} className="text-white/80 shrink-0 mt-0.5" /> : null}
                       </button>
                     )
                   })}
-                  <div className="mt-2 rounded-xl border border-white/8 bg-white/5 px-3 py-2.5">
-                    <div className="text-sm font-medium text-white">Pro</div>
-                    <div className="text-xs text-white/60">Unlock extended capabilities</div>
+                  <div className="mt-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-white">Pro</div>
+                      <div className="text-xs text-white/60 truncate">Unlock extended capabilities</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setModeMenuOpen(false)}
+                      className="h-8 shrink-0 rounded-full bg-white px-4 text-xs font-semibold text-black hover:bg-white/90 transition-colors"
+                    >
+                      Try Free
+                    </button>
                   </div>
                 </div>
               ) : null}
