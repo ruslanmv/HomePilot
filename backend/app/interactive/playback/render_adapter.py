@@ -92,6 +92,21 @@ async def render_scene_async(
             persona_assets=persona_assets,
             recipe=edit_recipe,
         )
+    elif edit_recipe and not persona_assets:
+        # Persona Live action path but the portrait couldn't be resolved.
+        # Falling through to txt2img here produces the "blush → empty
+        # room, character gone" bug: the scene prompt renders a generic
+        # backdrop without the persona anchor, and the viewport swaps to
+        # a frame that has no character in it. Bail out with a clear log
+        # line so the polling loop treats this as a failed render and the
+        # UI keeps showing the previous frame.
+        log.warning(
+            "playback_render_abort reason=persona_assets_missing "
+            "persona_project_id=%s recipe_workflow=%s",
+            persona_project_id or "(none)",
+            _recipe_workflow_id(edit_recipe),
+        )
+        return None
     else:
         # Pick the workflow by model ARCHITECTURE (sd15/sdxl/flux/svd/
         # ltx/wan/...) — same dispatch Imagine + Animate already use,
@@ -380,6 +395,18 @@ def _recipe_source_image(recipe: Any) -> str:
                 data_dir = (os.getenv("DATA_DIR") or "").strip()
                 if data_dir:
                     upload_dir = os.path.join(data_dir, "uploads")
+            # Final fallback: the backend's canonical config value. Root
+            # cause of the "blush → empty room, character vanished" bug —
+            # when UPLOAD_DIR / DATA_DIR aren't exported as env vars in
+            # the serving process, this function used to return empty,
+            # which dropped persona_assets to None and forced the renderer
+            # into generic txt2img with only the scene prompt.
+            if not upload_dir:
+                try:
+                    from ... import config as _app_config  # type: ignore
+                    upload_dir = str(getattr(_app_config, "UPLOAD_DIR", "") or "").strip()
+                except Exception:
+                    upload_dir = ""
             if upload_dir:
                 local_path = os.path.join(upload_dir, path[len("/files/"):])
                 if os.path.isfile(local_path):
