@@ -13,6 +13,9 @@ import {
 } from "lucide-react";
 import type { InteractiveApi } from "../api";
 import type { Experience } from "../types";
+// Polished chat bubbles + typewriter reveal for persona live chat.
+// Pure presentation layer — no state, no API assumptions.
+import { AnimatedBubble, TypewriterText, TypingDots } from "./LiveChatPolish";
 
 type RuntimeAction = {
   id: string;
@@ -107,25 +110,36 @@ function SceneBadge({ scene }: { scene: SceneContext }) {
   );
 }
 
-function ConversationOverlay({ messages }: { messages: ChatMessage[] }) {
-  if (!messages.length) return null;
+function ConversationOverlay({ messages, pending }: { messages: ChatMessage[]; pending?: boolean }) {
+  if (!messages.length && !pending) return null;
+  // Index of the most-recent AI message — that's the one we typewriter-reveal.
+  // Older AI replies render in full so scrolling through history doesn't
+  // re-animate every bubble.
+  let lastAiIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].sender === "ai") { lastAiIdx = i; break; }
+  }
   return (
     <div className="space-y-2">
       {messages.map((message, index) => {
-        const isUser = message.sender === "user";
+        const role: "user" | "assistant" = message.sender === "user" ? "user" : "assistant";
+        const key = `${message.sender}-${index}-${message.text.slice(0, 12)}`;
+        const isLatestAi = role === "assistant" && index === lastAiIdx;
         return (
-          <div key={`${message.sender}-${index}-${message.text.slice(0, 12)}`} className={isUser ? "flex justify-end" : "flex justify-start"}>
-            <div
-              className={[
-                "max-w-[85%] rounded-2xl border border-white/15 px-3.5 py-2.5 text-sm leading-relaxed backdrop-blur-md shadow-[0_8px_20px_rgba(0,0,0,0.22)]",
-                isUser ? "bg-[#6b5bff]/45 text-white" : "bg-black/45 text-white/95",
-              ].join(" ")}
-            >
-              {message.text}
-            </div>
-          </div>
+          <AnimatedBubble key={key} role={role}>
+            {isLatestAi ? (
+              <TypewriterText text={message.text} />
+            ) : (
+              <span>{message.text}</span>
+            )}
+          </AnimatedBubble>
         );
       })}
+      {pending ? (
+        <AnimatedBubble role="assistant">
+          <TypingDots />
+        </AnimatedBubble>
+      ) : null}
     </div>
   );
 }
@@ -296,30 +310,58 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
   }
 
   async function sendChat() {
-    if (!chat.trim() || !sessionId) return;
+    if (!chat.trim() || !sessionId || sending) return;
     const userText = chat.trim();
-    const res = await api.personaLiveChat(sessionId, chat.trim());
-    const maybeScene = (res.scene_context as SceneContext | undefined) || undefined;
-    applyCharacterTurn({
-      userText,
-      aiText: String(res.dialogue?.text || ""),
-      emotion: ((res.emotional_state as EmotionalState | undefined)?.mood || state?.emotionalState.mood || "neutral"),
-    });
-    setState((prev) => {
-      if (!prev) return prev;
-      setTransitionType(maybeScene && maybeScene.id !== prev.sceneContext.id ? "scene" : "soft");
-      return {
+    // Optimistic: push the user bubble immediately and clear the input so
+    // there's no "dead input" gap while we wait for the AI reply.
+    setMessages((prev) => [...prev.slice(-7), { sender: "user", text: userText }]);
+    setChat("");
+    setSending(true);
+    try {
+      const res = await api.personaLiveChat(sessionId, userText);
+      const maybeScene = (res.scene_context as SceneContext | undefined) || undefined;
+      // Only push the AI bubble here — user bubble was already added above,
+      // so we sidestep applyCharacterTurn's user-text push to avoid a
+      // duplicate. Reapply emotion + speaking-state side effects inline.
+      const aiText = String(res.dialogue?.text || "");
+      const emotion = ((res.emotional_state as EmotionalState | undefined)?.mood
+        || state?.emotionalState.mood
+        || "neutral");
+      setMessages((prev) => [...prev.slice(-7), { sender: "ai", text: aiText, emotion }]);
+      setCharacterState((prev) => ({
         ...prev,
-        dialogue: res.dialogue,
-        sceneContext: maybeScene || prev.sceneContext,
-        sceneMemory: (res.scene_memory as SceneMemory) || prev.sceneMemory,
-        emotionalState: (res.emotional_state as EmotionalState) || prev.emotionalState,
-      };
-    });
-    if (res.optional_action_suggestion?.id) {
-      setChat(`Try action: ${res.optional_action_suggestion.label}`);
-    } else {
-      setChat("");
+        emotion: emotion as CharacterState["emotion"],
+        expression: mapEmotionToExpression(emotion),
+        speaking: true,
+      }));
+      setState((prev) => {
+        if (!prev) return prev;
+        setTransitionType(maybeScene && maybeScene.id !== prev.sceneContext.id ? "scene" : "soft");
+        return {
+          ...prev,
+          dialogue: res.dialogue,
+          sceneContext: maybeScene || prev.sceneContext,
+          sceneMemory: (res.scene_memory as SceneMemory) || prev.sceneMemory,
+          emotionalState: (res.emotional_state as EmotionalState) || prev.emotionalState,
+        };
+      });
+      // Don't auto-fill the input with action suggestions anymore — the
+      // suggestion is surfaced in the Live Action panel; keeping input
+      // empty after Enter matches industry chat UX.
+    } catch (err) {
+      // Mark the last user message as errored so the UI can surface a
+      // retry affordance (AnimatedBubble renders a red ring on error).
+      setMessages((prev) => {
+        if (!prev.length) return prev;
+        const copy = [...prev];
+        const last = copy[copy.length - 1];
+        if (last.sender === "user") {
+          copy[copy.length - 1] = { ...last, text: last.text + "  ⚠︎" };
+        }
+        return copy;
+      });
+    } finally {
+      setSending(false);
     }
   }
 
@@ -384,7 +426,7 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
             </div>
 
             <div className="absolute left-3 right-3 bottom-28 z-20">
-              <ConversationOverlay messages={overlayMessages} />
+              <ConversationOverlay messages={overlayMessages} pending={sending} />
             </div>
           </>
         )}
@@ -500,7 +542,7 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
               <>
                 <SceneBadge scene={state.sceneContext} />
                 <div className="absolute left-4 right-4 bottom-24">
-                  <ConversationOverlay messages={overlayMessages} />
+                  <ConversationOverlay messages={overlayMessages} pending={sending} />
                 </div>
               </>
             )}
@@ -508,10 +550,29 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
               <input
                 value={chat}
                 onChange={(e) => setChat(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter sends; Shift+Enter is a no-op on single-line <input>
+                  // but we still block it so a future upgrade to <textarea>
+                  // Just Works.
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void sendChat();
+                  }
+                }}
                 placeholder="Ask anything"
-                className="flex-1 bg-transparent text-sm outline-none px-2"
+                disabled={sending}
+                maxLength={500}
+                className="flex-1 bg-transparent text-sm outline-none px-2 disabled:opacity-60"
               />
-              <button type="button" onClick={sendChat} className="w-9 h-9 rounded-full bg-[#ffffff1a] border border-white/20 grid place-items-center"><Send className="w-4 h-4" /></button>
+              <button
+                type="button"
+                onClick={sendChat}
+                disabled={!chat.trim() || sending}
+                aria-label="Send"
+                className="w-9 h-9 rounded-full bg-[#ffffff1a] border border-white/20 grid place-items-center disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </button>
             </div>
             {state.currentMedia.status === "rendering" && (
               <div className="absolute inset-0 bg-black/35 grid place-items-center pointer-events-none">
