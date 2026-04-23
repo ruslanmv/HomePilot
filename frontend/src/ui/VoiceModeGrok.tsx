@@ -34,6 +34,10 @@ import {
 
 // Import voice module components
 import './voice/voiceMode.css';
+// Interactive 360° persona preview — matches the Chat surface's
+// behaviour so voice replies with a view_pack render the same clickable
+// Front/Left/Right/Back chips.
+import { ViewPackViewer, type ViewAngle } from './components/ViewPackViewer';
 import Starfield from './voice/Starfield';
 import VoiceSettingsPanel from './voice/VoiceSettingsPanel';
 import SettingsModal from './voice/SettingsModal';
@@ -195,6 +199,13 @@ interface Message {
   media?: {
     images?: string[];
     video_url?: string;
+    // 360° persona preview fields — mirror the Chat-surface media shape
+    // so voice can show the same interactive viewer. All optional; when
+    // absent, voice falls back to the existing flat images strip.
+    view_pack?: Partial<Record<ViewAngle, string>>;
+    available_views?: ViewAngle[];
+    active_angle?: ViewAngle;
+    interactive_preview?: boolean;
   } | null;
 }
 
@@ -444,8 +455,28 @@ function RenderTypedMessage({
         );
       })}
 
-      {/* Render generated images AFTER typewriter animation completes */}
-      {!isTyping && media?.images?.length ? (
+      {/* Interactive 360° preview — mirrors the Chat surface's ViewAngleChips.
+          Shown when the assistant message carries a view_pack + available_views
+          with interactive_preview on; wins over the flat images strip so we
+          don't render the same angles twice. */}
+      {!isTyping && media?.interactive_preview && media?.view_pack && media?.available_views?.length ? (
+        <ViewPackViewer
+          viewPack={Object.fromEntries(
+            (Object.entries(media.view_pack) as Array<[ViewAngle, string | undefined]>)
+              .filter(([, url]) => Boolean(url))
+              .map(([angle, url]) => [angle, resolveFileUrl(url as string)])
+          ) as Partial<Record<ViewAngle, string>>}
+          availableViews={media.available_views}
+          initialAngle={media.active_angle}
+          onImageClick={(url) => onImageClick?.(url)}
+        />
+      ) : null}
+
+      {/* Render generated images AFTER typewriter animation completes.
+          Skipped when the interactive 360° viewer is active — the viewer
+          already displays the chosen angle, and rendering the flat strip
+          on top would duplicate the same four images. */}
+      {!isTyping && media?.images?.length && !(media?.interactive_preview && media?.view_pack) ? (
         <div className="mt-3 flex gap-3 overflow-x-auto hp-fade-in">
           {[...new Set(media.images)].map((src, i) => {
             const resolved = resolveFileUrl(src)
