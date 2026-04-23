@@ -1827,14 +1827,26 @@ function EmptyState({
 }
 
 function AssistantSkeleton({ label }: { label?: string }) {
+  // Grok-style "thinking" indicator: three dots that bounce in sequence.
+  // Used for every pending assistant turn (legacy chat, Expert, Agent).
+  // Staggered animationDelay gives the wave effect without custom keyframes.
   return (
-    <div className="space-y-3">
-      {label ? <div className="text-xs text-white/55">{label}</div> : null}
-      <div className="space-y-2 animate-pulse">
-        <div className="h-3 w-[88%] rounded-full bg-white/10" />
-        <div className="h-3 w-[74%] rounded-full bg-white/10" />
-        <div className="h-3 w-[66%] rounded-full bg-white/10" />
+    <div className="flex items-center gap-3">
+      <div className="flex items-end gap-1.5 h-4" aria-label="Thinking">
+        <span
+          className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce"
+          style={{ animationDelay: '0ms', animationDuration: '1.2s' }}
+        />
+        <span
+          className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce"
+          style={{ animationDelay: '150ms', animationDuration: '1.2s' }}
+        />
+        <span
+          className="w-1.5 h-1.5 rounded-full bg-white/70 animate-bounce"
+          style={{ animationDelay: '300ms', animationDuration: '1.2s' }}
+        />
       </div>
+      <span className="text-sm text-white/60">{label ?? 'Thinking'}</span>
     </div>
   )
 }
