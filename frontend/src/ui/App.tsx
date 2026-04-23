@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Send,
   X,
@@ -1525,6 +1526,9 @@ function QueryBar({
   const recognitionRef = useRef<any>(null)
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
   const modeMenuRef = useRef<HTMLDivElement | null>(null)
+  const modeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const modeMenuPanelRef = useRef<HTMLDivElement | null>(null)
+  const [modeMenuPos, setModeMenuPos] = useState<{ top: number; right: number } | null>(null)
 
   const toggleListening = useCallback(() => {
     // Stop if already listening
@@ -1563,8 +1567,12 @@ function QueryBar({
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
-      if (!modeMenuRef.current) return
-      if (!modeMenuRef.current.contains(event.target as Node)) setModeMenuOpen(false)
+      const target = event.target as Node
+      // Menu is portaled into document.body, so check both the anchor wrapper
+      // (contains the pill button) and the portaled panel ref.
+      if (modeMenuRef.current?.contains(target)) return
+      if (modeMenuPanelRef.current?.contains(target)) return
+      setModeMenuOpen(false)
     }
     const onEsc = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setModeMenuOpen(false)
@@ -1576,6 +1584,30 @@ function QueryBar({
       document.removeEventListener('keydown', onEsc)
     }
   }, [])
+
+  // Compute + track pill-anchored position for the portaled dropdown.
+  // Recomputes on open, on resize, and on scroll so the menu stays glued
+  // to the pill as the user scrolls the chat.
+  useEffect(() => {
+    if (!modeMenuOpen) return
+    const update = () => {
+      const el = modeButtonRef.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      // Anchor the menu above the pill (matches the old bottom-12 offset).
+      setModeMenuPos({
+        top: Math.max(8, r.top - 8),
+        right: Math.max(8, window.innerWidth - r.right),
+      })
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [modeMenuOpen])
 
   return (
     <div
@@ -1630,6 +1662,7 @@ function QueryBar({
           {showChatReasoningSelector && mode === 'chat' && onChatReasoningModeChange ? (
             <div className="relative" ref={modeMenuRef}>
               <button
+                ref={modeButtonRef}
                 type="button"
                 onClick={() => setModeMenuOpen((v) => !v)}
                 className="h-10 px-3 rounded-full bg-white/5 border border-white/10 text-white/90 text-sm font-medium inline-flex items-center gap-1.5 hover:bg-white/10 transition-colors"
@@ -1640,10 +1673,18 @@ function QueryBar({
                 {CHAT_REASONING_OPTIONS.find((m) => m.id === chatReasoningMode)?.label ?? 'Persona'}
                 <ChevronDown size={14} className={`transition-transform ${modeMenuOpen ? 'rotate-180' : ''}`} />
               </button>
-              {modeMenuOpen ? (
+              {modeMenuOpen && modeMenuPos && typeof document !== 'undefined'
+                ? createPortal(
                 <div
                   role="menu"
-                  className="absolute right-0 bottom-12 z-50 w-[300px] rounded-2xl border border-white/10 bg-neutral-900/95 backdrop-blur-2xl shadow-2xl p-2"
+                  ref={modeMenuPanelRef}
+                  style={{
+                    position: 'fixed',
+                    top: modeMenuPos.top,
+                    right: modeMenuPos.right,
+                    transform: 'translateY(-100%)',
+                  }}
+                  className="z-[1000] w-[300px] rounded-2xl border border-white/10 bg-neutral-900/95 backdrop-blur-2xl shadow-2xl p-2"
                 >
                   {CHAT_REASONING_OPTIONS.map((opt) => {
                     const selected = chatReasoningMode === opt.id
@@ -1674,8 +1715,10 @@ function QueryBar({
                       </button>
                     )
                   })}
-                </div>
-              ) : null}
+                </div>,
+                document.body,
+              )
+              : null}
             </div>
           ) : null}
           {isListening ? (
