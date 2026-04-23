@@ -33,7 +33,6 @@ import {
   Zap,
   Lightbulb,
   LayoutGrid,
-  Moon,
 } from 'lucide-react'
 import SettingsPanel, { type SettingsModelV2, type HardwarePresetUI } from './SettingsPanel'
 import { getDefaultBackendUrl, resolveBackendUrl } from './lib/backendUrl'
@@ -280,25 +279,22 @@ function useEnterpriseCallRow(): boolean {
 }
 
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams'
-type ChatReasoningMode = 'persona' | 'fast' | 'expert' | 'heavy' | 'beta'
+type ChatReasoningMode = 'persona' | 'fast' | 'expert' | 'heavy'
 
 const CHAT_REASONING_OPTIONS: Array<{
   id: ChatReasoningMode
   label: string
   description: string
   icon: any
-  premium?: boolean
-  badge?: string
 }> = [
   { id: 'persona', label: 'Persona', description: 'Your personas and legacy chat', icon: Rocket },
   { id: 'fast', label: 'Fast', description: 'Quick responses', icon: Zap },
   { id: 'expert', label: 'Expert', description: 'Thinks harder', icon: Lightbulb },
-  { id: 'heavy', label: 'Heavy', description: 'Team of experts', icon: LayoutGrid, premium: true },
-  { id: 'beta', label: 'Beta', description: 'Early access', icon: Moon, badge: 'beta' },
+  { id: 'heavy', label: 'Heavy', description: 'Team of experts', icon: LayoutGrid },
 ]
 
 function toThinkingMode(mode: ChatReasoningMode): 'auto' | 'fast' | 'think' | 'heavy' {
-  if (mode === 'expert' || mode === 'beta') return 'think'
+  if (mode === 'expert') return 'think'
   // 'persona' never reaches this (canUseExpertInContext filters it out first),
   // but map to 'auto' as a safe fallback for the Expert backend contract.
   if (mode === 'persona') return 'auto'
@@ -1671,37 +1667,13 @@ function QueryBar({
                           <Icon size={18} />
                         </span>
                         <span className="flex-1 min-w-0">
-                          <span className="flex items-center gap-2">
-                            <span className="text-sm font-semibold text-white">{opt.label}</span>
-                            {opt.badge ? (
-                              <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/80">
-                                {opt.badge}
-                              </span>
-                            ) : null}
-                            {opt.premium ? <Sparkles size={12} className="text-white/60" /> : null}
-                          </span>
+                          <span className="text-sm font-semibold text-white">{opt.label}</span>
                           <span className="block text-xs text-white/60 mt-0.5">{opt.description}</span>
                         </span>
                         {selected ? <Check size={16} className="text-white/80 shrink-0 mt-0.5" /> : null}
                       </button>
                     )
                   })}
-                  <div className="mt-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Sparkles size={14} className="text-white/70 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-white">Pro</div>
-                        <div className="text-xs text-white/60 truncate">Unlock extended capabilities</div>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setModeMenuOpen(false)}
-                      className="h-8 shrink-0 rounded-full bg-white px-4 text-xs font-semibold text-black hover:bg-white/90 transition-colors"
-                    >
-                      Try Free
-                    </button>
-                  </div>
                 </div>
               ) : null}
             </div>
@@ -2514,8 +2486,10 @@ export default function App() {
   })
   const [chatReasoningMode, setChatReasoningMode] = useState<ChatReasoningMode>(() => {
     const saved = localStorage.getItem('homepilot_chat_reasoning_mode') as string | null
-    // Migrate older 'auto' persisted value → new 'persona' label (same meaning).
+    // Migrate older persisted values to current set.
     if (saved === 'auto') return 'persona'
+    // 'beta' was a UI-only placeholder that mapped to the same think pipeline as Expert.
+    if (saved === 'beta') return 'expert'
     if (saved && CHAT_REASONING_OPTIONS.some((m) => m.id === saved)) return saved as ChatReasoningMode
     return 'persona'
   })
