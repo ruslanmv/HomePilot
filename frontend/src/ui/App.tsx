@@ -399,6 +399,8 @@ function NavItem({
   shortcut,
   onClick,
   collapsed,
+  disabled,
+  disabledReason,
 }: {
   icon: any
   label: string
@@ -406,10 +408,16 @@ function NavItem({
   shortcut?: string
   onClick?: () => void
   collapsed?: boolean
+  /** Optional gating — e.g. Voice is unavailable while the user is on an
+   *  Expert tier because the Expert backend does not serve voice. When
+   *  disabled, click is a no-op and the item is visually dimmed. */
+  disabled?: boolean
+  disabledReason?: string
 }) {
   return (
     <button
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      aria-disabled={disabled || undefined}
       className={[
         'group/menu-item relative',
         'peer/menu-button flex items-center overflow-hidden rounded-xl text-left',
@@ -417,10 +425,12 @@ function NavItem({
         collapsed
           ? 'h-[40px] w-[40px] justify-center mx-auto'
           : 'h-[36px] w-full gap-2 px-3 text-sm font-semibold',
-        active ? 'bg-white/10 text-white' : 'text-white/70 hover:bg-white/5 hover:text-white',
+        disabled
+          ? 'opacity-40 cursor-not-allowed text-white/50'
+          : active ? 'bg-white/10 text-white' : 'text-white/70 hover:bg-white/5 hover:text-white',
       ].join(' ')}
       type="button"
-      title={collapsed ? label : undefined}
+      title={disabled ? (disabledReason || `${label} unavailable`) : (collapsed ? label : undefined)}
     >
       <span className="size-6 flex items-center justify-center shrink-0">
         <Icon size={18} strokeWidth={2} />
@@ -1093,6 +1103,7 @@ function Sidebar({
   setShowHistory,
   collapsed,
   onToggleCollapse,
+  chatReasoningMode,
 }: {
   mode: Mode
   setMode: (m: Mode) => void
@@ -1111,6 +1122,9 @@ function Sidebar({
   setShowHistory: React.Dispatch<React.SetStateAction<boolean>>
   collapsed: boolean
   onToggleCollapse: () => void
+  /** Drives voice gating: Expert tiers (anything other than 'persona')
+   *  disable Voice because the Expert backend does not serve voice. */
+  chatReasoningMode: ChatReasoningMode
 }) {
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showProfileModal, setShowProfileModal] = useState(false)
@@ -1282,7 +1296,16 @@ function Sidebar({
         {/* Main modes (flat, no sub-groups) */}
         <div className="flex flex-col gap-px">
           <NavItem icon={MessageSquare} label="Chat" active={mode === 'chat'} shortcut="Ctrl+J" onClick={() => setMode('chat')} collapsed={collapsed} />
-          <NavItem icon={Mic} label="Voice" active={mode === 'voice'} shortcut="Ctrl+V" onClick={() => setMode('voice')} collapsed={collapsed} />
+          <NavItem
+            icon={Mic}
+            label="Voice"
+            active={mode === 'voice'}
+            shortcut="Ctrl+V"
+            onClick={() => setMode('voice')}
+            collapsed={collapsed}
+            disabled={chatReasoningMode !== 'persona'}
+            disabledReason="Voice requires Persona mode"
+          />
           <NavItem icon={ImageIcon} label="Imagine" active={mode === 'imagine'} onClick={() => setMode('imagine')} collapsed={collapsed} />
           <NavItem icon={Folder} label="Project" active={mode === 'project'} onClick={() => setMode('project')} collapsed={collapsed} />
           <NavItem icon={Workflow} label="Interactive" active={mode === 'interactive'} onClick={() => setMode('interactive')} collapsed={collapsed} />
@@ -1921,17 +1944,26 @@ function ChatState({
           not a styling of the header. */}
       <div className="fixed top-3 right-5 z-50">
         <div className="relative flex items-center gap-2">
-          {onStartCall && (
-            <button
-              type="button"
-              onClick={handleStartCall}
-              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-              title="Start call"
-              aria-label="Start call"
-            >
-              <Phone size={16} />
-            </button>
-          )}
+          {onStartCall && (() => {
+            const phoneDisabled = chatReasoningMode !== 'persona'
+            return (
+              <button
+                type="button"
+                onClick={phoneDisabled ? undefined : handleStartCall}
+                aria-disabled={phoneDisabled || undefined}
+                className={[
+                  'w-9 h-9 flex items-center justify-center rounded-full border',
+                  phoneDisabled
+                    ? 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed'
+                    : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors',
+                ].join(' ')}
+                title={phoneDisabled ? 'Phone call requires Persona mode' : 'Start call'}
+                aria-label={phoneDisabled ? 'Phone call unavailable in Expert mode' : 'Start call'}
+              >
+                <Phone size={16} />
+              </button>
+            )
+          })()}
           <button
             type="button"
             onClick={() => setChatSettingsOpen((v) => !v)}
@@ -2943,8 +2975,9 @@ export default function App() {
           e.preventDefault()
           setMode('chat')
         }
-        // Ctrl+V / Cmd+V: Switch to Voice mode (only if not in input field to allow paste)
-        else if (e.key === 'v' && !isInputField) {
+        // Ctrl+V / Cmd+V: Switch to Voice mode (only if not in input field to allow paste).
+        // Expert tiers block voice because the Expert backend does not serve it.
+        else if (e.key === 'v' && !isInputField && chatReasoningMode === 'persona') {
           e.preventDefault()
           setMode('voice')
         }
@@ -2953,7 +2986,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [chatReasoningMode])
 
   const canSend = useMemo(() => input.trim().length > 0 || pendingFile !== null, [input, pendingFile])
 
@@ -4933,6 +4966,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           setShowHistory={setShowHistory}
           collapsed={isMobile ? false : sidebarCollapsed}
           onToggleCollapse={toggleSidebar}
+          chatReasoningMode={chatReasoningMode}
         />
       </div>
 
@@ -4996,9 +5030,15 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                   {currentProject?.project_type === 'persona' && (
                     <>
                       <button
-                        onClick={() => setMode('voice')}
-                        className="ml-0.5 p-0.5 hover:bg-purple-600/30 rounded-full transition-colors text-purple-400"
-                        title="Continue in Voice"
+                        onClick={chatReasoningMode === 'persona' ? () => setMode('voice') : undefined}
+                        aria-disabled={chatReasoningMode !== 'persona' || undefined}
+                        className={[
+                          'ml-0.5 p-0.5 rounded-full transition-colors',
+                          chatReasoningMode === 'persona'
+                            ? 'hover:bg-purple-600/30 text-purple-400'
+                            : 'opacity-40 cursor-not-allowed text-purple-400/60',
+                        ].join(' ')}
+                        title={chatReasoningMode === 'persona' ? 'Continue in Voice' : 'Voice requires Persona mode'}
                       >
                         <Mic size={12} />
                       </button>
@@ -5194,7 +5234,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                   // Tell auto-link useEffect to skip — we already set the session
                   voiceSessionExplicitRef.current = true
                   setShowSessionPanel(false)
-                  setMode('voice')
+                  // Voice requires Persona mode (Expert backend doesn't serve voice).
+                  // If the user is on an Expert tier, stay in chat.
+                  setMode(chatReasoningMode === 'persona' ? 'voice' : 'chat')
                 }}
               />
           </PersonaHubDrawer>
@@ -5611,7 +5653,11 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                 return id
               })}
               onPickPrompt={(t) => sendTextOrIntent(t)}
-              onResumeVoice={currentProject.project_type === 'persona' ? () => setMode('voice') : undefined}
+              onResumeVoice={
+                currentProject.project_type === 'persona' && chatReasoningMode === 'persona'
+                  ? () => setMode('voice')
+                  : undefined
+              }
             />
             <div className="shrink-0 w-full max-w-3xl pb-6 pt-4">
               <QueryBar
