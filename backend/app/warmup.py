@@ -228,6 +228,24 @@ async def warm_image_model_on_startup() -> None:
     if not ready:
         return
 
+    # Step 1.5: if ComfyUI already has recent job history, skip warmup.
+    # Typical during uvicorn --reload: ComfyUI stays alive across backend
+    # restarts, the checkpoint is still resident in VRAM, and re-running
+    # a 30-step SDXL pass on every file-save wastes ~10s of GPU. First-
+    # ever startup has empty history, so we still warm up then.
+    # Non-fatal: any probe failure falls through to the real warmup.
+    try:
+        import httpx  # already imported above; cheap re-import
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0)) as client:
+            r = await client.get(f"{comfy_base_url.rstrip('/')}/history?max_items=1")
+            if r.status_code == 200:
+                body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+                if isinstance(body, dict) and body:
+                    log.info("warmup: ComfyUI already warm (history non-empty) — skipping")
+                    return
+    except Exception:  # noqa: BLE001
+        pass
+
     # Step 2: architecture dispatch matches Imagine + Interactive's
     # render_adapter, so we're always testing the same workflow
     # file the first real request will use.

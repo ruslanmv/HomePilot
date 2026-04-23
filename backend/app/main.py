@@ -1144,12 +1144,19 @@ def _signal_handler(signum: int, _frame: Any) -> None:
     raise SystemExit(0)
 
 # Only install signal handlers when running as the main process
-# (not in test harnesses or multiprocessing workers)
+# (not in test harnesses or multiprocessing workers).
+#
+# SIGTERM is normally handled by uvicorn — especially under ``--reload``,
+# where the reloader sends SIGTERM to the child on every file-save to
+# respawn it. Installing our handler there caused the
+# ``raise SystemExit(0)`` traceback every reload because uvloop re-raises
+# through the lifespan queue. Gate SIGTERM on HOMEPILOT_STANDALONE just
+# like SIGINT so the @atexit hook handles cleanup under uvicorn and the
+# reload cycle stays quiet.
 if os.environ.get("HOMEPILOT_NO_SIGNAL_HANDLER") != "1":
     try:
-        _signal.signal(_signal.SIGTERM, _signal_handler)
-        # SIGINT is normally handled by uvicorn; only override if running standalone
         if os.environ.get("HOMEPILOT_STANDALONE") == "1":
+            _signal.signal(_signal.SIGTERM, _signal_handler)
             _signal.signal(_signal.SIGINT, _signal_handler)
     except (ValueError, OSError):
         pass  # Can't set signal handlers from non-main thread
