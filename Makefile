@@ -16,6 +16,12 @@ MCP_GATEWAY_HOST ?= 127.0.0.1
 MCP_NEW_SERVERS := local_notes local_projects web shell_safe gmail google_calendar microsoft_graph slack github notion
 MCP_SERVERS_DIR := agentic/integrations/mcp
 
+# Expert Core MCP servers — the 10 that back Expert chat mode
+# (thinking_mode = fast / think / heavy). Source of truth:
+# expert/backend/app/expert/mcp_catalog.py::ESSENTIAL_MCP_SERVERS.
+# Each has its own Makefile with `install` and `test` targets.
+MCP_EXPERT_CORE_SERVERS := web_search doc_retrieval memory_store safety_policy observability code_sandbox citation_provenance eval_runner cost_router job_orchestrator
+
 .PHONY: help install setup run up down stop logs health dev build test test-local test-edit-session test-frontend test-mcp-servers test-docker clean \
         download download-minimal download-minimum download-recommended download-full \
         download-chat download-multimodal \
@@ -29,6 +35,7 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
         mcp-inventory \
         install-mcp-servers test-mcp-new-servers \
+        install-mcp-expert-core test-mcp-expert-core start-mcp-expert-core \
         persona-launch persona-check persona-stop persona-status persona-list \
         build-installer build-container \
         recovery recovery-status recovery-backup recovery-list-users \
@@ -189,6 +196,11 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 		echo ""; \
 		echo "⏭  Skipping MCP Context Forge (AGENTIC=0)"; \
 	fi
+	@echo ""
+	@echo "✓ Installing Expert Core MCP servers (10 servers — backs Expert chat mode)..."
+	@$(MAKE) install-mcp-expert-core || { \
+		echo "  ⚠  Expert Core MCP install hit errors (non-fatal). Retry: make install-mcp-expert-core"; \
+	}
 	@echo ""
 	@echo "✓ Installing avatar-service (StyleGAN face generator)..."
 	@if [ -d "avatar-service" ]; then \
@@ -555,7 +567,7 @@ start-comfyui: ## Start ComfyUI locally (auto-detects GPU vs CPU)
 
 # --- Testing & Development ----------------------------------------------------
 
-test: test-local test-edit-session test-frontend test-mcp-servers  ## Run all tests (backend + edit-session + frontend + MCP)
+test: test-local test-edit-session test-frontend test-mcp-servers test-mcp-expert-core  ## Run all tests (backend + edit-session + frontend + MCP + Expert Core MCP)
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ All tests passed!"
@@ -1879,3 +1891,90 @@ expert-frontend-install:
 
 expert-frontend-run:
 	cd frontend && npm run dev
+
+# ── Expert Core MCP Servers ───────────────────────────────────────────────────
+# Lifecycle targets for the 10 MCP servers that back Expert chat mode.
+# Source of truth: expert/backend/app/expert/mcp_catalog.py::ESSENTIAL_MCP_SERVERS.
+# Category in the UI: expert_core (see frontend/src/ui/mcp/AvailableServersPanel.tsx).
+
+install-mcp-expert-core: ## Install all 10 Expert Core MCP server venvs (backs Expert chat mode)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Installing Expert Core MCP Servers (10 servers)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@failed=""; \
+	for srv in $(MCP_EXPERT_CORE_SERVERS); do \
+		echo "─── Installing mcp-$$srv ───"; \
+		if [ -f "$(MCP_SERVERS_DIR)/$$srv/Makefile" ]; then \
+			if $(MAKE) -C $(MCP_SERVERS_DIR)/$$srv install; then \
+				echo "  ✓ mcp-$$srv installed"; \
+			else \
+				echo "  ✗ mcp-$$srv FAILED"; \
+				failed="$$failed $$srv"; \
+			fi; \
+		else \
+			echo "  ⚠  no Makefile at $(MCP_SERVERS_DIR)/$$srv — skipped"; \
+			failed="$$failed $$srv"; \
+		fi; \
+		echo ""; \
+	done; \
+	echo "════════════════════════════════════════════════════════════════════════════════"; \
+	if [ -z "$$failed" ]; then \
+		echo "  ✅ All 10 Expert Core MCP servers installed"; \
+	else \
+		echo "  ⚠  Failed:$$failed"; \
+		exit 1; \
+	fi; \
+	echo "════════════════════════════════════════════════════════════════════════════════"
+
+test-mcp-expert-core: ## Run pytest on all 10 Expert Core MCP servers
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Testing Expert Core MCP Servers (10 servers)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@failed=""; passed=0; \
+	for srv in $(MCP_EXPERT_CORE_SERVERS); do \
+		echo "─── Testing mcp-$$srv ───"; \
+		if [ ! -f "$(MCP_SERVERS_DIR)/$$srv/Makefile" ]; then \
+			echo "  ⚠  no Makefile — skipped"; \
+			failed="$$failed $$srv(no-makefile)"; \
+		elif $(MAKE) -C $(MCP_SERVERS_DIR)/$$srv test; then \
+			passed=$$((passed + 1)); \
+			echo "  ✓ mcp-$$srv tests passed"; \
+		else \
+			failed="$$failed $$srv"; \
+			echo "  ✗ mcp-$$srv TESTS FAILED"; \
+		fi; \
+		echo ""; \
+	done; \
+	echo "════════════════════════════════════════════════════════════════════════════════"; \
+	if [ -z "$$failed" ]; then \
+		echo "  ✅ All 10 Expert Core MCP servers passed ($$passed / 10)"; \
+	else \
+		echo "  ⚠  Passed $$passed / 10 — failed:$$failed"; \
+		exit 1; \
+	fi; \
+	echo "════════════════════════════════════════════════════════════════════════════════"
+
+start-mcp-expert-core: ## Start all 10 Expert Core MCP servers on ports 9150-9159 (dev use)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Starting Expert Core MCP Servers (ports 9150-9159)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Use Ctrl+C to stop all. In production these are started individually"
+	@echo "  via the Server Management UI (category: Expert Core Services)."
+	@echo ""
+	@bash -c ' \
+		set -e; \
+		ROOT="$$(pwd)"; pids=""; \
+		trap "kill $$pids 2>/dev/null || true; wait 2>/dev/null || true" INT TERM EXIT; \
+		port=9150; \
+		for srv in $(MCP_EXPERT_CORE_SERVERS); do \
+			d="$$ROOT/$(MCP_SERVERS_DIR)/$$srv"; \
+			if [ -x "$$d/.venv/bin/uvicorn" ]; then \
+				echo "  ▶ mcp-$$srv  http://127.0.0.1:$$port"; \
+				(cd "$$d" && .venv/bin/uvicorn app:app --host 127.0.0.1 --port $$port >/tmp/mcp-$$srv.log 2>&1) & \
+				pids="$$pids $$!"; \
+			else \
+				echo "  ✗ $$srv  venv missing (run: make install-mcp-expert-core)"; \
+			fi; \
+			port=$$((port + 1)); \
+		done; \
+		wait'

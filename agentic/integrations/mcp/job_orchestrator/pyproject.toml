@@ -7,3 +7,6 @@ dependencies = ["fastapi>=0.110.0", "uvicorn>=0.29.0", "pydantic>=2.7.0"]
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = false
