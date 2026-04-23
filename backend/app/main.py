@@ -212,6 +212,43 @@ try:
 except Exception as _pc_err:  # noqa: BLE001
     print(f"[persona_call] DISABLED due to import error: {_pc_err}")
 
+# --- Expert (/v1/expert/*) — ADDITIVE, OPTIONAL -------------------------------
+# Multi-provider Expert reasoning backend. Default ON so the existing frontend
+# selector (chat-only, non-persona, gated by VITE_EXPERT_CHAT_ENABLED) can
+# reach it in both preprod and prod. Set ``EXPERT_ENABLED=false`` to disable.
+# Loaded via importlib with a unique module name to avoid colliding with the
+# backend's own ``app`` package (the expert module lives at
+# ``expert/backend/app/expert/`` under a namespace-only ``app`` dir). Same
+# swallow-on-error safety pattern as voice_call/interactive/persona_call above
+# — a broken Expert subsystem must never take the rest of the app down, and
+# this mount does not touch any persona or voice codepath.
+try:
+    if os.getenv("EXPERT_ENABLED", "true").lower() == "true":
+        import importlib.util as _expert_importlib_util
+        import sys as _expert_sys
+        from pathlib import Path as _ExpertPath
+
+        _expert_pkg_dir = (
+            _ExpertPath(__file__).resolve().parents[2]
+            / "expert" / "backend" / "app" / "expert"
+        )
+        _expert_init = _expert_pkg_dir / "__init__.py"
+        if not _expert_init.is_file():
+            raise FileNotFoundError(f"Expert package not found at {_expert_init}")
+
+        _expert_spec = _expert_importlib_util.spec_from_file_location(
+            "homepilot_expert",
+            _expert_init,
+            submodule_search_locations=[str(_expert_pkg_dir)],
+        )
+        _expert_mod = _expert_importlib_util.module_from_spec(_expert_spec)
+        _expert_sys.modules["homepilot_expert"] = _expert_mod
+        _expert_spec.loader.exec_module(_expert_mod)
+        app.include_router(_expert_mod.router)
+        print("[expert] enabled — routes mounted under /v1/expert")
+except Exception as _ex_err:  # noqa: BLE001
+    print(f"[expert] DISABLED due to import error: {_ex_err}")
+
 # Include Marketplace routes (/v1/marketplace/*)
 app.include_router(marketplace_router)
 

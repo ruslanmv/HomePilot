@@ -420,7 +420,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		pids="$$pids $$!"; \
 		\
 		echo "Starting frontend..."; \
-		cd "$$ROOT/frontend" && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-false} npm run dev -- --host 0.0.0.0 --port 3000 & \
+		cd "$$ROOT/frontend" && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000 & \
 		pids="$$pids $$!"; \
 		\
 		if [ -f "$$ROOT/ComfyUI/main.py" ] && [ -f "$$ROOT/ComfyUI/.venv/bin/python" ]; then \
@@ -524,7 +524,7 @@ start-frontend: ## Start frontend locally
 		echo "Node modules not found. Run: make install"; \
 		exit 1; \
 	fi
-	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-false} npm run dev -- --host 0.0.0.0 --port 3000
+	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000
 
 install-preprod: ## Install dependencies for isolated preprod sandbox (includes Expert MCP gateway when AGENTIC=1)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
