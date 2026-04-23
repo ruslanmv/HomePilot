@@ -564,6 +564,11 @@ function VideoStage({
           playsInline
           preload="auto"
           className="absolute inset-0 w-full h-full object-cover"
+          // Face-safe focal point: persona faces sit in the upper third of the
+          // frame. Default ``object-position: center`` chops them when the
+          // container is wider than the asset's aspect. 50% 18% keeps the
+          // face visible without changing full-bleed composition.
+          style={{ objectPosition: '50% 18%' }}
         />
         <SceneStamp scene={scene!} />
       </div>
@@ -693,8 +698,12 @@ function ResponsiveStageImage({
         alt={alt}
         className={[
           "absolute inset-0 w-full h-full transition-[transform,opacity] duration-300 ease-out",
-          useContain ? "object-contain object-center" : "object-cover object-center",
+          // Landscape cover: bias the focal point toward the upper third so
+          // persona faces aren't cropped by default center-cover. Portrait
+          // path uses object-contain so the whole image is always visible.
+          useContain ? "object-contain object-center" : "object-cover",
         ].join(" ")}
+        style={!useContain ? { objectPosition: '50% 18%' } : undefined}
         onError={() => setBroken(true)}
         onLoad={(e) => {
           const img = e.currentTarget;
