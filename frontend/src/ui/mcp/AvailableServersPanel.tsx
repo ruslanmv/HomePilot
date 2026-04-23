@@ -73,6 +73,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
 
 const CATEGORY_LABELS: Record<string, string> = {
   core: 'Core Services',
+  expert_core: 'Expert Core Services',
   local: 'Local Integrations',
   communication: 'Communication',
   dev: 'Development & Knowledge',
@@ -80,7 +81,9 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: 'Other',
 }
 
-const CATEGORY_ORDER = ['core', 'local', 'communication', 'dev', 'external', 'other']
+// Expert Core sits right after Core so the set powering Expert chat mode
+// (thinking_mode=fast/think/heavy) is visible above optional integrations.
+const CATEGORY_ORDER = ['core', 'expert_core', 'local', 'communication', 'dev', 'external', 'other']
 
 type ActionFeedback = {
   serverId: string
@@ -298,6 +301,11 @@ export function AvailableServersPanel({ backendUrl, apiKey, onInstallChange }: P
             {group.category === 'external' && (
               <span className="ml-2 text-[10px] font-normal text-purple-400/60 normal-case tracking-normal">
                 Installed from git / persona import
+              </span>
+            )}
+            {group.category === 'expert_core' && (
+              <span className="ml-2 text-[10px] font-normal text-purple-300/70 normal-case tracking-normal">
+                Backs Expert chat mode (thinking_mode = fast / think / heavy)
               </span>
             )}
           </h4>
