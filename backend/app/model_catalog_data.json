@@ -3,7 +3,7 @@
   "description": "HomePilot Model Catalog - Curated models for all providers",
   "version": "1.0.0",
   "last_updated": "2026-01-28",
-  "_comment": "\ud83e\uddea EXPERIMENTAL: Add Civitai models using scripts/download.py --add-civitai --version-id <ID> --type <image|video>",
+  "_comment": "🧪 EXPERIMENTAL: Add Civitai models using scripts/download.py --add-civitai --version-id <ID> --type <image|video>",
   "_experimental_example": {
     "civitai_model_template": {
       "id": "model_file_name.safetensors",
@@ -57,7 +57,9 @@
           "recommended": true,
           "description": "Very fast, lightweight model for low-latency voice.",
           "size_gb": 2.0,
-          "context_window": 131072
+          "context_window": 131072,
+          "recommended_expert": true,
+          "expert_hint": "Ultra-fast 3B for Expert 'Fast' mode. Runs on almost any GPU."
         },
         {
           "id": "mistral:7b",
@@ -72,7 +74,9 @@
           "recommended": true,
           "description": "Balanced quality; good instruction following. Best 'Smart' model for 12GB.",
           "size_gb": 7.0,
-          "context_window": 131072
+          "context_window": 131072,
+          "recommended_expert": true,
+          "expert_hint": "Balanced 12B; Expert 'Heavy' mode fits 12 GB VRAM at Q4."
         },
         {
           "id": "mixtral:8x7b",
@@ -87,7 +91,9 @@
           "recommended": true,
           "description": "Fast and capable general model with strong multilingual support.",
           "size_gb": 4.0,
-          "context_window": 131072
+          "context_window": 131072,
+          "recommended_expert": true,
+          "expert_hint": "Fast capable 7B. Solid Expert Fast/Expert default; ~4.7 GB VRAM."
         },
         {
           "id": "gemma2",
@@ -108,13 +114,26 @@
           "label": "Phi-4 (14B)",
           "description": "Logic-heavy model from Microsoft; may be slower in voice.",
           "size_gb": 8.0,
-          "context_window": 16384
+          "context_window": 16384,
+          "recommended_expert": true,
+          "expert_hint": "14B logic-heavy reasoning from Microsoft. Great for Expert 'Think'."
         },
         {
           "id": "deepseek-r1:latest",
           "label": "DeepSeek R1 (7B)",
           "description": "Thinking model with chain-of-thought reasoning. Needs 300 tokens for voice.",
           "size_gb": 4.7,
+          "context_window": 131072,
+          "recommended_expert": true,
+          "expert_hint": "7B chain-of-thought reasoning — ideal Expert 'Think' model at 12 GB."
+        },
+        {
+          "id": "deepseek-r1:32b",
+          "label": "DeepSeek R1 (32B)",
+          "recommended_expert": true,
+          "expert_hint": "32B top-tier reasoning. Needs ~20 GB VRAM — save for cloud / large-GPU deploys.",
+          "description": "Top-tier chain-of-thought reasoning. Best Expert 'Think'/'Heavy' quality when VRAM allows.",
+          "size_gb": 20,
           "context_window": 131072
         },
         {
@@ -454,7 +473,9 @@
           "size_gb": 8.0,
           "context_window": 131072,
           "uncensored": true,
-          "abliterated": true
+          "abliterated": true,
+          "recommended_expert": true,
+          "expert_hint": "14B uncensored reasoning. Tightest on 12 GB but the best quality."
         },
         {
           "id": "huihui_ai/deepseek-r1-abliterated:1.5b",

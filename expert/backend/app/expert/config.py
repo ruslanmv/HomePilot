@@ -28,7 +28,13 @@ EXPERT_OLLAMA_URL: str = os.getenv(
     "EXPERT_OLLAMA_URL",
     os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 ).rstrip("/")
-EXPERT_LOCAL_MODEL: str = os.getenv("EXPERT_LOCAL_MODEL", "deepseek-r1:32b").strip()
+# Default chosen so out-of-the-box Expert runs on a 12 GB consumer GPU.
+# Operators with larger VRAM (or a cloud deploy) can point this at
+# ``deepseek-r1:32b`` or similar for top-tier reasoning quality.
+# If the configured model isn't pulled, chat_local falls back to any
+# installed model via EXPERT_LOCAL_AUTO_FALLBACK — Expert never hard-fails
+# on "model not found" as long as Ollama has at least one model.
+EXPERT_LOCAL_MODEL: str = os.getenv("EXPERT_LOCAL_MODEL", "deepseek-r1:latest").strip()
 EXPERT_LOCAL_FAST_MODEL: str = os.getenv("EXPERT_LOCAL_FAST_MODEL", "llama3.2:3b").strip()
 
 # ── Routing thresholds ────────────────────────────────────────────────────────
