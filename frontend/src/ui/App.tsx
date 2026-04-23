@@ -275,10 +275,10 @@ function useEnterpriseCallRow(): boolean {
 }
 
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams'
-type ChatReasoningMode = 'auto' | 'fast' | 'expert' | 'heavy' | 'beta'
+type ChatReasoningMode = 'persona' | 'fast' | 'expert' | 'heavy' | 'beta'
 
 const CHAT_REASONING_OPTIONS: Array<{ id: ChatReasoningMode; label: string; description: string; premium?: boolean; badge?: string }> = [
-  { id: 'auto', label: 'Auto', description: 'Chooses Fast or Expert automatically' },
+  { id: 'persona', label: 'Persona', description: 'Your personas and legacy chat' },
   { id: 'fast', label: 'Fast', description: 'Quick responses' },
   { id: 'expert', label: 'Expert', description: 'Thinks harder' },
   { id: 'heavy', label: 'Heavy', description: 'Deep multi-step reasoning', premium: true },
@@ -287,17 +287,23 @@ const CHAT_REASONING_OPTIONS: Array<{ id: ChatReasoningMode; label: string; desc
 
 function toThinkingMode(mode: ChatReasoningMode): 'auto' | 'fast' | 'think' | 'heavy' {
   if (mode === 'expert' || mode === 'beta') return 'think'
+  // 'persona' never reaches this (canUseExpertInContext filters it out first),
+  // but map to 'auto' as a safe fallback for the Expert backend contract.
+  if (mode === 'persona') return 'auto'
   return mode
 }
 
 const EXPERT_CHAT_ENABLED = String((import.meta as any)?.env?.VITE_EXPERT_CHAT_ENABLED ?? 'false') === 'true'
 
-function canUseExpertInContext(mode: Mode, chatReasoningMode: ChatReasoningMode, projectType?: string): boolean {
+// Picking 'persona' keeps the legacy personas backend exactly as today.
+// Picking Fast/Expert/Heavy/Beta explicitly opts into the Expert backend —
+// industry-standard pattern (Grok, Claude, ChatGPT all let the user switch
+// model mid-conversation). Voice is always legacy; the selector is never
+// rendered outside chat.
+function canUseExpertInContext(mode: Mode, chatReasoningMode: ChatReasoningMode, _projectType?: string): boolean {
   if (!EXPERT_CHAT_ENABLED) return false
   if (mode !== 'chat') return false
-  // Persona/live-play sessions must remain on existing production pipeline.
-  if (projectType === 'persona') return false
-  return chatReasoningMode !== 'auto'
+  return chatReasoningMode !== 'persona'
 }
 type Provider = 'backend' | 'ollama'
 
@@ -1424,7 +1430,7 @@ function QueryBar({
   placeholderOverride,
   pendingPreviewUrl,
   onRemoveAttachment,
-  chatReasoningMode = 'auto',
+  chatReasoningMode = 'persona',
   onChatReasoningModeChange,
   showChatReasoningSelector = false,
 }: {
@@ -1600,7 +1606,7 @@ function QueryBar({
                 aria-expanded={modeMenuOpen}
                 title="Expert mode selector"
               >
-                {CHAT_REASONING_OPTIONS.find((m) => m.id === chatReasoningMode)?.label ?? 'Auto'}
+                {CHAT_REASONING_OPTIONS.find((m) => m.id === chatReasoningMode)?.label ?? 'Persona'}
                 <ChevronDown size={14} className={`transition-transform ${modeMenuOpen ? 'rotate-180' : ''}`} />
               </button>
               {modeMenuOpen ? (
@@ -1839,7 +1845,6 @@ function ChatState({
   chatReasoningMode,
   onChatReasoningModeChange,
   showChatReasoningSelector,
-  onEnterExpertMode,
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -1864,11 +1869,6 @@ function ChatState({
   chatReasoningMode: ChatReasoningMode
   onChatReasoningModeChange: (mode: ChatReasoningMode) => void
   showChatReasoningSelector: boolean
-  /** Optional shortcut: exits the current (persona) project and lands in a
-   *  fresh Expert chat so the thinking-mode selector becomes visible. Only
-   *  rendered when provided AND the Expert selector isn't already showing —
-   *  e.g. in persona chats and voice mode. */
-  onEnterExpertMode?: () => void
 }) {
   const { copied, copy } = useCopyMessage()
   const displayMessages = useMemo(() => collapseCallTurns(messages), [messages])
@@ -1921,17 +1921,6 @@ function ChatState({
           not a styling of the header. */}
       <div className="fixed top-3 right-5 z-50">
         <div className="relative flex items-center gap-2">
-          {onEnterExpertMode && !showChatReasoningSelector && (
-            <button
-              type="button"
-              onClick={onEnterExpertMode}
-              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-              title="Expert mode"
-              aria-label="Enter Expert mode"
-            >
-              <Sparkles size={16} />
-            </button>
-          )}
           {onStartCall && (
             <button
               type="button"
@@ -2452,9 +2441,11 @@ export default function App() {
     return (localStorage.getItem('homepilot_mode') as Mode) || 'chat'
   })
   const [chatReasoningMode, setChatReasoningMode] = useState<ChatReasoningMode>(() => {
-    const saved = localStorage.getItem('homepilot_chat_reasoning_mode') as ChatReasoningMode | null
-    if (saved && CHAT_REASONING_OPTIONS.some((m) => m.id === saved)) return saved
-    return 'auto'
+    const saved = localStorage.getItem('homepilot_chat_reasoning_mode') as string | null
+    // Migrate older 'auto' persisted value → new 'persona' label (same meaning).
+    if (saved === 'auto') return 'persona'
+    if (saved && CHAT_REASONING_OPTIONS.some((m) => m.id === saved)) return saved as ChatReasoningMode
+    return 'persona'
   })
   useEffect(() => {
     localStorage.setItem('homepilot_chat_reasoning_mode', chatReasoningMode)
@@ -2565,7 +2556,12 @@ export default function App() {
     persona_agent?: Record<string, any>
     persona_appearance?: Record<string, any>
   } | null>(null)
-  const showChatReasoningSelector = EXPERT_CHAT_ENABLED && mode === 'chat' && currentProject?.project_type !== 'persona'
+  // Industry pattern (Grok, Claude, ChatGPT): selector is always visible in
+  // chat so users can switch model/strategy mid-conversation. Default is
+  // 'Persona' which routes to the legacy backend — persona projects remain
+  // on their existing pipeline unless the user explicitly picks another mode.
+  // Voice never shows the selector by design.
+  const showChatReasoningSelector = EXPERT_CHAT_ENABLED && mode === 'chat'
 
   // Agent settings panel toggle
   const [showAgentSettings, setShowAgentSettings] = useState(false)
@@ -2982,17 +2978,6 @@ export default function App() {
     setPendingFile(null)
     setPendingPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
   }, [])
-
-  // Top-bar shortcut: drop out of the current (persona) project and land in
-  // a blank Expert chat. This is how users reach Expert from a persona or
-  // voice screen where the in-bar selector is (correctly) hidden.
-  const enterExpertMode = useCallback(() => {
-    if (!EXPERT_CHAT_ENABLED) return
-    setCurrentProject(null)
-    setMode('chat')
-    setChatReasoningMode('expert')
-    onNewConversation()
-  }, [onNewConversation])
 
   // Listen to "message finished animating" events from Typewriter
   useEffect(() => {
@@ -5604,7 +5589,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               chatReasoningMode={chatReasoningMode}
               onChatReasoningModeChange={setChatReasoningMode}
               showChatReasoningSelector={showChatReasoningSelector}
-              onEnterExpertMode={enterExpertMode}
             />
           )
         ) : messages.length === 0 && currentProject ? (
@@ -5690,7 +5674,6 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             chatReasoningMode={chatReasoningMode}
             onChatReasoningModeChange={setChatReasoningMode}
             showChatReasoningSelector={showChatReasoningSelector}
-            onEnterExpertMode={enterExpertMode}
           />
         )}
       </main>
