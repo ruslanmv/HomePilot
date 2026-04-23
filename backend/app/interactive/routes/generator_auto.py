@@ -54,6 +54,11 @@ from ..planner.autogen_llm import (
 # stable top-level import binding that may drift across module
 # purge/reimport cycles.
 from ..playback import render_adapter as _render_adapter
+# Additive: Persona-Live-aware render-set selector. Scopes the eager
+# pre-render pass so persona_live_play skips the wasted scene-graph
+# pass and Standard projects only render reachable depth. Falls back
+# to the original target list when the selector has no signal.
+from ..playback.render_set import filter_targets_for_play
 from ..qa import run_qa
 from ._common import http_error_from, scoped_experience
 
@@ -495,12 +500,28 @@ async def _render_all_scenes(
     can summarise the run even when the render flag is off.
     """
     nodes = repo.list_nodes(exp.id)
+    edges = repo.list_edges(exp.id)
     # Only scenes + decision beats need visual assets — endings
     # typically lean on the scene's trailing frame + a callout.
     targets = [
         n for n in nodes
         if n.kind in ("scene", "decision", "assessment", "remediation")
     ]
+    # Additive scope filter: persona_live_play skips the whole pass
+    # (own render pipeline); standard projects keep only reachable
+    # nodes within the configured depth. Deferred nodes emit a
+    # dedicated ``scene_deferred`` event so they don't collide with
+    # the existing ``scene_skipped`` counter consumed by the UI and
+    # by test_interactive_generate_all_stream.
+    targets, _render_decisions = filter_targets_for_play(
+        targets, experience=exp, edges=edges, nodes=nodes,
+    )
+    for _decision in _render_decisions:
+        if not _decision.selected and _decision.reason != "already_rendered":
+            on_event("scene_deferred", {
+                "scene_id": _decision.node_id,
+                "reason": _decision.reason,
+            })
     total = len(targets)
     media_type = _media_type_from_audience(exp)
     persona_ctx = _persona_render_context(exp)
