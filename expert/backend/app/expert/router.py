@@ -3,13 +3,14 @@
 # Fallback chain ensures resilience: if preferred provider fails, try next tier.
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 
 from .config import (
     GROK_API_KEY, GROQ_API_KEY, GEMINI_API_KEY,
     EXPERT_LOCAL_THRESHOLD, EXPERT_GROQ_THRESHOLD,
-    EXPERT_SYSTEM_PROMPT, EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE,
+    EXPERT_SYSTEM_PROMPT, EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE, EXPERT_PROVIDER_TIMEOUT_S,
     available_expert_providers,
 )
 from .providers import (
@@ -22,6 +23,36 @@ from .providers import (
 logger = logging.getLogger("expert.router")
 
 ProviderName = Literal["local", "groq", "grok", "gemini", "claude", "openai", "auto"]
+
+
+def _attach_dispatch_meta(
+    raw: Dict[str, Any],
+    *,
+    requested_provider: ProviderName,
+    fallback_applied: bool,
+    notice: Optional[str] = None,
+) -> Dict[str, Any]:
+    provider_used = raw.get("provider", requested_provider)
+    raw["__expert_meta"] = {
+        "requested_provider": requested_provider,
+        "provider_used": provider_used,
+        "fallback_applied": fallback_applied,
+        "notice": notice,
+    }
+    return raw
+
+
+def extract_dispatch_meta(raw: Dict[str, Any]) -> Dict[str, Any]:
+    meta = raw.get("__expert_meta")
+    if isinstance(meta, dict):
+        return meta
+    provider = raw.get("provider", "local")
+    return {
+        "requested_provider": provider,
+        "provider_used": provider,
+        "fallback_applied": False,
+        "notice": None,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -158,13 +189,24 @@ async def dispatch(
     Includes one fallback level: if provider fails, try local Ollama.
     """
     try:
-        return await _call_provider(messages, provider, model=model,
-                                    temperature=temperature, max_tokens=max_tokens)
+        raw = await asyncio.wait_for(
+            _call_provider(messages, provider, model=model, temperature=temperature, max_tokens=max_tokens),
+            timeout=EXPERT_PROVIDER_TIMEOUT_S,
+        )
+        return _attach_dispatch_meta(raw, requested_provider=provider, fallback_applied=False)
     except Exception as e:
         logger.warning("Provider '%s' failed (%s), falling back to local.", provider, e)
         if provider != "local":
-            return await chat_local(messages, model=model, temperature=temperature,
-                                    max_tokens=max_tokens)
+            raw = await asyncio.wait_for(
+                chat_local(messages, model=model, temperature=temperature, max_tokens=max_tokens),
+                timeout=EXPERT_PROVIDER_TIMEOUT_S,
+            )
+            return _attach_dispatch_meta(
+                raw,
+                requested_provider=provider,
+                fallback_applied=True,
+                notice="Requested provider failed; used local fallback.",
+            )
         raise
 
 

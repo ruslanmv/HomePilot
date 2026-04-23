@@ -1,80 +1,51 @@
-# Expert Module — Production Readiness Summary (vs ChatGPT/Claude/Gemini baseline)
+# Expert Module — Production Readiness Summary
 
-## Short answer
+_Date updated: 2026-04-23_
 
-**You now have a strong foundation, but you are not yet at ChatGPT/Claude/Gemini production level.**
+## Current verdict
 
-Current state is best described as:
+**Strong architecture direction, partial production readiness.**
 
-- **Architecture readiness:** medium-high
-- **Production readiness:** medium
-- **Frontier-system readiness:** low-medium
-
----
-
-## What is now in place (good baseline)
-
-1. Local-first orchestration core
-2. Multi-provider routing and multi-step modes
-3. Tool substrate (registry/contracts)
-4. Session memory abstraction
-5. Eval/reliability hooks
-6. OllaBridge-compatible adapter endpoint
-7. Persona draft generation endpoint
-8. Unit tests for backend and frontend core paths
-
-This is enough to run controlled preprod and early production pilots.
+- Architecture readiness: **medium-high**
+- Production readiness: **medium**
+- Frontier parity readiness: **low-medium**
 
 ---
 
-## What is still needed before true production parity
+## What is implemented now (aligned with code)
 
-## P0 (must-have)
-
-1. **Real tool integrations (not simulated)**
-   - Web/retrieval/code tools backed by real MCP services.
-
-2. **Durable memory + governance**
-   - Persistent storage, TTL, deletion, user/tenant isolation, PII controls.
-
-3. **Safety and policy enforcement**
-   - Prompt-injection protections, moderation, high-risk policy gates.
-
-4. **Observability + SLOs**
-   - Tracing, dashboards, alerting, error budgets, fallback metrics.
-
-5. **Eval regression gates**
-   - Domain benchmark suites + CI blocking on quality/safety regressions.
-
-6. **Reliability hardening**
-   - Circuit breakers, retries, backpressure controls, deterministic failover reasons.
-
-## P1 (important)
-
-1. Cost-aware adaptive routing with historical tuning
-2. Citation/provenance enforcement for research mode
-3. Integration/performance/load tests under realistic traffic
-4. Canary + rollback automation with release gates
+1. Deterministic mode resolution (`auto -> fast/think/heavy`) in backend policy layer.
+2. Backend strategy metadata in responses (`strategy_used`).
+3. Provider timeout (`EXPERT_PROVIDER_TIMEOUT_S`) and deterministic local fallback.
+4. Fallback metadata surfaced (`fallback_applied`, `notices`).
+5. Latency metadata surfaced (`latency_ms`).
+6. Think/heavy pipelines propagate fallback/notices across multi-step execution.
+7. MCP server catalog and tool mapping definitions are present in backend catalog modules.
+8. Unit tests cover policy mode resolution and fallback metadata extraction.
 
 ---
 
-## Practical readiness verdict
+## What remains before enterprise production
 
-- **Can we deploy now?**
-  - Yes, to **preprod** and limited pilot production with tight controls.
+### P0 (must-have)
 
-- **Can we claim ChatGPT/Claude/Gemini parity now?**
-  - No. Not until P0 items above are completed and validated over sustained load.
+1. Frontend simplification to thin client (remove duplicate orchestration ownership).
+2. Real MCP tool backends in production paths (beyond simulated/basic flows).
+3. Persistent memory governance: TTL, deletion APIs, tenant isolation, auditable lifecycle.
+4. Safety policy enforcement and prompt/tool injection hardening at runtime boundaries.
+5. Centralized observability pipelines (metrics/traces/events with SLO alerts).
+6. Circuit breaker + retry/backpressure reliability controls.
+
+### P1 (important)
+
+1. Cost-aware dynamic routing feedback loops.
+2. Citation/provenance enforcement for research outputs.
+3. Load/performance/canary testing and rollback automation.
+4. Full UI honesty indicators for selected provider/strategy/fallback.
 
 ---
 
-## Small summary of what you still need
+## Deployability statement
 
-1. Replace simulated tools with real MCP tools.
-2. Add persistent memory + privacy controls.
-3. Add safety guardrails and policy enforcement.
-4. Add full observability + SLO monitoring.
-5. Add robust eval benchmarks and CI regression gates.
-6. Add reliability controls (retries/circuit-breakers/backpressure).
-
-After these, you will have a credible production-grade expert platform.
+- ✅ **Safe for preprod and controlled pilots** with guardrails.
+- ⚠️ **Not yet full enterprise production parity** until P0 items are completed and validated under sustained traffic.

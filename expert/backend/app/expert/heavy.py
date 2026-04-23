@@ -18,7 +18,7 @@ import os
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from .config import EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE, EXPERT_SYSTEM_PROMPT
-from .router import dispatch, dispatch_stream, ProviderName
+from .router import dispatch, dispatch_stream, extract_dispatch_meta, ProviderName
 
 logger = logging.getLogger("expert.heavy")
 
@@ -119,6 +119,8 @@ async def heavy(
         p_research, **kw
     )
     research = _extract(raw_research)
+    notices = _collect_notice(raw_research)
+    fallback_applied = _fallback(raw_research)
 
     # Agent 2: Reason
     logger.debug("Heavy agent 2: reasoner")
@@ -128,6 +130,8 @@ async def heavy(
         p_reason, **kw
     )
     reasoning = _extract(raw_reason)
+    notices.extend(_collect_notice(raw_reason))
+    fallback_applied = fallback_applied or _fallback(raw_reason)
 
     # Agent 3: Synthesize
     logger.debug("Heavy agent 3: synthesizer")
@@ -137,6 +141,8 @@ async def heavy(
         p_synth, **kw
     )
     synthesis = _extract(raw_synth)
+    notices.extend(_collect_notice(raw_synth))
+    fallback_applied = fallback_applied or _fallback(raw_synth)
 
     # Agent 4: Validate
     logger.debug("Heavy agent 4: validator")
@@ -146,6 +152,8 @@ async def heavy(
         p_valid, **kw
     )
     validation = _extract(raw_valid)
+    notices.extend(_collect_notice(raw_valid))
+    fallback_applied = fallback_applied or _fallback(raw_valid)
 
     # If validator found issues, use its corrected version as final answer
     if validation.upper().startswith("CORRECTION:"):
@@ -161,8 +169,10 @@ async def heavy(
             "synthesis": synthesis,
             "validation": validation,
         },
-        "provider": provider,
+        "provider": raw_valid.get("provider", provider),
         "pipeline": "heavy",
+        "fallback_applied": fallback_applied,
+        "notices": _dedupe_notices(notices),
     }
 
 
@@ -257,3 +267,16 @@ def _extract(raw: Dict[str, Any]) -> str:
         return raw["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError):
         return ""
+
+
+def _fallback(raw: Dict[str, Any]) -> bool:
+    return bool(extract_dispatch_meta(raw).get("fallback_applied"))
+
+
+def _collect_notice(raw: Dict[str, Any]) -> List[str]:
+    notice = extract_dispatch_meta(raw).get("notice")
+    return [notice] if isinstance(notice, str) and notice else []
+
+
+def _dedupe_notices(notices: List[str]) -> List[str]:
+    return list(dict.fromkeys(notices))

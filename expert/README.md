@@ -1,169 +1,199 @@
-# Expert Module (Local-First Orchestration)
+# 🌐 Expert Module — Enterprise Local-First AI for HomePilot
 
-This folder contains the **Expert module** for HomePilot, designed as a local-first AI orchestration system with optional remote GPU escalation.
-
-## Goals
-
-- Run reliably with **no dependency on external paid APIs**.
-- Keep local inference as the default path (privacy, cost control, offline readiness).
-- Support optional remote acceleration (vLLM/OpenAI-compatible endpoint) for harder tasks.
-- Provide building blocks for tool use, memory, evals, and reliability feedback loops.
+> Build your own sovereign AI platform (ChatGPT/Claude/Gemini/Grok-style experience) on local infrastructure first, with optional rented GPU burst when policy allows.
 
 ---
 
-## Current Architecture
+## 🚀 Vision
+
+The Expert subsystem is designed for organizations that want:
+
+- 🔒 **Data sovereignty** (keep prompts/inference local by default)
+- 💸 **Cost control** (remote GPU is optional, policy-gated)
+- 🧠 **High-quality reasoning** (fast / think / heavy pipelines)
+- 🛡️ **Reliability** (timeouts, deterministic fallback, observability)
+- 🏢 **Enterprise readiness** (memory, tools, safety, evals, readiness gates)
+
+---
+
+## 🧭 Core operating principle
+
+1. **Local-first inference is default**
+2. **Remote/rented GPU is escalation path, not baseline**
+3. **Backend is single source of truth** for routing and execution decisions
+4. **Fallback to local must exist** whenever remote fails/unavailable
+
+---
+
+## 🏗️ Architecture (high-level)
 
 ```txt
-UI (Expert.tsx)
-  -> expertApi.ts
-  -> Backend /v1/expert/*
-
-Frontend Expert Core (src/expert)
-  -> ExpertRouter
-      -> Policies (mode + complexity + reliability)
-      -> Providers (Local, Remote)
-      -> Tool Registry (budgeted)
-      -> Memory Store (session recall/append)
-      -> Eval Recorder (per-run scoring)
-      -> Reliability Tracker (success/latency snapshots)
+┌──────────────────────────────────────────────────────────────────┐
+│                        Frontend (UI)                            │
+│ mode selector • streaming renderer • notices • trace panel      │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │ API request
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│           Backend Expert Router (authoritative brain)           │
+│ mode resolution • policy • provider choice • strategy selection │
+└───────────────┬───────────────────────────────┬──────────────────┘
+                │                               │
+                ▼                               ▼
+      ┌───────────────────────┐        ┌──────────────────────────┐
+      │ Thinking Pipelines    │        │ Runtime Services         │
+      │ fast / think / heavy  │        │ tools • memory • evals   │
+      └────────────┬──────────┘        │ safety • observability   │
+                   │                   └──────────────┬───────────┘
+                   └──────────────────────┬────────────┘
+                                          ▼
+                             ┌──────────────────────────┐
+                             │ Provider Abstraction     │
+                             │ local / remote / burst   │
+                             └─────────────┬────────────┘
+                                           │
+                              ┌────────────┴────────────┐
+                              ▼                         ▼
+                    Local GPU/CPU (Ollama)     Remote / Rented GPU
 ```
 
-### Frontend core (`expert/frontend/src/expert`)
+---
 
-- `router.ts`
-  - Main orchestration entrypoint for local/remote execution.
-  - Supports `single-pass`, `expert-thinking`, and `heavy-multi-pass` strategies.
-  - Applies memory recall + tool loop context + eval and reliability recording.
-- `policies.ts`
-  - Routing decisions by mode (`auto|fast|expert|heavy|beta`), complexity, budget, provider health, and reliability stats.
-- `providers/local.ts`
-  - Local provider adapter (Ollama/OpenAI-compatible API).
-- `providers/remote.ts`
-  - Optional remote provider adapter (vLLM/OpenAI-compatible API).
-- `tools/*`
-  - Tool contracts + registry + built-in simulated tools (`web_search`, `retrieval`, `code_exec`, `model_compare`).
-- `memory/store.ts`
-  - `MemoryStore` abstraction and in-memory implementation.
-- `evals/harness.ts`
-  - `EvalRecorder` abstraction and in-memory baseline scorer.
-- `reliability/metrics.ts`
-  - Provider-level success and latency snapshot tracking.
+## ⚙️ Modes and strategies
 
-### Backend core (`expert/backend/app/expert`)
-
-- Existing backend endpoints remain stable:
-  - `GET /v1/expert/info`
-  - `POST /v1/expert/chat`
-  - `POST /v1/expert/stream`
-  - `POST /v1/expert/route`
-  - `POST /v1/expert/ollabridge/chat/completions` (OllaBridge/OpenAI-compatible adapter)
-  - `POST /v1/expert/persona/draft` (generate persona draft payload for HomePilot)
-  - `GET /v1/expert/readiness` (environment/config readiness report for prod gating)
-
-No destructive backend behavior changes are required for this documentation update.
-
-Additional production scaffolding modules are available under `expert/backend/app/expert/`:
-- `mcp_tools.py` (real MCP HTTP tool adapters with call budgets)
-- `persistent_memory.py` (sqlite memory with basic PII redaction)
-- `safety_policy.py` (prompt safety guardrail decisions)
-- `observability.py` (SLO monitor snapshotting)
-- `eval_bench.py` (eval scoring + regression gate helpers)
+| Mode | Strategy | Typical intent |
+|---|---|---|
+| `fast` | single-pass | lowest latency, local-first |
+| `think` / `expert` | expert-thinking | analysis + planning + answer |
+| `heavy` | heavy-multi-pass | strongest reasoning path for hard tasks |
+| `auto` | policy-resolved | deterministic selection by complexity/health/budget |
+| `beta` | experimental branch | controlled experiments, never silent replacement |
 
 ---
 
-## Environment Variables
+## 🔌 MCP servers and tools (what Expert uses)
 
-### Local inference
+Expert is designed to be **tool-augmented** through MCP. There are two layers:
 
-- `VITE_LOCAL_LLM_URL` (default `http://localhost:11434/v1`)
-- `VITE_LOCAL_LLM_MODEL` (default `llama3.1:8b`)
+### 1) Tool intents currently used by Expert orchestration
+- `web_search`
+- `retrieval`
+- `code_exec`
+- `model_compare`
 
-### Remote inference (optional)
+### 2) MCP server mapping (production target)
 
-- `VITE_REMOTE_LLM_URL` (empty disables remote path)
-- `VITE_REMOTE_LLM_API_KEY` (optional)
-- `VITE_REMOTE_LLM_MODEL` (default `Qwen/QwQ-32B`)
+```txt
+web_search    -> mcp-web-search
+retrieval     -> mcp-doc-retrieval
+code_exec     -> mcp-code-sandbox
+model_compare -> mcp-eval-runner (and cost awareness via mcp-cost-router)
+```
 
----
+### Priority MCP server stack
 
-## Operational Model
+- **P0** (must-have):
+  - `mcp-web-search`
+  - `mcp-doc-retrieval`
+  - `mcp-code-sandbox`
+  - `mcp-citation-provenance`
+  - `mcp-memory-store`
+- **P1**:
+  - `mcp-safety-policy`
+  - `mcp-eval-runner`
+  - `mcp-observability`
+- **P2**:
+  - `mcp-cost-router`
+  - `mcp-job-orchestrator`
 
-- **Default:** Local provider
-- **Escalation:** Remote provider when policy allows (mode + complexity + budget + reliability)
-- **Fallback:** Local when remote unavailable or blocked by policy
-- **Additive path:** New services can be introduced without replacing current endpoints
-
----
-
-## What is “production-ready” here?
-
-The module is designed to become production-ready in stages:
-
-1. Stable local-only baseline
-2. Optional remote GPU acceleration
-3. Real MCP integrations for tool calls
-4. Durable memory persistence
-5. Eval-driven routing improvements
-
-See `expert/MIGRATION_PLAN_PREPROD.md` for the full additive rollout sequence.
-
----
-
-## Test Status (Backend Python Expert)
-
-Backend Python unit coverage for this Expert module now exists at:
-
-- `expert/backend/tests/test_expert_module.py`
-
-Covered checks:
-
-- Complexity scoring + provider selection behavior (`app.expert.router`)
-- Message assembly (`build_messages`)
-- Think pipeline step outputs (`app.expert.thinking`)
-- Heavy pipeline correction behavior (`app.expert.heavy`)
+For the full server API expectations and priority rationale, see [`MCP_SERVERS_PRODUCTION_LIST.md`](./MCP_SERVERS_PRODUCTION_LIST.md).
 
 ---
 
-## Gap Coverage Matrix
+## 🪜 End-to-end lifecycle (step-by-step)
 
-This module now includes minimum viable coverage for the previously identified critical gaps:
-
-1. **Tool layer**  
-   Covered by `tools/types.ts`, `tools/registry.ts`, and `tools/builtin.ts`, plus tool loop integration in `router.ts`.
-2. **Memory layer**  
-   Covered by `memory/store.ts` and session recall/append integration in `router.ts` via `sessionId`.
-3. **Eval/reliability layer**  
-   Covered by `evals/harness.ts` and `reliability/metrics.ts`, with policy input integration in `policies.ts`.
-4. **Adaptive routing improvements**  
-   Covered by `policies.ts` reliability-aware decisions and `router.ts` feedback recording.
-
-These are **foundational** layers (not full enterprise implementations) and are intentionally designed so each piece can be replaced by production services without destructive changes.
-
-
-See also `expert/STABILITY_SAFETY_REVIEW.md` for a full hardening review and production safety checklist.
-
-See `expert/RESEARCHER_FEASIBILITY.md` for a dedicated Researcher-agent feasibility and rollout guide.
-
-See `expert/INSTITUTE_SCALABLE_BACKEND_BLUEPRINT.md` for the long-range institute backend architecture plan.
-
-See `expert/SPACE_AUTONOMY_EVOLUTION_ROADMAP.md` for the long-term autonomous space-AI and controlled self-evolution roadmap.
-
-See `expert/PRODUCTION_READINESS_SUMMARY.md` for the current production-parity status and required next steps.
-
-See `expert/MCP_SERVERS_PRODUCTION_LIST.md` for the prioritized MCP servers/tools required for production.
+```txt
+[1] User selects mode + sends prompt
+      ↓
+[2] Backend resolves mode -> concrete strategy
+      ↓
+[3] Policy evaluates complexity + health + budget + availability
+      ↓
+[4] Provider selected (local-first, remote only if justified)
+      ↓
+[5] Pipeline executes (fast / think / heavy)
+      ↓
+[6] Optional tools + memory operations under strict limits
+      ↓
+[7] Response returns with metadata:
+      strategy_used, fallback_applied, notices, latency_ms
+      ↓
+[8] Telemetry + eval logs emitted
+```
 
 ---
 
-## MCP Server Runtime Notes
+## 🧱 Deployment tiers
 
-HomePilot's MCP server packages under `agentic/integrations/mcp/*` are expected to run with:
+- **Tier 0 — Local only:** fully sovereign, offline-capable baseline
+- **Tier 1 — Local + guarded remote burst:** recommended enterprise hybrid
+- **Tier 2 — Hybrid scale:** local clusters + rented pools + SLO/budget governance
 
-- **Python 3.11**
-- **uv** for install/run/test workflows
-- JSON-RPC MCP-compatible tool endpoints (Context Forge compatible)
+---
 
-Typical workflow inside a server package:
+## 📚 Complete documentation index (all Expert `.md` files)
 
-- `make install`
-- `make run`
-- `make test`
+> Every Markdown file in `expert/` is listed here for complete onboarding and discoverability.
+
+1. 📘 [`README.md`](./README.md) — Master overview, principles, and navigation.
+2. 🗺️ [`DOCUMENTATION_GUIDE.md`](./DOCUMENTATION_GUIDE.md) — Role-based reading paths for humans and AI agents.
+3. 🏢 [`ENTERPRISE_LOCAL_ARCHITECTURE.md`](./ENTERPRISE_LOCAL_ARCHITECTURE.md) — Enterprise architecture, operations, and governance blueprint.
+4. 🔍 [`EXPERT_MODE_REVIEW.md`](./EXPERT_MODE_REVIEW.md) — Production gap analysis and migration phases.
+5. ✅ [`PRODUCTION_READINESS_SUMMARY.md`](./PRODUCTION_READINESS_SUMMARY.md) — Current readiness snapshot and gates.
+6. 🛣️ [`MIGRATION_PLAN_PREPROD.md`](./MIGRATION_PLAN_PREPROD.md) — Step-by-step preproduction migration plan.
+7. 🔐 [`STABILITY_SAFETY_REVIEW.md`](./STABILITY_SAFETY_REVIEW.md) — Safety and stability hardening review.
+8. 🔧 [`MCP_SERVERS_PRODUCTION_LIST.md`](./MCP_SERVERS_PRODUCTION_LIST.md) — MCP server priorities and required APIs.
+9. 🧪 [`RESEARCHER_FEASIBILITY.md`](./RESEARCHER_FEASIBILITY.md) — Researcher-agent feasibility and rollout notes.
+10. 🏛️ [`INSTITUTE_SCALABLE_BACKEND_BLUEPRINT.md`](./INSTITUTE_SCALABLE_BACKEND_BLUEPRINT.md) — Scalable backend blueprint for institute-level usage.
+11. 🌌 [`SPACE_AUTONOMY_EVOLUTION_ROADMAP.md`](./SPACE_AUTONOMY_EVOLUTION_ROADMAP.md) — Long-range autonomy evolution roadmap.
+12. 🩹 [`INTEGRATION_PATCH.md`](./INTEGRATION_PATCH.md) — Integration patch notes and guidance.
+
+---
+
+## 🧪 Quick verification commands
+
+```bash
+PYTHONPATH=/workspace/HomePilot/expert/backend \
+pytest -q expert/backend/tests/test_expert_module.py \
+          expert/backend/tests/test_expert_ollabridge_routes.py \
+          expert/backend/tests/test_expert_policies.py
+```
+
+### 🔬 Preprod sandbox (safe, isolated ports)
+
+Use these targets to validate Expert in preprod **without touching current prod ports**:
+
+```bash
+make start-preprod
+# Backend:  http://localhost:18000
+# Frontend: http://localhost:13000
+# ComfyUI:  http://localhost:18188
+```
+
+In another terminal:
+
+```bash
+make test-preprod-expert
+```
+
+This verifies `/v1/expert/info` and `/v1/expert/chat` response contracts including strategy/fallback metadata.
+
+---
+
+## 🏁 Enterprise statement
+
+HomePilot Expert is built to deliver a world-class assistant experience with **local sovereignty first**, **truthful operational behavior**, and **controlled remote scaling**.
+
+**Short product stance:**
+
+> Local-first, expert when needed, heavy only when justified, remote only when policy allows.

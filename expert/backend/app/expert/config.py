@@ -49,6 +49,7 @@ EXPERT_SYSTEM_PROMPT: str = os.getenv(
 EXPERT_STREAM_CHUNK_SIZE: int = int(os.getenv("EXPERT_STREAM_CHUNK_SIZE", "64"))
 EXPERT_MAX_TOKENS: int = int(os.getenv("EXPERT_MAX_TOKENS", "2048"))
 EXPERT_TEMPERATURE: float = float(os.getenv("EXPERT_TEMPERATURE", "0.7"))
+EXPERT_PROVIDER_TIMEOUT_S: float = float(os.getenv("EXPERT_PROVIDER_TIMEOUT_S", "45"))
 
 
 def available_expert_providers() -> list[str]:

@@ -24,6 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMFY_DIR="$ROOT/ComfyUI"
 PYTHON="$COMFY_DIR/.venv/bin/python"
+COMFY_PORT="${COMFY_PORT:-8188}"
 
 # Source the backend-written runtime.env, if present. The Settings
 # UI writes VRAM-mode and other launcher-only flags there via
@@ -132,6 +133,6 @@ fi
 cd "$COMFY_DIR"
 exec "$PYTHON" main.py \
   --listen 0.0.0.0 \
-  --port 8188 \
+  --port "$COMFY_PORT" \
   "${EXTRA_ARGS[@]}" \
   "$@"

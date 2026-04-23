@@ -46,6 +46,18 @@ class ExpertChatRequest(BaseModel):
         default=None,
         description="Override the default Expert system prompt.",
     )
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Session identifier for memory/trace linkage.",
+    )
+    has_attachments: bool = Field(
+        default=False,
+        description="Whether the request includes attachments or external artifacts.",
+    )
+    feature_hints: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional non-authoritative hints from UI (e.g. budget tier, tool-use preference).",
+    )
 
 
 class ExpertStreamRequest(ExpertChatRequest):
@@ -75,6 +87,22 @@ class ExpertChatResponse(BaseModel):
     provider_raw: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Raw provider response for debugging (omitted in production).",
+    )
+    strategy_used: str = Field(
+        default="single-pass",
+        description="Resolved execution strategy: single-pass / expert-thinking / heavy-multi-pass.",
+    )
+    fallback_applied: bool = Field(
+        default=False,
+        description="True when the request had to fall back from requested provider/pipeline path.",
+    )
+    notices: List[str] = Field(
+        default_factory=list,
+        description="User-visible operational notices (fallbacks, policy blocks, etc.).",
+    )
+    latency_ms: Optional[int] = Field(
+        default=None,
+        description="Total backend processing latency in milliseconds.",
     )
 
 

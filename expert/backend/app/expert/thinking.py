@@ -16,7 +16,7 @@ import logging
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 from .config import EXPERT_MAX_TOKENS, EXPERT_TEMPERATURE, EXPERT_SYSTEM_PROMPT
-from .router import dispatch, dispatch_stream, ProviderName
+from .router import dispatch, dispatch_stream, extract_dispatch_meta, ProviderName
 
 logger = logging.getLogger("expert.thinking")
 
@@ -107,6 +107,8 @@ async def think(
         _msg(_ANALYZE_PROMPT.format(input=query)), provider, **kw
     )
     analysis = _extract(raw_analysis)
+    notices = _collect_notice(raw_analysis)
+    fallback_applied = _fallback(raw_analysis)
 
     # Step 2: Plan
     logger.debug("Thinking step 2: plan")
@@ -114,6 +116,8 @@ async def think(
         _msg(_PLAN_PROMPT.format(analysis=analysis)), provider, **kw
     )
     plan = _extract(raw_plan)
+    notices.extend(_collect_notice(raw_plan))
+    fallback_applied = fallback_applied or _fallback(raw_plan)
 
     # Step 3: Solve
     logger.debug("Thinking step 3: solve")
@@ -121,6 +125,8 @@ async def think(
         _msg(_SOLVE_PROMPT.format(input=query, plan=plan)), provider, **kw
     )
     solution = _extract(raw_solution)
+    notices.extend(_collect_notice(raw_solution))
+    fallback_applied = fallback_applied or _fallback(raw_solution)
 
     # Step 4 (optional): Self-critique
     critique = None
@@ -130,6 +136,8 @@ async def think(
             _msg(_CRITIQUE_PROMPT.format(solution=solution)), provider, **kw
         )
         critique = _extract(raw_critique)
+        notices.extend(_collect_notice(raw_critique))
+        fallback_applied = fallback_applied or _fallback(raw_critique)
 
     return {
         "final_answer": solution,
@@ -142,6 +150,8 @@ async def think(
         "provider": raw_solution.get("provider", provider),
         "model": raw_solution.get("model"),
         "pipeline": "think",
+        "fallback_applied": fallback_applied,
+        "notices": _dedupe_notices(notices),
     }
 
 
@@ -224,3 +234,16 @@ def _extract(raw: Dict[str, Any]) -> str:
         return raw["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError):
         return ""
+
+
+def _fallback(raw: Dict[str, Any]) -> bool:
+    return bool(extract_dispatch_meta(raw).get("fallback_applied"))
+
+
+def _collect_notice(raw: Dict[str, Any]) -> List[str]:
+    notice = extract_dispatch_meta(raw).get("notice")
+    return [notice] if isinstance(notice, str) and notice else []
+
+
+def _dedupe_notices(notices: List[str]) -> List[str]:
+    return list(dict.fromkeys(notices))

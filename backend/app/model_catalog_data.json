@@ -554,23 +554,23 @@
           "vision": true
         },
         {
-          "id": "internvl3:8b",
-          "label": "InternVL3 8B",
+          "id": "qwen2.5vl:7b",
+          "label": "Qwen2.5-VL (7B)",
           "nsfw": true,
           "recommended_nsfw": true,
-          "description": "Detailed scene analysis. Strong at understanding complex visual content.",
-          "size_gb": 7.0,
-          "context_window": 131072,
+          "description": "Flagship vision-language model with strong OCR and chart understanding.",
+          "size_gb": 6.0,
+          "context_window": 125000,
           "uncensored": true,
           "vision": true
         },
         {
-          "id": "smolvlm2:latest",
-          "label": "SmolVLM2 (2.2B)",
+          "id": "bakllava:latest",
+          "label": "BakLLaVA (7B)",
           "nsfw": true,
           "recommended_nsfw": true,
-          "description": "Fast unrestricted captioning. Ultra-lightweight vision model.",
-          "size_gb": 2.0,
+          "description": "Lightweight multimodal fallback model for broad compatibility.",
+          "size_gb": 4.0,
           "context_window": 8192,
           "uncensored": true,
           "vision": true

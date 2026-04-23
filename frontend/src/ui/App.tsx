@@ -25,6 +25,8 @@ import {
   Phone,
   Users,
   EyeOff,
+  ChevronDown,
+  Check,
   PanelLeftClose,
   PanelLeft,
 } from 'lucide-react'
@@ -273,6 +275,30 @@ function useEnterpriseCallRow(): boolean {
 }
 
 type Mode = 'chat' | 'voice' | 'search' | 'project' | 'imagine' | 'edit' | 'animate' | 'interactive' | 'models' | 'studio' | 'avatar' | 'teams'
+type ChatReasoningMode = 'auto' | 'fast' | 'expert' | 'heavy' | 'beta'
+
+const CHAT_REASONING_OPTIONS: Array<{ id: ChatReasoningMode; label: string; description: string; premium?: boolean; badge?: string }> = [
+  { id: 'auto', label: 'Auto', description: 'Chooses Fast or Expert automatically' },
+  { id: 'fast', label: 'Fast', description: 'Quick responses' },
+  { id: 'expert', label: 'Expert', description: 'Thinks harder' },
+  { id: 'heavy', label: 'Heavy', description: 'Deep multi-step reasoning', premium: true },
+  { id: 'beta', label: 'Beta', description: 'Experimental model', badge: 'beta' },
+]
+
+function toThinkingMode(mode: ChatReasoningMode): 'auto' | 'fast' | 'think' | 'heavy' {
+  if (mode === 'expert' || mode === 'beta') return 'think'
+  return mode
+}
+
+const EXPERT_CHAT_ENABLED = String((import.meta as any)?.env?.VITE_EXPERT_CHAT_ENABLED ?? 'false') === 'true'
+
+function canUseExpertInContext(mode: Mode, chatReasoningMode: ChatReasoningMode, projectType?: string): boolean {
+  if (!EXPERT_CHAT_ENABLED) return false
+  if (mode !== 'chat') return false
+  // Persona/live-play sessions must remain on existing production pipeline.
+  if (projectType === 'persona') return false
+  return chatReasoningMode !== 'auto'
+}
 type Provider = 'backend' | 'ollama'
 
 type HardwarePreset = '4060' | '4080' | 'a100' | 'custom'
@@ -1398,6 +1424,9 @@ function QueryBar({
   placeholderOverride,
   pendingPreviewUrl,
   onRemoveAttachment,
+  chatReasoningMode = 'auto',
+  onChatReasoningModeChange,
+  showChatReasoningSelector = false,
 }: {
   centered: boolean
   input: string
@@ -1410,6 +1439,9 @@ function QueryBar({
   placeholderOverride?: string
   pendingPreviewUrl?: string | null
   onRemoveAttachment?: () => void
+  chatReasoningMode?: ChatReasoningMode
+  onChatReasoningModeChange?: (mode: ChatReasoningMode) => void
+  showChatReasoningSelector?: boolean
 }) {
   // ---- Drag-and-drop image support ----
   const [isDragging, setIsDragging] = useState(false)
@@ -1454,6 +1486,8 @@ function QueryBar({
   // ---- Speech-to-text for the mic button ----
   const [isListening, setIsListening] = useState(false)
   const recognitionRef = useRef<any>(null)
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
+  const modeMenuRef = useRef<HTMLDivElement | null>(null)
 
   const toggleListening = useCallback(() => {
     // Stop if already listening
@@ -1489,6 +1523,22 @@ function QueryBar({
 
     try { recognition.start() } catch { /* already started */ }
   }, [isListening, setInput])
+
+  useEffect(() => {
+    const onDocClick = (event: MouseEvent) => {
+      if (!modeMenuRef.current) return
+      if (!modeMenuRef.current.contains(event.target as Node)) setModeMenuOpen(false)
+    }
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setModeMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onEsc)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onEsc)
+    }
+  }, [])
 
   return (
     <div
@@ -1540,6 +1590,53 @@ function QueryBar({
 
         {/* Right: submit or mic */}
         <div className="absolute right-2 bottom-3 z-20 flex items-center gap-2">
+          {showChatReasoningSelector && mode === 'chat' && onChatReasoningModeChange ? (
+            <div className="relative" ref={modeMenuRef}>
+              <button
+                type="button"
+                onClick={() => setModeMenuOpen((v) => !v)}
+                className="h-10 px-3 rounded-full bg-white/5 border border-white/10 text-white/90 text-sm font-medium inline-flex items-center gap-1.5 hover:bg-white/10 transition-colors"
+                aria-haspopup="menu"
+                aria-expanded={modeMenuOpen}
+                title="Expert mode selector"
+              >
+                {CHAT_REASONING_OPTIONS.find((m) => m.id === chatReasoningMode)?.label ?? 'Auto'}
+                <ChevronDown size={14} className={`transition-transform ${modeMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {modeMenuOpen ? (
+                <div role="menu" className="absolute right-0 bottom-12 w-[300px] rounded-2xl border border-white/10 bg-[#2a2a2a]/88 backdrop-blur-2xl shadow-2xl p-2">
+                  {CHAT_REASONING_OPTIONS.map((opt) => {
+                    const selected = chatReasoningMode === opt.id
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={selected}
+                        onClick={() => {
+                          onChatReasoningModeChange(opt.id)
+                          setModeMenuOpen(false)
+                        }}
+                        className={`w-full text-left rounded-xl px-3 py-2.5 transition-colors ${selected ? 'bg-white/10' : 'hover:bg-white/6'}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-white">{opt.label}</span>
+                          {opt.badge ? <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/70">{opt.badge}</span> : null}
+                          {opt.premium ? <Sparkles size={12} className="text-white/70" /> : null}
+                          {selected ? <Check size={14} className="text-white/80 ms-auto" /> : null}
+                        </div>
+                        <div className="text-xs text-white/60 mt-0.5">{opt.description}</div>
+                      </button>
+                    )
+                  })}
+                  <div className="mt-2 rounded-xl border border-white/8 bg-white/5 px-3 py-2.5">
+                    <div className="text-sm font-medium text-white">Pro</div>
+                    <div className="text-xs text-white/60">Unlock extended capabilities</div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {isListening ? (
             <button
               type="button"
@@ -1596,7 +1693,7 @@ function QueryBar({
         )}
 
         {/* Textarea */}
-        <div className="ps-12 pe-20">
+        <div className="ps-12 pe-72">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -1634,6 +1731,9 @@ function EmptyState({
   onUpload,
   pendingPreviewUrl,
   onRemoveAttachment,
+  chatReasoningMode,
+  onChatReasoningModeChange,
+  showChatReasoningSelector,
 }: {
   mode: Mode
   input: string
@@ -1644,6 +1744,9 @@ function EmptyState({
   onUpload: (file: File) => void
   pendingPreviewUrl?: string | null
   onRemoveAttachment?: () => void
+  chatReasoningMode: ChatReasoningMode
+  onChatReasoningModeChange: (mode: ChatReasoningMode) => void
+  showChatReasoningSelector: boolean
 }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center px-6">
@@ -1673,6 +1776,9 @@ function EmptyState({
           onUpload={onUpload}
           pendingPreviewUrl={pendingPreviewUrl}
           onRemoveAttachment={onRemoveAttachment}
+          chatReasoningMode={chatReasoningMode}
+          onChatReasoningModeChange={onChatReasoningModeChange}
+          showChatReasoningSelector={showChatReasoningSelector}
         />
       </div>
     </div>
@@ -1730,6 +1836,9 @@ function ChatState({
   backendUrl,
   pendingPreviewUrl,
   onRemoveAttachment,
+  chatReasoningMode,
+  onChatReasoningModeChange,
+  showChatReasoningSelector,
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -1751,6 +1860,9 @@ function ChatState({
   backendUrl: string
   pendingPreviewUrl?: string | null
   onRemoveAttachment?: () => void
+  chatReasoningMode: ChatReasoningMode
+  onChatReasoningModeChange: (mode: ChatReasoningMode) => void
+  showChatReasoningSelector: boolean
 }) {
   const { copied, copy } = useCopyMessage()
   const displayMessages = useMemo(() => collapseCallTurns(messages), [messages])
@@ -2068,6 +2180,9 @@ function ChatState({
             onUpload={onUpload}
             pendingPreviewUrl={pendingPreviewUrl}
             onRemoveAttachment={onRemoveAttachment}
+            chatReasoningMode={chatReasoningMode}
+            onChatReasoningModeChange={onChatReasoningModeChange}
+            showChatReasoningSelector={showChatReasoningSelector}
           />
         </div>
         <div className="text-center text-[11px] text-[#444] pt-3 font-medium">
@@ -2319,6 +2434,14 @@ export default function App() {
   const [mode, setMode] = useState<Mode>(() => {
     return (localStorage.getItem('homepilot_mode') as Mode) || 'chat'
   })
+  const [chatReasoningMode, setChatReasoningMode] = useState<ChatReasoningMode>(() => {
+    const saved = localStorage.getItem('homepilot_chat_reasoning_mode') as ChatReasoningMode | null
+    if (saved && CHAT_REASONING_OPTIONS.some((m) => m.id === saved)) return saved
+    return 'auto'
+  })
+  useEffect(() => {
+    localStorage.setItem('homepilot_chat_reasoning_mode', chatReasoningMode)
+  }, [chatReasoningMode])
 
   // Route messages and conversation ID based on mode (Voice is ephemeral like Alexa/Grok)
   const messages = mode === 'voice' ? voiceMessages : chatMessages
@@ -2425,6 +2548,7 @@ export default function App() {
     persona_agent?: Record<string, any>
     persona_appearance?: Record<string, any>
   } | null>(null)
+  const showChatReasoningSelector = EXPERT_CHAT_ENABLED && mode === 'chat' && currentProject?.project_type !== 'persona'
 
   // Agent settings panel toggle
   const [showAgentSettings, setShowAgentSettings] = useState(false)
@@ -3880,7 +4004,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         // ── Agent/Knowledge topology: route text messages through /v1/agent/chat ──
         // The agent decides autonomously whether to use tools (vision, knowledge, memory, etc.)
         const chatTopology = settingsDraft.multimodalTopology || 'smart'
-        if ((chatTopology === 'agent' || chatTopology === 'knowledge') && (mode === 'chat' || mode === 'voice')) {
+        if ((chatTopology === 'agent' || chatTopology === 'knowledge') && (mode === 'chat' || mode === 'voice') && !canUseExpertInContext(mode, chatReasoningMode, currentProject?.project_type)) {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === tmpId ? { ...m, text: 'Agent thinking…' } : m
@@ -3933,57 +4057,76 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
 
         // Always call backend - it will route to the correct provider
         // If provider is 'ollama', backend will use Ollama with the provided base_url and model
-        const data = await postJson<any>(
-          settings.backendUrl,
-          '/chat',
-          {
-            message: requestText,
-            conversation_id: conversationId,
-            project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
-            fun_mode: settings.funMode,
-            mode,
-            // Use Enterprise Settings V2 provider/model/base_url
-            provider: settingsDraft.providerChat,
-            provider_base_url: settingsDraft.baseUrlChat || undefined,
-            provider_model: settingsDraft.modelChat,
-            // Custom generation parameters (from settingsDraft)
-            textTemperature: settingsDraft.textTemperature,
-            // Voice mode: let backend enforce its own token cap for short spoken replies
-            textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
-            imgWidth: settingsDraft.imgWidth,
-            imgHeight: settingsDraft.imgHeight,
-            imgSteps: settingsDraft.imgSteps,
-            imgCfg: settingsDraft.imgCfg,
-            imgSeed: settingsDraft.imgSeed,
-            imgModel: settingsDraft.modelImages,
-            imgPreset: settingsDraft.preset,
-            vidSeconds: settingsDraft.vidSeconds,
-            vidFps: settingsDraft.vidFps,
-            vidMotion: settingsDraft.vidMotion,
-            vidModel: settingsDraft.modelVideo,
-            vidPreset: settingsDraft.vidPreset,
-            nsfwMode: settingsDraft.nsfwMode,
-            memoryEngine: settingsDraft.memoryEngine || 'v2',
-            promptRefinement: settingsDraft.promptRefinement ?? true,
-            // Incognito mode: skip memory storage + profile injection
-            incognito: chatSettings?.incognito || false,
-            // Voice mode personality system prompt
-            voiceSystemPrompt,
-            // Backend personality agent id — needed for personality-aware
-            // image generation (inject visual style + conversation context)
-            personalityId: localStorage.getItem('homepilot_personality_id') || undefined,
-            // Chat model identity for prompt refinement fallback
-            // (backend needs this separately from provider_model which may be image model)
-            ollama_model: settingsDraft.providerChat === 'ollama' ? settingsDraft.modelChat : undefined,
-            llm_model: settingsDraft.providerChat === 'openai_compat' ? settingsDraft.modelChat : undefined,
-          },
-          authHeaders
-        )
+        const data = canUseExpertInContext(mode, chatReasoningMode, currentProject?.project_type)
+          ? await postJson<any>(
+              settings.backendUrl,
+              '/v1/expert/chat',
+              {
+                query: requestText,
+                provider: 'auto',
+                thinking_mode: toThinkingMode(chatReasoningMode),
+                with_critique: false,
+                history: messages
+                  .filter((m) => !m.pending)
+                  .slice(-8)
+                  .map((m) => ({ role: m.role, content: m.text })),
+                session_id: conversationId || undefined,
+                has_attachments: Boolean(pendingFile || pendingPreviewUrl),
+                feature_hints: { budgetTier: 'normal' },
+              },
+              authHeaders
+            )
+          : await postJson<any>(
+              settings.backendUrl,
+              '/chat',
+              {
+                message: requestText,
+                conversation_id: conversationId,
+                project_id: mode === 'voice' ? getVoiceLinkedProjectId() : currentProjectId,
+                fun_mode: settings.funMode,
+                mode,
+                // Use Enterprise Settings V2 provider/model/base_url
+                provider: settingsDraft.providerChat,
+                provider_base_url: settingsDraft.baseUrlChat || undefined,
+                provider_model: settingsDraft.modelChat,
+                // Custom generation parameters (from settingsDraft)
+                textTemperature: settingsDraft.textTemperature,
+                // Voice mode: let backend enforce its own token cap for short spoken replies
+                textMaxTokens: mode === 'voice' ? undefined : settingsDraft.textMaxTokens,
+                imgWidth: settingsDraft.imgWidth,
+                imgHeight: settingsDraft.imgHeight,
+                imgSteps: settingsDraft.imgSteps,
+                imgCfg: settingsDraft.imgCfg,
+                imgSeed: settingsDraft.imgSeed,
+                imgModel: settingsDraft.modelImages,
+                imgPreset: settingsDraft.preset,
+                vidSeconds: settingsDraft.vidSeconds,
+                vidFps: settingsDraft.vidFps,
+                vidMotion: settingsDraft.vidMotion,
+                vidModel: settingsDraft.modelVideo,
+                vidPreset: settingsDraft.vidPreset,
+                nsfwMode: settingsDraft.nsfwMode,
+                memoryEngine: settingsDraft.memoryEngine || 'v2',
+                promptRefinement: settingsDraft.promptRefinement ?? true,
+                // Incognito mode: skip memory storage + profile injection
+                incognito: chatSettings?.incognito || false,
+                // Voice mode personality system prompt
+                voiceSystemPrompt,
+                // Backend personality agent id — needed for personality-aware
+                // image generation (inject visual style + conversation context)
+                personalityId: localStorage.getItem('homepilot_personality_id') || undefined,
+                // Chat model identity for prompt refinement fallback
+                // (backend needs this separately from provider_model which may be image model)
+                ollama_model: settingsDraft.providerChat === 'ollama' ? settingsDraft.modelChat : undefined,
+                llm_model: settingsDraft.providerChat === 'openai_compat' ? settingsDraft.modelChat : undefined,
+              },
+              authHeaders
+            )
 
         setMessages((prev) =>
           prev.map((m) =>
             m.id === tmpId
-              ? { ...m, pending: false, animate: true, text: data.text ?? '…', media: data.media ?? null }
+              ? { ...m, pending: false, animate: true, text: (data.text ?? data.content ?? '…'), media: data.media ?? null }
               : m
           )
         )
@@ -3992,9 +4135,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
         if (mode === 'voice' && typeof window !== 'undefined') {
           window.dispatchEvent(
             new CustomEvent('hp:assistant_message', {
-              detail: { id: tmpId, text: data.text ?? '…', media: data.media ?? null },
-            })
-          )
+                detail: { id: tmpId, text: (data.text ?? data.content ?? '…'), media: data.media ?? null },
+              })
+            )
         }
 
         if (data.conversation_id && data.conversation_id !== conversationId) {
@@ -4045,9 +4188,12 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
       agenticCaps,
       messages,
       mode,
+      chatReasoningMode,
       settings.backendUrl,
       settings.funMode,
       settingsDraft,
+      pendingFile,
+      pendingPreviewUrl,
     ]
   )
 
@@ -5403,6 +5549,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               onUpload={handleAttachFile}
               pendingPreviewUrl={pendingPreviewUrl}
               onRemoveAttachment={clearPendingFile}
+              chatReasoningMode={chatReasoningMode}
+              onChatReasoningModeChange={setChatReasoningMode}
+              showChatReasoningSelector={showChatReasoningSelector}
             />
           ) : (
             <ChatState
@@ -5424,6 +5573,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               pendingPreviewUrl={pendingPreviewUrl}
               onRemoveAttachment={clearPendingFile}
               backendUrl={settings.backendUrl}
+              chatReasoningMode={chatReasoningMode}
+              onChatReasoningModeChange={setChatReasoningMode}
+              showChatReasoningSelector={showChatReasoningSelector}
             />
           )
         ) : messages.length === 0 && currentProject ? (
@@ -5465,6 +5617,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     ? INTENT_COPY[agentStartIntent].placeholder
                     : undefined
                 }
+                chatReasoningMode={chatReasoningMode}
+                onChatReasoningModeChange={setChatReasoningMode}
+                showChatReasoningSelector={showChatReasoningSelector}
               />
             </div>
           </div>
@@ -5479,6 +5634,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             onUpload={handleAttachFile}
             pendingPreviewUrl={pendingPreviewUrl}
             onRemoveAttachment={clearPendingFile}
+            chatReasoningMode={chatReasoningMode}
+            onChatReasoningModeChange={setChatReasoningMode}
+            showChatReasoningSelector={showChatReasoningSelector}
           />
         ) : (
           <ChatState
@@ -5500,6 +5658,9 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             pendingPreviewUrl={pendingPreviewUrl}
             onRemoveAttachment={clearPendingFile}
             backendUrl={settings.backendUrl}
+            chatReasoningMode={chatReasoningMode}
+            onChatReasoningModeChange={setChatReasoningMode}
+            showChatReasoningSelector={showChatReasoningSelector}
           />
         )}
       </main>

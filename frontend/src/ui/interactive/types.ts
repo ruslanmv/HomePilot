@@ -271,6 +271,7 @@ export interface AnalyticsSummary {
 export interface PlanAutoForm {
   title: string;
   prompt: string;
+  render_media_type?: "image" | "video";
   experience_mode: ExperienceMode;
   policy_profile_id: string;
   audience_role: string;

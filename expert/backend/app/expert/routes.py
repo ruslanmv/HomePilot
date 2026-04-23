@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -29,9 +30,11 @@ from .router import (
     build_messages,
     dispatch,
     dispatch_stream,
+    extract_dispatch_meta,
     score_complexity,
     select_provider,
 )
+from .policies import resolve_thinking_mode
 from .thinking import think, stream_think
 from .heavy import heavy, stream_heavy
 from .schemas import (
@@ -52,6 +55,15 @@ from .mcp_gateway import MCPGateway
 logger = logging.getLogger("expert.routes")
 
 router = APIRouter(prefix="/v1/expert", tags=["expert"])
+
+
+def _compute_request_complexity(req: ExpertChatRequest) -> int:
+    score = score_complexity(req.query)
+    if req.has_attachments:
+        score += 2
+    if len(req.history) > 8:
+        score += 1
+    return min(score, 10)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -90,22 +102,25 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
       'heavy' → research → reason → synthesize → validate  (4-agent pipeline)
       'auto'  → complexity score decides which pipeline to use
     """
-    complexity = score_complexity(req.query)
+    complexity = _compute_request_complexity(req)
     provider = select_provider(req.query, preferred=req.provider)
+    started = time.perf_counter()
 
     temperature = req.temperature if req.temperature is not None else EXPERT_TEMPERATURE
     max_tokens = req.max_tokens if req.max_tokens is not None else EXPERT_MAX_TOKENS
     include_raw = os.getenv("EXPERT_DEBUG", "").lower() in ("1", "true", "yes")
 
-    # Resolve auto mode → concrete pipeline
-    mode = req.thinking_mode
-    if mode == "auto":
-        if complexity >= 8:
-            mode = "heavy"
-        elif complexity >= 5:
-            mode = "think"
-        else:
-            mode = "fast"
+    resolution = resolve_thinking_mode(req.thinking_mode, complexity)
+    mode = resolution.mode_used
+    strategy = resolution.strategy
+    route_notices: list[str] = []
+    if req.thinking_mode == "auto":
+        route_notices.append(f"Auto selected '{mode}' strategy for complexity score {complexity}.")
+    budget_tier = str(req.feature_hints.get("budgetTier", "")).lower() if req.feature_hints else ""
+    if budget_tier == "low" and mode == "heavy":
+        route_notices.append("Budget tier is low; downgraded heavy mode to think.")
+        mode = "think"
+        strategy = "expert-thinking"
 
     try:
         # ── heavy pipeline ────────────────────────────────────────────────────
@@ -122,6 +137,10 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
                 complexity_score=complexity,
                 thinking_mode_used="heavy",
                 steps=result.get("agents"),
+                strategy_used=strategy,
+                fallback_applied=bool(result.get("fallback_applied", False)),
+                notices=[*route_notices, *list(result.get("notices", []))],
+                latency_ms=int((time.perf_counter() - started) * 1000),
             )
 
         # ── think pipeline ────────────────────────────────────────────────────
@@ -139,6 +158,10 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
                 complexity_score=complexity,
                 thinking_mode_used="think",
                 steps=result.get("steps"),
+                strategy_used=strategy,
+                fallback_applied=bool(result.get("fallback_applied", False)),
+                notices=[*route_notices, *list(result.get("notices", []))],
+                latency_ms=int((time.perf_counter() - started) * 1000),
             )
 
         # ── fast pipeline (single call) ───────────────────────────────────────
@@ -155,6 +178,10 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
             content = raw["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError):
             content = ""
+        meta = extract_dispatch_meta(raw)
+        notices = [*route_notices]
+        if isinstance(meta.get("notice"), str) and meta["notice"]:
+            notices.append(meta["notice"])
 
         return ExpertChatResponse(
             content=content,
@@ -163,6 +190,10 @@ async def expert_chat(req: ExpertChatRequest) -> ExpertChatResponse:
             complexity_score=complexity,
             thinking_mode_used="fast",
             provider_raw=raw if include_raw else None,
+            strategy_used=strategy,
+            fallback_applied=bool(meta.get("fallback_applied", False)),
+            notices=notices,
+            latency_ms=int((time.perf_counter() - started) * 1000),
         )
 
     except Exception as exc:
@@ -187,22 +218,32 @@ async def expert_stream(req: ExpertStreamRequest) -> StreamingResponse:
       data: [DONE]     → end of stream
       event: error     → {error: str}
     """
-    complexity = score_complexity(req.query)
+    complexity = _compute_request_complexity(req)
     provider = select_provider(req.query, preferred=req.provider)
     temperature = req.temperature if req.temperature is not None else EXPERT_TEMPERATURE
     max_tokens = req.max_tokens if req.max_tokens is not None else EXPERT_MAX_TOKENS
 
-    mode = req.thinking_mode
-    if mode == "auto":
-        if complexity >= 8:
-            mode = "heavy"
-        elif complexity >= 5:
-            mode = "think"
-        else:
-            mode = "fast"
+    resolution = resolve_thinking_mode(req.thinking_mode, complexity)
+    mode = resolution.mode_used
+    stream_notices: list[str] = []
+    if req.thinking_mode == "auto":
+        stream_notices.append(f"Auto selected '{mode}' strategy for complexity score {complexity}.")
+    budget_tier = str(req.feature_hints.get("budgetTier", "")).lower() if req.feature_hints else ""
+    if budget_tier == "low" and mode == "heavy":
+        stream_notices.append("Budget tier is low; downgraded heavy mode to think.")
+        mode = "think"
+        resolution = resolve_thinking_mode(mode, complexity)
 
     async def event_generator():
-        meta = json.dumps({"provider": provider, "complexity": complexity, "thinking_mode": mode})
+        meta = json.dumps(
+            {
+                "provider": provider,
+                "complexity": complexity,
+                "thinking_mode": mode,
+                "strategy": resolution.strategy,
+                "notices": stream_notices,
+            }
+        )
         yield f"event: meta\ndata: {meta}\n\n"
         try:
             if mode == "heavy":

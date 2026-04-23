@@ -23,6 +23,7 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         download-lora \
         download-avatar-models-basic download-avatar-models-full \
         start start-backend start-frontend start-no-agentic start-agentic-servers start-inventory \
+        install-preprod start-preprod test-preprod-expert \
         install-mcp start-mcp stop-mcp clean-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
@@ -419,7 +420,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		pids="$$pids $$!"; \
 		\
 		echo "Starting frontend..."; \
-		cd "$$ROOT/frontend" && npm run dev -- --host 0.0.0.0 --port 3000 & \
+		cd "$$ROOT/frontend" && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-false} npm run dev -- --host 0.0.0.0 --port 3000 & \
 		pids="$$pids $$!"; \
 		\
 		if [ -f "$$ROOT/ComfyUI/main.py" ] && [ -f "$$ROOT/ComfyUI/.venv/bin/python" ]; then \
@@ -523,7 +524,31 @@ start-frontend: ## Start frontend locally
 		echo "Node modules not found. Run: make install"; \
 		exit 1; \
 	fi
-	@cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
+	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-false} npm run dev -- --host 0.0.0.0 --port 3000
+
+install-preprod: ## Install dependencies for isolated preprod sandbox (includes Expert MCP gateway when AGENTIC=1)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Installing HomePilot PREPROD dependencies"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@$(MAKE) install AGENTIC=$(AGENTIC)
+	@if [ "$(AGENTIC)" = "1" ]; then \
+		echo ""; \
+		echo "Ensuring MCP Context Forge is installed for Expert preprod..."; \
+		echo "Expert preprod MCP targets: mcp-web-search, mcp-doc-retrieval, mcp-memory-store, mcp-safety-policy, mcp-observability"; \
+		$(MAKE) install-mcp; \
+		echo "Installing + testing Expert MCP servers..."; \
+		for d in web_search doc_retrieval memory_store safety_policy observability; do \
+			echo "  -> $$d"; \
+			$(MAKE) -C agentic/integrations/mcp/$$d install; \
+			$(MAKE) -C agentic/integrations/mcp/$$d test; \
+		done; \
+	fi
+
+start-preprod: ## Start isolated PREPROD sandbox (ports 18000/13000/18188) without touching current prod ports
+	@bash scripts/start-preprod.sh
+
+test-preprod-expert: ## Smoke-test Expert endpoints against preprod backend (default http://localhost:18000)
+	@bash scripts/test-expert-preprod.sh
 
 start-comfyui: ## Start ComfyUI locally (auto-detects GPU vs CPU)
 	@bash scripts/start-comfyui.sh
