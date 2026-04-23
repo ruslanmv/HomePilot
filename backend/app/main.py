@@ -120,6 +120,32 @@ from .multimodal import analyze_image, is_vision_intent, VISION_MODEL_PATTERNS
 # OpenAI-compatible endpoint (additive — exposes personas as /v1/chat/completions)
 from .openai_compat_endpoint import router as openai_compat_router
 
+# ── Access-log noise filter ──────────────────────────────────────────────────
+# The Interactive runtime polls GET /v1/interactive/play/sessions/{id}/pending
+# once per 1.5–5 s to pick up scene-render updates. Uvicorn logs every hit at
+# INFO, which swamps prod logs while carrying zero debug value. Drop *only*
+# that endpoint from ``uvicorn.access``; every other request still logs
+# normally. Set ``UVICORN_LOG_PENDING=true`` to re-enable for debugging.
+import logging as _logging
+import os as _os
+
+
+class _DropInteractivePendingFilter(_logging.Filter):
+    _suppress_token = "/v1/interactive/play/sessions/"
+    _suppress_suffix = "/pending"
+
+    def filter(self, record: _logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return not (self._suppress_token in msg and self._suppress_suffix in msg)
+
+
+if _os.getenv("UVICORN_LOG_PENDING", "false").lower() != "true":
+    _logging.getLogger("uvicorn.access").addFilter(_DropInteractivePendingFilter())
+
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(

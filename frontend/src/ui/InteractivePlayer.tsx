@@ -78,7 +78,13 @@ import {
   useToast,
 } from "./interactive/ui";
 
-const POLL_INTERVAL_MS = 1500;
+// Adaptive polling. The previous fixed 1.5s interval flooded backend
+// access logs with GET /v1/interactive/play/sessions/*/pending entries
+// (~40/min per open session). We now poll fast only while there's
+// actual work in flight and back off when the server has nothing new.
+const POLL_INTERVAL_ACTIVE_MS = 1500;  // something pending → stay responsive
+const POLL_INTERVAL_IDLE_MS   = 5000;  // nothing pending → cool off
+const POLL_INTERVAL_MAX_MS    = 15000; // ceiling for error backoff
 const MAX_VISIBLE_TURNS = 6;
 
 type ChatRole = "user" | "assistant" | "system";
@@ -217,31 +223,41 @@ function InteractivePlayerBody({
     if (!sessionId) return;
     let cancelled = false;
     let timer: number | undefined;
+    let failures = 0;
 
     async function tick() {
       if (cancelled) return;
+      // Default delay for next tick — reassigned based on activity/errors.
+      let nextDelay = POLL_INTERVAL_IDLE_MS;
       try {
         const res = await api.pending(sessionId, { since_id: cursorRef.current || undefined });
         if (cancelled) return;
-        if (res.items.length > 0) {
+        const hasItems = res.items.length > 0;
+        let stillPending: typeof res.items[number] | null = null;
+        if (hasItems) {
           const latestReady = [...res.items].reverse().find((j) => j.status === "ready");
           if (latestReady) setCurrentScene(latestReady);
-
-          const stillPending = res.items.find(
+          stillPending = res.items.find(
             (j) => j.status === "pending" || j.status === "rendering",
-          );
-          setPendingScene(stillPending || null);
+          ) || null;
+          setPendingScene(stillPending);
           setCursor(res.cursor || cursorRef.current);
         }
+        // Poll fast while there's work in flight; otherwise cool off.
+        nextDelay = stillPending ? POLL_INTERVAL_ACTIVE_MS : POLL_INTERVAL_IDLE_MS;
+        failures = 0;
         setPollFailures(0);
       } catch {
+        failures = Math.min(failures + 1, 6);
         setPollFailures((n) => Math.min(n + 1, 99));
+        // Exponential backoff on transient failures: 1.5s → 3s → 6s → 12s → cap.
+        nextDelay = Math.min(POLL_INTERVAL_ACTIVE_MS * 2 ** failures, POLL_INTERVAL_MAX_MS);
       } finally {
-        if (!cancelled) timer = window.setTimeout(tick, POLL_INTERVAL_MS);
+        if (!cancelled) timer = window.setTimeout(tick, nextDelay);
       }
     }
 
-    timer = window.setTimeout(tick, POLL_INTERVAL_MS);
+    timer = window.setTimeout(tick, POLL_INTERVAL_ACTIVE_MS);
     return () => {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
