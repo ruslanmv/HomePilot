@@ -1839,6 +1839,7 @@ function ChatState({
   chatReasoningMode,
   onChatReasoningModeChange,
   showChatReasoningSelector,
+  onEnterExpertMode,
 }: {
   messages: Msg[]
   setLightbox: (url: string) => void
@@ -1863,6 +1864,11 @@ function ChatState({
   chatReasoningMode: ChatReasoningMode
   onChatReasoningModeChange: (mode: ChatReasoningMode) => void
   showChatReasoningSelector: boolean
+  /** Optional shortcut: exits the current (persona) project and lands in a
+   *  fresh Expert chat so the thinking-mode selector becomes visible. Only
+   *  rendered when provided AND the Expert selector isn't already showing —
+   *  e.g. in persona chats and voice mode. */
+  onEnterExpertMode?: () => void
 }) {
   const { copied, copy } = useCopyMessage()
   const displayMessages = useMemo(() => collapseCallTurns(messages), [messages])
@@ -1915,6 +1921,17 @@ function ChatState({
           not a styling of the header. */}
       <div className="fixed top-3 right-5 z-50">
         <div className="relative flex items-center gap-2">
+          {onEnterExpertMode && !showChatReasoningSelector && (
+            <button
+              type="button"
+              onClick={onEnterExpertMode}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-white/5 border border-white/10 text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              title="Expert mode"
+              aria-label="Enter Expert mode"
+            >
+              <Sparkles size={16} />
+            </button>
+          )}
           {onStartCall && (
             <button
               type="button"
@@ -2965,6 +2982,17 @@ export default function App() {
     setPendingFile(null)
     setPendingPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
   }, [])
+
+  // Top-bar shortcut: drop out of the current (persona) project and land in
+  // a blank Expert chat. This is how users reach Expert from a persona or
+  // voice screen where the in-bar selector is (correctly) hidden.
+  const enterExpertMode = useCallback(() => {
+    if (!EXPERT_CHAT_ENABLED) return
+    setCurrentProject(null)
+    setMode('chat')
+    setChatReasoningMode('expert')
+    onNewConversation()
+  }, [onNewConversation])
 
   // Listen to "message finished animating" events from Typewriter
   useEffect(() => {
@@ -5576,6 +5604,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               chatReasoningMode={chatReasoningMode}
               onChatReasoningModeChange={setChatReasoningMode}
               showChatReasoningSelector={showChatReasoningSelector}
+              onEnterExpertMode={enterExpertMode}
             />
           )
         ) : messages.length === 0 && currentProject ? (
@@ -5661,6 +5690,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             chatReasoningMode={chatReasoningMode}
             onChatReasoningModeChange={setChatReasoningMode}
             showChatReasoningSelector={showChatReasoningSelector}
+            onEnterExpertMode={enterExpertMode}
           />
         )}
       </main>
