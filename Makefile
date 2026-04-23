@@ -29,7 +29,7 @@ MCP_EXPERT_CORE_SERVERS := web_search doc_retrieval memory_store safety_policy o
         download-lora \
         download-avatar-models-basic download-avatar-models-full \
         start start-backend start-frontend start-no-agentic start-agentic-servers start-inventory \
-        install-preprod start-preprod test-preprod-expert \
+        install-expert start-expert test-expert \
         install-mcp start-mcp stop-mcp clean-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
@@ -538,17 +538,17 @@ start-frontend: ## Start frontend locally
 	fi
 	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000
 
-install-preprod: ## Install dependencies for isolated preprod sandbox (includes Expert MCP gateway when AGENTIC=1)
+install-expert: ## Install dependencies for the isolated Expert-mode sandbox (includes Expert MCP gateway when AGENTIC=1)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
-	@echo "  Installing HomePilot PREPROD dependencies"
+	@echo "  Installing HomePilot Expert-mode dependencies"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@$(MAKE) install AGENTIC=$(AGENTIC)
 	@if [ "$(AGENTIC)" = "1" ]; then \
 		echo ""; \
-		echo "Ensuring MCP Context Forge is installed for Expert preprod..."; \
-		echo "Expert preprod MCP targets: mcp-web-search, mcp-doc-retrieval, mcp-memory-store, mcp-safety-policy, mcp-observability"; \
+		echo "Ensuring MCP Context Forge is installed for Expert mode..."; \
+		echo "Expert MCP targets (P0 minimum): mcp-web-search, mcp-doc-retrieval, mcp-memory-store, mcp-safety-policy, mcp-observability"; \
 		$(MAKE) install-mcp; \
-		echo "Installing + testing Expert MCP servers..."; \
+		echo "Installing + testing Expert MCP servers (P0 set)..."; \
 		for d in web_search doc_retrieval memory_store safety_policy observability; do \
 			echo "  -> $$d"; \
 			$(MAKE) -C agentic/integrations/mcp/$$d install; \
@@ -556,11 +556,11 @@ install-preprod: ## Install dependencies for isolated preprod sandbox (includes 
 		done; \
 	fi
 
-start-preprod: ## Start isolated PREPROD sandbox (ports 18000/13000/18188) without touching current prod ports
-	@bash scripts/start-preprod.sh
+start-expert: ## Start the isolated Expert-mode sandbox (ports 18000/13000/18188) without touching current prod ports
+	@bash scripts/start-expert.sh
 
-test-preprod-expert: ## Smoke-test Expert endpoints against preprod backend (default http://localhost:18000)
-	@bash scripts/test-expert-preprod.sh
+test-expert: ## Smoke-test Expert endpoints against the Expert-mode backend (default http://localhost:18000)
+	@bash scripts/test-expert.sh
 
 start-comfyui: ## Start ComfyUI locally (auto-detects GPU vs CPU)
 	@bash scripts/start-comfyui.sh

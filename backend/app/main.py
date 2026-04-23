@@ -215,7 +215,7 @@ except Exception as _pc_err:  # noqa: BLE001
 # --- Expert (/v1/expert/*) — ADDITIVE, OPTIONAL -------------------------------
 # Multi-provider Expert reasoning backend. Default ON so the existing frontend
 # selector (chat-only, non-persona, gated by VITE_EXPERT_CHAT_ENABLED) can
-# reach it in both preprod and prod. Set ``EXPERT_ENABLED=false`` to disable.
+# reach it in both the Expert sandbox and prod. Set ``EXPERT_ENABLED=false`` to disable.
 # Loaded via importlib with a unique module name to avoid colliding with the
 # backend's own ``app`` package (the expert module lives at
 # ``expert/backend/app/expert/`` under a namespace-only ``app`` dir). Same

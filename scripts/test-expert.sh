@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PORT="${PREPROD_BACKEND_PORT:-18000}"
+PORT="${EXPERT_MODE_BACKEND_PORT:-18000}"
 BASE="http://localhost:${PORT}"
 
-echo "Checking Expert preprod at ${BASE}"
+echo "Checking Expert at ${BASE}"
 
 INFO_JSON="$(curl -fsS "${BASE}/v1/expert/info")"
 python3 - <<'PY' "$INFO_JSON"
@@ -26,4 +26,4 @@ assert isinstance(j["notices"], list), "notices must be list"
 print("✓ /v1/expert/chat metadata contract OK")
 PY
 
-echo "✅ Expert preprod smoke test passed"
+echo "✅ Expert smoke test passed"

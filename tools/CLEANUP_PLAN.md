@@ -89,6 +89,6 @@ Prevents the duplicates from ever coming back.
 
 ## Out of scope for this cleanup
 
-- **Expert feature rollout** — runs on its own lane (`make start-preprod` → canary → prod). Do not mix with frontend hygiene PRs.
+- **Expert feature rollout** — runs on its own lane (`make start-expert` → canary → prod). Do not mix with frontend hygiene PRs.
 - **CSS / Tailwind pruning** — separate concern.
 - **Bundle size reduction** (code-splitting, `manualChunks`) — performance follow-up, not hygiene.
