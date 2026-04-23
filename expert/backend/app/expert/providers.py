@@ -21,6 +21,50 @@ from .config import (
 _TIMEOUT = httpx.Timeout(timeout=120.0, connect=15.0)
 _STREAM_TIMEOUT = httpx.Timeout(timeout=300.0, connect=15.0)
 
+# If the configured EXPERT_LOCAL_MODEL / EXPERT_LOCAL_FAST_MODEL isn't pulled,
+# fall back to whatever Ollama has locally. Set to "false" to disable and get
+# a hard error instead — useful in production where the deployed model must
+# match exactly.
+_LOCAL_AUTO_FALLBACK = os.getenv("EXPERT_LOCAL_AUTO_FALLBACK", "true").lower() != "false"
+
+
+async def _ollama_pulled_models() -> List[str]:
+    """Return the list of model tags currently pulled in Ollama. Empty on error."""
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:
+            r = await client.get(f"{EXPERT_OLLAMA_URL}/api/tags")
+            r.raise_for_status()
+            data = r.json()
+        return [m.get("name") or m.get("model") for m in data.get("models", []) if isinstance(m, dict)]
+    except Exception:
+        return []
+
+
+async def _resolve_local_model(requested: str) -> str:
+    """Return ``requested`` if Ollama has it pulled, otherwise either fall back
+    to the first available model or raise a clear error describing how to pull
+    it. Behavior controlled by ``EXPERT_LOCAL_AUTO_FALLBACK``."""
+    pulled = await _ollama_pulled_models()
+    if not pulled:
+        raise RuntimeError(
+            f"Ollama at {EXPERT_OLLAMA_URL} has no models pulled. "
+            f"Run `ollama pull {requested}` (or set EXPERT_LOCAL_MODEL / "
+            f"EXPERT_LOCAL_FAST_MODEL to a pulled model) and retry."
+        )
+    if requested in pulled:
+        return requested
+    if not _LOCAL_AUTO_FALLBACK:
+        raise RuntimeError(
+            f"Expert local model '{requested}' is not pulled. "
+            f"Available: {pulled}. Run `ollama pull {requested}` to fix."
+        )
+    # Prefer an exact stem match (handles ':latest' vs ':Q4_K_M' variants).
+    stem = requested.split(":")[0]
+    for m in pulled:
+        if m and m.split(":")[0] == stem:
+            return m
+    return pulled[0]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -260,7 +304,8 @@ async def chat_local(
     max_tokens: int = EXPERT_MAX_TOKENS,
 ) -> Dict[str, Any]:
     """Ollama local inference — zero cost, fully sovereign."""
-    mdl = model or (EXPERT_LOCAL_FAST_MODEL if fast else EXPERT_LOCAL_MODEL)
+    requested = model or (EXPERT_LOCAL_FAST_MODEL if fast else EXPERT_LOCAL_MODEL)
+    mdl = await _resolve_local_model(requested)
     url = f"{EXPERT_OLLAMA_URL}/api/chat"
     payload = {
         "model": mdl,
@@ -273,6 +318,11 @@ async def chat_local(
     }
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         r = await client.post(url, json=payload)
+        if r.status_code == 404:
+            raise RuntimeError(
+                f"Ollama rejected model '{mdl}' with 404. Run "
+                f"`ollama pull {mdl}` and retry (or set EXPERT_LOCAL_MODEL)."
+            )
         r.raise_for_status()
         data = r.json()
 
@@ -289,7 +339,8 @@ async def stream_local(
     max_tokens: int = EXPERT_MAX_TOKENS,
 ) -> AsyncIterator[str]:
     """Stream tokens from Ollama."""
-    mdl = model or (EXPERT_LOCAL_FAST_MODEL if fast else EXPERT_LOCAL_MODEL)
+    requested = model or (EXPERT_LOCAL_FAST_MODEL if fast else EXPERT_LOCAL_MODEL)
+    mdl = await _resolve_local_model(requested)
     url = f"{EXPERT_OLLAMA_URL}/api/chat"
     payload = {
         "model": mdl,
@@ -299,6 +350,11 @@ async def stream_local(
     }
     async with httpx.AsyncClient(timeout=_STREAM_TIMEOUT) as client:
         async with client.stream("POST", url, json=payload) as resp:
+            if resp.status_code == 404:
+                raise RuntimeError(
+                    f"Ollama rejected model '{mdl}' with 404. Run "
+                    f"`ollama pull {mdl}` and retry (or set EXPERT_LOCAL_MODEL)."
+                )
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line.strip():
