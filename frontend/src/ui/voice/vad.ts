@@ -72,6 +72,13 @@ export function createVAD(
   let src: MediaStreamAudioSourceNode | null = null;
   let stream: MediaStream | null = null;
   let raf = 0;
+  // Serialize start/stop so a rapid stop→start cycle (e.g. the controller
+  // effect re-running because ``cfg.vadConfig`` changed reference on every
+  // render) doesn't create a new AudioContext that races the previous
+  // ``getUserMedia`` awaiter. Callers that care about ordering can await
+  // ``start()``; ``stop()`` awaits any in-flight start before tearing
+  // down so the old context never races the new one.
+  let startInFlight: Promise<void> | null = null;
 
   // State tracking
   let state: VADState = 'idle';
@@ -227,53 +234,69 @@ export function createVAD(
 
   async function start(): Promise<void> {
     if (running) return;
+    // If a previous start() is still awaiting getUserMedia, reuse its
+    // promise instead of spawning a second AudioContext that would race
+    // it. The original "Context closed during startup, aborting" guard
+    // below still catches the case where stop() ran during that await.
+    if (startInFlight) return startInFlight;
 
-    try {
-      // Create audio context
-      ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      analyser = ctx.createAnalyser();
-      analyser.fftSize = 1024;
-      analyser.smoothingTimeConstant = 0.3;
+    const run = async (): Promise<void> => {
+      try {
+        // Create audio context
+        ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.3;
 
-      // Request microphone with echo cancellation, noise suppression, and auto gain
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+        // Request microphone with echo cancellation, noise suppression, and auto gain
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }
+        });
+
+        // Guard: If stop() was called during async getUserMedia, abort gracefully.
+        // Covers React StrictMode double-mount AND the useVoiceController
+        // effect re-running because vadConfig changed reference.
+        if (!ctx || ctx.state === 'closed') {
+          console.log('[VAD] Context closed during startup, aborting');
+          if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+            stream = null;
+          }
+          return;
         }
-      });
 
-      // Guard: If stop() was called during async getUserMedia, abort gracefully
-      // This handles React StrictMode double-mount race condition
-      if (!ctx || ctx.state === 'closed') {
-        console.log('[VAD] Context closed during startup, aborting');
-        if (stream) {
-          stream.getTracks().forEach(t => t.stop());
-        }
-        return;
+        src = ctx.createMediaStreamSource(stream);
+        src.connect(analyser);
+
+        // Reset state
+        running = true;
+        paused = false;
+        state = 'idle';
+        currentLevel = 0;
+        smoothedLevel = 0;
+        noiseFloor = cfg.noiseFloorMin;
+        calibrationSamples = [];
+        isCalibrating = true;
+
+        console.log('[VAD] Started with AEC/NS/AGC enabled');
+
+        // Start detection loop
+        raf = requestAnimationFrame(tick);
+      } catch (err) {
+        console.error('[VAD] Failed to start:', err);
+        throw err;
       }
+    };
 
-      src = ctx.createMediaStreamSource(stream);
-      src.connect(analyser);
-
-      // Reset state
-      running = true;
-      paused = false;
-      state = 'idle';
-      currentLevel = 0;
-      smoothedLevel = 0;
-      noiseFloor = cfg.noiseFloorMin;
-      calibrationSamples = [];
-      isCalibrating = true;
-
-      console.log('[VAD] Started with AEC/NS/AGC enabled');
-
-      // Start detection loop
-      raf = requestAnimationFrame(tick);
-    } catch (err) {
-      console.error('[VAD] Failed to start:', err);
-      throw err;
+    startInFlight = run();
+    try {
+      await startInFlight;
+    } finally {
+      startInFlight = null;
     }
   }
 

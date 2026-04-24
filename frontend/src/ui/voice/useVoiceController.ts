@@ -529,7 +529,14 @@ export function useVoiceController(
         vadRef.current = null;
       }
     };
-  }, [isHandsFree, svc, sttSupported, cfg.vadConfig, cfg.bargeInEnabled]);
+    // Stringify vadConfig in the dep array so a fresh-object-but-same-values
+    // re-render (common when the parent passes an inline config literal) no
+    // longer re-runs the effect, which used to tear down and rebuild the VAD
+    // on every render — that's what produced the "[VAD] Stopped / Context
+    // closed during startup, aborting / [VAD] Started" cascade in the
+    // console when the user was already speaking and opened a new session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHandsFree, svc, sttSupported, JSON.stringify(cfg.vadConfig), cfg.bargeInEnabled]);
 
   // Update audio levels for visualization
   useEffect(() => {
