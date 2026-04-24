@@ -55,7 +55,13 @@ EXPERT_SYSTEM_PROMPT: str = os.getenv(
 EXPERT_STREAM_CHUNK_SIZE: int = int(os.getenv("EXPERT_STREAM_CHUNK_SIZE", "64"))
 EXPERT_MAX_TOKENS: int = int(os.getenv("EXPERT_MAX_TOKENS", "2048"))
 EXPERT_TEMPERATURE: float = float(os.getenv("EXPERT_TEMPERATURE", "0.7"))
-EXPERT_PROVIDER_TIMEOUT_S: float = float(os.getenv("EXPERT_PROVIDER_TIMEOUT_S", "45"))
+# 120s accommodates CPU-only Ollama setups with mid-size thinking models
+# (e.g. deepseek-r1 / phi4) where a single analysis pass can easily exceed
+# 45s. Think mode chains three such calls, so keeping the per-call timeout
+# tight caused ``[expert chat] TimeoutError → 502`` on local dev boxes even
+# when the model was making progress. Override via env for prod deploys
+# where faster providers enforce a shorter SLA.
+EXPERT_PROVIDER_TIMEOUT_S: float = float(os.getenv("EXPERT_PROVIDER_TIMEOUT_S", "120"))
 
 
 def available_expert_providers() -> list[str]:

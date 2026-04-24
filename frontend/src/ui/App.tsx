@@ -3081,6 +3081,26 @@ export default function App() {
     setPendingPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
   }, [])
 
+  // Wrapper around setChatReasoningMode that handles the persona→Expert
+  // transition: picking Fast / Expert / Heavy while inside a persona
+  // project must exit the project and open a fresh chat because the two
+  // backends are completely separate (persona-legacy vs /v1/expert/chat)
+  // and carrying persona context over produced 502s + character bleed.
+  const handleChatReasoningModeChange = useCallback(
+    (next: ChatReasoningMode) => {
+      const leavingPersonaForExpert =
+        next !== 'persona' &&
+        currentProject?.project_type === 'persona'
+      if (leavingPersonaForExpert) {
+        setCurrentProject(null)
+        localStorage.removeItem('homepilot_current_project')
+        onNewConversation()
+      }
+      setChatReasoningMode(next)
+    },
+    [currentProject?.project_type, onNewConversation],
+  )
+
   // Listen to "message finished animating" events from Typewriter
   useEffect(() => {
     const handler = (e: Event) => {
@@ -5674,7 +5694,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               pendingPreviewUrl={pendingPreviewUrl}
               onRemoveAttachment={clearPendingFile}
               chatReasoningMode={chatReasoningMode}
-              onChatReasoningModeChange={setChatReasoningMode}
+              onChatReasoningModeChange={handleChatReasoningModeChange}
               showChatReasoningSelector={showChatReasoningSelector}
             />
           ) : (
@@ -5698,7 +5718,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
               onRemoveAttachment={clearPendingFile}
               backendUrl={settings.backendUrl}
               chatReasoningMode={chatReasoningMode}
-              onChatReasoningModeChange={setChatReasoningMode}
+              onChatReasoningModeChange={handleChatReasoningModeChange}
               showChatReasoningSelector={showChatReasoningSelector}
             />
           )
@@ -5746,7 +5766,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
                     : undefined
                 }
                 chatReasoningMode={chatReasoningMode}
-                onChatReasoningModeChange={setChatReasoningMode}
+                onChatReasoningModeChange={handleChatReasoningModeChange}
                 showChatReasoningSelector={showChatReasoningSelector}
               />
             </div>
@@ -5763,7 +5783,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             pendingPreviewUrl={pendingPreviewUrl}
             onRemoveAttachment={clearPendingFile}
             chatReasoningMode={chatReasoningMode}
-            onChatReasoningModeChange={setChatReasoningMode}
+            onChatReasoningModeChange={handleChatReasoningModeChange}
             showChatReasoningSelector={showChatReasoningSelector}
           />
         ) : (
@@ -5787,7 +5807,7 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
             onRemoveAttachment={clearPendingFile}
             backendUrl={settings.backendUrl}
             chatReasoningMode={chatReasoningMode}
-            onChatReasoningModeChange={setChatReasoningMode}
+            onChatReasoningModeChange={handleChatReasoningModeChange}
             showChatReasoningSelector={showChatReasoningSelector}
           />
         )}
