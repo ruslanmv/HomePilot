@@ -373,7 +373,12 @@ def _media_kind_from_url(url: str) -> str:
     u = (url or "").lower()
     if any(u.endswith(ext) or f"{ext}?" in u for ext in (".mp4", ".webm", ".mov", ".mkv", ".m4v")):
         return "video"
-    if any(u.endswith(ext) or f"{ext}?" in u for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif")):
+    # AVIF added 2026-04 — some ComfyUI pipelines (and any browser-side
+    # re-encode path) emit .avif scene assets. Without listing it here,
+    # the initial-scene payload dropped to media_kind="unknown" and the
+    # Standard player fell through to "Scene not available yet." instead
+    # of rendering the image.
+    if any(u.endswith(ext) or f"{ext}?" in u for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif")):
         return "image"
     return "unknown"
 

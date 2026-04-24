@@ -65,7 +65,10 @@ export function StandardPlayer({
 
   const url = scene?.status === "ready" ? (scene.asset_url || "") : "";
   const mediaHint = String(scene?.media_kind || "").toLowerCase();
-  const isImage = (mediaHint === "image") || (url && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(url));
+  // ``avif`` added alongside backend _media_kind_from_url — some ComfyUI
+  // pipelines emit AVIF for scene assets and without it here the stage
+  // fell through to "Scene not available yet."
+  const isImage = (mediaHint === "image") || (url && /\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url));
   const isVideo = url && /\.(mp4|webm|mov|mkv|m4v)(\?|$)/i.test(url);
   const defaultDuration = Math.max(1, Number(scene?.duration_sec || 5));
 
