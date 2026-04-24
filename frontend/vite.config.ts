@@ -42,6 +42,16 @@ const API_PREFIXES = [
 
 export default defineConfig({
   plugins: [react()],
+  // Vite's default resolve.extensions puts .jsx BEFORE .tsx, so a bare
+  // import like ``./ui/App`` (from main.tsx) silently picks the stale
+  // App.jsx mirror over the canonical App.tsx. That's how the Expert
+  // selector pill went missing on fresh builds — every edit landed in
+  // .tsx but Vite was bundling the .jsx shadow. Flip the order until
+  // the cleanup plan finishes removing the duplicate source tree. Once
+  // the mirrors are gone this override becomes a no-op.
+  resolve: {
+    extensions: ['.tsx', '.ts', '.mts', '.jsx', '.js', '.mjs', '.json'],
+  },
   server: {
     port: 3000,
     host: true,
