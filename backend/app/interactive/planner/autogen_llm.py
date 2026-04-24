@@ -132,7 +132,16 @@ async def generate_graph(
 ) -> GraphPlan:
     """Produce a full GraphPlan for this experience. Never raises.
 
-    Three paths, tried in order:
+    Persona Live Play gets its own purpose-built graph (intent → reaction
+    → followup) — the runtime doesn't traverse the scene tree (actions
+    come from _INTENT_CATALOG), but publish / QA still require at least
+    one entry scene. The scene-spine LLM path was producing invalid
+    graphs for persona_live projects ("next=None"), aborting 3x, then
+    falling back to the Standard Interactive topology (entry → decision
+    → branches → ending) which produced the "Continue / Ask for a hint"
+    catalog and the user-reported "only 1 ending node" skeleton.
+
+    Three paths, tried in order for non-persona_live projects:
 
       1. Two-prompt workflow (REV-4) — opt-in via
          ``INTERACTIVE_AUTOGEN_WORKFLOW=true``. Spine call +
@@ -142,6 +151,14 @@ async def generate_graph(
       3. Heuristic fallback — deterministic seeder that always
          produces a usable graph.
     """
+    # Persona Live Play short-circuit. Deterministic, no LLM round-trip,
+    # always valid — the user picked a persona, the wizard already has
+    # the intent-driven action catalog wired; a pre-baked graph just
+    # satisfies the QA entry-scene check and gives Publish something
+    # real to ship.
+    if str(getattr(experience, "project_type", "") or "").strip().lower() == "persona_live":
+        return _persona_live_graph(experience)
+
     from .autogen_workflow import (
         run_autogen_workflow, workflow_enabled,
     )
@@ -171,6 +188,167 @@ async def generate_graph(
         if llm_plan is not None:
             return llm_plan
     return _heuristic_graph(experience, cfg)
+
+
+# ── Persona Live Play path ─────────────────────────────────────
+
+# Level-1 player intents this graph keys off — matches the
+# ``_INTENT_CATALOG`` level-1 row in ``routes/persona_live.py`` so the
+# scene graph, the Live Action panel, and the renderer all agree on the
+# same four opening beats. Keeping the list short is deliberate: scenes
+# are publish-metadata placeholders that the runtime doesn't traverse,
+# they just have to exist and be internally consistent for QA.
+_PERSONA_LIVE_LEVEL_1_INTENTS: tuple[tuple[str, str, str, str], ...] = (
+    # (intent_id, reaction_label, scene_title, one-line narration)
+    (
+        "say_playful",
+        "playful smirk",
+        "Playful smirk",
+        "{name} catches your teasing, tilts her head, and gives you a slow smirk.",
+    ),
+    (
+        "compliment",
+        "soft blush",
+        "Soft blush",
+        "{name} glances down, a little caught off guard by the compliment, then meets your eyes again.",
+    ),
+    (
+        "ask_about_her",
+        "warm smile",
+        "Warm smile",
+        "{name} settles in, relaxes her shoulders, and starts telling you about her day.",
+    ),
+    (
+        "stay_quiet",
+        "quiet anticipation",
+        "Quiet anticipation",
+        "{name} holds the silence comfortably, eyes on you, inviting you to make the next move.",
+    ),
+)
+
+
+def _persona_live_graph(experience: Experience) -> GraphPlan:
+    """Deterministic Persona Live scene graph.
+
+    Shape (satisfies publish / QA without pretending to be a tree):
+
+        lina_intro_start  (scene, entry)
+              ├── choice:say_playful     → lina_reaction_say_playful      (scene)
+              ├── choice:compliment      → lina_reaction_compliment       (scene)
+              ├── choice:ask_about_her   → lina_reaction_ask_about_her    (scene)
+              └── choice:stay_quiet      → lina_reaction_stay_quiet       (scene)
+        every reaction   (auto)           → lina_followup                 (scene)
+        lina_followup    (auto)           → lina_epilogue                 (ending)
+
+    Each reaction scene carries a narration that shows what Lina DOES in
+    response to the player's intent (smirk / blush / warm smile / held
+    silence) — the authoring UI now shows a meaningful spine the
+    operator can edit, and the runtime's intent-driven Live Action panel
+    stays the actual source of truth for play.
+    """
+    persona_name = _persona_label_from_experience(experience) or "Lina"
+
+    intro = NodeSpec(
+        local_id="lina_intro_start",
+        kind="scene",
+        title=f"First moment with {persona_name}",
+        narration=(
+            f"{persona_name} notices you. She holds your gaze for a beat, "
+            "then lets the corner of her mouth lift. "
+            "'Hey… you made it. What's on your mind?'"
+        ),
+        is_entry=True,
+    )
+    followup = NodeSpec(
+        local_id="lina_followup",
+        kind="scene",
+        title="Keep the moment going",
+        narration=(
+            f"{persona_name} stays engaged, leaning into the connection. "
+            "The pull between you is easy now — ready for whatever you bring next."
+        ),
+    )
+    epilogue = NodeSpec(
+        local_id="lina_epilogue",
+        kind="ending",
+        title="Until next time",
+        narration=(
+            f"{persona_name} gives you a soft look. 'Come find me again soon.' "
+            "The scene fades on her smile."
+        ),
+    )
+
+    nodes: List[NodeSpec] = [intro]
+    edges: List[EdgeSpec] = []
+    for ordinal, (intent_id, reaction_label, scene_title, narration_tpl) in enumerate(
+        _PERSONA_LIVE_LEVEL_1_INTENTS
+    ):
+        reaction_id = f"lina_reaction_{intent_id}"
+        nodes.append(NodeSpec(
+            local_id=reaction_id,
+            kind="scene",
+            title=scene_title,
+            narration=narration_tpl.format(name=persona_name),
+        ))
+        # Choice edge from the intro to this reaction — label is the
+        # player intent so the Editor / Graph view reads cleanly.
+        edges.append(EdgeSpec(
+            from_local_id=intro.local_id,
+            to_local_id=reaction_id,
+            trigger_kind="choice",
+            label=intent_id,
+            ordinal=ordinal,
+        ))
+        # Each reaction flows into the shared follow-up scene.
+        edges.append(EdgeSpec(
+            from_local_id=reaction_id,
+            to_local_id=followup.local_id,
+            trigger_kind="auto",
+            label="continue",
+        ))
+
+    nodes.append(followup)
+    nodes.append(epilogue)
+    edges.append(EdgeSpec(
+        from_local_id=followup.local_id,
+        to_local_id=epilogue.local_id,
+        trigger_kind="auto",
+        label="epilogue",
+    ))
+
+    # Action catalog — intent-driven, mirrors ``_INTENT_CATALOG`` level 1
+    # in ``routes/persona_live.py``. This is what replaces the generic
+    # "Continue / Ask for a hint" default the user complained about.
+    actions: List[ActionSpec] = [
+        ActionSpec(label="Say something playful",  intent_code="say_playful",   xp_award=5),
+        ActionSpec(label="Compliment her",          intent_code="compliment",    xp_award=5),
+        ActionSpec(label="Ask about her day",       intent_code="ask_about_her", xp_award=5),
+        ActionSpec(label="Stay quiet and listen",   intent_code="stay_quiet",    xp_award=3),
+    ]
+
+    return GraphPlan(
+        nodes=nodes,
+        edges=edges,
+        actions=actions,
+        source="persona_live",
+    )
+
+
+def _persona_label_from_experience(experience: Experience) -> str:
+    """Best-effort persona label lookup for narration templates.
+
+    Priority:
+      1. audience_profile.persona_label  (wizard stamps this)
+      2. audience_profile.persona_name   (legacy)
+      3. experience.title (last-resort; typically "sexy girl" etc.)
+    """
+    ap = getattr(experience, "audience_profile", None) or {}
+    if isinstance(ap, dict):
+        for key in ("persona_label", "persona_name"):
+            val = str(ap.get(key) or "").strip()
+            if val:
+                return val
+    return str(getattr(experience, "title", "") or "").strip()
 
 
 # ── Heuristic path ─────────────────────────────────────────────

@@ -291,7 +291,7 @@ async def _run_auto_generate(
 
     actions = list(plan.actions)
     if not actions:
-        actions = list(_default_actions())
+        actions = list(_default_actions(exp))
     on_event("persisting_actions", {"count": len(actions)})
     _persist_actions(exp.id, actions)
 
@@ -384,8 +384,27 @@ def _sse_frame(obj: Dict[str, Any]) -> str:
     return f"data: {json.dumps(obj, separators=(',', ':'))}\n\n"
 
 
-def _default_actions() -> List[ActionSpec]:
-    """Minimal action set so every generated project can be played."""
+def _default_actions(experience: Optional[Experience] = None) -> List[ActionSpec]:
+    """Minimal action set so every generated project can be played.
+
+    Persona Live Play gets the intent-driven Level-1 catalog so a
+    fall-through (e.g. plan.actions came back empty) doesn't saddle
+    the panel with "Continue / Ask for a hint" — those actions don't
+    have a reaction mapping in ``_INTENT_CATALOG`` and the Live Action
+    panel would render them as dead buttons.
+    """
+    project_type = ""
+    if experience is not None:
+        project_type = str(getattr(experience, "project_type", "") or "").strip().lower()
+
+    if project_type == "persona_live":
+        return [
+            ActionSpec(label="Say something playful",  intent_code="say_playful",   xp_award=5),
+            ActionSpec(label="Compliment her",          intent_code="compliment",    xp_award=5),
+            ActionSpec(label="Ask about her day",       intent_code="ask_about_her", xp_award=5),
+            ActionSpec(label="Stay quiet and listen",   intent_code="stay_quiet",    xp_award=3),
+        ]
+
     return [
         ActionSpec(label="Continue", intent_code="continue", xp_award=5),
         ActionSpec(label="Ask for a hint", intent_code="request_hint", xp_award=3),
