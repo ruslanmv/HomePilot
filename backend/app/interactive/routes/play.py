@@ -38,6 +38,7 @@ from ..config import InteractiveConfig
 from ..errors import InvalidInputError, NotFoundError
 from ..interaction.router import ActionPayload, resolve_next
 from ..interaction.state import build_runtime_state
+from ..models import NodeUpdate
 from ..playback import resolve_asset_url
 from ..playback.persona_assets import resolve_persona_assets
 from ..progression import describe_level, is_action_unlocked
@@ -81,7 +82,7 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
     router = APIRouter(tags=["interactive-play"])
 
     @router.post("/play/sessions")
-    def start_session_(
+    async def start_session_(
         req: SessionStartRequest, _user: str = Depends(current_user),
     ) -> Dict[str, Any]:
         exp = repo.get_experience(req.experience_id)
@@ -102,6 +103,18 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
         if entry:
             repo.set_session_current_node(sess.id, entry.id)
             sess = repo.get_session(sess.id)
+            # Lazy entry-scene render: when generate-all hasn't (yet)
+            # populated the entry node's asset_ids — most often because
+            # the operator clicked Play before the wizard's render pass
+            # completed, or because ComfyUI was unreachable when it ran
+            # — try once inline. Failure is non-fatal: we fall through
+            # to the "pending" payload below so the player at least
+            # shows "Generating scene…" with a reason in the logs
+            # instead of "Scene not available yet."
+            if not list(getattr(entry, "asset_ids", []) or []):
+                refreshed = await _try_render_entry_scene(exp, entry, sess.id)
+                if refreshed is not None:
+                    entry = refreshed
             initial_scene = _build_initial_scene(entry)
 
         repo.append_event(sess.id, "session_started")
@@ -326,28 +339,106 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
 
 
 def _build_initial_scene(entry_node: Any) -> Optional[Dict[str, Any]]:
-    asset_ids = list(getattr(entry_node, "asset_ids", []) or [])
-    if not asset_ids:
-        return None
+    """Translate the entry node into the shape the player expects.
 
-    asset_id = str(asset_ids[0] or "").strip()
-    if not asset_id:
-        return None
-
-    asset_url = _resolve_scene_asset_url(asset_id)
-    media_kind = _media_kind_from_url(asset_url)
+    Returns a ``status: "pending"`` stub instead of ``None`` when the
+    node has no resolved asset yet — the player branches on this
+    status to show "Generating scene…" rather than the dead-end
+    "Scene not available yet." message that older builds emitted.
+    The pending payload keeps the node id and title so the player
+    can re-fetch the session later (page refresh / Play again) and
+    pick up the rendered asset once the background pass completes.
+    """
+    node_id = str(getattr(entry_node, "id", "") or "")
+    title = str(getattr(entry_node, "title", "") or "")
     duration = int(getattr(entry_node, "duration_sec", 0) or 0)
     if duration <= 0:
         duration = 5
 
+    asset_ids = list(getattr(entry_node, "asset_ids", []) or [])
+    asset_id = str(asset_ids[0] or "").strip() if asset_ids else ""
+    asset_url = _resolve_scene_asset_url(asset_id) if asset_id else ""
+
+    if not asset_id or not asset_url:
+        return {
+            "node_id": node_id,
+            "title": title,
+            "duration_sec": duration,
+            "asset_id": "",
+            "asset_url": "",
+            "media_kind": "",
+            "status": "pending",
+        }
+
     return {
-        "node_id": str(getattr(entry_node, "id", "") or ""),
+        "node_id": node_id,
         "asset_id": asset_id,
         "asset_url": asset_url,
-        "media_kind": media_kind,
+        "media_kind": _media_kind_from_url(asset_url),
         "duration_sec": duration,
-        "title": str(getattr(entry_node, "title", "") or ""),
+        "title": title,
+        "status": "ready",
     }
+
+
+async def _try_render_entry_scene(
+    exp: Any, entry_node: Any, session_id: str,
+) -> Optional[Any]:
+    """Best-effort inline render of the entry scene.
+
+    Re-uses the same adapter the wizard's generate-all pass calls, so
+    the workflow + variables + asset registration stay identical (no
+    new render path to maintain). Returns the refreshed node row on
+    success, ``None`` on any failure / when the playback config has
+    rendering disabled — callers fall through to the pending payload
+    in that case.
+
+    Bounded to ``cfg.render_timeout_s`` (already enforced inside the
+    adapter), so a misconfigured ComfyUI never wedges /play/sessions.
+    """
+    from ..playback.render_adapter import render_scene_async  # late import — heavy
+    from ..playback.playback_config import load_playback_config
+
+    cfg = load_playback_config()
+    if not getattr(cfg, "render_enabled", False):
+        # Render is gated off — nothing to do here. The player will
+        # show "Generating scene…" but the operator needs to flip
+        # the flag (or run generate-all manually) for it to fill.
+        return None
+
+    scene_prompt = (
+        str(getattr(entry_node, "narration", "") or "").strip()
+        or str(getattr(entry_node, "title", "") or "").strip()
+        or "Scene"
+    )
+    media_type = "image"
+    ap = getattr(exp, "audience_profile", None) or {}
+    if isinstance(ap, dict):
+        raw_media = str(ap.get("render_media_type") or "").strip().lower()
+        if raw_media in ("image", "video"):
+            media_type = raw_media
+    persona_hint = str(getattr(exp, "description", "") or "").strip()
+
+    try:
+        asset_id = await render_scene_async(
+            scene_prompt=scene_prompt,
+            duration_sec=int(getattr(entry_node, "duration_sec", 0) or 0) or 5,
+            session_id=f"play_entry_{session_id}",
+            persona_hint=persona_hint,
+            media_type=media_type,
+        )
+    except Exception:  # noqa: BLE001 — adapter failures are non-fatal
+        return None
+    if not asset_id:
+        return None
+
+    try:
+        repo.update_node(entry_node.id, NodeUpdate(asset_ids=[asset_id]))
+    except Exception:  # noqa: BLE001 — registration succeeded; player
+        # will still load this asset by id even if the patch failed.
+        return None
+
+    return repo.get_node(entry_node.id)
 
 
 def _persisted_persona_image_urls(exp: Any) -> Tuple[str, str]:
