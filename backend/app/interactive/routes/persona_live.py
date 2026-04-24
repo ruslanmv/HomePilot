@@ -660,7 +660,7 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
             str(persona.get("archetype") or "").strip(),
         ]).strip(", ")
 
-        async def _render_one(spec: pal.AssetSpec) -> str:
+        async def _render_one(spec: pal.AssetSpec) -> Optional["pal.RenderResult"]:
             """Build a per-spec edit recipe + submit to the renderer."""
             # composition routes to avatar_expression_change because
             # edit_inpaint_cn needs a face mask + ControlNet input we
@@ -695,10 +695,13 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
                     "persona_library_render_error asset=%s: %s",
                     spec.asset_id, str(exc)[:200],
                 )
-                return ""
+                return None
             if not asset_id:
-                return ""
-            return str(resolve_asset_url(asset_id) or "")
+                return None
+            url = str(resolve_asset_url(asset_id) or "")
+            if not url:
+                return None
+            return pal.RenderResult(asset_id=asset_id, url=url)
 
         stats = await pal.build_library(
             persona_id,

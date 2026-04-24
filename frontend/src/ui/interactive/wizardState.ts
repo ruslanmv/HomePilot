@@ -46,6 +46,19 @@ export interface WizardForm {
 
   // Step 3
   policy_profile_id: string;
+
+  /** Override LLM model id used by the storyteller (scene graph
+   *  generation + persona_live runtime). Empty string means
+   *  "use the server default". Surfaced in the wizard only when
+   *  ``experience_mode === "mature_gated"`` because the default
+   *  Llama 3 / Llama 3.2 models refuse explicit content with
+   *  "I cannot create content that describes explicit sexual
+   *  situations." Operators can pick from the abliterated /
+   *  uncensored models they already installed (see Models tab —
+   *  rows tagged "🌶️ Adult" / "🔥 NSFW Pick"). The backend
+   *  reads ``audience_profile.adult_llm`` at every LLM call site
+   *  for the experience. */
+  adult_llm: string;
 }
 
 export const DEFAULT_WIZARD_FORM: WizardForm = {
@@ -64,6 +77,7 @@ export const DEFAULT_WIZARD_FORM: WizardForm = {
   depth: 3,
   scenes_per_branch: 3,
   policy_profile_id: "sfw_general",
+  adult_llm: "",
 };
 
 export function toCreatePayload(f: WizardForm) {
@@ -82,6 +96,13 @@ export function toCreatePayload(f: WizardForm) {
       persona_project_id: f.persona_project_id || undefined,
       persona_label: f.persona_label || undefined,
       render_media_type: f.render_media_type,
+      // Stored only for mature_gated experiences. Empty string is
+      // wire-equivalent to "use the server default" — backend treats
+      // both as fall-through to the configured Ollama model.
+      adult_llm:
+        f.experience_mode === "mature_gated" && f.adult_llm
+          ? f.adult_llm
+          : undefined,
     },
   };
 }

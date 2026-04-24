@@ -89,12 +89,32 @@ class AssetSpec:
 
 @dataclass(frozen=True)
 class AssetRecord:
-    """One row persisted under ``persona_appearance.asset_library``."""
+    """One row persisted under ``persona_appearance.asset_library``.
+
+    ``asset_id`` is the SPEC id from the manifest (``"expr_blush"``,
+    ``"idle_neutral"``, …) — it's how the dict is keyed, used by the
+    runtime-lookup helpers to find a row by intent.
+
+    ``registry_asset_id`` is the asset registry's id (e.g.
+    ``"a_f3dbc3ea0ca345d3966c"``) returned by ``register_asset``.
+    This is the id the **editor preview** + the **Phase-4 scene link**
+    pass to ``/v1/interactive/assets/{id}/url``. Storing it here means
+    we can attach the registry id to a scene's ``asset_ids`` list
+    instead of the raw ComfyUI ``http://...`` URL — the editor's
+    resolve endpoint expects a registry id, and giving it a URL gets
+    silently 404'd because URL chars confuse the path parser.
+
+    ``asset_url`` is a denormalised copy of the URL the registry
+    resolves the id to. Useful for the runtime fast-path lookup that
+    avoids the registry hop, and as a fallback when the registry row
+    is gone but the URL is still reachable.
+    """
     asset_id: str
     asset_url: str
     kind: AssetKind
     tier: Tier
     reaction_intent: str
+    registry_asset_id: str = ""
     generated_at: float = 0.0
     source: str = ""  # "library_build" | "live_render_promoted"
 
@@ -465,6 +485,7 @@ def save_asset_record(
         "kind": record.kind,
         "tier": record.tier,
         "reaction_intent": record.reaction_intent,
+        "registry_asset_id": record.registry_asset_id,
         "generated_at": record.generated_at,
         "source": record.source,
     }
@@ -532,11 +553,29 @@ def lookup_enabled() -> bool:
     return os.getenv(_LIBRARY_LOOKUP_ENABLED_ENV, "false").lower() == "true"
 
 
-RenderFn = Callable[[AssetSpec], Awaitable[Optional[str]]]
-"""Callback signature: given an AssetSpec, submit a render, return the
-asset id (or an empty string / None on failure). Separating the callback
-from the planner keeps this module decoupled from render_adapter, which
-keeps the tests fast (mock the callback, assert the planner + storage
+@dataclass(frozen=True)
+class RenderResult:
+    """Outcome of rendering one asset spec.
+
+    Returned by the ``RenderFn`` callback the caller hands to
+    ``build_library``. Carries both the registry id and the URL so
+    we can persist both — the registry id powers the editor preview
+    + Phase-4 scene-link path; the URL powers the runtime fast-path
+    lookup. ``url=""`` is the failure sentinel (treat as no asset).
+    """
+    asset_id: str
+    url: str
+
+
+RenderFn = Callable[[AssetSpec], Awaitable[Optional["RenderResult"]]]
+"""Callback signature: given an AssetSpec, submit a render, return a
+``RenderResult`` (or empty / ``None`` on failure). For backwards
+compatibility ``build_library`` also accepts callbacks that return
+plain strings (treated as a URL with no registry id), but new code
+should return RenderResult so the editor preview path keeps working.
+Separating the callback from the planner keeps this module decoupled
+from render_adapter, which keeps the tests fast (mock the callback,
+assert the planner + storage
 behaviour without spinning up ComfyUI)."""
 
 
@@ -599,7 +638,7 @@ async def build_library(
             })
 
         try:
-            asset_url = await render_fn(spec)
+            rendered = await render_fn(spec)
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "persona_library_render_error asset=%s: %s",
@@ -616,6 +655,16 @@ async def build_library(
                     "reason": stats.failures[-1]["reason"],
                 })
             continue
+
+        # Backwards-compat shim: callbacks may still return a bare URL
+        # string. New callers return ``RenderResult`` so we can persist
+        # both the registry asset_id and the URL.
+        if isinstance(rendered, RenderResult):
+            registry_asset_id = rendered.asset_id
+            asset_url = rendered.url
+        else:
+            registry_asset_id = ""
+            asset_url = str(rendered or "")
 
         if not asset_url:
             stats.failed += 1
@@ -636,6 +685,7 @@ async def build_library(
             kind=spec.kind,
             tier=spec.tier,
             reaction_intent=spec.reaction_intent,
+            registry_asset_id=registry_asset_id,
             generated_at=time.time(),
             source="library_build",
         )

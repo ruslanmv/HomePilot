@@ -377,3 +377,64 @@ async def test_link_phase_emits_scene_linked_events(monkeypatch):
     linked_events = [e for e in events if e["event"] == "scene_linked"]
     assert len(linked_events) == 1
     assert linked_events[0]["payload"]["asset_url"] == "/files/smirk.png"
+
+
+# ── Phase 4: prefer the registry asset_id, not the URL ─────────────────
+
+@pytest.mark.asyncio
+async def test_link_phase_prefers_registry_asset_id_over_url(monkeypatch):
+    """The editor preview hits ``GET /assets/{asset_id}/url`` which
+    expects a registry id (``a_xxx``), not a raw ComfyUI URL. Phase 4
+    used to write ``asset_url`` directly into ``node.asset_ids[0]``,
+    which the editor then URL-encoded into the resolve path and
+    silently 404'd.
+
+    This test pins the fix: when the library row has a
+    ``registry_asset_id`` field (populated by the wizard's render
+    callback), Phase 4 writes THAT to the scene's ``asset_ids``.
+    """
+    monkeypatch.setattr(pal, "load_library", lambda pid: {
+        "expr_smirk": {
+            "asset_url":         "http://localhost:8188/view?filename=expression_00013_.png",
+            "registry_asset_id": "a_f3dbc3ea0ca345d3966c",
+        },
+    })
+
+    nodes = [_MockNode("n_smirk", "Playful smirk")]
+    patches: List[Dict[str, Any]] = []
+    _patch_repo_for_linking(monkeypatch, nodes, patches)
+
+    await generator_auto._link_persona_library_assets(
+        _fake_experience(),
+        {"ok": True, "persona_project_id": "persona_lina"},
+        on_event=lambda k, p: None,
+    )
+
+    assert len(patches) == 1
+    assert patches[0]["asset_ids"] == ["a_f3dbc3ea0ca345d3966c"]
+    assert "view?filename" not in patches[0]["asset_ids"][0]
+
+
+@pytest.mark.asyncio
+async def test_link_phase_falls_back_to_url_when_registry_id_missing(monkeypatch):
+    """Older library rows (before registry_asset_id existed) only
+    have asset_url. Phase 4 should still link them so existing
+    deployments don't lose their pre-rendered scenes."""
+    monkeypatch.setattr(pal, "load_library", lambda pid: {
+        "expr_smirk": {
+            "asset_url": "/files/legacy_smirk.png",
+            # no registry_asset_id field at all
+        },
+    })
+
+    nodes = [_MockNode("n_smirk", "Playful smirk")]
+    patches: List[Dict[str, Any]] = []
+    _patch_repo_for_linking(monkeypatch, nodes, patches)
+
+    await generator_auto._link_persona_library_assets(
+        _fake_experience(),
+        {"ok": True, "persona_project_id": "persona_lina"},
+        on_event=lambda k, p: None,
+    )
+
+    assert patches[0]["asset_ids"] == ["/files/legacy_smirk.png"]

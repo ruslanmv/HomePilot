@@ -325,6 +325,23 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
           })}
         </div>
       </FieldLabel>
+
+      {/*
+       * Storyteller LLM picker — only visible in Mature (gated) mode.
+       * The default Llama 3 / 3.2 models refuse explicit content
+       * with "I cannot create content that describes explicit
+       * sexual situations." Operators who picked Mature need to
+       * point this experience at one of the abliterated /
+       * uncensored Ollama models the Models tab lists. Empty
+       * selection = use the server default (the toggle just lets
+       * power users override per-experience).
+       */}
+      {form.experience_mode === "mature_gated" && (
+        <AdultLlmPicker
+          value={form.adult_llm}
+          onChange={(v) => setForm({ adult_llm: v })}
+        />
+      )}
     </div>
   );
 }
@@ -436,4 +453,132 @@ export function step0Valid(f: WizardForm): boolean {
     return false;
   }
   return f.title.trim().length >= 3 && f.prompt.trim().length >= 1;
+}
+
+
+// ── Storyteller LLM picker (Mature only) ────────────────────────────────
+
+/**
+ * Heuristic — does this Ollama model id look like an
+ * abliterated / uncensored / NSFW-permissive variant?
+ *
+ * Source of truth for the substrings is the curated catalog in
+ * Models.tsx (rows tagged ``nsfw: true`` or ``recommended_nsfw``).
+ * Pulling the full catalog would force a /model-catalog round-trip
+ * just for this dropdown, so we name-match instead — same set of
+ * model families, no extra fetch.
+ */
+const ADULT_LLM_NEEDLES = [
+  "abliterat",     // huihui_ai/qwen3-abliterated, mannix/llama3.1-8b-abliterated, etc.
+  "dolphin",       // dolphin-mistral, dolphin-llama3, dolphin3
+  "uncensored",    // llama2-uncensored, wizardlm-uncensored, wizard-vicuna-uncensored
+  "josiefied",     // goekdenizguelmez/JOSIEFIED-Qwen3, JOSIEFIED-Llama
+  "samantha",      // samantha-mistral
+  "hermes",        // hermes3, OpenHermes
+  "wizardlm",      // wizardlm2, wizardlm-uncensored
+  "wizard-vicuna",
+  "neural-chat",
+];
+
+interface OllamaTag {
+  /** Ollama-style id, e.g. ``llama3:8b`` or ``huihui_ai/qwen3-abliterated:4b``. */
+  id?: string;
+  name?: string;
+  model?: string;
+}
+
+function _looksAdult(modelId: string): boolean {
+  const lc = modelId.toLowerCase();
+  return ADULT_LLM_NEEDLES.some((needle) => lc.includes(needle));
+}
+
+interface AdultLlmPickerProps {
+  value: string;
+  onChange: (next: string) => void;
+}
+
+function AdultLlmPicker({ value, onChange }: AdultLlmPickerProps) {
+  const [installed, setInstalled] = useState<string[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const backend = resolveBackendUrl();
+    fetch(`${backend}/models?provider=ollama`, {
+      signal: ctrl.signal,
+      credentials: "include",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!body) {
+          setError("Couldn't reach Ollama.");
+          setLoading(false);
+          return;
+        }
+        // /models can return {data:[{id}]} (OpenAI-style) or {models:[...]}
+        // (raw Ollama /api/tags). Handle both.
+        const rawList: OllamaTag[] = Array.isArray(body?.data)
+          ? body.data
+          : Array.isArray(body?.models)
+          ? body.models
+          : [];
+        const ids = rawList
+          .map((m) => String(m.id || m.name || m.model || "").trim())
+          .filter(Boolean);
+        setInstalled(ids);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        setError("Couldn't fetch the model list.");
+        setLoading(false);
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  const adultInstalled = useMemo(
+    () => installed.filter(_looksAdult).sort(),
+    [installed],
+  );
+
+  return (
+    <FieldLabel
+      htmlFor="ix_adult_llm"
+      label="Storyteller LLM"
+      hint="Mature (gated) only. The default Llama models refuse explicit content; pick an installed abliterated / uncensored model so the wizard's scene-graph LLM and the persona's chat engine can actually generate the content this experience asks for. Leave on default to use the server's configured Ollama model."
+    >
+      <select
+        id="ix_adult_llm"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={loading}
+        className="w-full bg-[#121212] border border-[#3f3f3f] rounded-md px-3 py-2.5 text-sm outline-none focus:border-[#f97316] focus:ring-1 focus:ring-[#f97316]/40"
+      >
+        <option value="">Use server default</option>
+        {adultInstalled.map((id) => (
+          <option key={id} value={id}>
+            {id}
+          </option>
+        ))}
+      </select>
+      {!loading && !error && adultInstalled.length === 0 && (
+        <p className="text-[11px] text-amber-300 mt-1">
+          No abliterated / uncensored Ollama models found in your install.
+          Open Models → Chat (Ollama) and install one tagged
+          <span className="mx-1 px-1 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-200">
+            🔥 NSFW Pick
+          </span>
+          (Qwen3 Abliterated / JOSIEFIED Qwen3 / Dolphin / Samantha) — then
+          revisit this picker.
+        </p>
+      )}
+      {error && (
+        <p className="text-[11px] text-red-300 mt-1">
+          {error} — leaving this on default falls back to the server's Ollama
+          model.
+        </p>
+      )}
+    </FieldLabel>
+  );
 }

@@ -637,7 +637,7 @@ async def _build_persona_library(
     # tiers remain available via the explicit build endpoint.
     target_tier = 1
 
-    async def _render_one(spec: pal.AssetSpec) -> str:
+    async def _render_one(spec: pal.AssetSpec) -> Optional["pal.RenderResult"]:
         # Edit-hint → workflow mapping. The four "img2img on the
         # persona portrait" hints (expression / pose / outfit /
         # composition) all route to avatar_expression_change because
@@ -679,10 +679,16 @@ async def _build_persona_library(
                 "wizard_library_asset_error persona=%s asset=%s: %s",
                 persona_project_id, spec.asset_id, str(exc)[:200],
             )
-            return ""
+            return None
         if not asset_id:
-            return ""
-        return str(resolve_asset_url(asset_id) or "")
+            return None
+        url = str(resolve_asset_url(asset_id) or "")
+        if not url:
+            return None
+        # Return BOTH ids — registry asset_id powers the editor preview
+        # + Phase-4 scene-link path; the URL powers the runtime fast-
+        # path lookup. See pal.RenderResult / AssetRecord docstrings.
+        return pal.RenderResult(asset_id=asset_id, url=url)
 
     def _library_progress(kind: str, payload: Dict[str, Any]) -> None:
         on_event(f"library_{kind}", payload)
@@ -805,16 +811,28 @@ async def _link_persona_library_assets(
         row = library.get(asset_id_in_library) if isinstance(library, dict) else None
         if not isinstance(row, dict):
             continue
+        # Prefer the registry asset_id (the ``a_xxx`` id from
+        # asset_registry.register_asset). The editor preview hits
+        # ``GET /v1/interactive/assets/{asset_id}/url`` which expects
+        # a registry id, NOT the raw ComfyUI URL — we used to write
+        # ``row["asset_url"]`` (the URL) here, which got URL-encoded
+        # into the path and 404'd. Falls back to the URL only when the
+        # registry id is missing (older library rows from before this
+        # field existed) so the player still shows an image even if
+        # the editor preview can't resolve it.
+        registry_asset_id = str(row.get("registry_asset_id") or "").strip()
         url = str(row.get("asset_url") or "").strip()
-        if not url:
+        link_value = registry_asset_id or url
+        if not link_value:
             continue
 
         try:
-            _patch_node_assets(node.id, [url])
+            _patch_node_assets(node.id, [link_value])
             linked += 1
             on_event("scene_linked", {
                 "scene_id": node.id,
                 "asset_id": asset_id_in_library,
+                "registry_asset_id": registry_asset_id,
                 "asset_url": url,
             })
         except Exception as exc:  # noqa: BLE001 — patching one node failing
