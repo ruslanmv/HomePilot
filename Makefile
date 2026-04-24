@@ -36,6 +36,7 @@ MCP_EXPERT_CORE_SERVERS := web_search doc_retrieval memory_store safety_policy o
         mcp-inventory \
         install-mcp-servers test-mcp-new-servers \
         install-mcp-expert-core test-mcp-expert-core start-mcp-expert-core health-mcp-expert-core \
+        install-prod \
         persona-launch persona-check persona-stop persona-status persona-list \
         build-installer build-container \
         recovery recovery-status recovery-backup recovery-list-users \
@@ -1896,6 +1897,27 @@ expert-frontend-run:
 # Lifecycle targets for the 10 MCP servers that back Expert chat mode.
 # Source of truth: expert/backend/app/expert/mcp_catalog.py::ESSENTIAL_MCP_SERVERS.
 # Category in the UI: expert_core (see frontend/src/ui/mcp/AvailableServersPanel.tsx).
+
+install-prod: ## One-shot prod-ready install: deps + frontend bundle + Expert MCP health check (set VITE_EXPERT_CHAT_ENABLED=false to ship gated)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Production-ready install: deps → frontend build → Expert health check"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@$(MAKE) install
+	@echo ""
+	@echo "✓ Building frontend production bundle (VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true})..."
+	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run build
+	@echo ""
+	@$(MAKE) health-mcp-expert-core
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ Production install complete"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  • Frontend bundle:  frontend/dist/"
+	@echo "  • Expert routes:    backend mounts /v1/expert/* on start"
+	@echo "  • Expert MCP:       10/10 servers verified healthy"
+	@echo ""
+	@echo "  Next: ``make start`` (single box)  or deploy ``frontend/dist/`` + run uvicorn."
+	@echo "════════════════════════════════════════════════════════════════════════════════"
 
 install-mcp-expert-core: ## Install all 10 Expert Core MCP server venvs (backs Expert chat mode)
 	@echo "════════════════════════════════════════════════════════════════════════════════"
