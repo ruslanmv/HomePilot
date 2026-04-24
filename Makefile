@@ -767,10 +767,10 @@ health: ## Health checks (best-effort)
 
 dev: ## Frontend dev locally; backend stack in docker
 	docker compose -f infra/docker-compose.yml up -d backend llm comfyui media
-	cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
+	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000
 
-build: ## Build production frontend bundle
-	cd frontend && npm run build
+build: ## Build production frontend bundle (Expert selector ON by default — set VITE_EXPERT_CHAT_ENABLED=false to ship gated)
+	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run build
 
 test-docker: ## Run backend tests (pytest) inside backend container
 	docker compose -f infra/docker-compose.yml run --rm backend pytest -q
@@ -1891,7 +1891,7 @@ expert-frontend-install:
 	cd frontend && npm install
 
 expert-frontend-run:
-	cd frontend && npm run dev
+	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev
 
 # ── Expert Core MCP Servers ───────────────────────────────────────────────────
 # Lifecycle targets for the 10 MCP servers that back Expert chat mode.
