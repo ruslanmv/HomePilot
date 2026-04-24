@@ -168,6 +168,7 @@ export interface InteractiveApi {
       media_kind: "image" | "video" | "unknown" | string;
       duration_sec: number;
       title: string;
+      status?: "pending" | "rendering" | "ready" | "failed" | string;
     } | null;
     /** Set only for Persona Live Play when the backend generated
      *  the in-character greeting — callers render it as the first
@@ -520,6 +521,7 @@ export function createInteractiveApi(
           media_kind: "image" | "video" | "unknown" | string;
           duration_sec: number;
           title: string;
+          status?: "pending" | "rendering" | "ready" | "failed" | string;
         } | null;
         opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
         persona_portrait_url?: string;

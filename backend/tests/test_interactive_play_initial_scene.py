@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Sequence
 
-from app.interactive.routes.play import _build_initial_scene
+from app.interactive.routes.play import _build_initial_scene, _pick_entry_scene
 
 
 @dataclass
@@ -26,6 +26,7 @@ class _Node:
     narration: str = ""
     duration_sec: int = 0
     asset_ids: Sequence[str] = field(default_factory=list)
+    kind: str = "scene"
 
 
 def test_pending_payload_when_no_asset_ids():
@@ -71,3 +72,35 @@ def test_ready_payload_when_asset_resolves_to_direct_path():
     assert payload["asset_url"] == "/files/scene.png"
     assert payload["media_kind"] == "image"
     assert payload["duration_sec"] == 4
+
+
+def test_pick_entry_scene_prefers_first_resolvable_asset():
+    nodes = [
+        _Node(id="n1", title="Unrendered", asset_ids=[]),
+        _Node(id="n2", title="Renderable", asset_ids=["/files/scene-2.png"]),
+        _Node(id="n3", title="Also renderable", asset_ids=["/files/scene-3.png"]),
+    ]
+    picked = _pick_entry_scene(nodes)
+    assert picked is not None
+    assert picked.id == "n2"
+
+
+def test_pick_entry_scene_falls_back_to_scene_with_asset_id():
+    nodes = [
+        _Node(id="n1", title="Unrendered", asset_ids=[]),
+        _Node(id="n2", title="Has unresolved id", asset_ids=["unknown-registry-id"]),
+        _Node(id="n3", title="No asset", asset_ids=[]),
+    ]
+    picked = _pick_entry_scene(nodes)
+    assert picked is not None
+    assert picked.id == "n2"
+
+
+def test_pick_entry_scene_ignores_non_scene_nodes():
+    nodes = [
+        _Node(id="d1", title="Decision", kind="decision"),
+        _Node(id="n1", title="First scene", asset_ids=[]),
+    ]
+    picked = _pick_entry_scene(nodes)
+    assert picked is not None
+    assert picked.id == "n1"

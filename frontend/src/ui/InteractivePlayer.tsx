@@ -137,6 +137,7 @@ function InteractivePlayerBody({
       media_kind: "image" | "video" | "unknown" | string;
       duration_sec: number;
       title: string;
+      status?: "pending" | "rendering" | "ready" | "failed" | string;
     } | null;
     opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
     persona_portrait_url?: string;
@@ -184,7 +185,7 @@ function InteractivePlayerBody({
       id: `initial_${initial.node_id || "scene"}`,
       session_id: sessionId,
       turn_id: "",
-      status: "ready",
+      status: (String(initial.status || "").toLowerCase() as SceneJobView["status"]) || "pending",
       job_id: "",
       asset_id: initial.asset_id || "",
       media_kind: initial.media_kind || "unknown",

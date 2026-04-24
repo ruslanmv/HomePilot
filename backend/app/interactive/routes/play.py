@@ -96,9 +96,15 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
             personalization=req.personalization,
         )
 
-        # Default current node = entry scene (first node of kind='scene').
+        # Default current node = best entry scene.
+        # Prefer a scene that already has a playable asset URL so the
+        # stage can render immediately; otherwise fall back to any scene
+        # with an asset id, then any scene at all. Root-cause fix for
+        # "clicked Play → warming up → empty screen" when the planner
+        # left an unrendered prologue at index 0 but later scenes were
+        # fully rendered.
         nodes = repo.list_nodes(exp.id)
-        entry = next((n for n in nodes if n.kind == "scene"), None)
+        entry = _pick_entry_scene(nodes)
         initial_scene: Optional[Dict[str, Any]] = None
         if entry:
             repo.set_session_current_node(sess.id, entry.id)
@@ -379,6 +385,35 @@ def _build_initial_scene(entry_node: Any) -> Optional[Dict[str, Any]]:
         "title": title,
         "status": "ready",
     }
+
+
+def _pick_entry_scene(nodes: List[Any]) -> Optional[Any]:
+    """Pick the best entry scene for session start.
+
+    Priority:
+      1) first scene with an already-resolvable asset URL
+      2) first scene with any asset id
+      3) first scene node
+
+    This avoids black-stage starts when the planner left an unrendered
+    prologue scene at index 0 but later scenes were fully rendered.
+    """
+    scenes = [n for n in (nodes or []) if getattr(n, "kind", "") == "scene"]
+    if not scenes:
+        return None
+
+    def _first_asset_id(node: Any) -> str:
+        asset_ids = list(getattr(node, "asset_ids", []) or [])
+        return str(asset_ids[0] or "").strip() if asset_ids else ""
+
+    for n in scenes:
+        aid = _first_asset_id(n)
+        if aid and _resolve_scene_asset_url(aid):
+            return n
+    for n in scenes:
+        if _first_asset_id(n):
+            return n
+    return scenes[0]
 
 
 async def _try_render_entry_scene(

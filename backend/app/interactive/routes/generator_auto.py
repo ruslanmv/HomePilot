@@ -53,6 +53,7 @@ from ..planner.autogen_llm import (
 # module and have the patch visible to us without depending on a
 # stable top-level import binding that may drift across module
 # purge/reimport cycles.
+from ..playback import persona_asset_library as _persona_asset_library
 from ..playback import render_adapter as _render_adapter
 # Additive: Persona-Live-aware render-set selector. Scopes the eager
 # pre-render pass so persona_live_play skips the wasted scene-graph
@@ -487,12 +488,15 @@ async def _run_generate_all(
     exp: Experience, cfg: InteractiveConfig,
     *, on_event: EventHook,
 ) -> Dict[str, Any]:
-    """Chain ``/auto-generate`` + eager per-scene asset rendering.
+    """Chain ``/auto-generate`` + eager per-scene asset rendering +
+    (for persona_live) the persona asset-library pre-render pack.
 
     Keeps every step idempotent + restart-safe:
       * graph generation skips when nodes already exist.
       * per-scene render skips nodes that already carry an
         ``asset_ids`` entry (previous run resumed).
+      * library build is idempotent — re-runs skip asset ids that
+        already exist in persona_appearance.asset_library.
       * render failures are non-fatal — we emit ``scene_render_failed``
         and continue so the editor still opens with a usable graph.
     """
@@ -502,9 +506,174 @@ async def _run_generate_all(
     # Phase 2 — per-scene asset rendering.
     render_stats = await _render_all_scenes(exp, on_event=on_event)
 
+    # Phase 3 — persona asset library pre-render pack. Only runs for
+    # persona_live projects with a linked persona_project_id; for
+    # everyone else this is a no-op. Makes the last wizard step
+    # responsible for the whole pack so the player hits an instant
+    # library on day one instead of waiting for a separate
+    # library/build call to land.
+    library_stats = await _build_persona_library(exp, on_event=on_event)
+
     return {
         **plan_result,
         "rendering": render_stats,
+        "library": library_stats,
+    }
+
+
+def _lookup_persona_project(persona_project_id: str) -> Dict[str, Any]:
+    """Load a persona project record for the library build phase.
+
+    Factored out so tests can patch this one function deterministically
+    instead of juggling ``sys.modules["app.projects"]`` — that path is
+    fragile when other tests have already imported the real module and
+    cached references into namespaces we can't reach from a monkeypatch.
+    """
+    try:
+        from ... import projects  # late import — heavy
+    except Exception:  # noqa: BLE001
+        return {}
+    try:
+        return projects.get_project_by_id(persona_project_id) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+async def _build_persona_library(
+    exp: Experience, *, on_event: EventHook,
+) -> Dict[str, Any]:
+    """Phase-3 wizard pass — build the persona's pre-render pack.
+
+    Runs only when:
+      * ``project_type == "persona_live"`` (Standard Interactive has
+        no persona anchor, so there's nothing to pre-render)
+      * ``audience_profile.persona_project_id`` is set
+      * the persona has a committed portrait (without it the edit
+        recipes abort — see ``render_adapter.render_scene_async``)
+
+    Any failure here is non-fatal: the wizard still reports success
+    and the operator can re-run the pack later via the explicit
+    ``/persona-live/{pid}/library/build`` endpoint. Emits
+    ``library_*`` SSE events so the wizard modal can show a coverage
+    bar as the pack fills in.
+    """
+    project_type = str(getattr(exp, "project_type", "") or "").strip().lower()
+    if project_type != "persona_live":
+        return {"skipped": True, "reason": "not_persona_live"}
+
+    ap = getattr(exp, "audience_profile", None) or {}
+    persona_project_id = ""
+    if isinstance(ap, dict):
+        persona_project_id = str(ap.get("persona_project_id") or "").strip()
+    if not persona_project_id:
+        return {"skipped": True, "reason": "no_persona_project_id"}
+
+    # Bind the module-level import to the local name ``pal`` so tests
+    # can swap the reference via
+    # ``monkeypatch.setattr(generator_auto, "_persona_asset_library", stub)``
+    # and this function consistently sees the stub without fighting
+    # ``sys.modules`` or late-import caching.
+    pal = _persona_asset_library
+    from ..playback import resolve_asset_url
+    from ..playback.render_adapter import render_scene_async
+
+    # Resolve allow_explicit + persona identity from the project via
+    # the module-level helper — tests patch _lookup_persona_project
+    # directly to avoid fragile sys.modules monkeypatches.
+    persona_data = _lookup_persona_project(persona_project_id) or {}
+    persona_agent = persona_data.get("persona_agent") if isinstance(persona_data, dict) else {}
+    safety = persona_agent.get("safety") if isinstance(persona_agent, dict) else {}
+    allow_explicit = bool((safety or {}).get("allow_explicit", False))
+    persona_hint = ", ".join([
+        str((persona_data or {}).get("name") or "").strip(),
+        str((persona_agent or {}).get("persona_class") or "").strip(),
+    ]).strip(", ").strip()
+
+    # Confirm the persona has a portrait — render_scene_async bails
+    # out when the edit recipe can't anchor, so check up front and
+    # emit a clear reason if this is why we're skipping.
+    appearance = persona_data.get("persona_appearance") if isinstance(persona_data, dict) else {}
+    selected_filename = ""
+    if isinstance(appearance, dict):
+        selected_filename = str(appearance.get("selected_filename") or "").strip()
+    if not selected_filename:
+        on_event("library_skipped", {"reason": "no_persona_portrait"})
+        return {"skipped": True, "reason": "no_persona_portrait"}
+
+    # Tier 1 is the v1 spec's "must pre-generate" floor — idles +
+    # all expressions + default outfit + medium camera. That's what
+    # the Level-1 intent catalog needs served instantly. Higher
+    # tiers remain available via the explicit build endpoint.
+    target_tier = 1
+
+    async def _render_one(spec: pal.AssetSpec) -> str:
+        workflow_map = {
+            "expression":  "avatar_expression_change",
+            "pose":        "avatar_body_pose",
+            "outfit":      "avatar_inpaint_outfit",
+            "bg":          "change_background",
+            "composition": "edit_inpaint_cn",
+        }
+        edit_recipe = {
+            "workflow_id": workflow_map.get(spec.edit_hint, "edit"),
+            "category": spec.kind,
+            "params": {"mode": "img2img", "steps": 28, "cfg": 5.0, "denoise": 0.45},
+            "locks": ["face"] if spec.edit_hint == "expression" else [],
+        }
+        scene_prompt = (
+            f"{spec.prompt_fragment}, identity locked, same subject, tasteful"
+        )
+        try:
+            asset_id = await render_scene_async(
+                scene_prompt=scene_prompt,
+                duration_sec=5,
+                session_id=f"wizard_lib_{persona_project_id}",
+                persona_hint=persona_hint,
+                media_type="image",
+                edit_recipe=edit_recipe,
+                persona_project_id=persona_project_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — per-asset failures non-fatal
+            log.warning(
+                "wizard_library_asset_error persona=%s asset=%s: %s",
+                persona_project_id, spec.asset_id, str(exc)[:200],
+            )
+            return ""
+        if not asset_id:
+            return ""
+        return str(resolve_asset_url(asset_id) or "")
+
+    def _library_progress(kind: str, payload: Dict[str, Any]) -> None:
+        on_event(f"library_{kind}", payload)
+
+    try:
+        stats = await pal.build_library(
+            persona_project_id,
+            render_fn=_render_one,
+            max_tier=target_tier,
+            allow_explicit=allow_explicit,
+            on_progress=_library_progress,
+        )
+    except Exception as exc:  # noqa: BLE001 — whole-pass failure is non-fatal
+        log.warning(
+            "wizard_library_build_failed persona=%s: %s",
+            persona_project_id, str(exc)[:200],
+        )
+        on_event("library_failed", {
+            "persona_project_id": persona_project_id,
+            "reason": f"{exc.__class__.__name__}: {str(exc)[:200]}",
+        })
+        return {"ok": False, "persona_project_id": persona_project_id}
+
+    return {
+        "ok": True,
+        "persona_project_id": persona_project_id,
+        "tier": target_tier,
+        "allow_explicit": allow_explicit,
+        "total": stats.total,
+        "rendered": stats.rendered,
+        "skipped": stats.skipped,
+        "failed": stats.failed,
     }
 
 
