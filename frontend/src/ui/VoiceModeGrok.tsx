@@ -423,6 +423,126 @@ function useTypewriterText(
  * - Cursor only at end of currently typing line
  * - Click-to-expand lightbox for generated images
  */
+/** Direct, non-stateful render path for historical messages on remount.
+ *
+ * Voice → Chat → Voice used to surface a brief window where the bubble
+ * rendered as plain text with literal asterisks: historyIdsRef marked
+ * every message as already-rendered → animate=false → useTypewriter
+ * initialised, but the ``isTyping`` flag it emitted could briefly read
+ * ``true`` during the first render cycle (edge-case around the lazy
+ * initialState + useEffect order), which in turn made the render gate
+ * return raw text instead of calling ``parseInlineMarkdown``.
+ *
+ * Separating the non-animated path into its own component means
+ * historical messages never touch the typewriter state machine, so
+ * ``parseInlineMarkdown`` (with our italic / bold / strike / code
+ * rendering) fires deterministically on every mount.
+ *
+ * Rules-of-hooks note: kept as a sibling component (rather than an
+ * early-return inside RenderTypedMessage) so each render path has a
+ * stable hook order.
+ */
+/** Shared media block: 360° viewer / images strip / video. Rendered at
+ *  the end of both typewriter and static message paths. Gated on the
+ *  caller's "media is ready to show" signal — for the typewriter path
+ *  that's ``!isTyping``; for the static path it's always ``true``. */
+function MessageMedia({
+  media,
+  ready,
+  onImageClick,
+}: {
+  media?: Message['media'];
+  ready: boolean;
+  onImageClick?: (src: string) => void;
+}) {
+  if (!ready || !media) return null;
+  const hasViewPack =
+    media.interactive_preview && media.view_pack && media.available_views && media.available_views.length > 0;
+
+  return (
+    <>
+      {hasViewPack ? (
+        <ViewPackViewer
+          viewPack={Object.fromEntries(
+            (Object.entries(media.view_pack!) as Array<[ViewAngle, string | undefined]>)
+              .filter(([, url]) => Boolean(url))
+              .map(([angle, url]) => [angle, resolveFileUrl(url as string)])
+          ) as Partial<Record<ViewAngle, string>>}
+          availableViews={media.available_views!}
+          initialAngle={media.active_angle}
+          onImageClick={(url) => onImageClick?.(url)}
+        />
+      ) : null}
+
+      {media.images?.length && !hasViewPack ? (
+        <div className="mt-3 flex gap-3 overflow-x-auto hp-fade-in">
+          {[...new Set(media.images)].map((src, i) => {
+            const resolved = resolveFileUrl(src);
+            return (
+              <img
+                key={src || i}
+                src={resolved}
+                alt={`Generated ${i + 1}`}
+                className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
+                loading="lazy"
+                onClick={() => onImageClick?.(resolved)}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            );
+          })}
+        </div>
+      ) : null}
+
+      {media.video_url ? (
+        <div className="mt-3 hp-fade-in">
+          <video
+            src={media.video_url}
+            controls
+            playsInline
+            className="w-full max-w-xl rounded-xl border border-white/10 bg-black/20"
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function RenderStaticMessage({
+  fullText,
+  media,
+  onImageClick,
+}: {
+  fullText: string;
+  media?: Message['media'];
+  onImageClick?: (src: string) => void;
+}) {
+  const lines = fullText.split('\n');
+  return (
+    <div className="hp-message-assistant text-[17px]">
+      {lines.map((line, i) => {
+        const trimmed = line.trim();
+        const isBullet = trimmed.startsWith('•');
+        const content = isBullet ? line.substring(line.indexOf('•') + 1).trim() : line;
+        if (trimmed === '') return <div key={i} className="h-2" />;
+        if (isBullet) {
+          return (
+            <div key={i} className="ml-4 my-1 flex gap-2">
+              <span>•</span>
+              <span>{parseInlineMarkdown(content, onImageClick)}</span>
+            </div>
+          );
+        }
+        return (
+          <p key={i} className="my-0.5">
+            {parseInlineMarkdown(content, onImageClick)}
+          </p>
+        );
+      })}
+      <MessageMedia media={media} ready={true} onImageClick={onImageClick} />
+    </div>
+  );
+}
+
 function RenderTypedMessage({
   fullText,
   typingSpeed,
@@ -1116,16 +1236,29 @@ export default function VoiceModeGrok({
                     <div className="hp-message-user">
                       <p className="text-white/90 text-[17px] leading-relaxed">{msg.text}</p>
                     </div>
-                  ) : (
-                    <RenderTypedMessage
-                      fullText={msg.text}
-                      typingSpeed={typingSpeed}
-                      onProgress={scrollToBottom}
-                      animate={idx === messages.length - 1 && !historyIdsRef.current?.has(msg.id)}
-                      media={msg.media}
-                      onImageClick={(src) => setLightbox(src)}
-                    />
-                  )}
+                  ) : (() => {
+                    const shouldAnimate = idx === messages.length - 1 && !historyIdsRef.current?.has(msg.id);
+                    // Historical messages on a fresh voice mount take the
+                    // static render path — guaranteed formatted output, no
+                    // typewriter state race. Only the live-newly-arrived
+                    // last message runs the typewriter.
+                    return shouldAnimate ? (
+                      <RenderTypedMessage
+                        fullText={msg.text}
+                        typingSpeed={typingSpeed}
+                        onProgress={scrollToBottom}
+                        animate={true}
+                        media={msg.media}
+                        onImageClick={(src) => setLightbox(src)}
+                      />
+                    ) : (
+                      <RenderStaticMessage
+                        fullText={msg.text}
+                        media={msg.media}
+                        onImageClick={(src) => setLightbox(src)}
+                      />
+                    );
+                  })()}
                 </div>
               );
             })}
