@@ -80,13 +80,26 @@ const RE_MD_IMAGE = /!\[([^\]]*)\]\(([^)]+)\)/g;
 /** Regex matching markdown links: [text](url) */
 const RE_MD_LINK = /\[([^\]]*)\]\(([^)]+)\)/g;
 
+// Shared Voice-mode text helpers (normalizeForSpeech + parseVoiceInline).
+// Keeps the markdown-stripping logic in one place so TTS and the on-screen
+// bubble never disagree on how ``*I smile*`` should appear.
+import { normalizeForSpeech, parseVoiceInline } from './voice/textNormalize';
+
 /**
- * Strip markdown images and links from text for TTS.
- * - ![alt](url) → removes entirely (image should be seen, not read)
- * - [text](url) → keeps only the link text (the URL is not spoken)
- * - Collapses leftover whitespace so speech sounds natural.
+ * Strip markdown from text for TTS. Historically this only handled images
+ * and links; we now delegate to ``normalizeForSpeech`` which also collapses
+ * italic / bold / strike / code decorations so the speech engine no longer
+ * reads "*I smile*" as "asterisk I smile asterisk". Export kept
+ * parameter-compatible with the old signature — all existing callers
+ * (App.tsx, CallOverlay, CreatorStudioEditor) keep working.
  */
 export function stripMarkdownForSpeech(text: string): string {
+  return normalizeForSpeech(text);
+}
+
+// Legacy body kept (not exported, not called) so the git blame cleanly
+// shows the transition. Remove on the next cleanup pass.
+function _legacyStripMarkdownForSpeech(text: string): string {
   return text
     // Remove image markdown entirely (the user sees the image, no need to speak it)
     .replace(RE_MD_IMAGE, '')
@@ -188,7 +201,24 @@ function parseInlineMarkdown(
     nodes.push(line.slice(lastIndex));
   }
 
-  return nodes.length > 0 ? nodes : [line];
+  // Second pass: the gaps between image/link matches above are still raw
+  // strings that may contain *italic* / **bold** / ~~strike~~ / `code`
+  // markers — those would otherwise display as literal asterisks. Run
+  // every string slot through ``parseVoiceInline`` (with renderImageLink
+  // disabled so we don't double-process the image/link matches we
+  // already handled above).
+  const polished: React.ReactNode[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (typeof n === 'string') {
+      const pieces = parseVoiceInline(n);
+      for (const piece of pieces) polished.push(piece);
+    } else {
+      polished.push(n);
+    }
+  }
+
+  return polished.length > 0 ? polished : [line];
 }
 
 // Message type with stable ID for deduplication
