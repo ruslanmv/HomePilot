@@ -210,6 +210,18 @@ def _resolve_local_path(rel_url: str) -> str:
     Map a /files/... or /uploads/... URL back to an absolute path on disk.
 
     Returns "" when the asset is not available locally.
+
+    Resolution order for the upload root:
+      1. ``UPLOAD_DIR`` env var (operator override)
+      2. ``DATA_DIR/uploads`` env var (legacy)
+      3. ``app.config.UPLOAD_DIR`` — the canonical config value the rest
+         of the backend uses. This is the fix for the wizard-time
+         "persona_assets_missing" storm: when the FastAPI process is
+         started without ``UPLOAD_DIR``/``DATA_DIR`` exported (common
+         in dev via ``make start``), this resolver used to return empty
+         and every library render aborted. render_adapter's own
+         ``_recipe_source_image`` already had this fallback; bringing it
+         into persona_assets closes the last gap.
     """
     raw = str(rel_url or "").strip()
     if not raw:
@@ -232,6 +244,13 @@ def _resolve_local_path(rel_url: str) -> str:
         data_dir = (os.getenv("DATA_DIR") or "").strip()
         if data_dir:
             upload_dir = os.path.join(data_dir, "uploads")
+
+    if not upload_dir:
+        try:
+            from ... import config as _app_config  # type: ignore
+            upload_dir = str(getattr(_app_config, "UPLOAD_DIR", "") or "").strip()
+        except Exception:
+            upload_dir = ""
 
     if not upload_dir:
         return ""

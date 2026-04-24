@@ -95,3 +95,45 @@ def test_resolve_none_when_file_missing_on_disk(tmp_uploads, monkeypatch):
         "persona_appearance": {"selected_filename": "not_on_disk.png"},
     })
     assert resolve_persona_assets("p1") is None
+
+
+def test_resolve_falls_back_to_app_config_upload_dir_when_env_unset(tmp_path, monkeypatch):
+    """Regression for the wizard-time "persona_assets_missing" storm.
+
+    When the FastAPI process starts without UPLOAD_DIR / DATA_DIR
+    exported (common in dev via ``make start``), the local-path
+    resolver used to short-circuit with empty. render_adapter had
+    its own fallback onto ``app.config.UPLOAD_DIR`` but
+    persona_assets.py did not — so every Persona Live library render
+    aborted with ``persona_assets_missing`` even though the portrait
+    was actually on disk.
+
+    This test proves the fallback now lands: both env vars are
+    deliberately unset and the resolver reaches through to
+    ``app.config.UPLOAD_DIR``.
+    """
+    uploads = tmp_path / "uploads_via_config"
+    uploads.mkdir()
+    portrait_name = "persona_lina.png"
+    (uploads / portrait_name).write_bytes(b"fake-png")
+
+    # Simulate a process started without the env vars exported.
+    monkeypatch.delenv("UPLOAD_DIR", raising=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
+
+    # But app.config.UPLOAD_DIR points at the real directory.
+    from app import config as _app_config
+    monkeypatch.setattr(_app_config, "UPLOAD_DIR", str(uploads))
+
+    from app.interactive.playback.persona_assets import resolve_persona_assets
+    _stub_projects(monkeypatch, {
+        "id": "p1", "project_type": "persona",
+        "persona_appearance": {"selected_filename": portrait_name},
+    })
+    assets = resolve_persona_assets("p1")
+    assert assets is not None, (
+        "resolve_persona_assets must fall back to app.config.UPLOAD_DIR "
+        "when UPLOAD_DIR/DATA_DIR env vars are unset — otherwise every "
+        "wizard-time library render aborts with persona_assets_missing"
+    )
+    assert assets.portrait_path == str(uploads / portrait_name)
