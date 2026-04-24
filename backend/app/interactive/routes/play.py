@@ -28,10 +28,13 @@ Production fixes in this version:
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+
+log = logging.getLogger(__name__)
 
 from .. import repo
 from ..config import InteractiveConfig
@@ -105,6 +108,12 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
         # fully rendered.
         nodes = repo.list_nodes(exp.id)
         entry = _pick_entry_scene(nodes)
+        # Debug trace: "Play shows empty" bugs usually live at one of
+        # three seams — (1) no entry picked, (2) entry has no asset
+        # ids, (3) asset id doesn't resolve to a URL. Emit a single
+        # structured line with all three so the next failure tells us
+        # which seam snapped without another round-trip.
+        _log_entry_scene_trace(exp, nodes, entry)
         initial_scene: Optional[Dict[str, Any]] = None
         if entry:
             repo.set_session_current_node(sess.id, entry.id)
@@ -171,6 +180,16 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
                 payload["render_media_type"] = media_type
 
         payload["initial_scene"] = initial_scene
+        if initial_scene is not None:
+            log.info(
+                "play_session_initial_scene exp=%s sess=%s status=%s "
+                "media_kind=%s asset_id=%s has_url=%s",
+                exp.id, sess.id,
+                initial_scene.get("status") or "(missing)",
+                initial_scene.get("media_kind") or "(missing)",
+                initial_scene.get("asset_id") or "(empty)",
+                bool(initial_scene.get("asset_url")),
+            )
         return payload
 
     @router.get("/play/sessions/{session_id}")
@@ -397,6 +416,52 @@ def _build_initial_scene(entry_node: Any) -> Optional[Dict[str, Any]]:
         "title": title,
         "status": "ready",
     }
+
+
+def _log_entry_scene_trace(
+    exp: Any, nodes: List[Any], entry: Optional[Any],
+) -> None:
+    """Structured debug trace for the 'Play shows empty' class of bugs.
+
+    Dumps the experience id, total scene count, and for the chosen
+    entry (if any): its id, whether it carries asset_ids, the first
+    asset id, and whether that id resolves to a URL. Three fail modes
+    produce visibly different traces so the next "empty Play" report
+    says exactly which link snapped:
+
+      * ``entry=None``                — ``_pick_entry_scene`` found no
+        scene nodes; graph is malformed or the wizard skipped scene
+        persistence.
+      * ``asset_ids=[]``              — the scene exists but never
+        rendered; the wizard's Phase 2 render pass skipped or failed
+        for this node.
+      * ``resolved_url=""``           — the asset id is registered but
+        ``resolve_asset_url`` returned None (asset_registry row
+        missing or storage_key empty).
+      * full trace with resolved_url  — backend's side is fine; the
+        gap is in the frontend payload wiring.
+    """
+    scene_count = sum(1 for n in nodes if getattr(n, "kind", "") == "scene")
+    if entry is None:
+        log.info(
+            "play_entry_trace exp=%s scenes=%d entry=None (no scene nodes found)",
+            getattr(exp, "id", ""), scene_count,
+        )
+        return
+    asset_ids = list(getattr(entry, "asset_ids", []) or [])
+    first_id = str(asset_ids[0] or "").strip() if asset_ids else ""
+    resolved = _resolve_scene_asset_url(first_id) if first_id else ""
+    log.info(
+        "play_entry_trace exp=%s scenes=%d entry_id=%s kind=%s "
+        "asset_ids=%d first_asset_id=%s resolved_url=%s",
+        getattr(exp, "id", ""),
+        scene_count,
+        getattr(entry, "id", ""),
+        getattr(entry, "kind", ""),
+        len(asset_ids),
+        first_id or "(none)",
+        resolved or "(empty)",
+    )
 
 
 def _pick_entry_scene(nodes: List[Any]) -> Optional[Any]:

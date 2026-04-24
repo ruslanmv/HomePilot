@@ -181,6 +181,19 @@ function InteractivePlayerBody({
   useEffect(() => {
     const initial = session.data?.initial_scene;
     if (!initial) return;
+    // Debug: dump what the backend delivered so the next "Play shows
+    // empty" bug tells us whether the miss is in the payload
+    // (backend) or in how we mount it (frontend). Remove once the
+    // player's bootstrap is proven stable end-to-end.
+    // eslint-disable-next-line no-console
+    console.log("[InteractivePlayer] initial_scene from backend:", {
+      node_id: initial.node_id,
+      status: initial.status,
+      asset_id: initial.asset_id,
+      asset_url: initial.asset_url,
+      media_kind: initial.media_kind,
+      duration_sec: initial.duration_sec,
+    });
     setCurrentScene({
       id: `initial_${initial.node_id || "scene"}`,
       session_id: sessionId,
