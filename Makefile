@@ -1992,7 +1992,7 @@ start-mcp-expert-core: ## Start all 10 Expert Core MCP servers on ports 9150-915
 			d="$$ROOT/$(MCP_SERVERS_DIR)/$$srv"; \
 			if [ -x "$$d/.venv/bin/uvicorn" ]; then \
 				echo "  ▶ mcp-$$srv  http://127.0.0.1:$$port"; \
-				(cd "$$d" && .venv/bin/uvicorn app:app --host 127.0.0.1 --port $$port >/tmp/mcp-$$srv.log 2>&1) & \
+				(cd "$$d" && PYTHONPATH="$$PWD/../../../.." .venv/bin/uvicorn app:app --host 127.0.0.1 --port $$port >/tmp/mcp-$$srv.log 2>&1) & \
 				pids="$$pids $$!"; \
 			else \
 				echo "  ✗ $$srv  venv missing (run: make install-mcp-expert-core)"; \
@@ -2016,7 +2016,7 @@ health-mcp-expert-core: ## Probe GET /health on every Expert Core MCP server (po
 				failed=$$((failed + 1)); failed_list="$$failed_list $$srv"; \
 				port=$$((port + 1)); continue; \
 			fi; \
-			(cd "$$d" && .venv/bin/uvicorn app:app --host 127.0.0.1 --port "$$port" >/tmp/mcp-health-$$srv.log 2>&1) & \
+			(cd "$$d" && PYTHONPATH="$$PWD/../../../.." .venv/bin/uvicorn app:app --host 127.0.0.1 --port "$$port" >/tmp/mcp-health-$$srv.log 2>&1) & \
 			pid=$$!; \
 			ok=0; \
 			for _ in $$(seq 1 30); do \
