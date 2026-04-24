@@ -662,12 +662,15 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
 
         async def _render_one(spec: pal.AssetSpec) -> str:
             """Build a per-spec edit recipe + submit to the renderer."""
+            # composition routes to avatar_expression_change because
+            # edit_inpaint_cn needs a face mask + ControlNet input we
+            # don't have here — same fix applied in generator_auto.
             workflow_map = {
                 "expression":    "avatar_expression_change",
                 "pose":          "avatar_body_pose",
                 "outfit":        "avatar_inpaint_outfit",
                 "bg":            "change_background",
-                "composition":   "edit_inpaint_cn",
+                "composition":   "avatar_expression_change",
             }
             edit_recipe = {
                 "workflow_id": workflow_map.get(spec.edit_hint, "edit"),

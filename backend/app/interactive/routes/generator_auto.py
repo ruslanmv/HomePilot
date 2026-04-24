@@ -607,12 +607,21 @@ async def _build_persona_library(
     target_tier = 1
 
     async def _render_one(spec: pal.AssetSpec) -> str:
+        # Edit-hint → workflow mapping. The four "img2img on the
+        # persona portrait" hints (expression / pose / outfit /
+        # composition) all route to avatar_expression_change because
+        # the actual diffusion is identical — what changes is the
+        # prompt fragment + denoise. The shipped edit_inpaint_cn
+        # workflow needs a mask + ControlNet input we don't have at
+        # library-build time, so reusing the plain img2img graph
+        # there avoids a "Required input is missing: noise_mask"
+        # failure for cam_medium / cam_close_up assets.
         workflow_map = {
             "expression":  "avatar_expression_change",
             "pose":        "avatar_body_pose",
             "outfit":      "avatar_inpaint_outfit",
             "bg":          "change_background",
-            "composition": "edit_inpaint_cn",
+            "composition": "avatar_expression_change",
         }
         edit_recipe = {
             "workflow_id": workflow_map.get(spec.edit_hint, "edit"),

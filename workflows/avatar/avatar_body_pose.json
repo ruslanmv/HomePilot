@@ -1,214 +1,72 @@
 {
   "1": {
     "class_type": "CheckpointLoaderSimple",
+    "_meta": {"title": "Load Checkpoint"},
     "inputs": {
-      "ckpt_name": "sd_xl_base_1.0.safetensors"
+      "ckpt_name": "{{ckpt_name}}"
     }
   },
   "2": {
-    "class_type": "CLIPTextEncodeSDXL",
-    "_meta": {
-      "title": "Positive Prompt"
-    },
+    "class_type": "LoadImage",
+    "_meta": {"title": "Persona Portrait"},
     "inputs": {
-      "clip": [
-        "1",
-        1
-      ],
-      "text_g": "full body photograph from head to toe, entire body visible, showing feet, standing pose, front-facing, professional studio lighting, full length shot, wide angle, high quality, sharp focus, highly detailed, 8k resolution",
-      "text_l": "full body photograph from head to toe, entire body visible, showing feet, standing pose, front-facing, professional studio lighting, full length shot, wide angle, high quality, sharp focus, highly detailed, 8k resolution",
-      "width": 1024,
-      "height": 1536,
-      "crop_w": 0,
-      "crop_h": 0,
-      "target_width": 1024,
-      "target_height": 1536
+      "image": "{{image_path}}"
     }
   },
   "3": {
-    "class_type": "CLIPTextEncodeSDXL",
-    "_meta": {
-      "title": "Negative Prompt"
-    },
+    "class_type": "VAEEncode",
+    "_meta": {"title": "Encode portrait → latent"},
     "inputs": {
-      "clip": [
-        "1",
-        1
-      ],
-      "text_g": "close-up, headshot, portrait crop, face only, cropped body, cut off legs, cut off feet, lowres, blurry, bad anatomy, deformed, extra fingers, missing fingers, bad hands, bad feet, disfigured face, mismatched identity, distorted eyes, duplicate, watermark, text, logo, signature",
-      "text_l": "close-up, headshot, portrait crop, face only, cropped body, cut off legs, cut off feet, lowres, blurry, bad anatomy, deformed, extra fingers, missing fingers, bad hands, bad feet, disfigured face, mismatched identity, distorted eyes, duplicate, watermark, text, logo, signature",
-      "width": 1024,
-      "height": 1536,
-      "crop_w": 0,
-      "crop_h": 0,
-      "target_width": 1024,
-      "target_height": 1536
-    }
-  },
-  "4": {
-    "class_type": "EmptyLatentImage",
-    "inputs": {
-      "width": 1024,
-      "height": 1536,
-      "batch_size": 1
-    }
-  },
-  "10": {
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Face Reference"
-    },
-    "inputs": {
-      "image": ""
-    }
-  },
-  "11": {
-    "class_type": "InstantIDFaceAnalysis",
-    "inputs": {
-      "provider": "CPU"
-    }
-  },
-  "12": {
-    "class_type": "InstantIDModelLoader",
-    "inputs": {
-      "instantid_file": "ip-adapter.bin"
-    }
-  },
-  "13": {
-    "class_type": "ControlNetLoader",
-    "_meta": {
-      "title": "InstantID ControlNet"
-    },
-    "inputs": {
-      "control_net_name": "InstantID/diffusion_pytorch_model.safetensors"
-    }
-  },
-  "14": {
-    "class_type": "ApplyInstantID",
-    "inputs": {
-      "instantid": [
-        "12",
-        0
-      ],
-      "insightface": [
-        "11",
-        0
-      ],
-      "control_net": [
-        "13",
-        0
-      ],
-      "model": [
-        "1",
-        0
-      ],
-      "positive": [
-        "2",
-        0
-      ],
-      "negative": [
-        "3",
-        0
-      ],
-      "image": [
-        "10",
-        0
-      ],
-      "weight": 0.75,
-      "start_at": 0.0,
-      "end_at": 0.4
-    }
-  },
-  "20": {
-    "class_type": "ControlNetLoader",
-    "_meta": {
-      "title": "OpenPose ControlNet (SDXL)"
-    },
-    "inputs": {
-      "control_net_name": "thibaud-openpose-sdxl-1.0/diffusion_pytorch_model.safetensors"
-    }
-  },
-  "21": {
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Pose Reference"
-    },
-    "inputs": {
-      "image": ""
-    }
-  },
-  "22": {
-    "class_type": "ControlNetApplyAdvanced",
-    "inputs": {
-      "positive": [
-        "14",
-        1
-      ],
-      "negative": [
-        "14",
-        2
-      ],
-      "control_net": [
-        "20",
-        0
-      ],
-      "image": [
-        "21",
-        0
-      ],
-      "strength": 0.8,
-      "start_percent": 0.0,
-      "end_percent": 1.0
+      "pixels": ["2", 0],
+      "vae": ["1", 2]
     }
   },
   "5": {
-    "class_type": "KSampler",
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Positive Prompt (pose)"},
     "inputs": {
-      "model": [
-        "14",
-        0
-      ],
-      "positive": [
-        "22",
-        0
-      ],
-      "negative": [
-        "22",
-        1
-      ],
-      "latent_image": [
-        "4",
-        0
-      ],
-      "seed": 0,
-      "steps": 30,
-      "cfg": 7.0,
-      "sampler_name": "dpmpp_2m",
-      "scheduler": "karras",
-      "denoise": 1.0
+      "clip": ["1", 1],
+      "text": "{{positive_prompt}}"
     }
   },
   "6": {
-    "class_type": "VAEDecode",
+    "class_type": "CLIPTextEncode",
+    "_meta": {"title": "Negative Prompt"},
     "inputs": {
-      "samples": [
-        "5",
-        0
-      ],
-      "vae": [
-        "1",
-        2
-      ]
+      "clip": ["1", 1],
+      "text": "{{negative_prompt}}"
     }
   },
-  "7": {
-    "class_type": "SaveImage",
+  "8": {
+    "class_type": "KSampler",
+    "_meta": {"title": "Img2Img Sampler (pose shift, identity locked)"},
     "inputs": {
-      "filename_prefix": "avatar/body_pose",
-      "images": [
-        "6",
-        0
-      ]
+      "model": ["1", 0],
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "latent_image": ["3", 0],
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": "{{denoise}}"
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "_meta": {"title": "Decode → image"},
+    "inputs": {
+      "samples": ["8", 0],
+      "vae": ["1", 2]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "_meta": {"title": "Save"},
+    "inputs": {
+      "filename_prefix": "avatar/pose",
+      "images": ["9", 0]
     }
   }
 }

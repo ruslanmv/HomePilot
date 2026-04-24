@@ -414,7 +414,10 @@ def _build_edit_variables(
         "style": "photorealistic",
         # Source image for img2img / inpaint — multiple aliases so
         # a workflow LoadImage node can pick whichever placeholder
-        # its JSON uses.
+        # its JSON uses. ``image_path`` is the canonical name used by
+        # the retemplated avatar/* workflows; the others are kept for
+        # back-compat with workflows that pre-date the rewrite.
+        "image_path": persona_assets.portrait_path,
         "source_image": persona_assets.portrait_path,
         "input_image": persona_assets.portrait_path,
         "image": persona_assets.portrait_path,
