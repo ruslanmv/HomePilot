@@ -7,7 +7,7 @@
  * strings and falls back to sfw_general otherwise.
  */
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Image as ImageIcon, Users, Video } from "lucide-react";
 import type { ExperienceMode } from "../types";
 import type { RenderMediaType, WizardForm } from "../wizardState";
@@ -18,16 +18,66 @@ export interface Step0Props {
   setForm: (patch: Partial<WizardForm>) => void;
 }
 
-const MODE_OPTIONS: Array<{ value: ExperienceMode; label: string; hint: string }> = [
+const MODE_OPTIONS: Array<{ value: ExperienceMode; label: string; hint: string; matureOnly?: boolean }> = [
   { value: "sfw_general",         label: "General (SFW)",        hint: "Safe-for-work default — broad audiences." },
   { value: "sfw_education",       label: "Education",            hint: "Lessons, tutorials, explanations." },
   { value: "language_learning",   label: "Language learning",    hint: "CEFR-aware exercises and conversation." },
   { value: "enterprise_training", label: "Enterprise training",  hint: "Onboarding, compliance, certification." },
   { value: "social_romantic",     label: "Social / Romantic",    hint: "Casual social play, mood-aware companions." },
-  { value: "mature_gated",        label: "Mature (gated)",       hint: "Requires explicit viewer consent + region check." },
+  { value: "mature_gated",        label: "Mature (gated)",       hint: "Requires explicit viewer consent + region check.", matureOnly: true },
 ];
 
+// The "Mature (gated)" tier is only surfaced when Spicy Mode (NSFW) is
+// enabled under Settings → Advanced. This hook reads the same
+// localStorage key App.tsx writes (`homepilot_nsfw_mode`) and reacts to
+// cross-tab toggles via the native `storage` event, so flipping the
+// switch reflects here without a page reload.
+const NSFW_MODE_STORAGE_KEY = "homepilot_nsfw_mode";
+
+function useNsfwMode(): boolean {
+  const [enabled, setEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem(NSFW_MODE_STORAGE_KEY) === "true"; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === NSFW_MODE_STORAGE_KEY) {
+        setEnabled(e.newValue === "true");
+      }
+    };
+    // Same-tab toggles don't fire `storage`, so poll briefly on focus.
+    const onFocus = () => {
+      try { setEnabled(localStorage.getItem(NSFW_MODE_STORAGE_KEY) === "true"); }
+      catch { /* ignore */ }
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
+  return enabled;
+}
+
 export function Step0Prompt({ form, setForm }: Step0Props) {
+  const spicyModeEnabled = useNsfwMode();
+
+  // When Spicy Mode is disabled, the gated-mature tier is hidden from
+  // the picker entirely. If the form already carries `mature_gated`
+  // (e.g. Spicy was flipped off mid-wizard), coerce it back to the
+  // SFW default so the payload stays consistent with the visible UI.
+  useEffect(() => {
+    if (!spicyModeEnabled && form.experience_mode === "mature_gated") {
+      setForm({ experience_mode: "sfw_general", policy_profile_id: "sfw_general" });
+    }
+  }, [spicyModeEnabled, form.experience_mode, setForm]);
+
+  const visibleModeOptions = useMemo(
+    () => MODE_OPTIONS.filter((m) => !m.matureOnly || spicyModeEnabled),
+    [spicyModeEnabled],
+  );
+
   const personaOptions = useMemo(() => {
     try {
       const raw = localStorage.getItem(LS_PERSONA_CACHE);
@@ -193,7 +243,7 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
 
       <FieldLabel label="Experience mode" hint="Selects the policy profile + scene templates downstream.">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {MODE_OPTIONS.map((m) => {
+          {visibleModeOptions.map((m) => {
             const selected = form.experience_mode === m.value;
             return (
               <button

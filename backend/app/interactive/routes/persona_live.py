@@ -15,6 +15,11 @@ from ..config import InteractiveConfig
 from ..playback import resolve_asset_url
 from ..playback.edit_recipes import recipe_for_action
 from ..playback.persona_assets import load_assets
+from ..playback.persona_live_prompts import (
+    compose_image_prompt,
+    compose_system_prompt,
+    effective_tier,
+)
 from ..playback.scene_planner import ScenePlan
 from ..playback.video_job import get_job, render_now_async, submit_scene_job
 from ...llm import chat_ollama
@@ -464,16 +469,24 @@ async def _compose_turn(
     persona_name = str((persona or {}).get("name") or "persona")
     persona_archetype = str((persona or {}).get("archetype") or "companion")
     persona_style = str((persona or {}).get("style_hint") or "").strip()
+    allow_explicit = bool((persona or {}).get("allow_explicit", False))
+    # Tier precedence: explicit override on emotional_state (set when
+    # the caller ties the experience's audience_profile.nsfw_ceiling in)
+    # → persona's allow_explicit opt-in (→ "explicit") → Persona Live
+    # baseline of "suggestive" (fan-service but clothed). The safety
+    # gate further clamps the final render if the workflow emits a
+    # prompt above the configured ceiling.
+    requested_tier = str(emotional_state.get("nsfw_tier") or "").lower()
+    if not requested_tier:
+        requested_tier = "explicit" if allow_explicit else "suggestive"
+    tier = effective_tier(requested_tier, allow_explicit=allow_explicit)
     safe_action = (action_id or "chat").strip().lower()
     safe_message = (message or "").strip()
-    system_prompt = (
-        "You are a roleplay assistant for an interactive persona chat. "
-        "Reply naturally in-character using concise conversational language. "
-        "You must output strict JSON with keys: dialogue, scene_prompt, edit_hint, scene_change. "
-        "dialogue is 1-3 short sentences. "
-        "scene_prompt must keep identity continuity and mention the same subject. "
-        "edit_hint must be one of: expression, pose, outfit, bg. "
-        "scene_change must be one of apartment, beach, supermarket, rainstreet, or empty string."
+    system_prompt = compose_system_prompt(
+        tier=tier,
+        allow_explicit=allow_explicit,
+        persona_archetype=persona_archetype,
+        persona_style_hint=persona_style,
     )
     user_prompt = (
         f"persona_name={persona_name}\n"
@@ -561,20 +574,46 @@ def _compose_turn_fallback(
     persona_name = str((persona or {}).get("name") or "persona")
     persona_archetype = str((persona or {}).get("archetype") or "companion")
     persona_style = str((persona or {}).get("style_hint") or "").strip()
+    allow_explicit = bool((persona or {}).get("allow_explicit", False))
+    fallback_tier = effective_tier(
+        str(emotional_state.get("nsfw_tier") or "").lower()
+        or ("explicit" if allow_explicit else "suggestive"),
+        allow_explicit=allow_explicit,
+    )
 
     dialogue = (
         f"{tone} {text}." if text else f"{tone} I can {action_words} right here."
     ).strip()
     dialogue = dialogue + memory_hint
 
-    scene_prompt = (
-        f"{persona_name}, {persona_archetype}, {mood} expression, reacting to {action_words}, "
-        f"identity locked, same subject, subtle cinematic continuity, scene={scene_context['label']}"
+    edit_hint = _edit_hint_for_action(aid)
+
+    # Deterministic scene prompt: pick ladder position from trust
+    # (0-100 → 0-4) so the fallback still varies outfit / pose /
+    # expression over time instead of repeating the same caption.
+    trust_score = int(emotional_state.get("trust") or 35)
+    emotional_level = max(0, min(4, trust_score // 20))
+    axis_map: Dict[str, str] = {
+        "expression": "expression",
+        "pose": "pose",
+        "outfit": "outfit",
+        "bg": "environment",
+    }
+    base_subject = (
+        f"{persona_name}, {persona_archetype}, identity locked, same subject"
     )
     if persona_style:
-        scene_prompt = f"{scene_prompt}, style={persona_style}"
-
-    edit_hint = _edit_hint_for_action(aid)
+        base_subject = f"{base_subject}, style={persona_style}"
+    scene_prompt = compose_image_prompt(
+        base_subject=base_subject,
+        axis=axis_map.get(edit_hint, "expression"),  # type: ignore[arg-type]
+        tier=fallback_tier,
+        allow_explicit=allow_explicit,
+        emotional_level=emotional_level,
+        environment_key=_env_key_for(scene_context.get("id") or ""),
+    )
+    if scene_change:
+        scene_prompt = f"{scene_prompt}, scene_change={scene_change}"
     if aid == "chat" and scene_change:
         edit_hint = "bg"
 
@@ -584,6 +623,19 @@ def _compose_turn_fallback(
         "edit_hint": edit_hint,
         "scene_change": scene_change or None,
     }
+
+
+def _env_key_for(scene_id: str) -> str:
+    """Map _SCENE_LIBRARY ids to ENVIRONMENT_LIB keys so the shared
+    vocabulary ladder produces identity-consistent backgrounds. Unknown
+    scenes fall through to an empty string (no environment fragment)."""
+    mapping = {
+        "apartment": "livingroom",
+        "beach": "beach",
+        "supermarket": "kitchen",
+        "rainstreet": "nightcity",
+    }
+    return mapping.get((scene_id or "").strip().lower(), "")
 
 
 def _edit_hint_for_action(action_id: str) -> str:
