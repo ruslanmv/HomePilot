@@ -8,7 +8,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Image as ImageIcon, Users, Video } from "lucide-react";
+import { GitBranch, Image as ImageIcon, Users, Video } from "lucide-react";
 import type { ExperienceMode } from "../types";
 import type { RenderMediaType, WizardForm } from "../wizardState";
 import { LS_PERSONA_CACHE } from "../../voice/personalityGating";
@@ -120,9 +120,12 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
                 : "border-[#3f3f3f] hover:border-[#555] hover:bg-[#1a1a1a]",
             ].join(" ")}
           >
-            <div className="text-sm font-medium text-[#f1f1f1]">Standard interactive project</div>
+            <div className="text-sm font-medium text-[#f1f1f1] inline-flex items-center gap-1.5">
+              <GitBranch className="w-3.5 h-3.5 text-[#7dd3fc]" aria-hidden />
+              Standard interactive project
+            </div>
             <div className="text-xs text-[#aaa] mt-0.5">
-              Branching AI video with planner-generated scenes and choices.
+              Branching AI video with scenes, choices, and endings.
             </div>
           </button>
 
@@ -143,7 +146,7 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
               Persona live play
             </div>
             <div className="text-xs text-[#aaa] mt-0.5">
-              Pick one of your personas — video + chat revolve around them.
+              Pick one of your personas — chat + video revolve around them.
             </div>
           </button>
         </div>
