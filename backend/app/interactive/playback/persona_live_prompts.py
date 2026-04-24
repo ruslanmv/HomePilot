@@ -145,9 +145,17 @@ TIER_STYLE_TAGS: Dict[NsfwTier, str] = {
 # Negative prompt tokens — always applied, appended with more when
 # running at "safe" (we don't want the checkpoint to drift suggestive
 # on its own at low tiers).
+#
+# Quality + minor-safety tokens are ALWAYS in the base negative — the
+# system prompt soft-bans minor-suggestive content as an LLM-side rule,
+# but the diffusion model needs these tokens to enforce at the model
+# level too. Keeping them at every tier (including "safe") makes the
+# floor fail-closed even if the LLM hands the renderer a bad prompt.
 BASE_NEGATIVE = (
     "lowres, blurry, bad anatomy, extra limbs, deformed hands, "
-    "deformed face, text, watermark, jpeg artifacts, oversaturated"
+    "deformed face, text, watermark, jpeg artifacts, oversaturated, "
+    "child, kid, minor, underage, underage looking, teen, teenager, "
+    "loli, shota, young, youthful body, school uniform, schoolgirl"
 )
 SAFE_NEGATIVE_EXTRA = "nsfw, nudity, explicit, sexual, lingerie"
 
@@ -328,9 +336,18 @@ def compose_image_prompt(
     ei = max(0, min(int(emotional_level or 0), len(EMOTIONAL_LADDER) - 1))
     li = int(ladder_index if ladder_index is not None else emotional_level)
 
-    expr = _pick_ladder_entry(EXPRESSION_LADDER, tier=eff, index=li if axis == "expression" else ei)
-    pose = _pick_ladder_entry(POSE_LADDER,       tier=eff, index=li if axis == "pose"       else ei)
-    outfit = _pick_ladder_entry(OUTFIT_LADDER,   tier=eff, index=li if axis == "outfit"     else 0)
+    # Non-focus axes still ride the emotional_level so high-trust scenes
+    # don't strand the character in a casual-hoodie + neutral-pose default
+    # while only the focus axis evolves. The factor (×2) keeps the focus
+    # axis ahead — at level 4 / focus=outfit, outfit hits index 4 from
+    # ladder_index but pose + expression land at index 4×2/3 ≈ 2-3, which
+    # is "lying on couch" + "playful tease" in the ladders. That's the
+    # fan-service density the user asked for: visible variety per turn.
+    bg_idx = max(0, min(ei * 2, 8))
+
+    expr = _pick_ladder_entry(EXPRESSION_LADDER, tier=eff, index=li if axis == "expression" else bg_idx)
+    pose = _pick_ladder_entry(POSE_LADDER,       tier=eff, index=li if axis == "pose"       else bg_idx)
+    outfit = _pick_ladder_entry(OUTFIT_LADDER,   tier=eff, index=li if axis == "outfit"     else bg_idx)
 
     env_entry = ""
     if environment_key and environment_key in ENVIRONMENT_LIB:
