@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from .. import repo
 from ..config import InteractiveConfig
 from ..playback import resolve_asset_url
+from ..playback import persona_asset_library as pal
 from ..playback.edit_recipes import recipe_for_action
 from ..playback.persona_assets import load_assets
 from ..playback.persona_live_prompts import (
@@ -50,6 +51,16 @@ class PersonaLiveRestoreRequest(BaseModel):
 
 class PersonaLiveChatRequest(BaseModel):
     message: str
+
+
+class PersonaLiveLibraryBuildRequest(BaseModel):
+    """Build-pass request for the persona pre-render pack.
+
+    ``tier`` defaults to 1 (idles + expressions + default outfit + medium
+    camera — covers ~90% of gameplay). Operators can bump to 2 or 3 for
+    fuller coverage at extra GPU cost.
+    """
+    tier: int = 1
 
 
 @dataclass
@@ -382,6 +393,56 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
         if scene_change_id:
             scene_context = _scene_by_id(scene_change_id)
 
+        # Library-first fast path (opt-in via PERSONA_LIVE_LIBRARY_LOOKUP).
+        # If the persona has a pre-rendered asset for this intent, serve
+        # it instantly and skip the live render + job-poll loop. Dialogue
+        # still comes from _compose_turn so the conversation stays fresh;
+        # only the visual reaction is cached. Misses (library empty for
+        # this intent, or lookup flag off) fall through to the existing
+        # render path with no behaviour change.
+        if pal.lookup_enabled():
+            pre_url = pal.resolve_asset_url_for_intent(persona_id, action_id)
+            if pre_url:
+                emotional_state = _apply_emotion_delta(
+                    emotional_state, action_id=action_id,
+                    scene_category=scene_context["category"],
+                )
+                scene_memory = _apply_memory_update(scene_memory, scene_context, action_id)
+                version = repo.save_persona_version(
+                    persona_id=persona_id,
+                    session_id=session_id,
+                    image_url=pre_url,
+                    thumb_url=pre_url,
+                    recipe={"source": "library", "intent": action_id},
+                )
+                version_id = str(version.get("id") or "")
+                repo.update_persona_session_runtime_state(
+                    session_id,
+                    dialogue=turn["dialogue"],
+                    scene_context=scene_context,
+                    scene_memory=scene_memory,
+                    emotional_state=emotional_state,
+                    current_version_id=version_id,
+                )
+                synth_job_id = f"lib_{version_id}" if version_id else f"lib_{action_id}"
+                _JOB_RESULTS[synth_job_id] = {
+                    "status": "ready",
+                    "media": {"type": "image", "url": pre_url, "status": "ready"},
+                    "version_id": version_id,
+                    "source": "library",
+                }
+                return {
+                    "ok": True,
+                    "job_id": synth_job_id,
+                    "status": "ready",
+                    "scene_context": scene_context,
+                    "scene_memory": scene_memory,
+                    "emotional_state": emotional_state,
+                    "dialogue": {"text": turn["dialogue"]},
+                    "media": {"type": "image", "url": pre_url, "status": "ready"},
+                    "source": "library",
+                }
+
         # Translate the player INTENT into the renderer's expected key
         # (smirk / blush / closer_pose / outfit_change / …). Recipes in
         # edit_recipes.ACTION_RECIPES still key on those legacy ids — we
@@ -507,6 +568,125 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
                 },
             }
         return {"status": j.status}
+
+    # ── Asset library (pre-render pack) ──────────────────────────────────
+    #
+    # The library is the cache that turns "compliment her → blush" from a
+    # 5-15s GPU wait into an instant response. Fast path reads from
+    # persona_appearance.asset_library; build pass populates it.
+    # Everything is additive — the live-render path keeps working when
+    # the library is empty or PERSONA_LIVE_LIBRARY_LOOKUP is off.
+
+    @router.get("/persona-live/{persona_id}/library")
+    @router.get("/api/persona-live/{persona_id}/library")
+    def library_status(persona_id: str, _user: str = Depends(current_user)) -> Dict[str, Any]:
+        """Report what's in the library + what's missing per tier.
+
+        Useful for the persona editor UI: render a coverage bar per tier
+        ("Tier 1: 7/9 ready — 2 missing, click to build"). No rendering
+        happens here — this is a pure read.
+        """
+        built = pal.load_library(persona_id)
+        out_tiers: Dict[str, Any] = {}
+        for tier in (1, 2, 3):
+            planned = pal.plan_library(tier)
+            missing = [s.asset_id for s in planned if s.asset_id not in built]
+            out_tiers[f"tier_{tier}"] = {
+                "planned": len(planned),
+                "built": len(planned) - len(missing),
+                "missing": missing,
+            }
+        return {
+            "ok": True,
+            "persona_id": persona_id,
+            "lookup_enabled": pal.lookup_enabled(),
+            "library": built,
+            "coverage": out_tiers,
+        }
+
+    @router.post("/persona-live/{persona_id}/library/build")
+    @router.post("/api/persona-live/{persona_id}/library/build")
+    async def library_build(
+        persona_id: str,
+        req: PersonaLiveLibraryBuildRequest,
+        _user: str = Depends(current_user),
+    ) -> Dict[str, Any]:
+        """Render every missing asset in the requested tier (idempotent).
+
+        Wraps ``pal.build_library`` with a render callback that routes
+        each AssetSpec through the same ``render_scene_async`` adapter
+        the live-play path uses, anchored on the persona's portrait via
+        img2img — so identity stays locked across the whole pack.
+
+        Blocks until the pass finishes. Per-asset failures are non-fatal
+        and reported in the response ``failures`` list.
+        """
+        from ..playback.render_adapter import render_scene_async  # late import
+
+        persona = _load_persona(persona_id)
+        if not persona or not persona.get("avatar_url"):
+            return {"ok": False, "error": "persona_missing_portrait"}
+
+        allow_explicit = bool(persona.get("allow_explicit"))
+        persona_hint = ", ".join([
+            str(persona.get("name") or "").strip(),
+            str(persona.get("archetype") or "").strip(),
+        ]).strip(", ")
+
+        async def _render_one(spec: pal.AssetSpec) -> str:
+            """Build a per-spec edit recipe + submit to the renderer."""
+            workflow_map = {
+                "expression":    "avatar_expression_change",
+                "pose":          "avatar_body_pose",
+                "outfit":        "avatar_inpaint_outfit",
+                "bg":            "change_background",
+                "composition":   "edit_inpaint_cn",
+            }
+            edit_recipe = {
+                "workflow_id": workflow_map.get(spec.edit_hint, "edit"),
+                "category": spec.kind,
+                "params": {"mode": "img2img", "steps": 28, "cfg": 5.0, "denoise": 0.45},
+                "locks": ["face"] if spec.edit_hint == "expression" else [],
+            }
+            scene_prompt = f"{spec.prompt_fragment}, identity locked, same subject, tasteful"
+            try:
+                asset_id = await render_scene_async(
+                    scene_prompt=scene_prompt,
+                    duration_sec=5,
+                    session_id=f"lib_{persona_id}",
+                    persona_hint=persona_hint,
+                    media_type="image",
+                    edit_recipe=edit_recipe,
+                    persona_project_id=persona_id,
+                )
+            except Exception as exc:  # noqa: BLE001 — reported per-asset
+                log.warning(
+                    "persona_library_render_error asset=%s: %s",
+                    spec.asset_id, str(exc)[:200],
+                )
+                return ""
+            if not asset_id:
+                return ""
+            return str(resolve_asset_url(asset_id) or "")
+
+        stats = await pal.build_library(
+            persona_id,
+            render_fn=_render_one,
+            max_tier=int(req.tier or 1),
+        )
+        return {
+            "ok": True,
+            "persona_id": persona_id,
+            "tier": int(req.tier or 1),
+            "allow_explicit": allow_explicit,
+            "stats": {
+                "total": stats.total,
+                "rendered": stats.rendered,
+                "skipped": stats.skipped,
+                "failed": stats.failed,
+            },
+            "failures": stats.failures,
+        }
 
     @router.post("/persona-live/session/{session_id}/restore")
     @router.post("/api/persona-live/session/{session_id}/restore")
