@@ -177,6 +177,90 @@ def test_already_rendered_nodes_always_kept():
     assert b_decision.reason == "already_rendered"
 
 
+# ── Regression: real model attribute names must be honoured ────────────────
+#
+# The production ``interactive.models.Edge`` uses ``from_node_id`` /
+# ``to_node_id``, not ``from_id`` / ``to_id``. An earlier version of
+# ``compute_reachable_nodes`` only read ``from_id`` / ``to_id`` on the edge,
+# so BFS silently saw zero adjacencies against real Edge objects — every
+# non-entry node was marked ``deferred_unreachable_at_depth`` and Standard
+# Interactive rendered only the first scene. Keep these tests so the
+# regression can't creep back.
+
+@dataclass
+class _RealEdge:
+    """Mirrors ``interactive.models.Edge`` attribute names."""
+    from_node_id: str
+    to_node_id: str
+
+
+def test_compute_reachable_honors_real_edge_attr_names():
+    nodes = [_Node("start", "scene"), _Node("mid", "decision"), _Node("end", "scene")]
+    edges = [_RealEdge("start", "mid"), _RealEdge("mid", "end")]
+    assert compute_reachable_nodes(nodes, edges, start_id="start", max_depth=99) == {
+        "start",
+        "mid",
+        "end",
+    }
+
+
+def test_filter_with_real_edges_selects_full_graph_at_default_depth():
+    """Matches the user-reported bug: generate-all against a fresh Standard
+    project was only rendering the first scene because BFS read the wrong
+    attributes and only the entry node ended up in the reachable set."""
+    nodes = [
+        _Node("start", "scene"),
+        _Node("s2", "scene"),
+        _Node("s3", "scene"),
+        _Node("dec", "decision"),
+        _Node("s4", "scene"),
+        _Node("s5", "scene"),
+    ]
+    edges = [
+        _RealEdge("start", "s2"),
+        _RealEdge("s2", "s3"),
+        _RealEdge("s3", "dec"),
+        _RealEdge("dec", "s4"),
+        _RealEdge("dec", "s5"),
+    ]
+    naive = [n for n in nodes if n.kind in ("scene", "decision")]
+
+    exp = {"project_type": "standard", "entry_node_id": "start"}
+    selected, decisions = filter_targets_for_play(
+        naive, experience=exp, edges=edges, nodes=nodes,
+    )
+
+    sel_ids = {n.id for n in selected}
+    assert sel_ids == {"start", "s2", "s3", "dec", "s4", "s5"}
+    assert not any(d.reason == "deferred_unreachable_at_depth" for d in decisions)
+
+
+def test_interaction_type_read_from_audience_profile():
+    """Canonical runtime location for interaction_type is inside
+    ``audience_profile``. ``filter_targets_for_play`` must see the
+    persona_live_play marker there, not only as a top-level field."""
+    nodes, edges = _graph_5_scene_1_decision_2_ending()
+    naive = [n for n in nodes if n.kind in ("scene", "decision")]
+    exp = {"audience_profile": {"interaction_type": "persona_live_play"}}
+    selected, _ = filter_targets_for_play(
+        naive, experience=exp, edges=edges, nodes=nodes,
+    )
+    assert selected == []
+
+
+def test_project_type_persona_live_triggers_skip():
+    """Legacy experiences set ``project_type='persona_live'`` (no
+    ``_play`` suffix) rather than the audience_profile marker. That
+    should also short-circuit pre-rendering."""
+    nodes, edges = _graph_5_scene_1_decision_2_ending()
+    naive = [n for n in nodes if n.kind in ("scene", "decision")]
+    exp = {"project_type": "persona_live"}
+    selected, _ = filter_targets_for_play(
+        naive, experience=exp, edges=edges, nodes=nodes,
+    )
+    assert selected == []
+
+
 def test_unknown_interaction_type_falls_back_to_depth_filter():
     nodes, edges = _graph_5_scene_1_decision_2_ending()
     naive = [n for n in nodes if n.kind in ("scene", "decision")]

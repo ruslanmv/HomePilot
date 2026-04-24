@@ -83,8 +83,36 @@ class _NodeLike:
 
 @dataclass(frozen=True)
 class _EdgeLike:
+    """Duck-typed edge view.
+
+    Production ``interactive.models.Edge`` uses ``from_node_id`` /
+    ``to_node_id``. Legacy test doubles (and the shim below) use
+    ``from_id`` / ``to_id``. ``_edge_endpoints()`` below accepts both —
+    this dataclass just documents the "old" shape for reference.
+    """
     from_id: str
     to_id: str
+
+
+def _edge_endpoints(edge: object) -> tuple[str, str]:
+    """Return ``(from, to)`` for an edge, tolerating both naming styles.
+
+    The production ``Edge`` pydantic model exposes ``from_node_id`` /
+    ``to_node_id``; the test doubles in ``test_interactive_render_set``
+    use ``from_id`` / ``to_id``. Returning ``("", "")`` for unrecognised
+    shapes lets the caller skip the edge without crashing.
+    """
+    fid = (
+        getattr(edge, "from_node_id", None)
+        or getattr(edge, "from_id", None)
+        or ""
+    )
+    tid = (
+        getattr(edge, "to_node_id", None)
+        or getattr(edge, "to_id", None)
+        or ""
+    )
+    return str(fid or ""), str(tid or "")
 
 
 @dataclass(frozen=True)
@@ -131,8 +159,7 @@ def compute_reachable_nodes(
     # reaches *from* the start, not what reaches them.
     adj: dict[str, List[str]] = {}
     for e in edges:
-        fid = str(getattr(e, "from_id", "") or "")
-        tid = str(getattr(e, "to_id", "") or "")
+        fid, tid = _edge_endpoints(e)
         if fid and tid and fid in node_ids and tid in node_ids:
             adj.setdefault(fid, []).append(tid)
 
@@ -150,10 +177,51 @@ def compute_reachable_nodes(
 
 
 def _interaction_type(experience: object) -> str:
-    """Read ``interaction_type`` off the experience, tolerating dict / dataclass."""
+    """Resolve the interaction flavour, tolerating dict / pydantic shapes.
+
+    Production stores the setting in two places depending on surface:
+      * ``experience.audience_profile["interaction_type"]`` — canonical,
+        set by the wizard and read by Persona Live routes.
+      * ``experience.project_type`` — legacy field; a value of
+        ``"persona_live"`` is the project-level marker.
+
+    We also accept a top-level ``interaction_type`` attribute/key so the
+    existing unit tests (which pass ``{"interaction_type": ...}``
+    literals) keep working. Returned value is normalised to match the
+    legacy ``"persona_live_play"`` sentinel used by the filter.
+    """
+    def _dict_or_none(obj):
+        if isinstance(obj, dict):
+            return obj
+        return None
+
+    # 1. Top-level attribute / key (test-friendly, legacy)
     if isinstance(experience, dict):
-        return str(experience.get("interaction_type", "") or "")
-    return str(getattr(experience, "interaction_type", "") or "")
+        top = str(experience.get("interaction_type") or "").strip()
+    else:
+        top = str(getattr(experience, "interaction_type", "") or "").strip()
+    if top:
+        return top
+
+    # 2. audience_profile.interaction_type (canonical runtime location)
+    ap = None
+    if isinstance(experience, dict):
+        ap = _dict_or_none(experience.get("audience_profile"))
+    else:
+        ap = _dict_or_none(getattr(experience, "audience_profile", None))
+    if ap:
+        val = str(ap.get("interaction_type") or "").strip()
+        if val:
+            return val
+
+    # 3. project_type fallback — "persona_live" implies persona-live play
+    if isinstance(experience, dict):
+        pt = str(experience.get("project_type") or "").strip().lower()
+    else:
+        pt = str(getattr(experience, "project_type", "") or "").strip().lower()
+    if pt == "persona_live":
+        return "persona_live_play"
+    return ""
 
 
 def _entry_node_id(experience: object, nodes: Sequence) -> str:
