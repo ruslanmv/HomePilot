@@ -12,6 +12,7 @@ import { GitBranch, Image as ImageIcon, Users, Video } from "lucide-react";
 import type { ExperienceMode } from "../types";
 import type { RenderMediaType, WizardForm } from "../wizardState";
 import { LS_PERSONA_CACHE } from "../../voice/personalityGating";
+import { resolveBackendUrl } from "../../lib/backendUrl";
 
 export interface Step0Props {
   form: WizardForm;
@@ -97,6 +98,58 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
       return [];
     }
   }, []);
+
+  // The LS_PERSONA_CACHE writers in App.tsx persist label / persona_class
+  // but do NOT include avatar_url or archetype — historical oversight.
+  // That's why the wizard's persona preview card used to render an empty
+  // grey swatch next to the selected persona name. Rather than touch every
+  // cache writer, we resolve the missing fields from the backend at
+  // selection time and keep them in component state. Cheap: one GET per
+  // wizard session per selected persona.
+  const [resolvedDetails, setResolvedDetails] = useState<
+    Record<string, { avatar_url: string; archetype: string }>
+  >({});
+
+  useEffect(() => {
+    const pid = form.persona_project_id;
+    if (!pid) return;
+    const cached = personaOptions.find((p) => p.id === pid);
+    const needsAvatar = !(cached && cached.avatar_url);
+    const needsArchetype = !(cached && cached.archetype);
+    if (!needsAvatar && !needsArchetype) return;
+    if (resolvedDetails[pid]) return;
+
+    const ctrl = new AbortController();
+    const backend = resolveBackendUrl();
+    fetch(`${backend}/projects/${encodeURIComponent(pid)}`, {
+      signal: ctrl.signal,
+      credentials: "include",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!body || !body.ok || !body.project) return;
+        const project = body.project as {
+          persona_appearance?: { selected_filename?: unknown };
+          persona_agent?: {
+            persona_class?: unknown;
+            response_style?: { tone?: unknown };
+          };
+        };
+        const filename = String(
+          project.persona_appearance?.selected_filename || "",
+        ).trim();
+        const avatarUrl = filename ? `${backend}/files/${filename}` : "";
+        const archetype =
+          String(project.persona_agent?.persona_class || "").trim() ||
+          String(project.persona_agent?.response_style?.tone || "").trim();
+        setResolvedDetails((prev) => ({
+          ...prev,
+          [pid]: { avatar_url: avatarUrl, archetype },
+        }));
+      })
+      .catch(() => { /* swallow — preview falls back to placeholder */ });
+    return () => ctrl.abort();
+  }, [form.persona_project_id, personaOptions, resolvedDetails]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -184,16 +237,19 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
           {form.persona_project_id && (() => {
             const selected = personaOptions.find((p) => p.id === form.persona_project_id);
             if (!selected) return null;
+            const resolved = resolvedDetails[form.persona_project_id];
+            const avatarUrl = selected.avatar_url || resolved?.avatar_url || "";
+            const archetype = selected.archetype || resolved?.archetype || "";
             return (
               <div className="mt-2.5 flex items-center gap-2.5 rounded-md border border-[#3a2a58] bg-[#130f1f] p-2.5">
-                {selected.avatar_url ? (
-                  <img src={selected.avatar_url} alt={selected.label} className="w-12 h-12 rounded-md object-cover border border-[#51347f]" />
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt={selected.label} className="w-12 h-12 rounded-md object-cover border border-[#51347f]" />
                 ) : (
                   <div className="w-12 h-12 rounded-md bg-[#24173a] border border-[#51347f]" />
                 )}
                 <div className="min-w-0">
                   <div className="text-xs font-medium text-[#f1f1f1] truncate">{selected.label}</div>
-                  <div className="text-[11px] text-[#b59ed9] truncate">{selected.archetype || "Persona companion"}</div>
+                  <div className="text-[11px] text-[#b59ed9] truncate">{archetype || "Persona companion"}</div>
                 </div>
               </div>
             );
