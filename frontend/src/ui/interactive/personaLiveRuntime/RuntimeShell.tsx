@@ -55,10 +55,31 @@ type CharacterState = {
 };
 
 type ChatMessage = {
+  // Stable id — used as the React key in ConversationOverlay. Without it,
+  // the previous implementation keyed on ``${sender}-${index}-${text.slice(0,12)}``
+  // and ``prev.slice(-7)`` re-indexed every surviving bubble on every new
+  // turn, which made React unmount + remount each one → the slide-in /
+  // typewriter animations replayed on every send, producing the "all the
+  // bubbles auto-populate again" behaviour the user reported.
+  id: string;
   sender: "user" | "ai";
   text: string;
   emotion?: string;
 };
+
+function _newMessageId(): string {
+  // crypto.randomUUID() is available in every modern browser + jsdom; fall
+  // back to a timestamp + random suffix so the unit test harness never
+  // fails on environments without it.
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* fallthrough */
+  }
+  return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
 
 type PersonaRuntimeState = {
   persona: {
@@ -123,7 +144,13 @@ function ConversationOverlay({ messages, pending }: { messages: ChatMessage[]; p
     <div className="space-y-2">
       {messages.map((message, index) => {
         const role: "user" | "assistant" = message.sender === "user" ? "user" : "assistant";
-        const key = `${message.sender}-${index}-${message.text.slice(0, 12)}`;
+        // Stable id lets React keep the same DOM node across list shifts
+        // (prev.slice(-7) re-indexes entries on every send). Without this
+        // every bubble unmounted + remounted each turn and the slide-in
+        // animation replayed on all of them — the "auto-populate again"
+        // behaviour. Index is kept as a fallback only for historic dev
+        // data that predates the id field.
+        const key = message.id || `${message.sender}-${index}-${message.text.slice(0, 12)}`;
         const isLatestAi = role === "assistant" && index === lastAiIdx;
         return (
           <AnimatedBubble key={key} role={role}>
@@ -174,11 +201,16 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
 
   const sessionId = state?.session.id || "";
   const transitionClass = useSceneTransition(transitionType);
-  const overlayMessages = useMemo(() => {
+  const overlayMessages = useMemo((): ChatMessage[] => {
     const recent = messages.slice(-3);
     if (recent.length > 0) return recent;
     const dialogueText = state?.dialogue.text?.trim();
-    return dialogueText ? [{ sender: "ai" as const, text: dialogueText }] : [];
+    // Memoize the synthesized id on the dialogue text so the bubble
+    // doesn't remount every time overlayMessages recomputes — avoids
+    // the repeated slide-in animation when the user types.
+    return dialogueText
+      ? [{ id: `dlg-${dialogueText.length}-${dialogueText.slice(0, 24)}`, sender: "ai" as const, text: dialogueText }]
+      : [];
   }, [messages, state?.dialogue.text]);
 
   useEffect(() => {
@@ -252,9 +284,9 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
   function applyCharacterTurn(opts: { userText?: string; aiText: string; emotion?: string }) {
     const userText = opts.userText?.trim() || "";
     if (userText) {
-      setMessages((prev) => [...prev.slice(-7), { sender: "user", text: userText }]);
+      setMessages((prev) => [...prev.slice(-7), { id: _newMessageId(), sender: "user", text: userText }]);
     }
-    setMessages((prev) => [...prev.slice(-7), { sender: "ai", text: opts.aiText, emotion: opts.emotion }]);
+    setMessages((prev) => [...prev.slice(-7), { id: _newMessageId(), sender: "ai", text: opts.aiText, emotion: opts.emotion }]);
     setCharacterState((prev) => ({
       ...prev,
       emotion: (opts.emotion as CharacterState["emotion"]) || prev.emotion,
@@ -314,7 +346,7 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
     const userText = chat.trim();
     // Optimistic: push the user bubble immediately and clear the input so
     // there's no "dead input" gap while we wait for the AI reply.
-    setMessages((prev) => [...prev.slice(-7), { sender: "user", text: userText }]);
+    setMessages((prev) => [...prev.slice(-7), { id: _newMessageId(), sender: "user", text: userText }]);
     setChat("");
     setSending(true);
     try {
@@ -327,7 +359,7 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
       const emotion = ((res.emotional_state as EmotionalState | undefined)?.mood
         || state?.emotionalState.mood
         || "neutral");
-      setMessages((prev) => [...prev.slice(-7), { sender: "ai", text: aiText, emotion }]);
+      setMessages((prev) => [...prev.slice(-7), { id: _newMessageId(), sender: "ai", text: aiText, emotion }]);
       setCharacterState((prev) => ({
         ...prev,
         emotion: emotion as CharacterState["emotion"],
@@ -444,11 +476,25 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
             <input
               value={chat}
               onChange={(e) => setChat(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void sendChat();
+                }
+              }}
               placeholder="Message her..."
-              className="flex-1 bg-transparent text-sm outline-none px-2"
+              disabled={sending}
+              maxLength={500}
+              className="flex-1 bg-transparent text-sm outline-none px-2 disabled:opacity-60"
             />
-            <button type="button" onClick={sendChat} className="w-9 h-9 rounded-full bg-[#ffffff1a] border border-white/20 grid place-items-center">
-              <Send className="w-4 h-4" />
+            <button
+              type="button"
+              onClick={sendChat}
+              disabled={!chat.trim() || sending}
+              aria-label="Send"
+              className="w-9 h-9 rounded-full bg-[#ffffff1a] border border-white/20 grid place-items-center disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </button>
           </div>
         </div>

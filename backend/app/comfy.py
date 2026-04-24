@@ -562,10 +562,29 @@ def _strip_meta_keys(obj: Any) -> Any:
 
 
 def _load_workflow(name: str) -> Dict[str, Any]:
-    p = WORKFLOWS_DIR / f"{name}.json"
-    if not p.exists():
+    # Search order:
+    #   1. WORKFLOWS_DIR / <name>.json          (flat layout — default)
+    #   2. WORKFLOWS_DIR / avatar / <name>.json (persona-live recipes live here)
+    #   3. <repo_root>/workflows/avatar/<name>.json  \  fallback for
+    #   4. <repo_root>/workflows/<name>.json         /  non-comfyui trees
+    # Persona Live's ``avatar_expression_change`` ships in
+    # ``workflows/avatar/`` at repo root, not in ``comfyui/workflows/``,
+    # so a flat-only lookup missed it and every Tease/Smirk/Blush action
+    # failed with "Workflow file not found" → empty render → character
+    # vanished in the viewport.
+    candidates = [
+        WORKFLOWS_DIR / f"{name}.json",
+        WORKFLOWS_DIR / "avatar" / f"{name}.json",
+    ]
+    repo_root = Path(__file__).resolve().parents[2]
+    for sub in ("workflows/avatar", "workflows"):
+        candidates.append(repo_root / sub / f"{name}.json")
+
+    p = next((c for c in candidates if c.exists()), None)
+    if p is None:
         raise FileNotFoundError(
-            f"Workflow file not found: {p}. "
+            f"Workflow file not found for '{name}'. Searched: "
+            f"{[str(c) for c in candidates]}. "
             f"Set COMFY_WORKFLOWS_DIR or mount workflows into {WORKFLOWS_DIR}."
         )
     workflow = json.loads(p.read_text(encoding="utf-8"))
