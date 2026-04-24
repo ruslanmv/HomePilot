@@ -401,7 +401,9 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
         # this intent, or lookup flag off) fall through to the existing
         # render path with no behaviour change.
         if pal.lookup_enabled():
-            pre_url = pal.resolve_asset_url_for_intent(persona_id, action_id)
+            pre_url = pal.resolve_asset_url_for_intent(
+                persona_id, action_id, allow_explicit=allow_explicit,
+            )
             if pre_url:
                 emotional_state = _apply_emotion_delta(
                     emotional_state, action_id=action_id,
@@ -584,24 +586,49 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
 
         Useful for the persona editor UI: render a coverage bar per tier
         ("Tier 1: 7/9 ready — 2 missing, click to build"). No rendering
-        happens here — this is a pure read.
+        happens here — this is a pure read. Coverage is reported for both
+        the SFW plan AND (when the persona allows) the NSFW plan, so the
+        UI can show two separate coverage bars ("Base: 8/9", "Mature: 3/4").
         """
+        allow_explicit = _allow_explicit(persona_id)
         built = pal.load_library(persona_id)
-        out_tiers: Dict[str, Any] = {}
+        sfw_coverage: Dict[str, Any] = {}
         for tier in (1, 2, 3):
-            planned = pal.plan_library(tier)
+            planned = pal.plan_library(tier, allow_explicit=False)
             missing = [s.asset_id for s in planned if s.asset_id not in built]
-            out_tiers[f"tier_{tier}"] = {
+            sfw_coverage[f"tier_{tier}"] = {
                 "planned": len(planned),
                 "built": len(planned) - len(missing),
                 "missing": missing,
             }
+
+        nsfw_coverage: Dict[str, Any] = {}
+        if allow_explicit:
+            for tier in (1, 2, 3):
+                # Only the explicit rows for this layer — compare against
+                # the SFW plan so the UI can show "Mature: built/total"
+                # as a delta on top of the baseline count.
+                planned_full = pal.plan_library(tier, allow_explicit=True)
+                planned_sfw = pal.plan_library(tier, allow_explicit=False)
+                sfw_ids = {s.asset_id for s in planned_sfw}
+                explicit_only = [s for s in planned_full if s.asset_id not in sfw_ids]
+                missing = [s.asset_id for s in explicit_only if s.asset_id not in built]
+                nsfw_coverage[f"tier_{tier}"] = {
+                    "planned": len(explicit_only),
+                    "built": len(explicit_only) - len(missing),
+                    "missing": missing,
+                }
+
         return {
             "ok": True,
             "persona_id": persona_id,
+            "allow_explicit": allow_explicit,
             "lookup_enabled": pal.lookup_enabled(),
             "library": built,
-            "coverage": out_tiers,
+            "coverage": {
+                "sfw": sfw_coverage,
+                "nsfw": nsfw_coverage,
+            },
         }
 
     @router.post("/persona-live/{persona_id}/library/build")
@@ -673,6 +700,7 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
             persona_id,
             render_fn=_render_one,
             max_tier=int(req.tier or 1),
+            allow_explicit=allow_explicit,
         )
         return {
             "ok": True,

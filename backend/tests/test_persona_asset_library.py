@@ -232,6 +232,145 @@ async def test_build_library_records_per_asset_failures(monkeypatch):
     assert stats.rendered == len(pal.plan_library(1)) - 2
 
 
+# ── NSFW gating ─────────────────────────────────────────────────────────────
+
+def test_plan_library_excludes_nsfw_by_default():
+    """Default SFW persona must not see any explicit_only specs."""
+    for tier in (1, 2, 3):
+        plan = pal.plan_library(max_tier=tier, allow_explicit=False)
+        for spec in plan:
+            assert spec.explicit_only is False, (
+                f"tier={tier} leaked explicit spec {spec.asset_id}"
+            )
+
+
+def test_plan_library_includes_nsfw_when_allow_explicit():
+    """allow_explicit=True must surface the NSFW rows at their tier."""
+    tier_1 = pal.plan_library(max_tier=1, allow_explicit=True)
+    ids = {s.asset_id for s in tier_1}
+    assert "expr_heated" in ids
+    assert "expr_breathless" in ids
+
+    tier_2 = pal.plan_library(max_tier=2, allow_explicit=True)
+    tier_2_ids = {s.asset_id for s in tier_2}
+    assert "pose_reclining" in tier_2_ids
+    assert "outfit_lingerie" in tier_2_ids
+    assert "outfit_silk_robe" in tier_2_ids
+
+    tier_3 = pal.plan_library(max_tier=3, allow_explicit=True)
+    tier_3_ids = {s.asset_id for s in tier_3}
+    assert "env_boudoir" in tier_3_ids
+    assert "env_bedroom_intimate" in tier_3_ids
+
+
+def test_nsfw_tier_strictly_grows_the_plan():
+    """For every tier, allow_explicit=True must be a proper superset
+    of allow_explicit=False — we should only ever ADD rows, never
+    swap them out."""
+    for tier in (1, 2, 3):
+        sfw = {s.asset_id for s in pal.plan_library(tier, allow_explicit=False)}
+        nsfw = {s.asset_id for s in pal.plan_library(tier, allow_explicit=True)}
+        assert sfw.issubset(nsfw)
+        assert len(nsfw) > len(sfw)
+
+
+def test_asset_id_for_intent_prefers_nsfw_when_allow_explicit():
+    """suggest_outfit → outfit_fitness (SFW) becomes outfit_lingerie
+    (NSFW) when the persona allows explicit content."""
+    assert pal.asset_id_for_intent("suggest_outfit", allow_explicit=False) == "outfit_fitness"
+    assert pal.asset_id_for_intent("suggest_outfit", allow_explicit=True) == "outfit_lingerie"
+    assert pal.asset_id_for_intent("change_location", allow_explicit=True) == "env_boudoir"
+    assert pal.asset_id_for_intent("change_location", allow_explicit=False) == "env_couch"
+
+
+def test_level_5_intents_resolve_only_for_explicit_personas():
+    """lean_in / playful_dare had no SFW mapping; with the NSFW
+    override layer they resolve ONLY when allow_explicit=True."""
+    assert pal.asset_id_for_intent("lean_in", allow_explicit=False) == ""
+    assert pal.asset_id_for_intent("lean_in", allow_explicit=True) == "expr_breathless"
+    assert pal.asset_id_for_intent("playful_dare", allow_explicit=False) == ""
+    assert pal.asset_id_for_intent("playful_dare", allow_explicit=True) == "pose_closer_intimate"
+
+
+def test_resolve_url_prefers_nsfw_row_when_both_exist(monkeypatch):
+    """When the library has both the SFW and NSFW rows and the persona
+    allows explicit, the NSFW row wins for an intent that has both."""
+    monkeypatch.setattr(pal, "load_library", lambda pid: {
+        "outfit_fitness":   {"asset_url": "/files/fitness.png"},
+        "outfit_lingerie":  {"asset_url": "/files/lingerie.png"},
+    })
+    sfw = pal.resolve_asset_url_for_intent("pid", "suggest_outfit", allow_explicit=False)
+    nsfw = pal.resolve_asset_url_for_intent("pid", "suggest_outfit", allow_explicit=True)
+    assert sfw == "/files/fitness.png"
+    assert nsfw == "/files/lingerie.png"
+
+
+def test_resolve_url_falls_back_to_sfw_when_nsfw_row_missing(monkeypatch):
+    """Explicit persona + library built only at SFW tier: the lookup
+    must gracefully fall back to the SFW row instead of returning
+    empty and forcing a live render on every click."""
+    monkeypatch.setattr(pal, "load_library", lambda pid: {
+        # Only the SFW outfit is built.
+        "outfit_fitness": {"asset_url": "/files/fitness.png"},
+    })
+    url = pal.resolve_asset_url_for_intent("pid", "suggest_outfit", allow_explicit=True)
+    assert url == "/files/fitness.png"
+
+
+def test_level_5_intent_returns_empty_without_library_nsfw_row(monkeypatch):
+    """Explicit persona, but the NSFW tier hasn't been built yet.
+    lean_in has NO SFW fallback — must return empty so the action
+    endpoint falls through to live render."""
+    monkeypatch.setattr(pal, "load_library", lambda pid: {
+        "outfit_fitness": {"asset_url": "/files/fitness.png"},
+    })
+    url = pal.resolve_asset_url_for_intent("pid", "lean_in", allow_explicit=True)
+    assert url == ""
+
+
+@pytest.mark.asyncio
+async def test_build_library_respects_allow_explicit_gate(monkeypatch):
+    """Building with allow_explicit=False must render ONLY SFW specs —
+    the NSFW rows stay skipped at every tier."""
+    rendered: List[str] = []
+    monkeypatch.setattr(pal, "load_library", lambda pid: {})
+    monkeypatch.setattr(pal, "save_asset_record", lambda pid, rec: True)
+
+    async def _render(spec: pal.AssetSpec) -> str:
+        rendered.append(spec.asset_id)
+        return f"/files/{spec.asset_id}.png"
+
+    await pal.build_library(
+        "persona_sfw", render_fn=_render, max_tier=3, allow_explicit=False,
+    )
+    assert "expr_heated" not in rendered
+    assert "expr_breathless" not in rendered
+    assert "outfit_lingerie" not in rendered
+    assert "env_boudoir" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_build_library_includes_nsfw_when_persona_allows(monkeypatch):
+    """allow_explicit=True must render the NSFW rows alongside SFW."""
+    rendered: List[str] = []
+    monkeypatch.setattr(pal, "load_library", lambda pid: {})
+    monkeypatch.setattr(pal, "save_asset_record", lambda pid, rec: True)
+
+    async def _render(spec: pal.AssetSpec) -> str:
+        rendered.append(spec.asset_id)
+        return f"/files/{spec.asset_id}.png"
+
+    await pal.build_library(
+        "persona_explicit", render_fn=_render, max_tier=3, allow_explicit=True,
+    )
+    for required in (
+        "expr_heated", "expr_breathless",
+        "pose_reclining", "outfit_lingerie", "outfit_silk_robe",
+        "env_boudoir",
+    ):
+        assert required in rendered, f"NSFW spec {required} not built"
+
+
 @pytest.mark.asyncio
 async def test_build_library_emits_progress_events(monkeypatch):
     events: List[Dict[str, Any]] = []

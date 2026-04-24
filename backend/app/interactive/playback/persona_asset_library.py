@@ -70,6 +70,12 @@ class AssetSpec:
                      existing recipe router without a second code path.
     ``prompt_fragment`` — appended to the render-time prompt so the
                      workflow produces the right visual state.
+    ``explicit_only`` — when True, this spec is only planned / rendered
+                     when the persona has ``allow_explicit=True``. Hard
+                     fail-closed: the filter never includes it for a
+                     persona whose safety profile forbids explicit
+                     content, so Spicy Mode off + non-allow_explicit
+                     personas never see these rows at any tier.
     """
     asset_id: str
     tier: Tier
@@ -78,6 +84,7 @@ class AssetSpec:
     reaction_intent: str
     prompt_fragment: str
     description: str = ""
+    explicit_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -218,6 +225,90 @@ ASSET_MANIFEST: tuple[AssetSpec, ...] = (
         prompt_fragment="sunset beach, warm golden light, ocean waves",
         description="Outdoor escape environment.",
     ),
+
+    # ── NSFW pack (explicit_only=True) ─────────────────────────────────
+    #
+    # Gated behind ``persona.allow_explicit`` AND a Mature (gated)
+    # experience mode. Vocabulary mirrors the explicit rows in
+    # ``persona_live_prompts.EXPRESSION_LADDER / POSE_LADDER /
+    # OUTFIT_LADDER`` so the build pack produces the same "fan-service
+    # tasteful erotic art" style the system prompt already asks for at
+    # the explicit tier. ``BASE_NEGATIVE`` (minor-safety floor) applies
+    # automatically via the shared render adapter — we don't need a
+    # separate guard here.
+
+    # Tier 1 NSFW — the fan-service core reactions. These are what the
+    # "compliment her → breathless" / "lean in → heated gaze" loop
+    # needs served instantly to feel alive on an explicit-tier persona.
+    AssetSpec(
+        asset_id="expr_heated",
+        tier=1, kind="expression", edit_hint="expression", reaction_intent="blush",
+        prompt_fragment="heated gaze, flushed cheeks, lips parted, sensual mood, "
+                        "boudoir photography style, fan service, tasteful erotic art",
+        description="Mature expression reaction — warm, charged, clothed.",
+        explicit_only=True,
+    ),
+    AssetSpec(
+        asset_id="expr_breathless",
+        tier=1, kind="expression", edit_hint="expression", reaction_intent="ahegao",
+        prompt_fragment="breathless expression, half-lidded eyes, soft biting lip, "
+                        "sensual mood, boudoir photography style, tasteful erotic art",
+        description="Mature expression for lean_in / level-5 intents.",
+        explicit_only=True,
+    ),
+
+    # Tier 2 NSFW — poses + outfits that carry the most visible tier
+    # uplift on a click ("suggest outfit" → instant lingerie reveal).
+    AssetSpec(
+        asset_id="pose_reclining",
+        tier=2, kind="pose", edit_hint="pose", reaction_intent="closer_pose",
+        prompt_fragment="reclining on bed, one knee raised, relaxed pose, "
+                        "tasteful framing, boudoir photography style",
+        description="Mature pose — intimate bedroom framing.",
+        explicit_only=True,
+    ),
+    AssetSpec(
+        asset_id="pose_closer_intimate",
+        tier=2, kind="pose", edit_hint="pose", reaction_intent="closer_pose",
+        prompt_fragment="closer intimate pose, partner-implied framing, "
+                        "tasteful crop, boudoir photography style",
+        description="Mature close-framing pose for high-trust turns.",
+        explicit_only=True,
+    ),
+    AssetSpec(
+        asset_id="outfit_lingerie",
+        tier=2, kind="outfit", edit_hint="outfit", reaction_intent="outfit_change",
+        prompt_fragment="lingerie-style outfit, tasteful boudoir framing, "
+                        "soft rim light, sensual mood, tasteful erotic art",
+        description="Mature outfit — tasteful boudoir / lingerie.",
+        explicit_only=True,
+    ),
+    AssetSpec(
+        asset_id="outfit_silk_robe",
+        tier=2, kind="outfit", edit_hint="outfit", reaction_intent="outfit_change",
+        prompt_fragment="silk robe loosely tied, tasteful boudoir framing, "
+                        "soft window light, silk sheets, sensual mood",
+        description="Mature outfit — silk robe / boudoir loungewear.",
+        explicit_only=True,
+    ),
+
+    # Tier 3 NSFW — environments that complete the boudoir set.
+    AssetSpec(
+        asset_id="env_boudoir",
+        tier=3, kind="environment", edit_hint="bg", reaction_intent="move_to_beach",
+        prompt_fragment="boudoir set, soft window light, silk sheets, "
+                        "dramatic contrast, tasteful erotic art",
+        description="Mature environment — boudoir set.",
+        explicit_only=True,
+    ),
+    AssetSpec(
+        asset_id="env_bedroom_intimate",
+        tier=3, kind="environment", edit_hint="bg", reaction_intent="move_to_beach",
+        prompt_fragment="warm-lit intimate bedroom, low dim lighting, "
+                        "soft bedding, sensual mood",
+        description="Mature environment — intimate bedroom.",
+        explicit_only=True,
+    ),
 )
 
 
@@ -243,43 +334,93 @@ INTENT_TO_ASSET_ID: Dict[str, str] = {
     # Level 4
     "suggest_outfit":  "outfit_fitness",  # variety; rotates further when cached
     "change_location": "env_couch",
-    # Level 5 always falls through to live render — tier-gated content is
-    # rare enough that the "special moment" live render is the right call.
+}
+
+# Explicit-only intent overrides. Used when the persona has
+# allow_explicit=True AND Spicy Mode is on — these level-4 / level-5
+# intents prefer a NSFW library row over the SFW fallback above.
+# Every asset_id here must be tagged ``explicit_only=True`` in the
+# manifest; if the library doesn't have it yet (build pass hasn't run
+# at that tier, or the persona disallows explicit), the lookup falls
+# through to the SFW entry and then to live render.
+INTENT_TO_ASSET_ID_EXPLICIT: Dict[str, str] = {
+    # Level 4 mature variety — when the persona allows, suggest the
+    # lingerie outfit / boudoir environment instead of the SFW default.
+    "suggest_outfit":  "outfit_lingerie",
+    "change_location": "env_boudoir",
+    # Level 5 — "Lean into the moment" / "Playful dare". Previously
+    # fell through to live render always; now resolvable when the
+    # library is built at tier 2 for explicit personas.
+    "lean_in":         "expr_breathless",
+    "playful_dare":    "pose_closer_intimate",
+    # Level 2 intimacy can also prefer the mature close-framing pose
+    # once the library has it.
+    "get_closer":      "pose_closer_intimate",
+    "ask_personal":    "expr_heated",
 }
 
 
-def asset_id_for_intent(intent_id: str) -> str:
+def asset_id_for_intent(intent_id: str, *, allow_explicit: bool = False) -> str:
     """Resolve player intent → pre-rendered library asset id.
 
-    Returns empty string when the intent should fall through to the
-    live-render path (e.g. level-5 explicit intents, free-text chat).
+    When ``allow_explicit=True``, the lookup prefers the NSFW override
+    row if one exists for this intent; otherwise falls back to the SFW
+    default. Returns empty string when the intent has no library
+    mapping at all — the caller should fall through to live render.
     """
-    return INTENT_TO_ASSET_ID.get((intent_id or "").strip().lower(), "")
+    key = (intent_id or "").strip().lower()
+    if allow_explicit:
+        explicit_id = INTENT_TO_ASSET_ID_EXPLICIT.get(key)
+        if explicit_id:
+            return explicit_id
+    return INTENT_TO_ASSET_ID.get(key, "")
 
 
 # ── Planning ────────────────────────────────────────────────────────────────
 
-def plan_library(max_tier: Tier = 1) -> List[AssetSpec]:
+def plan_library(
+    max_tier: Tier = 1, *, allow_explicit: bool = False,
+) -> List[AssetSpec]:
     """Filter the manifest to the requested tier ceiling.
 
     ``max_tier=1`` → idles + all expressions + default outfit + medium cam
     ``max_tier=2`` → adds poses + close-up / wide cam + extra outfits
     ``max_tier=3`` → full manifest including environments + formal outfit
+
+    ``allow_explicit`` opts the persona into the NSFW rows
+    (``explicit_only=True`` in the manifest). Fail-closed: when False,
+    explicit rows are dropped at every tier. Callers must resolve this
+    flag from the persona's ``safety.allow_explicit`` — the library
+    never decides on its own.
     """
     t = max(1, min(int(max_tier or 1), 3))
-    return [spec for spec in ASSET_MANIFEST if spec.tier <= t]
+    out: List[AssetSpec] = []
+    for spec in ASSET_MANIFEST:
+        if spec.tier > t:
+            continue
+        if spec.explicit_only and not allow_explicit:
+            continue
+        out.append(spec)
+    return out
 
 
 def pending_specs(
-    *, max_tier: Tier, already_built: Dict[str, Any] | None = None,
+    *, max_tier: Tier,
+    already_built: Dict[str, Any] | None = None,
+    allow_explicit: bool = False,
 ) -> List[AssetSpec]:
     """Subtract the already-built asset ids from the planned set.
 
     ``already_built`` is the dict stored at
     ``persona_appearance.asset_library`` — keys are asset ids.
+    ``allow_explicit`` gates the NSFW rows the same way
+    ``plan_library`` does.
     """
     built = set((already_built or {}).keys())
-    return [spec for spec in plan_library(max_tier) if spec.asset_id not in built]
+    return [
+        spec for spec in plan_library(max_tier, allow_explicit=allow_explicit)
+        if spec.asset_id not in built
+    ]
 
 
 # ── Storage helpers ─────────────────────────────────────────────────────────
@@ -333,18 +474,43 @@ def save_asset_record(
     return patched is not None
 
 
-def resolve_asset_url_for_intent(persona_project_id: str, intent_id: str) -> str:
+def resolve_asset_url_for_intent(
+    persona_project_id: str,
+    intent_id: str,
+    *,
+    allow_explicit: bool = False,
+) -> str:
     """Fast-path lookup: intent → library asset url (``""`` if missing).
 
+    When ``allow_explicit=True``, prefers the NSFW variant (if the
+    library has it); falls back to the SFW variant; falls back to
+    empty (→ live render). Never raises, never blocks — the whole
+    point is instant feedback.
+
     Callers (e.g. the action endpoint) should treat an empty return as
-    "fall through to live render". This function never raises and never
-    blocks — the whole point is instant feedback.
+    "fall through to live render".
     """
-    asset_id = asset_id_for_intent(intent_id)
-    if not asset_id:
-        return ""
     library = load_library(persona_project_id)
-    row = library.get(asset_id) if isinstance(library, dict) else None
+    if not isinstance(library, dict) or not library:
+        return ""
+
+    # Try the explicit override first when the persona allows.
+    if allow_explicit:
+        explicit_id = INTENT_TO_ASSET_ID_EXPLICIT.get(
+            (intent_id or "").strip().lower()
+        )
+        if explicit_id:
+            row = library.get(explicit_id)
+            if isinstance(row, dict):
+                url = str(row.get("asset_url") or "")
+                if url:
+                    return url
+            # Fall through to SFW if the NSFW row isn't built yet.
+
+    sfw_id = INTENT_TO_ASSET_ID.get((intent_id or "").strip().lower())
+    if not sfw_id:
+        return ""
+    row = library.get(sfw_id)
     if not isinstance(row, dict):
         return ""
     return str(row.get("asset_url") or "")
@@ -388,9 +554,17 @@ async def build_library(
     *,
     render_fn: RenderFn,
     max_tier: Tier = 1,
+    allow_explicit: bool = False,
     on_progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
 ) -> BuildStats:
     """Render and persist every missing asset in the requested tier.
+
+    ``allow_explicit`` gates whether the NSFW rows from the manifest
+    are included — must be True AND the persona's safety profile must
+    allow explicit content (the route enforces this upstream before
+    calling us). Passing True on a persona whose profile forbids
+    explicit content is a caller bug; fail-closed is the responsibility
+    of the route layer.
 
     Idempotent: if the library already has a row for an asset_id, that
     row is left untouched. Per-asset failures are non-fatal — they're
@@ -400,10 +574,14 @@ async def build_library(
     import time
 
     existing = load_library(persona_project_id)
-    specs = pending_specs(max_tier=max_tier, already_built=existing)
+    specs = pending_specs(
+        max_tier=max_tier,
+        already_built=existing,
+        allow_explicit=allow_explicit,
+    )
 
     stats = BuildStats(
-        total=len(plan_library(max_tier)),
+        total=len(plan_library(max_tier, allow_explicit=allow_explicit)),
         skipped=len(existing),
     )
     if on_progress:
