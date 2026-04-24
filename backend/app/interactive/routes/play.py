@@ -117,7 +117,19 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
             # to the "pending" payload below so the player at least
             # shows "Generating scene…" with a reason in the logs
             # instead of "Scene not available yet."
-            if not list(getattr(entry, "asset_ids", []) or []):
+            #
+            # Skipped entirely for Persona Live projects: their entry
+            # scene is a publish/QA placeholder, not something the
+            # runtime ever displays. The Live Action panel draws from
+            # the persona_asset_library instead. Without this guard,
+            # Persona Live /play/sessions would fire a txt2img/video
+            # render on the generic scene narration — wasted GPU work
+            # that can also explode on missing model files.
+            project_type = str(getattr(exp, "project_type", "") or "").strip().lower()
+            if (
+                project_type != "persona_live"
+                and not list(getattr(entry, "asset_ids", []) or [])
+            ):
                 refreshed = await _try_render_entry_scene(exp, entry, sess.id)
                 if refreshed is not None:
                     entry = refreshed

@@ -208,3 +208,68 @@ def test_mime_inferred_from_extension(monkeypatch):
         config=_config(),
     ))
     assert captured_reg[0]["mime"] == "video/webm"
+
+
+# ── Workflow-variable defaults (regression) ────────────────────
+#
+# Older _build_variables didn't provide ``t5_encoder``, ``image_path``
+# or ``denoise`` defaults. LTX-style video workflows have
+# ``{{t5_encoder}}`` / ``{{image_path}}`` / ``{{denoise}}`` placeholders;
+# without the corresponding variables the submitted prompt landed
+# literal ``{{t5_encoder}}`` in CLIPLoader → ComfyUI rejected it with
+# "Value not in list: clip_name: '{{t5_encoder}}' not in [...]".
+# These tests lock in the defaults so the wizard video path stops
+# producing that false-positive "missing model" error.
+
+def test_build_variables_provides_t5_encoder_default(monkeypatch):
+    from app.interactive.playback.render_adapter import _build_variables
+
+    # Simulate ComfyUI reporting one real T5 encoder available.
+    import app.comfy as comfy_mod
+    def _fake_object_info(force=False):
+        return {
+            "CLIPLoader": {"input": {"required": {
+                "clip_name": [["clip_l.safetensors", "t5xxl_fp16.safetensors"]],
+            }}},
+        }
+    monkeypatch.setattr(comfy_mod, "_fetch_object_info", _fake_object_info)
+
+    vars_ = _build_variables("persona portrait", 5, "hint", media_type="video")
+    assert vars_["t5_encoder"] == "t5xxl_fp16.safetensors", (
+        "Default must pick an installed T5 model instead of an unresolved "
+        "{{t5_encoder}} placeholder — that's what was triggering the "
+        "'not in list' ComfyUI validation failures."
+    )
+    assert "image_path" in vars_
+    assert "denoise" in vars_
+
+
+def test_build_variables_falls_back_when_comfy_unreachable(monkeypatch):
+    """When ComfyUI is down or hasn't cached /object_info yet, the
+    picker falls back to the standard filename rather than raising."""
+    from app.interactive.playback.render_adapter import _build_variables
+    import app.comfy as comfy_mod
+    def _boom(force=False):
+        raise RuntimeError("comfy offline")
+    monkeypatch.setattr(comfy_mod, "_fetch_object_info", _boom)
+
+    vars_ = _build_variables("persona portrait", 5, "hint", media_type="video")
+    assert vars_["t5_encoder"] == "t5xxl_fp16.safetensors"
+
+
+def test_build_variables_picks_first_installed_when_no_t5(monkeypatch):
+    """If no preferred model matches, pick the first installed encoder
+    so we use whatever the operator actually has on disk."""
+    from app.interactive.playback.render_adapter import _build_variables
+    import app.comfy as comfy_mod
+    def _fake_object_info(force=False):
+        return {
+            "CLIPLoader": {"input": {"required": {
+                "clip_name": [["umt5_xxl_fp8_e4m3fn.safetensors", "clip_l.safetensors"]],
+            }}},
+        }
+    monkeypatch.setattr(comfy_mod, "_fetch_object_info", _fake_object_info)
+
+    vars_ = _build_variables("persona portrait", 5, "hint", media_type="video")
+    # umt5 doesn't match "t5xxl_fp16"/"t5xxl_fp8_e4m3fn" but does match "t5" substring
+    assert vars_["t5_encoder"] == "umt5_xxl_fp8_e4m3fn.safetensors"

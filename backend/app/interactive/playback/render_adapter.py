@@ -194,6 +194,48 @@ _VIDEO_WORKFLOW_BY_MODEL: List[tuple[str, str]] = [
 ]
 
 
+def _pick_available_clip_model(
+    *, prefer: tuple[str, ...], fallback: str,
+) -> str:
+    """Pick a CLIP/T5 encoder filename that ComfyUI actually has.
+
+    Queries the cached ``/object_info`` for ``CLIPLoader.clip_name`` and
+    returns the first installed model whose lowercase name contains any
+    of the ``prefer`` substrings (in order). Falls back to the provided
+    default when ComfyUI is unreachable or has no matching model.
+
+    Used to resolve ``{{t5_encoder}}`` in LTX-style video workflows so
+    we submit the real installed filename instead of a literal
+    ``{{t5_encoder}}`` string. Lets operators keep their model
+    configuration as-is even when the env/settings don't name the
+    encoder explicitly — we just use whatever's on disk.
+    """
+    try:
+        from ...comfy import _fetch_object_info  # late import
+        info = _fetch_object_info()
+    except Exception:  # noqa: BLE001 — ComfyUI down / partial install
+        return fallback
+
+    clip_loader = info.get("CLIPLoader", {}) if isinstance(info, dict) else {}
+    input_spec = clip_loader.get("input", {}) if isinstance(clip_loader, dict) else {}
+    required = input_spec.get("required", {}) if isinstance(input_spec, dict) else {}
+    clip_input = required.get("clip_name", [])
+    names: List[str] = []
+    if isinstance(clip_input, list) and clip_input and isinstance(clip_input[0], list):
+        names = [str(n) for n in clip_input[0] if isinstance(n, str)]
+
+    if not names:
+        return fallback
+
+    for needle in prefer:
+        for n in names:
+            if needle.lower() in n.lower():
+                return n
+    # No match by preference — return the first installed encoder rather
+    # than a hardcoded name that may not exist. "Use what it has."
+    return names[0]
+
+
 def _resolve_workflow(cfg: PlaybackConfig, media_type: str) -> str:
     """Pick the ComfyUI workflow filename from the live-resolved
     model name the same way Imagine + Animate do.
@@ -282,6 +324,22 @@ def _build_variables(
         except Exception:  # noqa: BLE001 — unknown model → defaults
             pass
 
+    # Workflow-specific template variables that older _build_variables
+    # callers never populated. When the workflow template references
+    # e.g. ``{{t5_encoder}}`` and we don't provide the variable, the
+    # submitted prompt contains the literal string ``{{t5_encoder}}``
+    # and ComfyUI rejects it with
+    #   "Value not in list: clip_name: '{{t5_encoder}}' not in [...]"
+    # — even though the encoder file IS installed. The fix is to pick
+    # a sensible default from what ComfyUI actually reports as
+    # available (via /object_info), falling back to the standard
+    # filename when the query fails.
+    t5_encoder = _pick_available_clip_model(
+        prefer=("t5xxl_fp16", "t5xxl_fp8_e4m3fn", "t5"),
+        fallback="t5xxl_fp16.safetensors",
+    )
+    image_path_default = os.getenv("DEFAULT_IMG2VID_SOURCE", "").strip()
+
     return {
         "prompt": positive,
         "positive_prompt": positive,
@@ -298,6 +356,11 @@ def _build_variables(
         "seed": _random.randint(1, 2_147_483_646),
         "aspect_ratio": "1:1",
         "style": "photorealistic",
+        # --- Workflow placeholder defaults (so _missing_ workflow vars
+        #     don't submit as literal "{{...}}" and get rejected) ---
+        "t5_encoder": t5_encoder,
+        "image_path": image_path_default,
+        "denoise": 1.0,  # img2vid defaults to full denoise on the start frame
         # --- PIPE-1: model + endpoint bindings ---
         "image_model": providers.image_model,
         "video_model": providers.video_model,
