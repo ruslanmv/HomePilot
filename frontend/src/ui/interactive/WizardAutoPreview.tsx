@@ -50,7 +50,11 @@ import {
   useAsyncResource,
   useToast,
 } from "./ui";
-import { GeneratingPanel } from "./GeneratingPanel";
+import {
+  startGeneration,
+  useWizardProgress,
+  dismissOverlay,
+} from "./wizardProgressStore";
 
 const MODE_LABELS: Record<ExperienceMode, string> = {
   sfw_general: "General (safe for work)",
@@ -131,14 +135,20 @@ export function WizardAutoPreview({
   });
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [genStep, setGenStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const [renderTotal, setRenderTotal] = useState(0);
-  const [renderDone, setRenderDone] = useState(0);
-  const [renderSkipped, setRenderSkipped] = useState(0);
-  const [currentSceneTitle, setCurrentSceneTitle] = useState<string>("");
+  // Progress lives in a module-level store so the modal survives
+  // tab switches mid-generation. WizardAutoPreview unmounts when
+  // the user clicks Chat / Imagine / Voice; the SSE stream and
+  // counters keep running, and the global overlay rendered at App
+  // level (see App.tsx) stays visible the whole time.
+  const progress = useWizardProgress();
+  const submitting = progress.active;
+  const genStep = progress.genStep;
+  const renderTotal = progress.renderTotal;
+  const renderDone = progress.renderDone;
+  const renderSkipped = progress.renderSkipped;
+  const currentSceneTitle = progress.currentSceneTitle;
 
   const personaLive = interaction.interaction_type === "persona_live_play";
 
@@ -188,88 +198,60 @@ export function WizardAutoPreview({
 
   const onSubmit = useCallback(async () => {
     setError(null);
-    setSubmitting(true);
-    setGenStep(0);
-    setRenderTotal(0);
-    setRenderDone(0);
-    setRenderSkipped(0);
-    setCurrentSceneTitle("");
 
-    try {
-      const created = await api.createExperience(buildCreatePayload());
-      setGenStep(1);
+    // Delegate to the module-level store. The store owns the SSE
+    // stream + all progress counters; this lets the global overlay
+    // keep showing the modal even if the user navigates to another
+    // tab while generation is in flight. WizardAutoPreview just
+    // observes via useWizardProgress() and waits for completion.
+    let createdId = "";
+    const result = await startGeneration({
+      api,
+      payload: buildCreatePayload(),
+      totalSteps: GENERATE_STEPS.length,
+      onCreated: (id) => { createdId = id; },
+    });
 
-      try {
-        const gen = await api.generateAllStream(created.id, {
-          onEvent: (ev) => {
-            const idx = _stepIndexForPhase(ev.type);
-            if (idx !== null) {
-              setGenStep((prev) => Math.max(prev, idx));
-            }
+    if (!result) {
+      // Generation failed — pull the error out of the store so the
+      // wizard's inline error banner can show it. The overlay also
+      // renders the failure state, but the in-form banner gives
+      // the user a "Retry" button without leaving the wizard.
+      const errMsg =
+        useWizardProgressStateError() || "Couldn't create the project.";
+      setError(errMsg);
+      return;
+    }
 
-            if (ev.type === "rendering_started") {
-              const total = Number((ev.payload as any)?.total || 0);
-              setRenderTotal(total);
-              setRenderDone(0);
-              setRenderSkipped(0);
-            }
+    toast.toast({
+      variant: result.source === "llm" ? "success" : "info",
+      title:
+        result.source === "existing"
+          ? "Project already has scenes"
+          : "Project ready",
+      message:
+        result.source === "existing"
+          ? "Opening the editor."
+          : `${result.node_count} scenes · ${result.edge_count} transitions${
+              result.action_count > 0 ? ` · ${result.action_count} choices` : ""
+            }`,
+    });
 
-            if (ev.type === "rendering_scene") {
-              const title = String((ev.payload as any)?.title || "");
-              if (title) setCurrentSceneTitle(title);
-            }
-
-            if (ev.type === "scene_rendered") {
-              setRenderDone((prev) => prev + 1);
-            }
-
-            if (
-              ev.type === "scene_skipped" ||
-              ev.type === "scene_render_failed"
-            ) {
-              setRenderDone((prev) => prev + 1);
-              setRenderSkipped((prev) => prev + 1);
-            }
-          },
-        });
-
-        setGenStep(GENERATE_STEPS.length - 1);
-        toast.toast({
-          variant: gen.source === "llm" ? "success" : "info",
-          title:
-            gen.source === "existing"
-              ? "Project already has scenes"
-              : "Project ready",
-          message:
-            gen.source === "existing"
-              ? "Opening the editor."
-              : `${gen.node_count} scenes · ${gen.edge_count} transitions${
-                  gen.action_count > 0 ? ` · ${gen.action_count} choices` : ""
-                }`,
-        });
-      } catch (genErr) {
-        const e = genErr as InteractiveApiError;
-        setGenStep(GENERATE_STEPS.length - 1);
-        toast.toast({
-          variant: "warning",
-          title: "Project created, but scene graph not generated",
-          message: e.message || "Open the Graph tab to seed it manually.",
-        });
-      }
-
-      await new Promise((r) => window.setTimeout(r, 220));
-      onCreated(created.id);
-    } catch (err) {
-      const e = err as InteractiveApiError;
-      setError(e.message || "Couldn't create the project.");
-      setSubmitting(false);
-      setGenStep(0);
-      setRenderTotal(0);
-      setRenderDone(0);
-      setRenderSkipped(0);
-      setCurrentSceneTitle("");
+    await new Promise((r) => window.setTimeout(r, 220));
+    if (createdId) {
+      // Dismiss the overlay BEFORE navigating so the GeneratingPanel
+      // doesn't briefly flash on the editor screen.
+      dismissOverlay();
+      onCreated(createdId);
     }
   }, [api, buildCreatePayload, onCreated, toast]);
+
+  // Tiny helper — reads the store's error one-shot for the toast above.
+  // Defined inside the component so it never participates in subscription
+  // loops (the main `progress` hook already subscribes for re-renders).
+  function useWizardProgressStateError(): string | null {
+    return progress.error;
+  }
 
   return (
     <div className="relative flex flex-col h-full w-full">
@@ -516,33 +498,17 @@ export function WizardAutoPreview({
         </div>
       </footer>
 
-      {submitting && (
-        <GeneratingPanel
-          title={_panelTitle(genStep, renderTotal, renderDone, renderEnabled)}
-          description={_panelDescription(genStep, currentSceneTitle, renderEnabled)}
-          steps={GENERATE_STEPS}
-          activeStep={genStep}
-          accentClassName="text-[#c4b5fd]"
-          spinnerSize="large"
-          progress={
-            renderEnabled && renderTotal > 0
-              ? Math.round((renderDone / renderTotal) * 100)
-              : undefined
-          }
-          progressLabel={
-            renderEnabled && renderTotal > 0
-              ? `${renderDone} / ${renderTotal} scenes${
-                  renderSkipped > 0 ? ` · ${renderSkipped} skipped` : ""
-                }`
-              : undefined
-          }
-          footerHint={
-            !renderEnabled && genStep >= 3
-              ? "Scene rendering is off. You can turn it on in Settings → Providers and regenerate from the Editor."
-              : undefined
-          }
-        />
-      )}
+      {/*
+       * The "Generating scenes…" modal used to render here as a local
+       * <GeneratingPanel>. It now lives in <WizardProgressOverlay>
+       * mounted at App.tsx — which makes it a global overlay portaled
+       * to document.body. That's the fix for the
+       * "modal disappears when I switch tabs" bug: when the user
+       * navigates from Interactive → Chat mid-generation, this
+       * component unmounts (along with its local state) but the
+       * module-level wizardProgressStore keeps the SSE running and
+       * the global overlay keeps showing on top of the new route.
+       */}
     </div>
   );
 }
@@ -718,66 +684,10 @@ function AdvancedBlock({
   );
 }
 
-function _panelTitle(
-  step: number,
-  renderTotal: number,
-  renderDone: number,
-  renderEnabled: boolean,
-): string {
-  if (step <= 1) return "Drafting your scene graph";
-  if (step === 2) return "Writing dialogue + choices";
-  if (step === 3) {
-    if (!renderEnabled) return "Scene graph ready";
-    if (renderTotal > 0) return `Rendering scenes · ${renderDone} of ${renderTotal}`;
-    return "Rendering scenes";
-  }
-  return "Opening your project";
-}
-
-function _panelDescription(
-  step: number,
-  currentScene: string,
-  renderEnabled: boolean,
-): string {
-  if (step <= 1) return "Turning your idea into a branching scene graph.";
-  if (step === 2) return "Populating scenes with narration, choices, and actions.";
-  if (step === 3) {
-    if (!renderEnabled) return "Skipping asset generation — your scenes are ready to edit.";
-    if (currentScene) return `Now rendering: ${currentScene}`;
-    return "Producing scene assets — this is the slowest phase.";
-  }
-  return "Everything's ready. Opening the editor.";
-}
-
-function _stepIndexForPhase(phase: string): number | null {
-  switch (phase) {
-    case "started":
-    case "already_generated":
-      return 1;
-    case "generating_graph":
-    case "graph_generated":
-      return 1;
-    case "persisting_nodes":
-    case "persisting_edges":
-    case "persisting_actions":
-    case "seeding_rule":
-    case "running_qa":
-    case "qa_done":
-      return 2;
-    case "rendering_started":
-    case "rendering_scene":
-    case "scene_rendered":
-    case "scene_skipped":
-    case "scene_render_failed":
-    case "rendering_done":
-      return 3;
-    case "result":
-    case "done":
-      return 4;
-    default:
-      return null;
-  }
-}
+// Note: _panelTitle / _panelDescription / _stepIndexForPhase used to
+// live here. They moved into wizardProgressStore + WizardProgressOverlay
+// when progress state was lifted out of this component. The store owns
+// step→phase mapping; the overlay owns title/description rendering.
 
 function SourceBadge({ source }: { source: "llm" | "heuristic" }) {
   if (source === "llm") {

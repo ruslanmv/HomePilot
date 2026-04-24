@@ -52,6 +52,7 @@ import ImagineView from './Imagine'
 import AnimateView from './Animate'
 import InteractiveView from './Interactive'
 import { InteractiveHost } from './InteractiveHost'
+import { WizardProgressOverlay } from './interactive/WizardProgressOverlay'
 import InteractivePlayer from './InteractivePlayer'
 import ModelsView from './Models'
 import StudioView from './Studio'
@@ -5979,6 +5980,13 @@ ${personalityPrompt || 'You are a friendly voice assistant. Be helpful and warm.
           }}
         />
       )}
+      {/*
+       * Global progress overlay for the Interactive wizard. Lives at
+       * App level so it survives tab navigation while a generation is
+       * in flight — see ``WizardProgressOverlay.tsx`` for the full
+       * rationale. Renders nothing when the store isn't active.
+       */}
+      <WizardProgressOverlay />
     </div>
   )
 }
