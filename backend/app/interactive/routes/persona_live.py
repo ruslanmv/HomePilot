@@ -636,7 +636,7 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
     async def library_build(
         persona_id: str,
         req: PersonaLiveLibraryBuildRequest,
-        _user: str = Depends(current_user),
+        user: str = Depends(current_user),
     ) -> Dict[str, Any]:
         """Render every missing asset in the requested tier (idempotent).
 
@@ -688,6 +688,7 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
                     media_type="image",
                     edit_recipe=edit_recipe,
                     persona_project_id=persona_id,
+                    user_id=user,
                 )
             except Exception as exc:  # noqa: BLE001 — reported per-asset
                 log.warning(

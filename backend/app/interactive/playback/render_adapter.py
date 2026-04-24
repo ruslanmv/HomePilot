@@ -45,6 +45,7 @@ async def render_scene_async(
     config: Optional[PlaybackConfig] = None,
     edit_recipe: Optional[Any] = None,
     persona_project_id: str = "",
+    user_id: str = "",
 ) -> Optional[str]:
     """Submit a workflow, extract the first usable media URL, and
     register it as a durable asset. Returns the asset id or
@@ -157,6 +158,7 @@ async def render_scene_async(
         asset_id = _register(
             storage_key=media_url, kind=media_kind,
             session_id=session_id, scene_prompt=scene_prompt,
+            user_id=user_id,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning(
@@ -589,10 +591,19 @@ def _first_urls(candidate: Any) -> List[str]:
 def _register(
     *, storage_key: str, kind: str,
     session_id: str, scene_prompt: str,
+    user_id: str = "",
 ) -> str:
     """Register the produced asset so operators can find it later
     via the same registry that the studio + animate tabs use.
     Late import so the phase-1 stub path never pulls sqlite in.
+
+    ``user_id`` is the experience owner — populated by callers from
+    ``Experience.user_id`` (wizard / phase-2 scene render / phase-3
+    library build) and from the auth-resolved current user (Persona
+    Live action endpoint, lazy entry render). The ``assets`` table
+    has had the column + index for it since day one; previously every
+    interactive render row landed with ``user_id=""``, which broke
+    multi-tenant audit queries.
     """
     from ...asset_registry import register_asset  # late import
 
@@ -604,6 +615,7 @@ def _register(
         origin="interactive_playback",
         feature="animate",
         project_id=session_id,
+        user_id=user_id,
         source_hint=_short_hint(scene_prompt),
     )
 

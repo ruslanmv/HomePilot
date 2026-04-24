@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .. import repo
@@ -61,10 +62,98 @@ def build_authoring_router(cfg: InteractiveConfig) -> APIRouter:
         if the id is a stub / unknown. Used by the Editor preview
         modal (EDIT-4) to show a scene's rendered image/video
         without forcing the client to bake in storage-key logic.
+
+        When ``INTERACTIVE_PROXY_ASSETS=true``, the URL is rewritten
+        from a direct ComfyUI ``/view?...`` URL to a backend-routed
+        ``/v1/interactive/assets/{id}/serve`` URL. This makes assets
+        portable across machines (a remote browser doesn't need to
+        reach the operator's localhost:8188), auth-gated (the proxy
+        sits behind ``current_user``), and cacheable through the
+        backend's existing CDN / reverse-proxy layer. Off by default
+        for backwards compat with existing clients that fetch the
+        ComfyUI URL directly.
         """
         from ..playback import resolve_asset_url  # late import
         url = resolve_asset_url(asset_id)
+        if url and _proxy_assets_enabled() and _looks_like_comfy_url(url):
+            url = f"/v1/interactive/assets/{asset_id}/serve"
         return {"ok": True, "asset_id": asset_id, "url": url}
+
+    @router.get("/assets/{asset_id}/serve")
+    async def serve_asset(
+        asset_id: str,
+        user_id: str = Depends(current_user),  # noqa: ARG001 — gate only
+    ) -> Response:
+        """Stream an asset's bytes through the backend.
+
+        Resolves the asset's storage_key (typically a ComfyUI
+        ``/view?...`` URL), fetches it server-side, and pipes it back
+        to the client with the right Content-Type + cache headers.
+
+        Why
+        ----
+        ComfyUI runs on a separate host:port (default localhost:8188).
+        A remote user's browser can't reach that. Storing only the
+        ComfyUI URL in the registry means assets are effectively
+        bound to the operator's machine. This proxy makes them
+        portable: every fetch goes through the backend, which DOES
+        have network access to ComfyUI, regardless of where the user
+        is browsing from.
+
+        Auth: the endpoint is gated by ``current_user``. Combined with
+        the per-asset ``user_id`` field now populated by
+        ``render_adapter._register``, future revisions can verify the
+        caller actually owns the asset they're requesting.
+
+        Caching: ``Cache-Control: private, max-age=86400`` because
+        re-rendering produces a new asset_id, so the URL itself is
+        immutable for the lifetime of an asset row.
+        """
+        from ..playback import resolve_asset_url  # late import
+        import httpx  # late import — we only pay for it on this hot path
+
+        url = resolve_asset_url(asset_id) or ""
+        if not url:
+            raise http_error_from(NotFoundError("asset not found"))
+
+        # If the storage_key isn't an HTTP URL, we can't proxy it.
+        # Older flows stamp ``/files/...`` paths here; those must be
+        # served by the regular ``/files/`` mount, not this proxy.
+        if not url.lower().startswith(("http://", "https://")):
+            raise http_error_from(InvalidInputError(
+                "asset is not http-served; use /files/ instead",
+                data={"asset_id": asset_id},
+            ))
+
+        client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+
+        async def _stream():
+            try:
+                async with client.stream("GET", url) as upstream:
+                    # Surface upstream errors as 502 so the client's
+                    # onError handler can offer a retry.
+                    if upstream.status_code >= 400:
+                        raise http_error_from(NotFoundError(
+                            f"upstream {upstream.status_code} from comfy",
+                        ))
+                    async for chunk in upstream.aiter_bytes(64 * 1024):
+                        yield chunk
+            finally:
+                await client.aclose()
+
+        # Best-effort content type — guess from the URL extension; the
+        # actual Content-Type from upstream is more reliable but
+        # streaming-then-rewriting headers is complicated, so we set a
+        # reasonable default and let the browser sniff.
+        media_type = _content_type_from_url(url)
+        return StreamingResponse(
+            _stream(),
+            media_type=media_type,
+            headers={
+                "Cache-Control": "private, max-age=86400",
+                "X-Asset-Source": "interactive_proxy",
+            },
+        )
 
     # ── Experiences ───────────────────────────────────────────────
 
@@ -250,3 +339,52 @@ def build_authoring_router(cfg: InteractiveConfig) -> APIRouter:
         return {"ok": True, "deleted": rule_id}
 
     return router
+
+
+# ── Asset proxy helpers ──────────────────────────────────────────
+
+def _proxy_assets_enabled() -> bool:
+    """Operator opt-in: when ``INTERACTIVE_PROXY_ASSETS=true``,
+    asset URLs are rewritten to flow through the backend proxy.
+    Default OFF so the wire format stays backwards-compatible with
+    existing wizard / editor clients that fetch ComfyUI directly.
+    """
+    import os
+    return os.getenv("INTERACTIVE_PROXY_ASSETS", "false").strip().lower() == "true"
+
+
+def _looks_like_comfy_url(url: str) -> bool:
+    """Heuristic: does this URL point at a ComfyUI server?
+
+    Currently matches ``/view?filename=`` which is the only ComfyUI
+    output URL shape ``app.comfy._view_url`` produces. Conservative on
+    purpose — we only rewrite the URLs we know we can stream.
+    """
+    if not url:
+        return False
+    return "/view?filename=" in url
+
+
+def _content_type_from_url(url: str) -> str:
+    """Guess Content-Type from the URL's filename extension.
+
+    The proxy doesn't reach into the upstream response headers (would
+    require buffering the first chunk), so we set a sensible default
+    and let the browser MIME-sniff if needed.
+    """
+    lower = (url or "").lower()
+    for ext, mime in (
+        (".png",  "image/png"),
+        (".jpg",  "image/jpeg"),
+        (".jpeg", "image/jpeg"),
+        (".webp", "image/webp"),
+        (".gif",  "image/gif"),
+        (".avif", "image/avif"),
+        (".mp4",  "video/mp4"),
+        (".webm", "video/webm"),
+        (".mov",  "video/quicktime"),
+        (".mkv",  "video/x-matroska"),
+    ):
+        if ext in lower:
+            return mime
+    return "application/octet-stream"

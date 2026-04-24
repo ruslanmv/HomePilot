@@ -538,6 +538,7 @@ async def _try_render_entry_scene(
             session_id=f"play_entry_{session_id}",
             persona_hint=persona_hint,
             media_type=media_type,
+            user_id=str(getattr(exp, "user_id", "") or ""),
         )
     except Exception:  # noqa: BLE001 — adapter failures are non-fatal
         return None

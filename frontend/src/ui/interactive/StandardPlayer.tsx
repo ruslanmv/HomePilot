@@ -61,9 +61,20 @@ export function StandardPlayer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [decisionOpen, setDecisionOpen] = useState(false);
   const [firing, setFiring] = useState<string | null>(null);
-  const [imageError, setImageError] = useState(false);
+  // ``mediaError`` covers BOTH <img> and <video> failures. Was
+  // ``imageError`` for images only — the <video> element used to fall
+  // through to a silent black stage, which was indistinguishable from
+  // a still-loading clip and produced the "Play screen is empty"
+  // reports we kept getting. Renamed + a forced retry-counter that
+  // appends a cache-bust ?t=N to the src so the browser actually
+  // re-fetches when the user clicks Retry.
+  const [mediaError, setMediaError] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
 
-  const url = scene?.status === "ready" ? (scene.asset_url || "") : "";
+  const baseUrl = scene?.status === "ready" ? (scene.asset_url || "") : "";
+  const url = retryNonce > 0 && baseUrl
+    ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}_t=${retryNonce}`
+    : baseUrl;
   const mediaHint = String(scene?.media_kind || "").toLowerCase();
   // ``avif`` added alongside backend _media_kind_from_url — some ComfyUI
   // pipelines emit AVIF for scene assets and without it here the stage
@@ -89,7 +100,8 @@ export function StandardPlayer({
 
   useEffect(() => {
     setDecisionOpen(false);
-    setImageError(false);
+    setMediaError(false);
+    setRetryNonce(0);
     setCurrentTime(0);
     setDuration(defaultDuration);
     setPlaying(true);
@@ -128,7 +140,7 @@ export function StandardPlayer({
   // Timed still-image playback: treat images like fixed-duration
   // scenes. When the timer completes, open the decision modal.
   useEffect(() => {
-    if (!isImage || !url || imageError) return undefined;
+    if (!isImage || !url || mediaError) return undefined;
     const maxSec = Math.max(1, Number(scene?.duration_sec || 5));
     setDuration(maxSec);
     if (!playing || decisionOpen) return undefined;
@@ -143,7 +155,7 @@ export function StandardPlayer({
       });
     }, 100);
     return () => window.clearInterval(t);
-  }, [choices.length, decisionOpen, imageError, isImage, playing, scene?.duration_sec, url]);
+  }, [choices.length, decisionOpen, mediaError, isImage, playing, scene?.duration_sec, url]);
 
   // Keep the <video> element's mute state in sync with the control.
   useEffect(() => {
@@ -257,7 +269,36 @@ export function StandardPlayer({
       ref={containerRef}
       className="relative w-full h-full bg-black text-white flex items-center justify-center"
     >
-      {isVideo ? (
+      {mediaError ? (
+        // Shared error UI for both <img> and <video> failures. The
+        // Retry button bumps ``retryNonce`` which appends a
+        // cache-busting ``?_t=N`` query string to the asset URL —
+        // resetting just the ``mediaError`` flag wasn't enough
+        // because the browser would happily re-use the cached 404.
+        <div className="w-full h-full flex flex-col items-center justify-center text-white/75 text-sm gap-3 px-6 text-center">
+          <div className="text-base font-medium">
+            {isVideo ? "Couldn't play this video scene." : "Couldn't load this scene's image."}
+          </div>
+          <div className="text-xs text-white/50 max-w-md">
+            The asset host may be unreachable. If you're running
+            ComfyUI locally, make sure it's still running. If you
+            switched between machines, your operator may need to
+            enable ``INTERACTIVE_PROXY_ASSETS`` so the backend
+            streams assets through itself.
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setMediaError(false);
+              setRetryNonce((n) => n + 1);
+              setCurrentTime(0);
+            }}
+            className="px-3 py-1.5 rounded-md border border-white/30 bg-black/30 hover:bg-black/50"
+          >
+            Retry
+          </button>
+        </div>
+      ) : isVideo ? (
         <video
           ref={videoRef}
           src={url}
@@ -266,30 +307,15 @@ export function StandardPlayer({
           playsInline
           className="w-full h-full object-contain"
           onClick={togglePlay}
+          onError={() => setMediaError(true)}
         />
       ) : isImage ? (
-        imageError ? (
-          <div className="w-full h-full flex flex-col items-center justify-center text-white/75 text-sm gap-3">
-            <div>Couldn't load this image scene.</div>
-            <button
-              type="button"
-              onClick={() => {
-                setImageError(false);
-                setCurrentTime(0);
-              }}
-              className="px-3 py-1.5 rounded-md border border-white/30 bg-black/30 hover:bg-black/50"
-            >
-              Retry
-            </button>
-          </div>
-        ) : (
-          <img
-            src={url}
-            className="w-full h-full object-contain animate-[pulse_12s_ease-in-out_infinite]"
-            alt={scene?.prompt || "Scene"}
-            onError={() => setImageError(true)}
-          />
-        )
+        <img
+          src={url}
+          className="w-full h-full object-contain animate-[pulse_12s_ease-in-out_infinite]"
+          alt={scene?.prompt || "Scene"}
+          onError={() => setMediaError(true)}
+        />
       ) : (
         <div className="w-full h-full flex items-center justify-center text-white/60 text-sm">
           {scene?.status === "rendering" || scene?.status === "pending"

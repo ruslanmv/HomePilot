@@ -180,6 +180,7 @@ def build_generator_auto_router(cfg: InteractiveConfig) -> APIRouter:
                 media_type=media_type,
                 edit_recipe=persona_ctx["edit_recipe"],
                 persona_project_id=persona_ctx["persona_project_id"],
+                user_id=str(getattr(exp, "user_id", "") or ""),
             )
         except Exception as exc:  # noqa: BLE001
             log.warning(
@@ -671,6 +672,7 @@ async def _build_persona_library(
                 media_type="image",
                 edit_recipe=edit_recipe,
                 persona_project_id=persona_project_id,
+                user_id=str(getattr(exp, "user_id", "") or ""),
             )
         except Exception as exc:  # noqa: BLE001 — per-asset failures non-fatal
             log.warning(
@@ -902,6 +904,7 @@ async def _render_all_scenes(
                 media_type=media_type,
                 edit_recipe=persona_ctx["edit_recipe"],
                 persona_project_id=persona_ctx["persona_project_id"],
+                user_id=str(getattr(exp, "user_id", "") or ""),
             )
         except Exception as exc:  # noqa: BLE001 — non-fatal per scene
             failed += 1
