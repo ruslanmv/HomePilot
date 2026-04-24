@@ -254,7 +254,20 @@ def compose_system_prompt(
         "expression rather than repeating the exact caption."
     )
 
-    return base + style_clause + tier_clause + progression_clause
+    intent_clause = (
+        " The viewer's action_id is a PLAYER INTENT (say_playful, "
+        "compliment, ask_about_her, stay_quiet, get_closer, ask_personal, "
+        "change_view, step_back, suggest_outfit, change_location, "
+        "lean_in, playful_dare). Treat it as what the player just SAID "
+        "or DID, not as a command for the character. Your dialogue is "
+        "the persona's REACTION (in-character voice, 1-3 sentences). "
+        "Your scene_prompt and edit_hint describe the visible REACTION "
+        "(blush after a compliment, smirk after a tease, closer pose "
+        "after get_closer, outfit_change after suggest_outfit, etc). "
+        "Never repeat the action label back at the viewer."
+    )
+
+    return base + style_clause + tier_clause + progression_clause + intent_clause
 
 
 # ── Image-prompt composition ────────────────────────────────────────────────

@@ -73,6 +73,159 @@ _ACTION_CATEGORY_MAP = {
     "zoom_out": "scene",
 }
 
+
+# ── Intent-driven action catalog ───────────────────────────────────────────
+#
+# The Live Action panel used to expose CHARACTER OUTPUT names (Tease /
+# Smirk / Blush / Closer Pose / Outfit Change). That made the player feel
+# like they were poking animation triggers instead of talking to Lina.
+# This catalog flips the model: each entry is a PLAYER INTENT (Compliment
+# her, Stay quiet, Suggest a different outfit) + the character reaction
+# the renderer should produce. _actions_for_level emits these labels;
+# the action endpoint maps intent → reaction_intent before handing off
+# to recipe_for_action so the existing edit recipes (avatar_expression_
+# change / avatar_inpaint_outfit / change_background / …) still drive
+# rendering with no new workflow files.
+#
+# Each entry carries:
+#   label              — text shown on the button
+#   description        — one-line hint (used for tooltips / a11y)
+#   category           — expression | pose | outfit | scene
+#   reaction_intent    — the legacy action_id the renderer keys on
+#                        (must exist in ACTION_RECIPES)
+#   delta              — additive {affection, comfort, playfulness}
+#   explicit_only      — gate behind persona.allow_explicit
+#   level              — unlock tier (1..5)
+#
+# Old action ids (tease/smirk/blush/dance/closer_pose/...) stay valid as
+# fallthrough so existing sessions, programmatic API users, and tests
+# don't break.
+_INTENT_CATALOG: Dict[str, Dict[str, Any]] = {
+    # Level 1 — opening / trust building
+    "say_playful": {
+        "label": "Say something playful",
+        "description": "Open with a light, teasing line.",
+        "category": "expression",
+        "reaction_intent": "smirk",
+        "delta": {"affection": 1, "comfort": 0, "playfulness": 3},
+        "level": 1,
+    },
+    "compliment": {
+        "label": "Compliment her",
+        "description": "Tell her something genuine.",
+        "category": "expression",
+        "reaction_intent": "blush",
+        "delta": {"affection": 3, "comfort": 1, "playfulness": 1},
+        "level": 1,
+    },
+    "ask_about_her": {
+        "label": "Ask about her day",
+        "description": "Show interest in who she is.",
+        "category": "expression",
+        "reaction_intent": "tease",
+        "delta": {"affection": 1, "comfort": 3, "playfulness": 0},
+        "level": 1,
+    },
+    "stay_quiet": {
+        "label": "Stay quiet and listen",
+        "description": "Give her space; let her lead.",
+        "category": "expression",
+        "reaction_intent": "tease",
+        "delta": {"affection": 0, "comfort": 2, "playfulness": 1},
+        "level": 1,
+    },
+    # Level 2 — closer + more personal
+    "get_closer": {
+        "label": "Get closer",
+        "description": "Move into a closer frame.",
+        "category": "pose",
+        "reaction_intent": "closer_pose",
+        "delta": {"affection": 2, "comfort": 2, "playfulness": 2},
+        "level": 2,
+    },
+    "ask_personal": {
+        "label": "Ask something personal",
+        "description": "Open the door to her backstory.",
+        "category": "expression",
+        "reaction_intent": "blush",
+        "delta": {"affection": 3, "comfort": 2, "playfulness": 0},
+        "level": 2,
+    },
+    # Level 3 — visual variety
+    "change_view": {
+        "label": "Change angle",
+        "description": "Ask her to turn so you see a new angle.",
+        "category": "pose",
+        "reaction_intent": "turn_around",
+        "delta": {"affection": 0, "comfort": 0, "playfulness": 2},
+        "level": 3,
+    },
+    "step_back": {
+        "label": "Step back to see all",
+        "description": "Pull the framing wider.",
+        "category": "scene",
+        "reaction_intent": "zoom_out",
+        "delta": {"affection": 0, "comfort": 1, "playfulness": 1},
+        "level": 3,
+    },
+    # Level 4 — outfit + location
+    "suggest_outfit": {
+        "label": "Suggest a different outfit",
+        "description": "Hint that you'd like to see her in something else.",
+        "category": "outfit",
+        "reaction_intent": "outfit_change",
+        "delta": {"affection": 1, "comfort": 0, "playfulness": 3},
+        "level": 4,
+    },
+    "change_location": {
+        "label": "Change the place",
+        "description": "Move the scene somewhere new.",
+        "category": "scene",
+        "reaction_intent": "move_to_beach",
+        "delta": {"affection": 0, "comfort": 2, "playfulness": 2},
+        "level": 4,
+    },
+    # Level 5 — tier-gated finale
+    "lean_in": {
+        "label": "Lean into the moment",
+        "description": "Close the distance and let her respond.",
+        "category": "expression",
+        "reaction_intent": "ahegao",
+        "delta": {"affection": 4, "comfort": 1, "playfulness": 4},
+        "explicit_only": True,
+        "level": 5,
+    },
+    "playful_dare": {
+        "label": "Playful dare",
+        "description": "Suggest something a little wild.",
+        "category": "scene",
+        "reaction_intent": "make_it_rain",
+        "delta": {"affection": 1, "comfort": 0, "playfulness": 5},
+        "level": 5,
+    },
+}
+
+# Reverse view: extend the legacy category map with the intent ids so
+# any caller that still keys off _ACTION_CATEGORY_MAP keeps working.
+for _intent_id, _entry in _INTENT_CATALOG.items():
+    _ACTION_CATEGORY_MAP.setdefault(_intent_id, str(_entry.get("category") or "expression"))
+
+
+def _intent_to_render_key(action_id: str) -> str:
+    """Translate a player intent into the legacy renderer action key.
+
+    Existing edit recipes (ACTION_RECIPES in edit_recipes.py) key on the
+    OLD action ids — tease, smirk, closer_pose, outfit_change, etc. The
+    renderer doesn't need to know the player clicked "Compliment her";
+    it just needs "blush" so the right workflow + denoise lands. Falls
+    through to the original ``action_id`` when no intent mapping exists,
+    so legacy callers and tests stay green.
+    """
+    entry = _INTENT_CATALOG.get((action_id or "").strip().lower())
+    if entry and entry.get("reaction_intent"):
+        return str(entry["reaction_intent"])
+    return action_id
+
 _SCENE_LIBRARY: Dict[str, Dict[str, str]] = {
     "apartment": {
         "id": "apartment",
@@ -197,8 +350,16 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
         emotional_state = _normalize_emotion(sess.get("emotional_state"))
 
         action_id = (req.action_id or "").strip().lower()
-        if not allow_explicit and action_id in {"ahegao"}:
-            dialogue = "Not happening here. Keep it playful."
+
+        # Gate explicit-only intents AND legacy explicit reaction keys
+        # behind the persona's safety profile. The legacy "ahegao" check
+        # used to live here as a hardcoded set; the catalog now owns the
+        # gating decision so adding a new mature intent doesn't require
+        # touching this branch.
+        intent_entry = _INTENT_CATALOG.get(action_id) or {}
+        is_explicit_intent = bool(intent_entry.get("explicit_only"))
+        if not allow_explicit and (is_explicit_intent or action_id in {"ahegao"}):
+            dialogue = "Not yet — keep it playful for now."
             repo.update_persona_session_runtime_state(
                 session_id,
                 dialogue=dialogue,
@@ -221,9 +382,14 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
         if scene_change_id:
             scene_context = _scene_by_id(scene_change_id)
 
+        # Translate the player INTENT into the renderer's expected key
+        # (smirk / blush / closer_pose / outfit_change / …). Recipes in
+        # edit_recipes.ACTION_RECIPES still key on those legacy ids — we
+        # only changed the player-facing labels above.
+        render_key = _intent_to_render_key(action_id)
         action_proxy = _ActionProxy(
-            intent_code=action_id,
-            category=_ACTION_CATEGORY_MAP.get(action_id, "expression"),
+            intent_code=render_key,
+            category=_ACTION_CATEGORY_MAP.get(render_key, "expression"),
             edit_recipe={},
         )
         media_mode = str(sess.get("mode") or "image")
@@ -442,11 +608,26 @@ def _normalize_memory(raw: Any, scene_context: Dict[str, str]) -> Dict[str, Any]
 
 def _normalize_emotion(raw: Any) -> Dict[str, Any]:
     if not isinstance(raw, dict):
-        return {"trust": 35, "intensity": 25, "mood": "guarded"}
+        return {
+            "trust": 35, "intensity": 25, "mood": "guarded",
+            "affection": 20, "comfort": 50, "playfulness": 25,
+        }
     trust = max(0, min(100, int(raw.get("trust") or 35)))
     intensity = max(0, min(100, int(raw.get("intensity") or 25)))
     mood = str(raw.get("mood") or _mood_for_trust(trust))
-    return {"trust": trust, "intensity": intensity, "mood": mood}
+    # Hidden stats (additive — older sessions defaulted to None and we
+    # back-fill so the catalog deltas have a sensible starting point).
+    affection = max(0, min(100, int(raw.get("affection") if raw.get("affection") is not None else max(0, trust - 15))))
+    comfort = max(0, min(100, int(raw.get("comfort") if raw.get("comfort") is not None else min(100, trust + 15))))
+    playfulness = max(0, min(100, int(raw.get("playfulness") or 25)))
+    return {
+        "trust": trust,
+        "intensity": intensity,
+        "mood": mood,
+        "affection": affection,
+        "comfort": comfort,
+        "playfulness": playfulness,
+    }
 
 
 async def _compose_turn(
@@ -670,39 +851,69 @@ def _mood_for_trust(trust: int) -> str:
 
 
 def _apply_emotion_delta(emotion: Dict[str, Any], *, action_id: str, scene_category: str) -> Dict[str, Any]:
-    trust = int(emotion.get("trust") or 0)
-    intensity = int(emotion.get("intensity") or 0)
+    """Apply per-action stat deltas with the new intent catalog.
+
+    Three new hidden stats — ``affection`` (does she like you),
+    ``comfort`` (does she feel safe), ``playfulness`` (teasing energy)
+    — track the dimensions the user asked for. The legacy ``trust``
+    field stays as a derived alias of ``affection + comfort`` so any
+    caller / test that reads emotion.trust keeps working with a value
+    that means the same thing it always did.
+    """
     aid = (action_id or "").strip().lower()
+    affection = int(emotion.get("affection") or 0)
+    comfort = int(emotion.get("comfort") or 0)
+    playfulness = int(emotion.get("playfulness") or 0)
+    intensity = int(emotion.get("intensity") or 0)
 
-    trust_delta = {
-        "tease": 2,
-        "smirk": 1,
-        "blush": 2,
-        "dance": 3,
-        "closer_pose": 4,
-        "outfit_change": -1,
-        "chat": 1,
-    }.get(aid, 1)
+    # Catalog wins; legacy actions fall through to a small per-id table
+    # so existing sessions / tests with raw "tease" / "smirk" / "dance"
+    # ids keep producing the same behaviour they always did.
+    catalog_entry = _INTENT_CATALOG.get(aid) or {}
+    delta = dict(catalog_entry.get("delta") or {})
+    if not delta:
+        legacy_delta = {
+            "tease": {"affection": 1, "comfort": 0, "playfulness": 3},
+            "smirk": {"affection": 1, "comfort": 0, "playfulness": 2},
+            "blush": {"affection": 2, "comfort": 1, "playfulness": 1},
+            "dance": {"affection": 1, "comfort": 0, "playfulness": 4},
+            "closer_pose": {"affection": 2, "comfort": 2, "playfulness": 2},
+            "turn_around": {"affection": 0, "comfort": 0, "playfulness": 1},
+            "outfit_change": {"affection": 0, "comfort": -1, "playfulness": 2},
+            "chat": {"affection": 1, "comfort": 1, "playfulness": 0},
+        }.get(aid, {"affection": 1, "comfort": 0, "playfulness": 0})
+        delta = dict(legacy_delta)
+
     intensity_delta = {
-        "tease": 4,
-        "blush": 3,
-        "dance": 5,
-        "closer_pose": 4,
-        "turn_around": 3,
-        "make_it_rain": 1,
-        "chat": 2,
-    }.get(aid, 2)
+        "tease": 4, "blush": 3, "dance": 5, "closer_pose": 4,
+        "turn_around": 3, "make_it_rain": 1, "chat": 2,
+    }.get(aid, max(2, sum(delta.values())))
 
-    if scene_category == "public" and aid in {"closer_pose", "ahegao"}:
-        trust_delta = min(trust_delta, 0)
+    # Public-scene safety clamp — intimacy doesn't level up at the
+    # supermarket. Applies to both legacy and new intent ids.
+    if scene_category == "public" and aid in {
+        "closer_pose", "get_closer", "lean_in", "ahegao",
+    }:
+        for key in ("affection", "comfort", "playfulness"):
+            delta[key] = min(0, int(delta.get(key, 0)))
         intensity_delta = max(0, intensity_delta - 3)
 
-    trust = max(0, min(100, trust + trust_delta))
+    affection = max(0, min(100, affection + int(delta.get("affection", 0))))
+    comfort = max(0, min(100, comfort + int(delta.get("comfort", 0))))
+    playfulness = max(0, min(100, playfulness + int(delta.get("playfulness", 0))))
     intensity = max(0, min(100, intensity + intensity_delta))
+
+    # Trust = halfway between affection and comfort. Keeps the legacy
+    # field shape; readers get a value with the same semantics as before.
+    trust = max(0, min(100, (affection + comfort) // 2))
+
     return {
         "trust": trust,
         "intensity": intensity,
         "mood": _mood_for_trust(trust),
+        "affection": affection,
+        "comfort": comfort,
+        "playfulness": playfulness,
     }
 
 
@@ -803,30 +1014,49 @@ def _allow_explicit(persona_id: str) -> bool:
 
 
 def _default_levels(vibe: str, allow_explicit: bool) -> List[Dict[str, Any]]:
+    """Intent-driven action ladder.
+
+    Each level lists PLAYER INTENTS (Compliment her / Stay quiet /
+    Suggest a different outfit), not character output names. The
+    renderer translates intent → reaction_intent at action time so the
+    existing edit recipes still apply — see ``_intent_to_render_key``.
+    """
     base = [
-        {"level": 1, "actions": ["tease", "smirk", "blush"]},
-        {"level": 2, "actions": ["dance", "closer_pose"]},
-        {"level": 3, "actions": ["turn_around", "zoom_out"]},
-        {"level": 4, "actions": ["outfit_change", "move_to_beach"]},
+        {"level": 1, "actions": ["say_playful", "compliment", "ask_about_her", "stay_quiet"]},
+        {"level": 2, "actions": ["get_closer", "ask_personal"]},
+        {"level": 3, "actions": ["change_view", "step_back"]},
+        {"level": 4, "actions": ["suggest_outfit", "change_location"]},
     ]
     if allow_explicit and "explicit" in (vibe or "").lower():
-        base.append({"level": 5, "actions": ["ahegao"]})
+        base.append({"level": 5, "actions": ["lean_in"]})
     else:
-        base.append({"level": 5, "actions": ["make_it_rain"]})
+        base.append({"level": 5, "actions": ["playful_dare"]})
     return base
 
 
 def _actions_for_level(level: int, levels: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Surface available + locked actions for the current viewer level.
+
+    Labels and descriptions come from ``_INTENT_CATALOG`` so the panel
+    shows the player-facing intent text ("Say something playful") and
+    not the renderer key ("smirk") or a title-cased action_id.
+    """
     available: List[Dict[str, Any]] = []
     locked: List[Dict[str, Any]] = []
     for block in levels:
         lv = int(block.get("level") or 1)
         for action_id in list(block.get("actions") or []):
-            item = {
+            entry = _INTENT_CATALOG.get(action_id, {})
+            label = str(entry.get("label") or action_id.replace("_", " ").title())
+            description = str(entry.get("description") or "")
+            category = str(entry.get("category") or _ACTION_CATEGORY_MAP.get(action_id, "expression"))
+            item: Dict[str, Any] = {
                 "id": action_id,
-                "label": action_id.replace("_", " ").title(),
-                "category": _ACTION_CATEGORY_MAP.get(action_id, "expression"),
+                "label": label,
+                "category": category,
             }
+            if description:
+                item["description"] = description
             if lv <= level:
                 available.append(item)
             else:
