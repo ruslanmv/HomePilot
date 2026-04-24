@@ -222,3 +222,158 @@ async def test_run_generate_all_includes_library_in_result(monkeypatch):
     assert "library" in result
     assert result["library"]["rendered"] == 9
     assert result["library"]["persona_project_id"] == "persona_lina"
+
+
+# ── Phase 4: link library assets to persona_live scene nodes ──────────
+
+class _MockNode:
+    """Minimal Node stand-in for repo.list_nodes / repo.update_node."""
+    def __init__(self, nid, title, kind="scene", asset_ids=None):
+        self.id = nid
+        self.title = title
+        self.kind = kind
+        self.asset_ids = list(asset_ids or [])
+
+
+def _patch_repo_for_linking(monkeypatch, nodes, patches):
+    """Stand-in repo so the link phase can read/patch without sqlite.
+
+    Patches the module-level ``_list_experience_nodes`` and
+    ``_patch_node_assets`` seams in ``generator_auto`` rather than
+    monkeypatching ``app.interactive.repo`` directly. This is the same
+    fix pattern as ``_lookup_persona_project`` — the seam approach is
+    stable under any test ordering, while ``sys.modules`` / module-
+    attribute patches on the shared ``repo`` module sometimes lose to
+    earlier tests that already cached the real functions.
+    """
+    monkeypatch.setattr(
+        generator_auto, "_list_experience_nodes",
+        lambda eid: list(nodes),
+    )
+
+    def _update(nid, asset_ids):
+        for n in nodes:
+            if n.id == nid:
+                n.asset_ids = list(asset_ids or [])
+                break
+        patches.append({"node_id": nid, "asset_ids": list(asset_ids or [])})
+    monkeypatch.setattr(generator_auto, "_patch_node_assets", _update)
+
+
+@pytest.mark.asyncio
+async def test_link_phase_attaches_library_assets_by_title(monkeypatch):
+    """The four reaction scenes + intro + followup + ending should
+    each pick up their matching library asset URL."""
+    monkeypatch.setattr(pal, "load_library", lambda pid: {
+        "idle_neutral":            {"asset_url": "/files/idle_neutral.png"},
+        "idle_soft_smile":         {"asset_url": "/files/idle_soft_smile.png"},
+        "expr_smirk":              {"asset_url": "/files/expr_smirk.png"},
+        "expr_blush":              {"asset_url": "/files/expr_blush.png"},
+        "expr_smile":              {"asset_url": "/files/expr_smile.png"},
+        "expr_neutral_attentive":  {"asset_url": "/files/expr_neutral.png"},
+    })
+
+    nodes = [
+        _MockNode("n_intro",     "First moment with Lina"),
+        _MockNode("n_smirk",     "Playful smirk"),
+        _MockNode("n_blush",     "Soft blush"),
+        _MockNode("n_smile",     "Warm smile"),
+        _MockNode("n_quiet",     "Quiet anticipation"),
+        _MockNode("n_followup",  "Keep the moment going"),
+        _MockNode("n_ending",    "Until next time", kind="ending"),  # not scene
+    ]
+    patches: List[Dict[str, Any]] = []
+    _patch_repo_for_linking(monkeypatch, nodes, patches)
+
+    exp = _fake_experience()
+    library_stats = {"ok": True, "persona_project_id": "persona_lina"}
+
+    result = await generator_auto._link_persona_library_assets(
+        exp, library_stats, on_event=lambda k, p: None,
+    )
+
+    # Six scene nodes — non-scene "ending" is filtered out.
+    assert result["linked"] == 6
+    by_id = {p["node_id"]: p["asset_ids"][0] for p in patches}
+    assert by_id["n_intro"] == "/files/idle_neutral.png"
+    assert by_id["n_smirk"] == "/files/expr_smirk.png"
+    assert by_id["n_blush"] == "/files/expr_blush.png"
+    assert by_id["n_smile"] == "/files/expr_smile.png"
+    assert by_id["n_quiet"] == "/files/expr_neutral.png"
+    assert by_id["n_followup"] == "/files/idle_soft_smile.png"
+    # Ending node never patched — it's kind=ending, link phase only
+    # touches kind=scene.
+    assert "n_ending" not in by_id
+
+
+@pytest.mark.asyncio
+async def test_link_phase_skips_already_linked_scenes(monkeypatch):
+    """Idempotent: nodes that already carry asset_ids stay untouched."""
+    monkeypatch.setattr(pal, "load_library", lambda pid: {
+        "expr_smirk": {"asset_url": "/files/expr_smirk.png"},
+    })
+
+    nodes = [
+        _MockNode("n_smirk", "Playful smirk", asset_ids=["existing-asset-id"]),
+    ]
+    patches: List[Dict[str, Any]] = []
+    _patch_repo_for_linking(monkeypatch, nodes, patches)
+
+    result = await generator_auto._link_persona_library_assets(
+        _fake_experience(), {"ok": True, "persona_project_id": "persona_lina"},
+        on_event=lambda k, p: None,
+    )
+
+    assert result["linked"] == 0
+    assert result["skipped_already_linked"] == 1
+    assert patches == []  # update_node never called
+
+
+@pytest.mark.asyncio
+async def test_link_phase_short_circuits_when_library_not_built(monkeypatch):
+    """Library failed / skipped → return early, no patches."""
+    result = await generator_auto._link_persona_library_assets(
+        _fake_experience(),
+        {"ok": False, "persona_project_id": "persona_lina"},
+        on_event=lambda k, p: None,
+    )
+    assert result == {"ok": False, "linked": 0, "reason": "library_not_built"}
+
+
+@pytest.mark.asyncio
+async def test_link_phase_handles_empty_library(monkeypatch):
+    """Build was 'ok' but the library dict is empty (e.g. all renders
+    failed). Link phase must not crash, just report no_op."""
+    monkeypatch.setattr(pal, "load_library", lambda pid: {})
+
+    result = await generator_auto._link_persona_library_assets(
+        _fake_experience(),
+        {"ok": True, "persona_project_id": "persona_lina"},
+        on_event=lambda k, p: None,
+    )
+    assert result["ok"] is False
+    assert result["linked"] == 0
+    assert result["reason"] == "library_empty"
+
+
+@pytest.mark.asyncio
+async def test_link_phase_emits_scene_linked_events(monkeypatch):
+    """Wizard modal needs scene_linked events to update the per-scene
+    coverage indicator without a full re-fetch."""
+    monkeypatch.setattr(pal, "load_library", lambda pid: {
+        "expr_smirk": {"asset_url": "/files/smirk.png"},
+    })
+    nodes = [_MockNode("n1", "Playful smirk")]
+    patches: List[Dict[str, Any]] = []
+    _patch_repo_for_linking(monkeypatch, nodes, patches)
+
+    events: List[Dict[str, Any]] = []
+    await generator_auto._link_persona_library_assets(
+        _fake_experience(),
+        {"ok": True, "persona_project_id": "persona_lina"},
+        on_event=lambda k, p: events.append({"event": k, "payload": p}),
+    )
+
+    linked_events = [e for e in events if e["event"] == "scene_linked"]
+    assert len(linked_events) == 1
+    assert linked_events[0]["payload"]["asset_url"] == "/files/smirk.png"

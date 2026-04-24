@@ -36,7 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -514,11 +514,41 @@ async def _run_generate_all(
     # library/build call to land.
     library_stats = await _build_persona_library(exp, on_event=on_event)
 
+    # Phase 4 — attach library assets to the persona_live scene
+    # graph so the editor preview ("Right? It's Complicated…")
+    # actually shows an image per scene instead of the
+    # "No asset rendered yet" placeholder. The library lives on the
+    # persona project; the scene nodes live on the experience. This
+    # phase bridges the two by mapping scene titles to library asset
+    # ids — see ``_link_persona_library_assets``. No-op for non-
+    # persona_live projects and no-op when the library build itself
+    # was skipped or failed.
+    link_stats = await _link_persona_library_assets(
+        exp, library_stats, on_event=on_event,
+    )
+
     return {
         **plan_result,
         "rendering": render_stats,
         "library": library_stats,
+        "library_linking": link_stats,
     }
+
+
+def _list_experience_nodes(experience_id: str) -> List[Any]:
+    """Module-level seam wrapping ``repo.list_nodes`` so tests can
+    patch this one function deterministically. Same rationale as
+    ``_lookup_persona_project``: directly monkey-patching ``repo``
+    sometimes loses to test-ordering when other tests have already
+    bound ``repo`` into their own namespaces.
+    """
+    return list(repo.list_nodes(experience_id))
+
+
+def _patch_node_assets(node_id: str, asset_ids: List[str]) -> None:
+    """Module-level seam wrapping ``repo.update_node`` (same reasoning
+    as ``_list_experience_nodes``)."""
+    repo.update_node(node_id, NodeUpdate(asset_ids=asset_ids))
 
 
 def _lookup_persona_project(persona_project_id: str) -> Dict[str, Any]:
@@ -683,6 +713,120 @@ async def _build_persona_library(
         "rendered": stats.rendered,
         "skipped": stats.skipped,
         "failed": stats.failed,
+    }
+
+
+# Substring → library asset_id mapping for the persona_live scene
+# spine. Keys are the lowercase scene title fragments produced by
+# ``_persona_live_graph`` in autogen_llm.py; matched in the order
+# below (most specific first). Anything that doesn't match leaves
+# the scene unlinked — safer than guessing a wrong asset.
+_PERSONA_LIVE_TITLE_TO_ASSET: List[Tuple[str, str]] = [
+    ("playful smirk",       "expr_smirk"),
+    ("soft blush",          "expr_blush"),
+    ("warm smile",          "expr_smile"),
+    ("quiet anticipation",  "expr_neutral_attentive"),
+    ("first moment",        "idle_neutral"),
+    ("keep the moment",     "idle_soft_smile"),
+    ("until next time",     "idle_soft_smile"),
+]
+
+
+async def _link_persona_library_assets(
+    exp: Experience, library_stats: Dict[str, Any], *, on_event: EventHook,
+) -> Dict[str, Any]:
+    """Attach library asset URLs to persona_live scene nodes.
+
+    The library build phase pre-renders the persona's reaction pack
+    (idle / expressions / outfit / camera) and persists it onto the
+    PERSONA project's ``persona_appearance.asset_library`` dict. The
+    scene nodes live on the EXPERIENCE — separate row, no automatic
+    join. Without this phase the editor's graph view shows
+    "No asset rendered yet" on every scene even though the rendered
+    images are sitting in the library waiting to be referenced.
+
+    Strategy: walk the experience's scene nodes, match each title
+    against ``_PERSONA_LIVE_TITLE_TO_ASSET``, look up the library
+    URL, and patch ``asset_ids = [url]`` on the node. The play
+    route's ``_resolve_scene_asset_url`` accepts ``/files/...`` and
+    ``http(s)://`` URLs as direct refs, so no separate registry hop
+    is needed.
+
+    No-op when:
+      * library_stats says the build was skipped or failed
+      * the persona project has no library yet (operator hasn't run
+        the build pass)
+      * the scene title doesn't map to any library asset
+      * the scene already has asset_ids (idempotent — re-runs leave
+        existing scene assets alone)
+    """
+    if not isinstance(library_stats, dict) or not library_stats.get("ok"):
+        return {"ok": False, "linked": 0, "reason": "library_not_built"}
+
+    persona_project_id = str(library_stats.get("persona_project_id") or "").strip()
+    if not persona_project_id:
+        return {"ok": False, "linked": 0, "reason": "no_persona_project_id"}
+
+    # Late import — pal is already top-level in this module via
+    # _persona_asset_library; the local rebind keeps the lookup path
+    # consistent with _build_persona_library.
+    pal = _persona_asset_library
+
+    library = pal.load_library(persona_project_id)
+    if not library:
+        return {"ok": False, "linked": 0, "reason": "library_empty"}
+
+    linked = 0
+    skipped_already_linked = 0
+    skipped_no_match = 0
+    for node in _list_experience_nodes(exp.id):
+        if getattr(node, "kind", "") != "scene":
+            continue
+        if list(getattr(node, "asset_ids", []) or []):
+            skipped_already_linked += 1
+            continue
+        title_lc = str(getattr(node, "title", "") or "").strip().lower()
+        if not title_lc:
+            skipped_no_match += 1
+            continue
+
+        asset_id_in_library: Optional[str] = None
+        for needle, lib_id in _PERSONA_LIVE_TITLE_TO_ASSET:
+            if needle in title_lc:
+                asset_id_in_library = lib_id
+                break
+
+        if asset_id_in_library is None:
+            skipped_no_match += 1
+            continue
+
+        row = library.get(asset_id_in_library) if isinstance(library, dict) else None
+        if not isinstance(row, dict):
+            continue
+        url = str(row.get("asset_url") or "").strip()
+        if not url:
+            continue
+
+        try:
+            _patch_node_assets(node.id, [url])
+            linked += 1
+            on_event("scene_linked", {
+                "scene_id": node.id,
+                "asset_id": asset_id_in_library,
+                "asset_url": url,
+            })
+        except Exception as exc:  # noqa: BLE001 — patching one node failing
+            log.warning(
+                "scene_link_failed exp=%s scene=%s lib=%s: %s",
+                exp.id, node.id, asset_id_in_library, str(exc)[:200],
+            )
+
+    return {
+        "ok": True,
+        "persona_project_id": persona_project_id,
+        "linked": linked,
+        "skipped_already_linked": skipped_already_linked,
+        "skipped_no_match": skipped_no_match,
     }
 
 
