@@ -35,7 +35,7 @@ MCP_EXPERT_CORE_SERVERS := web_search doc_retrieval memory_store safety_policy o
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
         mcp-inventory \
         install-mcp-servers test-mcp-new-servers \
-        install-mcp-expert-core test-mcp-expert-core start-mcp-expert-core \
+        install-mcp-expert-core test-mcp-expert-core start-mcp-expert-core health-mcp-expert-core \
         persona-launch persona-check persona-stop persona-status persona-list \
         build-installer build-container \
         recovery recovery-status recovery-backup recovery-list-users \
@@ -1978,3 +1978,47 @@ start-mcp-expert-core: ## Start all 10 Expert Core MCP servers on ports 9150-915
 			port=$$((port + 1)); \
 		done; \
 		wait'
+
+health-mcp-expert-core: ## Probe GET /health on every Expert Core MCP server (ports 9150-9159) and report pass/fail
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Health check: Expert Core MCP servers"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@bash -c ' \
+		set -u; \
+		passed=0; failed=0; failed_list=""; \
+		port=9150; \
+		for srv in $(MCP_EXPERT_CORE_SERVERS); do \
+			d="$(MCP_SERVERS_DIR)/$$srv"; \
+			if [ ! -x "$$d/.venv/bin/uvicorn" ]; then \
+				printf "  ✗ %-22s venv missing (run: make install-mcp-expert-core)\n" "$$srv"; \
+				failed=$$((failed + 1)); failed_list="$$failed_list $$srv"; \
+				port=$$((port + 1)); continue; \
+			fi; \
+			(cd "$$d" && .venv/bin/uvicorn app:app --host 127.0.0.1 --port "$$port" >/tmp/mcp-health-$$srv.log 2>&1) & \
+			pid=$$!; \
+			ok=0; \
+			for _ in $$(seq 1 30); do \
+				sleep 0.2; \
+				if curl -fsS --max-time 1 "http://127.0.0.1:$$port/health" >/tmp/mcp-health-$$srv.json 2>/dev/null; then \
+					ok=1; break; \
+				fi; \
+			done; \
+			if [ "$$ok" = "1" ] && grep -q "\"ok\"[[:space:]]*:[[:space:]]*true" /tmp/mcp-health-$$srv.json 2>/dev/null; then \
+				printf "  ✓ %-22s :%-5d healthy\n" "$$srv" "$$port"; \
+				passed=$$((passed + 1)); \
+			else \
+				printf "  ✗ %-22s :%-5d no /health response (tail: %s)\n" \
+					"$$srv" "$$port" "$$(tail -2 /tmp/mcp-health-$$srv.log 2>/dev/null | tr "\n" " ")"; \
+				failed=$$((failed + 1)); failed_list="$$failed_list $$srv"; \
+			fi; \
+			kill "$$pid" 2>/dev/null || true; wait "$$pid" 2>/dev/null || true; \
+			port=$$((port + 1)); \
+		done; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		if [ "$$failed" = "0" ]; then \
+			echo "  ✅ All 10 Expert Core MCP servers healthy ($$passed / 10)"; \
+		else \
+			echo "  ⚠  $$failed / 10 failed:$$failed_list"; \
+			exit 1; \
+		fi; \
+		echo "════════════════════════════════════════════════════════════════════════════════"'
