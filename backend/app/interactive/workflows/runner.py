@@ -221,6 +221,13 @@ class Step:
     fallback: Optional[FallbackFn] = None
     temperature: float = 0.3
     max_tokens: int = 350
+    # Per-step model override (Ollama model id). Empty string means
+    # "use the server default model". Threaded into chat_ollama by
+    # the runner so individual workflow steps can route around the
+    # default model — used by Mature (gated) experiences to pick an
+    # uncensored / abliterated model the operator selected in the
+    # wizard's Step 0 picker.
+    model: str = ""
 
 
 # ── Event hook type ────────────────────────────────────────────
@@ -382,6 +389,7 @@ class WorkflowRunner:
                     rendered, policy,
                     temperature=float(step.temperature),
                     max_tokens=int(step.max_tokens),
+                    model_override=(step.model or None),
                 )
             except asyncio.TimeoutError:
                 last_reason = f"timeout after {policy.timeout_s:.1f}s"

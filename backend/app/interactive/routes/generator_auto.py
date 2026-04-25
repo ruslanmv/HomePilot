@@ -620,6 +620,36 @@ async def _build_persona_library(
         str((persona_agent or {}).get("persona_class") or "").strip(),
     ]).strip(", ").strip()
 
+    # Persist the wizard's adult_llm pick onto the persona project so
+    # the Persona Live runtime (which only has persona_id, not the
+    # experience id) can read it via _load_persona. Idempotent — only
+    # fires when ``audience_profile.adult_llm`` is set on this
+    # experience and the value isn't already on the persona. Skipped
+    # silently when projects.update_project isn't reachable.
+    ap_for_llm = getattr(exp, "audience_profile", None) or {}
+    wizard_adult_llm = ""
+    if isinstance(ap_for_llm, dict):
+        wizard_adult_llm = str(ap_for_llm.get("adult_llm") or "").strip()
+    if wizard_adult_llm:
+        existing_llm = ""
+        if isinstance(persona_agent, dict):
+            existing_llm = str(persona_agent.get("llm_override") or "").strip()
+        if existing_llm != wizard_adult_llm:
+            try:
+                from ... import projects as _projects_mod  # late import
+                _projects_mod.update_project(persona_project_id, {
+                    "persona_agent": {"llm_override": wizard_adult_llm},
+                })
+                on_event("persona_llm_persisted", {
+                    "persona_project_id": persona_project_id,
+                    "model": wizard_adult_llm,
+                })
+            except Exception as exc:  # noqa: BLE001 — non-fatal
+                log.warning(
+                    "persona_llm_persist_failed persona=%s: %s",
+                    persona_project_id, str(exc)[:200],
+                )
+
     # Confirm the persona has a portrait — render_scene_async bails
     # out when the edit recipe can't anchor, so check up front and
     # emit a clear reason if this is why we're skipping.
@@ -631,11 +661,15 @@ async def _build_persona_library(
         on_event("library_skipped", {"reason": "no_persona_portrait"})
         return {"skipped": True, "reason": "no_persona_portrait"}
 
-    # Tier 1 is the v1 spec's "must pre-generate" floor — idles +
-    # all expressions + default outfit + medium camera. That's what
-    # the Level-1 intent catalog needs served instantly. Higher
-    # tiers remain available via the explicit build endpoint.
-    target_tier = 1
+    # Tier 2 is the v1 spec's "should pre-generate" set — Tier 1 base
+    # (idles + all expressions + default outfit + medium camera) PLUS
+    # pose variations + close-up / wide camera + extra outfits. That
+    # adds ~6 renders (~25-30s on a 4080) for the day-one variety the
+    # spec calls out as "users feel the persona react instantly with
+    # variety, not just five expressions in the same hoodie." Tier 3
+    # (environments + formal outfit) stays opt-in via the explicit
+    # ``/library/build`` endpoint to keep the wizard fast.
+    target_tier = 2
 
     async def _render_one(spec: pal.AssetSpec) -> Optional["pal.RenderResult"]:
         # Edit-hint → workflow mapping. The four "img2img on the

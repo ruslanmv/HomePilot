@@ -455,6 +455,16 @@ async def run_autogen_workflow(
     mode = str(experience.experience_mode or "sfw_general")
     topic = _coerce_topic(experience)
 
+    # Per-experience LLM override (Mature gated). Applied to every
+    # step in the workflow so the spine and per-scene scripts both
+    # route through the operator's chosen abliterated model. Empty
+    # string is the wire equivalent of "use the default" — the
+    # runner won't pass a model_override.
+    ap_for_llm = getattr(experience, "audience_profile", None) or {}
+    step_model = ""
+    if isinstance(ap_for_llm, dict):
+        step_model = str(ap_for_llm.get("adult_llm") or "").strip()
+
     # --- Stage 1: spine ---
     spine_step = Step(
         step_id="scene_spine",
@@ -470,6 +480,7 @@ async def run_autogen_workflow(
         validate=_validate_spine,
         temperature=0.5,
         max_tokens=800,
+        model=step_model,
     )
 
     runner = WorkflowRunner(library=lib)
@@ -513,6 +524,7 @@ async def run_autogen_workflow(
             fallback=_script_fallback_factory(scene, role),
             temperature=0.6,
             max_tokens=220,
+            model=step_model,
         )
 
         part = await runner.run(

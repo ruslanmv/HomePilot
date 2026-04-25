@@ -220,6 +220,30 @@ ASSET_MANIFEST: tuple[AssetSpec, ...] = (
         description="Outfit variety — intimate setting.",
     ),
 
+    # ── Tier 2 outfit × expression composites ──────────────────────────
+    #
+    # The v1 spec calls out "outfits × expressions" as the dimension
+    # that produces the felt sense of variety — players notice when
+    # the same character reacts in a NEW outfit. Two composites cover
+    # the highest-impact cases: fitness + smile (reaction to a
+    # compliment in athleisure) and sleepwear + blush (reaction in an
+    # intimate setting). Same plain-img2img pipeline, just denser
+    # prompt fragments combining outfit + expression cues.
+    AssetSpec(
+        asset_id="outfit_fitness_expr_smile",
+        tier=2, kind="outfit", edit_hint="outfit", reaction_intent="outfit_change",
+        prompt_fragment="fitted athleisure, sports bra and leggings, fitness look, "
+                        "warm genuine smile, relaxed eyes, open body language",
+        description="Composite: fitness outfit + warm smile (compliment in athleisure).",
+    ),
+    AssetSpec(
+        asset_id="outfit_sleepwear_expr_blush",
+        tier=2, kind="outfit", edit_hint="outfit", reaction_intent="outfit_change",
+        prompt_fragment="oversized button-up shirt over shorts, cozy sleepwear, "
+                        "shy blush, lips parted, averted glance, flustered vibe",
+        description="Composite: sleepwear + blush (intimate setting reaction).",
+    ),
+
     # ── Tier 3 — MAY pre-generate ──────────────────────────────────────
     AssetSpec(
         asset_id="outfit_dress",

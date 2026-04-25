@@ -133,7 +133,10 @@ async def test_phase3_runs_build_library_and_forwards_allow_explicit(monkeypatch
     )
 
     assert captured["pid"] == "persona_lina"
-    assert captured["max_tier"] == 1
+    # Wizard now defaults to tier 2 — Tier 1 base + pose / camera /
+    # extra outfits + outfit×expression composites — for richer day-
+    # one variety. Tier 3 (environments + formal) stays opt-in.
+    assert captured["max_tier"] == 2
     assert captured["allow_explicit"] is True
     assert result["ok"] is True
     assert result["persona_project_id"] == "persona_lina"
@@ -145,10 +148,13 @@ async def test_phase3_runs_build_library_and_forwards_allow_explicit(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_phase3_defaults_to_tier_1_for_wizard_run(monkeypatch):
-    """Tier 1 (idles + expressions + default outfit + medium cam) is
-    the v1 spec's 'must pre-generate' floor. Higher tiers stay
-    available via the explicit endpoint — don't slow the wizard."""
+async def test_phase3_defaults_to_tier_2_for_wizard_run(monkeypatch):
+    """Wizard's Phase 3 builds Tier 2 by default — Tier 1 base
+    (idles + expressions + default outfit + medium cam) PLUS pose
+    variations + close/wide camera + extra outfits + outfit×expr
+    composites. Tier 3 (environments + formal outfit) stays opt-in
+    via the explicit endpoint to keep the wizard render time
+    bounded (~25-30s extra on a 4080)."""
     _patch_persona(monkeypatch, {
         "id": "persona_lina", "name": "Lina",
         "persona_agent": {"persona_class": "companion", "safety": {}},
@@ -164,7 +170,7 @@ async def test_phase3_defaults_to_tier_1_for_wizard_run(monkeypatch):
     await generator_auto._build_persona_library(
         _fake_experience(), on_event=lambda k, p: None,
     )
-    assert recorded["max_tier"] == 1
+    assert recorded["max_tier"] == 2
 
 
 @pytest.mark.asyncio
@@ -438,3 +444,102 @@ async def test_link_phase_falls_back_to_url_when_registry_id_missing(monkeypatch
     )
 
     assert patches[0]["asset_ids"] == ["/files/legacy_smirk.png"]
+
+
+# ── adult_llm persistence: wizard → persona project ────────────────────
+
+@pytest.mark.asyncio
+async def test_phase3_persists_adult_llm_to_persona_project(monkeypatch):
+    """When the wizard's Step 0 picker captured an
+    ``audience_profile.adult_llm`` value, Phase 3 must patch it
+    onto the persona project's ``persona_agent.llm_override`` field
+    so the Persona Live runtime (which only has persona_id, not
+    the experience id) can read it via _load_persona on subsequent
+    sessions. Otherwise the wizard's choice is invisible to the
+    runtime that actually serves the chat."""
+    _patch_persona(monkeypatch, {
+        "id": "persona_lina", "name": "Lina",
+        "persona_agent": {
+            "persona_class": "flirty companion",
+            "safety": {"allow_explicit": True},
+            # No existing override yet
+        },
+        "persona_appearance": {"selected_filename": "a.png"},
+    })
+
+    # Capture the projects.update_project call.
+    patches: List[Dict[str, Any]] = []
+    from app import projects as _projects_mod
+    monkeypatch.setattr(
+        _projects_mod, "update_project",
+        lambda pid, body: patches.append({"pid": pid, "body": body}) or {"id": pid},
+    )
+
+    async def _stub_build(pid, *, render_fn, max_tier, allow_explicit, on_progress=None):
+        return pal.BuildStats()
+    monkeypatch.setattr(pal, "build_library", _stub_build)
+
+    exp = _fake_experience(audience_profile={
+        "persona_project_id": "persona_lina",
+        "adult_llm": "huihui_ai/qwen3-abliterated:8b",
+    })
+    events: List[tuple] = []
+    await generator_auto._build_persona_library(
+        exp, on_event=lambda k, p: events.append((k, p)),
+    )
+
+    assert any(p["pid"] == "persona_lina" for p in patches), (
+        "expected projects.update_project to be called for the persona"
+    )
+    persona_patch = next(p for p in patches if p["pid"] == "persona_lina")
+    assert persona_patch["body"]["persona_agent"]["llm_override"] == (
+        "huihui_ai/qwen3-abliterated:8b"
+    )
+    assert any(k == "persona_llm_persisted" for k, _ in events), (
+        "wizard modal should see a persona_llm_persisted SSE event"
+    )
+
+
+@pytest.mark.asyncio
+async def test_phase3_skips_adult_llm_persist_when_already_set(monkeypatch):
+    """Idempotent: if the persona already carries the same
+    llm_override the wizard would write, don't re-patch."""
+    _patch_persona(monkeypatch, {
+        "id": "persona_lina", "name": "Lina",
+        "persona_agent": {
+            "persona_class": "companion",
+            "safety": {},
+            "llm_override": "huihui_ai/qwen3-abliterated:8b",
+        },
+        "persona_appearance": {"selected_filename": "a.png"},
+    })
+
+    patches: List[Dict[str, Any]] = []
+    from app import projects as _projects_mod
+    monkeypatch.setattr(
+        _projects_mod, "update_project",
+        lambda pid, body: patches.append({"pid": pid, "body": body}) or {"id": pid},
+    )
+    async def _stub_build(*a, **kw):
+        return pal.BuildStats()
+    monkeypatch.setattr(pal, "build_library", _stub_build)
+
+    exp = _fake_experience(audience_profile={
+        "persona_project_id": "persona_lina",
+        "adult_llm": "huihui_ai/qwen3-abliterated:8b",  # same as already set
+    })
+    await generator_auto._build_persona_library(
+        exp, on_event=lambda k, p: None,
+    )
+
+    # No persona_agent patch (idempotent skip) — patches list may
+    # contain unrelated calls but never the llm_override write.
+    llm_patches = [
+        p for p in patches
+        if isinstance(p.get("body"), dict)
+        and "persona_agent" in p["body"]
+        and "llm_override" in p["body"]["persona_agent"]
+    ]
+    assert llm_patches == [], (
+        "phase 3 must skip the persist when the override is already set"
+    )

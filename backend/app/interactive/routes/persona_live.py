@@ -388,6 +388,7 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
             emotional_state=emotional_state,
             scene_memory=scene_memory,
             persona=persona,
+            adult_llm=str(persona.get("adult_llm") or "").strip() or None,
         )
         scene_change_id = str(turn.get("scene_change") or "")
         if scene_change_id:
@@ -755,6 +756,7 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
             emotional_state=emotional_state,
             scene_memory=scene_memory,
             persona=persona,
+            adult_llm=str(persona.get("adult_llm") or "").strip() or None,
         )
         scene_change_id = str(turn.get("scene_change") or "")
         if scene_change_id:
@@ -853,6 +855,7 @@ async def _compose_turn(
     emotional_state: Dict[str, Any],
     scene_memory: Dict[str, Any],
     persona: Optional[Dict[str, Any]] = None,
+    adult_llm: Optional[str] = None,
 ) -> Dict[str, Any]:
     fallback = _compose_turn_fallback(
         message=message,
@@ -899,6 +902,11 @@ async def _compose_turn(
         "Return JSON only."
     )
     try:
+        # ``adult_llm`` is the per-experience model override for
+        # mature_gated runs — operator picked it in Step 0 to bypass
+        # the default Llama 3 / 3.2's "I cannot create content..."
+        # refusal. Empty / None means "use the server default" which
+        # chat_ollama resolves itself.
         response = await chat_ollama(
             [
                 {"role": "system", "content": system_prompt},
@@ -906,6 +914,7 @@ async def _compose_turn(
             ],
             temperature=0.6,
             max_tokens=320,
+            model=adult_llm or None,
             response_format="json",
         )
         content = ""
@@ -1206,6 +1215,15 @@ def _load_persona(persona_id: str) -> Dict[str, Any]:
         ).strip()
     safety = persona_agent.get("safety") if isinstance(persona_agent, dict) else {}
     allow_explicit = bool((safety or {}).get("allow_explicit", False))
+    # Per-persona LLM override — populated by the wizard's Phase 3
+    # when the operator picked a Storyteller LLM in Step 0 for a
+    # Mature (gated) experience. Falls back to the server default
+    # when empty. Persists on the persona project so subsequent
+    # Persona Live sessions for this persona reuse the override
+    # without the operator re-selecting it.
+    adult_llm = ""
+    if isinstance(persona_agent, dict):
+        adult_llm = str(persona_agent.get("llm_override") or "").strip()
     return {
         "id": persona_id,
         "name": str((data or {}).get("name") or (persona_agent or {}).get("label") or "Persona"),
@@ -1213,6 +1231,7 @@ def _load_persona(persona_id: str) -> Dict[str, Any]:
         "archetype": archetype or "companion",
         "style_hint": style_hint,
         "allow_explicit": allow_explicit,
+        "adult_llm": adult_llm,
     }
 
 

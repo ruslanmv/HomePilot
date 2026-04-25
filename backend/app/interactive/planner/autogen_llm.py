@@ -512,6 +512,21 @@ def _rewrite_heuristic_title(
 
 # ── LLM path ───────────────────────────────────────────────────
 
+def _audience_adult_llm(experience: Experience) -> str:
+    """Read the wizard's per-experience LLM override from
+    ``audience_profile.adult_llm``. Empty when unset.
+
+    Surfaced for autogen + the workflow spine so Mature (gated)
+    projects can route around the default Llama 3 / 3.2 refusals.
+    Pulled out of inline dict access so tests can patch this one
+    function deterministically.
+    """
+    ap = getattr(experience, "audience_profile", None) or {}
+    if not isinstance(ap, dict):
+        return ""
+    return str(ap.get("adult_llm") or "").strip()
+
+
 async def _generate_via_llm(
     experience: Experience,
     *, cfg: InteractiveConfig, pcfg: PlaybackConfig,
@@ -524,6 +539,13 @@ async def _generate_via_llm(
     # bounded by the configured render-side timeout.
     max_tokens = max(pcfg.llm_max_tokens, 1500)
     timeout_s = max(pcfg.llm_timeout_s, 30.0)
+    # Per-experience LLM override for Mature (gated) projects — the
+    # default Llama 3 / 3.2 refuses explicit content with "I cannot
+    # create content that describes explicit sexual situations." The
+    # wizard's Step 0 picker stamps the operator's preferred
+    # uncensored/abliterated model into ``audience_profile.adult_llm``
+    # and we honor it here. Empty / unset → server default.
+    adult_llm = _audience_adult_llm(experience)
     try:
         response = await asyncio.wait_for(
             chat_ollama(
@@ -531,6 +553,7 @@ async def _generate_via_llm(
                 temperature=0.55,
                 max_tokens=max_tokens,
                 response_format="json",
+                model=adult_llm or None,
             ),
             timeout=timeout_s,
         )
