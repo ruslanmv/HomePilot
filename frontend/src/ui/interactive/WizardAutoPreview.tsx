@@ -148,11 +148,14 @@ export function WizardAutoPreview({
   // a glance whose persona they had selected.
   const [resolvedAvatar, setResolvedAvatar] = useState<string>("");
   const [resolvedArchetype, setResolvedArchetype] = useState<string>("");
+  // Pulled from the persona project so the Render plan panel can
+  // show the right Tier-2 library count (17 SFW, 23 with NSFW).
+  const [personaAllowExplicit, setPersonaAllowExplicit] = useState<boolean>(false);
+  const [libraryAlreadyBuilt, setLibraryAlreadyBuilt] = useState<number>(0);
 
   useEffect(() => {
     const pid = interaction.persona_project_id;
     if (!pid) return;
-    if (interaction.persona_avatar_url) return;
     const ctrl = new AbortController();
     const base = backendUrl.replace(/\/+$/, "");
     fetch(`${base}/projects/${encodeURIComponent(pid)}`, {
@@ -163,17 +166,34 @@ export function WizardAutoPreview({
       .then((body) => {
         if (!body || !body.ok || !body.project) return;
         const project = body.project as {
-          persona_appearance?: { selected_filename?: unknown };
+          persona_appearance?: {
+            selected_filename?: unknown;
+            asset_library?: Record<string, unknown>;
+          };
           persona_agent?: {
             persona_class?: unknown;
             response_style?: { tone?: unknown };
+            safety?: { allow_explicit?: unknown };
           };
         };
         const filename = String(
           project.persona_appearance?.selected_filename || "",
         ).trim();
-        if (filename) {
+        if (filename && !interaction.persona_avatar_url) {
           setResolvedAvatar(`${base}/files/${filename}`);
+        }
+        // Allow_explicit drives the NSFW Tier 2 row count (+6 specs).
+        setPersonaAllowExplicit(
+          Boolean(project.persona_agent?.safety?.allow_explicit),
+        );
+        // Already-built library count — Phase 3 build is idempotent
+        // so this many specs will SKIP rendering on this run. Lets
+        // the Render plan show "23 planned · 11 already cached → 12
+        // new renders this run" instead of misleading the operator
+        // about how long the wizard will take.
+        const lib = project.persona_appearance?.asset_library;
+        if (lib && typeof lib === "object") {
+          setLibraryAlreadyBuilt(Object.keys(lib).length);
         }
         const archetype =
           String(project.persona_agent?.persona_class || "").trim() ||
@@ -573,6 +593,41 @@ export function WizardAutoPreview({
         </div>
       </div>
 
+      {/*
+       * Render plan panel — shown right above the Create CTA so the
+       * operator can see exactly how many GPU renders this wizard
+       * run will fire before clicking. Three numbers:
+       *
+       *   * Scene graph     — fixed at 7 for Persona Live (intro +
+       *                       4 reactions + followup + ending);
+       *                       branch_count × depth × scenes_per_branch
+       *                       for Standard.
+       *   * Persona library — 17 (SFW) or 23 (NSFW + allow_explicit)
+       *                       at Tier 2. Persona Live only.
+       *   * Already cached  — library rows that exist on the persona
+       *                       from a prior run; idempotent skip.
+       *
+       * "Total this run" subtracts already-cached so the wizard
+       * progress bar lines up with the count shown here.
+       */}
+      <RenderPlanPanel
+        personaLive={personaLive}
+        renderEnabled={renderEnabled}
+        sceneCount={
+          personaLive
+            ? PERSONA_LIVE_SCENE_COUNT
+            : Math.max(1, form.branch_count * form.depth * form.scenes_per_branch)
+        }
+        libraryPlanned={
+          personaLive
+            ? (personaAllowExplicit
+                ? PERSONA_LIBRARY_TIER2_NSFW_COUNT
+                : PERSONA_LIBRARY_TIER2_SFW_COUNT)
+            : 0
+        }
+        libraryAlreadyBuilt={libraryAlreadyBuilt}
+      />
+
       <footer className="shrink-0 border-t border-[#2a2a2a] bg-[#0f0f0f] py-3">
         <div className="max-w-2xl mx-auto px-6 flex items-center justify-end gap-3">
           <PrimaryButton
@@ -798,4 +853,143 @@ function SourceBadge({ source }: { source: "llm" | "heuristic" }) {
 function cleanOptional(value?: string) {
   const v = String(value || "").trim();
   return v ? v : undefined;
+}
+
+// ── Render plan constants ────────────────────────────────────────────────
+//
+// Mirrors the persona_asset_library Tier 2 manifest. Kept in sync with
+// ``backend/app/interactive/playback/persona_asset_library.py`` —
+// changing the manifest there should bump these counts here too.
+//
+// Tier 2 SFW: 9 (Tier 1 base) + 6 (extra outfits / poses / cameras)
+//             + 2 (outfit×expression composites) = 17
+// Tier 2 NSFW: +6 (2 expr at Tier 1, 2 pose at Tier 2,
+//                 2 outfit at Tier 2) = 23 total when allow_explicit
+const PERSONA_LIBRARY_TIER2_SFW_COUNT = 17;
+const PERSONA_LIBRARY_TIER2_NSFW_COUNT = 23;
+// Persona Live's scene graph is deterministic (lina_intro_start +
+// 4 reaction scenes + lina_followup + lina_epilogue = 7). See
+// ``backend/app/interactive/planner/autogen_llm._persona_live_graph``.
+const PERSONA_LIVE_SCENE_COUNT = 7;
+
+
+function RenderPlanPanel({
+  personaLive,
+  renderEnabled,
+  sceneCount,
+  libraryPlanned,
+  libraryAlreadyBuilt,
+}: {
+  personaLive: boolean;
+  renderEnabled: boolean;
+  sceneCount: number;
+  libraryPlanned: number;
+  libraryAlreadyBuilt: number;
+}) {
+  // Library renders use the persona portrait as anchor, so for non-
+  // Persona-Live projects there's no library pass at all.
+  const libraryToBuild = personaLive
+    ? Math.max(0, libraryPlanned - libraryAlreadyBuilt)
+    : 0;
+  // Scene-graph renders only fire when the playback render flag is
+  // on AND the project type uses scene assets. Persona Live skips
+  // scene rendering entirely (the live runtime serves library
+  // images, not the scene tree).
+  const sceneRendersThisRun = personaLive
+    ? 0
+    : (renderEnabled ? sceneCount : 0);
+  const totalThisRun = sceneRendersThisRun + libraryToBuild;
+
+  return (
+    <div className="shrink-0 border-t border-[#2a2a2a] bg-[#121212]/60">
+      <div className="max-w-2xl mx-auto px-6 py-3">
+        <div className="text-[11px] uppercase tracking-wider text-[#9f7fd1] mb-2">
+          Render plan
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+          <PlanStat
+            label="Scene graph"
+            value={sceneCount}
+            unit={sceneCount === 1 ? "scene" : "scenes"}
+            hint={
+              personaLive
+                ? "Authored spine — the live runtime doesn't traverse this."
+                : (renderEnabled
+                    ? "All rendered as images / video clips."
+                    : "Scene render is OFF — no GPU work this pass.")
+            }
+          />
+          {personaLive && (
+            <PlanStat
+              label="Persona library"
+              value={libraryPlanned}
+              unit={libraryPlanned === 1 ? "image" : "images"}
+              hint={
+                libraryAlreadyBuilt > 0
+                  ? `${libraryAlreadyBuilt} already cached → ${libraryToBuild} new this run.`
+                  : "Pre-rendered once per persona; reused on every session."
+              }
+            />
+          )}
+          <PlanStat
+            label="Total this run"
+            value={totalThisRun}
+            unit={totalThisRun === 1 ? "render" : "renders"}
+            emphasised
+            hint={
+              totalThisRun === 0
+                ? "No renders queued — wizard finishes in seconds."
+                : "Each render typically takes 3–8 s on a capable GPU."
+            }
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function PlanStat({
+  label,
+  value,
+  unit,
+  hint,
+  emphasised,
+}: {
+  label: string;
+  value: number;
+  unit: string;
+  hint?: string;
+  emphasised?: boolean;
+}) {
+  return (
+    <div
+      className={[
+        "rounded-md border px-3 py-2",
+        emphasised
+          ? "border-[#8b5cf6]/50 bg-[#8b5cf6]/10"
+          : "border-[#2a2a2a] bg-[#0f0f0f]/60",
+      ].join(" ")}
+    >
+      <div className="text-[10px] uppercase tracking-wider text-[#777]">
+        {label}
+      </div>
+      <div className="flex items-baseline gap-1.5 mt-0.5">
+        <span
+          className={[
+            "font-semibold",
+            emphasised ? "text-[#c4b5fd] text-lg" : "text-[#f1f1f1] text-base",
+          ].join(" ")}
+        >
+          {value}
+        </span>
+        <span className="text-[11px] text-[#aaa]">{unit}</span>
+      </div>
+      {hint && (
+        <div className="text-[10px] text-[#777] mt-1 leading-snug">
+          {hint}
+        </div>
+      )}
+    </div>
+  );
 }
