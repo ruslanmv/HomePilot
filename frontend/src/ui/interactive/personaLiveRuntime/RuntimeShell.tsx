@@ -412,11 +412,19 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
       {/* Mobile immersive runtime */}
       <div className="lg:hidden relative flex-1 min-h-0 overflow-hidden">
         <div className={`absolute inset-0 transition-all ${transitionClass}`} style={{ transform: `scale(${cameraPreset.zoom}) translateY(${cameraPreset.yOffset}%)` }}>
+          {/*
+           * ``object-cover`` fills the viewport (no letterbox bars on
+           * mobile — phone players want immersive) but anchored
+           * ``object-top`` so the face stays visible when the source
+           * is squarer than the phone's aspect. Without ``object-top``
+           * the default center-crop chopped the eyes off on tall
+           * phones.
+           */}
           {state.currentMedia.url ? (
             state.currentMedia.type === "video" ? (
-              <video src={state.currentMedia.url} className="absolute inset-0 w-full h-full object-cover" autoPlay loop muted={muted} playsInline />
+              <video src={state.currentMedia.url} className="absolute inset-0 w-full h-full object-cover object-top" autoPlay loop muted={muted} playsInline />
             ) : (
-              <img src={state.currentMedia.url} alt={state.persona.name} className="absolute inset-0 w-full h-full object-cover" />
+              <img src={state.currentMedia.url} alt={state.persona.name} className="absolute inset-0 w-full h-full object-cover object-top" />
             )
           ) : (
             <div className="absolute inset-0 grid place-items-center text-[#888] text-sm">No render yet</div>
@@ -558,11 +566,21 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
         <div className="min-h-0 flex flex-col gap-3">
           <div className="relative flex-1 min-h-[320px] rounded-2xl border border-[#343434] overflow-hidden bg-[#101010]">
             <div className={`absolute inset-0 transition-all ${transitionClass}`} style={{ transform: `scale(${cameraPreset.zoom}) translateY(${cameraPreset.yOffset}%)` }}>
+              {/*
+               * Desktop fits the WHOLE image inside the panel
+               * (``object-contain``) so the face is never trimmed —
+               * the portrait is the focus of Persona Live, and
+               * cropping the head off the top is the worst possible
+               * default. Letterboxing the rounded panel with a dark
+               * background reads as intentional matting; the user
+               * sees Lina end-to-end. Mobile keeps ``object-cover``
+               * for the immersive full-screen takeover.
+               */}
               {state.currentMedia.url ? (
                 state.currentMedia.type === "video" ? (
-                  <video src={state.currentMedia.url} className="absolute inset-0 w-full h-full object-cover" autoPlay loop muted playsInline />
+                  <video src={state.currentMedia.url} className="absolute inset-0 w-full h-full object-contain" autoPlay loop muted playsInline />
                 ) : (
-                  <img src={state.currentMedia.url} alt={state.persona.name} className="absolute inset-0 w-full h-full object-cover" />
+                  <img src={state.currentMedia.url} alt={state.persona.name} className="absolute inset-0 w-full h-full object-contain" />
                 )
               ) : (
                 <div className="absolute inset-0 grid place-items-center text-[#666] text-sm">No render yet</div>
