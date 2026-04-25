@@ -33,6 +33,11 @@ import type { InteractiveApi } from "./api";
 import type { CatalogItemView, ResolveResult, SceneJobView } from "./types";
 import { InteractiveApiError } from "./types";
 import { useAsyncResource, useToast } from "./ui";
+import {
+  fadeKey,
+  useFadeOnSceneChange,
+  useScenePreload,
+} from "./scenePreload";
 
 
 const SKIP_SECONDS = 10;
@@ -41,6 +46,10 @@ const SKIP_SECONDS = 10;
 export interface StandardPlayerProps {
   api: InteractiveApi;
   sessionId: string;
+  /** Experience id (a.k.a. project id). Threaded in so the player
+   *  can preload upcoming scene assets via ``useScenePreload`` —
+   *  optional only because some legacy callers may not have it. */
+  experienceId?: string;
   scene: SceneJobView | null;
   onExit: () => void;
   onResolved: (resolved: ResolveResult, action: CatalogItemView) => void;
@@ -48,7 +57,7 @@ export interface StandardPlayerProps {
 
 
 export function StandardPlayer({
-  api, sessionId, scene, onExit, onResolved,
+  api, sessionId, experienceId, scene, onExit, onResolved,
 }: StandardPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -75,6 +84,26 @@ export function StandardPlayer({
   const url = retryNonce > 0 && baseUrl
     ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}_t=${retryNonce}`
     : baseUrl;
+
+  // ── Preload + transitions (cinematic engine spec §5–7) ─────────
+  // Walk the experience graph from the current scene and preload
+  // every reachable next-scene's image so navigation feels instant
+  // — the spec called out "Avoid lag when switching scenes" as
+  // critical for premium UX. depth=2 covers the immediate Continue
+  // hop plus the first step of every choice branch.
+  //
+  // ``scene.id`` is shaped ``initial_<node_id>`` for the entry
+  // payload and ``<node_id>`` for subsequent turns; strip the
+  // prefix so the graph lookup matches the actual node row.
+  const currentNodeId = String(scene?.id || "")
+    .replace(/^initial_/, "")
+    .trim();
+  useScenePreload(api, experienceId || "", currentNodeId);
+
+  // Cross-fade the media wrapper on scene change. The fade key
+  // changes when EITHER the scene id OR the asset url changes,
+  // so a regenerate-scene also fades the new image in.
+  const fade = useFadeOnSceneChange(fadeKey(scene?.id, url));
   const mediaHint = String(scene?.media_kind || "").toLowerCase();
   // ``avif`` added alongside backend _media_kind_from_url — some ComfyUI
   // pipelines emit AVIF for scene assets and without it here the stage
@@ -269,6 +298,20 @@ export function StandardPlayer({
       ref={containerRef}
       className="relative w-full h-full bg-black text-white flex items-center justify-center"
     >
+      {/*
+       * Fade-transition wrapper. Wraps every media element + the
+       * error / pending fallback so the whole stage cross-fades
+       * on scene change. CSS transition matches the JS-side
+       * duration via ``transitionMs`` to keep them in sync.
+       */}
+      <div
+        className="absolute inset-0 flex items-center justify-center"
+        style={{
+          opacity: fade.opacity,
+          transition: `opacity ${fade.transitionMs}ms ease-out`,
+          willChange: "opacity",
+        }}
+      >
       {mediaError ? (
         // Shared error UI for both <img> and <video> failures. The
         // Retry button bumps ``retryNonce`` which appends a
@@ -323,6 +366,7 @@ export function StandardPlayer({
             : "Scene not available yet."}
         </div>
       )}
+      </div>{/* end fade wrapper */}
 
       <TopBar onRestart={restart} onNext={() => setDecisionOpen(true)} onExit={onExit} />
       <CenterControls

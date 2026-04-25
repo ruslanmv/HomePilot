@@ -450,6 +450,7 @@ function InteractivePlayerBody({
         <StandardPlayer
           api={api}
           sessionId={sessionId}
+          experienceId={projectId}
           scene={currentScene}
           onExit={onExit}
           onResolved={onActionResolved}
