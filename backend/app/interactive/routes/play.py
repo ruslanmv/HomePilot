@@ -575,14 +575,31 @@ def _persisted_persona_image_urls(exp: Any) -> Tuple[str, str]:
 
 def _media_kind_from_url(url: str) -> str:
     u = (url or "").lower()
-    if any(u.endswith(ext) or f"{ext}?" in u for ext in (".mp4", ".webm", ".mov", ".mkv", ".m4v")):
+    # Accept the extension at any of:
+    #   - end of string         ".../foo.png"
+    #   - just before a query   ".../foo.png?x=1"
+    #   - inside a query value  ".../view?filename=foo.png&type=output"
+    # The third form is what ComfyUI's /view endpoint emits and was the
+    # cause of the "Standard player loads black" bug — without matching
+    # ``.png&`` and ``.png#`` here the kind dropped to "unknown" and
+    # both frontend regex paths fell through to the empty placeholder.
+    _VIDEO_EXTS = (".mp4", ".webm", ".mov", ".mkv", ".m4v")
+    _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif")
+    def _has_ext(haystack: str, ext: str) -> bool:
+        return (
+            haystack.endswith(ext)
+            or f"{ext}?" in haystack
+            or f"{ext}&" in haystack
+            or f"{ext}#" in haystack
+        )
+    if any(_has_ext(u, ext) for ext in _VIDEO_EXTS):
         return "video"
     # AVIF added 2026-04 — some ComfyUI pipelines (and any browser-side
     # re-encode path) emit .avif scene assets. Without listing it here,
     # the initial-scene payload dropped to media_kind="unknown" and the
     # Standard player fell through to "Scene not available yet." instead
     # of rendering the image.
-    if any(u.endswith(ext) or f"{ext}?" in u for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif")):
+    if any(_has_ext(u, ext) for ext in _IMAGE_EXTS):
         return "image"
     return "unknown"
 

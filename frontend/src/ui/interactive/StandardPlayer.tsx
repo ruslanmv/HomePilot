@@ -80,7 +80,16 @@ export function StandardPlayer({
   const [mediaError, setMediaError] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
 
-  const baseUrl = scene?.status === "ready" ? (scene.asset_url || "") : "";
+  const baseUrl = (() => {
+    if (!scene?.asset_url) return "";
+    // Trust the URL whenever it's present. The previous gate
+    // (status === "ready") was redundant — _build_initial_scene
+    // only stamps asset_url after asset registry resolution
+    // succeeds — and it caused a black stage for any backend that
+    // omitted the explicit "ready" stamp (legacy sessions, the
+    // pending-then-resolve race, single-tap retries, etc).
+    return scene.asset_url;
+  })();
   const url = retryNonce > 0 && baseUrl
     ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}_t=${retryNonce}`
     : baseUrl;
@@ -105,11 +114,19 @@ export function StandardPlayer({
   // so a regenerate-scene also fades the new image in.
   const fade = useFadeOnSceneChange(fadeKey(scene?.id, url));
   const mediaHint = String(scene?.media_kind || "").toLowerCase();
-  // ``avif`` added alongside backend _media_kind_from_url — some ComfyUI
-  // pipelines emit AVIF for scene assets and without it here the stage
-  // fell through to "Scene not available yet."
-  const isImage = (mediaHint === "image") || (url && /\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url));
-  const isVideo = url && /\.(mp4|webm|mov|mkv|m4v)(\?|$)/i.test(url);
+  // Media-kind detection is the union of three signals — any one is
+  // enough. The boundary character set covers ``.png?…``, ``.png&…``
+  // (ComfyUI /view URLs), ``.png#…``, and end-of-string. The previous
+  // ``(\?|$)`` form matched only the first and last, so a URL like
+  //   http://comfy:8188/view?filename=foo.png&subfolder=&type=output
+  // was misclassified as "unknown" and the Standard player rendered
+  // a black stage with the "Scene not available yet." placeholder.
+  const _IMG_RE = /\.(png|jpe?g|webp|gif|avif)([?&#]|$)/i;
+  const _VID_RE = /\.(mp4|webm|mov|mkv|m4v)([?&#]|$)/i;
+  const isImage =
+    mediaHint === "image" || (!!url && _IMG_RE.test(url));
+  const isVideo =
+    mediaHint === "video" || (!!url && _VID_RE.test(url));
   const defaultDuration = Math.max(1, Number(scene?.duration_sec || 5));
 
   // Load catalog as the pool of decision cards. For standard
