@@ -34,7 +34,7 @@
  *   - Payload generation is centralized and trimmed consistently.
  */
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, Sparkles } from "lucide-react";
 import { createInteractiveApi } from "./api";
 import type {
@@ -136,6 +136,53 @@ export function WizardAutoPreview({
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Resolve the persona's portrait when the interaction selection
+  // didn't include one. Same pattern Step 0 uses (`Step0Prompt.tsx`)
+  // — the LS persona cache that feeds these screens doesn't store
+  // ``avatar_url`` reliably (App.tsx writers omit it), so we hit
+  // ``GET /projects/{id}`` and pull ``persona_appearance.selected_filename``
+  // to build a working ``/files/...`` URL. Without this, the persona
+  // preview card on the WizardAutoPreview surface kept rendering an
+  // empty grey square + the bare label — operators couldn't tell at
+  // a glance whose persona they had selected.
+  const [resolvedAvatar, setResolvedAvatar] = useState<string>("");
+  const [resolvedArchetype, setResolvedArchetype] = useState<string>("");
+
+  useEffect(() => {
+    const pid = interaction.persona_project_id;
+    if (!pid) return;
+    if (interaction.persona_avatar_url) return;
+    const ctrl = new AbortController();
+    const base = backendUrl.replace(/\/+$/, "");
+    fetch(`${base}/projects/${encodeURIComponent(pid)}`, {
+      signal: ctrl.signal,
+      credentials: "include",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        if (!body || !body.ok || !body.project) return;
+        const project = body.project as {
+          persona_appearance?: { selected_filename?: unknown };
+          persona_agent?: {
+            persona_class?: unknown;
+            response_style?: { tone?: unknown };
+          };
+        };
+        const filename = String(
+          project.persona_appearance?.selected_filename || "",
+        ).trim();
+        if (filename) {
+          setResolvedAvatar(`${base}/files/${filename}`);
+        }
+        const archetype =
+          String(project.persona_agent?.persona_class || "").trim() ||
+          String(project.persona_agent?.response_style?.tone || "").trim();
+        if (archetype) setResolvedArchetype(archetype);
+      })
+      .catch(() => { /* swallow — card falls back to monogram */ });
+    return () => ctrl.abort();
+  }, [backendUrl, interaction.persona_project_id, interaction.persona_avatar_url]);
 
   // Progress lives in a module-level store so the modal survives
   // tab switches mid-generation. WizardAutoPreview unmounts when
@@ -323,32 +370,74 @@ export function WizardAutoPreview({
               </>
             )}
 
-            {personaLive && (
-              <Field label="Persona card">
-                <div className="rounded-lg border border-[#3a2a58] bg-[#130f1f] p-3">
-                  <div className="flex items-start gap-3">
-                    {interaction.persona_avatar_url ? (
+            {personaLive && (() => {
+              // Hero-sized persona card. The 12×12 thumbnail wasn't
+              // enough to convey identity — operators couldn't see
+              // who they'd selected at the preview step. 32×32 (128 px)
+              // portrait + responsive flex layout (stacks on mobile,
+              // side-by-side on desktop) matches the Step 0 card.
+              const avatarUrl = interaction.persona_avatar_url || resolvedAvatar;
+              const personaLabel = interaction.persona_label || "Selected persona";
+              const archetype = resolvedArchetype || "Persona companion";
+              return (
+                <Field label="Persona card">
+                  <div
+                    className={[
+                      "rounded-lg border border-[#3a2a58]",
+                      "bg-gradient-to-br from-[#130f1f] to-[#1a0f24]",
+                      "p-4 flex flex-col sm:flex-row gap-4",
+                      "shadow-[0_0_24px_-12px_rgba(139,92,246,0.4)]",
+                    ].join(" ")}
+                  >
+                    {avatarUrl ? (
                       <img
-                        src={interaction.persona_avatar_url}
-                        alt=""
-                        className="w-12 h-12 rounded-full object-cover object-top border border-white/10 bg-black shrink-0"
+                        src={avatarUrl}
+                        alt={personaLabel}
+                        className={[
+                          "w-32 h-32 rounded-md object-cover object-top",
+                          "border-2 border-[#51347f]",
+                          "shadow-md flex-shrink-0",
+                          "self-center sm:self-start bg-black",
+                        ].join(" ")}
                       />
-                    ) : null}
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-[#f1f1f1]">
-                        {interaction.persona_label || "Selected persona"}
+                    ) : (
+                      <div
+                        className={[
+                          "w-32 h-32 rounded-md bg-[#24173a]",
+                          "border-2 border-[#51347f]",
+                          "flex-shrink-0 self-center sm:self-start",
+                          "flex items-center justify-center",
+                          "text-[#7c3aed] text-2xl font-semibold",
+                        ].join(" ")}
+                        aria-label="No portrait available"
+                      >
+                        {(personaLabel || "?").trim().charAt(0).toUpperCase()}
                       </div>
-                      <div className="text-xs text-[#b59ed9] mt-1">
-                        Session vibe: {form.prompt}
+                    )}
+                    <div className="min-w-0 flex flex-col justify-center gap-1">
+                      <div className="text-[11px] uppercase tracking-wider text-[#9f7fd1]">
+                        Persona card
                       </div>
-                      <div className="text-[11px] text-[#8f7ab0] mt-2">
+                      <div className="text-base font-medium text-[#f1f1f1] truncate">
+                        {personaLabel}
+                      </div>
+                      <div className="text-xs text-[#b59ed9] truncate">
+                        {archetype}
+                      </div>
+                      {form.prompt && (
+                        <div className="text-xs text-[#b59ed9] mt-2">
+                          <span className="text-[#9f7fd1]">Session vibe:</span>{" "}
+                          {form.prompt}
+                        </div>
+                      )}
+                      <div className="text-[11px] text-[#7c3aed] mt-1">
                         Portrait is frozen into this experience for consistent playback.
                       </div>
                     </div>
                   </div>
-                </div>
-              </Field>
-            )}
+                </Field>
+              );
+            })()}
 
             <div className="grid grid-cols-2 gap-4">
               <Field label="Mode">
