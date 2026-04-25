@@ -217,6 +217,14 @@ export interface InteractiveApi {
     level?: number;
     versions?: Array<Record<string, unknown>>;
     render_skipped?: boolean;
+    /** Library-hit fast path: backend returns the cached photo
+     *  inline so the frontend can skip the job-poll loop. */
+    media?: {
+      type?: "image" | "video" | string;
+      url?: string;
+      status?: "ready" | "rendering" | string;
+    };
+    source?: string;
   }>;
   personaLiveJob(jobId: string): Promise<Record<string, unknown>>;
   personaLiveRestore(sessionId: string, versionId: string): Promise<{ ok: boolean; session: Record<string, unknown>; version: Record<string, unknown> }>;
@@ -604,6 +612,12 @@ export function createInteractiveApi(
         level?: number;
         versions?: Array<Record<string, unknown>>;
         render_skipped?: boolean;
+        media?: {
+          type?: "image" | "video" | string;
+          url?: string;
+          status?: "ready" | "rendering" | string;
+        };
+        source?: string;
       }>(
         `/persona-live/session/${encodeURIComponent(sessionId)}/action`,
         { method: "POST", body: JSON.stringify(req) },

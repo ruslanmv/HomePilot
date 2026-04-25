@@ -418,6 +418,15 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
                     thumb_url=pre_url,
                     recipe={"source": "library", "intent": action_id},
                 )
+                # ``save_persona_version`` already stamps
+                # current_version_id on the session row (repo.py
+                # ~line 696), so the runtime-state update here is
+                # only for dialogue / scene_context / scene_memory /
+                # emotional_state. Passing current_version_id used
+                # to TypeError: update_persona_session_runtime_state
+                # got an unexpected keyword argument
+                # 'current_version_id' — surfaced to the user as a
+                # 500 on /persona-live/session/{id}/action.
                 version_id = str(version.get("id") or "")
                 repo.update_persona_session_runtime_state(
                     session_id,
@@ -425,7 +434,6 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
                     scene_context=scene_context,
                     scene_memory=scene_memory,
                     emotional_state=emotional_state,
-                    current_version_id=version_id,
                 )
                 synth_job_id = f"lib_{version_id}" if version_id else f"lib_{action_id}"
                 _JOB_RESULTS[synth_job_id] = {

@@ -245,7 +245,12 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
     const t = window.setInterval(async () => {
       try {
         const job = await api.personaLiveJob(pendingJobId);
-        if (String(job.status || "") !== "completed") return;
+        // Backend stamps "completed" for live-render jobs and "ready"
+        // for library-hit pseudo-jobs (id prefixed lib_…). Accept both
+        // — without this, a library-cached lib_xxxxx job would never
+        // resolve and the "Rendering…" overlay stayed up indefinitely.
+        const s = String(job.status || "").toLowerCase();
+        if (s !== "completed" && s !== "ready") return;
         setPendingJobId("");
         const latest = await api.personaLiveSession(sessionId);
         setTransitionType("soft");
@@ -320,6 +325,18 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
         aiText: dialogueText,
         emotion: ((res.emotional_state as EmotionalState | undefined)?.mood || state?.emotionalState.mood || "neutral"),
       });
+      // Library-first hit: the backend's persona-asset-library fast
+      // path returns ``media.status === "ready"`` with the URL of a
+      // pre-rendered photo (e.g. expression_00013_.png&subfolder=avatar)
+      // — there's nothing to poll. Without this short-circuit the
+      // frontend used to fall through to ``setPendingJobId`` and the
+      // poll loop waited for a status that never arrived, leaving the
+      // "Rendering…" overlay stuck on a perfectly-cached image.
+      const media = (res.media || {}) as Record<string, unknown>;
+      const mediaUrl = String(media.url || "");
+      const mediaStatus = String(media.status || "").toLowerCase();
+      const mediaType = String(media.type || "image") === "video" ? "video" : "image";
+      const libraryHit = mediaStatus === "ready" && !!mediaUrl;
       setState((prev) => {
         if (!prev) return prev;
         return {
@@ -328,14 +345,25 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
           sceneContext: (res.scene_context as SceneContext) || prev.sceneContext,
           sceneMemory: (res.scene_memory as SceneMemory) || prev.sceneMemory,
           emotionalState: (res.emotional_state as EmotionalState) || prev.emotionalState,
+          currentMedia: libraryHit
+            ? { type: mediaType, url: mediaUrl, status: "ready" }
+            : prev.currentMedia,
         };
       });
-      if (res.render_skipped) {
+      if (libraryHit || res.render_skipped) {
         setState((prev) => (prev ? { ...prev, currentMedia: { ...prev.currentMedia, status: "ready" } } : prev));
       } else {
         setPendingJobId(res.job_id || "");
       }
       setChat("");
+    } catch (err) {
+      // Don't leave the overlay stuck on "Rendering…" when the
+      // backend fails (e.g. the recent 500 from the
+      // current_version_id kwarg mismatch). Surface a brief error
+      // hint and unblock the action panel so the user can retry.
+      // eslint-disable-next-line no-console
+      console.error("[PersonaLive] action failed:", err);
+      setState((prev) => (prev ? { ...prev, currentMedia: { ...prev.currentMedia, status: "error" } } : prev));
     } finally {
       setSending(false);
     }
