@@ -856,6 +856,40 @@ async def _link_persona_library_assets(
         # the editor preview can't resolve it.
         registry_asset_id = str(row.get("registry_asset_id") or "").strip()
         url = str(row.get("asset_url") or "").strip()
+
+        # Backfill: older library rows (rendered before
+        # ``registry_asset_id`` existed) only carry ``asset_url``.
+        # Reverse-look-up the registry by storage_key so we can write
+        # the proper id to ``node.asset_ids`` instead of the raw URL.
+        # Without this backfill, re-running the wizard against an
+        # already-built library produced 404 storms in the editor
+        # preview because Phase 4 fell back to the URL.
+        if not registry_asset_id and url:
+            try:
+                from ...asset_registry import find_asset_id_by_storage_key
+                found = find_asset_id_by_storage_key(url)
+                if found:
+                    registry_asset_id = found
+                    # Patch the library row in place so subsequent
+                    # link passes use the id directly without another
+                    # registry hit.
+                    row["registry_asset_id"] = found
+                    pal.save_asset_record(persona_project_id, pal.AssetRecord(
+                        asset_id=str(row.get("asset_id") or asset_id_in_library),
+                        asset_url=url,
+                        kind=str(row.get("kind") or "expression"),
+                        tier=int(row.get("tier") or 1),
+                        reaction_intent=str(row.get("reaction_intent") or ""),
+                        registry_asset_id=found,
+                        generated_at=float(row.get("generated_at") or 0.0),
+                        source=str(row.get("source") or "library_build"),
+                    ))
+            except Exception as exc:  # noqa: BLE001 — backfill is best-effort
+                log.warning(
+                    "scene_link_backfill_failed exp=%s lib=%s: %s",
+                    exp.id, asset_id_in_library, str(exc)[:200],
+                )
+
         link_value = registry_asset_id or url
         if not link_value:
             continue

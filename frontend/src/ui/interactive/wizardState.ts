@@ -120,6 +120,17 @@ export function toPlanPayload(f: WizardForm) {
       persona_project_id: f.persona_project_id || undefined,
       persona_label: f.persona_label || undefined,
       render_media_type: f.render_media_type,
+      // Plan-auto runs BEFORE create-experience so it can't read
+      // audience_profile.adult_llm — pass the operator's Step 0
+      // pick directly so the title/topic LLM call uses the
+      // uncensored model the user selected. Without this, the
+      // default Llama refuses with "I cannot create a brief for
+      // an interactive video that focuses on sexual experiences."
+      // and the wizard's title/description land as that refusal.
+      adult_llm:
+        f.experience_mode === "mature_gated" && f.adult_llm
+          ? f.adult_llm
+          : undefined,
     },
   };
 }
