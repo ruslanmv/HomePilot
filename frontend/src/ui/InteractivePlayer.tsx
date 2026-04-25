@@ -384,8 +384,83 @@ function InteractivePlayerBody({
       if (typeof resolved.mood === "string" && resolved.mood) setMood(resolved.mood);
       if (typeof resolved.affinity_score === "number") setAffinity(resolved.affinity_score);
       setLiveActionOpen(false);
+
+      // Scene navigation. The Standard player's choice card click
+      // surfaces a ResolveResult whose ``transition.to_node_id`` is
+      // the destination scene the player should now show. The
+      // previous wiring stopped at "update mood/affinity/bubbles"
+      // — the on-screen scene never advanced, so users reported
+      // "the click does nothing". Now: optimistically swap the
+      // current scene to a "transitioning" stub so the user sees
+      // immediate response, then fetch the destination node + asset
+      // URL and replace.
+      const nextNodeId = String(resolved.transition?.to_node_id || "").trim();
+      if (!nextNodeId) return;
+
+      // Optimistic stub: set status to "rendering" so the player
+      // shows its built-in "Generating scene…" placeholder while
+      // we resolve the real asset. This is the visible feedback
+      // the user was missing.
+      setCurrentScene((prev) => ({
+        id: nextNodeId,
+        session_id: prev?.session_id || sessionId,
+        turn_id: "",
+        status: "rendering",
+        job_id: "",
+        asset_id: "",
+        media_kind: "unknown",
+        asset_url: "",
+        prompt: action.label,
+        narration: "",
+        subtitles: "",
+        duration_sec: 5,
+        error: "",
+        created_at: "",
+        updated_at: "",
+      }));
+
+      // Async resolution: fetch the experience graph (cheap — one
+      // call, results land in the in-memory list), find the
+      // destination node, resolve its first asset id to a URL, and
+      // commit. If anything fails we leave the polling loop to
+      // catch up — that path still works as a fallback.
+      void (async () => {
+        try {
+          const nodes = await api.listNodes(projectId);
+          const node = nodes.find((n) => n.id === nextNodeId);
+          if (!node) return;
+          const assetId = (node.asset_ids || [])[0] || "";
+          let assetUrl = "";
+          if (assetId) {
+            try {
+              assetUrl = (await api.resolveAssetUrl(assetId)) || "";
+            } catch {
+              /* fall back to polling */
+            }
+          }
+          setCurrentScene({
+            id: node.id,
+            session_id: sessionId,
+            turn_id: "",
+            status: assetUrl ? "ready" : "pending",
+            job_id: "",
+            asset_id: assetId,
+            media_kind: "unknown",
+            asset_url: assetUrl,
+            prompt: node.title || action.label,
+            narration: node.narration || "",
+            subtitles: "",
+            duration_sec: Number(node.duration_sec || 5),
+            error: "",
+            created_at: "",
+            updated_at: "",
+          });
+        } catch {
+          /* polling fallback */
+        }
+      })();
     },
-    [],
+    [api, projectId, sessionId],
   );
 
   // ── Keyboard: Enter submits, Shift+Enter newline ────────────

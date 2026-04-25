@@ -755,38 +755,101 @@ function ChoiceCard({
   firing: boolean;
   onClick: () => void;
 }) {
+  // Future hook: the catalog row will eventually carry an
+  // ``asset_thumbnail_url`` for the destination scene. Until the
+  // backend populates that field, the gradient fallback below tints
+  // each card differently per intent so the user can at least
+  // distinguish paths visually.
+  const thumbUrl = (choice as { asset_thumbnail_url?: string })
+    .asset_thumbnail_url || "";
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={firing}
       aria-label={`Pick: ${choice.label}`}
+      aria-busy={firing}
       className={[
         "group relative aspect-[4/3] rounded-2xl overflow-hidden",
         "bg-gradient-to-br from-[#1f1f1f] to-[#0a0a0a]",
-        "border border-white/15 hover:border-[#3ea6ff]/80",
-        "transition-all duration-150 hover:scale-[1.02]",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff]",
-        firing ? "opacity-60 cursor-wait" : "",
+        "border border-white/15",
+        // Stronger interaction feedback than the previous tiny
+        // 1.02 scale: hover lifts + glows, focus pops a ring,
+        // active press shrinks for tactile confirmation.
+        "transition-[transform,box-shadow,border-color] duration-200",
+        "hover:scale-[1.035] hover:border-[#ec4899]/70",
+        "hover:shadow-[0_18px_40px_-12px_rgba(236,72,153,0.45)]",
+        "active:scale-[0.97]",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ec4899] focus-visible:ring-offset-2 focus-visible:ring-offset-black",
+        firing ? "opacity-90 cursor-wait" : "",
       ].join(" ")}
     >
+      {thumbUrl ? (
+        <img
+          src={thumbUrl}
+          alt=""
+          aria-hidden
+          className={[
+            "absolute inset-0 w-full h-full object-cover",
+            "opacity-90 group-hover:opacity-100 transition-opacity",
+            // Slight zoom on hover for cinematic feel.
+            "group-hover:scale-[1.03] transition-transform duration-300",
+          ].join(" ")}
+        />
+      ) : (
+        <div
+          className="absolute inset-0 opacity-80 group-hover:opacity-100 transition-opacity"
+          style={{
+            // Placeholder tint based on intent code → derive a
+            // deterministic hue so authors can eyeball "this choice
+            // goes to path X" even before real thumbnails exist.
+            background: hueFromString(choice.intent_code || choice.label),
+          }}
+          aria-hidden
+        />
+      )}
+      {/*
+       * Centered "play" affordance. Tells the user "this is a
+       * clickable destination, not a static card." Fades in on hover
+       * so it doesn't compete with the label at rest.
+       */}
       <div
-        className="absolute inset-0 opacity-80 group-hover:opacity-100 transition-opacity"
-        style={{
-          // Placeholder tint based on intent code → derive a
-          // deterministic hue so authors can eyeball "this choice
-          // goes to path X" even before real thumbnails exist.
-          background: hueFromString(choice.intent_code || choice.label),
-        }}
+        className={[
+          "absolute inset-0 flex items-center justify-center",
+          "opacity-0 group-hover:opacity-100 transition-opacity duration-200",
+          "pointer-events-none",
+        ].join(" ")}
         aria-hidden
-      />
+      >
+        <span className="w-12 h-12 rounded-full bg-white/15 border border-white/40 backdrop-blur-sm grid place-items-center">
+          <Play className="w-5 h-5 text-white fill-current ml-0.5" aria-hidden />
+        </span>
+      </div>
+      {/*
+       * Firing-state overlay: spinner on top of the card so the
+       * user has unmistakable feedback that their click landed and
+       * the next scene is being resolved. The card stays mostly
+       * visible (opacity-90 above) so they can still see what they
+       * picked while waiting.
+       */}
+      {firing && (
+        <div
+          className="absolute inset-0 grid place-items-center bg-black/40 backdrop-blur-[1px]"
+          aria-hidden
+        >
+          <span className="inline-flex items-center gap-2 rounded-full bg-black/70 border border-white/20 px-3 py-1.5 text-xs text-white">
+            <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+            Loading…
+          </span>
+        </div>
+      )}
       <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black/85 to-transparent">
         <div className="text-sm font-semibold text-white truncate">
           {choice.label}
         </div>
         {choice.intent_code && (
           <div className="text-[10px] text-white/60 truncate mt-0.5">
-            {choice.intent_code}
+            {choice.intent_code.replace(/_/g, " ")}
           </div>
         )}
       </div>
