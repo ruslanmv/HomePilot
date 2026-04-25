@@ -17,6 +17,7 @@
 import React, { useMemo } from "react";
 import { createPortal } from "react-dom";
 
+import { ExpertLogPanel, useExpertMode } from "./ExpertLogPanel";
 import { GeneratingPanel } from "./GeneratingPanel";
 import {
   useWizardProgress,
@@ -61,6 +62,7 @@ function _panelDescription(s: WizardProgressState): string {
 
 export function WizardProgressOverlay(): React.ReactElement | null {
   const state = useWizardProgress();
+  const [expertMode] = useExpertMode();
 
   const showProgressBar = useMemo(
     () => state.renderTotal > 0,
@@ -112,17 +114,33 @@ export function WizardProgressOverlay(): React.ReactElement | null {
         padding: "1rem",
       }}
     >
-      <div style={{ maxWidth: 480, width: "100%" }}>
-        <GeneratingPanel
-          title={_panelTitle(state, true)}
-          description={_panelDescription(state)}
-          steps={GENERATE_STEPS as unknown as Array<{ label: string }>}
-          activeStep={state.genStep}
-          accentClassName="text-[#c4b5fd]"
-          spinnerSize="large"
-          progress={progressPct}
-          progressLabel={progressLabel}
-        />
+      <div
+        style={{
+          maxWidth: expertMode ? 920 : 480,
+          width: "100%",
+          display: "flex",
+          flexDirection: expertMode ? "row" : "column",
+          gap: expertMode ? "0.75rem" : 0,
+          alignItems: "stretch",
+        }}
+      >
+        <div style={{ flex: expertMode ? "0 0 420px" : "1 1 auto", minWidth: 0 }}>
+          <GeneratingPanel
+            title={_panelTitle(state, true)}
+            description={_panelDescription(state)}
+            steps={GENERATE_STEPS as unknown as Array<{ label: string }>}
+            activeStep={state.genStep}
+            accentClassName="text-[#c4b5fd]"
+            spinnerSize="large"
+            progress={progressPct}
+            progressLabel={progressLabel}
+          />
+        </div>
+        {expertMode && (
+          <ExpertLogPanel
+            className="flex-1 min-w-0 max-h-[28rem]"
+          />
+        )}
         {state.error && (
           <div
             style={{

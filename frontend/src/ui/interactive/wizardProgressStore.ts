@@ -50,7 +50,38 @@ export type WizardProgressEventType =
   | "library_asset_rendered"
   | "library_asset_failed"
   | "library_build_done"
-  | "scene_linked";
+  | "scene_linked"
+  // Expert-mode chain-of-thought events. Forwarded as-is from the
+  // backend planner / workflow runner so the expert log panel can
+  // display CrewAI-style step traces.
+  | "planner_thought"
+  | "workflow_started"
+  | "workflow_completed"
+  | "step_started"
+  | "step_completed"
+  | "step_failed"
+  | "llm_step_started"
+  | "llm_step_completed"
+  | "llm_step_failed";
+
+export interface ExpertLogEntry {
+  /** Sequential id, monotonic per ``startGeneration`` call. */
+  id: number;
+  /** Wall-clock millis when the entry was added. */
+  ts: number;
+  /** Raw SSE event type. */
+  type: string;
+  /** Short human-readable label derived from the event for display. */
+  label: string;
+  /** One-line summary built from the payload (e.g. preview text). */
+  summary: string;
+  /** Full payload for the "show details" expander. */
+  payload: Record<string, unknown>;
+  /** "thought" | "step" | "llm" | "phase" — used for visual grouping. */
+  kind: "thought" | "step" | "llm" | "phase" | "render";
+  /** Set when the event represents a failure path. */
+  failed?: boolean;
+}
 
 export interface WizardProgressState {
   /** True from the moment ``startGeneration`` is called until the
@@ -82,7 +113,14 @@ export interface WizardProgressState {
   libraryTotal: number;
   libraryDone: number;
   libraryFailed: number;
+  /** Expert-mode chain-of-thought log. Always populated regardless of
+   *  whether the panel is visible — the toggle just decides display.
+   *  Capped at MAX_EXPERT_LOG entries to keep memory bounded on long
+   *  runs (a 60-scene render can emit 120+ events). */
+  expertLog: ExpertLogEntry[];
 }
+
+const MAX_EXPERT_LOG = 200;
 
 const initialState: WizardProgressState = {
   active: false,
@@ -97,7 +135,92 @@ const initialState: WizardProgressState = {
   libraryTotal: 0,
   libraryDone: 0,
   libraryFailed: 0,
+  expertLog: [],
 };
+
+let expertLogSeq = 0;
+
+function _classifyEvent(type: string): ExpertLogEntry["kind"] {
+  if (type === "planner_thought") return "thought";
+  if (type.startsWith("llm_step")) return "llm";
+  if (type === "workflow_started" || type === "workflow_completed"
+      || type === "step_started" || type === "step_completed"
+      || type === "step_failed") return "step";
+  if (type.startsWith("rendering_") || type.startsWith("scene_")
+      || type.startsWith("library_")) return "render";
+  return "phase";
+}
+
+function _summarizeEvent(
+  type: string, payload: Record<string, unknown>,
+): { label: string; summary: string } {
+  const p = payload || {};
+  const peek = (k: string): string => {
+    const v = p[k];
+    return typeof v === "string" ? v : v == null ? "" : String(v);
+  };
+  switch (type) {
+    case "planner_thought":
+      return { label: peek("label") || "Planner thinking",
+               summary: [peek("path"), peek("error")].filter(Boolean).join(" · ") };
+    case "workflow_started":
+      return { label: `Workflow → ${peek("workflow") || "?"}`,
+               summary: `${(p.step_ids as unknown[] || []).length} step(s)` };
+    case "workflow_completed":
+      return { label: `Workflow ${peek("ok") === "true" || p.ok ? "complete" : "ended"}`,
+               summary: `${peek("duration_ms") || "?"} ms` };
+    case "step_started":
+      return { label: `Step → ${peek("step_id") || peek("prompt_id") || "?"}`,
+               summary: `prompt=${peek("prompt_id") || "?"}` };
+    case "step_completed":
+      return { label: `Step ✓ ${peek("step_id") || "?"}`,
+               summary: peek("preview") || `${peek("duration_ms") || "?"} ms` };
+    case "step_failed":
+      return { label: `Step ✗ ${peek("step_id") || "?"}`,
+               summary: peek("reason") || "failed" };
+    case "llm_step_started":
+      return { label: `LLM call → ${peek("step_id") || "?"}`,
+               summary: peek("user_preview") || peek("system_preview") || "" };
+    case "llm_step_completed":
+      return { label: `LLM ✓ ${peek("step_id") || "?"}`,
+               summary: peek("preview") || `${peek("output_chars") || "?"} chars` };
+    case "llm_step_failed":
+      return { label: `LLM ✗ ${peek("step_id") || "?"}`,
+               summary: peek("reason") || "failed" };
+    case "rendering_scene":
+      return { label: `Rendering scene ${peek("index") || ""}/${peek("total") || ""}`,
+               summary: peek("title") };
+    case "scene_rendered":
+      return { label: "Scene rendered", summary: peek("title") || peek("scene_id") };
+    case "scene_skipped":
+      return { label: "Scene skipped", summary: peek("title") || peek("reason") || "" };
+    case "scene_render_failed":
+      return { label: "Scene render failed",
+               summary: peek("reason") || peek("title") };
+    default:
+      return { label: type, summary: "" };
+  }
+}
+
+function _appendExpertLog(
+  type: string, payload: Record<string, unknown>,
+): void {
+  const { label, summary } = _summarizeEvent(type, payload);
+  const entry: ExpertLogEntry = {
+    id: ++expertLogSeq,
+    ts: Date.now(),
+    type,
+    label,
+    summary,
+    payload,
+    kind: _classifyEvent(type),
+    failed: type.endsWith("_failed"),
+  };
+  const next = state.expertLog.length >= MAX_EXPERT_LOG
+    ? [...state.expertLog.slice(-MAX_EXPERT_LOG + 1), entry]
+    : [...state.expertLog, entry];
+  setState({ expertLog: next });
+}
 
 let state: WizardProgressState = { ...initialState };
 const subscribers = new Set<() => void>();
@@ -197,6 +320,7 @@ interface StartGenerationArgs {
 export async function startGeneration(
   args: StartGenerationArgs,
 ): Promise<GenerateAllResult | null> {
+  expertLogSeq = 0;
   setState({
     ...initialState,
     active: true,
@@ -211,6 +335,14 @@ export async function startGeneration(
 
     const result = await args.api.generateAllStream(created.id, {
       onEvent: (ev) => {
+        // Always append to the expert log first — the panel is the
+        // most useful when the run is failing, and tossing entries
+        // before phase logic short-circuits would lose evidence.
+        _appendExpertLog(
+          ev.type,
+          (ev.payload as Record<string, unknown>) || {},
+        );
+
         const idx = _stepIndexForPhase(ev.type);
         if (idx !== null) {
           setState({ genStep: Math.max(state.genStep, idx) });

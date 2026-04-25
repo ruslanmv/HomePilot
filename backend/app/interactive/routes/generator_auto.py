@@ -272,7 +272,13 @@ async def _run_auto_generate(
         return payload
 
     on_event("generating_graph", {})
-    plan: GraphPlan = await generate_graph(exp, cfg=cfg)
+    # Forward the SSE event hook into the planner so its workflow
+    # runner emits step_started / step_completed / step_failed
+    # frames + planner_thought + llm_step_* frames straight into
+    # the same SSE stream the wizard already reads. Expert Mode in
+    # the frontend renders these as a CrewAI-style chain-of-thought
+    # log; non-expert UIs ignore them silently.
+    plan: GraphPlan = await generate_graph(exp, cfg=cfg, on_event=on_event)
     on_event("graph_generated", {
         "source": plan.source,
         "node_count": len(plan.nodes),

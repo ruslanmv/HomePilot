@@ -43,6 +43,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -129,6 +130,7 @@ async def generate_graph(
     *,
     cfg: InteractiveConfig,
     playback_cfg: Optional[PlaybackConfig] = None,
+    on_event: Optional[Any] = None,
 ) -> GraphPlan:
     """Produce a full GraphPlan for this experience. Never raises.
 
@@ -151,12 +153,30 @@ async def generate_graph(
       3. Heuristic fallback — deterministic seeder that always
          produces a usable graph.
     """
+    # ``on_event`` is the chain-of-thought hook used by Expert Mode.
+    # It's optional; non-streaming callers pass None and the planner
+    # behaves identically. When supplied, every meaningful decision
+    # point in this function emits a ``planner_thought`` frame so the
+    # operator can see the planner's reasoning live (CrewAI-style
+    # step list) instead of staring at a generic spinner.
+    def _think(label: str, **details: Any) -> None:
+        if on_event is None:
+            return
+        try:
+            on_event("planner_thought", {"label": label, **details})
+        except Exception:  # noqa: BLE001 — never let a logging hook
+            pass         #               break planner execution.
+
     # Persona Live Play short-circuit. Deterministic, no LLM round-trip,
     # always valid — the user picked a persona, the wizard already has
     # the intent-driven action catalog wired; a pre-baked graph just
     # satisfies the QA entry-scene check and gives Publish something
     # real to ship.
     if str(getattr(experience, "project_type", "") or "").strip().lower() == "persona_live":
+        _think(
+            "Detected Persona Live project — using deterministic graph",
+            path="persona_live",
+        )
         return _persona_live_graph(experience)
 
     from .autogen_workflow import (
@@ -166,15 +186,27 @@ async def generate_graph(
     pcfg = playback_cfg or load_playback_config()
 
     if workflow_enabled():
+        _think(
+            "Trying two-prompt workflow (spine + per-scene scripts)",
+            path="workflow",
+        )
         try:
-            plan = await run_autogen_workflow(experience)
+            plan = await run_autogen_workflow(experience, on_event=on_event)
         except Exception as exc:  # noqa: BLE001
             log.warning("autogen_workflow_error: %s", str(exc)[:400])
+            _think("Workflow raised an error — falling back",
+                   error=str(exc)[:200])
             plan = None
         if plan is not None:
             # Same safety net as the legacy LLM path.
             try:
                 _run_validation(plan, cfg=cfg)
+                _think(
+                    "Workflow graph validated",
+                    nodes=len(plan.nodes),
+                    edges=len(plan.edges),
+                    actions=len(plan.actions),
+                )
                 return plan
             except GraphValidationError as exc:
                 issues = getattr(exc, "issues", [])
@@ -182,12 +214,38 @@ async def generate_graph(
                     "autogen_workflow_graph_invalid: %d issues — %s",
                     len(issues), str(issues[:3])[:300],
                 )
+                _think(
+                    "Workflow graph invalid — falling back to legacy LLM",
+                    issue_count=len(issues),
+                )
 
     if pcfg.llm_enabled:
-        llm_plan = await _generate_via_llm(experience, cfg=cfg, pcfg=pcfg)
+        _think(
+            "Calling legacy single-prompt LLM",
+            path="legacy_llm",
+            timeout_s=pcfg.llm_timeout_s,
+        )
+        llm_plan = await _generate_via_llm(
+            experience, cfg=cfg, pcfg=pcfg, on_event=on_event,
+        )
         if llm_plan is not None:
+            _think(
+                "Legacy LLM produced a valid graph",
+                nodes=len(llm_plan.nodes),
+                edges=len(llm_plan.edges),
+            )
             return llm_plan
-    return _heuristic_graph(experience, cfg)
+        _think("Legacy LLM produced no usable graph — using heuristic")
+    else:
+        _think("Playback LLM disabled — using heuristic")
+    plan = _heuristic_graph(experience, cfg)
+    _think(
+        "Heuristic seeder produced graph",
+        path="heuristic",
+        nodes=len(plan.nodes),
+        edges=len(plan.edges),
+    )
+    return plan
 
 
 # ── Persona Live Play path ─────────────────────────────────────
@@ -530,8 +588,17 @@ def _audience_adult_llm(experience: Experience) -> str:
 async def _generate_via_llm(
     experience: Experience,
     *, cfg: InteractiveConfig, pcfg: PlaybackConfig,
+    on_event: Optional[Any] = None,
 ) -> Optional[GraphPlan]:
     from ...llm import chat_ollama  # late import
+
+    def _emit(kind: str, **payload: Any) -> None:
+        if on_event is None:
+            return
+        try:
+            on_event(kind, dict(payload))
+        except Exception:  # noqa: BLE001
+            pass
 
     messages = _build_messages(experience, cfg=cfg)
     # Graph generation is heavier than a one-line chat reply →
@@ -546,6 +613,28 @@ async def _generate_via_llm(
     # uncensored/abliterated model into ``audience_profile.adult_llm``
     # and we honor it here. Empty / unset → server default.
     adult_llm = _audience_adult_llm(experience)
+
+    # Expert Mode trace — capture the system prompt summary + a
+    # truncated user-message preview so the operator can see what
+    # the planner is asking the LLM. Full prompt would dwarf the
+    # SSE buffer, so we slice it.
+    sys_msg = next((m.get("content", "") for m in messages
+                    if m.get("role") == "system"), "")
+    user_msg = next((m.get("content", "") for m in messages
+                     if m.get("role") == "user"), "")
+    started_at = time.time()
+    _emit(
+        "llm_step_started",
+        step_id="autogen.legacy_llm",
+        prompt_id="autogen.legacy_monolithic",
+        model=adult_llm or "default",
+        max_tokens=max_tokens,
+        temperature=0.55,
+        timeout_s=timeout_s,
+        system_preview=str(sys_msg)[:240],
+        user_preview=str(user_msg)[:240],
+    )
+
     try:
         response = await asyncio.wait_for(
             chat_ollama(
@@ -559,20 +648,53 @@ async def _generate_via_llm(
         )
     except asyncio.TimeoutError:
         log.warning("autogen_llm_timeout after %.1fs", timeout_s)
+        _emit(
+            "llm_step_failed",
+            step_id="autogen.legacy_llm",
+            reason="timeout",
+            duration_ms=int((time.time() - started_at) * 1000),
+        )
         return None
     except Exception as exc:  # noqa: BLE001
         log.warning("autogen_llm_error: %s", str(exc)[:400])
+        _emit(
+            "llm_step_failed",
+            step_id="autogen.legacy_llm",
+            reason=f"{exc.__class__.__name__}: {str(exc)[:200]}",
+            duration_ms=int((time.time() - started_at) * 1000),
+        )
         return None
 
     content = _extract_content(response)
+    duration_ms = int((time.time() - started_at) * 1000)
     if not content:
         log.warning("autogen_llm_empty_content")
+        _emit(
+            "llm_step_failed",
+            step_id="autogen.legacy_llm",
+            reason="empty_content",
+            duration_ms=duration_ms,
+        )
         return None
+    _emit(
+        "llm_step_completed",
+        step_id="autogen.legacy_llm",
+        duration_ms=duration_ms,
+        output_chars=len(content),
+        preview=content[:240],
+    )
+
     payload = _parse_json(content)
     if payload is None:
         log.warning(
             "autogen_llm_malformed_json — first 200 chars: %r",
             content[:200],
+        )
+        _emit(
+            "llm_step_failed",
+            step_id="autogen.legacy_llm",
+            reason="malformed_json",
+            duration_ms=duration_ms,
         )
         return None
 

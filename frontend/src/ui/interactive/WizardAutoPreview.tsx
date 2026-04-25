@@ -48,6 +48,7 @@ import {
   Target,
 } from "lucide-react";
 import { createInteractiveApi } from "./api";
+import { ExpertModeToggle } from "./ExpertLogPanel";
 import type {
   ExperienceMode,
   HealthInfo,
@@ -1155,6 +1156,10 @@ function CustomizePanel({
         disabled={disabled}
         personaLive={true}
       />
+
+      <div className="border-t border-[#2a2a2a] pt-3 -mb-1">
+        <ExpertModeToggle />
+      </div>
     </section>
   );
 }
@@ -1698,6 +1703,10 @@ function StandardCustomizePanel({
         disabled={disabled}
         personaLive={false}
       />
+
+      <div className="border-t border-[#2a2a2a] pt-3 -mb-1">
+        <ExpertModeToggle />
+      </div>
     </section>
   );
 }
