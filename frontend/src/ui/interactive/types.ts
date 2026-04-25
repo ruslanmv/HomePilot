@@ -321,6 +321,14 @@ export interface SceneJobView {
   media_kind?: "image" | "video" | "unknown" | string;
   asset_url: string;
   prompt: string;
+  /** Long-form scene narration. Optional + additive — populated by
+   *  the play route so the Standard player's visual-novel caption
+   *  overlay can render dialogue without a second roundtrip. */
+  narration?: string;
+  /** Shorter author-overridable caption that wins over ``narration``
+   *  when present. Reserved for cases where the author wants a
+   *  punchier on-screen line vs. the planner's full narration. */
+  subtitles?: string;
   duration_sec: number;
   error: string;
   created_at: string;

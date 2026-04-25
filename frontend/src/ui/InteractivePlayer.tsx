@@ -137,6 +137,8 @@ function InteractivePlayerBody({
       media_kind: "image" | "video" | "unknown" | string;
       duration_sec: number;
       title: string;
+      narration?: string;
+      subtitles?: string;
       status?: "pending" | "rendering" | "ready" | "failed" | string;
     } | null;
     opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
@@ -204,6 +206,8 @@ function InteractivePlayerBody({
       media_kind: initial.media_kind || "unknown",
       asset_url: initial.asset_url || "",
       prompt: initial.title || "",
+      narration: initial.narration || "",
+      subtitles: initial.subtitles || "",
       duration_sec: Number(initial.duration_sec || 5),
       error: "",
       created_at: "",

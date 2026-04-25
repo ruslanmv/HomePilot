@@ -16,6 +16,7 @@ import type { Experience } from "../types";
 // Polished chat bubbles + typewriter reveal for persona live chat.
 // Pure presentation layer — no state, no API assumptions.
 import { AnimatedBubble, TypewriterText, TypingDots } from "./LiveChatPolish";
+import { usePersonaSpeech } from "./usePersonaSpeech";
 
 type RuntimeAction = {
   id: string;
@@ -190,6 +191,13 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
   const [mobileTab, setMobileTab] = useState<"actions" | "history">("actions");
   const [overlaysHidden, setOverlaysHidden] = useState(false);
   const [muted, setMuted] = useState(true);
+
+  // One mute button, two side-effects: hush the <video> background
+  // AND silence the AI's voice. The frontend wants a single tap to
+  // shut everything up — the user may want to keep watching without
+  // listening (commute / shared room) and conflating the two
+  // reduces UI clutter. ``toggleMute`` is the canonical handler;
+  // both mobile + desktop volume buttons call it.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [characterState, setCharacterState] = useState<CharacterState>({
     emotion: "neutral",
@@ -272,8 +280,42 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
   // change emotion/expression state, but camera stays fixed.
   const cameraPreset = CAMERA_PRESETS.medium;
 
+  // Companion voice — Web Speech API. Hook is a silent no-op when
+  // the browser doesn't support synthesis, so wiring it
+  // unconditionally is safe. The ``speaking`` flag from this hook
+  // drives the existing portrait-animation state below so the lips
+  // move while audio plays. Additive only: no backend deps, swap-
+  // friendly when a server-side TTS lands later.
+  const speech = usePersonaSpeech();
+
+  // Initial sync: persona-live boots ``muted=true`` (autoplay
+  // policies disallow background audio without a user gesture
+  // anyway), so disable speech up front and let the user flip both
+  // on with the mute button. This prevents a silent <audio> token
+  // from queueing under a muted video.
   useEffect(() => {
-    if (!state?.dialogue.text) return;
+    if (muted && speech.enabled) speech.setEnabled(false);
+    // Run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toggleMute = React.useCallback(() => {
+    setMuted((prev) => {
+      const nextMuted = !prev;
+      // When the user UN-mutes, turn speech ON; when MUTES, turn
+      // speech OFF. Single source of truth: the mute button.
+      speech.setEnabled(!nextMuted);
+      return nextMuted;
+    });
+  }, [speech]);
+
+  useEffect(() => {
+    const text = state?.dialogue.text;
+    if (!text) return;
+    // Speak the latest dialogue line. usePersonaSpeech.cancel() is
+    // called internally before each utterance so back-to-back
+    // actions don't stack into garbled overlap.
+    speech.speak(text);
     setCharacterState((prev) => ({
       ...prev,
       speaking: true,
@@ -284,6 +326,11 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
       setCharacterState((prev) => ({ ...prev, speaking: false }));
     }, 1800);
     return () => window.clearTimeout(t);
+    // speech.speak intentionally excluded — the hook returns a stable
+    // callback whose closure already reads the latest enabled / voice
+    // / supported state via refs + setState; including it here would
+    // re-fire the effect on every voiceschanged event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.dialogue.text, state?.emotionalState.mood]);
 
   function applyCharacterTurn(opts: { userText?: string; aiText: string; emotion?: string }) {
@@ -479,7 +526,14 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
             </div>
 
             <div className="absolute top-4 right-3 z-20 flex flex-col gap-2">
-              <button type="button" onClick={() => setMuted((m) => !m)} className="w-9 h-9 rounded-full bg-black/55 border border-white/15 grid place-items-center">
+              <button
+                type="button"
+                onClick={toggleMute}
+                aria-label={muted ? "Unmute (turn on AI voice)" : "Mute"}
+                aria-pressed={muted}
+                title={muted ? "Unmute" : "Mute"}
+                className="w-9 h-9 rounded-full bg-black/55 border border-white/15 grid place-items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
                 {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
               </button>
               <button type="button" onClick={() => setOverlaysHidden((v) => !v)} className="w-9 h-9 rounded-full bg-black/55 border border-white/15 grid place-items-center">
@@ -625,7 +679,16 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
             </div>
             <div className="absolute top-3 right-3 z-20 flex flex-col gap-2">
               <button type="button" onClick={onExit} className="w-10 h-10 rounded-full bg-black/55 border border-white/15 grid place-items-center"><X className="w-4 h-4" /></button>
-              <button type="button" onClick={() => setMuted((m) => !m)} className="w-10 h-10 rounded-full bg-black/55 border border-white/15 grid place-items-center">{muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}</button>
+              <button
+                type="button"
+                onClick={toggleMute}
+                aria-label={muted ? "Unmute (turn on AI voice)" : "Mute"}
+                aria-pressed={muted}
+                title={muted ? "Unmute" : "Mute"}
+                className="w-10 h-10 rounded-full bg-black/55 border border-white/15 grid place-items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+              </button>
               <button type="button" onClick={() => setOverlaysHidden((v) => !v)} className="w-10 h-10 rounded-full bg-black/55 border border-white/15 grid place-items-center">{overlaysHidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}</button>
               <button type="button" className="w-10 h-10 rounded-full bg-black/55 border border-white/15 grid place-items-center"><Menu className="w-4 h-4" /></button>
             </div>

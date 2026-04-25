@@ -388,6 +388,16 @@ def _build_initial_scene(entry_node: Any) -> Optional[Dict[str, Any]]:
     """
     node_id = str(getattr(entry_node, "id", "") or "")
     title = str(getattr(entry_node, "title", "") or "")
+    # Narration is the long-form scene text the planner writes —
+    # surfaced here so the Standard player's visual-novel caption
+    # overlay can render it without a second roundtrip. Empty
+    # string is fine; the caption layer falls back to the title.
+    narration = str(getattr(entry_node, "narration", "") or "")
+    # Subtitles is an author-overridable shorter caption. Defaults
+    # to empty (planner doesn't write it today); reserved for the
+    # subtitle layer when the author wants different display text
+    # vs. the planner's full narration.
+    subtitles = str(getattr(entry_node, "subtitles", "") or "")
     duration = int(getattr(entry_node, "duration_sec", 0) or 0)
     if duration <= 0:
         duration = 5
@@ -400,6 +410,8 @@ def _build_initial_scene(entry_node: Any) -> Optional[Dict[str, Any]]:
         return {
             "node_id": node_id,
             "title": title,
+            "narration": narration,
+            "subtitles": subtitles,
             "duration_sec": duration,
             "asset_id": "",
             "asset_url": "",
@@ -414,6 +426,8 @@ def _build_initial_scene(entry_node: Any) -> Optional[Dict[str, Any]]:
         "media_kind": _media_kind_from_url(asset_url),
         "duration_sec": duration,
         "title": title,
+        "narration": narration,
+        "subtitles": subtitles,
         "status": "ready",
     }
 

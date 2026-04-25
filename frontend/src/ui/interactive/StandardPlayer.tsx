@@ -385,6 +385,20 @@ export function StandardPlayer({
       )}
       </div>{/* end fade wrapper */}
 
+      {/*
+       * Visual-novel caption overlay. Reads scene.subtitles first
+       * (author override) then scene.narration (planner) — falls
+       * silent if neither is present. Lives below the controls and
+       * above the seek bar so a viewer's eyes don't have to leave
+       * the bottom of the frame to read along. The "Standard" player
+       * is YouTube-scope entertainment + visual-novel reading; the
+       * caption is what makes it feel like a manga/visual novel.
+       *
+       * Visibility persists in localStorage so the user's preference
+       * (captions on / off) survives reloads.
+       */}
+      <CaptionOverlay scene={scene} />
+
       <TopBar onRestart={restart} onNext={() => setDecisionOpen(true)} onExit={onExit} />
       <CenterControls
         playing={playing}
@@ -607,6 +621,127 @@ function DecisionModal({
             />
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Caption overlay (visual-novel surface) ────────────────────────
+//
+// Visual-novel / manga-style caption that sits ABOVE the bottom
+// controls and renders the scene's narration. Reads scene.subtitles
+// first (author override) then scene.narration (planner). Hidden
+// when both are empty.
+//
+// The toggle (eye icon) lives at the right edge so the user can hide
+// captions for a clean view; the choice persists in localStorage
+// (key: ``homepilot_captions``) so a user who hides them once stays
+// hidden across reloads.
+
+const CAPTIONS_STORAGE_KEY = "homepilot_captions";
+
+function _readCaptionsEnabled(): boolean {
+  try {
+    const raw = globalThis.localStorage?.getItem(CAPTIONS_STORAGE_KEY);
+    // Default ON — captions are the visual-novel feature; only honor
+    // an explicit "off" preference written by the toggle below.
+    return raw !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function _writeCaptionsEnabled(next: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(CAPTIONS_STORAGE_KEY, next ? "1" : "0");
+  } catch {
+    /* private browsing / quota — non-fatal */
+  }
+}
+
+function CaptionOverlay({ scene }: { scene: SceneJobView | null }) {
+  const [enabled, setEnabled] = useState<boolean>(() => _readCaptionsEnabled());
+
+  // Re-read from localStorage on mount so a different tab that
+  // toggled the preference takes effect here on next render.
+  useEffect(() => {
+    const sync = () => setEnabled(_readCaptionsEnabled());
+    globalThis.addEventListener?.("storage", sync);
+    return () => globalThis.removeEventListener?.("storage", sync);
+  }, []);
+
+  const text = String(scene?.subtitles || scene?.narration || "").trim();
+  // Hide when nothing to show OR the user toggled captions off. The
+  // toggle button stays mounted (small dot at the right edge) so the
+  // user can re-enable without leaving the player.
+  const hasText = text.length > 0;
+
+  const onToggle = useCallback(() => {
+    setEnabled((prev) => {
+      const next = !prev;
+      _writeCaptionsEnabled(next);
+      return next;
+    });
+  }, []);
+
+  return (
+    <div
+      className={[
+        "absolute left-0 right-0 z-10 px-4 pointer-events-none",
+        // Sit ABOVE the bottom bar. BottomBar lives at bottom-0 with
+        // ~3rem of internal padding + the seek slider — 5.5rem keeps
+        // the caption clear of the slider and safely above controls.
+        "bottom-[5.5rem] sm:bottom-[6rem]",
+      ].join(" ")}
+      aria-hidden={!hasText || !enabled}
+    >
+      <div className="max-w-3xl mx-auto flex items-end gap-2">
+        {hasText && enabled ? (
+          <div
+            className={[
+              "pointer-events-auto flex-1 min-w-0",
+              "rounded-xl border border-white/15 bg-black/65 backdrop-blur-md",
+              "px-4 py-3 text-white/95 text-[15px] leading-relaxed",
+              "shadow-[0_8px_32px_-12px_rgba(0,0,0,0.6)]",
+              // Visual-novel tone: serif feels storybook-y; system
+              // font-stack falls through cleanly when serif unavailable.
+              "font-serif",
+            ].join(" ")}
+            role="region"
+            aria-label="Scene caption"
+            aria-live="polite"
+          >
+            {text}
+          </div>
+        ) : (
+          <span className="flex-1" aria-hidden />
+        )}
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={enabled ? "Hide captions" : "Show captions"}
+          aria-pressed={enabled}
+          className={[
+            "pointer-events-auto shrink-0",
+            "w-9 h-9 rounded-full bg-black/55 hover:bg-black/75",
+            "border border-white/20 text-white/85",
+            "flex items-center justify-center backdrop-blur-sm",
+            "transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white",
+          ].join(" ")}
+        >
+          {/* Use a tiny inline glyph so we don't pull another lucide
+              import this far down the file. ``Aa`` reads as captions
+              universally (YouTube convention). */}
+          <span
+            className={[
+              "text-[12px] font-semibold leading-none tracking-tight",
+              enabled ? "" : "line-through opacity-60",
+            ].join(" ")}
+          >
+            Aa
+          </span>
+        </button>
       </div>
     </div>
   );
