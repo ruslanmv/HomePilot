@@ -119,6 +119,34 @@ async def render_scene_async(
             scene_prompt, duration_sec, persona_hint,
             media_type=media_type,
         )
+        # Standard Interactive video safeguard. The i2v workflows
+        # (img2vid-ltx / img2vid / img2vid-wan / …) all require an
+        # ``{{image_path}}`` source frame — which we don't have for
+        # Standard projects (no persona portrait). Without this guard
+        # the workflow submits with image_path="" and ComfyUI's
+        # LoadImage node rejects the prompt with
+        # "Custom validation failed for node: image - Invalid image
+        # file: ". The right long-term fix is two-pass txt2img →
+        # img2vid; until that lands, fall back to txt2img and let
+        # the player surface a still image. The player handles
+        # image-as-video gracefully (renders <img>, plays for
+        # ``duration_sec`` then fires the choice modal).
+        if (
+            (media_type or "").lower() == "video"
+            and "img2vid" in workflow
+            and not str(variables.get("image_path") or "").strip()
+        ):
+            log.info(
+                "playback_render_fallback reason=no_source_image "
+                "from=%s to=image", workflow,
+                extra={"session_id": session_id},
+            )
+            workflow = _resolve_workflow(cfg, "image")
+            variables = _build_variables(
+                scene_prompt, duration_sec, persona_hint,
+                media_type="image",
+            )
+            media_type = "image"
     log.info(
         "playback_render_submit workflow=%s media_type=%s",
         workflow, media_type,
