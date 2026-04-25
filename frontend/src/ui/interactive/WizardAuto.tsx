@@ -29,7 +29,7 @@
  * InteractiveHost level so one component handles both modes.
  */
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Sparkles, Users, Wand2 } from "lucide-react";
 import { createInteractiveApi } from "./api";
 import type { PlanAutoResult } from "./types";
@@ -37,6 +37,7 @@ import { InteractiveApiError } from "./types";
 import { ErrorBanner, PrimaryButton } from "./ui";
 import { GeneratingPanel } from "./GeneratingPanel";
 import { LS_PERSONA_CACHE } from "../voice/personalityGating";
+import { resolveBackendUrl } from "../lib/backendUrl";
 
 
 const IDEA_PLACEHOLDER = "train new sales reps on pricing tiers";
@@ -104,7 +105,21 @@ export function WizardAuto({
   const [renderMediaType, setRenderMediaType] =
     useState<"video" | "image">("video");
 
-  const personaOptions = useMemo(() => {
+  // Persona dropdown sources, merged on id:
+  //
+  //   1. ``LS_PERSONA_CACHE`` — cheap synchronous read, populated by
+  //      Voice / Session Hub when the user enters a persona there.
+  //      Lets the dropdown render something on first paint.
+  //
+  //   2. ``GET /projects`` filtered to ``project_type === "persona"``
+  //      — the AUTHORITATIVE list. Without this fallback, users who
+  //      created personas via the main Projects workspace but never
+  //      opened them in Voice mode saw "No personas yet." here even
+  //      though their personas were visible everywhere else.
+  //
+  // Mirrors the Step0Prompt loader so the one-box wizard and the
+  // classic 5-step wizard agree on which personas are selectable.
+  const cacheOptions = useMemo(() => {
     try {
       const raw = localStorage.getItem(LS_PERSONA_CACHE);
       if (!raw) return [];
@@ -123,6 +138,66 @@ export function WizardAuto({
       return [];
     }
   }, []);
+
+  const [backendOptions, setBackendOptions] = useState<Array<{
+    id: string;
+    label: string;
+    avatar_url: string;
+    archetype: string;
+  }>>([]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const backend = (backendUrl && backendUrl.trim()) || resolveBackendUrl();
+    fetch(`${backend}/projects`, {
+      signal: ctrl.signal,
+      credentials: "include",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        // ``/projects`` returns either ``{projects: [...]}`` or just
+        // ``[...]`` depending on the auth wrapper — handle both.
+        const list: Array<Record<string, unknown>> = Array.isArray(body)
+          ? body
+          : Array.isArray(body?.projects)
+          ? body.projects
+          : [];
+        const personas = list
+          .filter((p) => String(p.project_type || "").trim().toLowerCase() === "persona")
+          .map((p) => {
+            const agent = (p.persona_agent && typeof p.persona_agent === "object")
+              ? (p.persona_agent as Record<string, unknown>)
+              : {};
+            const appearance = (p.persona_appearance && typeof p.persona_appearance === "object")
+              ? (p.persona_appearance as Record<string, unknown>)
+              : {};
+            const filename = String(appearance.selected_filename || "").trim();
+            return {
+              id: String(p.id || "").trim(),
+              label: String(p.name || agent.label || "Persona").trim() || "Persona",
+              avatar_url: filename ? `${backend}/files/${filename}` : "",
+              archetype: String(agent.persona_class || "").trim() || "Persona companion",
+            };
+          })
+          .filter((p) => p.id);
+        if (!ctrl.signal.aborted) setBackendOptions(personas);
+      })
+      .catch(() => { /* swallow — dropdown falls back to cache */ });
+    return () => ctrl.abort();
+  }, [backendUrl]);
+
+  const personaOptions = useMemo(() => {
+    const byId = new Map<string, {
+      id: string;
+      label: string;
+      avatar_url: string;
+      archetype: string;
+    }>();
+    for (const p of cacheOptions) byId.set(p.id, p);
+    // Backend wins — authoritative + carries avatar/archetype.
+    for (const p of backendOptions) byId.set(p.id, p);
+    return Array.from(byId.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [cacheOptions, backendOptions]);
 
   const needsPersona = interactionType === "persona_live_play" && !personaId;
   const canSubmit = idea.trim().length > 0 && !generating && !needsPersona;
