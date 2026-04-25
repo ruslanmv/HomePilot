@@ -15,7 +15,7 @@ import type { InteractiveApi } from "../api";
 import type { Experience } from "../types";
 // Polished chat bubbles + typewriter reveal for persona live chat.
 // Pure presentation layer — no state, no API assumptions.
-import { AnimatedBubble, TypewriterText, TypingDots } from "./LiveChatPolish";
+import { AnimatedBubble, RichDialogueText, TypingDots } from "./LiveChatPolish";
 import { usePersonaSpeech } from "./usePersonaSpeech";
 
 type RuntimeAction = {
@@ -152,11 +152,31 @@ function ConversationOverlay({ messages, pending }: { messages: ChatMessage[]; p
         // behaviour. Index is kept as a fallback only for historic dev
         // data that predates the id field.
         const key = message.id || `${message.sender}-${index}-${message.text.slice(0, 12)}`;
-        const isLatestAi = role === "assistant" && index === lastAiIdx;
+        // ``lastAiIdx`` is computed by the caller and used to be
+        // referenced as ``isLatestAi`` to gate the typewriter
+        // animation. RichDialogueText handles all AI bubbles now;
+        // the index-tracking flag is intentionally dropped — kept
+        // commented so future "highlight the latest line" features
+        // know where the cheapest hook is.
+        // const isLatestAi = role === "assistant" && index === lastAiIdx;
+        void lastAiIdx;
         return (
           <AnimatedBubble key={key} role={role}>
-            {isLatestAi ? (
-              <TypewriterText text={message.text} />
+            {/*
+             * Visual-novel rendering for the AI persona's bubbles:
+             * narration / action description ("Lina blushed playfully
+             * and said") renders italic + muted, the quoted speech
+             * ("I'm so glad you found my surprise") renders bright
+             * + normal weight. Makes the "she does X, then says Y"
+             * pattern read at a glance.
+             *
+             * User bubbles stay plain — what the player typed isn't
+             * narrated. ``isLatestAi`` is preserved as a flag for
+             * future "highlight latest" treatment without affecting
+             * the parser today.
+             */}
+            {role === "assistant" ? (
+              <RichDialogueText text={message.text} />
             ) : (
               <span>{message.text}</span>
             )}
@@ -384,6 +404,14 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
       const mediaStatus = String(media.status || "").toLowerCase();
       const mediaType = String(media.type || "image") === "video" ? "video" : "image";
       const libraryHit = mediaStatus === "ready" && !!mediaUrl;
+      // XP / level surfaced inline in the action response so the
+      // progress bar advances without waiting on the polling path.
+      // Library-hit responses bypass the live-render polling that
+      // previously refreshed XP via personaLiveSession() — without
+      // this read, taps on a warm library left "0 / 35 XP" forever.
+      const nextXp = typeof res.xp === "number" ? res.xp : null;
+      const nextLevel = typeof res.level === "number" ? res.level : null;
+      const nextXpToNext = typeof res.xp_to_next === "number" ? res.xp_to_next : null;
       setState((prev) => {
         if (!prev) return prev;
         return {
@@ -395,6 +423,12 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
           currentMedia: libraryHit
             ? { type: mediaType, url: mediaUrl, status: "ready" }
             : prev.currentMedia,
+          session: {
+            ...prev.session,
+            xp: nextXp ?? prev.session.xp,
+            level: nextLevel ?? prev.session.level,
+            xpToNext: nextXpToNext ?? prev.session.xpToNext,
+          },
         };
       });
       if (libraryHit || res.render_skipped) {
@@ -441,6 +475,14 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
         expression: mapEmotionToExpression(emotion),
         speaking: true,
       }));
+      // Chat earns 2 XP per turn server-side. Read the new totals
+      // out of the response so the progress bar moves while the
+      // user is talking — without this, free-form conversation felt
+      // unrewarded and the bar only nudged when a Live Action was
+      // tapped.
+      const chatNextXp = typeof res.xp === "number" ? res.xp : null;
+      const chatNextLevel = typeof res.level === "number" ? res.level : null;
+      const chatNextXpToNext = typeof res.xp_to_next === "number" ? res.xp_to_next : null;
       setState((prev) => {
         if (!prev) return prev;
         setTransitionType(maybeScene && maybeScene.id !== prev.sceneContext.id ? "scene" : "soft");
@@ -450,6 +492,12 @@ export function RuntimeShell({ api, experience, onExit }: { api: InteractiveApi;
           sceneContext: maybeScene || prev.sceneContext,
           sceneMemory: (res.scene_memory as SceneMemory) || prev.sceneMemory,
           emotionalState: (res.emotional_state as EmotionalState) || prev.emotionalState,
+          session: {
+            ...prev.session,
+            xp: chatNextXp ?? prev.session.xp,
+            level: chatNextLevel ?? prev.session.level,
+            xpToNext: chatNextXpToNext ?? prev.session.xpToNext,
+          },
         };
       });
       // Don't auto-fill the input with action suggestions anymore — the

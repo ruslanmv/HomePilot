@@ -435,6 +435,34 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
                     scene_memory=scene_memory,
                     emotional_state=emotional_state,
                 )
+                # Award XP for the action. The library-fast-path used
+                # to skip this — the live-render branch (line ~1331)
+                # was the only place ``update_persona_session_progress``
+                # got called, so once a persona's library was warm,
+                # every action returned instantly with ``xp`` stuck at
+                # 0 and the user could never level up via taps. Match
+                # the live-render delta (10 per action) so the
+                # progress bar advances regardless of which path
+                # served the photo.
+                before_progress = repo.get_persona_session(session_id) or {}
+                before_level = int(before_progress.get("current_level") or 1)
+                progressed = repo.update_persona_session_progress(
+                    session_id, xp_delta=10,
+                ) or before_progress
+                new_xp = int(progressed.get("xp") or 0)
+                new_level = int(progressed.get("current_level") or before_level)
+                xp_to_next = max(0, (new_level * 35) - new_xp)
+                new_unlocks: List[Dict[str, Any]] = []
+                if new_level > before_level:
+                    levels = _default_levels(
+                        vibe="", allow_explicit=allow_explicit,
+                    )
+                    for block in levels:
+                        if int(block.get("level") or 1) == new_level:
+                            new_unlocks.extend([
+                                {"id": aid, "label": str(aid).replace("_", " ").title()}
+                                for aid in list(block.get("actions") or [])
+                            ])
                 synth_job_id = f"lib_{version_id}" if version_id else f"lib_{action_id}"
                 _JOB_RESULTS[synth_job_id] = {
                     "status": "ready",
@@ -452,6 +480,11 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
                     "dialogue": {"text": turn["dialogue"]},
                     "media": {"type": "image", "url": pre_url, "status": "ready"},
                     "source": "library",
+                    "xp": new_xp,
+                    "level": new_level,
+                    "xp_to_next": xp_to_next,
+                    "xp_delta": 10,
+                    "new_unlocks": new_unlocks,
                 }
 
         # Translate the player INTENT into the renderer's expected key
@@ -784,6 +817,22 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
             emotional_state=emotional_state,
         )
 
+        # Chat earns a smaller XP delta than tap-actions — actions
+        # are higher-intent, multi-modal beats (text + photo) and
+        # should pay more. Without ANY chat XP, free-form
+        # conversation felt unrewarding: the bar didn't move while
+        # the user was talking, only when they tapped a Live Action.
+        # 2 XP per chat keeps action taps the dominant path to
+        # leveling up while still acknowledging conversation.
+        before_chat = repo.get_persona_session(session_id) or {}
+        before_level_chat = int(before_chat.get("current_level") or 1)
+        progressed = repo.update_persona_session_progress(
+            session_id, xp_delta=2,
+        ) or before_chat
+        new_xp_chat = int(progressed.get("xp") or 0)
+        new_level_chat = int(progressed.get("current_level") or before_level_chat)
+        xp_to_next_chat = max(0, (new_level_chat * 35) - new_xp_chat)
+
         suggestion = _suggest_action(req.message)
         return {
             "ok": True,
@@ -792,6 +841,10 @@ def build_persona_live_router(_cfg: InteractiveConfig) -> APIRouter:
             "scene_memory": scene_memory,
             "emotional_state": emotional_state,
             "optional_action_suggestion": suggestion,
+            "xp": new_xp_chat,
+            "level": new_level_chat,
+            "xp_to_next": xp_to_next_chat,
+            "xp_delta": 2,
         }
 
     return router

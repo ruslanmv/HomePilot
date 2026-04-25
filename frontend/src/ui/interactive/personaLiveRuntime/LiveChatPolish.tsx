@@ -14,6 +14,131 @@
  */
 import React, { useEffect, useRef, useState } from 'react'
 
+// ── Rich dialogue parser ─────────────────────────────────────────────────
+//
+// Companion replies typically arrive as
+//   ``Lina blushed playfully and said "I'm so glad you found my surprise."``
+// — narration / action description first, then quoted speech.
+//
+// To make the chat read like a visual novel (and to match the user's
+// request "her thoughts should maybe be another color, when she speaks
+// the colors as now"), we split the text into segments and let the
+// caller render each segment with its own classes:
+//
+//   * "speech"    — the words inside straight or curly quotes. Rendered
+//                   bright white, normal weight — this is HER voice.
+//   * "narration" — everything outside quotes. Rendered italic + muted
+//                   purple — these are her ACTIONS / INNER DESCRIPTION.
+//
+// Both straight ``"..."`` and curly ``"..."`` ``'...'`` are recognised.
+// Unmatched / unbalanced quotes fall through as narration so we never
+// drop characters.
+
+export type DialogueSegment = {
+  kind: "speech" | "narration";
+  text: string;
+};
+
+// Quote characters we treat as speech-delimiters. Apostrophes used
+// inside contractions ("don't") would otherwise eat half a sentence
+// — we skip ``'``/``ʼ`` here and only honor full-fledged double quotes
+// + the curly single ``'…'`` pair (rarely used but unambiguous).
+const _OPEN_QUOTES = ['"', "“", "‘"]; // " “ ‘
+const _CLOSE_QUOTES = ['"', "”", "’"]; // " ” ’
+
+function _isOpenQuote(ch: string): boolean {
+  return _OPEN_QUOTES.includes(ch);
+}
+function _isCloseQuote(ch: string, opener: string): boolean {
+  // Pair curly opens with curly closes; straight pairs with straight.
+  if (opener === '"') return ch === '"';
+  if (opener === "“") return ch === "”";
+  if (opener === "‘") return ch === "’";
+  return _CLOSE_QUOTES.includes(ch);
+}
+
+export function splitDialogueSegments(text: string): DialogueSegment[] {
+  const out: DialogueSegment[] = [];
+  if (!text) return out;
+  let i = 0;
+  let buf = "";
+  let mode: "narration" | "speech" = "narration";
+  let opener = "";
+  while (i < text.length) {
+    const ch = text[i];
+    if (mode === "narration" && _isOpenQuote(ch)) {
+      if (buf) {
+        out.push({ kind: "narration", text: buf });
+        buf = "";
+      }
+      mode = "speech";
+      opener = ch;
+      // We INCLUDE the surrounding quote glyphs in the speech segment
+      // so the visual novel framing reads naturally ("…").
+      buf = ch;
+      i += 1;
+      continue;
+    }
+    if (mode === "speech" && _isCloseQuote(ch, opener)) {
+      buf += ch;
+      out.push({ kind: "speech", text: buf });
+      buf = "";
+      mode = "narration";
+      opener = "";
+      i += 1;
+      continue;
+    }
+    buf += ch;
+    i += 1;
+  }
+  if (buf) {
+    // Trailing buffer — if we're still in speech mode it means the
+    // closing quote was missing; emit as narration so we don't lose
+    // the text and don't pretend it was spoken.
+    out.push({ kind: mode === "speech" ? "narration" : mode, text: buf });
+  }
+  return out;
+}
+
+/**
+ * Render text with visual-novel styling: narration in muted italic,
+ * speech in bright normal-weight. Pure presentation; no state.
+ *
+ * Defaults are tuned for the dark Persona Live shell. Override via
+ * ``narrationClassName`` / ``speechClassName`` if a future surface
+ * needs different colors.
+ */
+export function RichDialogueText({
+  text,
+  narrationClassName = "italic text-[#cfd8dc]/70",
+  speechClassName = "text-white font-medium",
+  className = "",
+}: {
+  text: string;
+  narrationClassName?: string;
+  speechClassName?: string;
+  className?: string;
+}) {
+  const segments = splitDialogueSegments(text);
+  // No quotes at all → render as plain narration so layout doesn't
+  // jump for short replies.
+  if (segments.length <= 1 && segments[0]?.kind === "narration") {
+    return <span className={[narrationClassName, className].join(" ")}>{text}</span>;
+  }
+  return (
+    <span className={className}>
+      {segments.map((seg, idx) => (
+        <span
+          key={idx}
+          className={seg.kind === "speech" ? speechClassName : narrationClassName}
+        >
+          {seg.text}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // ── TypewriterText ────────────────────────────────────────────────────────
 // Reveals text one word at a time. Defaults tuned to feel "alive" without
 // making the user wait on long replies:

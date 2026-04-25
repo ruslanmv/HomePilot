@@ -215,6 +215,12 @@ export interface InteractiveApi {
     image_url?: string;
     xp?: number;
     level?: number;
+    /** Remaining XP needed to reach next level. */
+    xp_to_next?: number;
+    /** XP awarded by this specific action — used for celebrations. */
+    xp_delta?: number;
+    /** Newly-unlocked actions when this action triggered a level-up. */
+    new_unlocks?: Array<{ id: string; label: string }>;
     versions?: Array<Record<string, unknown>>;
     render_skipped?: boolean;
     /** Library-hit fast path: backend returns the cached photo
@@ -234,6 +240,11 @@ export interface InteractiveApi {
     scene_memory?: Record<string, unknown>;
     emotional_state?: Record<string, unknown>;
     optional_action_suggestion?: { id: string; label: string } | null;
+    /** Chat earns a smaller XP delta than tap-actions. */
+    xp?: number;
+    level?: number;
+    xp_to_next?: number;
+    xp_delta?: number;
   }>;
 }
 
@@ -643,6 +654,10 @@ export function createInteractiveApi(
         scene_memory?: Record<string, unknown>;
         emotional_state?: Record<string, unknown>;
         optional_action_suggestion?: { id: string; label: string } | null;
+        xp?: number;
+        level?: number;
+        xp_to_next?: number;
+        xp_delta?: number;
       }>(
         `/persona-live/session/${encodeURIComponent(sessionId)}/chat`,
         { method: "POST", body: JSON.stringify({ message }) },
@@ -652,6 +667,10 @@ export function createInteractiveApi(
         scene_memory: r.scene_memory,
         emotional_state: r.emotional_state,
         optional_action_suggestion: r.optional_action_suggestion,
+        xp: r.xp,
+        level: r.level,
+        xp_to_next: r.xp_to_next,
+        xp_delta: r.xp_delta,
       })),
   };
 }
