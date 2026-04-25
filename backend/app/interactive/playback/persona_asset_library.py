@@ -563,18 +563,31 @@ def resolve_asset_url_for_intent(
 
 # ── Build pass ──────────────────────────────────────────────────────────────
 
-# Opt-in toggle: callers can also pass ``enabled=True`` explicitly.
+# Operator kill-switch: set ``PERSONA_LIVE_LIBRARY_LOOKUP=false`` to
+# force every action click back through the live-render path. Default
+# is ON because the wizard's Phase 3 builds the library automatically
+# now and the fast path is thoroughly tested — keeping the toggle off
+# by default just means generated images sit unused on disk and the
+# player ends up live-rendering things it has cached. Flip it OFF
+# only as a safety valve when a library is suspected of being stale
+# or corrupted.
 _LIBRARY_LOOKUP_ENABLED_ENV = "PERSONA_LIVE_LIBRARY_LOOKUP"
 
 
 def lookup_enabled() -> bool:
     """Global kill-switch for the runtime library-first lookup.
 
-    Default OFF so this module is purely additive on deployment —
-    operators flip the env var after running a library build pass
-    for their personas and verifying the images are good.
+    Default ON — the wizard's Phase 3 pre-renders the library on
+    every persona_live experience create, and the action endpoint
+    serves cached images instantly when the player's intent has a
+    matching row. Set ``PERSONA_LIVE_LIBRARY_LOOKUP=false`` to bypass
+    the cache entirely (every click fires a fresh SDXL render — slow
+    but useful when verifying renders pass-by-pass).
+
+    Lookup misses always fall through to live render, so flipping
+    the switch is reversible without losing any data.
     """
-    return os.getenv(_LIBRARY_LOOKUP_ENABLED_ENV, "false").lower() == "true"
+    return os.getenv(_LIBRARY_LOOKUP_ENABLED_ENV, "true").lower() != "false"
 
 
 @dataclass(frozen=True)

@@ -140,13 +140,29 @@ def test_resolve_url_empty_for_unmapped_intent(monkeypatch):
 
 
 # ── lookup_enabled env toggle ──────────────────────────────────────────────
+#
+# Default flipped from OFF → ON: the wizard's Phase 3 builds the
+# library on every persona_live experience create now, so keeping the
+# fast-path lookup gated meant generated images sat unused on disk
+# while the player live-rendered things it had cached. The env var is
+# now a kill-switch (set to "false" to bypass the cache) rather than
+# an opt-in.
 
-def test_lookup_disabled_by_default(monkeypatch):
+def test_lookup_enabled_by_default(monkeypatch):
     monkeypatch.delenv("PERSONA_LIVE_LIBRARY_LOOKUP", raising=False)
+    assert pal.lookup_enabled() is True
+
+
+def test_lookup_disabled_when_env_false(monkeypatch):
+    """Explicit OFF kill-switch — every action click forces a fresh
+    live render. Useful for verifying renders pass-by-pass."""
+    monkeypatch.setenv("PERSONA_LIVE_LIBRARY_LOOKUP", "false")
     assert pal.lookup_enabled() is False
 
 
 def test_lookup_enabled_when_env_true(monkeypatch):
+    """Explicit ON also works (no-op, but documents the expected
+    behaviour for operators flipping the var to confirm)."""
     monkeypatch.setenv("PERSONA_LIVE_LIBRARY_LOOKUP", "true")
     assert pal.lookup_enabled() is True
 
