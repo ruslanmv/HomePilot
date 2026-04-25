@@ -161,6 +161,14 @@ def test_render_scene_async_picks_sd15_workflow_for_dreamshaper(monkeypatch):
 
 
 def test_render_scene_async_defaults_to_video_workflow(monkeypatch):
+    # Provide a non-empty image_path so the i2v safeguard in
+    # render_adapter (cb06c60 — "fall back to txt2img when no source
+    # frame") doesn't fire and override the workflow selection this
+    # test is designed to verify. The fallback is the right
+    # production behavior for Standard Interactive without a persona
+    # portrait, but here we're locking in the i2v workflow PICK
+    # logic, not the fallback.
+    monkeypatch.setenv("DEFAULT_IMG2VID_SOURCE", "/tmp/fake_source_frame.png")
     from app.interactive.playback import render_adapter
     captured: Dict[str, Any] = {}
 
@@ -194,6 +202,10 @@ def test_render_scene_async_picks_ltx_workflow_for_ltx_model(monkeypatch):
     """Video architecture dispatch mirrors Animate: any model name
     containing "ltx" routes to img2vid-ltx."""
     monkeypatch.setenv("VIDEO_MODEL", "ltx-video-2b-v0.9.1.safetensors")
+    # Same i2v-safeguard suppression as the sibling test — the
+    # fallback's correct in production but masks workflow selection
+    # in this unit test.
+    monkeypatch.setenv("DEFAULT_IMG2VID_SOURCE", "/tmp/fake_source_frame.png")
     from app.interactive.playback import render_adapter
     captured: Dict[str, Any] = {}
 
