@@ -79,7 +79,33 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
     [spicyModeEnabled],
   );
 
-  const personaOptions = useMemo(() => {
+  // Persona options come from two sources merged on id:
+  //
+  //   1. ``LS_PERSONA_CACHE`` — populated by App.tsx writers when
+  //      the user explicitly enters a persona via Voice / Session
+  //      Hub. Cheap synchronous read; lets the dropdown render
+  //      something on first paint.
+  //
+  //   2. ``GET /projects`` filtered to ``project_type === "persona"``
+  //      — the AUTHORITATIVE list. Without this fallback, users
+  //      who created personas via the main Project workspace but
+  //      never opened them in voice mode saw "No personas yet."
+  //      even though the backend had several.
+  //
+  // The fallback fires unconditionally (not just on empty cache)
+  // because a persona created after the cache was last written
+  // would otherwise stay invisible until a Voice link warmed it.
+  // ``setCacheOptions`` is intentionally unused: the cache is read
+  // once on mount via the lazy initializer to render something on
+  // first paint. The backend fetch is the authoritative refresh,
+  // so there's no second-write path on the cache side.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [cacheOptions, _setCacheOptions] = useState<Array<{
+    id: string;
+    label: string;
+    avatar_url: string;
+    archetype: string;
+  }>>(() => {
     try {
       const raw = localStorage.getItem(LS_PERSONA_CACHE);
       if (!raw) return [];
@@ -97,7 +123,68 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
     } catch {
       return [];
     }
+  });
+  const [backendOptions, setBackendOptions] = useState<Array<{
+    id: string;
+    label: string;
+    avatar_url: string;
+    archetype: string;
+  }>>([]);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const backend = resolveBackendUrl();
+    fetch(`${backend}/projects`, {
+      signal: ctrl.signal,
+      credentials: "include",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body) => {
+        // The /projects endpoint returns either ``{projects: [...]}``
+        // or just ``[...]`` depending on which auth wrapper served
+        // the request — handle both shapes.
+        const list: Array<Record<string, unknown>> = Array.isArray(body)
+          ? body
+          : Array.isArray(body?.projects)
+          ? body.projects
+          : [];
+        const personas = list
+          .filter((p) => String(p.project_type || "").trim().toLowerCase() === "persona")
+          .map((p) => {
+            const agent = (p.persona_agent && typeof p.persona_agent === "object")
+              ? (p.persona_agent as Record<string, unknown>)
+              : {};
+            const appearance = (p.persona_appearance && typeof p.persona_appearance === "object")
+              ? (p.persona_appearance as Record<string, unknown>)
+              : {};
+            const filename = String(appearance.selected_filename || "").trim();
+            return {
+              id: String(p.id || "").trim(),
+              label: String(p.name || agent.label || "Persona").trim() || "Persona",
+              avatar_url: filename ? `${backend}/files/${filename}` : "",
+              archetype: String(agent.persona_class || "").trim() || "Persona companion",
+            };
+          })
+          .filter((p) => p.id);
+        if (!ctrl.signal.aborted) setBackendOptions(personas);
+      })
+      .catch(() => { /* swallow — dropdown falls back to cache */ });
+    return () => ctrl.abort();
   }, []);
+
+  // Merge: backend wins (authoritative + has avatar/archetype),
+  // cache fills any gaps (e.g. backend fetch failed). De-duped on id.
+  const personaOptions = useMemo(() => {
+    const byId = new Map<string, {
+      id: string;
+      label: string;
+      avatar_url: string;
+      archetype: string;
+    }>();
+    for (const p of cacheOptions) byId.set(p.id, p);
+    for (const p of backendOptions) byId.set(p.id, p);
+    return Array.from(byId.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [cacheOptions, backendOptions]);
 
   // The LS_PERSONA_CACHE writers in App.tsx persist label / persona_class
   // but do NOT include avatar_url or archetype — historical oversight.
