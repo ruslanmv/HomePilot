@@ -240,16 +240,60 @@ export function Step0Prompt({ form, setForm }: Step0Props) {
             const resolved = resolvedDetails[form.persona_project_id];
             const avatarUrl = selected.avatar_url || resolved?.avatar_url || "";
             const archetype = selected.archetype || resolved?.archetype || "";
+            // Hero-sized persona preview card. The previous 12×12 icon
+            // was too small to read the persona's face / outfit / vibe
+            // — operators were second-guessing whether they'd selected
+            // the right persona. 32×32 (128 px) gives a portrait that
+            // actually conveys identity at a glance, and the card uses
+            // a vertical-on-mobile / horizontal-on-desktop layout so
+            // it stays compact in the form column.
             return (
-              <div className="mt-2.5 flex items-center gap-2.5 rounded-md border border-[#3a2a58] bg-[#130f1f] p-2.5">
+              <div
+                className={[
+                  "mt-3 rounded-lg border border-[#3a2a58]",
+                  "bg-gradient-to-br from-[#130f1f] to-[#1a0f24]",
+                  "p-4 flex flex-col sm:flex-row gap-4",
+                  "shadow-[0_0_24px_-12px_rgba(139,92,246,0.4)]",
+                ].join(" ")}
+              >
                 {avatarUrl ? (
-                  <img src={avatarUrl} alt={selected.label} className="w-12 h-12 rounded-md object-cover border border-[#51347f]" />
+                  <img
+                    src={avatarUrl}
+                    alt={selected.label}
+                    className={[
+                      "w-32 h-32 rounded-md object-cover",
+                      "border-2 border-[#51347f]",
+                      "shadow-md flex-shrink-0",
+                      "self-center sm:self-start",
+                    ].join(" ")}
+                  />
                 ) : (
-                  <div className="w-12 h-12 rounded-md bg-[#24173a] border border-[#51347f]" />
+                  <div
+                    className={[
+                      "w-32 h-32 rounded-md bg-[#24173a]",
+                      "border-2 border-[#51347f]",
+                      "flex-shrink-0 self-center sm:self-start",
+                      "flex items-center justify-center",
+                      "text-[#7c3aed] text-2xl font-semibold",
+                    ].join(" ")}
+                    aria-label="No portrait available"
+                  >
+                    {(selected.label || "?").trim().charAt(0).toUpperCase()}
+                  </div>
                 )}
-                <div className="min-w-0">
-                  <div className="text-xs font-medium text-[#f1f1f1] truncate">{selected.label}</div>
-                  <div className="text-[11px] text-[#b59ed9] truncate">{archetype || "Persona companion"}</div>
+                <div className="min-w-0 flex flex-col justify-center gap-1">
+                  <div className="text-[11px] uppercase tracking-wider text-[#9f7fd1]">
+                    Persona card
+                  </div>
+                  <div className="text-base font-medium text-[#f1f1f1] truncate">
+                    {selected.label}
+                  </div>
+                  <div className="text-xs text-[#b59ed9] truncate">
+                    {archetype || "Persona companion"}
+                  </div>
+                  <div className="text-[11px] text-[#7c3aed] mt-1">
+                    Portrait is frozen into this experience for consistent playback.
+                  </div>
                 </div>
               </div>
             );
