@@ -516,15 +516,32 @@ function AdultLlmPicker({ value, onChange }: AdultLlmPickerProps) {
           setLoading(false);
           return;
         }
-        // /models can return {data:[{id}]} (OpenAI-style) or {models:[...]}
-        // (raw Ollama /api/tags). Handle both.
-        const rawList: OllamaTag[] = Array.isArray(body?.data)
+        // ``GET /models?provider=ollama`` returns the raw Ollama
+        // model-id list as plain strings (the backend's
+        // model_catalog.list_models_for_provider extracts ``.name``
+        // from /api/tags and sorts them). Older OpenAI-compat
+        // endpoints return ``{data: [{id}]}`` and Ollama itself
+        // sometimes returns ``{models: [{model}]}`` — handle every
+        // shape so the picker works regardless of which surface
+        // the backend is proxying. The previous parser assumed
+        // object entries only and silently produced an empty list
+        // when the backend returned strings, which made the picker
+        // claim "no abliterated models found" even when 3 were
+        // installed.
+        const rawList: unknown[] = Array.isArray(body?.data)
           ? body.data
           : Array.isArray(body?.models)
           ? body.models
           : [];
-        const ids = rawList
-          .map((m) => String(m.id || m.name || m.model || "").trim())
+        const ids: string[] = rawList
+          .map((m) => {
+            if (typeof m === "string") return m.trim();
+            if (m && typeof m === "object") {
+              const o = m as Record<string, unknown>;
+              return String(o.id || o.name || o.model || "").trim();
+            }
+            return "";
+          })
           .filter(Boolean);
         setInstalled(ids);
         setLoading(false);
