@@ -24,10 +24,10 @@
  */
 
 import React, { useMemo, useState, useCallback } from "react";
-import { LogIn, Play, Plus, Trash2, Workflow, Search, Filter, RefreshCw, Sparkles } from "lucide-react";
+import { LogIn, Play, Plus, Trash2, Workflow, Search, Filter, RefreshCw, Sparkles, GitBranch, Users } from "lucide-react";
 import { createInteractiveApi } from "./interactive/api";
-import type { Experience, ExperienceStatus } from "./interactive/types";
-import { InteractiveApiError } from "./interactive/types";
+import type { Experience, ExperienceStatus, InteractionType } from "./interactive/types";
+import { InteractiveApiError, resolveInteractionType } from "./interactive/types";
 import {
   DangerButton,
   EmptyState,
@@ -386,6 +386,52 @@ function Grid({
   );
 }
 
+// Per-interaction-type accent palette. Two families so the landing
+// page reads like the main "Projects" tab — blue for branching
+// scene-graph projects, violet for persona-anchored play. Pulled
+// out as a const so future surfaces (player chrome, edit modal)
+// can reuse the exact tokens.
+const TYPE_ACCENTS: Record<
+  InteractionType,
+  {
+    label: string;
+    icon: typeof GitBranch;
+    /** Top-of-card accent stripe color. */
+    stripe: string;
+    /** Hover border color. */
+    border: string;
+    /** Focus ring color. */
+    ring: string;
+    /** Badge background + border + text colors (Tailwind arbitrary
+     *  rgba values so they read as soft pills, not solid blocks). */
+    badgeBg: string;
+    badgeBorder: string;
+    badgeText: string;
+  }
+> = {
+  standard_project: {
+    label: "Standard",
+    icon: GitBranch,
+    stripe: "#3ea6ff",
+    border: "#3ea6ff",
+    ring: "#3ea6ff",
+    badgeBg: "rgba(62,166,255,0.12)",
+    badgeBorder: "rgba(62,166,255,0.30)",
+    badgeText: "#7dd3fc",
+  },
+  persona_live_play: {
+    label: "Persona Live",
+    icon: Users,
+    stripe: "#8b5cf6",
+    border: "#8b5cf6",
+    ring: "#8b5cf6",
+    badgeBg: "rgba(139,92,246,0.12)",
+    badgeBorder: "rgba(139,92,246,0.30)",
+    badgeText: "#c4b5fd",
+  },
+};
+
+
 function ProjectCard({
   experience, onOpen, onPlay, onDelete,
 }: {
@@ -395,6 +441,9 @@ function ProjectCard({
   onDelete: () => void;
 }) {
   const modeLabel = humanizeMode(experience.experience_mode);
+  const interactionType = resolveInteractionType(experience);
+  const accent = TYPE_ACCENTS[interactionType];
+  const TypeIcon = accent.icon;
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -408,13 +457,29 @@ function ProjectCard({
       onClick={onOpen}
       onKeyDown={onKeyDown}
       aria-label={`Open ${experience.title || "untitled project"} in editor`}
+      style={{ "--card-accent": accent.stripe } as React.CSSProperties}
       className={[
         "relative text-left bg-[#1f1f1f] border border-[#3f3f3f] rounded-lg p-5 cursor-pointer",
-        "hover:bg-[#282828] hover:border-[#555] transition-colors",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3ea6ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f0f]",
+        "hover:bg-[#282828] transition-colors",
+        // Hover & focus colors come from the accent so Standard cards
+        // glow blue and Persona Live cards glow violet — the visual
+        // distinction is reinforced on every interaction.
+        "hover:[border-color:var(--card-accent)]",
+        "focus:outline-none focus-visible:ring-2 focus-visible:[--tw-ring-color:var(--card-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f0f]",
         "flex flex-col gap-3 group",
+        // Top accent stripe — ::before-style via an inline element
+        // (tailwind doesn't support ::before with CSS vars cleanly).
+        "overflow-hidden",
       ].join(" ")}
     >
+      {/* Accent stripe along the top edge. Uses the type color so
+          the card reads as Standard / Persona Live at a glance. */}
+      <div
+        aria-hidden
+        className="absolute inset-x-0 top-0 h-[3px]"
+        style={{ background: accent.stripe }}
+      />
+
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium text-[#f1f1f1] truncate">
@@ -422,6 +487,21 @@ function ProjectCard({
           </div>
           <div className="text-xs text-[#777] mt-0.5 truncate">{modeLabel}</div>
         </div>
+        {/* Type badge (Standard / Persona Live) — primary visual ID
+            for the card. Status badge moves below. */}
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium whitespace-nowrap"
+          style={{
+            background: accent.badgeBg,
+            borderColor: accent.badgeBorder,
+            color: accent.badgeText,
+          }}
+        >
+          <TypeIcon className="w-3 h-3" aria-hidden />
+          {accent.label}
+        </span>
+      </div>
+      <div className="flex items-center justify-end -mt-1.5">
         <StatusBadge status={experience.status} />
       </div>
 
