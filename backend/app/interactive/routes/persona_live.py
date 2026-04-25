@@ -138,7 +138,7 @@ _INTENT_CATALOG: Dict[str, Dict[str, Any]] = {
         "level": 1,
     },
     "stay_quiet": {
-        "label": "Stay quiet and listen",
+        "label": "Just be present",
         "description": "Give her space; let her lead.",
         "category": "expression",
         "reaction_intent": "tease",

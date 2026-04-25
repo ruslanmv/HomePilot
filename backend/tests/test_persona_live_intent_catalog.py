@@ -127,7 +127,7 @@ def test_actions_for_level_returns_intent_labels():
     assert "Say something playful" in labels
     assert "Compliment her" in labels
     assert "Ask about her day" in labels
-    assert "Stay quiet and listen" in labels
+    assert "Just be present" in labels
 
 
 def test_actions_for_level_includes_descriptions():

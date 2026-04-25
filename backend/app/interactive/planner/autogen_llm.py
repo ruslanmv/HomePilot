@@ -381,7 +381,7 @@ def _persona_live_graph(experience: Experience) -> GraphPlan:
         ActionSpec(label="Say something playful",  intent_code="say_playful",   xp_award=5),
         ActionSpec(label="Compliment her",          intent_code="compliment",    xp_award=5),
         ActionSpec(label="Ask about her day",       intent_code="ask_about_her", xp_award=5),
-        ActionSpec(label="Stay quiet and listen",   intent_code="stay_quiet",    xp_award=3),
+        ActionSpec(label="Just be present",         intent_code="stay_quiet",    xp_award=3),
     ]
 
     return GraphPlan(
