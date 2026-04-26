@@ -220,13 +220,69 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
     def get_catalog_(
         session_id: str, _user: str = Depends(current_user),
     ) -> Dict[str, Any]:
+        def _slug(value: str) -> str:
+            import re
+            raw = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+            return raw[:80]
+
         sess = _require_session(session_id)
         actions = repo.list_actions(sess.experience_id)
         state = build_runtime_state(session_id)
         progress: Dict[str, Dict[str, float]] = state.progress if state else {}
+        # Additive preview enrichment for Standard mode selector:
+        # map action intent -> destination scene media so cards can
+        # show actual thumbnails (and future audio preview hooks)
+        # instead of generic gradients.
+        preview_by_intent: Dict[str, Dict[str, Any]] = {}
+        preview_by_ordinal: List[Dict[str, Any]] = []
+        try:
+            current_node_id = str(sess.current_node_id or "").strip()
+            edges = [
+                e for e in repo.list_edges(sess.experience_id)
+                if e.from_node_id == current_node_id
+            ]
+            edges = sorted(edges, key=lambda e: (int(getattr(e, "ordinal", 0) or 0), str(e.id)))
+            node_by_id = {
+                n.id: n for n in repo.list_nodes(sess.experience_id)
+            }
+            for e in edges:
+                label = str((e.trigger_payload or {}).get("label") or "").strip()
+                to_node = node_by_id.get(e.to_node_id)
+                if to_node is None:
+                    continue
+                asset_ids = list(getattr(to_node, "asset_ids", []) or [])
+                aid = str(asset_ids[0] or "").strip() if asset_ids else ""
+                url = _resolve_scene_asset_url(aid) if aid else ""
+                preview = {
+                    "destination_node_id": to_node.id,
+                    "asset_preview_url": url,
+                    "asset_thumbnail_url": url,
+                }
+                preview_by_ordinal.append(preview)
+                if label:
+                    # Match on both raw label and slug(label) so cards
+                    # can resolve previews whether the action carries
+                    # the human label or the slugged intent_code.
+                    preview_by_intent[label] = preview
+                    label_slug = _slug(label)
+                    if label_slug:
+                        preview_by_intent[label_slug] = preview
+        except Exception:
+            log.exception("catalog preview enrichment failed")
+
         items: List[Dict[str, Any]] = []
-        for a in actions:
+        ordered_actions = sorted(actions, key=lambda a: (int(a.ordinal or 0), str(a.created_at or "")))
+        for idx, a in enumerate(ordered_actions):
             unlocked, reason = is_action_unlocked(a, progress)
+            intent = str(a.intent_code or "").strip()
+            label = str(a.label or "").strip()
+            preview = (
+                preview_by_intent.get(intent)
+                or preview_by_intent.get(_slug(intent))
+                or preview_by_intent.get(label)
+                or preview_by_intent.get(_slug(label))
+                or (preview_by_ordinal[idx] if idx < len(preview_by_ordinal) else {})
+            )
             items.append({
                 "id": a.id,
                 "label": a.label,
@@ -238,6 +294,9 @@ def build_play_router(cfg: InteractiveConfig) -> APIRouter:
                 "ordinal": a.ordinal,
                 "unlocked": unlocked,
                 "lock_reason": reason,
+                "destination_node_id": preview.get("destination_node_id", ""),
+                "asset_preview_url": preview.get("asset_preview_url", ""),
+                "asset_thumbnail_url": preview.get("asset_thumbnail_url", ""),
             })
         return {"ok": True, "items": items}
 
@@ -634,5 +693,13 @@ def _resolve_scene_asset_url(asset_id: str) -> str:
     raw = str(asset_id or "").strip()
     if raw.startswith("/files/") or raw.startswith("http://") or raw.startswith("https://"):
         return raw
+    if raw.startswith("/view?") or raw.startswith("view?"):
+        try:
+            from ..media_router import resolve_current_comfy_base_url
+            base = str(resolve_current_comfy_base_url() or "").strip()
+        except Exception:
+            base = ""
+        if base:
+            return f"{base.rstrip('/')}/{raw.lstrip('/')}"
 
     return ""

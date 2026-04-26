@@ -75,6 +75,7 @@ Design choices
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from dataclasses import dataclass, field
@@ -296,7 +297,42 @@ class WorkflowRunner:
             events.append(ev)
             if on_event is not None:
                 try:
-                    on_event(ev)
+                    # Backward-compat hook bridge:
+                    #   * New runner-native hooks expect one arg:
+                    #       on_event(WorkflowEvent)
+                    #   * Legacy planner/generator hooks expect two args:
+                    #       on_event(kind, payload)
+                    #
+                    # We support both so route-level SSE hooks can be
+                    # passed through unchanged without dropping workflow
+                    # events due to signature mismatch.
+                    payload = dict(ev.payload or {})
+                    argc: Optional[int] = None
+                    has_varargs = False
+                    try:
+                        sig = inspect.signature(on_event)
+                        params = list(sig.parameters.values())
+                        has_varargs = any(
+                            p.kind == inspect.Parameter.VAR_POSITIONAL
+                            for p in params
+                        )
+                        argc = len([
+                            p for p in params
+                            if p.kind in (
+                                inspect.Parameter.POSITIONAL_ONLY,
+                                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                            )
+                        ])
+                    except Exception:
+                        argc = None
+
+                    if has_varargs or (argc is not None and argc >= 2):
+                        on_event(ev.kind, payload)
+                    elif argc == 0:
+                        on_event()
+                    else:
+                        # Default path: WorkflowEvent callback.
+                        on_event(ev)
                 except Exception:  # noqa: BLE001
                     # Hooks must never break the workflow.
                     log.exception("workflow event hook raised — ignored")

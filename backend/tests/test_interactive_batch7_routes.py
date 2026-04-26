@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 
 from app.interactive import repo
 from app.interactive.config import InteractiveConfig
+from app.interactive.models import NodeUpdate
 from app.interactive.router import build_router
 from app.interactive.routes._common import current_user
 
@@ -397,6 +398,76 @@ def test_play_catalog_flags_locked_actions(client_a):
     assert len(items) == 1
     assert items[0]["unlocked"] is False
     assert items[0]["lock_reason"] == "level_gate"
+
+
+def test_play_catalog_includes_scene_thumbnail_preview(client_a):
+    eid = _make_exp(client_a, "Thumb Preview")
+    r = client_a.post(
+        f"/v1/interactive/experiences/{eid}/nodes",
+        json={"kind": "scene", "title": "Start"},
+    )
+    start_id = r.json()["node"]["id"]
+    r = client_a.post(
+        f"/v1/interactive/experiences/{eid}/nodes",
+        json={
+            "kind": "scene",
+            "title": "Listen More",
+            "asset_ids": ["/files/mock/listen_more.jpg"],
+        },
+    )
+    dst_a = r.json()["node"]["id"]
+    repo.update_node(dst_a, NodeUpdate(asset_ids=["/files/mock/listen_more.jpg"]))
+    r = client_a.post(
+        f"/v1/interactive/experiences/{eid}/nodes",
+        json={
+            "kind": "scene",
+            "title": "Gently Tease",
+        },
+    )
+    dst_b = r.json()["node"]["id"]
+    repo.update_node(dst_b, NodeUpdate(asset_ids=["/files/mock/gently_tease.jpg"]))
+
+    client_a.post(
+        f"/v1/interactive/experiences/{eid}/edges",
+        json={
+            "from_node_id": start_id,
+            "to_node_id": dst_a,
+            "trigger_kind": "choice",
+            "trigger_payload": {"label": "Listen more"},
+            "ordinal": 0,
+        },
+    )
+    client_a.post(
+        f"/v1/interactive/experiences/{eid}/edges",
+        json={
+            "from_node_id": start_id,
+            "to_node_id": dst_b,
+            "trigger_kind": "choice",
+            "trigger_payload": {"label": "Gently tease"},
+            "ordinal": 1,
+        },
+    )
+    client_a.post(
+        f"/v1/interactive/experiences/{eid}/actions",
+        json={"label": "Listen more", "intent_code": "listen_more", "required_level": 1},
+    )
+    client_a.post(
+        f"/v1/interactive/experiences/{eid}/actions",
+        json={"label": "Gently tease", "intent_code": "gently_tease", "required_level": 1},
+    )
+
+    r = client_a.post(
+        "/v1/interactive/play/sessions",
+        json={"experience_id": eid, "viewer_ref": "thumb_viewer"},
+    )
+    sid = r.json()["session"]["id"]
+    repo.set_session_current_node(sid, start_id)
+
+    r = client_a.get(f"/v1/interactive/play/sessions/{sid}/catalog")
+    items = sorted(r.json()["items"], key=lambda x: x.get("ordinal", 0))
+    assert len(items) == 2
+    assert items[0]["asset_thumbnail_url"] == "/files/mock/listen_more.jpg"
+    assert items[1]["asset_thumbnail_url"] == "/files/mock/gently_tease.jpg"
 
 
 def test_play_end_session(client_a):

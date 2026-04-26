@@ -131,6 +131,21 @@ def _run_llm_sync(
     sync FastAPI handler without requiring it to be async. Returns
     the parsed JSON dict or ``None`` on any failure.
     """
+    # ``asyncio.run(coro)`` raises immediately when a loop is already
+    # running in this thread. If we were to inline ``_go()`` into
+    # asyncio.run(...) first, Python would create a coroutine object
+    # that never gets awaited, triggering:
+    #   RuntimeWarning: coroutine ... was never awaited
+    # Guard first, then construct/run the coroutine only in the
+    # loop-free sync path.
+    try:
+        asyncio.get_running_loop()
+        log.debug("persona opening skipped — event loop already running")
+        return None
+    except RuntimeError:
+        # No running loop in this thread (normal sync FastAPI path).
+        pass
+
     # Local import keeps this module cheap to import from tests
     # that don't exercise the LLM path.
     from ...llm import chat_ollama
@@ -165,14 +180,7 @@ def _run_llm_sync(
             return None
         return parsed if isinstance(parsed, dict) else None
 
-    try:
-        return asyncio.run(_go())
-    except RuntimeError:
-        # Already inside a running loop (unlikely from the sync
-        # handler, but possible under some ASGI servers). Skip
-        # opening-turn generation rather than deadlocking.
-        log.debug("persona opening skipped — event loop already running")
-        return None
+    return asyncio.run(_go())
 
 
 def _content_of(response: Dict[str, Any]) -> str:

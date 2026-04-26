@@ -120,6 +120,25 @@ function InteractivePlayerBody({
   projectId,
   onExit,
 }: InteractivePlayerProps) {
+  const _readBool = (v: unknown): boolean | null => {
+    if (typeof v === "boolean") return v;
+    const s = String(v ?? "").trim().toLowerCase();
+    if (!s) return null;
+    if (["1", "true", "yes", "on"].includes(s)) return true;
+    if (["0", "false", "no", "off"].includes(s)) return false;
+    return null;
+  };
+
+  const _initialMuteFromAudience = (ap: Record<string, unknown> | null | undefined): boolean => {
+    const explicit =
+      _readBool(ap?.tts_muted) ??
+      _readBool(ap?.mute_tts) ??
+      _readBool(ap?.muted);
+    // Keep autoplay-safe default (muted) unless experience-level
+    // settings explicitly opt in/out.
+    return explicit ?? true;
+  };
+
   const api = useMemo(() => createInteractiveApi(backendUrl, apiKey), [backendUrl, apiKey]);
   const toast = useToast();
 
@@ -214,6 +233,16 @@ function InteractivePlayerBody({
       updated_at: "",
     });
   }, [session.data?.initial_scene, sessionId]);
+
+  // Apply experience-level default mute once when the experience loads.
+  const seededMuteFromExperienceRef = useRef(false);
+  useEffect(() => {
+    if (seededMuteFromExperienceRef.current) return;
+    const ap = (exp.data?.audience_profile || null) as Record<string, unknown> | null;
+    if (!ap) return;
+    setMuted(_initialMuteFromAudience(ap));
+    seededMuteFromExperienceRef.current = true;
+  }, [exp.data?.audience_profile]);
 
   const cursorRef = useRef<string>("");
   useEffect(() => {
@@ -530,6 +559,7 @@ function InteractivePlayerBody({
           api={api}
           sessionId={sessionId}
           experienceId={projectId}
+          experience={exp.data || null}
           scene={currentScene}
           onExit={onExit}
           onResolved={onActionResolved}

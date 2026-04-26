@@ -261,6 +261,14 @@ def _resolve_scene_asset_url(asset_id: str) -> str:
     raw = str(asset_id or "").strip()
     if raw.startswith("/files/") or raw.startswith("http://") or raw.startswith("https://"):
         return raw
+    if raw.startswith("/view?") or raw.startswith("view?"):
+        try:
+            from ..media_router import resolve_current_comfy_base_url
+            base = str(resolve_current_comfy_base_url() or "").strip()
+        except Exception:
+            base = ""
+        if base:
+            return f"{base.rstrip('/')}/{raw.lstrip('/')}"
     return ""
 
 

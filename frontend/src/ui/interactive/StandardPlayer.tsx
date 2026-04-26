@@ -30,7 +30,7 @@ import {
   Volume2, VolumeX,
 } from "lucide-react";
 import type { InteractiveApi } from "./api";
-import type { CatalogItemView, ResolveResult, SceneJobView } from "./types";
+import type { CatalogItemView, Experience, ResolveResult, SceneJobView } from "./types";
 import { InteractiveApiError } from "./types";
 import { useAsyncResource, useToast } from "./ui";
 import {
@@ -50,6 +50,7 @@ export interface StandardPlayerProps {
    *  can preload upcoming scene assets via ``useScenePreload`` —
    *  optional only because some legacy callers may not have it. */
   experienceId?: string;
+  experience?: Experience | null;
   scene: SceneJobView | null;
   onExit: () => void;
   onResolved: (resolved: ResolveResult, action: CatalogItemView) => void;
@@ -57,7 +58,7 @@ export interface StandardPlayerProps {
 
 
 export function StandardPlayer({
-  api, sessionId, experienceId, scene, onExit, onResolved,
+  api, sessionId, experienceId, experience, scene, onExit, onResolved,
 }: StandardPlayerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -79,6 +80,18 @@ export function StandardPlayer({
   // re-fetches when the user clicks Retry.
   const [mediaError, setMediaError] = useState(false);
   const [retryNonce, setRetryNonce] = useState(0);
+  const spokenKeyRef = useRef<string>("");
+  const [speechPlaying, setSpeechPlaying] = useState(false);
+  const [awaitingSpeechGate, setAwaitingSpeechGate] = useState(false);
+
+  const _readBool = (v: unknown): boolean | null => {
+    if (typeof v === "boolean") return v;
+    const s = String(v ?? "").trim().toLowerCase();
+    if (!s) return null;
+    if (["1", "true", "yes", "on"].includes(s)) return true;
+    if (["0", "false", "no", "off"].includes(s)) return false;
+    return null;
+  };
 
   const baseUrl = (() => {
     if (!scene?.asset_url) return "";
@@ -128,6 +141,26 @@ export function StandardPlayer({
   const isVideo =
     mediaHint === "video" || (!!url && _VID_RE.test(url));
   const defaultDuration = Math.max(1, Number(scene?.duration_sec || 5));
+  const narrationText = String(scene?.subtitles || scene?.narration || scene?.prompt || "").trim();
+
+  // Voice gate precedence (industry best-practice):
+  //   1) Global Voice Assistant default (Enterprise Settings)
+  //   2) Optional per-experience override in audience_profile
+  //   3) Runtime mute button (single control for media + narration)
+  const ap = (experience?.audience_profile || {}) as Record<string, unknown>;
+  const globalTtsEnabled = (() => {
+    try {
+      const lsToggle = localStorage.getItem("homepilot_tts_enabled") !== "false";
+      const svcEnabled = (window as any)?.SpeechService?.isTTSEnabled?.() ?? true;
+      return lsToggle && svcEnabled;
+    } catch {
+      return false;
+    }
+  })();
+  const customTtsEnabled =
+    _readBool(ap.tts_enabled) ??
+    _readBool(ap.scene_tts_enabled);
+  const speechEnabled = (customTtsEnabled ?? globalTtsEnabled) && !muted;
 
   // Load catalog as the pool of decision cards. For standard
   // projects it's the author's branch choices (mapped onto the
@@ -146,12 +179,23 @@ export function StandardPlayer({
 
   useEffect(() => {
     setDecisionOpen(false);
+    setAwaitingSpeechGate(false);
+    setSpeechPlaying(false);
     setMediaError(false);
     setRetryNonce(0);
     setCurrentTime(0);
     setDuration(defaultDuration);
     setPlaying(true);
   }, [scene?.id, defaultDuration]);
+
+  const _openDecisionWhenReady = useCallback(() => {
+    if (choices.length <= 0) return;
+    if (speechEnabled && narrationText && speechPlaying) {
+      setAwaitingSpeechGate(true);
+      return;
+    }
+    setDecisionOpen(true);
+  }, [choices.length, narrationText, speechEnabled, speechPlaying]);
 
   // ── Video element wiring ─────────────────────────────────────
   useEffect(() => {
@@ -162,10 +206,7 @@ export function StandardPlayer({
     const onDur = () => setDuration(v.duration || 0);
     const onEnd = () => {
       setPlaying(false);
-      // Open the decision modal at end-of-scene so authors know the
-      // beat has landed. If there are no choices, stay quiet — a
-      // linear scene just pauses on its last frame.
-      if (choices.length > 0) setDecisionOpen(true);
+      _openDecisionWhenReady();
     };
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
@@ -181,7 +222,7 @@ export function StandardPlayer({
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
     };
-  }, [choices.length, isVideo]);
+  }, [_openDecisionWhenReady, isVideo]);
 
   // Timed still-image playback: treat images like fixed-duration
   // scenes. When the timer completes, open the decision modal.
@@ -195,18 +236,53 @@ export function StandardPlayer({
         const next = Math.min(maxSec, prev + 0.1);
         if (next >= maxSec) {
           setPlaying(false);
-          if (choices.length > 0) setDecisionOpen(true);
+          _openDecisionWhenReady();
         }
         return next;
       });
     }, 100);
     return () => window.clearInterval(t);
-  }, [choices.length, decisionOpen, mediaError, isImage, playing, scene?.duration_sec, url]);
+  }, [_openDecisionWhenReady, decisionOpen, mediaError, isImage, playing, scene?.duration_sec, url]);
 
   // Keep the <video> element's mute state in sync with the control.
   useEffect(() => {
     if (videoRef.current) videoRef.current.muted = muted;
   }, [muted]);
+
+  // Scene narration voice: additive and non-destructive.
+  // Speaks once per scene/text pair when voice is enabled.
+  useEffect(() => {
+    const svc = (window as any)?.SpeechService;
+    if (!svc || typeof svc.speak !== "function") return;
+    if (!speechEnabled) {
+      svc.stopSpeaking?.();
+      setSpeechPlaying(false);
+      if (awaitingSpeechGate && choices.length > 0) {
+        setAwaitingSpeechGate(false);
+        setDecisionOpen(true);
+      }
+      return;
+    }
+    if (!scene?.id || !narrationText) return;
+    const key = `${scene.id}::${narrationText}`;
+    if (spokenKeyRef.current === key) return;
+    spokenKeyRef.current = key;
+    svc.stopSpeaking?.();
+    svc.speak(narrationText, {
+      onStart: () => setSpeechPlaying(true),
+      onEnd: () => setSpeechPlaying(false),
+      onError: () => {
+        setSpeechPlaying(false);
+      },
+    });
+  }, [awaitingSpeechGate, choices.length, narrationText, scene?.id, speechEnabled]);
+
+  useEffect(() => {
+    if (!awaitingSpeechGate) return;
+    if (speechPlaying) return;
+    setAwaitingSpeechGate(false);
+    if (choices.length > 0) setDecisionOpen(true);
+  }, [awaitingSpeechGate, choices.length, speechPlaying]);
 
   // Track fullscreen state from the browser so our icon stays honest.
   useEffect(() => {
@@ -231,7 +307,7 @@ export function StandardPlayer({
     if (isImage) {
       setCurrentTime((prev) => {
         const target = Math.max(0, Math.min(duration, prev + delta));
-        if (target >= duration && choices.length > 0) setDecisionOpen(true);
+        if (target >= duration) _openDecisionWhenReady();
         return target;
       });
       return;
@@ -243,7 +319,7 @@ export function StandardPlayer({
       Math.min((v.duration || 0) - 0.1, (v.currentTime || 0) + delta),
     );
     v.currentTime = target;
-  }, [choices.length, duration, isImage]);
+  }, [_openDecisionWhenReady, duration, isImage]);
 
   const restart = useCallback(() => {
     if (isImage) {

@@ -22,6 +22,24 @@ _STUB_PREFIX = "ixa_stub_"
 _PLAYBACK_PREFIX = "ixa_playback_"
 
 
+def _absolutize_comfy_view_url(url: str) -> str:
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("http://") or raw.startswith("https://") or raw.startswith("/files/"):
+        return raw
+    if raw.startswith("/view?") or raw.startswith("view?"):
+        try:
+            from ..media_router import resolve_current_comfy_base_url  # late import
+            base = str(resolve_current_comfy_base_url() or "").strip()
+        except Exception:
+            base = ""
+        if base:
+            suffix = raw if raw.startswith("/") else f"/{raw}"
+            return f"{base.rstrip('/')}{suffix}"
+    return raw
+
+
 def resolve_asset_url(asset_id: str) -> Optional[str]:
     """Look up the durable URL (or file path) for an asset id.
 
@@ -52,4 +70,6 @@ def resolve_asset_url(asset_id: str) -> Optional[str]:
     if not record:
         return None
     storage_key = str(record.get("storage_key") or "").strip()
-    return storage_key or None
+    if not storage_key:
+        return None
+    return _absolutize_comfy_view_url(storage_key) or None

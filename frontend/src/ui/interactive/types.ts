@@ -61,6 +61,14 @@ export interface AudienceProfile {
   /** ✅ NEW — rendering controls */
   persona_image_fit?: "cover" | "contain";
   persona_image_position?: string;
+  /** Optional per-experience scene voice override.
+   *  When absent, the global Voice Assistant setting is used. */
+  tts_enabled?: boolean;
+  scene_tts_enabled?: boolean;
+  /** Optional per-experience default mute for interactive players. */
+  tts_muted?: boolean;
+  mute_tts?: boolean;
+  muted?: boolean;
 
   [key: string]: unknown;
 }
@@ -375,6 +383,10 @@ export interface CatalogItemView {
   ordinal: number;
   unlocked: boolean;
   lock_reason: string;
+  destination_node_id?: string;
+  asset_preview_url?: string;
+  asset_thumbnail_url?: string;
+  audio_preview_url?: string;
 }
 
 export interface LevelDescriptionView {

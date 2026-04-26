@@ -44,8 +44,20 @@ function _supported(): boolean {
 
 function _readEnabled(): boolean {
   try {
-    // Default ON — a silent companion isn't a companion.
-    return globalThis.localStorage?.getItem(STORAGE_KEY_ENABLED) !== "0";
+    // Per-runtime explicit override wins.
+    const explicit = globalThis.localStorage?.getItem(STORAGE_KEY_ENABLED);
+    if (explicit === "1") return true;
+    if (explicit === "0") return false;
+
+    // Default to app-global Voice Assistant settings so Persona Live
+    // follows Enterprise Settings out of the box.
+    const globalToggle = globalThis.localStorage?.getItem("homepilot_tts_enabled");
+    const enabledByGlobalToggle = globalToggle !== "false";
+    const cfgRaw = globalThis.localStorage?.getItem("homepilot_voice_config");
+    if (!cfgRaw) return enabledByGlobalToggle;
+    const cfg = JSON.parse(cfgRaw);
+    const voiceCfgEnabled = cfg?.enabled !== false;
+    return enabledByGlobalToggle && voiceCfgEnabled;
   } catch {
     return true;
   }
@@ -61,7 +73,15 @@ function _writeEnabled(next: boolean): void {
 
 function _readSelectedVoice(): string {
   try {
-    return globalThis.localStorage?.getItem(STORAGE_KEY_VOICE) || "";
+    const explicit = globalThis.localStorage?.getItem(STORAGE_KEY_VOICE) || "";
+    if (explicit) return explicit;
+    const cfgRaw = globalThis.localStorage?.getItem("homepilot_voice_config");
+    if (cfgRaw) {
+      const cfg = JSON.parse(cfgRaw);
+      const uri = String(cfg?.voiceURI || "").trim();
+      if (uri) return uri;
+    }
+    return globalThis.localStorage?.getItem("homepilot_voice_uri") || "";
   } catch {
     return "";
   }

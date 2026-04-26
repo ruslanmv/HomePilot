@@ -367,6 +367,35 @@ def test_failed_events_carry_reason_and_attempt(tmp_path, patch_call_prompt):
     assert fails[0].payload["fatal"] is False
 
 
+def test_events_support_legacy_two_argument_hook(tmp_path, patch_call_prompt):
+    lib = _mk_library(tmp_path)
+    patch_call_prompt.feed("t.echo", "hi")
+
+    got: List[tuple[str, dict]] = []
+
+    def hook(kind, payload):
+        got.append((kind, dict(payload or {})))
+
+    step = Step(
+        step_id="echo",
+        prompt_id="t.echo",
+        output_key="topic",
+        build_vars=lambda c: {"idea": c["idea"]},
+    )
+    runner = WorkflowRunner(library=lib)
+    result = asyncio.run(runner.run(
+        workflow="demo",
+        steps=[step],
+        context={"idea": "x"},
+        on_event=hook,
+    ))
+
+    assert not result.aborted
+    assert got[0][0] == "workflow_started"
+    assert got[-1][0] == "workflow_completed"
+    assert got[-1][1]["ok"] is True
+
+
 # ── extract_content helper ────────────────────────────────────
 
 def test_extract_content_happy_path():

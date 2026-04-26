@@ -66,3 +66,25 @@ def test_empty_storage_key_returns_none(monkeypatch):
 def test_registry_exception_returns_none(monkeypatch):
     _install_get_asset(monkeypatch, RuntimeError("db locked"))
     assert resolve_asset_url("a_xyz") is None
+
+
+def test_relative_comfy_view_url_is_absolutized(monkeypatch):
+    _install_get_asset(
+        monkeypatch,
+        {"a_xyz": {"id": "a_xyz", "storage_key": "view?filename=img_1.png&type=output"}},
+    )
+    import app.interactive.media_router as mr
+
+    monkeypatch.setattr(mr, "resolve_current_comfy_base_url", lambda: "http://localhost:8188")
+    assert resolve_asset_url("a_xyz") == "http://localhost:8188/view?filename=img_1.png&type=output"
+
+
+def test_slash_relative_comfy_view_url_is_absolutized(monkeypatch):
+    _install_get_asset(
+        monkeypatch,
+        {"a_xyz": {"id": "a_xyz", "storage_key": "/view?filename=img_2.png&subfolder=&type=output"}},
+    )
+    import app.interactive.media_router as mr
+
+    monkeypatch.setattr(mr, "resolve_current_comfy_base_url", lambda: "http://localhost:8188")
+    assert resolve_asset_url("a_xyz") == "http://localhost:8188/view?filename=img_2.png&subfolder=&type=output"
