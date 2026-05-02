@@ -1,0 +1,1746 @@
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { Upload, Mic, Settings2, X, Play, MoreHorizontal, Wand2, Download, RefreshCw, Trash2, Gamepad2, Pause, History, Lock, Unlock, Zap, Grid2X2, Image, Sliders, ChevronRight, ChevronDown, Maximize2, Info, Film, ArrowUp, Loader2, Sparkles } from 'lucide-react';
+import { upscaleImage } from './enhance/upscaleApi';
+import { resolveFileUrl } from './resolveFileUrl';
+import { getCurrentUserId, registerUserScopedKey, userScopedKey, } from './lib/userScopedStorage';
+// Register the gallery base key so AuthGate can namespace / clear it per user.
+registerUserScopedKey('homepilot_imagine_items');
+/**
+ * Resolve the localStorage key the Imagine gallery should read/write for the
+ * current authenticated user. Falls back to an anonymous bucket when no
+ * user is active — this keeps SSR/boot paths safe and prevents any user's
+ * gallery from being written to the un-scoped global slot.
+ */
+function imagineItemsKey() {
+    const uid = getCurrentUserId();
+    return uid
+        ? userScopedKey('homepilot_imagine_items', uid)
+        : 'homepilot_imagine_items:user:anon';
+}
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+// Explicit generous deadline for generation requests. Cold-start
+// model loads + busy ComfyUI queues can legitimately take several
+// minutes; the browser's default fetch behaviour (either no
+// timeout or a very long one) leaves the UI in limbo. 10 minutes
+// matches the backend's COMFY_POLL_MAX_S so the two sides agree
+// on "when does this request really count as failed".
+const POSTJSON_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+async function postJson(baseUrl, path, body, apiKey, opts) {
+    const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+    // Compose a deadline-based AbortSignal with an optional caller
+    // signal so a user-clicked Cancel also aborts. Deadline fires
+    // only if the backend genuinely never responds within the
+    // generous window above — matches best-practice long-running
+    // API patterns (AWS Bedrock async, Replicate, OpenAI Images).
+    const controller = new AbortController();
+    const timeoutMs = opts?.timeoutMs ?? POSTJSON_DEFAULT_TIMEOUT_MS;
+    const deadlineTimer = window.setTimeout(() => controller.abort(), timeoutMs);
+    const callerSignal = opts?.signal;
+    if (callerSignal) {
+        if (callerSignal.aborted)
+            controller.abort();
+        else
+            callerSignal.addEventListener('abort', () => controller.abort());
+    }
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(apiKey ? { 'x-api-key': apiKey } : {}),
+            },
+            credentials: 'include',
+            body: JSON.stringify(body),
+            signal: controller.signal,
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => '');
+            throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`);
+        }
+        return (await res.json());
+    }
+    finally {
+        window.clearTimeout(deadlineTimer);
+    }
+}
+async function deleteJson(baseUrl, path, body, apiKey) {
+    const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+    const res = await fetch(url, {
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+            ...(apiKey ? { 'x-api-key': apiKey } : {}),
+        },
+        credentials: 'include',
+        body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`);
+    }
+    return (await res.json());
+}
+function uid() {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+const ASPECT_RATIOS = [
+    { label: '1:1', previewW: 24, previewH: 24, genW: 1024, genH: 1024 },
+    { label: '4:3', previewW: 32, previewH: 24, genW: 1152, genH: 864 },
+    { label: '3:4', previewW: 24, previewH: 32, genW: 864, genH: 1152 },
+    { label: '16:9', previewW: 42, previewH: 24, genW: 1344, genH: 768 },
+    { label: '9:16', previewW: 24, previewH: 42, genW: 768, genH: 1344 },
+];
+// -----------------------------------------------------------------------------
+// Component
+// -----------------------------------------------------------------------------
+export default function ImagineView(props) {
+    const authKey = (props.apiKey || '').trim();
+    const [prompt, setPrompt] = useState('');
+    // Load items from localStorage on mount.
+    // Scoped per authenticated user so switching accounts never surfaces
+    // another user's gallery thumbnails (whose /files/ URLs would 403/404
+    // and produce the ghost-card bug from issue: cross-account UI leak).
+    const [items, setItems] = useState(() => {
+        try {
+            const lsKey = imagineItemsKey();
+            let stored = localStorage.getItem(lsKey);
+            // One-time migration: if the user has no scoped gallery yet but the
+            // legacy global slot still holds data, adopt it into the scoped slot.
+            // This preserves galleries for the currently-logged-in user when the
+            // fix is first deployed; the global slot is then cleared so future
+            // logins don't inherit anyone's data.
+            if (!stored) {
+                const legacy = localStorage.getItem('homepilot_imagine_items');
+                if (legacy && getCurrentUserId()) {
+                    localStorage.setItem(lsKey, legacy);
+                    localStorage.removeItem('homepilot_imagine_items');
+                    stored = legacy;
+                }
+            }
+            if (stored) {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed)) {
+                    // Thresholds for handling stale processing items:
+                    // - IN_FLIGHT_THRESHOLD: If processing item is older than this, generation likely
+                    //   completed but state update was lost due to tab switch (component unmount).
+                    //   Image generation typically takes 3-5 seconds, so 15s is safe.
+                    // - STALE_THRESHOLD: If processing item is older than this, app was closed during
+                    //   generation - mark as definitively failed.
+                    const IN_FLIGHT_THRESHOLD = 15 * 1000; // 15 seconds - likely completed but lost track
+                    const STALE_THRESHOLD = 10 * 60 * 1000; // 10 minutes - definitively failed
+                    const now = Date.now();
+                    return parsed.map((item) => {
+                        // Migrate: old items without status get 'done' if they have url
+                        if (!item.status) {
+                            return { ...item, status: item.url ? 'done' : 'failed' };
+                        }
+                        // Handle processing items based on age
+                        if (item.status === 'processing') {
+                            const age = now - item.createdAt;
+                            // Very old items (app was closed) - mark as failed
+                            if (age > STALE_THRESHOLD) {
+                                return { ...item, status: 'failed', error: 'Generation interrupted - please retry' };
+                            }
+                            // Medium-age items (tab was switched) - likely completed but we lost track
+                            // Mark as failed since we can't verify the result without backend check
+                            if (age > IN_FLIGHT_THRESHOLD) {
+                                return {
+                                    ...item,
+                                    status: 'failed',
+                                    error: 'Generation may have completed - check your gallery or retry'
+                                };
+                            }
+                        }
+                        // Keep recent processing items as-is (still in-flight)
+                        return item;
+                    });
+                }
+            }
+        }
+        catch (error) {
+            console.error('Failed to load imagine items from localStorage:', error);
+        }
+        return [];
+    });
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [upscalingId, setUpscalingId] = useState(null);
+    // Selection state for Lightbox (Grok-style detail view)
+    const [selectedImage, setSelectedImage] = useState(null);
+    const [showDetails, setShowDetails] = useState(false); // Immersive mode: details hidden by default
+    const [lightboxPrompt, setLightboxPrompt] = useState(''); // Editable prompt in lightbox
+    const [isRegenerating, setIsRegenerating] = useState(false); // Regenerating from lightbox
+    const [regenProgress, setRegenProgress] = useState(null); // Progress 0-100 during regen
+    const [regenAbortController, setRegenAbortController] = useState(null); // For cancellation
+    // Fullscreen + navigation (additive)
+    const lightboxRef = useRef(null);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const [fullscreenStretch, setFullscreenStretch] = useState(false); // false = fit (contain), true = fill (cover/crop)
+    // Track selected index for arrow navigation
+    const selectedIndex = useMemo(() => {
+        if (!selectedImage)
+            return -1;
+        return items.findIndex((it) => it.id === selectedImage.id);
+    }, [items, selectedImage]);
+    // Detect newly completed images for slideshow
+    const prevItemsRef = useRef(items);
+    const [aspect, setAspect] = useState('1:1');
+    const [showAspectPanel, setShowAspectPanel] = useState(false);
+    const [compatibleAspectRatios, setCompatibleAspectRatios] = useState([]);
+    const [defaultAspectRatio, setDefaultAspectRatio] = useState('1:1');
+    // Number of images to generate per request (1, 2, or 4 like Grok)
+    const [numImages, setNumImages] = useState(1);
+    // Game Mode state
+    const [gameMode, setGameMode] = useState(false);
+    const [useGlobalLLMForVariations, setUseGlobalLLMForVariations] = useState(false);
+    const [gameSessionId, setGameSessionId] = useState(null);
+    const [gameStrength, setGameStrength] = useState(0.65);
+    const [spicyStrength, setSpicyStrength] = useState(0.3); // Spicy strength (only when nsfwMode + gameMode)
+    const [gameLocks, setGameLocks] = useState({
+        lock_world: true,
+        lock_style: true,
+        lock_subject_type: true,
+        lock_main_character: false,
+        lock_palette: false,
+        lock_time_of_day: false,
+    });
+    const [isAutoGenerating, setIsAutoGenerating] = useState(false);
+    const [showGamePanel, setShowGamePanel] = useState(false);
+    const [gameVariations, setGameVariations] = useState([]);
+    const [showVariationHistory, setShowVariationHistory] = useState(false);
+    const autoGenerateRef = useRef(false);
+    // Advanced Settings Panel state
+    const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+    const [advancedMode, setAdvancedMode] = useState(false);
+    const [customSteps, setCustomSteps] = useState(30);
+    const [customCfg, setCustomCfg] = useState(5.5);
+    const [customDenoise, setCustomDenoise] = useState(0.55);
+    const [seedLock, setSeedLock] = useState(false);
+    const [customSeed, setCustomSeed] = useState(0);
+    const [useControlNet, setUseControlNet] = useState(false);
+    const [cnStrength, setCnStrength] = useState(1.0);
+    // Resolution override state (preset-based, additive — only dims change)
+    const [resolutionTiers, setResolutionTiers] = useState([]);
+    const [selectedResTier, setSelectedResTier] = useState(''); // empty = current preset (no override)
+    const [resolutionMode, setResolutionMode] = useState('auto'); // auto = preset default, override = show grid
+    const [presetResolutions, setPresetResolutions] = useState({}); // { aspect: { preset: {w,h} } }
+    const [presetUiLabels, setPresetUiLabels] = useState({}); // { preset: { label } }
+    // Reference Image state (for img2img similar generation)
+    const referenceInputRef = useRef(null);
+    const promptInputRef = useRef(null);
+    const [referenceUrl, setReferenceUrl] = useState(null);
+    const [referenceStrength, setReferenceStrength] = useState(0.35); // 0=very similar, 1=more creative
+    const [isUploadingReference, setIsUploadingReference] = useState(false);
+    // Ref for auto-scrolling to top when new images are added (Grok-style)
+    const gridStartRef = useRef(null);
+    // Save items to localStorage whenever they change (user-scoped slot).
+    useEffect(() => {
+        try {
+            localStorage.setItem(imagineItemsKey(), JSON.stringify(items));
+        }
+        catch (error) {
+            console.error('Failed to save imagine items to localStorage:', error);
+        }
+    }, [items]);
+    // Fail-closed rendering: when a gallery image fails to load (403/404 from
+    // cross-account or deleted asset URLs), we drop the item from the current
+    // view AND persist the drop so the ghost card doesn't re-appear on next
+    // mount. This complements server-side ownership checks on /files/.
+    const [brokenIds, setBrokenIds] = useState(() => new Set());
+    const markImageBroken = useCallback((id) => {
+        setBrokenIds((prev) => {
+            if (prev.has(id))
+                return prev;
+            const next = new Set(prev);
+            next.add(id);
+            return next;
+        });
+        setItems((prev) => prev.filter((it) => it.id !== id));
+    }, []);
+    // On mount, periodically check localStorage for items that completed while unmounted
+    // This handles the race condition where API completes after component remounts
+    useEffect(() => {
+        const processingItems = items.filter(item => item.status === 'processing');
+        if (processingItems.length === 0)
+            return;
+        // Check localStorage for updates and sync state
+        const syncFromLocalStorage = () => {
+            try {
+                const stored = localStorage.getItem(imagineItemsKey());
+                if (!stored)
+                    return false;
+                const storedItems = JSON.parse(stored);
+                const storedMap = new Map(storedItems.map(item => [item.id, item]));
+                let hasUpdates = false;
+                setItems(prev => {
+                    const updated = prev.map(item => {
+                        if (item.status !== 'processing')
+                            return item;
+                        // Check if this item was completed in localStorage (by another instance)
+                        const storedItem = storedMap.get(item.id);
+                        if (storedItem && storedItem.status === 'done' && storedItem.url) {
+                            console.log('[Imagine] Synced completed item from localStorage:', item.id);
+                            hasUpdates = true;
+                            return storedItem;
+                        }
+                        // Check if this processing item is now too old
+                        const age = Date.now() - item.createdAt;
+                        if (age > 15 * 1000) {
+                            hasUpdates = true;
+                            return {
+                                ...item,
+                                status: 'failed',
+                                error: 'Generation may have completed - check your gallery or retry'
+                            };
+                        }
+                        // Continue progress simulation
+                        return {
+                            ...item,
+                            progress: Math.min(90, (item.progress || 0) + Math.random() * 5 + 1)
+                        };
+                    });
+                    return updated;
+                });
+                return hasUpdates;
+            }
+            catch (e) {
+                console.error('[Imagine] Failed to sync from localStorage:', e);
+                return false;
+            }
+        };
+        // Run sync check periodically
+        const progressInterval = setInterval(() => {
+            syncFromLocalStorage();
+        }, 500);
+        // Also run immediately on mount
+        syncFromLocalStorage();
+        return () => clearInterval(progressInterval);
+        // Only run on mount (empty deps) - items will be stale but that's intentional
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    // Scroll to top when entering Imagine to avoid "empty space above" if previously scrolled
+    useEffect(() => {
+        gridStartRef.current?.scrollIntoView({ block: 'start' });
+    }, []);
+    // Initialize lightbox prompt when selecting an image
+    useEffect(() => {
+        if (selectedImage) {
+            setLightboxPrompt(selectedImage.prompt);
+        }
+    }, [selectedImage]);
+    // PATCH B — Track fullscreen state
+    useEffect(() => {
+        const onFsChange = () => {
+            setIsFullscreen(Boolean(document.fullscreenElement));
+        };
+        document.addEventListener("fullscreenchange", onFsChange);
+        return () => document.removeEventListener("fullscreenchange", onFsChange);
+    }, []);
+    // PATCH C — Keyboard navigation (ArrowLeft/Right + Esc)
+    useEffect(() => {
+        if (!selectedImage)
+            return;
+        const onKeyDown = (e) => {
+            // Don't hijack typing in inputs
+            const tag = e.target?.tagName?.toLowerCase();
+            if (tag === "input" || tag === "textarea")
+                return;
+            if (e.key === "Escape") {
+                setSelectedImage(null);
+                setShowDetails(false);
+                if (document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => { });
+                }
+                return;
+            }
+            if (e.key === "ArrowLeft") {
+                e.preventDefault();
+                const i = selectedIndex;
+                if (i >= 0 && i < items.length - 1) {
+                    // Items are newest-first; ArrowLeft = older
+                    setSelectedImage(items[i + 1]);
+                }
+            }
+            if (e.key === "ArrowRight") {
+                e.preventDefault();
+                const i = selectedIndex;
+                if (i > 0) {
+                    // ArrowRight = newer
+                    setSelectedImage(items[i - 1]);
+                }
+            }
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [selectedImage, selectedIndex, items]);
+    // PATCH D — Slideshow auto-advance (Game Mode + Auto + Fullscreen)
+    useEffect(() => {
+        if (!selectedImage) {
+            prevItemsRef.current = items;
+            return;
+        }
+        if (!(gameMode && isAutoGenerating && isFullscreen)) {
+            prevItemsRef.current = items;
+            return;
+        }
+        const prev = prevItemsRef.current;
+        prevItemsRef.current = items;
+        // Find newest DONE image now vs before
+        const newestNow = items.find((it) => it.status === "done" && it.url);
+        if (!newestNow)
+            return;
+        const newestPrev = prev.find((it) => it.status === "done" && it.url);
+        // If there was no previous done, or newest changed -> advance
+        if (!newestPrev || newestPrev.id !== newestNow.id) {
+            setSelectedImage(newestNow);
+        }
+    }, [items, selectedImage, gameMode, isAutoGenerating, isFullscreen]);
+    // Helper function to get preview dimensions for aspect ratio
+    const getPreviewDimension = (ratioId, dim) => {
+        const previewMap = {
+            '1:1': { width: 24, height: 24 },
+            '4:3': { width: 32, height: 24 },
+            '3:4': { width: 24, height: 32 },
+            '16:9': { width: 42, height: 24 },
+            '9:16': { width: 24, height: 42 },
+        };
+        return previewMap[ratioId]?.[dim] ?? 24;
+    };
+    // Fetch compatible aspect ratios when model changes
+    useEffect(() => {
+        const fetchImagePresets = async () => {
+            try {
+                const base = props.backendUrl.replace(/\/+$/, '');
+                // Detect model architecture from model filename
+                const model = props.modelImages || '';
+                let arch = 'sdxl'; // default
+                const lowerModel = model.toLowerCase();
+                if (lowerModel.includes('flux') && lowerModel.includes('schnell')) {
+                    arch = 'flux_schnell';
+                }
+                else if (lowerModel.includes('flux')) {
+                    arch = 'flux_dev';
+                }
+                else if (lowerModel.includes('sdxl') || lowerModel.includes('xl') || lowerModel.includes('pony')) {
+                    arch = 'sdxl';
+                }
+                else if (lowerModel.includes('sd15') || lowerModel.includes('dreamshaper') || lowerModel.includes('realistic')) {
+                    arch = 'sd15';
+                }
+                const url = `${base}/image-presets?model=${arch}&preset=${props.imgPreset || 'med'}`;
+                const res = await fetch(url, {
+                    headers: authKey ? { 'x-api-key': authKey } : undefined,
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.compatible_aspect_ratios && Array.isArray(data.compatible_aspect_ratios)) {
+                        const mappedRatios = data.compatible_aspect_ratios.map((ar) => ({
+                            id: ar.id,
+                            label: ar.label?.replace(/\s*\([^)]*\)/g, '') || ar.id,
+                            previewW: getPreviewDimension(ar.id, 'width'),
+                            previewH: getPreviewDimension(ar.id, 'height'),
+                            dimensions: ar.dimensions,
+                        }));
+                        setCompatibleAspectRatios(mappedRatios);
+                        // Set default aspect ratio from API
+                        if (data.default_aspect_ratio) {
+                            setDefaultAspectRatio(data.default_aspect_ratio);
+                            // Only change current aspect if it's not in the compatible list
+                            if (!mappedRatios.find(r => r.id === aspect)) {
+                                setAspect(data.default_aspect_ratio);
+                            }
+                        }
+                    }
+                    // Store preset resolutions for resolution grid in Advanced Controls
+                    if (data.preset_resolutions) {
+                        setPresetResolutions(data.preset_resolutions);
+                    }
+                    if (data.preset_ui) {
+                        setPresetUiLabels(data.preset_ui);
+                    }
+                }
+            }
+            catch (err) {
+                console.error('[Imagine] Failed to fetch image presets:', err);
+                // Fallback to default aspect ratios
+                const fallbackRatios = ASPECT_RATIOS.map(r => ({
+                    id: r.label,
+                    label: r.label,
+                    previewW: r.previewW,
+                    previewH: r.previewH,
+                    dimensions: { width: r.genW, height: r.genH },
+                }));
+                setCompatibleAspectRatios(fallbackRatios);
+            }
+        };
+        fetchImagePresets();
+    }, [props.modelImages, props.imgPreset, props.backendUrl, authKey]);
+    // Recompute resolution tiers when aspect ratio changes
+    // Uses preset_resolutions from the API (computed from model_config.get_model_settings)
+    useEffect(() => {
+        const arPresets = presetResolutions[aspect];
+        if (!arPresets || Object.keys(arPresets).length === 0) {
+            setResolutionTiers([]);
+            return;
+        }
+        const tierOrder = ['low', 'med', 'high', 'ultra'];
+        const mapped = tierOrder
+            .filter((tid) => arPresets[tid]?.width && arPresets[tid]?.height)
+            .map((tid) => ({
+            id: tid,
+            label: presetUiLabels[tid]?.label || tid,
+            width: arPresets[tid].width,
+            height: arPresets[tid].height,
+        }));
+        setResolutionTiers(mapped);
+        // If current selection is no longer valid, reset to auto
+        if (resolutionMode === 'override' && selectedResTier && !mapped.find((t) => t.id === selectedResTier)) {
+            setSelectedResTier('');
+            setResolutionMode('auto');
+        }
+    }, [aspect, presetResolutions, presetUiLabels]); // eslint-disable-line react-hooks/exhaustive-deps
+    const aspectObj = useMemo(() => {
+        // Prefer compatible ratios from API, fallback to static list
+        if (compatibleAspectRatios.length > 0) {
+            const found = compatibleAspectRatios.find((a) => a.id === aspect);
+            if (found) {
+                return {
+                    label: found.id,
+                    previewW: found.previewW,
+                    previewH: found.previewH,
+                    genW: found.dimensions?.width || 1024,
+                    genH: found.dimensions?.height || 1024,
+                };
+            }
+        }
+        return ASPECT_RATIOS.find((a) => a.label === aspect) || ASPECT_RATIOS[0];
+    }, [aspect, compatibleAspectRatios]);
+    // Upload reference image handler
+    const handleUploadReference = useCallback(async (file) => {
+        setIsUploadingReference(true);
+        try {
+            const base = props.backendUrl.replace(/\/+$/, '');
+            const url = `${base}/upload`;
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: authKey ? { 'x-api-key': authKey } : undefined,
+                body: fd,
+            });
+            if (!res.ok) {
+                const text = await res.text().catch(() => `HTTP ${res.status}`);
+                throw new Error(text);
+            }
+            const data = await res.json();
+            // Backend typically returns { url: "http://.../files/..." }
+            const imageUrl = data?.url || data?.file_url || data?.media_url;
+            if (!imageUrl) {
+                throw new Error('Upload succeeded but no URL returned');
+            }
+            setReferenceUrl(imageUrl);
+        }
+        catch (err) {
+            console.error('Reference upload failed:', err);
+            alert(`Failed to upload reference: ${err.message || err}`);
+        }
+        finally {
+            setIsUploadingReference(false);
+        }
+    }, [props.backendUrl, authKey]);
+    const handleGenerate = useCallback(async (overridePrompt) => {
+        const t = (overridePrompt || prompt).trim();
+        // Allow empty prompt when reference image is uploaded
+        if (!t && !referenceUrl)
+            return;
+        if (isGenerating)
+            return;
+        // Use default prompt for reference-only generation
+        const effectivePrompt = t || 'similar image';
+        setIsGenerating(true);
+        setShowAspectPanel(false);
+        setShowGamePanel(false);
+        setShowAdvancedSettings(false);
+        // Create placeholder items IMMEDIATELY (persists across tab switches)
+        const placeholderIds = [];
+        const now = Date.now();
+        for (let i = 0; i < numImages; i++) {
+            placeholderIds.push(`${now}-${Math.random().toString(16).slice(2)}-${i}`);
+        }
+        const placeholders = placeholderIds.map(id => ({
+            id,
+            status: 'processing',
+            progress: 0,
+            createdAt: now,
+            prompt: effectivePrompt,
+            width: props.imgWidth,
+            height: props.imgHeight,
+        }));
+        // Add placeholders to items (will be persisted to localStorage)
+        setItems((prev) => [...placeholders, ...prev]);
+        // Only clear prompt if not in auto-generate mode
+        if (!autoGenerateRef.current) {
+            setPrompt('');
+        }
+        // Auto-scroll to show new placeholders
+        setTimeout(() => {
+            gridStartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+        // Simulate progress while waiting for API
+        const progressInterval = setInterval(() => {
+            setItems(prev => prev.map(item => placeholderIds.includes(item.id) && item.status === 'processing'
+                ? { ...item, progress: Math.min(90, (item.progress || 0) + Math.random() * 8 + 2) }
+                : item));
+        }, 500);
+        try {
+            // IMPORTANT: Send aspect ratio to backend instead of hardcoded dimensions.
+            // The backend's Dynamic Preset System will calculate correct dimensions
+            // based on the model architecture (SD1.5 vs SDXL vs Flux).
+            // Only send explicit width/height if user set them in settings.
+            const hasExplicitDimensions = props.imgWidth && props.imgWidth > 0 && props.imgHeight && props.imgHeight > 0;
+            // Resolution tier override: only apply when user explicitly chose Override mode
+            const resTierOverride = resolutionMode === 'override' && selectedResTier
+                ? resolutionTiers.find((t) => t.id === selectedResTier)
+                : null;
+            // Map 'comfyui' provider to 'ollama' for prompt refinement
+            // ComfyUI is used automatically for actual image generation
+            const llmProvider = props.providerImages === 'comfyui' ? 'ollama' : props.providerImages;
+            // Determine the LLM settings for prompt refinement and Game Mode
+            // Use chat provider settings if available, otherwise fall back to ollama defaults
+            const chatProvider = props.providerChat || 'ollama';
+            const chatBaseUrl = props.baseUrlChat || 'http://localhost:11434';
+            const chatModel = props.modelChat || 'llama3:8b';
+            const requestBody = {
+                message: /^\s*(imagine|generate|create|draw|make)\b/i.test(effectivePrompt) ? effectivePrompt : `imagine ${effectivePrompt}`,
+                mode: 'imagine',
+                // Provider override fields for image generation
+                provider: llmProvider,
+                provider_base_url: props.baseUrlImages || undefined,
+                provider_model: props.modelImages || undefined,
+                // LLM settings for prompt refinement and Game Mode variation generation
+                // These are separate from the image provider settings
+                ollama_base_url: chatProvider === 'ollama' ? chatBaseUrl : undefined,
+                ollama_model: chatProvider === 'ollama' ? chatModel : undefined,
+                llm_base_url: chatProvider !== 'ollama' ? chatBaseUrl : undefined,
+                llm_model: chatProvider !== 'ollama' ? chatModel : undefined,
+                // Image generation params
+                // Send aspect ratio for backend to calculate model-appropriate dimensions
+                // Only send explicit width/height if user set them in settings (not from aspect picker)
+                imgAspectRatio: aspect, // e.g., "16:9", "1:1", etc.
+                // Resolution override: tier selection > explicit props > auto from preset
+                imgWidth: resTierOverride ? resTierOverride.width : hasExplicitDimensions ? props.imgWidth : undefined,
+                imgHeight: resTierOverride ? resTierOverride.height : hasExplicitDimensions ? props.imgHeight : undefined,
+                imgResolutionOverride: resTierOverride ? true : undefined,
+                // Use custom settings if advanced mode is enabled, otherwise use props
+                imgSteps: advancedMode ? customSteps : props.imgSteps,
+                imgCfg: advancedMode ? customCfg : props.imgCfg,
+                imgSeed: advancedMode && seedLock ? customSeed : props.imgSeed,
+                imgDenoise: advancedMode ? customDenoise : undefined,
+                imgPreset: props.imgPreset || 'med', // Send preset for architecture-aware settings
+                imgModel: props.modelImages,
+                nsfwMode: props.nsfwMode,
+                promptRefinement: props.promptRefinement ?? true,
+                imgBatchSize: numImages,
+                // ControlNet settings
+                useControlNet: advancedMode ? useControlNet : undefined,
+                cnStrength: advancedMode && useControlNet ? cnStrength : undefined,
+                // Reference image for img2img (similar image generation)
+                imgReference: referenceUrl ?? undefined,
+                imgRefStrength: referenceUrl ? referenceStrength : undefined,
+            };
+            // Add Game Mode parameters if enabled
+            if (gameMode) {
+                requestBody.gameMode = true;
+                requestBody.gameSessionId = gameSessionId;
+                requestBody.gameStrength = gameStrength;
+                requestBody.gameLocks = gameLocks;
+                requestBody.gameUseGlobalLLMForVariations = useGlobalLLMForVariations;
+                // Only send spicyStrength if nsfwMode is also enabled
+                if (props.nsfwMode) {
+                    requestBody.gameSpicyStrength = spicyStrength;
+                }
+            }
+            // Log the aspect ratio being sent for debugging
+            console.log('[Imagine] Generating with aspect ratio:', aspect, '| Request body imgAspectRatio:', requestBody.imgAspectRatio);
+            const data = await postJson(props.backendUrl, '/chat', requestBody, authKey);
+            const urls = data?.media?.images || [];
+            if (urls.length === 0) {
+                throw new Error(data?.message || data?.text || 'No images returned by backend.');
+            }
+            // Handle Game Mode response
+            if (gameMode && data?.media?.game) {
+                const gameData = data.media.game;
+                if (gameData.session_id) {
+                    setGameSessionId(gameData.session_id);
+                }
+                if (gameData.variation_prompt) {
+                    setGameVariations((prev) => [
+                        {
+                            prompt: gameData.variation_prompt,
+                            tags: gameData.tags || {},
+                            timestamp: Date.now(),
+                        },
+                        ...prev,
+                    ].slice(0, 50));
+                }
+            }
+            const now = Date.now();
+            // Use the actual refined/final prompt that was sent to the image model
+            // This is the real prompt that generated the image, so users can reproduce it
+            // Priority: final_prompt (refined) > variation_prompt (game mode) > original user input
+            const finalPrompt = data?.media?.final_prompt
+                || (gameMode && data?.media?.game?.variation_prompt)
+                || t;
+            clearInterval(progressInterval);
+            // Extract generation parameters for reproducibility
+            const seeds = data?.media?.seeds || (data?.media?.seed ? [data.media.seed] : []);
+            const genWidth = data?.media?.width;
+            const genHeight = data?.media?.height;
+            const genSteps = data?.media?.steps;
+            const genCfg = data?.media?.cfg;
+            const genModel = data?.media?.model;
+            // Build completed items
+            const completedItemsMap = new Map();
+            placeholderIds.forEach((placeholderId, index) => {
+                const imageUrl = urls[index];
+                const placeholder = placeholders[index];
+                if (imageUrl) {
+                    completedItemsMap.set(placeholderId, {
+                        ...placeholder,
+                        status: 'done',
+                        progress: 100,
+                        url: imageUrl,
+                        prompt: finalPrompt,
+                        seed: seeds[index] ?? seeds[0],
+                        width: genWidth,
+                        height: genHeight,
+                        steps: genSteps,
+                        cfg: genCfg,
+                        model: genModel,
+                    });
+                }
+                else {
+                    completedItemsMap.set(placeholderId, {
+                        ...placeholder,
+                        status: 'failed',
+                        error: 'No image returned',
+                    });
+                }
+            });
+            // CRITICAL: Directly persist to localStorage BEFORE setItems
+            // This ensures the result is saved even if component unmounts between
+            // API response and React's state update
+            try {
+                const lsKey = imagineItemsKey();
+                const stored = localStorage.getItem(lsKey);
+                const currentItems = stored ? JSON.parse(stored) : [];
+                const updatedItems = currentItems.map(item => {
+                    const completed = completedItemsMap.get(item.id);
+                    return completed || item;
+                }).slice(0, 100);
+                localStorage.setItem(lsKey, JSON.stringify(updatedItems));
+                console.log('[Imagine] Persisted completed images to localStorage:', Array.from(completedItemsMap.keys()));
+            }
+            catch (e) {
+                console.error('[Imagine] Failed to persist to localStorage:', e);
+            }
+            // Update React state (may not process if component unmounted, but localStorage is already updated)
+            setItems(prev => prev.map(item => {
+                const completed = completedItemsMap.get(item.id);
+                return completed || item;
+            }).slice(0, 100));
+        }
+        catch (err) {
+            clearInterval(progressInterval);
+            console.error('Generation failed:', err);
+            // Build failed items
+            const failedItemsMap = new Map();
+            placeholders.forEach(placeholder => {
+                failedItemsMap.set(placeholder.id, {
+                    ...placeholder,
+                    status: 'failed',
+                    error: err.message || 'Generation failed'
+                });
+            });
+            // CRITICAL: Directly persist failure to localStorage
+            try {
+                const lsKey = imagineItemsKey();
+                const stored = localStorage.getItem(lsKey);
+                const currentItems = stored ? JSON.parse(stored) : [];
+                const updatedItems = currentItems.map(item => {
+                    const failed = failedItemsMap.get(item.id);
+                    return failed || item;
+                });
+                localStorage.setItem(lsKey, JSON.stringify(updatedItems));
+            }
+            catch (e) {
+                console.error('Failed to persist to localStorage:', e);
+            }
+            // Update React state
+            setItems(prev => prev.map(item => {
+                const failed = failedItemsMap.get(item.id);
+                return failed || item;
+            }));
+            // Stop auto-generation on error
+            autoGenerateRef.current = false;
+            setIsAutoGenerating(false);
+        }
+        finally {
+            setIsGenerating(false);
+        }
+    }, [prompt, isGenerating, aspect, props, authKey, gameMode, useGlobalLLMForVariations, gameSessionId, gameStrength, spicyStrength, gameLocks, numImages, advancedMode, customSteps, customCfg, customDenoise, seedLock, customSeed, useControlNet, cnStrength, referenceUrl, referenceStrength, selectedResTier, resolutionTiers]);
+    // Auto-generation loop for Game Mode
+    useEffect(() => {
+        if (isAutoGenerating && gameMode && !isGenerating && prompt.trim()) {
+            autoGenerateRef.current = true;
+            const timeoutId = setTimeout(() => {
+                if (autoGenerateRef.current) {
+                    handleGenerate(prompt);
+                }
+            }, 500); // Small delay between generations
+            return () => clearTimeout(timeoutId);
+        }
+    }, [isAutoGenerating, gameMode, isGenerating, prompt, handleGenerate]);
+    const toggleAutoGenerate = () => {
+        if (isAutoGenerating) {
+            autoGenerateRef.current = false;
+            setIsAutoGenerating(false);
+        }
+        else {
+            if (!prompt.trim()) {
+                alert('Please enter a base prompt first');
+                return;
+            }
+            autoGenerateRef.current = true;
+            setIsAutoGenerating(true);
+            handleGenerate(prompt);
+        }
+    };
+    const resetGameSession = () => {
+        setGameSessionId(null);
+        setGameVariations([]);
+    };
+    const handleDelete = async (item, e) => {
+        if (e) {
+            e.stopPropagation();
+        }
+        // Confirm deletion
+        if (!confirm('Delete this image? This will remove it from your gallery and database.')) {
+            return;
+        }
+        try {
+            // Only delete from backend if item has a URL (completed items)
+            // Failed/processing items only exist locally
+            if (item.url) {
+                await deleteJson(props.backendUrl, '/media/image', { image_url: item.url }, authKey);
+            }
+            // Remove from local state (and localStorage via useEffect)
+            setItems((prev) => prev.filter((i) => i.id !== item.id));
+            // Close lightbox if this image was selected
+            if (selectedImage?.id === item.id) {
+                setSelectedImage(null);
+            }
+        }
+        catch (err) {
+            alert(`Failed to delete image: ${err.message || err}`);
+        }
+    };
+    // Grok-style in-place regeneration: keeps lightbox open, shows progress overlay
+    const handleRegenerateInPlace = useCallback(async () => {
+        if (!selectedImage || !lightboxPrompt.trim() || isRegenerating)
+            return;
+        const abortController = new AbortController();
+        setRegenAbortController(abortController);
+        setIsRegenerating(true);
+        setRegenProgress(0);
+        // Simulate progress while waiting for sync API
+        const progressInterval = setInterval(() => {
+            setRegenProgress(prev => {
+                if (prev === null)
+                    return 0;
+                if (prev >= 90)
+                    return prev;
+                return Math.min(90, prev + Math.random() * 10 + 3);
+            });
+        }, 400);
+        try {
+            const requestBody = {
+                message: lightboxPrompt,
+                mode: 'imagine',
+                numImages: 1,
+                imgWidth: selectedImage.width || 1024,
+                imgHeight: selectedImage.height || 1024,
+                ...(advancedMode && {
+                    imgSteps: customSteps,
+                    imgCfg: customCfg,
+                    ...(seedLock && { imgSeed: customSeed }),
+                }),
+                provider: props.providerImages === 'comfyui' ? 'ollama' : props.providerImages,
+                provider_base_url: props.baseUrlImages || undefined,
+                provider_model: props.modelImages || undefined,
+                ollama_base_url: props.providerChat === 'ollama' ? props.baseUrlChat : undefined,
+                ollama_model: props.providerChat === 'ollama' ? props.modelChat : undefined,
+                nsfwMode: props.nsfwMode,
+                promptRefinement: props.promptRefinement ?? true,
+            };
+            const data = await postJson(props.backendUrl, '/chat', requestBody, authKey);
+            if (abortController.signal.aborted)
+                return;
+            if (!data.media?.images?.[0]) {
+                throw new Error(data.message || data.text || 'No image returned');
+            }
+            setRegenProgress(100);
+            const newItem = {
+                id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                status: 'done',
+                url: data.media.images[0],
+                createdAt: Date.now(),
+                prompt: data.media.final_prompt || lightboxPrompt,
+                seed: data.media.seed || data.media.seeds?.[0],
+                width: data.media.width || selectedImage.width,
+                height: data.media.height || selectedImage.height,
+                steps: data.media.steps || (advancedMode ? customSteps : undefined),
+                cfg: data.media.cfg || (advancedMode ? customCfg : undefined),
+                model: data.media.model || props.modelImages,
+            };
+            // Update selected image in-place (Grok behavior)
+            setSelectedImage(newItem);
+            setLightboxPrompt(newItem.prompt);
+            // Also prepend to items list
+            setItems(prev => [newItem, ...prev]);
+            await new Promise(r => setTimeout(r, 300));
+        }
+        catch (err) {
+            if (abortController.signal.aborted)
+                return;
+            console.error('Regeneration failed:', err);
+            alert(`Regeneration failed: ${err.message || err}`);
+        }
+        finally {
+            clearInterval(progressInterval);
+            setIsRegenerating(false);
+            setRegenProgress(null);
+            setRegenAbortController(null);
+        }
+    }, [selectedImage, lightboxPrompt, isRegenerating, advancedMode, customSteps, customCfg, seedLock, customSeed, props, authKey]);
+    // Cancel in-place regeneration
+    const handleCancelRegeneration = useCallback(() => {
+        if (regenAbortController) {
+            regenAbortController.abort();
+            setIsRegenerating(false);
+            setRegenProgress(null);
+            setRegenAbortController(null);
+        }
+    }, [regenAbortController]);
+    const handleUpscale = async (item, e) => {
+        if (e) {
+            e.stopPropagation();
+        }
+        if (upscalingId) {
+            alert('Already upscaling an image. Please wait.');
+            return;
+        }
+        try {
+            if (!item.url) {
+                alert('Cannot upscale: image URL not available');
+                return;
+            }
+            setUpscalingId(item.id);
+            const result = await upscaleImage({
+                backendUrl: props.backendUrl,
+                apiKey: authKey,
+                imageUrl: item.url,
+                scale: 2,
+                model: '4x-UltraSharp.pth',
+            });
+            const upscaledUrl = result?.media?.images?.[0];
+            if (upscaledUrl) {
+                // Add upscaled image to gallery (non-destructive - keeps original)
+                const newItem = {
+                    id: `upscale-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                    status: 'done',
+                    url: upscaledUrl,
+                    createdAt: Date.now(),
+                    prompt: `[Upscaled 2x] ${item.prompt}`,
+                    seed: item.seed,
+                    width: (item.width ?? 1024) * 2,
+                    height: (item.height ?? 1024) * 2,
+                    steps: item.steps,
+                    cfg: item.cfg,
+                    model: item.model,
+                };
+                setItems((prev) => [newItem, ...prev]);
+            }
+            else {
+                alert('Upscale completed but no image was returned.');
+            }
+        }
+        catch (err) {
+            alert(`Failed to upscale image: ${err.message || err}`);
+        }
+        finally {
+            setUpscalingId(null);
+        }
+    };
+    return (<div className="h-full w-full bg-black text-white font-sans overflow-hidden flex flex-col relative">
+      {/* Header overlay */}
+      <div className="absolute top-0 left-0 right-0 z-20 flex justify-between items-center px-6 py-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
+        <div className="pointer-events-auto flex items-center gap-3">
+          {/* Keep HomePilot brand mark vibe (subtle, not a different product logo) */}
+          <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
+            <Wand2 size={16} className="text-white"/>
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-white leading-tight">HomePilot</div>
+            <div className="text-xs text-white/50 leading-tight">Imagine</div>
+          </div>
+        </div>
+
+        <div className="pointer-events-auto flex items-center gap-2">
+          {/* Game Mode Toggle */}
+          <button className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border ${gameMode
+            ? 'bg-purple-500/20 border-purple-500/50 text-purple-300'
+            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'}`} type="button" onClick={() => {
+            setGameMode(!gameMode);
+            if (!gameMode) {
+                setShowGamePanel(true);
+            }
+        }}>
+            <Gamepad2 size={16}/>
+            <span>Game Mode {gameMode ? 'ON' : 'OFF'}</span>
+          </button>
+
+          {/* Variation History */}
+          {gameMode && gameVariations.length > 0 && (<button className="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 px-4 py-2 rounded-full text-sm font-semibold transition-all" type="button" onClick={() => setShowVariationHistory(true)}>
+              <History size={16} className="text-white/70"/>
+              <span>{gameVariations.length}</span>
+            </button>)}
+
+          {/* Reference Upload Button */}
+          <input ref={referenceInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f)
+                handleUploadReference(f);
+            e.currentTarget.value = '';
+        }}/>
+          <button className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition-all border ${referenceUrl
+            ? 'bg-purple-500/20 border-purple-500/50 text-purple-300'
+            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'}`} type="button" onClick={() => referenceInputRef.current?.click()} disabled={isUploadingReference}>
+            {isUploadingReference ? (<>
+                <span className="animate-spin">⏳</span>
+                <span>Uploading...</span>
+              </>) : (<>
+                <Upload size={16}/>
+                <span>{referenceUrl ? 'Change reference' : 'Upload reference'}</span>
+              </>)}
+          </button>
+
+          {/* Advanced Settings Toggle */}
+          <button className={`p-2 rounded-full border transition-all ${showAdvancedSettings
+            ? 'bg-white text-black border-white'
+            : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/70'}`} type="button" onClick={() => setShowAdvancedSettings(!showAdvancedSettings)} title="Advanced Settings">
+            <Settings2 size={18}/>
+          </button>
+        </div>
+      </div>
+
+      {/* Game Mode Settings Panel */}
+      {showGamePanel && gameMode && (<div className="absolute top-20 right-6 z-30 bg-black/95 border border-white/10 rounded-2xl p-5 shadow-2xl w-80 backdrop-blur-xl">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Gamepad2 size={16} className="text-purple-400"/>
+              Game Mode Settings
+            </h3>
+            <button type="button" onClick={() => setShowGamePanel(false)} className="text-white/50 hover:text-white">
+              <X size={16}/>
+            </button>
+          </div>
+
+          {/* Variation Strength */}
+          <div className="mb-4">
+            <label className="text-[11px] font-bold text-white/50 uppercase tracking-wider mb-2 block">
+              Variation Strength: {gameStrength.toFixed(2)}
+            </label>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-white/40">Subtle</span>
+              <input type="range" min="0" max="1" step="0.05" value={gameStrength} onChange={(e) => setGameStrength(parseFloat(e.target.value))} className="flex-1 h-2 bg-white/10 rounded-full appearance-none cursor-pointer accent-purple-500"/>
+              <span className="text-xs text-white/40">Wild</span>
+            </div>
+          </div>
+
+          {/* Use Global Chat Model */}
+          <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+            <span className="text-sm text-white/80">Use Chat Model</span>
+            <button onClick={() => setUseGlobalLLMForVariations(!useGlobalLLMForVariations)} className={`w-10 h-5 rounded-full transition-colors relative ${useGlobalLLMForVariations ? 'bg-purple-500' : 'bg-white/20'}`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${useGlobalLLMForVariations ? 'translate-x-5' : 'translate-x-0.5'}`}/>
+            </button>
+          </div>
+
+          {/* Spicy Strength - Only visible when nsfwMode is enabled */}
+          {props.nsfwMode && (<div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-xs text-red-300 font-semibold">🔥 Spicy Strength</span>
+                <span className="text-xs text-white/60">{spicyStrength.toFixed(2)}</span>
+              </div>
+              <input type="range" min="0" max="1" step="0.1" value={spicyStrength} onChange={(e) => setSpicyStrength(parseFloat(e.target.value))} className="w-full h-2 bg-red-500/20 rounded-full appearance-none cursor-pointer accent-red-500"/>
+              <div className="flex justify-between text-[10px] text-white/30 mt-1">
+                <span>Tasteful</span>
+                <span>Bold</span>
+              </div>
+            </div>)}
+
+          {/* Lock Settings */}
+          <div className="mb-4">
+            <label className="text-[11px] font-bold text-white/50 uppercase tracking-wider mb-2 block">
+              Consistency Locks
+            </label>
+            <div className="space-y-2">
+              {[
+                { key: 'lock_world', label: 'World/Setting' },
+                { key: 'lock_style', label: 'Art Style' },
+                { key: 'lock_subject_type', label: 'Subject Type' },
+                { key: 'lock_main_character', label: 'Main Character' },
+                { key: 'lock_palette', label: 'Color Palette' },
+                { key: 'lock_time_of_day', label: 'Time of Day' },
+            ].map(({ key, label }) => (<button key={key} type="button" className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${gameLocks[key]
+                    ? 'bg-purple-500/20 border border-purple-500/30'
+                    : 'bg-white/5 border border-white/10 hover:bg-white/10'}`} onClick={() => setGameLocks((prev) => ({ ...prev, [key]: !prev[key] }))}>
+                  <span className="text-xs text-white/80">{label}</span>
+                  {gameLocks[key] ? (<Lock size={14} className="text-purple-400"/>) : (<Unlock size={14} className="text-white/40"/>)}
+                </button>))}
+            </div>
+          </div>
+
+          {/* Session Info */}
+          {gameSessionId && (<div className="mb-4 p-3 bg-white/5 rounded-lg">
+              <div className="text-[10px] text-white/40 mb-1">Session ID</div>
+              <div className="text-xs text-white/60 font-mono truncate">{gameSessionId}</div>
+              <button type="button" className="mt-2 text-xs text-red-400 hover:text-red-300" onClick={resetGameSession}>
+                Reset Session
+              </button>
+            </div>)}
+
+          <div className="text-[10px] text-white/40 leading-relaxed">
+            Game Mode generates infinite variations of your prompt. Each generation creates a new variation while
+            maintaining consistency based on your lock settings.
+          </div>
+        </div>)}
+
+      {/* Advanced Settings Panel */}
+      {showAdvancedSettings && (<div className="absolute top-20 right-6 z-30 bg-black/95 border border-white/10 rounded-2xl shadow-2xl w-80 backdrop-blur-xl overflow-hidden">
+          <div className="p-5 border-b border-white/10 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Settings2 size={16}/>
+              PARAMETERS
+            </h3>
+            <button type="button" onClick={() => setShowAdvancedSettings(false)} className="text-white/50 hover:text-white">
+              <X size={16}/>
+            </button>
+          </div>
+
+          <div className="p-5 space-y-6 max-h-[70vh] overflow-y-auto">
+            {/* Advanced Mode Toggle */}
+            <button onClick={() => setAdvancedMode(!advancedMode)} className={`w-full flex items-center justify-between p-3 rounded-xl border transition-colors ${advancedMode
+                ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
+                : 'bg-white/5 border-white/10 text-white/60 hover:border-white/20'}`}>
+              <span className="flex items-center gap-2 font-medium text-sm">
+                <Sliders size={16}/>
+                Advanced Controls
+              </span>
+              {advancedMode ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+            </button>
+
+            {advancedMode && (<div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Resolution: Auto (Preset) vs Override — mirrors Animate.tsx */}
+                {resolutionTiers.length > 0 && (<div className="space-y-2">
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="uppercase tracking-wider text-white/40 font-semibold">Resolution</span>
+                      {(() => {
+                        const currentPresetId = props.imgPreset || 'med';
+                        const activeTier = resolutionTiers.find((t) => t.id === (selectedResTier || currentPresetId));
+                        return activeTier ? (<span className="text-purple-400/60 font-mono text-[10px]">
+                            {activeTier.width}x{activeTier.height}
+                          </span>) : null;
+                    })()}
+                    </div>
+                    <div className="flex gap-1.5 mb-1.5">
+                      <button onClick={() => { setResolutionMode('auto'); setSelectedResTier(''); }} className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${resolutionMode === 'auto'
+                        ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                        : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'}`}>
+                        Auto (Preset)
+                      </button>
+                      <button onClick={() => setResolutionMode('override')} className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${resolutionMode === 'override'
+                        ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                        : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'}`}>
+                        Override
+                      </button>
+                    </div>
+                    {resolutionMode === 'override' && (<div className={`grid gap-1.5 ${resolutionTiers.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
+                        {resolutionTiers.map((t) => {
+                            const currentPresetId = props.imgPreset || 'med';
+                            const isSelected = selectedResTier === t.id;
+                            const isCurrentPreset = t.id === currentPresetId;
+                            return (<button key={t.id} onClick={() => setSelectedResTier(t.id)} title={`${t.width}x${t.height}${isCurrentPreset ? ' (current preset default)' : ''}`} className={`relative py-1.5 px-2 rounded-lg text-xs font-medium transition-colors ${isSelected
+                                    ? 'bg-purple-500/30 text-purple-200 border border-purple-500/50'
+                                    : isCurrentPreset
+                                        ? 'bg-white/8 text-white/80 border border-white/20 ring-1 ring-purple-500/25'
+                                        : 'bg-white/5 text-white/70 border border-white/10 hover:bg-white/10'}`}>
+                              <div className="font-mono text-[10px]">{t.width}x{t.height}</div>
+                              <div className="text-[9px] text-white/40 capitalize">{t.id}</div>
+                              {isCurrentPreset && !isSelected && (<div className="absolute -top-1 -right-1 w-1.5 h-1.5 bg-purple-400/60 rounded-full"/>)}
+                            </button>);
+                        })}
+                      </div>)}
+                    <p className="text-[10px] text-white/30 leading-relaxed">
+                      Override resolution to test what works best on your GPU. Lower = faster, less VRAM.
+                    </p>
+                  </div>)}
+
+                {/* Steps */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Steps</span>
+                    <span className="text-white/60">{customSteps}</span>
+                  </div>
+                  <input type="range" min={10} max={50} value={customSteps} onChange={(e) => setCustomSteps(Number(e.target.value))} className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"/>
+                </div>
+
+                {/* CFG Scale */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">CFG Scale</span>
+                    <span className="text-white/60">{customCfg.toFixed(1)}</span>
+                  </div>
+                  <input type="range" min={1} max={15} step={0.5} value={customCfg} onChange={(e) => setCustomCfg(Number(e.target.value))} className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"/>
+                </div>
+
+                {/* Denoise Strength */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="uppercase tracking-wider text-white/40 font-semibold">Denoise Strength</span>
+                    <span className="text-white/60">{customDenoise.toFixed(2)}</span>
+                  </div>
+                  <input type="range" min={0.1} max={1.0} step={0.05} value={customDenoise} onChange={(e) => setCustomDenoise(Number(e.target.value))} className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"/>
+                </div>
+
+                {/* Lock Seed */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-sm text-white/80">Lock Seed</span>
+                  <button onClick={() => {
+                    if (!seedLock)
+                        setCustomSeed(Math.floor(Math.random() * 2147483647));
+                    setSeedLock(!seedLock);
+                }} className={`w-10 h-5 rounded-full transition-colors relative ${seedLock ? 'bg-purple-500' : 'bg-white/20'}`}>
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${seedLock ? 'translate-x-5' : 'translate-x-0.5'}`}/>
+                  </button>
+                </div>
+                {seedLock && (<input type="number" value={customSeed} onChange={(e) => setCustomSeed(Number(e.target.value))} className="w-full rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm text-white font-mono focus:border-purple-500/50 focus:outline-none" placeholder="Seed value"/>)}
+
+                {/* Use ControlNet */}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-sm text-white/80">Use ControlNet</span>
+                  <button onClick={() => setUseControlNet(!useControlNet)} className={`w-10 h-5 rounded-full transition-colors relative ${useControlNet ? 'bg-purple-500' : 'bg-white/20'}`}>
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${useControlNet ? 'translate-x-5' : 'translate-x-0.5'}`}/>
+                  </button>
+                </div>
+                {useControlNet && (<div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="uppercase tracking-wider text-white/40 font-semibold">CN Strength</span>
+                      <span className="text-white/60">{cnStrength.toFixed(2)}</span>
+                    </div>
+                    <input type="range" min={0} max={2} step={0.05} value={cnStrength} onChange={(e) => setCnStrength(Number(e.target.value))} className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"/>
+                  </div>)}
+
+                {/* Fullscreen Stretch Toggle */}
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-white/80">Fullscreen Stretch</span>
+                  <button onClick={() => setFullscreenStretch(!fullscreenStretch)} className={`w-10 h-5 rounded-full transition-colors relative ${fullscreenStretch ? 'bg-purple-500' : 'bg-white/20'}`}>
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${fullscreenStretch ? 'translate-x-5' : 'translate-x-0.5'}`}/>
+                  </button>
+                </div>
+                <div className="text-[11px] text-white/40 -mt-3 leading-snug">
+                  OFF: fit entire image on screen (may letterbox). ON: fill screen (may crop edges).
+                </div>
+              </div>)}
+
+            <div className="p-4 rounded-xl bg-purple-900/10 border border-purple-500/20 text-xs text-purple-200/70 leading-relaxed">
+              <span className="font-bold text-purple-400 block mb-1">PRO TIP</span>
+              Enable Advanced Controls to fine-tune generation parameters. Use Lock Seed to regenerate with the same composition.
+            </div>
+          </div>
+        </div>)}
+
+      {/* Grid - Row-wise layout like Grok (fills left to right, then next row) */}
+      <div className="flex-1 overflow-y-auto px-4 pb-48 pt-8 scrollbar-hide">
+        <div className="max-w-[1600px] mx-auto grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 content-start">
+          {/* Scroll anchor for auto-scroll to top (Grok-style: new images at top) */}
+          <div ref={gridStartRef} className="col-span-full h-1"/>
+
+          {/* Empty hint */}
+          {items.length === 0 && !isGenerating ? (<div className="col-span-full rounded-2xl border border-white/10 bg-white/5 p-8 text-center">
+              <div className="mx-auto mb-4 size-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
+                <Sparkles size={24} className="text-purple-400/60"/>
+              </div>
+              <div className="text-lg font-semibold text-white/90 mb-2">Your gallery is empty</div>
+              <div className="text-sm text-white/45 mb-4">
+                Type a prompt below and hit Generate.
+              </div>
+              <button type="button" onClick={() => {
+                promptInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                promptInputRef.current?.focus();
+            }} className="px-4 py-2 bg-purple-500/20 text-purple-200 rounded-xl border border-purple-500/30 hover:bg-purple-500/30 transition-colors">
+                Start with a prompt
+              </button>
+            </div>) : null}
+
+          {/* Images (including processing placeholders) - rendered in order (newest first at top-left) */}
+          {items.filter((img) => !brokenIds.has(img.id)).map((img) => (<div key={img.id} onClick={() => img.status === 'done' && setSelectedImage(img)} className={`relative group rounded-2xl overflow-hidden bg-white/5 border border-white/10 transition-colors aspect-square ${img.status === 'done' ? 'hover:border-white/20 cursor-pointer' : ''}`}>
+              {/* Image content - show based on status */}
+              {img.status === 'done' && img.url ? (<img src={resolveFileUrl(img.url, props.backendUrl)} alt={img.prompt} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" loading="lazy" onError={() => markImageBroken(img.id)}/>) : (
+            // Processing or Failed - show gradient placeholder
+            <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-purple-900/30 to-black"/>)}
+
+              {/* Processing overlay - "Generating..." with purple spinner */}
+              {img.status === 'processing' && (<div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
+                  <Loader2 size={32} className="text-purple-400 animate-spin mb-3"/>
+                  <div className="text-white/90 text-sm font-medium">Generating...</div>
+                  {typeof img.progress === 'number' && (<div className="mt-2 px-3 py-1 rounded-full bg-black/60 border border-white/10 text-white/90 text-xs">
+                      {Math.round(img.progress)}%
+                    </div>)}
+                </div>)}
+
+              {/* Failed overlay */}
+              {img.status === 'failed' && (<div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
+                  <X size={32} className="text-red-400 mb-2"/>
+                  <div className="text-red-400 text-sm font-medium">Generation failed</div>
+                  <div className="text-white/50 text-xs mt-1 px-4 text-center line-clamp-2">
+                    {img.error || 'Unknown error'}
+                  </div>
+                  <button className="mt-3 px-4 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-medium transition-colors" onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(img, e);
+                }}>
+                    Remove
+                  </button>
+                </div>)}
+
+              {/* Card overlay (only for completed images) */}
+              {img.status === 'done' && (<div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
+                  <div className="flex gap-2 justify-end transform translate-y-4 group-hover:translate-y-0 transition-transform duration-300">
+                    <button className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors" type="button" title="Play" onClick={(e) => {
+                    e.stopPropagation();
+                }}>
+                      <Play size={18} fill="currentColor"/>
+                    </button>
+                    <button className="bg-white/10 backdrop-blur-md hover:bg-white/20 p-2 rounded-full text-white transition-colors" type="button" title="Copy URL" onClick={(e) => {
+                    e.stopPropagation();
+                    if (img.url)
+                        navigator.clipboard?.writeText(resolveFileUrl(img.url, props.backendUrl)).catch(() => { });
+                }}>
+                      <MoreHorizontal size={18}/>
+                    </button>
+                    <button className={`backdrop-blur-md p-2 rounded-full transition-colors ${upscalingId === img.id
+                    ? 'bg-purple-500/40 text-purple-300 animate-pulse'
+                    : 'bg-purple-500/20 hover:bg-purple-500/40 text-purple-300 hover:text-purple-200'}`} type="button" title="Upscale 2x" disabled={upscalingId !== null} onClick={(e) => handleUpscale(img, e)}>
+                      <Maximize2 size={18}/>
+                    </button>
+                    <button className="bg-red-500/20 backdrop-blur-md hover:bg-red-500/40 p-2 rounded-full text-red-400 hover:text-red-300 transition-colors" type="button" title="Delete" onClick={(e) => handleDelete(img, e)}>
+                      <Trash2 size={18}/>
+                    </button>
+                  </div>
+
+                  <div className="mt-3 text-xs text-white/80 line-clamp-2">{img.prompt}</div>
+                </div>)}
+            </div>))}
+        </div>
+      </div>
+
+      {/* Floating prompt bar */}
+      <div className="absolute bottom-0 left-0 right-0 z-30 p-6 flex justify-center items-end bg-gradient-to-t from-black via-black/90 to-transparent h-48 pointer-events-none">
+        <div className="w-full max-w-2xl relative pointer-events-auto">
+          {/* Reference Image Preview Panel */}
+          {referenceUrl && (<div className="absolute bottom-[110%] left-0 right-0 bg-black/95 border border-white/10 rounded-2xl p-4 shadow-2xl mb-2 backdrop-blur-xl">
+              <div className="flex items-center gap-4">
+                <img src={referenceUrl} className="h-20 w-20 rounded-xl object-cover border border-white/20 shadow-lg" alt="Reference"/>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Image size={14} className="text-purple-400"/>
+                      Reference Active
+                    </div>
+                    <button type="button" className="p-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/30 text-white/50 hover:text-red-400 transition-colors" onClick={() => setReferenceUrl(null)} title="Remove reference">
+                      <X size={14}/>
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs">
+                      <span className="text-white/50">Similarity</span>
+                      <span className="text-white/70 font-mono">
+                        {referenceStrength < 0.3 ? 'Very Similar' : referenceStrength < 0.6 ? 'Balanced' : 'More Creative'}
+                      </span>
+                    </div>
+                    <input type="range" min={0} max={1} step={0.05} value={referenceStrength} onChange={(e) => setReferenceStrength(Number(e.target.value))} className="w-full h-1.5 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full"/>
+                    <div className="flex justify-between text-[10px] text-white/40">
+                      <span>Similar</span>
+                      <span>Creative</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 text-[10px] text-white/40 leading-relaxed">
+                Generated images will be similar to your reference. Adjust the slider to control how closely to follow the reference.
+              </div>
+            </div>)}
+
+          {/* Aspect panel */}
+          {showAspectPanel ? (<div className="absolute bottom-[110%] left-0 bg-black border border-white/10 rounded-xl p-3 shadow-2xl mb-2 flex flex-col gap-3">
+              {/* Aspect Ratio Section */}
+              <div>
+                <div className="flex justify-between items-center text-xs text-white/50 uppercase font-semibold px-1 mb-2">
+                  <span>Aspect Ratio</span>
+                  <button type="button" onClick={() => setShowAspectPanel(false)}>
+                    <X size={14}/>
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  {(compatibleAspectRatios.length > 0 ? compatibleAspectRatios : ASPECT_RATIOS.map(r => ({
+                id: r.label,
+                label: r.label,
+                previewW: r.previewW,
+                previewH: r.previewH,
+                dimensions: { width: r.genW, height: r.genH },
+            }))).map((r) => (<button key={r.id} onClick={() => {
+                    console.log('[Imagine] Aspect ratio selected:', r.id, r.dimensions ? `(${r.dimensions.width}x${r.dimensions.height})` : '');
+                    setAspect(r.id);
+                }} className={`p-2 rounded-lg hover:bg-white/5 transition-colors group flex flex-col items-center gap-1 ${aspect === r.id ? 'bg-white/5 ring-1 ring-white/20' : ''}`} title={`${r.id}${r.dimensions ? ` (${r.dimensions.width}x${r.dimensions.height})` : ''}`} type="button">
+                      <div className={`border-2 ${aspect === r.id ? 'border-white/70' : 'border-white/30 group-hover:border-white/50'} rounded-[2px]`} style={{ width: r.previewW, height: r.previewH }}/>
+                      <span className="text-[10px] text-white/50">{r.id}</span>
+                    </button>))}
+                </div>
+              </div>
+
+              {/* Number of Images Section */}
+              <div className="border-t border-white/10 pt-3">
+                <div className="text-xs text-white/50 uppercase font-semibold px-1 mb-2">
+                  Images per generation
+                </div>
+                <div className="flex gap-2">
+                  {[1, 2, 4].map((n) => (<button key={n} onClick={() => setNumImages(n)} className={`flex-1 py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-2 ${numImages === n
+                    ? 'bg-white/10 ring-1 ring-white/30 text-white'
+                    : 'bg-white/5 hover:bg-white/10 text-white/60'}`} type="button">
+                      {n === 1 ? (<Image size={14}/>) : (<Grid2X2 size={14}/>)}
+                      <span className="text-sm font-medium">{n}</span>
+                    </button>))}
+                </div>
+                <div className="text-[10px] text-white/40 px-1 mt-1.5">
+                  {numImages === 1 ? 'Single full-size image' : `${numImages} thumbnails per generation`}
+                </div>
+              </div>
+            </div>) : null}
+
+          <div className="relative group">
+            <div className={`absolute -inset-0.5 bg-gradient-to-r from-white/10 to-white/0 rounded-full opacity-0 transition duration-500 group-hover:opacity-100 blur ${isGenerating ? 'opacity-100 animate-pulse' : ''}`}></div>
+
+            <div className="relative bg-black border border-white/10 rounded-[32px] p-2 pr-2 flex items-center shadow-2xl transition-all focus-within:border-white/20">
+              <button className="p-3 text-white/50 hover:text-white transition-colors rounded-full hover:bg-white/5" type="button" title="Voice input (not implemented)">
+                <Mic size={20}/>
+              </button>
+
+              <input ref={promptInputRef} type="text" value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => (e.key === 'Enter' ? void handleGenerate() : undefined)} placeholder="Describe what you want to see…" className="flex-1 bg-transparent text-white placeholder-white/35 outline-none px-2 h-12 text-lg"/>
+
+              <div className="flex items-center gap-2 pl-2">
+                <button onClick={() => setShowAspectPanel((v) => !v)} className={`p-2 rounded-full transition-colors ${showAspectPanel ? 'text-white bg-white/5' : 'text-white/50 hover:text-white hover:bg-white/5'}`} type="button" title="Aspect & settings">
+                  <Settings2 size={20}/>
+                </button>
+
+                {/* Game Mode: Auto Generate Button */}
+                {gameMode && (<button onClick={toggleAutoGenerate} disabled={!prompt.trim()} className={`ml-1 h-10 px-4 rounded-full font-semibold text-sm transition-all flex items-center gap-2 ${isAutoGenerating
+                ? 'bg-red-500 text-white hover:bg-red-600'
+                : prompt.trim()
+                    ? 'bg-purple-500 text-white hover:bg-purple-600'
+                    : 'bg-white/10 text-white/40 cursor-not-allowed'}`} type="button">
+                    {isAutoGenerating ? (<>
+                        <Pause size={16}/>
+                        Stop
+                      </>) : (<>
+                        <Zap size={16}/>
+                        Auto
+                      </>)}
+                  </button>)}
+
+                <button onClick={() => void handleGenerate()} disabled={(!prompt.trim() && !referenceUrl) || isGenerating || isAutoGenerating} className={`ml-1 h-10 px-6 rounded-full font-semibold text-sm transition-all flex items-center gap-2 ${(prompt.trim() || referenceUrl) && !isGenerating && !isAutoGenerating
+            ? gameMode
+                ? 'bg-purple-500 text-white hover:bg-purple-600 hover:scale-[1.02]'
+                : 'bg-white text-black hover:bg-gray-200 hover:scale-[1.02]'
+            : 'bg-white/10 text-white/40 cursor-not-allowed'}`} type="button">
+                  {isGenerating ? (<span className="animate-pulse">Creating…</span>) : gameMode ? ('Variation') : ('Generate')}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-2 text-[11px] text-white/35 px-2">
+              Using provider <span className="text-white/55 font-semibold">{props.providerImages}</span>
+              {props.modelImages ? (<>
+                  {' '}
+                  · model <span className="text-white/55 font-semibold">{props.modelImages}</span>
+                </>) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Immersive Lightbox - Clean, Image-first Design */}
+      {selectedImage && (<div ref={lightboxRef} className="fixed inset-0 z-50 flex flex-col bg-black animate-in fade-in duration-200" onClick={() => { setSelectedImage(null); setShowDetails(false); }}>
+          {/* Floating Controls - Top Right (auto-hide in fullscreen, show on hover) */}
+          <div className={`absolute top-4 right-4 z-50 flex items-center gap-2 transition-opacity duration-300 ${isFullscreen ? 'opacity-0 hover:opacity-100' : ''}`}>
+            {/* Slideshow indicator — visible when Game Mode + Auto + Fullscreen */}
+            {gameMode && isAutoGenerating && isFullscreen && (<div className="p-2.5 bg-purple-500/20 text-purple-200 border border-purple-500/30 rounded-full" title="Slideshow: auto-advancing to new images" onClick={(e) => e.stopPropagation()}>
+                <Film size={18}/>
+              </div>)}
+            <button className={`p-2.5 rounded-full transition-all ${showDetails ? 'bg-white text-black' : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'}`} onClick={(e) => { e.stopPropagation(); setShowDetails(!showDetails); }} type="button" title="Toggle details">
+              <Info size={18}/>
+            </button>
+            <button className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all" onClick={(e) => {
+                e.stopPropagation();
+                // Fullscreen the lightbox container (not just the image)
+                // so overlay controls, slideshow icon, and keyboard nav work inside fullscreen
+                const el = lightboxRef.current;
+                if (el?.requestFullscreen) {
+                    el.requestFullscreen().catch(() => { });
+                }
+            }} type="button" title="View full size">
+              <Maximize2 size={18}/>
+            </button>
+            <button className="p-2.5 bg-white/10 text-white/70 hover:bg-white/20 hover:text-white rounded-full transition-all" onClick={() => { setSelectedImage(null); setShowDetails(false); }} type="button" title="Close">
+              <X size={18}/>
+            </button>
+          </div>
+
+          {/* Main Content Area */}
+          <div className="flex-1 flex min-h-0" onClick={(e) => e.stopPropagation()}>
+            {/* Hero Image Container - LARGER, fills more space */}
+            <div className="flex-1 flex items-center justify-center p-2 relative group min-h-0 overflow-hidden">
+              {selectedImage.url ? (<img src={resolveFileUrl(selectedImage.url, props.backendUrl)} data-lightbox-media className={isFullscreen
+                    ? fullscreenStretch
+                        ? "w-full h-full object-cover"
+                        : "w-full h-full object-contain"
+                    : "max-h-[calc(100vh-140px)] max-w-full object-contain rounded-lg shadow-2xl"} alt="Selected"/>) : (<div className="flex items-center justify-center h-64 w-full max-w-lg bg-white/5 rounded-lg">
+                  <Loader2 size={32} className="text-white/50 animate-spin"/>
+                </div>)}
+
+              {/* Chips Overlay - Fade in on hover */}
+              <div className="absolute bottom-6 left-6 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                {selectedImage.model && (<span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.model.split('.')[0].split('-')[0].toUpperCase()}
+                  </span>)}
+                {selectedImage.width && selectedImage.height && (<span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.width}×{selectedImage.height}
+                  </span>)}
+                {selectedImage.steps && (<span className="px-3 py-1.5 bg-black/60 backdrop-blur-md text-white text-xs font-semibold rounded-full border border-white/10">
+                    {selectedImage.steps} steps
+                  </span>)}
+              </div>
+
+              {/* Grok-style Regeneration Overlay - Blur + Dots + Progress */}
+              {isRegenerating && (<div className="absolute inset-0 z-30 flex items-center justify-center rounded-lg overflow-hidden">
+                  {/* Blur + Dim background */}
+                  <div className="absolute inset-0 bg-black/40 backdrop-blur-sm"/>
+
+                  {/* Dotted pattern overlay */}
+                  <div className="absolute inset-0 opacity-40 pointer-events-none" style={{
+                    backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.4) 1px, transparent 1px)',
+                    backgroundSize: '24px 24px'
+                }}/>
+
+                  {/* Center controls */}
+                  <div className="relative z-10 flex flex-col items-center gap-4">
+                    {/* Progress indicator */}
+                    {typeof regenProgress === 'number' && (<div className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white font-medium text-lg shadow-xl">
+                        {Math.round(regenProgress)}%
+                      </div>)}
+
+                    {/* Cancel button */}
+                    <button className="px-5 py-2.5 rounded-full bg-black/70 border border-white/20 text-white/90 hover:bg-black/80 hover:text-white transition-colors font-medium shadow-xl" onClick={(e) => { e.stopPropagation(); handleCancelRegeneration(); }} type="button">
+                      Cancel
+                    </button>
+                  </div>
+                </div>)}
+            </div>
+
+            {/* Details Panel - Slide in from right */}
+            {showDetails && (<div className="w-80 bg-[#0a0a0a] border-l border-white/10 flex flex-col animate-in slide-in-from-right duration-200">
+                <div className="p-4 border-b border-white/10">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Wand2 size={14} className="text-white/60"/>
+                    Generation Details
+                  </h3>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Prompt - Only visible in details panel */}
+                  <div>
+                    <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-2 block">Prompt</label>
+                    <p className="text-sm text-white/70 leading-relaxed">{selectedImage.prompt}</p>
+                  </div>
+                  {/* Seed */}
+                  {selectedImage.seed && (<div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Seed</label>
+                      <div className="text-base text-white font-mono font-bold">{selectedImage.seed}</div>
+                    </div>)}
+                  {/* Resolution */}
+                  {selectedImage.width && selectedImage.height && (<div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Resolution</label>
+                      <div className="text-sm text-white/80 font-mono">{selectedImage.width} × {selectedImage.height}</div>
+                    </div>)}
+                  {/* Steps & CFG */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {selectedImage.steps && (<div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Steps</label>
+                        <div className="text-sm text-white/70 font-mono">{selectedImage.steps}</div>
+                      </div>)}
+                    {selectedImage.cfg && (<div>
+                        <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">CFG</label>
+                        <div className="text-sm text-white/70 font-mono">{selectedImage.cfg}</div>
+                      </div>)}
+                  </div>
+                  {/* Date & Time */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Date</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedImage.createdAt).toLocaleDateString()}</div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Time</label>
+                      <div className="text-xs text-white/60 font-mono">{new Date(selectedImage.createdAt).toLocaleTimeString()}</div>
+                    </div>
+                  </div>
+                  {/* Model */}
+                  {selectedImage.model && (<div>
+                      <label className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 block">Model</label>
+                      <div className="text-xs text-white/50 font-mono break-all">{selectedImage.model}</div>
+                    </div>)}
+                </div>
+              </div>)}
+          </div>
+
+          {/* Grok-style Prompt Composer Bar — hidden in fullscreen for immersive view */}
+          {!isFullscreen && (<div className="bg-[#0a0a0a] border-t border-white/10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
+            <div className="max-w-4xl mx-auto flex items-center gap-3">
+
+              {/* Prompt Card Container */}
+              <div className="flex-1 flex items-center gap-3 bg-[#1a1a1a] rounded-2xl px-4 py-2.5 border border-white/10">
+                {/* Progress indicator in prompt bar during regeneration */}
+                {isRegenerating && typeof regenProgress === 'number' && (<div className="flex items-center gap-2 flex-shrink-0">
+                    <div className="px-2.5 py-1 rounded-full bg-white/10 text-white/80 text-xs font-medium">
+                      {Math.round(regenProgress)}%
+                    </div>
+                    <ChevronDown size={14} className="text-white/40"/>
+                  </div>)}
+
+                {/* Editable Prompt Input */}
+                <input type="text" value={lightboxPrompt} onChange={(e) => setLightboxPrompt(e.target.value)} onKeyDown={(e) => {
+                    if (e.key === 'Enter' && lightboxPrompt.trim() && !isRegenerating) {
+                        handleRegenerateInPlace();
+                    }
+                }} placeholder={isRegenerating ? "Generating image..." : "Edit prompt and regenerate..."} className="flex-1 bg-transparent text-white/90 text-sm placeholder-white/30 outline-none min-w-0" disabled={isRegenerating}/>
+
+                {/* Redo Button (inside card) - Grok style */}
+                <button onClick={isRegenerating ? handleCancelRegeneration : handleRegenerateInPlace} disabled={!lightboxPrompt.trim() && !isRegenerating} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-all flex-shrink-0 ${isRegenerating
+                    ? 'bg-white/10 hover:bg-white/20 text-white'
+                    : lightboxPrompt.trim()
+                        ? 'bg-white/10 hover:bg-white/20 text-white'
+                        : 'bg-white/5 text-white/30 cursor-not-allowed'}`} type="button" title={isRegenerating ? "Cancel" : "Redo"}>
+                  Redo <ArrowUp size={14}/>
+                </button>
+              </div>
+
+              {/* Action Icons (outside card) */}
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button className="p-2.5 text-white/60 hover:text-white hover:bg-white/10 rounded-full transition-colors" onClick={() => {
+                    if (!selectedImage.url)
+                        return;
+                    const a = document.createElement('a');
+                    a.href = resolveFileUrl(selectedImage.url, props.backendUrl);
+                    a.download = `imagine-${selectedImage.id}.png`;
+                    a.click();
+                }} type="button" title="Download" disabled={!selectedImage.url}>
+                  <Download size={18}/>
+                </button>
+                <button className="p-2.5 text-white/60 hover:text-purple-400 hover:bg-purple-500/10 rounded-full transition-colors" onClick={() => {
+                    if (!selectedImage.url)
+                        return;
+                    // Store handoff payload for Animate tab (Grok-style)
+                    localStorage.setItem('homepilot_animate_handoff', JSON.stringify({
+                        imageUrl: selectedImage.url,
+                        prompt: selectedImage.prompt || '',
+                        createdAt: Date.now(),
+                    }));
+                    window.dispatchEvent(new CustomEvent('switch-to-animate'));
+                    setSelectedImage(null);
+                    setShowDetails(false);
+                }} type="button" title="Animate this image" disabled={!selectedImage.url}>
+                  <Film size={18}/>
+                </button>
+                <button className="p-2.5 text-white/60 hover:text-red-400 hover:bg-red-500/10 rounded-full transition-colors" onClick={() => handleDelete(selectedImage)} type="button" title="Delete">
+                  <Trash2 size={18}/>
+                </button>
+              </div>
+
+            </div>
+          </div>)}
+        </div>)}
+
+      {/* Variation History Modal */}
+      {showVariationHistory && (<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-md" onClick={() => setShowVariationHistory(false)}>
+          <div className="max-w-2xl w-full max-h-[80vh] bg-[#121212] border border-white/10 rounded-2xl overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="p-5 border-b border-white/10 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <History size={16} className="text-purple-400"/>
+                Variation History ({gameVariations.length})
+              </h3>
+              <button type="button" onClick={() => setShowVariationHistory(false)} className="text-white/50 hover:text-white">
+                <X size={20}/>
+              </button>
+            </div>
+
+            <div className="overflow-y-auto max-h-[60vh] p-4 space-y-3">
+              {gameVariations.map((v, i) => (<div key={i} className="p-4 bg-white/5 rounded-xl border border-white/10 hover:border-white/20 transition-colors">
+                  <div className="text-sm text-white/90 mb-2">{v.prompt}</div>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {Object.entries(v.tags).map(([key, value]) => (<span key={key} className="px-2 py-1 bg-purple-500/20 text-purple-300 text-[10px] rounded-full">
+                        {key}: {value}
+                      </span>))}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-white/40">
+                      {new Date(v.timestamp).toLocaleTimeString()}
+                    </span>
+                    <button type="button" className="text-xs text-purple-400 hover:text-purple-300 flex items-center gap-1" onClick={() => {
+                    setPrompt(v.prompt);
+                    setShowVariationHistory(false);
+                }}>
+                      <RefreshCw size={12}/>
+                      Use as base
+                    </button>
+                  </div>
+                </div>))}
+
+              {gameVariations.length === 0 && (<div className="text-center text-white/40 py-8">
+                  No variations generated yet. Start generating to see history.
+                </div>)}
+            </div>
+          </div>
+        </div>)}
+
+      <style>{`
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .line-clamp-2 {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+      `}</style>
+    </div>);
+}

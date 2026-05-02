@@ -6,14 +6,14 @@ import os
 import subprocess
 import uuid as uuidlib
 import traceback
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Dict, List, Optional, Literal
 from urllib.parse import urlparse, parse_qs
 
 import httpx
 from fastapi import Body, Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -120,6 +120,32 @@ from .multimodal import analyze_image, is_vision_intent, VISION_MODEL_PATTERNS
 # OpenAI-compatible endpoint (additive — exposes personas as /v1/chat/completions)
 from .openai_compat_endpoint import router as openai_compat_router
 
+# ── Access-log noise filter ──────────────────────────────────────────────────
+# The Interactive runtime polls GET /v1/interactive/play/sessions/{id}/pending
+# once per 1.5–5 s to pick up scene-render updates. Uvicorn logs every hit at
+# INFO, which swamps prod logs while carrying zero debug value. Drop *only*
+# that endpoint from ``uvicorn.access``; every other request still logs
+# normally. Set ``UVICORN_LOG_PENDING=true`` to re-enable for debugging.
+import logging as _logging
+import os as _os
+
+
+class _DropInteractivePendingFilter(_logging.Filter):
+    _suppress_token = "/v1/interactive/play/sessions/"
+    _suppress_suffix = "/pending"
+
+    def filter(self, record: _logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return not (self._suppress_token in msg and self._suppress_suffix in msg)
+
+
+if _os.getenv("UVICORN_LOG_PENDING", "false").lower() != "true":
+    _logging.getLogger("uvicorn.access").addFilter(_DropInteractivePendingFilter())
+
+
 app = FastAPI(title="HomePilot Orchestrator", version="2.1.0")
 
 app.add_middleware(
@@ -177,6 +203,21 @@ except Exception as _vc_err:  # noqa: BLE001
     # Deliberate broad catch: this entire feature is optional. Log and move on.
     print(f"[voice_call] DISABLED due to import error: {_vc_err}")
 
+# --- Interactive (/v1/interactive/*) — ADDITIVE, FEATURE-FLAGGED -------------
+# AI interactive video engine. Off by default; enable with
+# ``INTERACTIVE_ENABLED=true``. See backend/app/interactive/__init__.py for
+# the service design. Same safety pattern as voice_call: import errors are
+# logged and swallowed so a broken interactive subsystem can't sink the app.
+try:
+    from .interactive import load_config as _interactive_load_config
+    from .interactive import build_router as _interactive_build_router
+    _interactive_cfg = _interactive_load_config()
+    app.include_router(_interactive_build_router(_interactive_cfg))
+    if _interactive_cfg.enabled:
+        print("[interactive] enabled — routes mounted under /v1/interactive")
+except Exception as _ix_err:  # noqa: BLE001
+    print(f"[interactive] DISABLED due to import error: {_ix_err}")
+
 # --- Persona call (/v1/persona-call/*) — ADDITIVE, FEATURE-FLAGGED -----------
 # Phone-call conversational dynamics + per-turn system suffix composer.
 # Off by default. Enable with ``PERSONA_CALL_ENABLED=true``. The module
@@ -196,6 +237,43 @@ try:
         )
 except Exception as _pc_err:  # noqa: BLE001
     print(f"[persona_call] DISABLED due to import error: {_pc_err}")
+
+# --- Expert (/v1/expert/*) — ADDITIVE, OPTIONAL -------------------------------
+# Multi-provider Expert reasoning backend. Default ON so the existing frontend
+# selector (chat-only, non-persona, gated by VITE_EXPERT_CHAT_ENABLED) can
+# reach it in both the Expert sandbox and prod. Set ``EXPERT_ENABLED=false`` to disable.
+# Loaded via importlib with a unique module name to avoid colliding with the
+# backend's own ``app`` package (the expert module lives at
+# ``expert/backend/app/expert/`` under a namespace-only ``app`` dir). Same
+# swallow-on-error safety pattern as voice_call/interactive/persona_call above
+# — a broken Expert subsystem must never take the rest of the app down, and
+# this mount does not touch any persona or voice codepath.
+try:
+    if os.getenv("EXPERT_ENABLED", "true").lower() == "true":
+        import importlib.util as _expert_importlib_util
+        import sys as _expert_sys
+        from pathlib import Path as _ExpertPath
+
+        _expert_pkg_dir = (
+            _ExpertPath(__file__).resolve().parents[2]
+            / "expert" / "backend" / "app" / "expert"
+        )
+        _expert_init = _expert_pkg_dir / "__init__.py"
+        if not _expert_init.is_file():
+            raise FileNotFoundError(f"Expert package not found at {_expert_init}")
+
+        _expert_spec = _expert_importlib_util.spec_from_file_location(
+            "homepilot_expert",
+            _expert_init,
+            submodule_search_locations=[str(_expert_pkg_dir)],
+        )
+        _expert_mod = _expert_importlib_util.module_from_spec(_expert_spec)
+        _expert_sys.modules["homepilot_expert"] = _expert_mod
+        _expert_spec.loader.exec_module(_expert_mod)
+        app.include_router(_expert_mod.router)
+        print("[expert] enabled — routes mounted under /v1/expert")
+except Exception as _ex_err:  # noqa: BLE001
+    print(f"[expert] DISABLED due to import error: {_ex_err}")
 
 # Include Marketplace routes (/v1/marketplace/*)
 app.include_router(marketplace_router)
@@ -256,6 +334,59 @@ app.include_router(system_dashboard_router)
 from .system_resources import router as system_resources_router
 app.include_router(system_resources_router)
 
+
+# ── Runtime config (shell-sourceable env for the launcher) ─────
+#
+# Small persistence layer so the frontend Settings panel's
+# ComfyUI VRAM toggle (and future launcher flags) survives a
+# backend + ComfyUI restart. The launcher script
+# ``scripts/start-comfyui.sh`` sources the resulting file at
+# boot, so the user's Save Settings click is reflected on next
+# ``make start``.
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+from .runtime_config import (
+    ALLOWED_KEYS as _RUNTIME_ALLOWED_KEYS,
+    read_runtime_config,
+    write_runtime_config,
+)
+
+
+class _RuntimeConfigBody(BaseModel):
+    """Pydantic wraps the ``values`` dict so FastAPI rejects
+    non-JSON payloads with a proper 422 before our handler runs."""
+    values: dict = {}
+
+
+_runtime_config_router = APIRouter(tags=["system"])
+
+
+@_runtime_config_router.get("/v1/system/runtime-config")
+def _get_runtime_config() -> dict:
+    """Return the currently-persisted shell-sourceable runtime env.
+    Keys outside the allow-list are never returned — same shape as
+    the POST body so round-trip is trivial for the frontend."""
+    return {
+        "ok": True,
+        "allowed_keys": sorted(_RUNTIME_ALLOWED_KEYS),
+        "values": read_runtime_config(),
+    }
+
+
+@_runtime_config_router.post("/v1/system/runtime-config")
+def _post_runtime_config(body: _RuntimeConfigBody) -> dict:
+    """Persist the provided subset of allow-listed keys. Unknown
+    or malformed entries are silently dropped so the endpoint is
+    safe to call repeatedly from the Save Settings flow. The
+    change takes effect on next ComfyUI restart (``make start``
+    or ``make start-comfyui``)."""
+    written = write_runtime_config(body.values or {})
+    return {"ok": True, "written": written, "applied_on": "next ComfyUI restart"}
+
+
+app.include_router(_runtime_config_router)
+
 # Include LangGraph Persona Agent routes (/v1/persona-graph/*, /v1/world-state/*, /world-state/*)
 # Additive — enables graph-based reasoning for v3 personas with embodiment awareness
 from .langgraph_personas.persona_graph_routes import router as persona_graph_router
@@ -267,7 +398,22 @@ app.include_router(persona_graph_router)
 # ----------------------------
 @app.get("/comfy/view/{filename:path}")
 async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "output"):
-    """Proxy ComfyUI /view requests so the frontend can load generated images."""
+    """Proxy ComfyUI /view requests so the frontend can load generated images.
+
+    Behaviour:
+      1. Try ComfyUI's /view endpoint (the happy path for freshly
+         generated images that haven't been evicted yet).
+      2. On ANY failure — ComfyUI down, 404, connection refused —
+         fall back to the local asset_registry + upload directory.
+         Past sessions write files to disk under UPLOAD_DIR and
+         register them with asset_registry; those persist across
+         ComfyUI restarts where the in-memory /view cache does not.
+      3. Only return 502 if BOTH paths fail.
+
+    This is what historically caused 'avatar_*.png 502 Bad Gateway'
+    after a ComfyUI restart — the frontend still had stable URLs,
+    but the proxy gave up before checking durable storage.
+    """
     params = {"filename": filename, "type": type}
     if subfolder:
         params["subfolder"] = subfolder
@@ -278,7 +424,101 @@ async def comfy_view_proxy(filename: str, subfolder: str = "", type: str = "outp
             content_type = r.headers.get("content-type", "image/png")
             return Response(content=r.content, media_type=content_type)
     except Exception as exc:
+        served = _serve_comfy_view_from_disk(filename, subfolder)
+        if served is not None:
+            return served
         return JSONResponse(status_code=502, content={"detail": f"ComfyUI view failed: {exc}"})
+
+
+def _serve_comfy_view_from_disk(filename: str, subfolder: str) -> Optional[Response]:
+    """Resolve a ComfyUI filename to a local file + serve it.
+
+    Checks, in order:
+      1. The asset_registry by storage_key suffix match (works
+         for anything registered via make restore-avatars or the
+         normal image-generation pipeline).
+      2. The UPLOAD_DIR root for an exact basename match.
+      3. ComfyUI's own output directory (``<repo>/ComfyUI/output``)
+         for images that were generated but never migrated — this
+         is the path restore-avatars itself walks.
+
+    Path traversal is blocked: anything with ``..`` or an absolute
+    prefix in the request param is rejected without a disk touch.
+    """
+    import mimetypes
+    import sqlite3
+
+    safe = PurePath(filename)
+    if ".." in safe.parts or safe.is_absolute():
+        return None
+    basename = safe.name
+    if not basename:
+        return None
+
+    def _file_response(path: Path) -> Optional[Response]:
+        try:
+            if not path.is_file():
+                return None
+            mime = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+            return FileResponse(
+                path=str(path), media_type=mime, filename=basename,
+                headers={"Cache-Control": "public, max-age=3600"},
+            )
+        except Exception:
+            return None
+
+    # 1) asset_registry lookup by storage_key suffix. Every
+    #    avatar restored by `make restore-avatars` lands with
+    #    the full relative path in storage_key, so matching on
+    #    the trailing filename resolves the row cheaply.
+    try:
+        con = sqlite3.connect(config.SQLITE_PATH)
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+        cur.execute(
+            "SELECT storage_key FROM assets "
+            "WHERE storage_backend = 'local' AND storage_key LIKE ? "
+            "LIMIT 1",
+            (f"%{basename}",),
+        )
+        row = cur.fetchone()
+        con.close()
+        if row and row["storage_key"]:
+            key = Path(str(row["storage_key"]))
+            root = _files_upload_root()
+            candidate = key if key.is_absolute() else (root / key)
+            resp = _file_response(candidate)
+            if resp is not None:
+                return resp
+    except Exception:
+        # Asset-registry read is best-effort; fall through to
+        # direct filesystem probes below.
+        pass
+
+    # 2) UPLOAD_DIR direct lookup (flat or given subfolder).
+    root = _files_upload_root()
+    candidates: List[Path] = []
+    if subfolder:
+        sub = PurePath(subfolder)
+        if ".." not in sub.parts and not sub.is_absolute():
+            candidates.append(root / sub / basename)
+    candidates.append(root / basename)
+    candidates.append(root / "avatars" / basename)
+    candidates.append(root / "comfy" / basename)
+
+    # 3) ComfyUI output dir — the canonical location restore-avatars
+    #    scans. Located relative to the project root so it keeps
+    #    working in dev + container builds.
+    comfy_output = Path(__file__).resolve().parents[2] / "ComfyUI" / "output"
+    candidates.append(comfy_output / basename)
+    if subfolder:
+        candidates.append(comfy_output / subfolder / basename)
+
+    for path in candidates:
+        resp = _file_response(path)
+        if resp is not None:
+            return resp
+    return None
 
 
 # ----------------------------
@@ -823,6 +1063,20 @@ def _startup() -> None:
     if os.getenv("AGENTIC_ENABLED", "true").lower() in ("1", "true", "yes"):
         asyncio.get_event_loop().create_task(_start_agentic_servers())
 
+    # Image-model warmup — preload the configured IMAGE_MODEL into
+    # VRAM so the first user image-gen request doesn't pay the
+    # cold-load tax that triggers the "Image generation error:
+    # timed out" UX. Best-effort; failures are logged + ignored so
+    # a missing ComfyUI never blocks the backend from serving other
+    # features. Set INTERACTIVE_WARMUP_IMAGE=false to skip.
+    try:
+        from .warmup import warm_image_model_on_startup  # late import
+        asyncio.get_event_loop().create_task(warm_image_model_on_startup())
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("homepilot.startup").warning(
+            "Image warmup task couldn't start: %s", exc,
+        )
+
 
 async def _start_agentic_servers() -> None:
     """Background task: ensure core + installed + external MCP servers are running."""
@@ -890,12 +1144,19 @@ def _signal_handler(signum: int, _frame: Any) -> None:
     raise SystemExit(0)
 
 # Only install signal handlers when running as the main process
-# (not in test harnesses or multiprocessing workers)
+# (not in test harnesses or multiprocessing workers).
+#
+# SIGTERM is normally handled by uvicorn — especially under ``--reload``,
+# where the reloader sends SIGTERM to the child on every file-save to
+# respawn it. Installing our handler there caused the
+# ``raise SystemExit(0)`` traceback every reload because uvloop re-raises
+# through the lifespan queue. Gate SIGTERM on HOMEPILOT_STANDALONE just
+# like SIGINT so the @atexit hook handles cleanup under uvicorn and the
+# reload cycle stays quiet.
 if os.environ.get("HOMEPILOT_NO_SIGNAL_HANDLER") != "1":
     try:
-        _signal.signal(_signal.SIGTERM, _signal_handler)
-        # SIGINT is normally handled by uvicorn; only override if running standalone
         if os.environ.get("HOMEPILOT_STANDALONE") == "1":
+            _signal.signal(_signal.SIGTERM, _signal_handler)
             _signal.signal(_signal.SIGINT, _signal_handler)
     except (ValueError, OSError):
         pass  # Can't set signal handlers from non-main thread
@@ -1753,8 +2014,24 @@ async def test_api_key_endpoint(req: ApiKeyTestRequest) -> JSONResponse:
 # ---------------------------------------------------------------------------
 
 class OllaBridgeSettings(BaseModel):
-    enabled: bool = Field(False, description="Enable/disable the OpenAI-compatible persona API")
-    api_key: str = Field("my-secret", description="API key for external clients")
+    """OllaBridge runtime settings.
+
+    ``enabled`` defaults to True: OllaBridge is a normal product
+    feature that's on by default; the toggle is a kill-switch, not
+    an opt-in gate.
+
+    ``api_key`` semantics (match the 'Leave empty to keep unchanged'
+    settings-panel UX):
+      - ``null`` / field OMITTED   → keep currently-stored value.
+      - ``""`` (empty string)       → wipe the stored key (auth off).
+      - ``"some-value"``            → set as the new key.
+
+    The UI sends ``null``/omits the field when the user leaves the
+    input blank in edit mode; tests that want to clear the key pass
+    ``api_key: ""`` explicitly.
+    """
+    enabled: bool = Field(True, description="Enable/disable the OpenAI-compatible persona API")
+    api_key: Optional[str] = Field(None, description="API key for external clients. null/omitted=keep, ''=wipe, value=set.")
 
 
 @app.get("/settings/ollabridge")
@@ -1776,14 +2053,27 @@ async def get_ollabridge_settings() -> JSONResponse:
 async def set_ollabridge_settings(req: OllaBridgeSettings) -> JSONResponse:
     """Toggle the OpenAI-compatible persona API and set its API key at runtime.
 
-    When enabled, external clients (OllaBridge, 3D-Avatar-Chatbot, any OpenAI SDK)
-    can chat with HomePilot personas via /v1/chat/completions.
+    When enabled (default), external clients (OllaBridge, 3D-Avatar-
+    Chatbot, any OpenAI SDK) can chat with HomePilot personas via
+    /v1/chat/completions. Local same-machine clients and logged-in
+    HomePilot browser users don't need the key — see
+    auth.require_ollabridge_api_key.
+
+    Semantics for ``api_key``:
+      - ``null`` / field OMITTED  → keep stored value (matches 'Leave
+                                    empty to keep unchanged' UI hint).
+      - ``""`` (empty string)     → wipe the stored key (auth off).
+      - ``"some-value"``          → set as the new key.
     """
     from . import config as _cfg
     from . import openai_compat_endpoint as _compat
 
-    # Update the runtime API key
-    _cfg.API_KEY = req.api_key.strip() if req.api_key else ""
+    # Update the runtime API key per the semantics above.
+    if req.api_key is None:
+        pass  # keep existing
+    else:
+        # Explicit value given — empty string wipes, non-empty sets.
+        _cfg.API_KEY = req.api_key.strip()
 
     # Store the enabled flag on the compat module so the endpoint can gate itself
     _compat._compat_enabled = req.enabled

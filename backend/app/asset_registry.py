@@ -161,6 +161,31 @@ def get_asset(asset_id: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
+def find_asset_id_by_storage_key(storage_key: str) -> Optional[str]:
+    """Reverse-lookup: storage_key → asset_id.
+
+    Used by the persona-library link phase to backfill the
+    ``registry_asset_id`` field on older library rows that were
+    saved before that field existed. The ``UNIQUE(storage_backend,
+    storage_key)`` constraint on the assets table guarantees at
+    most one row per storage_key, so this is a safe O(1) lookup.
+    """
+    if not storage_key:
+        return None
+    _ensure_assets_table()
+    con = _db()
+    cur = con.cursor()
+    cur.execute(
+        "SELECT id FROM assets WHERE storage_backend = 'local' AND storage_key = ?",
+        (storage_key,),
+    )
+    row = cur.fetchone()
+    con.close()
+    if not row:
+        return None
+    return str(row["id"])
+
+
 def list_assets(
     feature: str = "",
     kind: str = "",

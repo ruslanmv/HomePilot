@@ -10,6 +10,10 @@ __pycache__/
 .venv/
 *.egg-info/
 
+# uv-generated lockfiles in per-server MCP projects (regenerated on ``uv sync``;
+# never committed — each agentic/integrations/mcp/*/ is a standalone venv).
+agentic/integrations/mcp/*/uv.lock
+
 # Local env / secrets
 .env
 .env.*.local

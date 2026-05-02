@@ -541,8 +541,14 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
   useEffect(() => {
     const headers: Record<string, string> = {}
     if (apiKey) headers['x-api-key'] = apiKey
+    try {
+      if (typeof window !== 'undefined') {
+        const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+        if (tok) headers['authorization'] = `Bearer ${tok}`
+      }
+    } catch { /* ignore */ }
 
-    fetch(`${backendUrl}/v1/agentic/catalog`, { headers })
+    fetch(`${backendUrl}/v1/agentic/catalog`, { headers, credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data) {
@@ -960,6 +966,12 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' }
       if (apiKey) headers['x-api-key'] = apiKey
+      try {
+        if (typeof window !== 'undefined') {
+          const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+          if (tok) headers['authorization'] = `Bearer ${tok}`
+        }
+      } catch { /* ignore */ }
 
       const prevToolDetails: Record<string, { name: string; description?: string }> = {}
       for (const d of ag.tool_details || []) {
@@ -1030,6 +1042,7 @@ export function PersonaSettingsPanel({ project, backendUrl, apiKey, onClose, onS
       const res = await fetch(`${backendUrl}/projects/${project.id}`, {
         method: 'PUT',
         headers,
+        credentials: 'include',
         body: JSON.stringify(body),
       })
 

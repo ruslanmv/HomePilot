@@ -126,8 +126,13 @@ MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))
 # Timeouts / polling
 TOOL_TIMEOUT_S = float(os.getenv("TOOL_TIMEOUT_S", "300"))
 COMFY_POLL_INTERVAL_S = float(os.getenv("COMFY_POLL_INTERVAL_S", "1.0"))
-# Increased from 240s to 360s (6 minutes) for bigger models like SDXL
-COMFY_POLL_MAX_S = float(os.getenv("COMFY_POLL_MAX_S", "360"))
+# Max wait for a ComfyUI workflow to complete. Bumped from 360 →
+# 600 s (10 min) so a genuine cold-start model load (30–60 s)
+# plus a busy queue doesn't clip a legitimate render. Users
+# still get a clear timeout error if the workflow really is
+# stuck — just not a premature one on the first request of the
+# day when the checkpoint + VAE + CLIP haven't been loaded yet.
+COMFY_POLL_MAX_S = float(os.getenv("COMFY_POLL_MAX_S", "600"))
 
 def _parse_csv(value: str) -> List[str]:
     return [x.strip() for x in (value or "").split(",") if x.strip()]

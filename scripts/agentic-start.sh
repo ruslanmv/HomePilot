@@ -45,6 +45,14 @@ if [ ! -x "$PYTHON" ]; then
 fi
 
 MCPGATEWAY_URL="${MCPGATEWAY_URL:-http://localhost:4444}"
+PA_PORT="${MCP_PERSONAL_ASSISTANT_PORT:-9101}"
+KNOWLEDGE_PORT="${MCP_KNOWLEDGE_PORT:-9102}"
+DECISION_PORT="${MCP_DECISION_COPILOT_PORT:-9103}"
+BRIEFING_PORT="${MCP_EXECUTIVE_BRIEFING_PORT:-9104}"
+WEB_SEARCH_PORT="${MCP_WEB_SEARCH_PORT:-9105}"
+INVENTORY_PORT="${MCP_INVENTORY_PORT:-9120}"
+EVERYDAY_A2A_PORT="${A2A_EVERYDAY_ASSISTANT_PORT:-9201}"
+COS_A2A_PORT="${A2A_CHIEF_OF_STAFF_PORT:-9202}"
 SEED=true
 for arg in "$@"; do
     case "$arg" in
@@ -102,29 +110,29 @@ echo ""
 echo "  Starting HomePilot core MCP servers..."
 
 start_server "MCP personal-assistant" \
-    "agentic.integrations.mcp.personal_assistant_server:app" 9101
+    "agentic.integrations.mcp.personal_assistant_server:app" "$PA_PORT"
 start_server "MCP knowledge" \
-    "agentic.integrations.mcp.knowledge_server:app" 9102
+    "agentic.integrations.mcp.knowledge_server:app" "$KNOWLEDGE_PORT"
 start_server "MCP decision-copilot" \
-    "agentic.integrations.mcp.decision_copilot_server:app" 9103
+    "agentic.integrations.mcp.decision_copilot_server:app" "$DECISION_PORT"
 start_server "MCP executive-briefing" \
-    "agentic.integrations.mcp.executive_briefing_server:app" 9104
+    "agentic.integrations.mcp.executive_briefing_server:app" "$BRIEFING_PORT"
 start_server "MCP web-search" \
-    "agentic.integrations.mcp.web_search_server:app" 9105
+    "agentic.integrations.mcp.web_search_server:app" "$WEB_SEARCH_PORT"
 start_server "MCP inventory" \
-    "agentic.integrations.mcp.inventory_server:app" 9120
+    "agentic.integrations.mcp.inventory_server:app" "$INVENTORY_PORT"
 
 # ── Start A2A agents ─────────────────────────────────────────────────────────
 echo "  Starting HomePilot A2A agents..."
 start_server "A2A everyday-assistant" \
-    "agentic.integrations.a2a.everyday_assistant_agent:app" 9201
+    "agentic.integrations.a2a.everyday_assistant_agent:app" "$EVERYDAY_A2A_PORT"
 start_server "A2A chief-of-staff" \
-    "agentic.integrations.a2a.chief_of_staff_agent:app" 9202
+    "agentic.integrations.a2a.chief_of_staff_agent:app" "$COS_A2A_PORT"
 
 # ── Wait for core servers to be healthy ──────────────────────────────────────
 echo "  Waiting for core servers to be ready..."
 
-CORE_PORTS="9101 9102 9103 9104 9105 9120 9201 9202"
+CORE_PORTS="$PA_PORT $KNOWLEDGE_PORT $DECISION_PORT $BRIEFING_PORT $WEB_SEARCH_PORT $INVENTORY_PORT $EVERYDAY_A2A_PORT $COS_A2A_PORT"
 TOTAL_CORE=8
 
 for attempt in $(seq 1 10); do

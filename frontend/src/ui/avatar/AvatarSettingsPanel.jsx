@@ -1,0 +1,679 @@
+/**
+ * AvatarSettingsPanel — slide-out drawer for Avatar Studio model settings.
+ *
+ * Slides in from the right when the user clicks the gear icon.
+ * Clean, enterprise-grade design that hides all checkpoint/model
+ * complexity from beginners while giving power users full control.
+ *
+ * Persisted in localStorage under `homepilot_avatar_settings`.
+ */
+import React, { useState, useCallback, useEffect } from 'react';
+import { Settings, X, Check, Globe, Sparkles, Info, FileText, Cpu, AlertTriangle, Layers, Orbit, SlidersHorizontal, RotateCcw } from 'lucide-react';
+import { RECOMMENDED_CHECKPOINTS, BODY_WORKFLOW_OPTIONS } from './types';
+import { ANGLE_TUNING_DEFAULTS } from './viewPack';
+// ---------------------------------------------------------------------------
+// Persistence
+// ---------------------------------------------------------------------------
+const STORAGE_KEY = 'homepilot_avatar_settings';
+const DEFAULT_SETTINGS = {
+    checkpointSource: 'recommended',
+    recommendedCheckpointId: 'dreamshaper8',
+    showCharacterDescription: false,
+    useStyleGAN: true,
+    bodyWorkflowMethod: 'default',
+};
+export function loadAvatarSettings() {
+    try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            return { ...DEFAULT_SETTINGS, ...parsed };
+        }
+    }
+    catch { /* ignore */ }
+    return { ...DEFAULT_SETTINGS };
+}
+export function saveAvatarSettings(s) {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    }
+    catch { /* ignore */ }
+}
+/**
+ * Resolve the effective checkpoint filename based on current avatar settings
+ * and the global settings model.
+ */
+export function resolveCheckpoint(avatarSettings, globalModelImages) {
+    if (avatarSettings.checkpointSource === 'global') {
+        return globalModelImages || undefined;
+    }
+    const rec = RECOMMENDED_CHECKPOINTS.find((c) => c.id === avatarSettings.recommendedCheckpointId);
+    return rec?.filename;
+}
+const TUNABLE_ANGLES = [
+    { id: 'left', label: 'Left' },
+    { id: 'right', label: 'Right' },
+    { id: 'back', label: 'Back' },
+];
+function ViewAngleTuningSection({ settings, onChange, }) {
+    const [expanded, setExpanded] = useState(false);
+    const [activeTab, setActiveTab] = useState('left');
+    const tuning = settings.viewAngleTuning ?? {};
+    const current = {
+        denoise: tuning[activeTab]?.denoise ?? ANGLE_TUNING_DEFAULTS[activeTab].denoise,
+        promptWeight: tuning[activeTab]?.promptWeight ?? ANGLE_TUNING_DEFAULTS[activeTab].promptWeight,
+    };
+    const update = useCallback((field, value) => {
+        const next = {
+            ...settings,
+            viewAngleTuning: {
+                ...tuning,
+                [activeTab]: {
+                    ...tuning[activeTab],
+                    [field]: value,
+                },
+            },
+        };
+        onChange(next);
+        saveAvatarSettings(next);
+    }, [settings, onChange, activeTab, tuning]);
+    const resetAll = useCallback(() => {
+        const next = { ...settings };
+        delete next.viewAngleTuning;
+        onChange(next);
+        saveAvatarSettings(next);
+    }, [settings, onChange]);
+    const hasOverrides = settings.viewAngleTuning && Object.keys(settings.viewAngleTuning).length > 0;
+    return (<div className="mt-3">
+      {/* Collapsible header */}
+      <button onClick={() => setExpanded(!expanded)} className={[
+            'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all',
+            expanded
+                ? 'bg-orange-500/10 border border-orange-500/30'
+                : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+        ].join(' ')}>
+        <SlidersHorizontal size={16} className={expanded ? 'text-orange-400' : 'text-white/25'}/>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-white/80">View Angle Tuning</span>
+            {hasOverrides && (<span className="text-[9px] px-1.5 py-0.5 rounded-md bg-orange-500/20 text-orange-300 font-semibold">
+                CUSTOM
+              </span>)}
+          </div>
+          <p className="text-[11px] text-white/35 mt-0.5">
+            Fine-tune generation strength per angle
+          </p>
+        </div>
+        {/* Chevron */}
+        <svg className={`w-4 h-4 text-white/30 transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </button>
+
+      {/* Expanded content */}
+      {expanded && (<div className="mt-2 mx-1 px-4 py-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+          {/* Angle tab pills */}
+          <div className="flex gap-1.5 mb-4">
+            {TUNABLE_ANGLES.map((a) => {
+                const isActive = activeTab === a.id;
+                const hasCustom = tuning[a.id] !== undefined;
+                return (<button key={a.id} onClick={() => setActiveTab(a.id)} className={[
+                        'flex-1 py-1.5 rounded-lg text-xs font-medium transition-all text-center',
+                        isActive
+                            ? 'bg-orange-500/20 text-orange-300 border border-orange-500/30'
+                            : hasCustom
+                                ? 'bg-white/[0.04] text-white/50 border border-white/[0.08]'
+                                : 'bg-transparent text-white/30 border border-transparent hover:bg-white/[0.03]',
+                    ].join(' ')}>
+                  {a.label}
+                  {hasCustom && !isActive && (<span className="ml-1 inline-block w-1 h-1 rounded-full bg-orange-400/60"/>)}
+                </button>);
+            })}
+          </div>
+
+          {/* Denoise Strength slider */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-medium text-white/60">Denoise Strength</span>
+              <span className="text-[11px] font-mono text-orange-300/80 bg-orange-500/10 px-1.5 py-0.5 rounded">
+                {current.denoise.toFixed(2)}
+              </span>
+            </div>
+            <input type="range" min={0.5} max={1.0} step={0.05} value={current.denoise} onChange={(e) => update('denoise', parseFloat(e.target.value))} className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-orange-500" style={{
+                background: `linear-gradient(to right, rgb(249 115 22) ${((current.denoise - 0.5) / 0.5) * 100}%, rgba(255,255,255,0.1) ${((current.denoise - 0.5) / 0.5) * 100}%)`,
+            }}/>
+            <div className="flex justify-between mt-1">
+              <span className="text-[9px] text-white/25">0.50 — keep colors</span>
+              <span className="text-[9px] text-white/25">1.00 — full prompt</span>
+            </div>
+          </div>
+
+          {/* Prompt Weight slider */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-medium text-white/60">Prompt Weight</span>
+              <span className="text-[11px] font-mono text-orange-300/80 bg-orange-500/10 px-1.5 py-0.5 rounded">
+                {current.promptWeight.toFixed(1)}
+              </span>
+            </div>
+            <input type="range" min={1.0} max={2.0} step={0.1} value={current.promptWeight} onChange={(e) => update('promptWeight', parseFloat(e.target.value))} className="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-orange-500" style={{
+                background: `linear-gradient(to right, rgb(249 115 22) ${((current.promptWeight - 1.0) / 1.0) * 100}%, rgba(255,255,255,0.1) ${((current.promptWeight - 1.0) / 1.0) * 100}%)`,
+            }}/>
+            <div className="flex justify-between mt-1">
+              <span className="text-[9px] text-white/25">1.0 — subtle</span>
+              <span className="text-[9px] text-white/25">2.0 — strong override</span>
+            </div>
+          </div>
+
+          {/* Reset button */}
+          {hasOverrides && (<button onClick={resetAll} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-white/40 hover:text-white/60 hover:bg-white/[0.04] transition-colors">
+              <RotateCcw size={12}/>
+              Reset All to Defaults
+            </button>)}
+        </div>)}
+    </div>);
+}
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+export function AvatarSettingsPanel({ globalModelImages, settings, onChange, styleganStatus, openposeAvailable, }) {
+    const [open, setOpen] = useState(false);
+    // Close on Escape
+    useEffect(() => {
+        if (!open)
+            return;
+        const handler = (e) => {
+            if (e.key === 'Escape')
+                setOpen(false);
+        };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, [open]);
+    const setSource = useCallback((source) => {
+        const next = { ...settings, checkpointSource: source };
+        onChange(next);
+        saveAvatarSettings(next);
+    }, [settings, onChange]);
+    const setRecommended = useCallback((id) => {
+        const next = {
+            ...settings,
+            checkpointSource: 'recommended',
+            recommendedCheckpointId: id,
+        };
+        onChange(next);
+        saveAvatarSettings(next);
+    }, [settings, onChange]);
+    const currentRec = RECOMMENDED_CHECKPOINTS.find((c) => c.id === settings.recommendedCheckpointId);
+    return (<>
+      {/* Gear icon trigger */}
+      <button onClick={() => setOpen(true)} className="w-9 h-9 rounded-xl flex items-center justify-center transition-all border border-white/10 bg-white/5 text-white/40 hover:text-white/70 hover:bg-white/10 hover:border-white/20" title="Advanced Settings" aria-label="Open advanced settings">
+        <Settings size={16}/>
+      </button>
+
+      {/* Backdrop + Drawer */}
+      {open && (<>
+          {/* Backdrop */}
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40" onClick={() => setOpen(false)}/>
+
+          {/* Slide-out drawer from right */}
+          <div className="fixed top-0 right-0 bottom-0 w-full max-w-sm bg-[#111111] border-l border-white/10 z-50 flex flex-col animate-slideInRight">
+            {/* Drawer header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Advanced Settings</h3>
+                <p className="text-[10px] text-white/35 mt-0.5">
+                  Configure the AI engine for avatar generation
+                </p>
+              </div>
+              <button onClick={() => setOpen(false)} className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-white/40 hover:text-white/70 transition-colors" aria-label="Close settings">
+                <X size={16}/>
+              </button>
+            </div>
+
+            {/* Drawer body */}
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+              <div>
+                <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">
+                  Model Configuration
+                </div>
+                <p className="text-[11px] text-white/30 mb-4">
+                  Select the AI engine for your avatars
+                </p>
+
+                {/* Recommended option */}
+                <button onClick={() => setSource('recommended')} className={[
+                'w-full flex items-start gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
+                settings.checkpointSource === 'recommended'
+                    ? 'bg-purple-500/10 border border-purple-500/30 ring-1 ring-purple-500/10'
+                    : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+            ].join(' ')}>
+                  <div className="mt-0.5">
+                    <Sparkles size={16} className={settings.checkpointSource === 'recommended'
+                ? 'text-purple-400'
+                : 'text-white/25'}/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">
+                        Recommended
+                      </span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                        Portrait Optimized
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-1">
+                      Curated models tuned for portrait generation
+                    </p>
+                  </div>
+                  {settings.checkpointSource === 'recommended' && (<Check size={16} className="text-purple-400 mt-0.5 shrink-0"/>)}
+                </button>
+
+                {/* Recommended checkpoint selector */}
+                {settings.checkpointSource === 'recommended' && (<div className="ml-8 mb-3 space-y-1.5">
+                    {RECOMMENDED_CHECKPOINTS.map((ckpt) => (<button key={ckpt.id} onClick={() => setRecommended(ckpt.id)} className={[
+                        'w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-all',
+                        settings.recommendedCheckpointId === ckpt.id
+                            ? 'bg-white/[0.06] border border-white/[0.10]'
+                            : 'border border-transparent hover:bg-white/[0.04]',
+                    ].join(' ')}>
+                        <div>
+                          <div className="text-xs font-medium text-white/70">
+                            {ckpt.label}
+                          </div>
+                          <div className="text-[10px] text-white/30 mt-0.5">
+                            {ckpt.description}
+                          </div>
+                        </div>
+                        {settings.recommendedCheckpointId === ckpt.id && (<Check size={14} className="text-green-400 shrink-0 ml-2"/>)}
+                      </button>))}
+                  </div>)}
+
+                {/* Global Settings option */}
+                <button onClick={() => setSource('global')} className={[
+                'w-full flex items-start gap-3 px-4 py-3.5 rounded-xl text-left transition-all',
+                settings.checkpointSource === 'global'
+                    ? 'bg-blue-500/10 border border-blue-500/30 ring-1 ring-blue-500/10'
+                    : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+            ].join(' ')}>
+                  <div className="mt-0.5">
+                    <Globe size={16} className={settings.checkpointSource === 'global'
+                ? 'text-blue-400'
+                : 'text-white/25'}/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-white/80">
+                      Global Settings
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-1">
+                      Use the Image Model from your main Settings panel
+                    </p>
+                    {settings.checkpointSource === 'global' && globalModelImages && (<div className="text-[10px] text-blue-400/70 mt-1.5 font-mono truncate">
+                        {globalModelImages}
+                      </div>)}
+                  </div>
+                  {settings.checkpointSource === 'global' && (<Check size={16} className="text-blue-400 mt-0.5 shrink-0"/>)}
+                </button>
+
+                {settings.checkpointSource === 'global' && (<div className="flex items-start gap-2 mt-3 ml-8 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                    <Info size={12} className="text-amber-400/60 mt-0.5 shrink-0"/>
+                    <p className="text-[10px] text-amber-300/50 leading-relaxed">
+                      May not be optimized for portrait generation
+                    </p>
+                  </div>)}
+              </div>
+
+              {/* Body Workflow Method */}
+              <div className="border-t border-white/[0.06] pt-5">
+                <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">
+                  Body Generation Method
+                </div>
+                <p className="text-[11px] text-white/30 mb-4">
+                  Choose the pipeline for face-to-body generation
+                </p>
+
+                <div className="space-y-1.5">
+                  {BODY_WORKFLOW_OPTIONS.map((opt) => {
+                const isPoseDisabled = opt.id === 'pose' && openposeAvailable === false;
+                return (<button key={opt.id} disabled={isPoseDisabled} onClick={() => {
+                        if (isPoseDisabled)
+                            return;
+                        const next = { ...settings, bodyWorkflowMethod: opt.id };
+                        onChange(next);
+                        saveAvatarSettings(next);
+                    }} className={[
+                        'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all',
+                        isPoseDisabled
+                            ? 'opacity-40 cursor-not-allowed border border-transparent'
+                            : settings.bodyWorkflowMethod === opt.id
+                                ? 'bg-purple-500/10 border border-purple-500/30 ring-1 ring-purple-500/10'
+                                : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+                    ].join(' ')}>
+                      <Layers size={16} className={settings.bodyWorkflowMethod === opt.id
+                        ? 'text-purple-400'
+                        : 'text-white/25'}/>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-white/80">
+                            {opt.label}
+                          </span>
+                          {opt.badge && (<span className={[
+                            'text-[9px] px-1.5 py-0.5 rounded-md font-semibold',
+                            settings.bodyWorkflowMethod === opt.id
+                                ? 'bg-purple-500/20 text-purple-300'
+                                : 'bg-white/10 text-white/40',
+                        ].join(' ')}>
+                              {opt.badge}
+                            </span>)}
+                        </div>
+                        <p className="text-[11px] text-white/35 mt-0.5">
+                          {isPoseDisabled
+                        ? 'OpenPose ControlNet not installed. Run: ./scripts/download_models.sh recommended'
+                        : opt.description}
+                        </p>
+                      </div>
+                      {settings.bodyWorkflowMethod === opt.id && !isPoseDisabled && (<Check size={14} className="text-purple-400 shrink-0"/>)}
+                    </button>);
+            })}
+                </div>
+              </div>
+
+              {/* Character Description toggle */}
+              <div className="border-t border-white/[0.06] pt-5">
+                <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">
+                  Designer Options
+                </div>
+                <p className="text-[11px] text-white/30 mb-4">
+                  Show or hide advanced sections in the wizard
+                </p>
+
+                {/* StyleGAN Face Generator toggle */}
+                <button onClick={() => {
+                const next = { ...settings, useStyleGAN: !settings.useStyleGAN };
+                onChange(next);
+                saveAvatarSettings(next);
+            }} className={[
+                'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
+                settings.useStyleGAN
+                    ? 'bg-purple-500/10 border border-purple-500/30'
+                    : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+            ].join(' ')}>
+                  <Cpu size={16} className={settings.useStyleGAN ? 'text-purple-400' : 'text-white/25'}/>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">StyleGAN Face Creator</span>
+                      {settings.useStyleGAN && (<span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                          ON
+                        </span>)}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      Use StyleGAN for face generation with Body step
+                    </p>
+                    {/* Install status */}
+                    {settings.useStyleGAN && styleganStatus && (<div className="flex items-center gap-1.5 mt-1">
+                        {styleganStatus.installed ? (<>
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-400"/>
+                            <span className="text-[10px] text-green-400/70">
+                              FFHQ {styleganStatus.resolution} installed
+                            </span>
+                          </>) : (<>
+                            <div className="w-1.5 h-1.5 rounded-full bg-amber-400"/>
+                            <span className="text-[10px] text-amber-400/70">
+                              Not installed — falls back to ComfyUI
+                            </span>
+                          </>)}
+                      </div>)}
+                  </div>
+                  {/* Toggle switch */}
+                  <div className={[
+                'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                settings.useStyleGAN ? 'bg-gradient-to-r from-purple-500 to-pink-500' : 'bg-white/15',
+            ].join(' ')}>
+                    <div className={[
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                settings.useStyleGAN ? 'translate-x-4' : 'translate-x-0.5',
+            ].join(' ')}/>
+                  </div>
+                </button>
+
+                {settings.useStyleGAN && (<div className="flex items-start gap-2 mb-3 ml-8 px-3 py-2 rounded-lg bg-purple-500/5 border border-purple-500/10">
+                    <Info size={12} className="text-purple-400/60 mt-0.5 shrink-0"/>
+                    <p className="text-[10px] text-purple-300/50 leading-relaxed">
+                      {styleganStatus?.installed
+                    ? `Faces via StyleGAN (${styleganStatus.resolution}px) → Body via Diffusion → Outfits. Adds a Body creation step.`
+                    : 'StyleGAN not installed. Faces generated via ComfyUI with photorealistic prompts. Install StyleGAN for dedicated face generation with Body step.'}
+                    </p>
+                  </div>)}
+
+                {settings.useStyleGAN && styleganStatus && !styleganStatus.installed && (<div className="flex items-start gap-2 mb-3 ml-8 px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10">
+                    <AlertTriangle size={12} className="text-amber-400/60 mt-0.5 shrink-0"/>
+                    <div className="text-[10px] text-amber-300/50 leading-relaxed">
+                      <p className="font-medium text-amber-300/70">Install StyleGAN models:</p>
+                      <p className="mt-0.5 font-mono">cd avatar-service && python scripts/download_models.py</p>
+                    </div>
+                  </div>)}
+
+                {/* Headshot 1:1 Aspect Ratio toggle */}
+                <button onClick={() => {
+                const next = { ...settings, headshot1to1: !settings.headshot1to1 };
+                onChange(next);
+                saveAvatarSettings(next);
+            }} className={[
+                'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
+                settings.headshot1to1
+                    ? 'bg-purple-500/10 border border-purple-500/30'
+                    : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+            ].join(' ')}>
+                  <Layers size={16} className={settings.headshot1to1 ? 'text-purple-400' : 'text-white/25'}/>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">Headshot 1:1 Ratio</span>
+                      {!settings.headshot1to1 && (<span className="text-[9px] px-1.5 py-0.5 rounded-md bg-green-500/20 text-green-300 font-semibold">
+                          2:3 Default
+                        </span>)}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      {settings.headshot1to1
+                ? 'Square 512×512 — may reduce quality'
+                : 'Portrait 512×768 — best quality for headshots'}
+                    </p>
+                  </div>
+                  {/* Toggle switch */}
+                  <div className={[
+                'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                settings.headshot1to1 ? 'bg-purple-500' : 'bg-white/15',
+            ].join(' ')}>
+                    <div className={[
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                settings.headshot1to1 ? 'translate-x-4' : 'translate-x-0.5',
+            ].join(' ')}/>
+                  </div>
+                </button>
+
+                {/* Auto-Mirror Left toggle */}
+                <button onClick={() => {
+                const next = { ...settings, autoMirrorLeft: !(settings.autoMirrorLeft ?? true) };
+                onChange(next);
+                saveAvatarSettings(next);
+            }} className={[
+                'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
+                (settings.autoMirrorLeft ?? true)
+                    ? 'bg-purple-500/10 border border-purple-500/30'
+                    : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+            ].join(' ')}>
+                  <RotateCcw size={16} className={(settings.autoMirrorLeft ?? true) ? 'text-purple-400' : 'text-white/25'}/>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">Auto-Mirror Left View</span>
+                      {(settings.autoMirrorLeft ?? true) && (<span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                          ON
+                        </span>)}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      {(settings.autoMirrorLeft ?? true)
+                ? 'Generates right-facing then mirrors to left — reliable result'
+                : 'Disabled — left prompt sent as-is, may face wrong direction'}
+                    </p>
+                  </div>
+                  <div className={[
+                'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                (settings.autoMirrorLeft ?? true) ? 'bg-gradient-to-r from-purple-500 to-pink-500' : 'bg-white/15',
+            ].join(' ')}>
+                    <div className={[
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                (settings.autoMirrorLeft ?? true) ? 'translate-x-4' : 'translate-x-0.5',
+            ].join(' ')}/>
+                  </div>
+                </button>
+
+                {/* Auto-Mirror Right toggle */}
+                <button onClick={() => {
+                const next = { ...settings, autoMirrorRight: !(settings.autoMirrorRight ?? false) };
+                onChange(next);
+                saveAvatarSettings(next);
+            }} className={[
+                'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mb-2',
+                (settings.autoMirrorRight ?? false)
+                    ? 'bg-purple-500/10 border border-purple-500/30'
+                    : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+            ].join(' ')}>
+                  <RotateCcw size={16} className={(settings.autoMirrorRight ?? false) ? 'text-purple-400' : 'text-white/25'}/>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">Auto-Mirror Right View</span>
+                      {(settings.autoMirrorRight ?? false) && (<span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                          ON
+                        </span>)}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      {(settings.autoMirrorRight ?? false)
+                ? 'Mirrors right-facing image if orientation is wrong'
+                : 'Disabled — right prompt is reliable, no mirroring needed'}
+                    </p>
+                  </div>
+                  <div className={[
+                'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                (settings.autoMirrorRight ?? false) ? 'bg-gradient-to-r from-purple-500 to-pink-500' : 'bg-white/15',
+            ].join(' ')}>
+                    <div className={[
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                (settings.autoMirrorRight ?? false) ? 'translate-x-4' : 'translate-x-0.5',
+            ].join(' ')}/>
+                  </div>
+                </button>
+
+                {/* Character Description toggle */}
+                <button onClick={() => {
+                const next = { ...settings, showCharacterDescription: !settings.showCharacterDescription };
+                onChange(next);
+                saveAvatarSettings(next);
+            }} className={[
+                'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all',
+                settings.showCharacterDescription
+                    ? 'bg-purple-500/10 border border-purple-500/30'
+                    : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+            ].join(' ')}>
+                  <FileText size={16} className={settings.showCharacterDescription ? 'text-purple-400' : 'text-white/25'}/>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-white/80">Character Description</div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      Show the editable prompt textarea in the designer
+                    </p>
+                  </div>
+                  {/* Toggle switch */}
+                  <div className={[
+                'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                settings.showCharacterDescription ? 'bg-purple-500' : 'bg-white/15',
+            ].join(' ')}>
+                    <div className={[
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                settings.showCharacterDescription ? 'translate-x-4' : 'translate-x-0.5',
+            ].join(' ')}/>
+                  </div>
+                </button>
+
+                {/* 360° Orbit Default toggle */}
+                <button onClick={() => {
+                const next = { ...settings, orbit360Default: !(settings.orbit360Default ?? true) };
+                onChange(next);
+                saveAvatarSettings(next);
+            }} className={[
+                'w-full flex items-center gap-3 px-4 py-3.5 rounded-xl text-left transition-all mt-2',
+                (settings.orbit360Default ?? true)
+                    ? 'bg-purple-500/10 border border-purple-500/30'
+                    : 'border border-transparent hover:bg-white/[0.03] hover:border-white/[0.06]',
+            ].join(' ')}>
+                  <Orbit size={16} className={(settings.orbit360Default ?? true) ? 'text-purple-400' : 'text-white/25'}/>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-white/80">360° Orbit by Default</span>
+                      {(settings.orbit360Default ?? true) && (<span className="text-[9px] px-1.5 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold">
+                          ON
+                        </span>)}
+                    </div>
+                    <p className="text-[11px] text-white/35 mt-0.5">
+                      Start in 360° drag-to-rotate mode instead of static view
+                    </p>
+                  </div>
+                  {/* Toggle switch */}
+                  <div className={[
+                'w-9 h-5 rounded-full transition-colors relative shrink-0',
+                (settings.orbit360Default ?? true) ? 'bg-gradient-to-r from-cyan-500 to-teal-500' : 'bg-white/15',
+            ].join(' ')}>
+                    <div className={[
+                'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+                (settings.orbit360Default ?? true) ? 'translate-x-4' : 'translate-x-0.5',
+            ].join(' ')}/>
+                  </div>
+                </button>
+
+                {/* View Angle Tuning — only when 360° orbit is enabled */}
+                {(settings.orbit360Default ?? true) && (<ViewAngleTuningSection settings={settings} onChange={onChange}/>)}
+              </div>
+            </div>
+
+            {/* Drawer footer */}
+            <div className="px-5 py-4 border-t border-white/[0.06]">
+              <button onClick={() => setOpen(false)} className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-sm font-medium text-white/80 transition-colors">
+                Save &amp; Close
+              </button>
+              <div className="mt-3 text-center space-y-0.5">
+                <div>
+                  <span className="text-[9px] text-white/25 uppercase tracking-wider">Model: </span>
+                  <span className="text-[10px] text-white/40 font-mono">
+                    {currentRec?.label || globalModelImages || 'Default'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] text-white/25 uppercase tracking-wider">Face: </span>
+                  <span className={`text-[10px] font-mono ${settings.useStyleGAN ? 'text-purple-400/60' : 'text-white/40'}`}>
+                    {settings.useStyleGAN ? 'StyleGAN' : 'Diffusion'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] text-white/25 uppercase tracking-wider">Body: </span>
+                  <span className="text-[10px] text-white/40 font-mono">
+                    {BODY_WORKFLOW_OPTIONS.find((o) => o.id === settings.bodyWorkflowMethod)?.label || 'Default'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[9px] text-white/25 uppercase tracking-wider">Orbit: </span>
+                  <span className={`text-[10px] font-mono ${(settings.orbit360Default ?? true) ? 'text-cyan-400/60' : 'text-white/40'}`}>
+                    {(settings.orbit360Default ?? true) ? '360° On' : 'Off'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>)}
+
+      <style>{`
+        @keyframes slideInRight {
+          from { transform: translateX(100%); }
+          to { transform: translateX(0); }
+        }
+        .animate-slideInRight {
+          animation: slideInRight 0.25s ease-out;
+        }
+      `}</style>
+    </>);
+}

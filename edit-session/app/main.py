@@ -14,6 +14,8 @@ Key features:
 from __future__ import annotations
 
 import re
+import logging
+from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 from fastapi import (
@@ -47,6 +49,24 @@ from .health import router as health_router
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Application startup/shutdown tasks."""
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "Starting %s v%s",
+        settings.SERVICE_NAME,
+        settings.SERVICE_VERSION,
+    )
+    logger.info("Store backend: %s", settings.STORE)
+    logger.info("HomePilot URL: %s", settings.HOME_PILOT_BASE_URL)
+    try:
+        yield
+    finally:
+        logger.info("Shutting down edit-session service")
+
+
 # Application metadata
 app = FastAPI(
     title="HomePilot Edit Session",
@@ -57,6 +77,7 @@ app = FastAPI(
     version=settings.SERVICE_VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 
@@ -664,30 +685,3 @@ async def revert_to_history(
         "history": rec.history,
     }
 
-
-# =============================================================================
-# STARTUP / SHUTDOWN EVENTS
-# =============================================================================
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Application startup tasks."""
-    import logging
-
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-
-    logger.info(
-        f"Starting {settings.SERVICE_NAME} v{settings.SERVICE_VERSION}"
-    )
-    logger.info(f"Store backend: {settings.STORE}")
-    logger.info(f"HomePilot URL: {settings.HOME_PILOT_BASE_URL}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Application shutdown tasks."""
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info("Shutting down edit-session service")

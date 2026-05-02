@@ -16,6 +16,12 @@ type ModelCatalogEntry = {
   label?: string
   recommended?: boolean
   recommended_nsfw?: boolean
+  /** Tagged as a solid pick for Expert-mode chat (think/heavy pipelines).
+   *  Purely advisory — Expert auto-falls-back to any installed model via
+   *  EXPERT_LOCAL_AUTO_FALLBACK, so this tag never gates functionality. */
+  recommended_expert?: boolean
+  /** Short hint explaining why a model is a good Expert pick (VRAM, role). */
+  expert_hint?: string
   protected?: boolean
   nsfw?: boolean
   description?: string
@@ -219,15 +225,16 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       { id: 'llama3:70b', label: 'Llama 3 70B' },
       { id: 'llama3.1', label: 'Llama 3.1 (8B)', recommended: true },
       { id: 'llama3.1:70b', label: 'Llama 3.1 70B' },
-      { id: 'llama3.2', label: 'Llama 3.2 (3B)', recommended: true },
+      { id: 'llama3.2', label: 'Llama 3.2 (3B)', recommended: true, recommended_expert: true, expert_hint: "Ultra-fast 3B for Expert 'Fast' mode. Runs on almost any GPU." },
       { id: 'mistral:7b', label: 'Mistral 7B' },
-      { id: 'mistral-nemo', label: 'Mistral Nemo (12B)', recommended: true },
+      { id: 'mistral-nemo', label: 'Mistral Nemo (12B)', recommended: true, recommended_expert: true, expert_hint: "Balanced 12B; Expert 'Heavy' mode fits 12 GB VRAM at Q4." },
       { id: 'mixtral:8x7b', label: 'Mixtral 8x7B' },
-      { id: 'qwen2.5', label: 'Qwen 2.5 (7B)', recommended: true },
+      { id: 'qwen2.5', label: 'Qwen 2.5 (7B)', recommended: true, recommended_expert: true, expert_hint: "Fast capable 7B. Solid Expert Fast/Expert default; ~4.7 GB VRAM." },
       { id: 'gemma2', label: 'Gemma 2 (9B)' },
       { id: 'phi3:3.8b', label: 'Phi-3 3.8B' },
-      { id: 'phi4', label: 'Phi-4 (14B)' },
-      { id: 'deepseek-r1:latest', label: 'DeepSeek R1 (7B)' },
+      { id: 'phi4', label: 'Phi-4 (14B)', recommended_expert: true, expert_hint: "14B logic-heavy reasoning from Microsoft. Great for Expert 'Think'." },
+      { id: 'deepseek-r1:latest', label: 'DeepSeek R1 (7B)', recommended_expert: true, expert_hint: "7B chain-of-thought reasoning — ideal Expert 'Think' model at 12 GB." },
+      { id: 'deepseek-r1:32b', label: 'DeepSeek R1 (32B)', recommended_expert: true, expert_hint: '32B top-tier reasoning. Needs ~20 GB VRAM — save for cloud / large-GPU deploys.' },
       // Uncensored & Roleplay (hidden when Spice Mode off)
       { id: 'dolphin3', label: 'Dolphin 3.0 (8B)', nsfw: true, recommended_nsfw: true },
       { id: 'dolphin-llama3', label: 'Dolphin Llama 3 (8B)', nsfw: true },
@@ -269,7 +276,7 @@ const FALLBACK_CATALOGS: Record<string, Record<string, ModelCatalogEntry[]>> = {
       { id: 'huihui_ai/llama3.2-abliterate:3b', label: 'Llama 3.2 Abliterated (3B)', nsfw: true },
       { id: 'huihui_ai/gemma3-abliterated', label: 'Gemma 3 Abliterated', nsfw: true },
       { id: 'huihui_ai/deepseek-r1-abliterated:8b', label: 'DeepSeek R1 Abliterated (8B)', nsfw: true },
-      { id: 'huihui_ai/deepseek-r1-abliterated:14b', label: 'DeepSeek R1 Abliterated (14B)', nsfw: true },
+      { id: 'huihui_ai/deepseek-r1-abliterated:14b', label: 'DeepSeek R1 Abliterated (14B)', nsfw: true, recommended_expert: true, expert_hint: '14B uncensored reasoning. Tightest on 12 GB but the best quality.' },
       { id: 'huihui_ai/deepseek-r1-abliterated:1.5b', label: 'DeepSeek R1 Abliterated (1.5B)', nsfw: true },
       { id: 'dolphincoder', label: 'Dolphin Coder (7B)', nsfw: true },
       { id: 'goekdenizguelmez/JOSIEFIED-Llama', label: 'JOSIEFIED Llama', nsfw: true, recommended_nsfw: true },
@@ -844,6 +851,8 @@ export default function ModelsView(props: ModelsParams) {
       label: string
       recommended?: boolean
       recommended_nsfw?: boolean
+      recommended_expert?: boolean
+      expert_hint?: string
       protected?: boolean
       nsfw?: boolean
       description?: string
@@ -860,6 +869,8 @@ export default function ModelsView(props: ModelsParams) {
         label: safeLabel(s.id, s.label),
         recommended: s.recommended,
         recommended_nsfw: s.recommended_nsfw,
+        recommended_expert: s.recommended_expert,
+        expert_hint: s.expert_hint,
         protected: s.protected,
         nsfw: s.nsfw,
         description: s.description,
@@ -2151,6 +2162,14 @@ export default function ModelsView(props: ModelsParams) {
                           {row.recommended ? (
                             <div className="px-3 py-1.5 rounded-lg border border-blue-500/30 bg-blue-500/10 text-[10px] font-bold uppercase tracking-wider text-blue-200">
                               ⭐ Recommended
+                            </div>
+                          ) : null}
+                          {row.recommended_expert ? (
+                            <div
+                              className="px-3 py-1.5 rounded-lg border border-purple-500/30 bg-purple-500/10 text-[10px] font-bold uppercase tracking-wider text-purple-200"
+                              title={row.expert_hint || 'Recommended for Expert mode. Expert auto-falls-back to any installed model — this tag is a quality hint.'}
+                            >
+                              💡 Expert Pick
                             </div>
                           ) : null}
                           {row.recommended_nsfw && props.nsfwMode ? (

@@ -16,6 +16,12 @@ MCP_GATEWAY_HOST ?= 127.0.0.1
 MCP_NEW_SERVERS := local_notes local_projects web shell_safe gmail google_calendar microsoft_graph slack github notion
 MCP_SERVERS_DIR := agentic/integrations/mcp
 
+# Expert Core MCP servers — the 10 that back Expert chat mode
+# (thinking_mode = fast / think / heavy). Source of truth:
+# expert/backend/app/expert/mcp_catalog.py::ESSENTIAL_MCP_SERVERS.
+# Each has its own Makefile with `install` and `test` targets.
+MCP_EXPERT_CORE_SERVERS := web_search doc_retrieval memory_store safety_policy observability code_sandbox citation_provenance eval_runner cost_router job_orchestrator
+
 .PHONY: help install setup run up down stop logs health dev build test test-local test-edit-session test-frontend test-mcp-servers test-docker clean \
         download download-minimal download-minimum download-recommended download-full \
         download-chat download-multimodal \
@@ -23,11 +29,14 @@ MCP_SERVERS_DIR := agentic/integrations/mcp
         download-lora \
         download-avatar-models-basic download-avatar-models-full \
         start start-backend start-frontend start-no-agentic start-agentic-servers start-inventory \
+        install-expert start-expert test-expert \
         install-mcp start-mcp stop-mcp clean-mcp mcp-status mcp-install-server verify-mcp \
         mcp-register-homepilot mcp-list-tools mcp-list-gateways mcp-list-agents \
         mcp-register-tool mcp-register-gateway mcp-register-agent mcp-start-full \
         mcp-inventory \
         install-mcp-servers test-mcp-new-servers \
+        install-mcp-expert-core test-mcp-expert-core start-mcp-expert-core health-mcp-expert-core \
+        install-prod \
         persona-launch persona-check persona-stop persona-status persona-list \
         build-installer build-container \
         recovery recovery-status recovery-backup recovery-list-users \
@@ -188,6 +197,11 @@ install: ## Install HomePilot locally with uv (Python 3.11+)
 		echo ""; \
 		echo "⏭  Skipping MCP Context Forge (AGENTIC=0)"; \
 	fi
+	@echo ""
+	@echo "✓ Installing Expert Core MCP servers (10 servers — backs Expert chat mode)..."
+	@$(MAKE) install-mcp-expert-core || { \
+		echo "  ⚠  Expert Core MCP install hit errors (non-fatal). Retry: make install-mcp-expert-core"; \
+	}
 	@echo ""
 	@echo "✓ Installing avatar-service (StyleGAN face generator)..."
 	@if [ -d "avatar-service" ]; then \
@@ -411,7 +425,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		trap cleanup INT TERM EXIT; \
 		\
 		echo "Starting backend..."; \
-		cd "$$ROOT/backend" && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 & \
+		cd "$$ROOT/backend" && INTERACTIVE_ENABLED=$${INTERACTIVE_ENABLED:-true} .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 & \
 		pids="$$pids $$!"; \
 		\
 		echo "Starting edit-session service..."; \
@@ -419,7 +433,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 		pids="$$pids $$!"; \
 		\
 		echo "Starting frontend..."; \
-		cd "$$ROOT/frontend" && npm run dev -- --host 0.0.0.0 --port 3000 & \
+		cd "$$ROOT/frontend" && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000 & \
 		pids="$$pids $$!"; \
 		\
 		if [ -f "$$ROOT/ComfyUI/main.py" ] && [ -f "$$ROOT/ComfyUI/.venv/bin/python" ]; then \
@@ -429,7 +443,7 @@ start: preflight ## Start HomePilot locally (backend + frontend + ComfyUI)
 				ln -s "$$ROOT/models/comfy" "$$ROOT/ComfyUI/models"; \
 			fi; \
 			echo "Starting ComfyUI..."; \
-			cd "$$ROOT/ComfyUI" && .venv/bin/python main.py --listen 0.0.0.0 --port 8188 & \
+			bash "$$ROOT/scripts/start-comfyui.sh" & \
 			pids="$$pids $$!"; \
 		fi; \
 		\
@@ -507,7 +521,7 @@ start-backend: ## Start backend locally with uv
 		echo "Virtual environment not found. Run: make install"; \
 		exit 1; \
 	fi
-	@cd backend && .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	@cd backend && INTERACTIVE_ENABLED=$${INTERACTIVE_ENABLED:-true} .venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 start-edit-session: ## Start edit-session sidecar locally (port 8010)
 	@echo "Starting edit-session service..."
@@ -523,32 +537,72 @@ start-frontend: ## Start frontend locally
 		echo "Node modules not found. Run: make install"; \
 		exit 1; \
 	fi
-	@cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
+	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000
 
-start-comfyui: ## Start ComfyUI locally (required for image/video generation)
-	@echo "Starting ComfyUI..."
-	@if [ ! -f "ComfyUI/main.py" ]; then \
-		echo "❌ ComfyUI not found. Run: make install"; \
-		exit 1; \
+install-expert: ## Install dependencies for the isolated Expert-mode sandbox (includes Expert MCP gateway when AGENTIC=1)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Installing HomePilot Expert-mode dependencies"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@$(MAKE) install AGENTIC=$(AGENTIC)
+	@if [ "$(AGENTIC)" = "1" ]; then \
+		echo ""; \
+		echo "Ensuring MCP Context Forge is installed for Expert mode..."; \
+		echo "Expert MCP targets (P0 minimum): mcp-web-search, mcp-doc-retrieval, mcp-memory-store, mcp-safety-policy, mcp-observability"; \
+		$(MAKE) install-mcp; \
+		echo "Installing + testing Expert MCP servers (P0 set)..."; \
+		for d in web_search doc_retrieval memory_store safety_policy observability; do \
+			echo "  -> $$d"; \
+			$(MAKE) -C agentic/integrations/mcp/$$d install; \
+			$(MAKE) -C agentic/integrations/mcp/$$d test; \
+		done; \
 	fi
-	@if [ ! -f "ComfyUI/.venv/bin/python" ]; then \
-		echo "❌ ComfyUI venv not found. Run: make install"; \
-		exit 1; \
-	fi
-	@if [ -d "models/comfy" ] && [ ! -L "ComfyUI/models" ]; then \
-		echo "ℹ️  Auto-linking models..."; \
-		rm -rf ComfyUI/models; \
-		ln -s $$(pwd)/models/comfy ComfyUI/models; \
-	fi
-	@cd ComfyUI && .venv/bin/python main.py --listen 0.0.0.0 --port 8188
+
+start-expert: ## Start the isolated Expert-mode sandbox (ports 18000/13000/18188) without touching current prod ports
+	@bash scripts/start-expert.sh
+
+test-expert: ## Smoke-test Expert endpoints against the Expert-mode backend (default http://localhost:18000)
+	@bash scripts/test-expert.sh
+
+start-comfyui: ## Start ComfyUI locally (auto-detects GPU vs CPU)
+	@bash scripts/start-comfyui.sh
 
 # --- Testing & Development ----------------------------------------------------
 
-test: test-local test-edit-session test-frontend test-mcp-servers  ## Run all tests (backend + edit-session + frontend + MCP)
+test: test-local test-edit-session test-frontend test-mcp-servers test-mcp-expert-core  ## Run all tests (backend + edit-session + frontend + MCP + Expert Core MCP)
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════════════════════"
 	@echo "  ✅ All tests passed!"
 	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+interactive-smoke: ## Hello-world smoke test for the Interactive subsystem (real deps, with graceful fallbacks)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Interactive subsystem smoke test (real Ollama + ComfyUI when reachable)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo ""
+	@if [ ! -d "backend/.venv" ]; then \
+		echo "❌ Backend not installed. Run: make install"; \
+		exit 1; \
+	fi
+	@# Best-effort: pull the lightest Ollama chat model if Ollama is
+	@# running and the model isn't already there. The smoke script
+	@# is fine without it (heuristic fallback), so we never fail the
+	@# target if the pull itself fails.
+	@OLLAMA_MODEL=$${OLLAMA_MODEL:-llama3.2:1b}; \
+	 if command -v ollama >/dev/null 2>&1; then \
+		if ollama list 2>/dev/null | awk 'NR>1 {print $$1}' | grep -qx "$$OLLAMA_MODEL"; then \
+			echo "✓ Ollama has model '$$OLLAMA_MODEL' locally."; \
+		else \
+			echo "↻ Pulling lightweight model '$$OLLAMA_MODEL' via Ollama (first-time cost only)…"; \
+			ollama pull "$$OLLAMA_MODEL" || echo "⚠ ollama pull failed — smoke will use heuristic fallback"; \
+		fi; \
+	 else \
+		echo "⚠ 'ollama' CLI not on PATH — smoke will use heuristic fallback"; \
+	 fi
+	@echo ""
+	@cd backend && INTERACTIVE_ENABLED=true \
+	               INTERACTIVE_PLAYBACK_LLM=true \
+	               INTERACTIVE_PLAYBACK_RENDER=true \
+	               .venv/bin/python scripts/interactive_smoke.py
 
 test-local: ## Run backend API tests locally with pytest
 	@echo "════════════════════════════════════════════════════════════════════════════════"
@@ -713,10 +767,10 @@ health: ## Health checks (best-effort)
 
 dev: ## Frontend dev locally; backend stack in docker
 	docker compose -f infra/docker-compose.yml up -d backend llm comfyui media
-	cd frontend && npm run dev -- --host 0.0.0.0 --port 3000
+	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev -- --host 0.0.0.0 --port 3000
 
-build: ## Build production frontend bundle
-	cd frontend && npm run build
+build: ## Build production frontend bundle (Expert selector ON by default — set VITE_EXPERT_CHAT_ENABLED=false to ship gated)
+	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run build
 
 test-docker: ## Run backend tests (pytest) inside backend container
 	docker compose -f infra/docker-compose.yml run --rm backend pytest -q
@@ -1783,3 +1837,210 @@ file-manager-scan: ## Dry-run: scan every source and print a file list (no serve
 		$(if $(SESSION),--session "$(SESSION)",) \
 		$(if $(BACKEND_URL),--backend-url "$(BACKEND_URL)",) \
 		$(if $(COMFY_URL),--comfy-url "$(COMFY_URL)",)
+
+# ─────────────────────────────────────────────────────────────────────
+# Recovery — rebuild file_assets ownership for orphan avatar / image
+# files that exist on disk but aren't registered in the database.
+# Useful when projects_metadata.json has been wiped but the underlying
+# avatar PNGs are still present in UPLOAD_DIR.
+#
+# Idempotent: skips files already registered. Safe to run multiple
+# times. Pass DRY_RUN=1 to preview without writing. Pass USER=<id|name>
+# to assign restored files to a specific user instead of the admin.
+#
+# Examples:
+#   make restore-avatars                  # restore as admin
+#   make restore-avatars DRY_RUN=1        # preview only
+#   make restore-avatars USER=ruslanmv    # assign to a named user
+# ─────────────────────────────────────────────────────────────────────
+
+restore-avatars: ## Reassign orphan image files in UPLOAD_DIR to the admin user (or USER=<id|name>). DRY_RUN=1 to preview.
+	@test -x backend/.venv/bin/python || (echo "❌ backend venv missing — run 'make install' first"; exit 1)
+	@cd backend && .venv/bin/python -m app.scripts.restore_avatars \
+		$(if $(DRY_RUN),--dry-run,) \
+		$(if $(USER),--user "$(USER)",)
+
+# ─────────────────────────────────────────────────────────────────────
+# Expert Upgrade (standalone API scaffolding)
+# ─────────────────────────────────────────────────────────────────────
+expert-upgrade-install: ## Install standalone Expert Upgrade deps from root requirements.txt
+	pip install -r requirements.txt
+
+expert-upgrade-run: ## Run standalone Expert Upgrade API (expert.main:app)
+	uvicorn expert.main:app --reload
+
+
+# Expert assistant upgraded targets
+
+PYTHON ?= python3
+PIP ?= pip3
+
+expert-assistant-install:
+	$(PIP) install -r requirements.txt
+
+expert-assistant-run:
+	uvicorn expert.main:app --host 0.0.0.0 --port 8000 --reload
+
+expert-assistant-test:
+	pytest -q
+
+expert-assistant-lint:
+	python -m py_compile expert/main.py expert/**/*.py
+
+expert-frontend-install:
+	cd frontend && npm install
+
+expert-frontend-run:
+	cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run dev
+
+# ── Expert Core MCP Servers ───────────────────────────────────────────────────
+# Lifecycle targets for the 10 MCP servers that back Expert chat mode.
+# Source of truth: expert/backend/app/expert/mcp_catalog.py::ESSENTIAL_MCP_SERVERS.
+# Category in the UI: expert_core (see frontend/src/ui/mcp/AvailableServersPanel.tsx).
+
+install-prod: ## One-shot prod-ready install: deps + frontend bundle + Expert MCP health check (set VITE_EXPERT_CHAT_ENABLED=false to ship gated)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Production-ready install: deps → frontend build → Expert health check"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@$(MAKE) install
+	@echo ""
+	@echo "✓ Building frontend production bundle (VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true})..."
+	@cd frontend && VITE_EXPERT_CHAT_ENABLED=$${VITE_EXPERT_CHAT_ENABLED:-true} npm run build
+	@echo ""
+	@$(MAKE) health-mcp-expert-core
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  ✅ Production install complete"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  • Frontend bundle:  frontend/dist/"
+	@echo "  • Expert routes:    backend mounts /v1/expert/* on start"
+	@echo "  • Expert MCP:       10/10 servers verified healthy"
+	@echo ""
+	@echo "  Next: ``make start`` (single box)  or deploy ``frontend/dist/`` + run uvicorn."
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+
+install-mcp-expert-core: ## Install all 10 Expert Core MCP server venvs (backs Expert chat mode)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Installing Expert Core MCP Servers (10 servers)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@failed=""; \
+	for srv in $(MCP_EXPERT_CORE_SERVERS); do \
+		echo "─── Installing mcp-$$srv ───"; \
+		if [ -f "$(MCP_SERVERS_DIR)/$$srv/Makefile" ]; then \
+			if $(MAKE) -C $(MCP_SERVERS_DIR)/$$srv install; then \
+				echo "  ✓ mcp-$$srv installed"; \
+			else \
+				echo "  ✗ mcp-$$srv FAILED"; \
+				failed="$$failed $$srv"; \
+			fi; \
+		else \
+			echo "  ⚠  no Makefile at $(MCP_SERVERS_DIR)/$$srv — skipped"; \
+			failed="$$failed $$srv"; \
+		fi; \
+		echo ""; \
+	done; \
+	echo "════════════════════════════════════════════════════════════════════════════════"; \
+	if [ -z "$$failed" ]; then \
+		echo "  ✅ All 10 Expert Core MCP servers installed"; \
+	else \
+		echo "  ⚠  Failed:$$failed"; \
+		exit 1; \
+	fi; \
+	echo "════════════════════════════════════════════════════════════════════════════════"
+
+test-mcp-expert-core: ## Run pytest on all 10 Expert Core MCP servers
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Testing Expert Core MCP Servers (10 servers)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@failed=""; passed=0; \
+	for srv in $(MCP_EXPERT_CORE_SERVERS); do \
+		echo "─── Testing mcp-$$srv ───"; \
+		if [ ! -f "$(MCP_SERVERS_DIR)/$$srv/Makefile" ]; then \
+			echo "  ⚠  no Makefile — skipped"; \
+			failed="$$failed $$srv(no-makefile)"; \
+		elif $(MAKE) -C $(MCP_SERVERS_DIR)/$$srv test; then \
+			passed=$$((passed + 1)); \
+			echo "  ✓ mcp-$$srv tests passed"; \
+		else \
+			failed="$$failed $$srv"; \
+			echo "  ✗ mcp-$$srv TESTS FAILED"; \
+		fi; \
+		echo ""; \
+	done; \
+	echo "════════════════════════════════════════════════════════════════════════════════"; \
+	if [ -z "$$failed" ]; then \
+		echo "  ✅ All 10 Expert Core MCP servers passed ($$passed / 10)"; \
+	else \
+		echo "  ⚠  Passed $$passed / 10 — failed:$$failed"; \
+		exit 1; \
+	fi; \
+	echo "════════════════════════════════════════════════════════════════════════════════"
+
+start-mcp-expert-core: ## Start all 10 Expert Core MCP servers on ports 9150-9159 (dev use)
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Starting Expert Core MCP Servers (ports 9150-9159)"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Use Ctrl+C to stop all. In production these are started individually"
+	@echo "  via the Server Management UI (category: Expert Core Services)."
+	@echo ""
+	@bash -c ' \
+		set -e; \
+		ROOT="$$(pwd)"; pids=""; \
+		trap "kill $$pids 2>/dev/null || true; wait 2>/dev/null || true" INT TERM EXIT; \
+		port=9150; \
+		for srv in $(MCP_EXPERT_CORE_SERVERS); do \
+			d="$$ROOT/$(MCP_SERVERS_DIR)/$$srv"; \
+			if [ -x "$$d/.venv/bin/uvicorn" ]; then \
+				echo "  ▶ mcp-$$srv  http://127.0.0.1:$$port"; \
+				(cd "$$d" && PYTHONPATH="$$PWD/../../../.." .venv/bin/uvicorn app:app --host 127.0.0.1 --port $$port >/tmp/mcp-$$srv.log 2>&1) & \
+				pids="$$pids $$!"; \
+			else \
+				echo "  ✗ $$srv  venv missing (run: make install-mcp-expert-core)"; \
+			fi; \
+			port=$$((port + 1)); \
+		done; \
+		wait'
+
+health-mcp-expert-core: ## Probe GET /health on every Expert Core MCP server (ports 9150-9159) and report pass/fail
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@echo "  Health check: Expert Core MCP servers"
+	@echo "════════════════════════════════════════════════════════════════════════════════"
+	@bash -c ' \
+		set -u; \
+		passed=0; failed=0; failed_list=""; \
+		port=9150; \
+		for srv in $(MCP_EXPERT_CORE_SERVERS); do \
+			d="$(MCP_SERVERS_DIR)/$$srv"; \
+			if [ ! -x "$$d/.venv/bin/uvicorn" ]; then \
+				printf "  ✗ %-22s venv missing (run: make install-mcp-expert-core)\n" "$$srv"; \
+				failed=$$((failed + 1)); failed_list="$$failed_list $$srv"; \
+				port=$$((port + 1)); continue; \
+			fi; \
+			(cd "$$d" && PYTHONPATH="$$PWD/../../../.." .venv/bin/uvicorn app:app --host 127.0.0.1 --port "$$port" >/tmp/mcp-health-$$srv.log 2>&1) & \
+			pid=$$!; \
+			ok=0; \
+			for _ in $$(seq 1 30); do \
+				sleep 0.2; \
+				if curl -fsS --max-time 1 "http://127.0.0.1:$$port/health" >/tmp/mcp-health-$$srv.json 2>/dev/null; then \
+					ok=1; break; \
+				fi; \
+			done; \
+			if [ "$$ok" = "1" ] && grep -q "\"ok\"[[:space:]]*:[[:space:]]*true" /tmp/mcp-health-$$srv.json 2>/dev/null; then \
+				printf "  ✓ %-22s :%-5d healthy\n" "$$srv" "$$port"; \
+				passed=$$((passed + 1)); \
+			else \
+				printf "  ✗ %-22s :%-5d no /health response (tail: %s)\n" \
+					"$$srv" "$$port" "$$(tail -2 /tmp/mcp-health-$$srv.log 2>/dev/null | tr "\n" " ")"; \
+				failed=$$((failed + 1)); failed_list="$$failed_list $$srv"; \
+			fi; \
+			kill "$$pid" 2>/dev/null || true; wait "$$pid" 2>/dev/null || true; \
+			port=$$((port + 1)); \
+		done; \
+		echo "════════════════════════════════════════════════════════════════════════════════"; \
+		if [ "$$failed" = "0" ]; then \
+			echo "  ✅ All 10 Expert Core MCP servers healthy ($$passed / 10)"; \
+		else \
+			echo "  ⚠  $$failed / 10 failed:$$failed_list"; \
+			exit 1; \
+		fi; \
+		echo "════════════════════════════════════════════════════════════════════════════════"'

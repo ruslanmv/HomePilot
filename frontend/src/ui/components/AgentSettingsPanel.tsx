@@ -173,8 +173,14 @@ export function AgentSettingsPanel({ project, backendUrl, apiKey, onClose, onSav
   useEffect(() => {
     const headers: Record<string, string> = {}
     if (apiKey) headers['x-api-key'] = apiKey
+    try {
+      if (typeof window !== 'undefined') {
+        const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+        if (tok) headers['authorization'] = `Bearer ${tok}`
+      }
+    } catch { /* ignore */ }
 
-    fetch(`${backendUrl}/v1/agentic/catalog`, { headers })
+    fetch(`${backendUrl}/v1/agentic/catalog`, { headers, credentials: 'include' })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (data) {

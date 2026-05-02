@@ -1,0 +1,165 @@
+<svg width="1600" height="980" viewBox="0 0 1600 980" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad" x1="800" y1="0" x2="800" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#050A2D"/>
+      <stop offset="1" stop-color="#0B1550"/>
+    </linearGradient>
+    <linearGradient id="panelGrad" x1="40" y1="170" x2="1540" y2="360" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2B165D" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#12164A" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="cardBlue" x1="0" y1="0" x2="240" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4D97FF"/>
+      <stop offset="1" stop-color="#2E63E8"/>
+    </linearGradient>
+    <linearGradient id="cardPurple" x1="0" y1="0" x2="240" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#875AF7"/>
+      <stop offset="1" stop-color="#5F63F2"/>
+    </linearGradient>
+    <linearGradient id="cardPink" x1="0" y1="0" x2="240" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E44FA7"/>
+      <stop offset="1" stop-color="#C149C7"/>
+    </linearGradient>
+    <linearGradient id="cardGreen" x1="0" y1="0" x2="240" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18B97D"/>
+      <stop offset="1" stop-color="#0FA56F"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="180%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#000000" flood-opacity="0.25"/>
+    </filter>
+    <filter id="glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="40"/>
+    </filter>
+
+    <!-- Smaller, better-proportioned arrowhead -->
+    <marker id="arrowHead" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto">
+      <path d="M0 0 L9 4.5 L0 9 Z" fill="#D9DDF8"/>
+    </marker>
+
+    <style>
+      .headline { font: 700 34px Inter, Arial, sans-serif; fill: #F5F7FF; }
+      .subline { font: 600 24px Inter, Arial, sans-serif; fill: #AEB5E8; }
+      .panelTitle { font: 700 28px Inter, Arial, sans-serif; fill: #F5F7FF; }
+      .panelSub { font: 500 18px Inter, Arial, sans-serif; fill: #D0D5F2; }
+      .actionTitle { font: 700 24px Inter, Arial, sans-serif; fill: #FFFFFF; }
+      .actionSub { font: 500 16px Inter, Arial, sans-serif; fill: #D7DCF8; }
+      .num { font: 700 20px Inter, Arial, sans-serif; fill: #FFFFFF; }
+      .cardTitle { font: 700 28px Inter, Arial, sans-serif; fill: #FFFFFF; }
+      .cardSub { font: 500 18px Inter, Arial, sans-serif; fill: #EEF2FF; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1600" height="980" fill="url(#bgGrad)"/>
+
+  <!-- Headline -->
+  <text x="800" y="78" text-anchor="middle" class="headline">
+    Create an interactive story in minutes from one idea to a playable branching video
+  </text>
+  <text x="800" y="132" text-anchor="middle" class="subline">
+    Wizard → AI planner → scene graph → asset rendering → play + edit
+  </text>
+
+  <!-- Top panel -->
+  <g transform="translate(40 180)">
+    <rect x="0" y="0" width="1480" height="210" rx="22" fill="url(#panelGrad)" stroke="#7C3AED" stroke-opacity="0.65" stroke-width="2"/>
+    <text x="46" y="52" class="panelTitle">Editor — audit, edit, regenerate at any time</text>
+    <text x="46" y="92" class="panelSub">Four per-scene actions, no keyboard shortcuts required</text>
+
+    <!-- Edit -->
+    <g transform="translate(42 126)">
+      <circle cx="28" cy="28" r="28" fill="none" stroke="#4DA8FF" stroke-width="4"/>
+      <path d="M15 29L25 39L43 18" stroke="#4DA8FF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="78" y="21" class="actionTitle">Edit</text>
+      <text x="78" y="52" class="actionSub">fix title · narration · prompt</text>
+    </g>
+    <!-- Preview -->
+    <g transform="translate(360 126)">
+      <circle cx="28" cy="28" r="28" fill="none" stroke="#FF4FB3" stroke-width="4"/>
+      <path d="M22 16L43 28L22 40V16Z" fill="#FF4FB3"/>
+      <text x="78" y="21" class="actionTitle">Preview</text>
+      <text x="78" y="52" class="actionSub">see image or video inline</text>
+    </g>
+    <!-- Regenerate -->
+    <g transform="translate(760 126)">
+      <circle cx="28" cy="28" r="28" fill="none" stroke="#8B5CF6" stroke-width="4"/>
+      <path d="M42 20C36 13 27 12 20 16C12 20 9 30 13 38C17 46 26 50 35 46C41 43 45 38 46 31" stroke="#8B5CF6" stroke-width="4" stroke-linecap="round"/>
+      <path d="M46 11V24H33" stroke="#8B5CF6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="78" y="21" class="actionTitle">Regenerate</text>
+      <text x="78" y="52" class="actionSub">one scene or all at once</text>
+    </g>
+    <!-- Play -->
+    <g transform="translate(1180 126)">
+      <circle cx="28" cy="28" r="28" fill="none" stroke="#10C48D" stroke-width="4"/>
+      <path d="M22 16L43 28L22 40V16Z" fill="#10C48D"/>
+      <text x="78" y="21" class="actionTitle">Play</text>
+      <text x="78" y="52" class="actionSub">one click from the editor</text>
+    </g>
+  </g>
+
+  <!-- Flow row -->
+  <!-- Card 1 -->
+  <g transform="translate(48 500)" filter="url(#shadow)">
+    <rect width="236" height="210" rx="28" fill="url(#cardBlue)"/>
+    <rect x="18" y="18" width="62" height="38" rx="19" fill="#1F4FAF" fill-opacity="0.5"/>
+    <text x="49" y="44" text-anchor="middle" class="num">1</text>
+    <text x="118" y="116" text-anchor="middle" class="cardTitle">Wizard</text>
+    <text x="118" y="154" text-anchor="middle" class="cardSub">guided setup</text>
+    <text x="118" y="188" text-anchor="middle" class="cardSub">for idea → story</text>
+  </g>
+
+  <!-- Arrow 1 - shortened + thinner -->
+  <path d="M 290 605 H 395" stroke="#D9DDF8" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrowHead)"/>
+
+  <!-- Card 2 -->
+  <g transform="translate(410 500)" filter="url(#shadow)">
+    <rect width="236" height="210" rx="28" fill="url(#cardPurple)"/>
+    <rect x="18" y="18" width="62" height="38" rx="19" fill="#5536B8" fill-opacity="0.55"/>
+    <text x="49" y="44" text-anchor="middle" class="num">2</text>
+    <text x="118" y="116" text-anchor="middle" class="cardTitle">AI planner</text>
+    <text x="118" y="154" text-anchor="middle" class="cardSub">builds structure</text>
+    <text x="118" y="188" text-anchor="middle" class="cardSub">and prompt flow</text>
+  </g>
+
+  <!-- Arrow 2 - shortened + thinner -->
+  <path d="M 652 605 H 757" stroke="#D9DDF8" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrowHead)"/>
+
+  <!-- Card 3 -->
+  <g transform="translate(772 500)" filter="url(#shadow)">
+    <rect width="236" height="210" rx="28" fill="url(#cardPurple)"/>
+    <rect x="18" y="18" width="62" height="38" rx="19" fill="#5536B8" fill-opacity="0.55"/>
+    <text x="49" y="44" text-anchor="middle" class="num">3</text>
+    <text x="118" y="116" text-anchor="middle" class="cardTitle">Scene graph</text>
+    <text x="118" y="154" text-anchor="middle" class="cardSub">branching nodes</text>
+    <text x="118" y="188" text-anchor="middle" class="cardSub">choices · outcomes</text>
+  </g>
+
+  <!-- Arrow 3 - shortened + thinner -->
+  <path d="M 1014 605 H 1119" stroke="#D9DDF8" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrowHead)"/>
+
+  <!-- Card 4 -->
+  <g transform="translate(1134 500)" filter="url(#shadow)">
+    <rect width="236" height="210" rx="28" fill="url(#cardPink)"/>
+    <rect x="18" y="18" width="62" height="38" rx="19" fill="#983072" fill-opacity="0.5"/>
+    <text x="49" y="44" text-anchor="middle" class="num">4</text>
+    <text x="118" y="116" text-anchor="middle" class="cardTitle">Render</text>
+    <text x="118" y="154" text-anchor="middle" class="cardSub">generate image</text>
+    <text x="118" y="188" text-anchor="middle" class="cardSub">or video by scene</text>
+  </g>
+
+  <!-- Down arrow - adjusted position and size -->
+  <path d="M800 725 V 775" stroke="#D9DDF8" stroke-width="3.5" stroke-linecap="round" marker-end="url(#arrowHead)"/>
+
+  <!-- Glow behind final card -->
+  <circle cx="800" cy="855" r="140" fill="#18B97D" fill-opacity="0.22" filter="url(#glow)"/>
+
+  <!-- Card 5 -->
+  <g transform="translate(690 770)" filter="url(#shadow)">
+    <rect width="220" height="210" rx="28" fill="url(#cardGreen)"/>
+    <rect x="18" y="18" width="62" height="38" rx="19" fill="#0A6C4E" fill-opacity="0.75"/>
+    <text x="49" y="44" text-anchor="middle" class="num">5</text>
+    <text x="110" y="116" text-anchor="middle" class="cardTitle">Play</text>
+    <text x="110" y="154" text-anchor="middle" class="cardSub">standard · or</text>
+    <text x="110" y="188" text-anchor="middle" class="cardSub">persona chat</text>
+  </g>
+</svg>

@@ -34,6 +34,10 @@ import {
 
 // Import voice module components
 import './voice/voiceMode.css';
+// Interactive 360° persona preview — matches the Chat surface's
+// behaviour so voice replies with a view_pack render the same clickable
+// Front/Left/Right/Back chips.
+import { ViewPackViewer, type ViewAngle } from './components/ViewPackViewer';
 import Starfield from './voice/Starfield';
 import VoiceSettingsPanel from './voice/VoiceSettingsPanel';
 import SettingsModal from './voice/SettingsModal';
@@ -76,13 +80,26 @@ const RE_MD_IMAGE = /!\[([^\]]*)\]\(([^)]+)\)/g;
 /** Regex matching markdown links: [text](url) */
 const RE_MD_LINK = /\[([^\]]*)\]\(([^)]+)\)/g;
 
+// Shared Voice-mode text helpers (normalizeForSpeech + parseVoiceInline).
+// Keeps the markdown-stripping logic in one place so TTS and the on-screen
+// bubble never disagree on how ``*I smile*`` should appear.
+import { normalizeForSpeech, parseVoiceInline } from './voice/textNormalize';
+
 /**
- * Strip markdown images and links from text for TTS.
- * - ![alt](url) → removes entirely (image should be seen, not read)
- * - [text](url) → keeps only the link text (the URL is not spoken)
- * - Collapses leftover whitespace so speech sounds natural.
+ * Strip markdown from text for TTS. Historically this only handled images
+ * and links; we now delegate to ``normalizeForSpeech`` which also collapses
+ * italic / bold / strike / code decorations so the speech engine no longer
+ * reads "*I smile*" as "asterisk I smile asterisk". Export kept
+ * parameter-compatible with the old signature — all existing callers
+ * (App.tsx, CallOverlay, CreatorStudioEditor) keep working.
  */
 export function stripMarkdownForSpeech(text: string): string {
+  return normalizeForSpeech(text);
+}
+
+// Legacy body kept (not exported, not called) so the git blame cleanly
+// shows the transition. Remove on the next cleanup pass.
+function _legacyStripMarkdownForSpeech(text: string): string {
   return text
     // Remove image markdown entirely (the user sees the image, no need to speak it)
     .replace(RE_MD_IMAGE, '')
@@ -184,7 +201,24 @@ function parseInlineMarkdown(
     nodes.push(line.slice(lastIndex));
   }
 
-  return nodes.length > 0 ? nodes : [line];
+  // Second pass: the gaps between image/link matches above are still raw
+  // strings that may contain *italic* / **bold** / ~~strike~~ / `code`
+  // markers — those would otherwise display as literal asterisks. Run
+  // every string slot through ``parseVoiceInline`` (with renderImageLink
+  // disabled so we don't double-process the image/link matches we
+  // already handled above).
+  const polished: React.ReactNode[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
+    if (typeof n === 'string') {
+      const pieces = parseVoiceInline(n);
+      for (const piece of pieces) polished.push(piece);
+    } else {
+      polished.push(n);
+    }
+  }
+
+  return polished.length > 0 ? polished : [line];
 }
 
 // Message type with stable ID for deduplication
@@ -195,6 +229,13 @@ interface Message {
   media?: {
     images?: string[];
     video_url?: string;
+    // 360° persona preview fields — mirror the Chat-surface media shape
+    // so voice can show the same interactive viewer. All optional; when
+    // absent, voice falls back to the existing flat images strip.
+    view_pack?: Partial<Record<ViewAngle, string>>;
+    available_views?: ViewAngle[];
+    active_angle?: ViewAngle;
+    interactive_preview?: boolean;
   } | null;
 }
 
@@ -382,6 +423,126 @@ function useTypewriterText(
  * - Cursor only at end of currently typing line
  * - Click-to-expand lightbox for generated images
  */
+/** Direct, non-stateful render path for historical messages on remount.
+ *
+ * Voice → Chat → Voice used to surface a brief window where the bubble
+ * rendered as plain text with literal asterisks: historyIdsRef marked
+ * every message as already-rendered → animate=false → useTypewriter
+ * initialised, but the ``isTyping`` flag it emitted could briefly read
+ * ``true`` during the first render cycle (edge-case around the lazy
+ * initialState + useEffect order), which in turn made the render gate
+ * return raw text instead of calling ``parseInlineMarkdown``.
+ *
+ * Separating the non-animated path into its own component means
+ * historical messages never touch the typewriter state machine, so
+ * ``parseInlineMarkdown`` (with our italic / bold / strike / code
+ * rendering) fires deterministically on every mount.
+ *
+ * Rules-of-hooks note: kept as a sibling component (rather than an
+ * early-return inside RenderTypedMessage) so each render path has a
+ * stable hook order.
+ */
+/** Shared media block: 360° viewer / images strip / video. Rendered at
+ *  the end of both typewriter and static message paths. Gated on the
+ *  caller's "media is ready to show" signal — for the typewriter path
+ *  that's ``!isTyping``; for the static path it's always ``true``. */
+function MessageMedia({
+  media,
+  ready,
+  onImageClick,
+}: {
+  media?: Message['media'];
+  ready: boolean;
+  onImageClick?: (src: string) => void;
+}) {
+  if (!ready || !media) return null;
+  const hasViewPack =
+    media.interactive_preview && media.view_pack && media.available_views && media.available_views.length > 0;
+
+  return (
+    <>
+      {hasViewPack ? (
+        <ViewPackViewer
+          viewPack={Object.fromEntries(
+            (Object.entries(media.view_pack!) as Array<[ViewAngle, string | undefined]>)
+              .filter(([, url]) => Boolean(url))
+              .map(([angle, url]) => [angle, resolveFileUrl(url as string)])
+          ) as Partial<Record<ViewAngle, string>>}
+          availableViews={media.available_views!}
+          initialAngle={media.active_angle}
+          onImageClick={(url) => onImageClick?.(url)}
+        />
+      ) : null}
+
+      {media.images?.length && !hasViewPack ? (
+        <div className="mt-3 flex gap-3 overflow-x-auto hp-fade-in">
+          {[...new Set(media.images)].map((src, i) => {
+            const resolved = resolveFileUrl(src);
+            return (
+              <img
+                key={src || i}
+                src={resolved}
+                alt={`Generated ${i + 1}`}
+                className="w-72 max-h-96 h-auto object-contain rounded-xl border border-white/10 bg-black/20 cursor-zoom-in hover:opacity-90 transition-opacity"
+                loading="lazy"
+                onClick={() => onImageClick?.(resolved)}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            );
+          })}
+        </div>
+      ) : null}
+
+      {media.video_url ? (
+        <div className="mt-3 hp-fade-in">
+          <video
+            src={media.video_url}
+            controls
+            playsInline
+            className="w-full max-w-xl rounded-xl border border-white/10 bg-black/20"
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function RenderStaticMessage({
+  fullText,
+  media,
+  onImageClick,
+}: {
+  fullText: string;
+  media?: Message['media'];
+  onImageClick?: (src: string) => void;
+}) {
+  const lines = fullText.split('\n');
+  return (
+    <div className="hp-message-assistant text-[17px]">
+      {lines.map((line, i) => {
+        const trimmed = line.trim();
+        const isBullet = trimmed.startsWith('•');
+        const content = isBullet ? line.substring(line.indexOf('•') + 1).trim() : line;
+        if (trimmed === '') return <div key={i} className="h-2" />;
+        if (isBullet) {
+          return (
+            <div key={i} className="ml-4 my-1 flex gap-2">
+              <span>•</span>
+              <span>{parseInlineMarkdown(content, onImageClick)}</span>
+            </div>
+          );
+        }
+        return (
+          <p key={i} className="my-0.5">
+            {parseInlineMarkdown(content, onImageClick)}
+          </p>
+        );
+      })}
+      <MessageMedia media={media} ready={true} onImageClick={onImageClick} />
+    </div>
+  );
+}
+
 function RenderTypedMessage({
   fullText,
   typingSpeed,
@@ -444,8 +605,28 @@ function RenderTypedMessage({
         );
       })}
 
-      {/* Render generated images AFTER typewriter animation completes */}
-      {!isTyping && media?.images?.length ? (
+      {/* Interactive 360° preview — mirrors the Chat surface's ViewAngleChips.
+          Shown when the assistant message carries a view_pack + available_views
+          with interactive_preview on; wins over the flat images strip so we
+          don't render the same angles twice. */}
+      {!isTyping && media?.interactive_preview && media?.view_pack && media?.available_views?.length ? (
+        <ViewPackViewer
+          viewPack={Object.fromEntries(
+            (Object.entries(media.view_pack) as Array<[ViewAngle, string | undefined]>)
+              .filter(([, url]) => Boolean(url))
+              .map(([angle, url]) => [angle, resolveFileUrl(url as string)])
+          ) as Partial<Record<ViewAngle, string>>}
+          availableViews={media.available_views}
+          initialAngle={media.active_angle}
+          onImageClick={(url) => onImageClick?.(url)}
+        />
+      ) : null}
+
+      {/* Render generated images AFTER typewriter animation completes.
+          Skipped when the interactive 360° viewer is active — the viewer
+          already displays the chosen angle, and rendering the flat strip
+          on top would duplicate the same four images. */}
+      {!isTyping && media?.images?.length && !(media?.interactive_preview && media?.view_pack) ? (
         <div className="mt-3 flex gap-3 overflow-x-auto hp-fade-in">
           {[...new Set(media.images)].map((src, i) => {
             const resolved = resolveFileUrl(src)
@@ -1055,16 +1236,29 @@ export default function VoiceModeGrok({
                     <div className="hp-message-user">
                       <p className="text-white/90 text-[17px] leading-relaxed">{msg.text}</p>
                     </div>
-                  ) : (
-                    <RenderTypedMessage
-                      fullText={msg.text}
-                      typingSpeed={typingSpeed}
-                      onProgress={scrollToBottom}
-                      animate={idx === messages.length - 1 && !historyIdsRef.current?.has(msg.id)}
-                      media={msg.media}
-                      onImageClick={(src) => setLightbox(src)}
-                    />
-                  )}
+                  ) : (() => {
+                    const shouldAnimate = idx === messages.length - 1 && !historyIdsRef.current?.has(msg.id);
+                    // Historical messages on a fresh voice mount take the
+                    // static render path — guaranteed formatted output, no
+                    // typewriter state race. Only the live-newly-arrived
+                    // last message runs the typewriter.
+                    return shouldAnimate ? (
+                      <RenderTypedMessage
+                        fullText={msg.text}
+                        typingSpeed={typingSpeed}
+                        onProgress={scrollToBottom}
+                        animate={true}
+                        media={msg.media}
+                        onImageClick={(src) => setLightbox(src)}
+                      />
+                    ) : (
+                      <RenderStaticMessage
+                        fullText={msg.text}
+                        media={msg.media}
+                        onImageClick={(src) => setLightbox(src)}
+                      />
+                    );
+                  })()}
                 </div>
               );
             })}

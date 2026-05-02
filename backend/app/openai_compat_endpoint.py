@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 
-from .auth import require_api_key
+from .auth import require_ollabridge_api_key
 from . import config as _config
 from .llm import chat as llm_chat, strip_think_tags
 from .personalities import registry as personality_registry, build_system_prompt, ConversationMemory
@@ -452,7 +452,7 @@ async def _chat_with_personality(
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("/v1/chat/completions", dependencies=[Depends(require_api_key)])
+@router.post("/v1/chat/completions", dependencies=[Depends(require_ollabridge_api_key)])
 async def openai_chat_completions(
     req: ChatCompletionRequest,
     x_client_type: Optional[str] = Header(default=None, alias="X-Client-Type"),
@@ -656,7 +656,7 @@ async def openai_chat_completions(
     return response_data
 
 
-@router.get("/v1/models", dependencies=[Depends(require_api_key)])
+@router.get("/v1/models", dependencies=[Depends(require_ollabridge_api_key)])
 async def openai_list_models() -> ModelListResponse:
     """List available models (personas + built-in personalities).
 

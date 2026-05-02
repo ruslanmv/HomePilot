@@ -1,0 +1,676 @@
+/**
+ * Typed HTTP client for the interactive service.
+ *
+ * One reason to keep this in a dedicated module:
+ *   - All routes live under `/v1/interactive/*`
+ *   - All error shapes are the uniform `{code, error, data}` dict
+ *     produced by `routes/_common.http_error_from`
+ *   - Downstream components can import `createInteractiveApi` and
+ *     never touch `fetch`, so swapping auth / retry / tracing
+ *     becomes a one-file edit.
+ *
+ * Design notes:
+ *   - The client accepts `backendUrl` + `apiKey` up-front so hook
+ *     callers don't re-build it on every render.
+ *   - Every method returns a `Promise<T>` with a typed shape.
+ *   - Failures are normalized to `InteractiveApiError` with the
+ *     backend `code` preserved so callers can branch on it
+ *     (e.g. `err.code === "invalid_input"`).
+ *   - `AbortSignal` threaded through so React effects can cancel
+ *     in-flight requests on unmount.
+ */
+
+import {
+  ActionItem,
+  AnalyticsSummary,
+  AutoGenerateResult,
+  AutoGenerateStreamEvent,
+  CatalogItemView,
+  ChatResult,
+  EdgeItem,
+  Experience,
+  ExperienceMode,
+  HealthInfo,
+  InteractiveApiError,
+  NodeItem,
+  PendingResult,
+  PlanAutoResult,
+  PlanIntent,
+  PlanningPreset,
+  PersonaLiveGenerateResult,
+  ProgressSnapshot,
+  PublishResult,
+  Publication,
+  QAResult,
+  ResolveResult,
+  RuleItem,
+} from "./types";
+
+export interface InteractiveApi {
+  // Meta
+  health(signal?: AbortSignal): Promise<HealthInfo>;
+  listPresets(signal?: AbortSignal): Promise<PlanningPreset[]>;
+
+  // Experiences
+  listExperiences(signal?: AbortSignal): Promise<Experience[]>;
+  getExperience(id: string, signal?: AbortSignal): Promise<Experience>;
+  createExperience(input: Partial<Experience>): Promise<Experience>;
+  patchExperience(id: string, patch: Partial<Experience>): Promise<Experience>;
+  deleteExperience(id: string): Promise<void>;
+
+  // Planner
+  plan(req: { prompt: string; mode: ExperienceMode; audience_hints?: Record<string, unknown> }): Promise<PlanIntent>;
+  planAuto(req: { idea: string }): Promise<PlanAutoResult>;
+  autoGenerate(id: string): Promise<AutoGenerateResult>;
+  /**
+   * SSE variant of ``autoGenerate`` (PIPE-2). ``onEvent`` fires
+   * once per phase event the backend emits (started,
+   * generating_graph, persisting_nodes, ..., running_qa) so the
+   * wizard spinner can surface real progress. Resolves with the
+   * final ``result`` payload, matching the POST /auto-generate
+   * body. Aborts via ``signal``.
+   */
+  autoGenerateStream(
+    id: string,
+    opts: {
+      onEvent?: (ev: AutoGenerateStreamEvent) => void;
+      signal?: AbortSignal;
+    },
+  ): Promise<AutoGenerateResult>;
+
+  /**
+   * Full-project generation stream (BATCH B). Chains plan +
+   * graph + per-scene asset rendering behind a single SSE feed
+   * so the wizard modal can stay up through the entire
+   * plan → render → ready lifecycle. Event kinds include
+   * everything ``autoGenerateStream`` emits plus:
+   *   rendering_started / rendering_scene / scene_rendered
+   *   | scene_skipped | scene_render_failed / rendering_done.
+   */
+  generateAllStream(
+    id: string,
+    opts: {
+      onEvent?: (ev: AutoGenerateStreamEvent) => void;
+      signal?: AbortSignal;
+    },
+  ): Promise<AutoGenerateResult>;
+  /**
+   * Re-render a single scene node (EDIT-3). Used by the Editor's
+   * "Regenerate scene" button. Replaces the node's asset_ids
+   * with the freshly-produced asset so the player always picks
+   * the latest render.
+   */
+  renderSingleScene(
+    experienceId: string, nodeId: string,
+  ): Promise<{
+    ok: boolean;
+    scene_id: string;
+    title: string;
+    status: "rendered" | "skipped" | "failed" | "rendered_but_not_attached";
+    asset_id?: string;
+    reason?: string;
+    media_type?: "image" | "video";
+  }>;
+  /** PATCH a node's editable fields (EDIT-2). */
+  patchNode(
+    nodeId: string,
+    patch: { title?: string; narration?: string; image_prompt?: string },
+  ): Promise<NodeItem>;
+  /** Resolve an asset_id to its player URL, or null if unknown. */
+  resolveAssetUrl(
+    assetId: string, signal?: AbortSignal,
+  ): Promise<string | null>;
+  seedGraph(
+    id: string,
+    req: { prompt: string; mode: ExperienceMode; audience_hints?: Record<string, unknown> },
+  ): Promise<{ already_seeded: boolean; node_count: number; edge_count: number }>;
+
+  // Graph
+  listNodes(id: string, signal?: AbortSignal): Promise<NodeItem[]>;
+  listEdges(id: string, signal?: AbortSignal): Promise<EdgeItem[]>;
+
+  // Catalog
+  listActions(id: string, signal?: AbortSignal): Promise<ActionItem[]>;
+  createAction(id: string, payload: Partial<ActionItem> & { label: string }): Promise<ActionItem>;
+  deleteAction(actionId: string): Promise<void>;
+
+  // Rules
+  listRules(id: string, signal?: AbortSignal): Promise<RuleItem[]>;
+  createRule(
+    id: string,
+    payload: { name: string; condition: Record<string, unknown>; action: Record<string, unknown>; priority?: number; enabled?: boolean },
+  ): Promise<RuleItem>;
+  deleteRule(ruleId: string): Promise<void>;
+
+  // QA + Publish
+  runQa(id: string): Promise<QAResult>;
+  latestReport(id: string, signal?: AbortSignal): Promise<{ report: Record<string, unknown> }>;
+  publish(id: string, channel: string): Promise<PublishResult>;
+  listPublications(id: string, signal?: AbortSignal): Promise<Publication[]>;
+
+  // Analytics
+  experienceAnalytics(id: string, signal?: AbortSignal): Promise<AnalyticsSummary>;
+
+  // Live-play (PLAY-*)
+  startSession(req: {
+    experience_id: string;
+    viewer_ref?: string;
+    language?: string;
+    personalization?: Record<string, unknown>;
+  }): Promise<{
+    id: string;
+    experience_id: string;
+    current_node_id: string;
+    initial_scene?: {
+      node_id: string;
+      asset_id: string;
+      asset_url: string;
+      media_kind: "image" | "video" | "unknown" | string;
+      duration_sec: number;
+      title: string;
+      status?: "pending" | "rendering" | "ready" | "failed" | string;
+    } | null;
+    /** Set only for Persona Live Play when the backend generated
+     *  the in-character greeting — callers render it as the first
+     *  assistant bubble before the viewer types. */
+    opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
+    /** Persona Live Play: the persona's canonical portrait URL.
+     *  The player uses it as the idle VideoStage background (so
+     *  the stage never shows a black backdrop) and as the avatar
+     *  fallback when the wizard didn't stamp ``persona_avatar_url``. */
+    persona_portrait_url?: string;
+    /** "image" → the stage stays a still photo between turns.
+     *  "video" → the stage loops an img2vid clip derived from the
+     *  portrait. Defaults to whatever the wizard stamped. */
+    render_media_type?: "image" | "video";
+  }>;
+  chat(sessionId: string, req: { text: string; viewer_region?: string }): Promise<ChatResult>;
+  pending(
+    sessionId: string,
+    opts?: { since_id?: string; limit?: number },
+    signal?: AbortSignal,
+  ): Promise<PendingResult>;
+  getCatalog(sessionId: string, signal?: AbortSignal): Promise<CatalogItemView[]>;
+  getProgress(sessionId: string, signal?: AbortSignal): Promise<ProgressSnapshot>;
+  resolveTurn(
+    sessionId: string,
+    req: { action_id?: string; free_text?: string; viewer_region?: string },
+  ): Promise<ResolveResult>;
+
+  // Persona Live
+  personaLiveGenerate(req: {
+    persona_id: string;
+    vibe: string;
+    mode: "image" | "video";
+  }): Promise<PersonaLiveGenerateResult>;
+  personaLiveStart(req: { persona_id: string; mode?: "image" | "video" }): Promise<{ id: string; persona_id: string; current_level: number; xp: number }>;
+  personaLiveSession(sessionId: string): Promise<Record<string, unknown>>;
+  personaLiveAction(sessionId: string, req: { action_id: string; message?: string }): Promise<{
+    job_id: string;
+    status?: string;
+    dialogue: { text: string } | string;
+    scene_context?: Record<string, unknown>;
+    scene_memory?: Record<string, unknown>;
+    emotional_state?: Record<string, unknown>;
+    image_url?: string;
+    xp?: number;
+    level?: number;
+    /** Remaining XP needed to reach next level. */
+    xp_to_next?: number;
+    /** XP awarded by this specific action — used for celebrations. */
+    xp_delta?: number;
+    /** Newly-unlocked actions when this action triggered a level-up. */
+    new_unlocks?: Array<{ id: string; label: string }>;
+    versions?: Array<Record<string, unknown>>;
+    render_skipped?: boolean;
+    /** Library-hit fast path: backend returns the cached photo
+     *  inline so the frontend can skip the job-poll loop. */
+    media?: {
+      type?: "image" | "video" | string;
+      url?: string;
+      status?: "ready" | "rendering" | string;
+    };
+    source?: string;
+  }>;
+  personaLiveJob(jobId: string): Promise<Record<string, unknown>>;
+  personaLiveRestore(sessionId: string, versionId: string): Promise<{ ok: boolean; session: Record<string, unknown>; version: Record<string, unknown> }>;
+  personaLiveChat(sessionId: string, message: string): Promise<{
+    dialogue: { text: string };
+    scene_context?: Record<string, unknown>;
+    scene_memory?: Record<string, unknown>;
+    emotional_state?: Record<string, unknown>;
+    optional_action_suggestion?: { id: string; label: string } | null;
+    /** Chat earns a smaller XP delta than tap-actions. */
+    xp?: number;
+    level?: number;
+    xp_to_next?: number;
+    xp_delta?: number;
+  }>;
+}
+
+/**
+ * Shared SSE reader for /auto-generate/stream and
+ * /generate-all/stream. Parses ``data: {...}\n\n`` frames,
+ * forwards each to ``onEvent``, and resolves with the ``result``
+ * frame payload. Rejects with InteractiveApiError on HTTP
+ * failures or an explicit ``error`` frame. Native EventSource
+ * can't honour credentials:'include' across origins — hence the
+ * hand-rolled fetch+ReadableStream reader.
+ */
+async function _consumeGenerationStream(
+  url: string,
+  authHeaders: Record<string, string>,
+  opts: {
+    onEvent?: (ev: AutoGenerateStreamEvent) => void;
+    signal?: AbortSignal;
+  },
+): Promise<AutoGenerateResult> {
+  const resp = await fetch(url, {
+    method: "GET",
+    credentials: "include",
+    headers: { Accept: "text/event-stream", ...authHeaders },
+    signal: opts.signal,
+  });
+  if (!resp.ok || !resp.body) {
+    const detail = await resp.text().catch(() => "");
+    throw new InteractiveApiError(
+      detail || `generation stream failed (${resp.status})`,
+      resp.status,
+    );
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let finalResult: AutoGenerateResult | null = null;
+  let errorMessage: string | null = null;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buffer.indexOf("\n\n")) >= 0) {
+      const raw = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 2);
+      if (!raw.startsWith("data:")) continue;
+      const body = raw.slice("data:".length).trim();
+      if (!body) continue;
+      let frame: AutoGenerateStreamEvent;
+      try {
+        frame = JSON.parse(body) as AutoGenerateStreamEvent;
+      } catch {
+        continue;
+      }
+      if (opts.onEvent) {
+        try { opts.onEvent(frame); } catch { /* hook must not kill stream */ }
+      }
+      if (frame.type === "result") {
+        finalResult = (frame.payload as unknown as AutoGenerateResult) || null;
+      }
+      if (frame.type === "error") {
+        const payload = (frame.payload || {}) as Record<string, unknown>;
+        errorMessage = typeof payload.reason === "string"
+          ? payload.reason
+          : "generation failed";
+      }
+      if (frame.type === "done") break;
+    }
+  }
+
+  if (errorMessage) throw new InteractiveApiError(errorMessage, 0);
+  if (!finalResult) throw new InteractiveApiError("stream ended without a result frame", 0);
+  return finalResult;
+}
+
+
+export function createInteractiveApi(
+  backendUrl: string, apiKey?: string,
+): InteractiveApi {
+  const base = backendUrl.replace(/\/+$/, "") + "/v1/interactive";
+  const authHeaders: Record<string, string> = apiKey
+    ? { "x-api-key": apiKey.trim() }
+    : {};
+
+  async function call<T>(
+    path: string,
+    init: RequestInit = {},
+    signal?: AbortSignal,
+  ): Promise<T> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...authHeaders,
+      ...(init.headers as Record<string, string> | undefined),
+    };
+    let res: Response;
+    try {
+      // credentials: 'include' forwards the homepilot_session cookie
+      // on cross-origin dev + same-origin packaged builds, so the
+      // backend's viewer resolver can authenticate the request. Without
+      // this, every /v1/interactive/* call 401s in dev and produces a
+      // confusing error on the landing page.
+      res = await fetch(`${base}${path}`, {
+        ...init, headers, signal, credentials: "include",
+      });
+    } catch (err) {
+      if ((err as Error).name === "AbortError") throw err;
+      throw new InteractiveApiError(
+        `Network error contacting ${path}: ${(err as Error).message}`,
+        0, "network_error",
+      );
+    }
+    const contentType = res.headers.get("content-type") || "";
+    const isJson = contentType.includes("application/json");
+    const body = isJson ? await res.json().catch(() => ({})) : await res.text();
+    if (!res.ok) {
+      const detail = (isJson && (body as { detail?: unknown }).detail) || body;
+      if (detail && typeof detail === "object") {
+        const d = detail as { code?: string; error?: string; data?: Record<string, unknown> };
+        throw new InteractiveApiError(
+          d.error || `HTTP ${res.status}`,
+          res.status, d.code || "http_error", d.data || {},
+        );
+      }
+      throw new InteractiveApiError(
+        typeof detail === "string" ? detail : `HTTP ${res.status}`,
+        res.status, "http_error",
+      );
+    }
+    return body as T;
+  }
+
+  return {
+    health: (signal) => call<HealthInfo>("/health", { method: "GET" }, signal),
+
+    listPresets: (signal) =>
+      call<{ items: PlanningPreset[] }>("/presets", { method: "GET" }, signal)
+        .then((r) => r.items),
+
+    listExperiences: (signal) =>
+      call<{ items: Experience[] }>("/experiences", { method: "GET" }, signal)
+        .then((r) => r.items),
+
+    getExperience: (id, signal) =>
+      call<{ experience: Experience }>(`/experiences/${encodeURIComponent(id)}`, { method: "GET" }, signal)
+        .then((r) => r.experience),
+
+    createExperience: (input) =>
+      call<{ experience: Experience }>("/experiences", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }).then((r) => r.experience),
+
+    patchExperience: (id, patch) =>
+      call<{ experience: Experience }>(`/experiences/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      }).then((r) => r.experience),
+
+    deleteExperience: (id) =>
+      call<{ ok: boolean }>(`/experiences/${encodeURIComponent(id)}`, { method: "DELETE" })
+        .then(() => undefined),
+
+    plan: (req) =>
+      call<{ intent: PlanIntent }>("/plan", {
+        method: "POST",
+        body: JSON.stringify(req),
+      }).then((r) => r.intent),
+
+    planAuto: (req) =>
+      call<PlanAutoResult & { ok: boolean }>("/plan-auto", {
+        method: "POST",
+        body: JSON.stringify(req),
+      }),
+
+    autoGenerate: (id) =>
+      call<AutoGenerateResult & { ok: boolean }>(
+        `/experiences/${encodeURIComponent(id)}/auto-generate`,
+        { method: "POST", body: JSON.stringify({}) },
+      ),
+
+    autoGenerateStream: (id, opts) =>
+      _consumeGenerationStream(
+        `${base}/experiences/${encodeURIComponent(id)}/auto-generate/stream`,
+        authHeaders, opts,
+      ),
+
+    generateAllStream: (id, opts) =>
+      _consumeGenerationStream(
+        `${base}/experiences/${encodeURIComponent(id)}/generate-all/stream`,
+        authHeaders, opts,
+      ),
+
+    renderSingleScene: (experienceId, nodeId) =>
+      call(
+        `/experiences/${encodeURIComponent(experienceId)}/nodes/${encodeURIComponent(nodeId)}/render`,
+        { method: "POST", body: JSON.stringify({}) },
+      ),
+
+    patchNode: (nodeId, patch) =>
+      call<{ ok: boolean; node: NodeItem }>(
+        `/nodes/${encodeURIComponent(nodeId)}`,
+        { method: "PATCH", body: JSON.stringify(patch) },
+      ).then((r) => r.node),
+
+    resolveAssetUrl: (assetId, signal) =>
+      call<{ ok: boolean; url: string | null }>(
+        `/assets/${encodeURIComponent(assetId)}/url`,
+        { method: "GET" }, signal,
+      ).then((r) => r.url),
+
+    seedGraph: (id, req) =>
+      call<{ already_seeded: boolean; node_count: number; edge_count: number }>(
+        `/experiences/${encodeURIComponent(id)}/seed-graph`,
+        { method: "POST", body: JSON.stringify(req) },
+      ),
+
+    listNodes: (id, signal) =>
+      call<{ items: NodeItem[] }>(
+        `/experiences/${encodeURIComponent(id)}/nodes`, { method: "GET" }, signal,
+      ).then((r) => r.items),
+
+    listEdges: (id, signal) =>
+      call<{ items: EdgeItem[] }>(
+        `/experiences/${encodeURIComponent(id)}/edges`, { method: "GET" }, signal,
+      ).then((r) => r.items),
+
+    listActions: (id, signal) =>
+      call<{ items: ActionItem[] }>(
+        `/experiences/${encodeURIComponent(id)}/actions`, { method: "GET" }, signal,
+      ).then((r) => r.items),
+
+    createAction: (id, payload) =>
+      call<{ action: ActionItem }>(
+        `/experiences/${encodeURIComponent(id)}/actions`,
+        { method: "POST", body: JSON.stringify(payload) },
+      ).then((r) => r.action),
+
+    deleteAction: (actionId) =>
+      call<{ ok: boolean }>(`/actions/${encodeURIComponent(actionId)}`, { method: "DELETE" })
+        .then(() => undefined),
+
+    listRules: (id, signal) =>
+      call<{ items: RuleItem[] }>(
+        `/experiences/${encodeURIComponent(id)}/rules`, { method: "GET" }, signal,
+      ).then((r) => r.items),
+
+    createRule: (id, payload) =>
+      call<{ rule: RuleItem }>(
+        `/experiences/${encodeURIComponent(id)}/rules`,
+        { method: "POST", body: JSON.stringify(payload) },
+      ).then((r) => r.rule),
+
+    deleteRule: (ruleId) =>
+      call<{ ok: boolean }>(`/rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" })
+        .then(() => undefined),
+
+    runQa: (id) =>
+      call<QAResult & { ok: boolean }>(
+        `/experiences/${encodeURIComponent(id)}/qa-run`, { method: "POST" },
+      ),
+
+    latestReport: (id, signal) =>
+      call<{ report: Record<string, unknown> }>(
+        `/experiences/${encodeURIComponent(id)}/qa-reports`, { method: "GET" }, signal,
+      ),
+
+    publish: (id, channel) =>
+      call<PublishResult & { ok: boolean }>(
+        `/experiences/${encodeURIComponent(id)}/publish`,
+        { method: "POST", body: JSON.stringify({ channel }) },
+      ),
+
+    listPublications: (id, signal) =>
+      call<{ items: Publication[] }>(
+        `/experiences/${encodeURIComponent(id)}/publications`, { method: "GET" }, signal,
+      ).then((r) => r.items),
+
+    experienceAnalytics: (id, signal) =>
+      call<AnalyticsSummary & { ok: boolean }>(
+        `/experiences/${encodeURIComponent(id)}/analytics`, { method: "GET" }, signal,
+      ),
+
+    startSession: (req) =>
+      call<{
+        session: { id: string; experience_id: string; current_node_id: string };
+        initial_scene?: {
+          node_id: string;
+          asset_id: string;
+          asset_url: string;
+          media_kind: "image" | "video" | "unknown" | string;
+          duration_sec: number;
+          title: string;
+          status?: "pending" | "rendering" | "ready" | "failed" | string;
+        } | null;
+        opening_turn?: { reply_text: string; scene_prompt: string; character_turn_id: string };
+        persona_portrait_url?: string;
+        render_media_type?: "image" | "video";
+      }>(
+        "/play/sessions",
+        { method: "POST", body: JSON.stringify(req) },
+      ).then((r) => ({
+        ...r.session,
+        initial_scene: r.initial_scene || null,
+        opening_turn: r.opening_turn,
+        persona_portrait_url: r.persona_portrait_url,
+        render_media_type: r.render_media_type,
+      })),
+
+    chat: (sessionId, req) =>
+      call<ChatResult & { ok: boolean }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/chat`,
+        { method: "POST", body: JSON.stringify(req) },
+      ),
+
+    pending: (sessionId, opts, signal) => {
+      const params = new URLSearchParams();
+      if (opts?.since_id) params.set("since_id", opts.since_id);
+      if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+      const suffix = params.toString() ? `?${params.toString()}` : "";
+      return call<PendingResult & { ok: boolean }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/pending${suffix}`,
+        { method: "GET" }, signal,
+      );
+    },
+
+    getCatalog: (sessionId, signal) =>
+      call<{ items: CatalogItemView[] }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/catalog`,
+        { method: "GET" }, signal,
+      ).then((r) => r.items),
+
+    getProgress: (sessionId, signal) =>
+      call<ProgressSnapshot & { ok: boolean }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/progress`,
+        { method: "GET" }, signal,
+      ),
+
+    resolveTurn: (sessionId, req) =>
+      call<{ resolved: ResolveResult }>(
+        `/play/sessions/${encodeURIComponent(sessionId)}/resolve`,
+        { method: "POST", body: JSON.stringify(req) },
+      ).then((r) => r.resolved),
+
+    personaLiveGenerate: (req) =>
+      call<PersonaLiveGenerateResult>(
+        "/persona-live/generate",
+        { method: "POST", body: JSON.stringify(req) },
+      ),
+
+    personaLiveStart: (req) =>
+      call<{ ok: boolean; session: { id: string; persona_id: string; current_level: number; xp: number } }>(
+        "/persona-live/start",
+        { method: "POST", body: JSON.stringify(req) },
+      ).then((r) => r.session),
+
+    personaLiveSession: (sessionId) =>
+      call<Record<string, unknown>>(
+        `/persona-live/session/${encodeURIComponent(sessionId)}`,
+        { method: "GET" },
+      ),
+
+    personaLiveAction: (sessionId, req) =>
+      call<{
+        ok: boolean;
+        job_id: string;
+        status?: string;
+        dialogue: { text: string } | string;
+        scene_context?: Record<string, unknown>;
+        scene_memory?: Record<string, unknown>;
+        emotional_state?: Record<string, unknown>;
+        image_url?: string;
+        xp?: number;
+        level?: number;
+        versions?: Array<Record<string, unknown>>;
+        render_skipped?: boolean;
+        media?: {
+          type?: "image" | "video" | string;
+          url?: string;
+          status?: "ready" | "rendering" | string;
+        };
+        source?: string;
+      }>(
+        `/persona-live/session/${encodeURIComponent(sessionId)}/action`,
+        { method: "POST", body: JSON.stringify(req) },
+      ),
+
+    personaLiveJob: (jobId) =>
+      call<Record<string, unknown>>(
+        `/persona-live/jobs/${encodeURIComponent(jobId)}`,
+        { method: "GET" },
+      ),
+
+    personaLiveRestore: (sessionId, versionId) =>
+      call<{ ok: boolean; session: Record<string, unknown>; version: Record<string, unknown> }>(
+        `/persona-live/session/${encodeURIComponent(sessionId)}/restore`,
+        { method: "POST", body: JSON.stringify({ version_id: versionId }) },
+      ),
+
+    personaLiveChat: (sessionId, message) =>
+      call<{
+        ok: boolean;
+        dialogue: { text: string };
+        scene_context?: Record<string, unknown>;
+        scene_memory?: Record<string, unknown>;
+        emotional_state?: Record<string, unknown>;
+        optional_action_suggestion?: { id: string; label: string } | null;
+        xp?: number;
+        level?: number;
+        xp_to_next?: number;
+        xp_delta?: number;
+      }>(
+        `/persona-live/session/${encodeURIComponent(sessionId)}/chat`,
+        { method: "POST", body: JSON.stringify({ message }) },
+      ).then((r) => ({
+        dialogue: r.dialogue,
+        scene_context: r.scene_context,
+        scene_memory: r.scene_memory,
+        emotional_state: r.emotional_state,
+        optional_action_suggestion: r.optional_action_suggestion,
+        xp: r.xp,
+        level: r.level,
+        xp_to_next: r.xp_to_next,
+        xp_delta: r.xp_delta,
+      })),
+  };
+}
