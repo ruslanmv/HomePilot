@@ -77,8 +77,28 @@ export type ResolvedMedia = {
 function authHeaders(apiKey?: string): Record<string, string> {
   const h: Record<string, string> = { 'Content-Type': 'application/json' }
   if (apiKey && apiKey.trim().length > 0) h['x-api-key'] = apiKey
+  // Additive: attach the logged-in user's bearer JWT when present so
+  // inventory endpoints that now accept 'user session OR api key'
+  // (see backend/app/auth.py::require_api_key) authenticate without
+  // the shared API key. Silent no-op on anonymous / not-yet-logged-in
+  // sessions.
+  try {
+    if (typeof window !== 'undefined') {
+      const tok = window.localStorage.getItem('homepilot_auth_token') || ''
+      if (tok && !h['Authorization']) h['Authorization'] = `Bearer ${tok}`
+    }
+  } catch {
+    /* ignore storage errors */
+  }
   return h
 }
+
+/** Fetch init used by every inventory call. ``credentials: 'include'``
+ *  makes the browser attach the ``homepilot_session`` cookie so the
+ *  backend's user-session fallback path (see ``require_api_key``) can
+ *  authenticate even when a bearer token isn't held in localStorage
+ *  (e.g. SSR-style browser session). */
+const WITH_CREDS: Pick<RequestInit, 'credentials'> = { credentials: 'include' }
 
 // ---------------------------------------------------------------------------
 // API calls
@@ -96,7 +116,7 @@ export async function fetchInventoryCategories(
   })
   const res = await fetch(
     `${backendUrl}/v1/inventory/${projectId}/categories?${params}`,
-    { headers: authHeaders(opts?.apiKey) },
+    { headers: authHeaders(opts?.apiKey), ...WITH_CREDS },
   )
   if (!res.ok) throw new Error(`Inventory categories failed: ${res.status}`)
   return res.json()
@@ -124,7 +144,7 @@ export async function searchInventory(
 
   const res = await fetch(
     `${backendUrl}/v1/inventory/${projectId}/search?${params}`,
-    { headers: authHeaders(opts?.apiKey) },
+    { headers: authHeaders(opts?.apiKey), ...WITH_CREDS },
   )
   if (!res.ok) throw new Error(`Inventory search failed: ${res.status}`)
   return res.json()
@@ -141,7 +161,7 @@ export async function getInventoryItem(
   })
   const res = await fetch(
     `${backendUrl}/v1/inventory/${projectId}/items/${encodeURIComponent(itemId)}?${params}`,
-    { headers: authHeaders(opts?.apiKey) },
+    { headers: authHeaders(opts?.apiKey), ...WITH_CREDS },
   )
   if (!res.ok) throw new Error(`Inventory get failed: ${res.status}`)
   return res.json()
@@ -156,6 +176,7 @@ export async function resolveInventoryMedia(
   const res = await fetch(`${backendUrl}/v1/inventory/resolve`, {
     method: 'POST',
     headers: authHeaders(opts?.apiKey),
+    ...WITH_CREDS,
     body: JSON.stringify({
       project_id: projectId,
       asset_id: assetId,
@@ -179,6 +200,7 @@ export async function resolvePersonaOutfitView(
   const res = await fetch(`${backendUrl}/v1/inventory/${projectId}/persona/outfit-view`, {
     method: 'POST',
     headers: authHeaders(opts.apiKey),
+    ...WITH_CREDS,
     body: JSON.stringify({
       target: opts.target || 'current_outfit',
       angle: opts.angle,
@@ -202,6 +224,7 @@ export async function saveViewPackToOutfit(
   const res = await fetch(`${backendUrl}/v1/viewpack/save-to-outfit`, {
     method: 'POST',
     headers: authHeaders(opts.apiKey),
+    ...WITH_CREDS,
     body: JSON.stringify({
       project_id: opts.projectId,
       outfit_id: opts.outfitId,
@@ -221,7 +244,7 @@ export async function deleteInventoryItem(
 ): Promise<{ ok: boolean; deleted_id: string; deleted_label: string; deleted_type: string }> {
   const res = await fetch(
     `${backendUrl}/v1/inventory/${projectId}/items/${encodeURIComponent(itemId)}`,
-    { method: 'DELETE', headers: authHeaders(opts?.apiKey) },
+    { method: 'DELETE', headers: authHeaders(opts?.apiKey), ...WITH_CREDS },
   )
   if (!res.ok) throw new Error(`Inventory delete failed: ${res.status}`)
   return res.json()
@@ -263,7 +286,7 @@ export async function listPersonaDocuments(
 ): Promise<{ ok: boolean; documents: PersonaDocument[] }> {
   const res = await fetch(
     `${backendUrl}/projects/${projectId}/persona/documents`,
-    { headers: authHeaders(opts?.apiKey) },
+    { headers: authHeaders(opts?.apiKey), ...WITH_CREDS },
   )
   if (!res.ok) throw new Error(`List persona documents failed: ${res.status}`)
   return res.json()
@@ -281,6 +304,7 @@ export async function attachPersonaDocument(
     {
       method: 'POST',
       headers: authHeaders(opts?.apiKey),
+      ...WITH_CREDS,
       body: JSON.stringify({ item_id: itemId, mode }),
     },
   )
@@ -300,6 +324,7 @@ export async function setPersonaDocumentMode(
     {
       method: 'POST',
       headers: authHeaders(opts?.apiKey),
+      ...WITH_CREDS,
       body: JSON.stringify({ item_id: itemId, mode }),
     },
   )
@@ -315,7 +340,7 @@ export async function detachPersonaDocument(
 ): Promise<{ ok: boolean; removed: boolean }> {
   const res = await fetch(
     `${backendUrl}/projects/${projectId}/persona/documents/${encodeURIComponent(itemId)}`,
-    { method: 'DELETE', headers: authHeaders(opts?.apiKey) },
+    { method: 'DELETE', headers: authHeaders(opts?.apiKey), ...WITH_CREDS },
   )
   if (!res.ok) throw new Error(`Detach document failed: ${res.status}`)
   return res.json()
@@ -329,7 +354,7 @@ export async function deletePersonaDocumentPermanently(
 ): Promise<{ ok: boolean; message: string }> {
   const res = await fetch(
     `${backendUrl}/projects/${projectId}/persona/documents/${encodeURIComponent(itemId)}/permanent`,
-    { method: 'DELETE', headers: authHeaders(opts?.apiKey) },
+    { method: 'DELETE', headers: authHeaders(opts?.apiKey), ...WITH_CREDS },
   )
   if (!res.ok) throw new Error(`Delete document permanently failed: ${res.status}`)
   return res.json()
@@ -355,7 +380,7 @@ export async function uploadProjectItem(
 
   const res = await fetch(
     `${backendUrl}/projects/${projectId}/items/upload`,
-    { method: 'POST', headers, body: form },
+    { method: 'POST', headers, body: form, ...WITH_CREDS },
   )
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
   return res.json()

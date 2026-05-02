@@ -52,3 +52,38 @@ font-feature-settings: "liga" 1, "calt" 1;
   from { opacity: 0; transform: translateY(8px) scale(0.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+/* Interactive live-play animations (PLAY-8) --------------------- */
+
+@keyframes ixSheetUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-sheet-up {
+  animation: ixSheetUp 220ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+@keyframes ixSceneFade {
+  from { opacity: 0.0; }
+  to   { opacity: 1.0; }
+}
+.animate-scene-fade {
+  animation: ixSceneFade 500ms ease-out both;
+}
+
+@keyframes ixMoodBreathe {
+  0%   { filter: brightness(0.95); }
+  50%  { filter: brightness(1.05); }
+  100% { filter: brightness(0.95); }
+}
+.animate-mood-breathe {
+  animation: ixMoodBreathe 6s ease-in-out infinite;
+}
+
+@keyframes ixLiveDotPulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.3); }
+}
+.animate-live-dot {
+  animation: ixLiveDotPulse 1.4s ease-in-out infinite;
+}

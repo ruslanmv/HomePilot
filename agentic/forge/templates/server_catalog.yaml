@@ -186,3 +186,93 @@ optional:
       type: external
       git: https://github.com/ruslanmv/teams-mcp-server
       ref: master
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Expert Core Services (category: expert_core)
+  #
+  # The ten MCP servers that back the Expert chat mode (thinking_mode =
+  # fast / think / heavy). Source of truth for priorities and API shapes is
+  # ``expert/backend/app/expert/mcp_catalog.py``. Each is installable from
+  # the Server Management UI so operators can enable the ones they need
+  # without running the full preprod sandbox.
+  # ─────────────────────────────────────────────────────────────────────────
+
+  - id: mcp-web-search
+    port: 9150
+    module: "agentic.integrations.mcp.web_search_server:app"
+    label: "Web Search (Expert P0)"
+    description: "Grounded web retrieval and citation candidates for Expert mode."
+    category: expert_core
+    icon: globe
+
+  - id: mcp-doc-retrieval
+    port: 9151
+    module: "agentic.integrations.mcp.doc_retrieval_server:app"
+    label: "Doc Retrieval (Expert P0)"
+    description: "Private knowledge retrieval and RAG for Expert mode."
+    category: expert_core
+    icon: file-text
+
+  - id: mcp-memory-store
+    port: 9152
+    module: "agentic.integrations.mcp.memory_store_server:app"
+    label: "Memory Store (Expert P0)"
+    description: "Durable memory service with privacy controls for Expert mode."
+    category: expert_core
+    icon: brain
+
+  - id: mcp-safety-policy
+    port: 9153
+    module: "agentic.integrations.mcp.safety_policy_server:app"
+    label: "Safety Policy (Expert P1)"
+    description: "Input/output policy checks and risk scoring for Expert mode."
+    category: expert_core
+    icon: shield
+
+  - id: mcp-observability
+    port: 9154
+    module: "agentic.integrations.mcp.observability_server:app"
+    label: "Observability (Expert P1)"
+    description: "Metrics, traces, and event export for Expert mode."
+    category: expert_core
+    icon: bar-chart
+
+  - id: mcp-code-sandbox
+    port: 9155
+    module: "agentic.integrations.mcp.code_sandbox_server:app"
+    label: "Code Sandbox (Expert P0)"
+    description: "Safe code execution and deterministic computation for Expert mode."
+    category: expert_core
+    icon: terminal
+
+  - id: mcp-citation-provenance
+    port: 9156
+    module: "agentic.integrations.mcp.citation_provenance_server:app"
+    label: "Citation Provenance (Expert P0)"
+    description: "Claim-to-source lineage and citation integrity for Expert mode."
+    category: expert_core
+    icon: file-text
+
+  - id: mcp-eval-runner
+    port: 9157
+    module: "agentic.integrations.mcp.eval_runner_server:app"
+    label: "Eval Runner (Expert P1)"
+    description: "Automated quality / safety / cost evaluation suites for Expert mode."
+    category: expert_core
+    icon: bar-chart
+
+  - id: mcp-cost-router
+    port: 9158
+    module: "agentic.integrations.mcp.cost_router_server:app"
+    label: "Cost Router (Expert P2)"
+    description: "Budget-aware route recommendations and cost recording for Expert mode."
+    category: expert_core
+    icon: bar-chart
+
+  - id: mcp-job-orchestrator
+    port: 9159
+    module: "agentic.integrations.mcp.job_orchestrator_server:app"
+    label: "Job Orchestrator (Expert P2)"
+    description: "Long-running simulation / research job queue for Expert mode."
+    category: expert_core
+    icon: package

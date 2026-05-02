@@ -28,6 +28,15 @@ services:
       OUTPUT_DIR: ${OUTPUT_DIR:-/outputs}
       TOOL_TIMEOUT_S: ${TOOL_TIMEOUT_S:-300}
       COMFY_POLL_INTERVAL_S: ${COMFY_POLL_INTERVAL_S:-1.0}
+      # Interactive tab: on by default in the dev compose so the
+      # feature is reachable during local development without
+      # manual env flags. Opt out with INTERACTIVE_ENABLED=false.
+      INTERACTIVE_ENABLED: ${INTERACTIVE_ENABLED:-true}
+      # Phase-2 playback swaps (LLM composer + real renderer) —
+      # opt-in so new installs pick the safe phase-1 path until
+      # LLM / Comfy endpoints are confirmed reachable.
+      INTERACTIVE_PLAYBACK_LLM: ${INTERACTIVE_PLAYBACK_LLM:-false}
+      INTERACTIVE_PLAYBACK_RENDER: ${INTERACTIVE_PLAYBACK_RENDER:-false}
       COMFY_POLL_MAX_S: ${COMFY_POLL_MAX_S:-240}
       AVATAR_SERVICE_URL: ${AVATAR_SERVICE_URL:-http://avatar-service:8020}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}

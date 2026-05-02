@@ -1,0 +1,20 @@
+version: "3.9"
+
+services:
+  expert-api:
+    build: .
+    command: uvicorn expert.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      EXPERT_DEFAULT_MODEL_PROVIDER: dummy
+      EXPERT_DEFAULT_MODEL_NAME: dummy-chat
+      EXPERT_MCP_WEB_SEARCH_URL: http://host.docker.internal:9132/rpc
+      EXPERT_MCP_DOC_RETRIEVAL_URL: http://host.docker.internal:9133/rpc
+      EXPERT_MCP_ARCHIVE_WORKSPACE_URL: http://host.docker.internal:9134/rpc
+      EXPERT_MCP_CODE_SANDBOX_URL: http://host.docker.internal:9135/rpc
+      EXPERT_MCP_CITATION_URL: http://host.docker.internal:9136/rpc
+      EXPERT_MCP_MEMORY_URL: http://host.docker.internal:9137/rpc
+      EXPERT_MCP_SAFETY_URL: http://host.docker.internal:9138/rpc
+      EXPERT_MCP_OBSERVABILITY_URL: http://host.docker.internal:9139/rpc
+      EXPERT_MCP_COST_URL: http://host.docker.internal:9140/rpc

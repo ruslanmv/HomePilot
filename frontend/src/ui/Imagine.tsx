@@ -141,23 +141,57 @@ type GameVariation = {
 // Helpers
 // -----------------------------------------------------------------------------
 
-async function postJson<T>(baseUrl: string, path: string, body: any, apiKey?: string): Promise<T> {
-  const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(apiKey ? { 'x-api-key': apiKey } : {}),
-    },
-    credentials: 'include',
-    body: JSON.stringify(body),
-  })
+// Explicit generous deadline for generation requests. Cold-start
+// model loads + busy ComfyUI queues can legitimately take several
+// minutes; the browser's default fetch behaviour (either no
+// timeout or a very long one) leaves the UI in limbo. 10 minutes
+// matches the backend's COMFY_POLL_MAX_S so the two sides agree
+// on "when does this request really count as failed".
+const POSTJSON_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
+async function postJson<T>(
+  baseUrl: string,
+  path: string,
+  body: any,
+  apiKey?: string,
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<T> {
+  const url = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
+
+  // Compose a deadline-based AbortSignal with an optional caller
+  // signal so a user-clicked Cancel also aborts. Deadline fires
+  // only if the backend genuinely never responds within the
+  // generous window above — matches best-practice long-running
+  // API patterns (AWS Bedrock async, Replicate, OpenAI Images).
+  const controller = new AbortController()
+  const timeoutMs = opts?.timeoutMs ?? POSTJSON_DEFAULT_TIMEOUT_MS
+  const deadlineTimer = window.setTimeout(() => controller.abort(), timeoutMs)
+  const callerSignal = opts?.signal
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort()
+    else callerSignal.addEventListener('abort', () => controller.abort())
   }
-  return (await res.json()) as T
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { 'x-api-key': apiKey } : {}),
+      },
+      credentials: 'include',
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
+    }
+    return (await res.json()) as T
+  } finally {
+    window.clearTimeout(deadlineTimer)
+  }
 }
 
 async function deleteJson<T>(baseUrl: string, path: string, body: any, apiKey?: string): Promise<T> {

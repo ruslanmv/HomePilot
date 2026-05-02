@@ -1,137 +1,72 @@
 {
   "1": {
     "class_type": "CheckpointLoaderSimple",
+    "_meta": {"title": "Load Checkpoint"},
     "inputs": {
-      "ckpt_name": "dreamshaper_8.safetensors"
+      "ckpt_name": "{{ckpt_name}}"
     }
   },
   "2": {
     "class_type": "LoadImage",
-    "_meta": {
-      "title": "Subject Image"
-    },
+    "_meta": {"title": "Persona Portrait"},
     "inputs": {
-      "image": ""
+      "image": "{{image_path}}"
     }
   },
   "3": {
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Face Region Mask"
-    },
+    "class_type": "VAEEncode",
+    "_meta": {"title": "Encode portrait → latent"},
     "inputs": {
-      "image": ""
-    }
-  },
-  "4": {
-    "class_type": "ImageToMask",
-    "inputs": {
-      "image": [
-        "3",
-        0
-      ],
-      "channel": "red"
+      "pixels": ["2", 0],
+      "vae": ["1", 2]
     }
   },
   "5": {
     "class_type": "CLIPTextEncode",
-    "_meta": {
-      "title": "Positive Prompt"
-    },
+    "_meta": {"title": "Positive Prompt"},
     "inputs": {
-      "clip": [
-        "1",
-        1
-      ],
-      "text": "smiling face, natural expression, same person, same identity, photorealistic, sharp focus"
+      "clip": ["1", 1],
+      "text": "{{positive_prompt}}"
     }
   },
   "6": {
     "class_type": "CLIPTextEncode",
-    "_meta": {
-      "title": "Negative Prompt"
-    },
+    "_meta": {"title": "Negative Prompt"},
     "inputs": {
-      "clip": [
-        "1",
-        1
-      ],
-      "text": "different person, different identity, deformed, blurry, lowres, disfigured face"
-    }
-  },
-  "7": {
-    "class_type": "InpaintModelConditioning",
-    "inputs": {
-      "positive": [
-        "5",
-        0
-      ],
-      "negative": [
-        "6",
-        0
-      ],
-      "vae": [
-        "1",
-        2
-      ],
-      "pixels": [
-        "2",
-        0
-      ],
-      "mask": [
-        "4",
-        0
-      ]
+      "clip": ["1", 1],
+      "text": "{{negative_prompt}}"
     }
   },
   "8": {
     "class_type": "KSampler",
+    "_meta": {"title": "Img2Img Sampler (low denoise to keep identity)"},
     "inputs": {
-      "model": [
-        "1",
-        0
-      ],
-      "positive": [
-        "7",
-        0
-      ],
-      "negative": [
-        "7",
-        1
-      ],
-      "latent_image": [
-        "7",
-        2
-      ],
-      "seed": 0,
-      "steps": 20,
-      "cfg": 5.0,
+      "model": ["1", 0],
+      "positive": ["5", 0],
+      "negative": ["6", 0],
+      "latent_image": ["3", 0],
+      "seed": "{{seed}}",
+      "steps": "{{steps}}",
+      "cfg": "{{cfg}}",
       "sampler_name": "euler",
       "scheduler": "normal",
-      "denoise": 0.55
+      "denoise": "{{denoise}}"
     }
   },
   "9": {
     "class_type": "VAEDecode",
+    "_meta": {"title": "Decode → image"},
     "inputs": {
-      "samples": [
-        "8",
-        0
-      ],
-      "vae": [
-        "1",
-        2
-      ]
+      "samples": ["8", 0],
+      "vae": ["1", 2]
     }
   },
   "10": {
     "class_type": "SaveImage",
+    "_meta": {"title": "Save"},
     "inputs": {
       "filename_prefix": "avatar/expression",
-      "images": [
-        "9",
-        0
-      ]
+      "images": ["9", 0]
     }
   }
 }
